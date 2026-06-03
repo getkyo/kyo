@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.symbol.SymbolSignature
 import kyo.internal.tasty.type_.TypeArena
 
@@ -117,40 +117,40 @@ class SymbolSignatureTest extends Test:
             )
 
     "SymbolSignature.compute for Method returns def-prefixed string with param list" in run {
-        buildFixture.map: cp =>
-            val m   = cp.symbol(SymbolId(2)).asInstanceOf[Tasty.Symbol.Method]
-            val sig = SymbolSignature.compute(m, cp)
-            assert(sig.startsWith("def greet"), s"Unexpected: $sig")
-            assert(sig.contains("(x: "), s"Expected param in: $sig")
-            succeed
+        buildFixture.flatMap: cp =>
+            val m = cp.symbol(SymbolId(2)).asInstanceOf[Tasty.Symbol.Method]
+            SymbolSignature.compute(m, cp).map: sig =>
+                assert(sig.startsWith("def greet"), s"Unexpected: $sig")
+                assert(sig.contains("(x: "), s"Expected param in: $sig")
+                succeed
     }
 
     "SymbolSignature.compute for Class returns class-prefixed string" in run {
-        buildFixture.map: cp =>
-            val c   = cp.symbol(SymbolId(1)).asInstanceOf[Tasty.Symbol.Class]
-            val sig = SymbolSignature.compute(c, cp)
-            assert(sig.startsWith("class "), s"Unexpected: $sig")
-            assert(sig.contains("String"), s"Expected name in: $sig")
-            succeed
+        buildFixture.flatMap: cp =>
+            val c = cp.symbol(SymbolId(1)).asInstanceOf[Tasty.Symbol.Class]
+            SymbolSignature.compute(c, cp).map: sig =>
+                assert(sig.startsWith("class "), s"Unexpected: $sig")
+                assert(sig.contains("String"), s"Expected name in: $sig")
+                succeed
     }
 
     "SymbolSignature.compute for Val returns val-prefixed string" in run {
-        buildFixture.map: cp =>
-            val v   = cp.symbol(SymbolId(4)).asInstanceOf[Tasty.Symbol.Val]
-            val sig = SymbolSignature.compute(v, cp)
-            assert(sig.startsWith("val result"), s"Unexpected: $sig")
-            succeed
+        buildFixture.flatMap: cp =>
+            val v = cp.symbol(SymbolId(4)).asInstanceOf[Tasty.Symbol.Val]
+            SymbolSignature.compute(v, cp).map: sig =>
+                assert(sig.startsWith("val result"), s"Unexpected: $sig")
+                succeed
     }
 
     "SymbolSignature.compute for Package returns package-prefixed string" in run {
-        buildFixture.map: cp =>
-            val p   = cp.symbol(SymbolId(0)).asInstanceOf[Tasty.Symbol.Package]
-            val sig = SymbolSignature.compute(p, cp)
-            assert(sig.startsWith("package "), s"Unexpected: $sig")
-            succeed
+        buildFixture.flatMap: cp =>
+            val p = cp.symbol(SymbolId(0)).asInstanceOf[Tasty.Symbol.Package]
+            SymbolSignature.compute(p, cp).map: sig =>
+                assert(sig.startsWith("package "), s"Unexpected: $sig")
+                succeed
     }
 
-    "SymbolSignature.compute for TypeAlias returns type-equals string" in {
+    "SymbolSignature.compute for TypeAlias returns type-equals string" in run {
         val ta = Tasty.Symbol.TypeAlias(
             SymbolId(0),
             Tasty.Name.Unsafe.init("MyAlias"),
@@ -175,10 +175,10 @@ class SymbolSignatureTest extends Test:
             errors = Chunk.empty,
             canonical = TypeArena.canonical()
         )
-        val sig = SymbolSignature.compute(ta, cp)
-        assert(sig.contains("type MyAlias"), s"Unexpected: $sig")
-        assert(sig.contains("="), s"Expected '=' in: $sig")
-        succeed
+        SymbolSignature.compute(ta, cp).map: sig =>
+            assert(sig.contains("type MyAlias"), s"Unexpected: $sig")
+            assert(sig.contains("="), s"Expected '=' in: $sig")
+            succeed
     }
 
 end SymbolSignatureTest

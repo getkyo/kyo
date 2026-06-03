@@ -1,7 +1,7 @@
 package kyo
 
 import AllowUnsafe.embrace.danger
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 
 /** Tests for TypeArena intern and Phase C merge.

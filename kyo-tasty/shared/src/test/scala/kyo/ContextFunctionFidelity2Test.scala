@@ -1,9 +1,9 @@
 package kyo
 
+import kyo.Tasty.SymbolId
 import kyo.internal.Fidelity2TestBase
 import kyo.internal.TestClasspaths
 import kyo.internal.TestClasspaths2
-import kyo.internal.tasty.symbol.SymbolId
 
 /** Fidelity tests for Type.ContextFunction decoding (F-A2-005).
   *

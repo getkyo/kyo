@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 
 /** Tests for the SymbolId opaque type.
   *

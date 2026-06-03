@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 
 /** Plan-mandated tests for Phase 04 (leaves 82-83): Field JVM accessor predicates.
   *

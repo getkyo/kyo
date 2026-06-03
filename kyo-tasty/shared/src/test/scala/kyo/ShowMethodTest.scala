@@ -9,7 +9,7 @@ class ShowMethodTest extends Test with TastyTestSupport:
     import AllowUnsafe.embrace.danger
 
     private def makeClasspath(using Frame): Tasty.Classpath < Sync =
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         import kyo.internal.tasty.type_.TypeArena
         Sync.defer {
             val pkgWithId = Tasty.Symbol.Package(SymbolId(0), Tasty.Name.Unsafe.init("p"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
@@ -47,17 +47,17 @@ class ShowMethodTest extends Test with TastyTestSupport:
 
     // Leaf id:7 -- Symbol.show, Type.show, Tree.show, Constant.show emit non-empty strings
     "Symbol.show returns non-empty string" in run {
-        makeClasspath.map: cp =>
+        makeClasspath.flatMap: cp =>
             given Tasty.Classpath = cp
             val sym               = cp.findClass("p.Foo").get
-            val s                 = sym.show
-            assert(s.nonEmpty, s"Symbol.show was empty for $sym")
-            succeed
+            sym.show.map: s =>
+                assert(s.nonEmpty, s"Symbol.show was empty for $sym")
+                succeed
     }
 
     "Type.show returns non-empty string" in run {
         makeClasspath.map: cp =>
-            import kyo.internal.tasty.symbol.SymbolId
+            import kyo.Tasty.SymbolId
             val tpe = Tasty.Type.Named(SymbolId(1))
             val s   = tpe.show(using cp)
             assert(s.nonEmpty, s"Type.show was empty for $tpe")

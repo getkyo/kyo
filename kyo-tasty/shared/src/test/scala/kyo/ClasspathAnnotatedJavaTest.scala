@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 
 /** Phase 08 followup for W-06-02: exercises the Java-annotation path (`javaAnnotations`) of `Classpath.symbolsAnnotatedWith`.
@@ -98,14 +98,14 @@ class ClasspathAnnotatedJavaTest extends Test:
     // When: symbolsAnnotatedWith("java.lang.Deprecated")
     // Then: returns exactly class A (the Java-annotation path is exercised)
     "ClasspathAnnotatedJavaTest: symbolsAnnotatedWith returns class A via Java annotation path" in run {
-        buildFixture.map: cp =>
-            val result = cp.symbolsAnnotatedWith("java.lang.Deprecated")
-            assert(
-                result.length == 1,
-                s"Expected 1 symbol annotated with java.lang.Deprecated via Java path, got ${result.length}: ${result.map(_.name.asString).mkString(", ")}"
-            )
-            assert(result(0).name.asString == "A", s"Expected annotated symbol to be 'A', got '${result(0).name.asString}'")
-            succeed
+        buildFixture.flatMap: cp =>
+            cp.symbolsAnnotatedWith("java.lang.Deprecated").map: result =>
+                assert(
+                    result.length == 1,
+                    s"Expected 1 symbol annotated with java.lang.Deprecated via Java path, got ${result.length}: ${result.map(_.name.asString).mkString(", ")}"
+                )
+                assert(result(0).name.asString == "A", s"Expected annotated symbol to be 'A', got '${result(0).name.asString}'")
+                succeed
     }
 
 end ClasspathAnnotatedJavaTest

@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 
 /** Plan-mandated tests for Phase 02 (leaves 43-46): verify all 40 flag predicates still work post-cutover.
   *

@@ -19,7 +19,7 @@ class SubclassesOfTest extends Test:
       * subclass of C)
       */
     private def ladderClasspath(using Frame): Tasty.Classpath < Sync =
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         import kyo.internal.tasty.type_.TypeArena
         Sync.defer {
             val absFlags  = flagsOf(Tasty.Flag.Abstract)
@@ -110,7 +110,7 @@ class SubclassesOfTest extends Test:
 
     /** Build a classpath with trait T having concrete and abstract subclasses. */
     private def traitClasspath(using Frame): Tasty.Classpath < Sync =
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         import kyo.internal.tasty.type_.TypeArena
         Sync.defer {
             val absFlags  = flagsOf(Tasty.Flag.Abstract)

@@ -48,7 +48,7 @@ private[kyo] object SnapshotEquivalence:
 
     /** Count symbols whose any reachable Type contains Named(SymbolId(-1)). */
     private[kyo] def countUnresolvedRefs(cp: Tasty.Classpath): Int =
-        import kyo.internal.tasty.symbol.SymbolId.value as idValue
+        import kyo.Tasty.SymbolId.value as idValue
         var count = 0
         cp.symbols.foreach: sym =>
             var found = false

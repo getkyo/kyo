@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 06 (leaf 128): Classpath.symbolsAnnotatedWith.
@@ -154,19 +154,19 @@ class ClasspathAnnotatedTest extends Test:
     // Then: Chunk[Symbol] of size 2; contains m1 and v1; excludes PlainA, deprecatedClass, and m2.
     // Pins: INV-005
     "Leaf 128: symbolsAnnotatedWith returns only symbols bearing the given annotation" in run {
-        buildFixture.map: cp =>
-            val annotated = cp.symbolsAnnotatedWith("scala.deprecated")
-            assert(
-                annotated.size == 2,
-                s"Expected 2 annotated symbols but got ${annotated.size}: ${annotated.map(_.name.asString)}"
-            )
-            val names = annotated.map(_.name.asString).toSeq.toSet
-            assert(names.contains("m1"), s"Expected m1 in annotated set but got: $names")
-            assert(names.contains("v1"), s"Expected v1 in annotated set but got: $names")
-            assert(!names.contains("PlainA"), s"PlainA must NOT be in annotated set: $names")
-            assert(!names.contains("m2"), s"m2 must NOT be in annotated set: $names")
-            assert(!names.contains("deprecated"), s"deprecated class itself must NOT be in annotated set: $names")
-            succeed
+        buildFixture.flatMap: cp =>
+            cp.symbolsAnnotatedWith("scala.deprecated").map: annotated =>
+                assert(
+                    annotated.size == 2,
+                    s"Expected 2 annotated symbols but got ${annotated.size}: ${annotated.map(_.name.asString)}"
+                )
+                val names = annotated.map(_.name.asString).toSeq.toSet
+                assert(names.contains("m1"), s"Expected m1 in annotated set but got: $names")
+                assert(names.contains("v1"), s"Expected v1 in annotated set but got: $names")
+                assert(!names.contains("PlainA"), s"PlainA must NOT be in annotated set: $names")
+                assert(!names.contains("m2"), s"m2 must NOT be in annotated set: $names")
+                assert(!names.contains("deprecated"), s"deprecated class itself must NOT be in annotated set: $names")
+                succeed
     }
 
 end ClasspathAnnotatedTest

@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 08 (leaves 175-178): steering target-use-case end-to-end validation.
@@ -105,7 +105,7 @@ class SteeringTargetUseCaseTest extends Test:
     // When: run the steering snippet
     // Then: cls is Present(c); c.methods includes "foo"; c.vals includes "x"; c.parents includes "pkg.B"
     "Leaf 175: steering target use case runs end-to-end" in run {
-        buildFixture.map: cp =>
+        buildFixture.flatMap: cp =>
             given Tasty.Classpath = cp
             val cls               = cp.findClass("pkg.A")
             assert(cls.isDefined, "findClass(\"pkg.A\") must return Present")
@@ -113,20 +113,20 @@ class SteeringTargetUseCaseTest extends Test:
                 case Maybe.Present(c) =>
                     val methodNames = c.methods.map(_.name)
                     val valNames    = c.vals.map(_.name)
-                    val parentFqns  = c.parents.map(_.fullNameString)
-                    assert(
-                        methodNames.exists(_.asString == "foo"),
-                        s"Expected method 'foo' in ${methodNames.map(_.asString).mkString(", ")}"
-                    )
-                    assert(
-                        valNames.exists(_.asString == "x"),
-                        s"Expected val 'x' in ${valNames.map(_.asString).mkString(", ")}"
-                    )
-                    assert(
-                        parentFqns.exists(_ == "pkg.B"),
-                        s"Expected parent 'pkg.B' in ${parentFqns.mkString(", ")}"
-                    )
-                    succeed
+                    Kyo.foreach(c.parents)(p => p.fullNameString).map: parentFqns =>
+                        assert(
+                            methodNames.exists(_.asString == "foo"),
+                            s"Expected method 'foo' in ${methodNames.map(_.asString).mkString(", ")}"
+                        )
+                        assert(
+                            valNames.exists(_.asString == "x"),
+                            s"Expected val 'x' in ${valNames.map(_.asString).mkString(", ")}"
+                        )
+                        assert(
+                            parentFqns.exists(_ == "pkg.B"),
+                            s"Expected parent 'pkg.B' in ${parentFqns.mkString(", ")}"
+                        )
+                        succeed
                 case Maybe.Absent => fail("cls must be Present")
             end match
     }

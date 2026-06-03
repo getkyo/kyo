@@ -1,12 +1,12 @@
 package kyo.internal.tasty.snapshot
 
 import kyo.*
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 import kyo.internal.tasty.symbol.SymbolDescriptor
-import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.symbol.TypedSymbolFactory
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
@@ -274,7 +274,7 @@ object SnapshotReader:
         end match
 
         // Collect typeParamIds per symbol index.
-        val typeParamsByIdx = new Array[Chunk[kyo.internal.tasty.symbol.SymbolId]](symCount)
+        val typeParamsByIdx = new Array[Chunk[kyo.Tasty.SymbolId]](symCount)
         java.util.Arrays.fill(typeParamsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
         sectionMap.get(SnapshotFormat.sectionTPARAMS) match
             case Some((off, len)) if len > 0 =>
@@ -286,13 +286,13 @@ object SnapshotReader:
                     len,
                     symCount,
                     (idx, refs) =>
-                        typeParamsByIdx(idx) = Chunk.from(refs.map(kyo.internal.tasty.symbol.SymbolId(_)))
+                        typeParamsByIdx(idx) = Chunk.from(refs.map(kyo.Tasty.SymbolId(_)))
                 )
             case _ => ()
         end match
 
         // Collect declarationIds per symbol index.
-        val declarationsByIdx = new Array[Chunk[kyo.internal.tasty.symbol.SymbolId]](symCount)
+        val declarationsByIdx = new Array[Chunk[kyo.Tasty.SymbolId]](symCount)
         java.util.Arrays.fill(declarationsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
         sectionMap.get(SnapshotFormat.sectionMEMBERS) match
             case Some((off, len)) if len > 0 =>
@@ -304,7 +304,7 @@ object SnapshotReader:
                     len,
                     symCount,
                     (idx, refs) =>
-                        declarationsByIdx(idx) = Chunk.from(refs.map(kyo.internal.tasty.symbol.SymbolId(_)))
+                        declarationsByIdx(idx) = Chunk.from(refs.map(kyo.Tasty.SymbolId(_)))
                 )
             case _ => ()
         end match
@@ -714,8 +714,8 @@ object SnapshotReader:
         val symsArray      = partialSymbols.toArray
 
         val parentsByIdx      = new Array[Chunk[Tasty.Type]](symCount)
-        val typeParamsByIdx   = new Array[Chunk[kyo.internal.tasty.symbol.SymbolId]](symCount)
-        val declarationsByIdx = new Array[Chunk[kyo.internal.tasty.symbol.SymbolId]](symCount)
+        val typeParamsByIdx   = new Array[Chunk[kyo.Tasty.SymbolId]](symCount)
+        val declarationsByIdx = new Array[Chunk[kyo.Tasty.SymbolId]](symCount)
         java.util.Arrays.fill(parentsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
         java.util.Arrays.fill(typeParamsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
         java.util.Arrays.fill(declarationsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
@@ -745,7 +745,7 @@ object SnapshotReader:
                     len,
                     symCount,
                     (idx, refs) =>
-                        typeParamsByIdx(idx) = Chunk.from(refs.map(kyo.internal.tasty.symbol.SymbolId(_)))
+                        typeParamsByIdx(idx) = Chunk.from(refs.map(kyo.Tasty.SymbolId(_)))
                 )
             case _ => ()
         end match
@@ -760,7 +760,7 @@ object SnapshotReader:
                     len,
                     symCount,
                     (idx, refs) =>
-                        declarationsByIdx(idx) = Chunk.from(refs.map(kyo.internal.tasty.symbol.SymbolId(_)))
+                        declarationsByIdx(idx) = Chunk.from(refs.map(kyo.Tasty.SymbolId(_)))
                 )
             case _ => ()
         end match

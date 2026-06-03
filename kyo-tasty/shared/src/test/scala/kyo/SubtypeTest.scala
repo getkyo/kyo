@@ -12,7 +12,7 @@ package kyo
 class SubtypeTest extends Test:
 
     import AllowUnsafe.embrace.danger
-    import kyo.internal.tasty.symbol.SymbolId
+    import kyo.Tasty.SymbolId
 
     // Counter for assigning unique SymbolIds in tests.
     private var nextId: Int = 0

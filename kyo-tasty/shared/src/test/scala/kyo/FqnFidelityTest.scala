@@ -122,7 +122,7 @@ class FqnFidelityTest extends Test:
                 val decoded = TypeUnpickler.readTypeIntoSession(view, session)
                 decoded match
                     case Tasty.Type.Named(sid) =>
-                        import kyo.internal.tasty.symbol.SymbolId.value
+                        import kyo.Tasty.SymbolId.value
                         val fqn = session.unresolvedIdToFqn.getOrElse(
                             sid.value,
                             s"<not-found; id=${sid.value}>"

@@ -367,9 +367,9 @@ object TypeUnpickler:
         fqn: String,
         fqns: mutable.HashMap[Int, String],
         id: Int
-    )(using AllowUnsafe): kyo.internal.tasty.symbol.SymbolId =
+    )(using AllowUnsafe): kyo.Tasty.SymbolId =
         fqns(id) = fqn
-        kyo.internal.tasty.symbol.SymbolId(id)
+        kyo.Tasty.SymbolId(id)
     end makeTrackedUnresolvedSym
 
     /** Decode one type node. tag byte not yet consumed. Records startAddr -> result in addrCache. */
@@ -433,7 +433,7 @@ object TypeUnpickler:
                             // does not collide with the Named(-1) sentinel checked by INV-005.
                             ctx.session match
                                 case s: DecodeSession =>
-                                    Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(s.nextUnresolvedId()))
+                                    Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
                                 case null =>
                                     Tasty.Type.Named(sentinelUnresolved.id)
                         end if
@@ -445,14 +445,14 @@ object TypeUnpickler:
                 // TASTy ASTRef values are section-relative. addrMap keys are absolute (sectionOffset + sectionRelativeAddr).
                 // F-A-001 fix: add sectionOffset to convert to absolute before lookup and storage.
                 val absRef = ctx.sectionOffset + astRef
-                if ctx.addrMap.contains(absRef) then Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
+                if ctx.addrMap.contains(absRef) then Tasty.Type.Named(kyo.Tasty.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
                 else
                     // F-A2-002 fix: cross-file TERMREFdirect miss. Assign a unique tracked negative ID
                     // so the result is Named(SymbolId(uniqueNeg)) with uniqueNeg < -1, not the Named(-1) sentinel.
                     // Phase C's remapType will attempt FQN lookup via negIdToFinal; if it fails the type
                     // remains as a unique unresolved ref (value < -1) rather than colliding with the -1 sentinel.
                     ctx.session match
-                        case s: DecodeSession => Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(s.nextUnresolvedId()))
+                        case s: DecodeSession => Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
                         case null             => Tasty.Type.Named(sentinelUnresolved.id)
                 end if
 
@@ -461,14 +461,14 @@ object TypeUnpickler:
                 // TASTy ASTRef values are section-relative. addrMap keys are absolute (sectionOffset + sectionRelativeAddr).
                 // F-A-001 fix: add sectionOffset to convert to absolute before lookup and storage.
                 val absRef = ctx.sectionOffset + astRef
-                if ctx.addrMap.contains(absRef) then Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
+                if ctx.addrMap.contains(absRef) then Tasty.Type.Named(kyo.Tasty.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
                 else
                     // F-A2-002 fix: cross-file TYPEREFdirect miss (same rationale as TERMREFdirect above).
                     // Assign a unique tracked negative ID so the result is Named(SymbolId(uniqueNeg)) with
                     // uniqueNeg < -1, eliminating the Named(-1) sentinel from declaredType traversals.
                     // This is the root cause of the scala.Tuple.splitAt Named(-1) in probe-001.log line 39872.
                     ctx.session match
-                        case s: DecodeSession => Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(s.nextUnresolvedId()))
+                        case s: DecodeSession => Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
                         case null             => Tasty.Type.Named(sentinelUnresolved.id)
                 end if
 
@@ -508,7 +508,7 @@ object TypeUnpickler:
                                 // No per-address fabricated names leak into cp.symbols; the unique ID is
                                 // unresolvable but does not collide with the INV-005 Named(-1) sentinel check.
                                 val placeholderId = ctx.session match
-                                    case s: DecodeSession => kyo.internal.tasty.symbol.SymbolId(s.nextUnresolvedId())
+                                    case s: DecodeSession => kyo.Tasty.SymbolId(s.nextUnresolvedId())
                                     case null             => sentinelUnresolved.id
                                 Tasty.Type.RecThis(Tasty.Type.Named(placeholderId))
                 end match
@@ -556,7 +556,7 @@ object TypeUnpickler:
                                     }
                                 enclosingPair match
                                     case Some((_, addr)) =>
-                                        Tasty.Type.ThisType(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + addr))
+                                        Tasty.Type.ThisType(kyo.Tasty.SymbolId(PHASE_B_ADDR_OFFSET + addr))
                                     case None =>
                                         Tasty.Type.ThisType(sentinelUnresolved.id)
                                 end match
@@ -603,7 +603,7 @@ object TypeUnpickler:
                         // emit Named(PHASE_B_ADDR_OFFSET + absRef). Phase C remaps to the final
                         // SymbolId via addrToFinal, allowing resolveChildRef to extract it.
                         // If truly unresolvable (different file), Phase C returns Named(-1).
-                        Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + absRefTerm))
+                        Tasty.Type.Named(kyo.Tasty.SymbolId(PHASE_B_ADDR_OFFSET + absRefTerm))
                 end match
 
             case TastyFormat.TERMREF =>
@@ -624,7 +624,7 @@ object TypeUnpickler:
                 // If absRef is truly from a different file, addrToFinal will not contain it and
                 // Phase C leaves it as Named(-1) (same behavior as before this fix).
                 val absRef = ctx.sectionOffset + astRef
-                Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
+                Tasty.Type.Named(kyo.Tasty.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
 
             case TastyFormat.TYPEREF =>
                 // F-A-009: TYPEREF (117) is a type-position reference, distinct from TermRef.
@@ -640,7 +640,7 @@ object TypeUnpickler:
                 val args  = readTypesUntil(view, end, ctx)
                 val fqnHint: String | Null = tycon match
                     case Tasty.Type.Named(id) =>
-                        import kyo.internal.tasty.symbol.SymbolId.value
+                        import kyo.Tasty.SymbolId.value
                         ctx.session match
                             case s: DecodeSession => s.unresolvedIdToFqn.getOrElse(id.value, null)
                             case _                => null
@@ -708,7 +708,7 @@ object TypeUnpickler:
                 view.goto(end)
                 def namedFqn(t: Tasty.Type): String | Null = t match
                     case Tasty.Type.Named(id) =>
-                        import kyo.internal.tasty.symbol.SymbolId.value
+                        import kyo.Tasty.SymbolId.value
                         ctx.session match
                             case s: DecodeSession => s.unresolvedIdToFqn.getOrElse(id.value, null)
                             case _                => null
@@ -791,7 +791,7 @@ object TypeUnpickler:
                     // with uniqueNeg < -1, not the Named(-1) sentinel that would fail INV-005.
                     case _ =>
                         ctx.session match
-                            case s: DecodeSession => Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(s.nextUnresolvedId()))
+                            case s: DecodeSession => Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
                             case null             => Tasty.Type.Named(sentinelUnresolved.id)
                 end match
 
@@ -1003,7 +1003,7 @@ object TypeUnpickler:
                 ctx.addrCache.getOrElse(
                     absRef, {
                         ctx.session match
-                            case s: DecodeSession => Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(s.nextUnresolvedId()))
+                            case s: DecodeSession => Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
                             case null             => Tasty.Type.Named(sentinelUnresolved.id)
                     }
                 )
@@ -1037,7 +1037,7 @@ object TypeUnpickler:
                     case s: DecodeSession =>
                         val id = s.nextUnresolvedId()
                         s.unresolvedIdToFqn(id) = fullFqn
-                        Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(id))
+                        Tasty.Type.Named(kyo.Tasty.SymbolId(id))
                     case null => Tasty.Type.Named(sentinelUnresolved.id)
                 end match
 
@@ -1068,8 +1068,8 @@ object TypeUnpickler:
                     case s: DecodeSession => s.nextUnresolvedId()
                     case null             => sentinelUnresolved.id.value
                 Tasty.Type.Wildcard(
-                    Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(loId)),
-                    Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(hiId))
+                    Tasty.Type.Named(kyo.Tasty.SymbolId(loId)),
+                    Tasty.Type.Named(kyo.Tasty.SymbolId(hiId))
                 )
 
             case TastyFormat.QUALTHIS =>
@@ -1081,7 +1081,7 @@ object TypeUnpickler:
                 val end = view.readEnd()
                 view.goto(end)
                 ctx.session match
-                    case s: DecodeSession => Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(s.nextUnresolvedId()))
+                    case s: DecodeSession => Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
                     case null             => Tasty.Type.Named(sentinelUnresolved.id)
 
             // ── Unknown tag: fail loudly (HARD RULE 13 / Phase 2.04-strict) ─────────

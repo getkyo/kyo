@@ -230,7 +230,7 @@ class SymbolResolutionTest extends Test:
 
     // ── Phase 09: Plan-mandated tests (Leaves 1-6) ──────────────────────────
 
-    import kyo.internal.tasty.symbol.SymbolId
+    import kyo.Tasty.SymbolId
 
     private def makeClassSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
@@ -409,7 +409,7 @@ class SymbolResolutionTest extends Test:
                 val _findInh: Maybe[Tasty.Symbol]    = sym.findInheritedMember("anything")
                 val _findAny: Maybe[Tasty.Symbol]    = sym.findAnyMember("anything")
                 val _byKind: Chunk[Tasty.Symbol]     = sym.membersByKind(Tasty.SymbolKind.Method)
-                val _showStr: String                 = sym.show
+                val _showEff: String < Sync          = sym.show
             succeed
     }
 

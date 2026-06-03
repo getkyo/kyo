@@ -1,12 +1,12 @@
 package kyo
 
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.PlatformFileSource
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
-import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 

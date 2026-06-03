@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 
 /** Plan-mandated tests for Phase 08 (leaves 170-171): JavaMetadata.isJvmPublic/Private/Protected/Static/Final.
   *

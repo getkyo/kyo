@@ -1,11 +1,11 @@
 package kyo
 
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TreeUnpickler
 import kyo.internal.tasty.snapshot.SnapshotFormat
 import kyo.internal.tasty.snapshot.SnapshotReader
-import kyo.internal.tasty.symbol.SymbolId
 import scala.collection.immutable.IntMap
 import scala.collection.mutable
 

@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 
 /** Phase 05 plan tests for Type ADT SymbolId migration.
   *
@@ -11,7 +11,7 @@ import kyo.internal.tasty.symbol.SymbolId
 class TypeSymbolIdTest extends Test:
 
     import AllowUnsafe.embrace.danger
-    import kyo.internal.tasty.symbol.SymbolId
+    import kyo.Tasty.SymbolId
 
     // ── Test 1: Type.Named carries SymbolId not Symbol ──────────────────────
 

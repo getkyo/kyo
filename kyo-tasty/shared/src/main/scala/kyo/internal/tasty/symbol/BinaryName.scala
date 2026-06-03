@@ -2,6 +2,7 @@ package kyo.internal.tasty.symbol
 
 import kyo.Tasty
 import kyo.Tasty.Name.asString
+import kyo.Tasty.SymbolId.value
 
 /** Computes the JVM binary name for a Symbol.
   *

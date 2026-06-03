@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.snapshot.DigestComputer
@@ -7,7 +8,6 @@ import kyo.internal.tasty.snapshot.SnapshotFormat
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import kyo.internal.tasty.symbol.FqnNormalizer
-import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
@@ -179,22 +179,24 @@ class DecoderFidelity5Phase04Test extends Test:
             val src = MemSrc()
             src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
             Scope.run:
-                ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
+                ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).flatMap: cp =>
                     import Tasty.Name.asString
-                    var checked = 0
-                    cp.allClassLike.foreach: sym =>
+                    Kyo.foreach(cp.allClassLike): sym =>
                         // Build a synthetic binary name from the source FQN (slash-separator form)
-                        val sourceFqn  = cp.fullName(sym).asString
-                        val binaryName = sourceFqn.replace('.', '/')
-                        val viaMethod  = cp.findClassByBinary(binaryName)
-                        val viaManual  = cp.findClass(FqnNormalizer.canonicalSourceFqn(binaryName.replace('/', '.')))
-                        assert(
-                            viaMethod == viaManual,
-                            s"findClassByBinary('$binaryName') = $viaMethod but expected $viaManual"
-                        )
-                        checked += 1
-                    assert(checked > 0, "Must have checked at least one class")
-                    succeed
+                        cp.fullName(sym).map: fqn =>
+                            val sourceFqn  = fqn.asString
+                            val binaryName = sourceFqn.replace('.', '/')
+                            val viaMethod  = cp.findClassByBinary(binaryName)
+                            val viaManual  = cp.findClass(FqnNormalizer.canonicalSourceFqn(binaryName.replace('/', '.')))
+                            assert(
+                                viaMethod == viaManual,
+                                s"findClassByBinary('$binaryName') = $viaMethod but expected $viaManual"
+                            )
+                            1
+                    .map: results =>
+                        val checked = results.sum
+                        assert(checked > 0, "Must have checked at least one class")
+                        succeed
         .map:
             case Result.Success(r) => r
             case Result.Failure(e) => fail(s"Unexpected error: $e")
@@ -275,7 +277,7 @@ class DecoderFidelity5Phase04Test extends Test:
     "P04.8 F-W2-19: cp.symbol returns sentinel for id=-1, id=-2, and id=Int.MinValue" in run {
         Abort.run[TastyError]:
             snapshotRoundTrip().map: cp =>
-                import kyo.internal.tasty.symbol.SymbolId.value as symIdValue
+                import kyo.Tasty.SymbolId.value as symIdValue
                 val s1 = cp.symbol(SymbolId(-1))
                 val s2 = cp.symbol(SymbolId(-2))
                 val s3 = cp.symbol(SymbolId(Int.MinValue))
@@ -364,7 +366,7 @@ class DecoderFidelity5Phase04Test extends Test:
         Abort.run[TastyError]:
             Scope.run:
                 ClasspathOrchestrator.init(Seq.empty, Tasty.ErrorMode.SoftFail, MemSrc(), 1).map: cp =>
-                    import kyo.internal.tasty.symbol.SymbolId.value as symIdValue
+                    import kyo.Tasty.SymbolId.value as symIdValue
                     assert(cp.symbols.isEmpty, s"Expected empty classpath; got ${cp.symbols.length} symbols")
                     val root = cp.symbol(cp.rootSymbolId)
                     assert(

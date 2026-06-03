@@ -2,6 +2,7 @@ package kyo.internal.tasty.query
 
 import kyo.*
 import kyo.Maybe.Absent
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileUnpickler
 import kyo.internal.tasty.classfile.ModuleInfoReader
@@ -17,7 +18,6 @@ import kyo.internal.tasty.reader.TastyHeader
 import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 import kyo.internal.tasty.symbol.SymbolDescriptor
-import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.symbol.TypedSymbolFactory
 import kyo.internal.tasty.type_.TypeArena
 import kyo.stats.Attributes

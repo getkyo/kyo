@@ -1,7 +1,7 @@
 package kyo
 
 import AllowUnsafe.embrace.danger
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 
 /** Plan-mandated tests for Phase 08 (leaf 164): Annotation.arguments.
   *

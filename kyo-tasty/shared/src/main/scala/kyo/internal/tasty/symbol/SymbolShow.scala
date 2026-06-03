@@ -1,5 +1,6 @@
 package kyo.internal.tasty.symbol
 
+import kyo.*
 import kyo.AllowUnsafe
 import kyo.Tasty
 import kyo.Tasty.Name.asString
@@ -10,11 +11,12 @@ import kyo.Tasty.Name.asString
   */
 private[kyo] object SymbolShow:
 
-    def show(sym: Tasty.Symbol, cp: Tasty.Classpath)(using AllowUnsafe): String =
-        val kind = sym.kind.toString
-        val fqn  = cp.fullName(sym).asString
-        if fqn.isEmpty then kind
-        else s"$kind $fqn"
+    def show(sym: Tasty.Symbol, cp: Tasty.Classpath)(using Frame): String < Sync =
+        Sync.Unsafe.defer:
+            val kind = sym.kind.toString
+            val fqn  = cp.fullNameUnsafe(sym).asString
+            if fqn.isEmpty then kind
+            else s"$kind $fqn"
     end show
 
 end SymbolShow

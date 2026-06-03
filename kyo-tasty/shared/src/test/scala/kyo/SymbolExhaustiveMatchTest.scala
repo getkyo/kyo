@@ -1,7 +1,7 @@
 package kyo
 
 import AllowUnsafe.embrace.danger
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 
 /** Phase 01 plan-mandated tests confirming exhaustive match on the Symbol hierarchy under -Xfatal-warnings.
   *

@@ -1,8 +1,8 @@
 package kyo
 
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
-import kyo.internal.tasty.symbol.SymbolId
 import scala.collection.mutable
 
 /** Plan-mandated tests for Phase 03 (leaves 52-65, 69): ClassLike typed resolution accessors.

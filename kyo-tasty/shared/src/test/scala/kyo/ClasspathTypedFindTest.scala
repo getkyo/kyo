@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 06 (leaves 101-109): typed Classpath find* lookups.

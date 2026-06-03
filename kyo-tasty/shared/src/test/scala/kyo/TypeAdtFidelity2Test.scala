@@ -89,7 +89,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // Cross-platform: pure ADT unit test.
     // Pins: F-A2-006
     "F-A2-006 leaf 3 (Phase 2.09): TypeOps.applied(scala.& base, 2 args) collapses to AndType" in run {
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         val intT    = Tasty.Type.Named(SymbolId(1))
         val stringT = Tasty.Type.Named(SymbolId(2))
         val base    = Tasty.Type.Named(SymbolId(-100))
@@ -134,7 +134,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // Cross-platform: pure ADT unit test.
     // Pins: F-A2-007 structural integrity
     "F-A2-007 leaf 5 (Phase 2.09): Type.MatchCase(pat, rhs) holds structurally distinct components" in run {
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         val patT                     = Tasty.Type.Named(SymbolId(100))
         val rhsT                     = Tasty.Type.Named(SymbolId(200))
         val mc: Tasty.Type.MatchCase = Tasty.Type.MatchCase(patT, rhsT)

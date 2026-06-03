@@ -1,7 +1,7 @@
 package kyo.internal.tasty.type_
 
 import kyo.*
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 
 /** Subtype checking for `Tasty.Type` values.
   *

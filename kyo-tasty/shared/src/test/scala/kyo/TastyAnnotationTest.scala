@@ -15,7 +15,7 @@ class TastyAnnotationTest extends Test with TastyTestSupport:
     // Phase 09: Type.Named(id).show resolves cp.symbol(id).name.asString; the symbol must
     // be registered in the classpath at index id.value.
     "Annotation case class: annotationType.show returns leaf name 'deprecated', arguments is empty" in run {
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         val deprecatedSym = Tasty.Symbol.Class(
             SymbolId(0),
             Tasty.Name.Unsafe.init("deprecated"),

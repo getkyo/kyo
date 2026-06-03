@@ -296,7 +296,7 @@ class DecoderFidelity5ExplorationTest extends Test:
     "DF5 leaf 13: class with most methods decodes all methods without Named(-1)" in run {
         TestClasspaths.withClasspath().map: cp =>
             given Tasty.Classpath = cp
-            import kyo.internal.tasty.symbol.SymbolId.value as idVal
+            import kyo.Tasty.SymbolId.value as idVal
             val classWithMostMethods = cp.allClassLike.toIndexedSeq.maxByOption: cl =>
                 cl.declarationIds.count: id =>
                     cp.symbol(id).isInstanceOf[Tasty.Symbol.Method]
@@ -332,7 +332,7 @@ class DecoderFidelity5ExplorationTest extends Test:
     "DF5 leaf 14: method with most type params decodes all type params without sentinel" in run {
         TestClasspaths.withClasspath().map: cp =>
             given Tasty.Classpath = cp
-            import kyo.internal.tasty.symbol.SymbolId.value as idVal
+            import kyo.Tasty.SymbolId.value as idVal
             val allMethods   = cp.allMethods
             val mostTpMethod = allMethods.toIndexedSeq.maxByOption(_.typeParamIds.length)
             mostTpMethod match
@@ -356,7 +356,7 @@ class DecoderFidelity5ExplorationTest extends Test:
     "DF5 leaf 15: deepest declaredType nesting causes no StackOverflowError" in run {
         TestClasspaths.withClasspath().map: cp =>
             given Tasty.Classpath = cp
-            import kyo.internal.tasty.symbol.SymbolId.value as idVal
+            import kyo.Tasty.SymbolId.value as idVal
             var maxDepth      = 0
             var deepestMethod = ""
             var soeCaught     = false

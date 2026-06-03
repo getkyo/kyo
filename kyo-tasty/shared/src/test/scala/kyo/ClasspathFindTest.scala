@@ -15,7 +15,7 @@ class ClasspathFindTest extends Test:
         Sync.defer:
             Tasty.Classpath.make(
                 symbols = Chunk.empty,
-                rootSymbolId = kyo.internal.tasty.symbol.SymbolId(-1),
+                rootSymbolId = kyo.Tasty.SymbolId(-1),
                 topLevelClassIds = Chunk.empty,
                 packageIds = Chunk.empty,
                 fqnIndex = Map.empty,
@@ -51,7 +51,7 @@ class ClasspathFindTest extends Test:
 
     // Leaf id:6 -- findClassByBinary handles dollar-encoded names
     "findClassByBinary translates slash and dollar to dot" in run {
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         import kyo.internal.tasty.type_.TypeArena
         Sync.defer {
             val symWithId = Tasty.Symbol.Class(

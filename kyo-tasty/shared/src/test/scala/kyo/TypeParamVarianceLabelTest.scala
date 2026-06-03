@@ -1,7 +1,7 @@
 package kyo
 
 import AllowUnsafe.embrace.danger
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 
 /** Phase 08 followup for W-05-02: exercises `TypeParam.varianceLabel`.
   *

@@ -110,7 +110,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     "F-A4-002 (Phase 2.02): warm.parentTypes has 0 Named(-1) after in-memory round-trip" in run {
         TestClasspaths2.withSnapshotInMemory().map: (_, warm) =>
-            import kyo.internal.tasty.symbol.SymbolId.value as idValue
+            import kyo.Tasty.SymbolId.value as idValue
             var namedMinusOne = 0
             warm.symbols.foreach:
                 case c: Tasty.Symbol.ClassLike =>

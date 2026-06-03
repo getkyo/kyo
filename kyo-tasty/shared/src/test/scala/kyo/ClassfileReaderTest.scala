@@ -37,7 +37,7 @@ class ClassfileReaderTest extends Test:
         case m: Tasty.Symbol.Method    => m.javaMetadata
         case _                         => Maybe.Absent
 
-    private def symPermittedSubclassIds(sym: Tasty.Symbol): Maybe[Chunk[kyo.internal.tasty.symbol.SymbolId]] = sym match
+    private def symPermittedSubclassIds(sym: Tasty.Symbol): Maybe[Chunk[kyo.Tasty.SymbolId]] = sym match
         case c: Tasty.Symbol.Class => c.permittedSubclassIds
         case t: Tasty.Symbol.Trait => t.permittedSubclassIds
         case _                     => Maybe.Absent

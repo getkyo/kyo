@@ -1,7 +1,7 @@
 package kyo.internal
 
 import kyo.*
-import kyo.internal.tasty.symbol.SymbolId as InternalSymbolId
+import kyo.Tasty.SymbolId as InternalSymbolId
 
 /** Unit tests for SnapshotEquivalence.warmColdEquivalent.
   *
@@ -103,7 +103,7 @@ class SnapshotEquivalenceTest extends kyo.Test:
       * for testing the size-comparison axes in SnapshotEquivalence.
       */
     private def makeSyntheticCp(
-        fqnIndex: Map[String, kyo.internal.tasty.symbol.SymbolId] = Map.empty
+        fqnIndex: Map[String, kyo.Tasty.SymbolId] = Map.empty
     )(using AllowUnsafe): Tasty.Classpath =
         Tasty.Classpath.make(
             symbols = Chunk.empty,

@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 
 /** Phase 04 plan-mandated tests for the pure-data Symbol flag and kind predicates.
   *

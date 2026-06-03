@@ -88,7 +88,7 @@ class TastySymbolTest extends Test:
                 cp.findClass("kyo.fixtures.PlainClass") match
                     case Present(sym) =>
                         given Tasty.Classpath = cp
-                        Kyo.lift(sym.fullName.asString)
+                        sym.fullName.map(_.asString)
                     case Absent =>
                         Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(fqn) =>
@@ -176,7 +176,7 @@ class TastySymbolTest extends Test:
     // Then: contains "Outer" and "Inner" separated by "$".
     // Pins: T1 (binaryName nested-class coverage).
     "Symbol.binaryName nested class returns com/example/Outer$Inner" in run {
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         val comSym     = Tasty.Symbol.Package(SymbolId(0), Tasty.Name.Unsafe.init("com"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val exampleSym = Tasty.Symbol.Package(SymbolId(1), Tasty.Name.Unsafe.init("example"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val outerSym = Tasty.Symbol.Class(
@@ -221,7 +221,7 @@ class TastySymbolTest extends Test:
     }
 
     "Symbol.binaryName top-level class returns com/example/Foo" in run {
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         val comSym     = Tasty.Symbol.Package(SymbolId(0), Tasty.Name.Unsafe.init("com"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val exampleSym = Tasty.Symbol.Package(SymbolId(1), Tasty.Name.Unsafe.init("example"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val fooSym = Tasty.Symbol.Class(
@@ -396,17 +396,18 @@ class TastySymbolTest extends Test:
     // Test (T4, root-owned FQN): root sentinel Symbol where ownerId == id returns just its own name.
     // Pins: T4 (root-owned symbol FQN handling).
     "T4: root sentinel Symbol fullName returns its own name" in run {
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name.Unsafe.init(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
-        Tasty.Classpath.fromPicklesWithSymbols(Chunk(rootSym)).map: cp =>
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(rootSym)).flatMap: cp =>
             given Tasty.Classpath = cp
-            val fqn               = rootSym.fullName.asString
-            // Root symbol with empty name returns empty string for fullName.
-            assert(fqn.isEmpty || fqn == "", s"Expected empty fullName for root sentinel but got '$fqn'")
+            rootSym.fullName.map: name =>
+                val fqn = name.asString
+                // Root symbol with empty name returns empty string for fullName.
+                assert(fqn.isEmpty || fqn == "", s"Expected empty fullName for root sentinel but got '$fqn'")
     }
 
     "T4: deeply nested inner class binaryName contains dollar separators" in run {
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         val syms: Seq[Tasty.Symbol] = (0 to 5).map: i =>
             val ownerId = if i == 0 then 0 else i - 1
             val n       = Tasty.Name.Unsafe.init(('A' + i).toChar.toString)
@@ -441,7 +442,7 @@ class TastySymbolTest extends Test:
     // Test (Phase 25b T6-3): seeded generative test for Symbol.fullName.asString.
     // Build Symbol chains with explicit ownerId and assert fullName matches dot-joined segments.
     "Symbol.fullName.asString matches dot-joined segments for a known chain" in run {
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         val segments = List("com", "example", "MyClass")
         val syms: List[Tasty.Symbol.Class] = segments.zipWithIndex.map: (seg, i) =>
             val ownerId = if i == 0 then 0 else i - 1
@@ -461,12 +462,13 @@ class TastySymbolTest extends Test:
                 Chunk.empty,
                 Maybe.Absent
             )
-        Tasty.Classpath.fromPicklesWithSymbols(Chunk.from(syms)).map: cp =>
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk.from(syms)).flatMap: cp =>
             given Tasty.Classpath = cp
             val last              = syms.last
-            val fqn               = last.fullName.asString
-            // fullName walk produces "com.example.MyClass".
-            assert(fqn.contains("MyClass"), s"Expected fullName to contain 'MyClass' but got '$fqn'")
+            last.fullName.map: name =>
+                val fqn = name.asString
+                // fullName walk produces "com.example.MyClass".
+                assert(fqn.contains("MyClass"), s"Expected fullName to contain 'MyClass' but got '$fqn'")
     }
 
     // Phase 13 T1 gap: kind accessor on each major SymbolKind.

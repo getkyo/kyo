@@ -1,8 +1,8 @@
 package kyo
 
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.classfile.JavaSignatures
 import kyo.internal.tasty.symbol.Interner
-import kyo.internal.tasty.symbol.SymbolId
 
 /** Tests for the JVM generic signature parser (JVMS §4.7.9.1).
   *

@@ -1329,7 +1329,7 @@ object TreeUnpickler:
       * matches. O(n) but used only in THIS/QUALTHIS decode.
       */
     private def resolveSymbolById(
-        id: kyo.internal.tasty.symbol.SymbolId,
+        id: kyo.Tasty.SymbolId,
         ctx: DecodeCtx,
         fallbackName: String
     )(using AllowUnsafe): Tasty.Symbol =
@@ -1401,7 +1401,7 @@ object TreeUnpickler:
                 val fullFqn = if qualFqn.nonEmpty then qualFqn + "." + nm else nm
                 val id      = session.nextUnresolvedId()
                 session.unresolvedIdToFqn(id) = fullFqn
-                Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(id))
+                Tasty.Type.Named(kyo.Tasty.SymbolId(id))
 
             case TastyFormat.APPLIEDtpt =>
                 // APPLIEDtpt (162): cat-5 (tag + Length + tycon_Tree + arg_Tree*).
@@ -1479,7 +1479,7 @@ object TreeUnpickler:
                 val fullFqn = if qualFqn.nonEmpty then qualFqn + "." + nm else nm
                 val id      = session.nextUnresolvedId()
                 session.unresolvedIdToFqn(id) = fullFqn
-                Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(id))
+                Tasty.Type.Named(kyo.Tasty.SymbolId(id))
 
             case TastyFormat.REFINEDtpt =>
                 // REFINEDtpt (160): cat-5 (tag + Length + parent_Tree + decl_Tree*).
@@ -1576,7 +1576,7 @@ object TreeUnpickler:
                 val absRef = sectionOffset + ref
                 typeSession.addrCache.getOrElse(
                     absRef,
-                    Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(typeSession.nextUnresolvedId()))
+                    Tasty.Type.Named(kyo.Tasty.SymbolId(typeSession.nextUnresolvedId()))
                 )
 
             case TastyFormat.BYNAMEtpt =>
@@ -1610,7 +1610,7 @@ object TreeUnpickler:
                 val fullFqn = if qualFqn.nonEmpty then qualFqn + "." + nm else nm
                 val id      = typeSession.nextUnresolvedId()
                 typeSession.unresolvedIdToFqn(id) = fullFqn
-                Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(id))
+                Tasty.Type.Named(kyo.Tasty.SymbolId(id))
 
             case TastyFormat.APPLY =>
                 // APPLY (136): cat-5 (tag + Length + fn_AST + args_AST*).
@@ -1645,8 +1645,8 @@ object TreeUnpickler:
                 val loId = typeSession.nextUnresolvedId()
                 val hiId = typeSession.nextUnresolvedId()
                 Tasty.Type.Wildcard(
-                    Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(loId)),
-                    Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(hiId))
+                    Tasty.Type.Named(kyo.Tasty.SymbolId(loId)),
+                    Tasty.Type.Named(kyo.Tasty.SymbolId(hiId))
                 )
 
             case TastyFormat.QUALTHIS =>
@@ -1660,7 +1660,7 @@ object TreeUnpickler:
                 // unique tracked unresolved ID to avoid the Named(-1) sentinel.
                 val end = view.readEnd()
                 view.goto(end)
-                Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(typeSession.nextUnresolvedId()))
+                Tasty.Type.Named(kyo.Tasty.SymbolId(typeSession.nextUnresolvedId()))
 
             case other =>
                 // Any tag reaching here is a routing invariant violation: the caller committed to

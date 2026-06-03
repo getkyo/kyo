@@ -58,7 +58,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     // Note: on JS/Native the embedded fixture set has Color (value-form) and Shape (class-form).
     // Pins: INV-105-DF2 producer; F-A2-010
     "INV-105-DF2 (Phase 2.06): every enum class has at least one EnumCase child" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath().flatMap: cp =>
             given Tasty.Classpath = cp
 
             val enums = cp.allClassLike.filter(e => e.isEnum && !e.isInstanceOf[Tasty.Symbol.EnumCase]).toList
@@ -77,12 +77,13 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
 
             val enumsWithNoCases = enums.filterNot(hasEnumCase)
 
-            assert(
-                enumsWithNoCases.isEmpty,
-                s"${enumsWithNoCases.size} enum(s) have no EnumCase children after Phase 2.06 fix: " +
-                    enumsWithNoCases.take(5).map(e => cp.fullName(e).asString).mkString(", ")
-            )
-            succeed
+            Kyo.foreach(enumsWithNoCases.take(5))(e => cp.fullName(e).map(_.asString)).map: names =>
+                assert(
+                    enumsWithNoCases.isEmpty,
+                    s"${enumsWithNoCases.size} enum(s) have no EnumCase children after Phase 2.06 fix: " +
+                        names.mkString(", ")
+                )
+                succeed
     }
 
     // Leaf 3 (Phase 2.06): total-enumcase-count-grows
@@ -153,7 +154,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     // Then: permittedSubclasses contains EnumCase symbols (regression guard for Phase 15 fix)
     // Pins: F-A2-010 (HARD RULE 4 layered preservation)
     "F-A2-010 (Phase 2.06): class-form EnumCase still correctly classified (Shape or TastyError)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath().flatMap: cp =>
             given Tasty.Classpath = cp
 
             // Try kyo.TastyError first (JVM), fall back to kyo.fixtures.Shape (JS/Native)
@@ -162,12 +163,13 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
                 case Maybe.Present(enumClass) =>
                     val permSubEnumCases = enumClass.permittedSubclasses.collect:
                         case e: Tasty.Symbol.EnumCase => e
-                    assert(
-                        permSubEnumCases.nonEmpty,
-                        s"${cp.fullName(enumClass).asString} has no EnumCase permitted subclasses after Phase 2.06 " +
-                            s"(regression: permittedSubclasses = ${enumClass.permittedSubclasses})"
-                    )
-                    succeed
+                    cp.fullName(enumClass).map: name =>
+                        assert(
+                            permSubEnumCases.nonEmpty,
+                            s"${name.asString} has no EnumCase permitted subclasses after Phase 2.06 " +
+                                s"(regression: permittedSubclasses = ${enumClass.permittedSubclasses})"
+                        )
+                        succeed
                 case Maybe.Absent =>
                     // Fall back: search for any class-form enum case (at least Shape cases in embedded set)
                     val classFormCases = cp.symbols.collect:

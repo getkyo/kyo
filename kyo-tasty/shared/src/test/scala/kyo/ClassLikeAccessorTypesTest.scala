@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 
 /** Plan-mandated tests for Phase 03 (leaves 66-68): compile-time type-shape verification for ClassLike typed accessors.
   *

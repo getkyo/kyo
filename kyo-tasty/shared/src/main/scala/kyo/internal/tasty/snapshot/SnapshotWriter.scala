@@ -2,9 +2,9 @@ package kyo.internal.tasty.snapshot
 
 import java.io.ByteArrayOutputStream
 import kyo.*
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.symbol.FqnNormalizer
-import kyo.internal.tasty.symbol.SymbolId
 import scala.collection.mutable
 
 /** Writes a `Classpath` to a KRFL snapshot file.
@@ -206,7 +206,7 @@ object SnapshotWriter:
             symbolList,
             symbolId,
             sym =>
-                import kyo.internal.tasty.symbol.SymbolId
+                import kyo.Tasty.SymbolId
                 (sym match
                     case c: Tasty.Symbol.ClassLike => c.declarationIds
                     case p: Tasty.Symbol.Package   => p.memberIds
@@ -220,7 +220,7 @@ object SnapshotWriter:
             symbolList,
             symbolId,
             sym =>
-                import kyo.internal.tasty.symbol.SymbolId
+                import kyo.Tasty.SymbolId
                 (sym match
                     case c: Tasty.Symbol.ClassLike   => c.typeParamIds
                     case m: Tasty.Symbol.Method      => m.typeParamIds
@@ -236,7 +236,7 @@ object SnapshotWriter:
             symbolList,
             symbolId,
             sym =>
-                import kyo.internal.tasty.symbol.SymbolId
+                import kyo.Tasty.SymbolId
                 (sym match
                     case c: Tasty.Symbol.Class =>
                         c.permittedSubclassIds match
@@ -440,7 +440,7 @@ object SnapshotWriter:
             SnapshotFormat.writeInt32LE(buf, pos + 13, fqnId)
             // sym.ownerId.value is the index into the symbols array.
             // For self-referential root (ownerId == id), write -1 to indicate no owner.
-            import kyo.internal.tasty.symbol.SymbolId
+            import kyo.Tasty.SymbolId
             val ownerIdx = sym.ownerId.value
             val ownerId  = if ownerIdx == sym.id.value then -1 else ownerIdx
             SnapshotFormat.writeInt32LE(buf, pos + 17, ownerId)
@@ -668,7 +668,7 @@ object SnapshotWriter:
       * from this section, bypassing the single-FQN-per-symbol limitation of the SYMBOLS section.
       */
     private def serializeFqnIndex(
-        fqnIndex: Map[String, kyo.internal.tasty.symbol.SymbolId],
+        fqnIndex: Map[String, kyo.Tasty.SymbolId],
         symbolList: Seq[Tasty.Symbol],
         symbolId: scala.collection.mutable.HashMap[Tasty.Symbol, Int],
         internName: String => Int
@@ -748,10 +748,10 @@ object SnapshotWriter:
       * skipped.
       */
     private def serializeSubclassIndex(
-        subclassIndex: Map[kyo.internal.tasty.symbol.SymbolId, Chunk[kyo.internal.tasty.symbol.SymbolId]],
+        subclassIndex: Map[kyo.Tasty.SymbolId, Chunk[kyo.Tasty.SymbolId]],
         symIdToIdx: scala.collection.mutable.HashMap[Int, Int]
     ): Array[Byte] =
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         val baos = new java.io.ByteArrayOutputStream(4 * 1024)
         val tmp  = new Array[Byte](4)
         // Collect valid entries: (parentIdx, filteredChildren).
@@ -783,10 +783,10 @@ object SnapshotWriter:
       * Entries where either SymbolId is not in the symbols array are skipped.
       */
     private def serializeCompanionIndex(
-        companionIndex: Map[kyo.internal.tasty.symbol.SymbolId, kyo.internal.tasty.symbol.SymbolId],
+        companionIndex: Map[kyo.Tasty.SymbolId, kyo.Tasty.SymbolId],
         symIdToIdx: scala.collection.mutable.HashMap[Int, Int]
     ): Array[Byte] =
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         val baos = new java.io.ByteArrayOutputStream(4 * 1024)
         val tmp  = new Array[Byte](4)
         val entries = companionIndex.toSeq.sortBy(_._1.value).flatMap: (symId, companionId) =>

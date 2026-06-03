@@ -19,9 +19,9 @@ class FlatSymbolGrepAuditTest extends Test:
     "Leaf 174: Symbol hierarchy has no flat case class -- sealed trait is the root" in run {
         // Constructing a Class subtype must compile and produce a Symbol (not a flat case class).
         val sym: Tasty.Symbol = Tasty.Symbol.Unresolved(
-            kyo.internal.tasty.symbol.SymbolId(-1),
+            kyo.Tasty.SymbolId(-1),
             Tasty.Name.Unsafe.init("<unresolved>"),
-            kyo.internal.tasty.symbol.SymbolId(-1)
+            kyo.Tasty.SymbolId(-1)
         )
         sym match
             case u: Tasty.Symbol.Unresolved =>

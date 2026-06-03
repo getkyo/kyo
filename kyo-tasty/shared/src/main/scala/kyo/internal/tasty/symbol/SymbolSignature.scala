@@ -10,7 +10,11 @@ import kyo.Tasty.Name.asString
   */
 private[kyo] object SymbolSignature:
 
-    def compute(sym: Tasty.Symbol, cp: Tasty.Classpath)(using AllowUnsafe): String =
+    def compute(sym: Tasty.Symbol, cp: Tasty.Classpath)(using Frame): String < Sync =
+        Sync.Unsafe.defer:
+            computeUnsafe(sym, cp)
+
+    private def computeUnsafe(sym: Tasty.Symbol, cp: Tasty.Classpath)(using AllowUnsafe): String =
         given Tasty.Classpath = cp
         sym match
             case m: Tasty.Symbol.Method       => methodSig(m)
@@ -28,7 +32,7 @@ private[kyo] object SymbolSignature:
             case p: Tasty.Symbol.Package      => s"package ${p.simpleName}"
             case u: Tasty.Symbol.Unresolved   => s"<unresolved ${u.simpleName}>"
         end match
-    end compute
+    end computeUnsafe
 
     private def methodSig(m: Tasty.Symbol.Method)(using Tasty.Classpath, AllowUnsafe): String =
         val tps =
@@ -59,7 +63,10 @@ private[kyo] object SymbolSignature:
 
     private def renderType(t: Tasty.Type)(using cp: Tasty.Classpath, allow: AllowUnsafe): String =
         t match
-            case Tasty.Type.Named(id) => cp.symbol(id).fullNameString
-            case _                    => t.toString
+            case Tasty.Type.Named(id) =>
+                // Resolve symbol and produce its FQN string using the unsafe kernel.
+                import Tasty.Name.asString
+                cp.fullNameUnsafe(cp.symbol(id)).asString
+            case _ => t.toString
 
 end SymbolSignature

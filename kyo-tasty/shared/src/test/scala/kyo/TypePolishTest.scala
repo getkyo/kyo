@@ -1,7 +1,7 @@
 package kyo
 
 import AllowUnsafe.embrace.danger
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 import scala.collection.mutable.ArrayBuffer
 
 /** Plan-mandated tests for Phase 08 (leaves 155-160): Type.symbol, Type.children, Type.foreach.

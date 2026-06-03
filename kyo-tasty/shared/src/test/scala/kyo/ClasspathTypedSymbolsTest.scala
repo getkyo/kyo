@@ -290,7 +290,7 @@ class ClasspathTypedSymbolsTest extends Test:
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
-                Kyo.lift(cp.symbol(kyo.internal.tasty.symbol.SymbolId(999999)))).map:
+                Kyo.lift(cp.symbol(kyo.Tasty.SymbolId(999999)))).map:
                 case Result.Success(sym) =>
                     assert(
                         sym.isInstanceOf[Tasty.Symbol.Unresolved],

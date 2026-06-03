@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 
 /** Plan-mandated tests for Phase 05 (leaves 91-95): TypeAlias.body/typeParams and OpaqueType.body/bounds/typeParams accessors.
   *

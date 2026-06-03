@@ -9,7 +9,6 @@ import kyo.internal.tasty.snapshot.DigestComputer as SnapshotDigest
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import kyo.internal.tasty.symbol.Interner
-import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 import kyo.stats.Attributes
 import scala.collection.immutable.IntMap
@@ -36,6 +35,39 @@ import scala.collection.immutable.IntMap
   * `Tasty.Type`).
   */
 object Tasty:
+
+    // ── SymbolId ────────────────────────────────────────────────────────────
+
+    /** Opaque integer handle used to reference a Symbol within a Classpath instance.
+      *
+      * Values are produced exclusively by Classpath Pass C construction and obtained by users from `Classpath.symbol`,
+      * `Classpath.rootSymbolId`, `Classpath.topLevelClassIds`, `Classpath.packageIds`, or from any `SymbolId` field on `Symbol` or `Type`.
+      * Outside of `object Tasty`, callers cannot construct a SymbolId from a raw Int.
+      *
+      * Two SymbolId values produced by the same Classpath compare equal via `==` iff they refer to the same Symbol. SymbolId values are NOT
+      * stable across distinct Classpath instances (different `Classpath.init` calls produce independent id spaces).
+      */
+    opaque type SymbolId = Int
+
+    object SymbolId:
+
+        /** Internal smart constructor. Callable only from inside `kyo` (via `private[kyo]`); user code cannot invoke this. */
+        private[kyo] def apply(i: Int): SymbolId = i
+
+        extension (id: SymbolId)
+            /** Internal accessor for the underlying integer value. Used by `Classpath.symbol(id)` to index the dense
+              * `symbols: IndexedSeq[Symbol]` array.
+              */
+            private[kyo] def value: Int = id
+        end extension
+
+        given CanEqual[SymbolId, SymbolId] = CanEqual.canEqualAny
+
+    end SymbolId
+
+    // Bring the `value` extension into scope for the entirety of `object Tasty` so that
+    // internal code can write `id.value` without per-site imports.
+    import SymbolId.value
 
     // ── Version ─────────────────────────────────────────────────────────────
 
@@ -641,7 +673,7 @@ object Tasty:
       * appeared in the classfile; element names are interned `Name` values and ordering matches the source
       * declaration. Element values are typed via the `JavaAnnotation.Value` enum nested in the companion.
       *
-      * **Querying.** `Symbol.hasAnnotation(fqn)` and `Symbol.getAnnotation(fqn)` walk both this list and the
+      * **Querying.** `Symbol.hasAnnotation(fqn)` and `Symbol.findAnnotation(fqn)` walk both this list and the
       * Scala `annotations` list (where applicable), so the common "is this symbol annotated with X" question
       * does not need to branch on the value space.
       */
@@ -1627,12 +1659,10 @@ object Tasty:
         override def equals(other: Any): Boolean =
             other match
                 case that: Symbol =>
-                    import kyo.internal.tasty.symbol.SymbolId.value
                     if id.value == -1 || that.id.value == -1 then this.eq(that)
                     else id == that.id
                 case _ => false
         override def hashCode(): Int =
-            import kyo.internal.tasty.symbol.SymbolId.value
             if id.value == -1 then java.lang.System.identityHashCode(this)
             else id.value
         end hashCode
@@ -1769,7 +1799,7 @@ object Tasty:
 
         def companion(using cp: Classpath): Maybe[Symbol] = cp.companion(this)
 
-        def fullName(using cp: Classpath, allow: AllowUnsafe): Name = cp.fullName(this)
+        def fullName(using frame: Frame, cp: Classpath): Name < Sync = cp.fullName(this)
 
         def binaryName(using cp: Classpath): String =
             kyo.internal.tasty.symbol.BinaryName.compute(this, cp)
@@ -1782,7 +1812,7 @@ object Tasty:
           * `show(ShowFormat.FullyQualified)` for the bare FQN, `show(ShowFormat.Simple)` for the simple
           * name, or `show(ShowFormat.Code)` for the source-style signature.
           */
-        def show(using cp: Classpath, allow: AllowUnsafe): String = kyo.internal.tasty.symbol.SymbolShow.show(this, cp)
+        def show(using frame: Frame, cp: Classpath): String < Sync = kyo.internal.tasty.symbol.SymbolShow.show(this, cp)
 
         // Typed grouped queries derived from flags
         def visibility: Visibility =
@@ -1804,10 +1834,10 @@ object Tasty:
             else if flags.contains(Flag.Open) then OpenLevel.Open
             else OpenLevel.Default
 
-        /** Dotted fully-qualified name as a `String`. Mirrors `fullName(using cp).asString`. */
-        def fullNameString(using cp: Classpath, allow: AllowUnsafe): String =
+        /** Dotted fully-qualified name as a `String`. Mirrors `fullName(using cp).map(_.asString)`. */
+        def fullNameString(using frame: Frame, cp: Classpath): String < Sync =
             import Name.asString
-            fullName.asString
+            fullName.map(_.asString)
 
         /** Simple name as a `String`. Mirrors `name.asString`. */
         def simpleName: String =
@@ -1833,66 +1863,66 @@ object Tasty:
         /** Subtype-aware annotation query. ClassLike / Method / Val / Var / TypeAlias / OpaqueType / AbstractType / Parameter walk both
           * Scala and Java annotation lists; Field walks `javaAnnotations` only; TypeParam / Package / Unresolved return `false`.
           */
-        def hasAnnotation(annotationFqn: String)(using cp: Classpath, allow: AllowUnsafe): Boolean =
-            def matchScala(a: Annotation): Boolean =
-                import Name.asString
-                cp.typeFqnString(a.annotationType) == annotationFqn
-            def matchJava(a: JavaAnnotation): Boolean =
-                import Name.asString
-                cp.fullName(a.annotationClass).asString == annotationFqn
-            this match
-                case c: Symbol.Class        => c.annotations.exists(matchScala) || c.javaAnnotations.exists(matchJava)
-                case t: Symbol.Trait        => t.annotations.exists(matchScala) || t.javaAnnotations.exists(matchJava)
-                case o: Symbol.Object       => o.annotations.exists(matchScala) || o.javaAnnotations.exists(matchJava)
-                case m: Symbol.Method       => m.annotations.exists(matchScala)
-                case v: Symbol.Val          => v.annotations.exists(matchScala)
-                case w: Symbol.Var          => w.annotations.exists(matchScala)
-                case f: Symbol.Field        => f.javaAnnotations.exists(matchJava)
-                case t: Symbol.TypeAlias    => t.annotations.exists(matchScala)
-                case t: Symbol.OpaqueType   => t.annotations.exists(matchScala)
-                case t: Symbol.AbstractType => t.annotations.exists(matchScala)
-                case p: Symbol.Parameter    => p.annotations.exists(matchScala)
-                case _                      => false
-            end match
+        def hasAnnotation(annotationFqn: String)(using frame: Frame, cp: Classpath): Boolean < Sync =
+            Sync.Unsafe.defer:
+                def matchScala(a: Annotation): Boolean =
+                    cp.typeFqnStringUnsafe(a.annotationType) == annotationFqn
+                def matchJava(a: JavaAnnotation): Boolean =
+                    import Name.asString
+                    cp.fullNameUnsafe(a.annotationClass).asString == annotationFqn
+                this match
+                    case c: Symbol.Class        => c.annotations.exists(matchScala) || c.javaAnnotations.exists(matchJava)
+                    case t: Symbol.Trait        => t.annotations.exists(matchScala) || t.javaAnnotations.exists(matchJava)
+                    case o: Symbol.Object       => o.annotations.exists(matchScala) || o.javaAnnotations.exists(matchJava)
+                    case m: Symbol.Method       => m.annotations.exists(matchScala)
+                    case v: Symbol.Val          => v.annotations.exists(matchScala)
+                    case w: Symbol.Var          => w.annotations.exists(matchScala)
+                    case f: Symbol.Field        => f.javaAnnotations.exists(matchJava)
+                    case t: Symbol.TypeAlias    => t.annotations.exists(matchScala)
+                    case t: Symbol.OpaqueType   => t.annotations.exists(matchScala)
+                    case t: Symbol.AbstractType => t.annotations.exists(matchScala)
+                    case p: Symbol.Parameter    => p.annotations.exists(matchScala)
+                    case _                      => false
+                end match
         end hasAnnotation
 
         /** Subtype-aware annotation lookup; first Scala match preferred, then first Java match. */
-        def findAnnotation(annotationFqn: String)(using cp: Classpath, allow: AllowUnsafe): Maybe[Annotation | JavaAnnotation] =
-            def matchScala(a: Annotation): Boolean =
-                import Name.asString
-                cp.typeFqnString(a.annotationType) == annotationFqn
-            def matchJava(a: JavaAnnotation): Boolean =
-                import Name.asString
-                cp.fullName(a.annotationClass).asString == annotationFqn
-            this match
-                case c: Symbol.Class =>
-                    Maybe(c.annotations.find(matchScala).orElse(c.javaAnnotations.find(matchJava)).orNull)
-                case t: Symbol.Trait =>
-                    Maybe(t.annotations.find(matchScala).orElse(t.javaAnnotations.find(matchJava)).orNull)
-                case o: Symbol.Object =>
-                    Maybe(o.annotations.find(matchScala).orElse(o.javaAnnotations.find(matchJava)).orNull)
-                case m: Symbol.Method       => Maybe(m.annotations.find(matchScala).orNull)
-                case v: Symbol.Val          => Maybe(v.annotations.find(matchScala).orNull)
-                case w: Symbol.Var          => Maybe(w.annotations.find(matchScala).orNull)
-                case f: Symbol.Field        => Maybe(f.javaAnnotations.find(matchJava).orNull)
-                case t: Symbol.TypeAlias    => Maybe(t.annotations.find(matchScala).orNull)
-                case t: Symbol.OpaqueType   => Maybe(t.annotations.find(matchScala).orNull)
-                case t: Symbol.AbstractType => Maybe(t.annotations.find(matchScala).orNull)
-                case p: Symbol.Parameter    => Maybe(p.annotations.find(matchScala).orNull)
-                case _                      => Maybe.Absent
-            end match
+        def findAnnotation(annotationFqn: String)(using frame: Frame, cp: Classpath): Maybe[Annotation | JavaAnnotation] < Sync =
+            Sync.Unsafe.defer:
+                def matchScala(a: Annotation): Boolean =
+                    cp.typeFqnStringUnsafe(a.annotationType) == annotationFqn
+                def matchJava(a: JavaAnnotation): Boolean =
+                    import Name.asString
+                    cp.fullNameUnsafe(a.annotationClass).asString == annotationFqn
+                this match
+                    case c: Symbol.Class =>
+                        Maybe.fromOption(c.annotations.find(matchScala).orElse(c.javaAnnotations.find(matchJava)))
+                    case t: Symbol.Trait =>
+                        Maybe.fromOption(t.annotations.find(matchScala).orElse(t.javaAnnotations.find(matchJava)))
+                    case o: Symbol.Object =>
+                        Maybe.fromOption(o.annotations.find(matchScala).orElse(o.javaAnnotations.find(matchJava)))
+                    case m: Symbol.Method       => Maybe.fromOption(m.annotations.find(matchScala))
+                    case v: Symbol.Val          => Maybe.fromOption(v.annotations.find(matchScala))
+                    case w: Symbol.Var          => Maybe.fromOption(w.annotations.find(matchScala))
+                    case f: Symbol.Field        => Maybe.fromOption(f.javaAnnotations.find(matchJava))
+                    case t: Symbol.TypeAlias    => Maybe.fromOption(t.annotations.find(matchScala))
+                    case t: Symbol.OpaqueType   => Maybe.fromOption(t.annotations.find(matchScala))
+                    case t: Symbol.AbstractType => Maybe.fromOption(t.annotations.find(matchScala))
+                    case p: Symbol.Parameter    => Maybe.fromOption(p.annotations.find(matchScala))
+                    case _                      => Maybe.Absent
+                end match
         end findAnnotation
 
         /** Human-readable signature. For Method: `def name[Tps](p1: T1, ...): R`. For Class / Trait / Object: `kind name[Tps] extends
           * parents`. For Val / Var / Field: `kind name: T`. For TypeAlias / OpaqueType: `name = body`. Other subtypes return `simpleName`.
           */
-        def signature(using cp: Classpath, allow: AllowUnsafe): String =
+        def signature(using frame: Frame, cp: Classpath): String < Sync =
             kyo.internal.tasty.symbol.SymbolSignature.compute(this, cp)
 
         /** Format-selectable show. `FullyQualified` returns `fullNameString`; `Simple` returns `simpleName`; `Code` returns `signature`. */
-        def show(format: ShowFormat)(using cp: Classpath, allow: AllowUnsafe): String = format match
+        def show(format: ShowFormat)(using frame: Frame, cp: Classpath): String < Sync = format match
             case ShowFormat.FullyQualified => fullNameString
-            case ShowFormat.Simple         => simpleName
+            case ShowFormat.Simple         => Sync.defer(simpleName)
             case ShowFormat.Code           => signature
 
         /** Direct declarations only (for ClassLike); empty for non-classlike. */
@@ -1919,7 +1949,7 @@ object Tasty:
 
         /** Find a direct declaration by simple name. */
         def findDeclaredMember(name: String)(using cp: Classpath): Maybe[Symbol] =
-            Maybe(declaredMembers.find(_.simpleName == name).orNull)
+            Maybe.fromOption(declaredMembers.find(_.simpleName == name))
 
         /** Find an inherited (parent-or-deeper) declaration by simple name. Not direct.
           *
@@ -1980,7 +2010,7 @@ object Tasty:
 
         /** Find any (direct or inherited) member by simple name. */
         def findAnyMember(name: String)(using cp: Classpath): Maybe[Symbol] =
-            Maybe(allMembers.find(_.simpleName == name).orNull)
+            Maybe.fromOption(allMembers.find(_.simpleName == name))
 
         // Resolution accessors preserved from the flat Symbol API (used by existing callers)
 
@@ -2331,6 +2361,10 @@ object Tasty:
                     javaAnnotations,
                     body
                 )
+            // Scala-language exception: pattern extractors require an `Option`-shaped return so the compiler
+            // can desugar `case Symbol.EnumCase(id) => ...`. Using `Maybe[SymbolId]` would defeat the
+            // extractor protocol. The result is always `Some` (extraction never fails), narrowing the
+            // result type so callers can deconstruct without an explicit `match`.
             def unapply(e: EnumCase): Some[SymbolId] = Some(e.id)
         end EnumCase
 
@@ -2825,6 +2859,8 @@ object Tasty:
         end symbolsByKind
 
         private def symbolsOfKind[A <: Symbol](k: SymbolKind): Chunk[A] =
+            // safe: `symbolsByKind` is built by Pass C so that the kind key matches the runtime class of
+            // every contained Symbol; callers (allTraits/allObjects/...) pick `A` to align with `k`.
             symbolsByKind.getOrElse(k, Chunk.empty).asInstanceOf[Chunk[A]]
 
         /** Cached ClassLike aggregate: every Class, Trait, Object, and EnumCase symbol. Materialized once
@@ -3051,7 +3087,7 @@ object Tasty:
           * Pure O(1) lookup in the immutable moduleIndex.
           */
         def findModule(name: String): Maybe[ModuleDescriptor] =
-            Maybe(moduleIndex.get(name).orNull)
+            Maybe.fromOption(moduleIndex.get(name))
 
         /** All JPMS module descriptors loaded into this classpath.
           *
@@ -3226,29 +3262,31 @@ object Tasty:
           * Java `javaAnnotations` (via `JavaAnnotation.annotationClass` FQN). Symbols that carry neither field (TypeParam, Package,
           * Unresolved) are excluded.
           */
-        def symbolsAnnotatedWith(annotationFqn: String)(using AllowUnsafe): Chunk[Symbol] =
-            import Name.asString
-            symbols.filter: sym =>
-                val scalaMatch: Boolean = sym match
-                    case c: Symbol.ClassLike     => c.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
-                    case m: Symbol.Method        => m.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
-                    case v: Symbol.Val           => v.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
-                    case w: Symbol.Var           => w.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
-                    case ta: Symbol.TypeAlias    => ta.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
-                    case ot: Symbol.OpaqueType   => ot.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
-                    case at: Symbol.AbstractType => at.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
-                    case p: Symbol.Parameter     => p.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
-                    case _                       => false
-                val javaMatch: Boolean = sym match
-                    case c: Symbol.ClassLike => c.javaAnnotations.exists(ja => fullName(ja.annotationClass).asString == annotationFqn)
-                    case f: Symbol.Field     => f.javaAnnotations.exists(ja => fullName(ja.annotationClass).asString == annotationFqn)
-                    case _                   => false
-                scalaMatch || javaMatch
+        def symbolsAnnotatedWith(annotationFqn: String)(using Frame): Chunk[Symbol] < Sync =
+            Sync.Unsafe.defer:
+                import Name.asString
+                symbols.filter: sym =>
+                    val scalaMatch: Boolean = sym match
+                        case c: Symbol.ClassLike     => c.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
+                        case m: Symbol.Method        => m.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
+                        case v: Symbol.Val           => v.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
+                        case w: Symbol.Var           => w.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
+                        case ta: Symbol.TypeAlias    => ta.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
+                        case ot: Symbol.OpaqueType   => ot.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
+                        case at: Symbol.AbstractType => at.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
+                        case p: Symbol.Parameter     => p.annotations.exists(ann => annotationFqnMatches(ann, annotationFqn))
+                        case _                       => false
+                    val javaMatch: Boolean = sym match
+                        case c: Symbol.ClassLike =>
+                            c.javaAnnotations.exists(ja => fullNameUnsafe(ja.annotationClass).asString == annotationFqn)
+                        case f: Symbol.Field => f.javaAnnotations.exists(ja => fullNameUnsafe(ja.annotationClass).asString == annotationFqn)
+                        case _               => false
+                    scalaMatch || javaMatch
         end symbolsAnnotatedWith
 
         private def annotationFqnMatches(ann: Annotation, fqn: String)(using AllowUnsafe): Boolean =
             import Name.asString
-            typeFqnString(ann.annotationType) == fqn
+            typeFqnStringUnsafe(ann.annotationType) == fqn
         end annotationFqnMatches
 
         /** Reconstruct a dotted FQN string from a Type.Named or Type.TermRef tycon, or empty string when unavailable.
@@ -3256,7 +3294,15 @@ object Tasty:
           * Used by annotation FQN matching to support both Type.Named(id) and Type.TermRef(qual, name) tycon forms.
           * F-G-001 fix: annotation tycons decoded from TYPEREF wire tag arrive as Type.TermRef.
           */
-        private[Tasty] def typeFqnString(t: Type)(using AllowUnsafe): String =
+        private[Tasty] def typeFqnString(t: Type)(using Frame): String < Sync =
+            Sync.Unsafe.defer:
+                typeFqnStringUnsafe(t)
+
+        /** Unsafe-tier kernel for `typeFqnString`. Performs name interning that requires an `AllowUnsafe` proof.
+          * Used internally by Pass C orchestration paths that already hold `AllowUnsafe` (snapshot writer FQN inversion,
+          * annotation FQN matching) where wrapping each call in `Sync.Unsafe.defer` would add unnecessary indirection.
+          */
+        private[kyo] def typeFqnStringUnsafe(t: Type)(using AllowUnsafe): String =
             import Name.asString
             t match
                 case Type.Named(id) =>
@@ -3266,22 +3312,22 @@ object Tasty:
                         // external symbols (e.g. scala.deprecated when scala-library is absent),
                         // the negative SymbolId may have a known FQN in unresolvedFqnByNegId.
                         unresolvedFqnByNegId.getOrElse(SymbolId.value(id), "")
-                    else fullName(sym).asString
+                    else fullNameUnsafe(sym).asString
                     end if
                 case Type.TermRef(qual, name) =>
-                    val q = typeFqnString(qual)
+                    val q = typeFqnStringUnsafe(qual)
                     if q.nonEmpty then q + "." + name.asString else name.asString
                 case Type.TypeRef(qual, name) =>
                     // F-A-009: TYPEREF now emits TypeRef; annotation FQN matching must handle both forms.
-                    val q = typeFqnString(qual)
+                    val q = typeFqnStringUnsafe(qual)
                     if q.nonEmpty then q + "." + name.asString else name.asString
                 case Type.Applied(base, _) =>
                     // F-I-003 fix: @Child[T] enrichment wraps the TermRef tycon in Applied(tycon, Chunk(T)).
                     // For FQN matching, use the unapplied base type.
-                    typeFqnString(base)
+                    typeFqnStringUnsafe(base)
                 case _ => ""
             end match
-        end typeFqnString
+        end typeFqnStringUnsafe
 
         /** Look up the companion symbol (companion object for a class/trait; companion class for an object).
           *
@@ -3297,11 +3343,16 @@ object Tasty:
           * Walks upward collecting non-empty segment names; stops when the symbol owns itself (root sentinel), when ownerId is -1, or when
           * the same symbol appears twice (cycle guard). Depth limit of 64 prevents unbounded loops.
           *
-          * Requires `AllowUnsafe` because the resulting `Name` is interned into the shared global pool. Callers obtain the proof from the
-          * enclosing `Sync.Unsafe.defer` (the orchestrator constructs `Classpath` inside one) or from a `given AllowUnsafe` brought into
-          * scope at the user boundary.
+          * Returns `Name < Sync`: the result is computed inside a `Sync.Unsafe.defer` boundary that marks the name-interning side effect.
           */
-        def fullName(sym: Symbol)(using AllowUnsafe): Name =
+        def fullName(sym: Symbol)(using Frame): Name < Sync =
+            Sync.Unsafe.defer:
+                fullNameUnsafe(sym)
+
+        /** Unsafe-tier kernel for `fullName`. Performs the actual name interning under an `AllowUnsafe` proof. Used by internal Pass C
+          * paths and by the safe-tier `fullName` wrapper above.
+          */
+        private[kyo] def fullNameUnsafe(sym: Symbol)(using AllowUnsafe): Name =
             import Name.asString
             val visited = new java.util.HashSet[Int]()
             @scala.annotation.tailrec
@@ -3319,7 +3370,7 @@ object Tasty:
                     end if
             val parts = go(sym, 0, Nil)
             Name.Unsafe.init(parts.mkString("."))
-        end fullName
+        end fullNameUnsafe
 
         /** Decode the body bytes of `sym` into a `Tree`, memoizing the result.
           *
@@ -3550,7 +3601,7 @@ object Tasty:
           *   - `Scope`: registers a finalizer that closes JAR pools and mmap arenas on scope exit.
           *   - `Abort[TastyError]`: fatal errors (snapshot mismatch, classpath build failures).
           */
-        def initCached(roots: Seq[String], cacheDir: String)(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
+        def initCached(roots: Seq[String], cacheDir: String)(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
             initCachedImpl(roots, cacheDir)
 
         /** Create a classpath from pre-parsed in-memory pickles.
@@ -3623,7 +3674,7 @@ object Tasty:
         private def initImpl(
             roots: Seq[String],
             mode: ErrorMode
-        )(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
+        )(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
             val source      = PlatformFileSource.get
             val concurrency = Runtime.getRuntime.availableProcessors().max(1)
             TastyStat.scope.traceSpan(
@@ -3637,7 +3688,7 @@ object Tasty:
         private def initCachedImpl(
             roots: Seq[String],
             cacheDir: String
-        )(using Frame): Classpath < (Sync & Async & Scope & Abort[TastyError]) =
+        )(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
             val source      = PlatformFileSource.get
             val concurrency = Runtime.getRuntime.availableProcessors().max(1)
             // Compute digest of root metadata
@@ -3727,11 +3778,6 @@ object Tasty:
 
     end Classpath
 
-    // ── SymbolId re-export ───────────────────────────────────────────────────
-
-    /** Re-export `kyo.internal.tasty.symbol.SymbolId` so callers can write `Tasty.SymbolId` without importing the internal package. */
-    type SymbolId = kyo.internal.tasty.symbol.SymbolId
-
     // ── FQN helper ──────────────────────────────────────────────────────────
 
     inline def classFqn[A](using t: Tag[A]): String = t.show
@@ -3786,7 +3832,7 @@ object Tasty:
             maxAgeMs: Long,
             source: kyo.internal.tasty.query.FileSource
         )(using Frame): Unit < (Sync & Abort[TastyError]) =
-            source.list(cacheDir, ".krfl").flatMap: files =>
+            source.list(cacheDir, Chunk(".krfl")).flatMap: files =>
                 // Collect (path, mtime) for each file that can be statted; skip files with stat errors.
                 Kyo.collect(files): path =>
                     Abort.run[TastyError](source.stat(path)).map:

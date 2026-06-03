@@ -30,7 +30,7 @@ class TastyPropertyTest extends Test:
     // Leaf 2: embedded fixture: zero Named(-1) in allMethods declaredType
     "PROP-002: embedded fixture: zero Named(-1) in allMethods declaredType" in run {
         kyo.internal.TestClasspaths.withClasspath().map: cp =>
-            import kyo.internal.tasty.symbol.SymbolId.value as idValue
+            import kyo.Tasty.SymbolId.value as idValue
             var sentinelCount   = 0
             val sampleViolators = new scala.collection.mutable.ArrayBuffer[String]()
             cp.allMethods.foreach: m =>

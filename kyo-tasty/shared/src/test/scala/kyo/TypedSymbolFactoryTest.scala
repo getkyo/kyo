@@ -1,7 +1,7 @@
 package kyo
 
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.symbol.SymbolDescriptor
-import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.symbol.TypedSymbolFactory
 
 /** Plan-mandated tests for TypedSymbolFactory (leaves 47-51).

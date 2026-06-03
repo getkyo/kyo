@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 07 (leaves 151-154): Symbol.show(format: ShowFormat).
@@ -133,11 +133,11 @@ class SymbolShowFormatTest extends Test:
     // Then: returns "scala.collection.List".
     // Pins: INV-009
     "Leaf 151: show(FullyQualified) returns dotted FQN" in run {
-        buildFixture.map: cp =>
-            val c   = cp.findClass("scala.collection.List").get
-            val out = c.show(Tasty.ShowFormat.FullyQualified)(using cp)
-            assert(out == "scala.collection.List", s"Unexpected: $out")
-            succeed
+        buildFixture.flatMap: cp =>
+            val c = cp.findClass("scala.collection.List").get
+            c.show(Tasty.ShowFormat.FullyQualified)(using summon[Frame], cp).map: out =>
+                assert(out == "scala.collection.List", s"Unexpected: $out")
+                succeed
     }
 
     // ── Leaf 152: show-Simple ─────────────────────────────────────────────────
@@ -146,11 +146,11 @@ class SymbolShowFormatTest extends Test:
     // Then: returns "List".
     // Pins: INV-009
     "Leaf 152: show(Simple) returns simple name" in run {
-        buildFixture.map: cp =>
-            val c   = cp.findClass("scala.collection.List").get
-            val out = c.show(Tasty.ShowFormat.Simple)(using cp)
-            assert(out == "List", s"Unexpected: $out")
-            succeed
+        buildFixture.flatMap: cp =>
+            val c = cp.findClass("scala.collection.List").get
+            c.show(Tasty.ShowFormat.Simple)(using summon[Frame], cp).map: out =>
+                assert(out == "List", s"Unexpected: $out")
+                succeed
     }
 
     // ── Leaf 153: show-Code-method ────────────────────────────────────────────
@@ -159,12 +159,12 @@ class SymbolShowFormatTest extends Test:
     // Then: returns a string starting with "def foo" and containing "(x: ".
     // Pins: INV-009
     "Leaf 153: show(Code) for method starts with def name and has params" in run {
-        buildFixture.map: cp =>
-            val m   = cp.symbol(SymbolId(4)).asInstanceOf[Tasty.Symbol.Method]
-            val out = m.show(Tasty.ShowFormat.Code)(using cp)
-            assert(out.startsWith("def foo"), s"Expected 'def foo...' but got: $out")
-            assert(out.contains("(x: "), s"Expected '(x: ' in: $out")
-            succeed
+        buildFixture.flatMap: cp =>
+            val m = cp.symbol(SymbolId(4)).asInstanceOf[Tasty.Symbol.Method]
+            m.show(Tasty.ShowFormat.Code)(using summon[Frame], cp).map: out =>
+                assert(out.startsWith("def foo"), s"Expected 'def foo...' but got: $out")
+                assert(out.contains("(x: "), s"Expected '(x: ' in: $out")
+                succeed
     }
 
     // ── Leaf 154: show-Code-classlike ─────────────────────────────────────────
@@ -173,14 +173,14 @@ class SymbolShowFormatTest extends Test:
     // Then: returns string containing "class List", "[A]", and "extends D".
     // Pins: INV-009
     "Leaf 154: show(Code) for class contains kind, name, type params, and extends clause" in run {
-        buildFixture.map: cp =>
-            val c   = cp.findClass("scala.collection.List").get
-            val out = c.show(Tasty.ShowFormat.Code)(using cp)
-            assert(out.contains("class List"), s"Expected 'class List' in: $out")
-            assert(out.contains("[A]"), s"Expected '[A]' in: $out")
-            assert(out.contains("extends"), s"Expected 'extends' in: $out")
-            assert(out.contains("D"), s"Expected 'D' in: $out")
-            succeed
+        buildFixture.flatMap: cp =>
+            val c = cp.findClass("scala.collection.List").get
+            c.show(Tasty.ShowFormat.Code)(using summon[Frame], cp).map: out =>
+                assert(out.contains("class List"), s"Expected 'class List' in: $out")
+                assert(out.contains("[A]"), s"Expected '[A]' in: $out")
+                assert(out.contains("extends"), s"Expected 'extends' in: $out")
+                assert(out.contains("D"), s"Expected 'D' in: $out")
+                succeed
     }
 
 end SymbolShowFormatTest

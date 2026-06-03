@@ -29,8 +29,8 @@ class JavaSymbolTest extends Test:
 
     private def symWithId(
         sym: Tasty.Symbol,
-        id: kyo.internal.tasty.symbol.SymbolId,
-        ownerId: kyo.internal.tasty.symbol.SymbolId
+        id: kyo.Tasty.SymbolId,
+        ownerId: kyo.Tasty.SymbolId
     ): Tasty.Symbol = sym match
         case c: Tasty.Symbol.Class         => c.copy(id = id, ownerId = ownerId)
         case t: Tasty.Symbol.Trait         => t.copy(id = id, ownerId = ownerId)
@@ -95,17 +95,18 @@ class JavaSymbolTest extends Test:
     // ArrayRecord is a JVM-only class fixture in kyo-tasty fixtures.
     // -------------------------------------------------------------------------
     "sym.fullName for ArrayRecord returns a non-empty string" in run {
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         val bytes     = kyo.fixtures.Embedded.arrayRecordClass
         val interner2 = Interner.init(numShards = 32, initialShardCapacity = 16)
         Abort.run[TastyError]:
             ClassfileUnpickler.read(bytes, interner2, new TypeArena).flatMap: cr =>
                 val sym = symWithId(cr.classSymbol, SymbolId(0), SymbolId(0))
-                Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).map: cp =>
+                Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).flatMap: cp =>
                     given Tasty.Classpath = cp
                     val s                 = cp.symbols(0)
-                    val fqn               = s.fullName.asString
-                    assert(fqn.nonEmpty || s.name.asString.nonEmpty, s"Expected non-empty name for ArrayRecord symbol")
+                    s.fullName.map: name =>
+                        val fqn = name.asString
+                        assert(fqn.nonEmpty || s.name.asString.nonEmpty, s"Expected non-empty name for ArrayRecord symbol")
         .map:
             case Result.Success(_) => succeed
             case Result.Failure(e) => fail(s"Unexpected failure: $e")
@@ -116,7 +117,7 @@ class JavaSymbolTest extends Test:
     // Test 2: binaryName - Phase 09 restores sym.binaryName.
     // -------------------------------------------------------------------------
     "sym.binaryName for ArrayRecord returns a non-empty string" in run {
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         val bytes     = kyo.fixtures.Embedded.arrayRecordClass
         val interner2 = Interner.init(numShards = 32, initialShardCapacity = 16)
         Abort.run[TastyError]:
@@ -234,7 +235,7 @@ class JavaSymbolTest extends Test:
             0x00.toByte // attributes_count = 0
         )
         // Parse the minimal classfile and verify name is non-empty.
-        import kyo.internal.tasty.symbol.SymbolId
+        import kyo.Tasty.SymbolId
         Abort.run[TastyError]:
             readClass(fooBarClassBytes).flatMap: cr =>
                 val sym = symWithId(cr.classSymbol, SymbolId(0), SymbolId(0))

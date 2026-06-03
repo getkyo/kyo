@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 
 /** Phase 01 plan-mandated tests confirming the 5 supporting ADTs (Variance, TypeBounds, Visibility, OpenLevel, ShowFormat) derive CanEqual
   * and have exhaustive matches.

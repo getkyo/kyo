@@ -33,35 +33,41 @@ class SnapshotFidelityTest extends Test:
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly via withRoundTrip (real stdlib); now uses embedded fixtures.
     "INV-010 (Phase 12): snapshot warm-load preserves annotations and permittedSubclassIds" in run {
-        TestClasspaths2.withSnapshotInMemory().map: (coldCp, warmCp) =>
-            val coldAnnotCount = coldCp.symbolsAnnotatedWith("scala.deprecated").size
-            val warmAnnotCount = warmCp.symbolsAnnotatedWith("scala.deprecated").size
-            assert(
-                warmAnnotCount >= coldAnnotCount,
-                s"In-memory snapshot lost deprecated annotations: cold=$coldAnnotCount warm=$warmAnnotCount"
-            )
-            coldCp.allClassLike.foreach:
-                case cold: Tasty.Symbol.Class =>
-                    cold.permittedSubclassIds match
-                        case Present(coldIds) =>
-                            val fqn = cold.fullNameString(using coldCp)
-                            warmCp.findClass(fqn) match
-                                case Present(warm: Tasty.Symbol.Class) =>
-                                    warm.permittedSubclassIds match
-                                        case Present(warmIds) =>
-                                            assert(
-                                                coldIds.size == warmIds.size,
-                                                s"permittedSubclassIds size differs for $fqn: cold=${coldIds.size} warm=${warmIds.size}"
-                                            )
-                                        case Absent =>
-                                            fail(s"permittedSubclassIds Present in cold but Absent after in-memory round-trip for $fqn")
-                                    end match
-                                case _ => ()
+        TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
+            for
+                coldAnnot <- coldCp.symbolsAnnotatedWith("scala.deprecated")
+                warmAnnot <- warmCp.symbolsAnnotatedWith("scala.deprecated")
+                _ <-
+                    val coldAnnotCount = coldAnnot.size
+                    val warmAnnotCount = warmAnnot.size
+                    assert(
+                        warmAnnotCount >= coldAnnotCount,
+                        s"In-memory snapshot lost deprecated annotations: cold=$coldAnnotCount warm=$warmAnnotCount"
+                    )
+                    Kyo.foreachDiscard(coldCp.allClassLike):
+                        case cold: Tasty.Symbol.Class =>
+                            cold.permittedSubclassIds match
+                                case Present(coldIds) =>
+                                    cold.fullNameString(using summon[Frame], coldCp).map: fqn =>
+                                        warmCp.findClass(fqn) match
+                                            case Present(warm: Tasty.Symbol.Class) =>
+                                                warm.permittedSubclassIds match
+                                                    case Present(warmIds) =>
+                                                        assert(
+                                                            coldIds.size == warmIds.size,
+                                                            s"permittedSubclassIds size differs for $fqn: cold=${coldIds.size} warm=${warmIds.size}"
+                                                        )
+                                                    case Absent =>
+                                                        fail(
+                                                            s"permittedSubclassIds Present in cold but Absent after in-memory round-trip for $fqn"
+                                                        )
+                                                end match
+                                            case _ => ()
+                                        end match
+                                case Absent => Kyo.unit
                             end match
-                        case Absent => ()
-                    end match
-                case _ => ()
-            succeed
+                        case _ => Kyo.unit
+            yield succeed
     }
 
     // F-C-002 (Phase 12, migrated Phase 2 post-audit): permits-roundtrip via in-memory snapshot
@@ -72,29 +78,29 @@ class SnapshotFidelityTest extends Test:
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly via withRoundTrip; now uses embedded fixtures.
     "F-C-002 (Phase 12): permittedSubclassIds survives in-memory snapshot round-trip" in run {
-        TestClasspaths2.withSnapshotInMemory().map: (coldCp, warmCp) =>
-            coldCp.allClassLike.foreach:
+        TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
+            Kyo.foreachDiscard(coldCp.allClassLike):
                 case cold: Tasty.Symbol.Class =>
                     cold.permittedSubclassIds match
                         case Present(coldIds) =>
-                            val fqn = cold.fullNameString(using coldCp)
-                            warmCp.findClass(fqn) match
-                                case Present(warm: Tasty.Symbol.Class) =>
-                                    warm.permittedSubclassIds match
-                                        case Present(warmIds) =>
-                                            assert(
-                                                coldIds.size == warmIds.size,
-                                                s"permittedSubclassIds size differs for $fqn: cold=${coldIds.size} warm=${warmIds.size}"
-                                            )
-                                        case Absent =>
-                                            fail(s"permittedSubclassIds Present in cold but Absent after in-memory round-trip for $fqn")
-                                    end match
-                                case _ => ()
-                            end match
-                        case Absent => ()
+                            cold.fullNameString(using summon[Frame], coldCp).map: fqn =>
+                                warmCp.findClass(fqn) match
+                                    case Present(warm: Tasty.Symbol.Class) =>
+                                        warm.permittedSubclassIds match
+                                            case Present(warmIds) =>
+                                                assert(
+                                                    coldIds.size == warmIds.size,
+                                                    s"permittedSubclassIds size differs for $fqn: cold=${coldIds.size} warm=${warmIds.size}"
+                                                )
+                                            case Absent =>
+                                                fail(s"permittedSubclassIds Present in cold but Absent after in-memory round-trip for $fqn")
+                                        end match
+                                    case _ => ()
+                                end match
+                        case Absent => Kyo.unit
                     end match
-                case _ => ()
-            succeed
+                case _ => Kyo.unit
+            .map(_ => succeed)
     }
 
     // F-C-003 (Phase 12, migrated Phase 2 post-audit): annotations-roundtrip via in-memory snapshot
@@ -105,14 +111,18 @@ class SnapshotFidelityTest extends Test:
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly with `>= 5` lower bound on real stdlib; now uses embedded fixtures (bound removed).
     "F-C-003 (Phase 12): symbolsAnnotatedWith count survives in-memory snapshot round-trip" in run {
-        TestClasspaths2.withSnapshotInMemory().map: (coldCp, warmCp) =>
-            val coldCount = coldCp.symbolsAnnotatedWith("scala.deprecated").size
-            val warmCount = warmCp.symbolsAnnotatedWith("scala.deprecated").size
-            assert(
-                warmCount >= coldCount,
-                s"In-memory snapshot round-trip must preserve deprecated annotation count: cold=$coldCount warm=$warmCount"
-            )
-            succeed
+        TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
+            for
+                coldA <- coldCp.symbolsAnnotatedWith("scala.deprecated")
+                warmA <- warmCp.symbolsAnnotatedWith("scala.deprecated")
+            yield
+                val coldCount = coldA.size
+                val warmCount = warmA.size
+                assert(
+                    warmCount >= coldCount,
+                    s"In-memory snapshot round-trip must preserve deprecated annotation count: cold=$coldCount warm=$warmCount"
+                )
+                succeed
     }
 
     // F-G-002 (Phase 12, migrated Phase 2 post-audit): javametadata-roundtrip via in-memory snapshot
@@ -123,36 +133,36 @@ class SnapshotFidelityTest extends Test:
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly (required real stdlib .class files); embedded fixtures suffice for shape assertion.
     "F-G-002 (Phase 12): javaMetadata survives in-memory snapshot round-trip" in run {
-        TestClasspaths2.withSnapshotInMemory().map: (coldCp, warmCp) =>
+        TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
             coldCp.allClassLike.flatMap:
                 case c: Tasty.Symbol.ClassLike if c.javaMetadata.isDefined => Chunk(c)
                 case _                                                     => Chunk.empty
             .headOption match
                 case Some(coldSym) =>
-                    val fqn = coldSym.fullNameString(using coldCp)
-                    warmCp.findSymbol(fqn) match
-                        case Present(warmSym: Tasty.Symbol.ClassLike) =>
-                            assert(
-                                warmSym.javaMetadata.isDefined,
-                                s"javaMetadata lost after in-memory round-trip for $fqn"
-                            )
-                            val coldMeta = coldSym.javaMetadata.get
-                            val warmMeta = warmSym.javaMetadata.get
-                            assert(
-                                warmMeta.isJvmPublic == coldMeta.isJvmPublic,
-                                s"isJvmPublic differs for $fqn: cold=${coldMeta.isJvmPublic} warm=${warmMeta.isJvmPublic}"
-                            )
-                            assert(
-                                warmMeta.accessFlags == coldMeta.accessFlags,
-                                s"accessFlags differs for $fqn: cold=${coldMeta.accessFlags} warm=${warmMeta.accessFlags}"
-                            )
-                            succeed
-                        case _ =>
-                            succeed
-                    end match
+                    coldSym.fullNameString(using summon[Frame], coldCp).map: fqn =>
+                        warmCp.findSymbol(fqn) match
+                            case Present(warmSym: Tasty.Symbol.ClassLike) =>
+                                assert(
+                                    warmSym.javaMetadata.isDefined,
+                                    s"javaMetadata lost after in-memory round-trip for $fqn"
+                                )
+                                val coldMeta = coldSym.javaMetadata.get
+                                val warmMeta = warmSym.javaMetadata.get
+                                assert(
+                                    warmMeta.isJvmPublic == coldMeta.isJvmPublic,
+                                    s"isJvmPublic differs for $fqn: cold=${coldMeta.isJvmPublic} warm=${warmMeta.isJvmPublic}"
+                                )
+                                assert(
+                                    warmMeta.accessFlags == coldMeta.accessFlags,
+                                    s"accessFlags differs for $fqn: cold=${coldMeta.accessFlags} warm=${warmMeta.accessFlags}"
+                                )
+                                succeed
+                            case _ =>
+                                succeed
+                        end match
                 case None =>
                     // Embedded fixtures may have no javaMetadata symbols; acceptable
-                    succeed
+                    Sync.defer(succeed)
             end match
     }
 

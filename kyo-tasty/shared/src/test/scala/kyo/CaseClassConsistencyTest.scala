@@ -62,7 +62,7 @@ class CaseClassConsistencyTest extends Test:
 
     "Annotation.arguments is a synchronous Chunk[Tree]" in {
         // Verify the field type is Chunk[Tree] at compile time (test compiles = proof)
-        val tpe                          = Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(-1))
+        val tpe                          = Tasty.Type.Named(kyo.Tasty.SymbolId(-1))
         val ann                          = Tasty.Annotation(tpe, Chunk.empty)
         val arguments: Chunk[Tasty.Tree] = ann.arguments
         assert(arguments.isEmpty)

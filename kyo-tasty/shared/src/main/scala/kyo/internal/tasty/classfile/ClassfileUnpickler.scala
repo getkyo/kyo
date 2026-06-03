@@ -1,6 +1,7 @@
 package kyo.internal.tasty.classfile
 
 import kyo.*
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.scala2.Scala2PickleReader
 import kyo.internal.tasty.symbol.Flags as FlagsHelper
@@ -8,7 +9,6 @@ import kyo.internal.tasty.symbol.FqnCanonicalizer
 import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.symbol.Symbol as SymbolFactory
 import kyo.internal.tasty.symbol.SymbolDescriptor
-import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.symbol.TypedSymbolFactory
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
@@ -1065,9 +1065,9 @@ object ClassfileUnpickler:
                                                             runtimeTypeAnnotations = allTypeAnns
                                                         )
                                                         // permittedSubclassIds uses SymbolId(-1) placeholders resolved by Pass C.
-                                                        val permSubIds: Maybe[Chunk[kyo.internal.tasty.symbol.SymbolId]] =
+                                                        val permSubIds: Maybe[Chunk[kyo.Tasty.SymbolId]] =
                                                             if permittedSubSym.nonEmpty then
-                                                                Maybe(permittedSubSym.map(_ => kyo.internal.tasty.symbol.SymbolId(-1)))
+                                                                Maybe(permittedSubSym.map(_ => kyo.Tasty.SymbolId(-1)))
                                                             else Maybe.Absent
                                                         val classDesc = new SymbolDescriptor(
                                                             id = -1,

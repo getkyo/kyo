@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileResult
 import kyo.internal.tasty.classfile.ClassfileUnpickler
@@ -11,7 +12,6 @@ import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
 import kyo.internal.tasty.reader.TypeUnpickler
 import kyo.internal.tasty.symbol.Interner
-import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 

@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 07 (leaves 137-144): Symbol annotation queries.
@@ -179,10 +179,11 @@ class SymbolAnnotationQueryTest extends Test:
     // Then: returns true.
     // Pins: INV-003
     "Leaf 137: hasAnnotation returns true for Scala annotation on method" in run {
-        buildFixture.map: cp =>
+        buildFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(5)).asInstanceOf[Tasty.Symbol.Method]
-            assert(m.hasAnnotation("scala.deprecated")(using cp))
-            succeed
+            m.hasAnnotation("scala.deprecated")(using summon[Frame], cp).map: has =>
+                assert(has)
+                succeed
     }
 
     // ── Leaf 138: hasAnnotation-scala-on-class ─────────────────────────────────
@@ -191,10 +192,11 @@ class SymbolAnnotationQueryTest extends Test:
     // Then: returns true.
     // Pins: INV-003
     "Leaf 138: hasAnnotation returns true for Scala annotation on class" in run {
-        buildFixture.map: cp =>
+        buildFixture.flatMap: cp =>
             val c = cp.symbol(SymbolId(6)).asInstanceOf[Tasty.Symbol.Class]
-            assert(c.hasAnnotation("scala.deprecated")(using cp))
-            succeed
+            c.hasAnnotation("scala.deprecated")(using summon[Frame], cp).map: has =>
+                assert(has)
+                succeed
     }
 
     // ── Leaf 139: hasAnnotation-java-on-field ─────────────────────────────────
@@ -203,10 +205,11 @@ class SymbolAnnotationQueryTest extends Test:
     // Then: returns true.
     // Pins: INV-003
     "Leaf 139: hasAnnotation returns true for Java annotation on field" in run {
-        buildFixture.map: cp =>
+        buildFixture.flatMap: cp =>
             val f = cp.symbol(SymbolId(7)).asInstanceOf[Tasty.Symbol.Field]
-            assert(f.hasAnnotation("java.lang.Deprecated")(using cp))
-            succeed
+            f.hasAnnotation("java.lang.Deprecated")(using summon[Frame], cp).map: has =>
+                assert(has)
+                succeed
     }
 
     // ── Leaf 140: hasAnnotation-on-package-returns-false ──────────────────────
@@ -215,10 +218,11 @@ class SymbolAnnotationQueryTest extends Test:
     // Then: returns false.
     // Pins: INV-003
     "Leaf 140: hasAnnotation returns false for Package" in run {
-        buildFixture.map: cp =>
+        buildFixture.flatMap: cp =>
             val p = cp.symbol(SymbolId(8)).asInstanceOf[Tasty.Symbol.Package]
-            assert(!p.hasAnnotation("anything")(using cp))
-            succeed
+            p.hasAnnotation("anything")(using summon[Frame], cp).map: has =>
+                assert(!has)
+                succeed
     }
 
     // ── Leaf 141: hasAnnotation-on-typeparam-returns-false ────────────────────
@@ -227,10 +231,11 @@ class SymbolAnnotationQueryTest extends Test:
     // Then: returns false.
     // Pins: INV-003
     "Leaf 141: hasAnnotation returns false for TypeParam" in run {
-        buildFixture.map: cp =>
+        buildFixture.flatMap: cp =>
             val t = cp.symbol(SymbolId(9)).asInstanceOf[Tasty.Symbol.TypeParam]
-            assert(!t.hasAnnotation("scala.deprecated")(using cp))
-            succeed
+            t.hasAnnotation("scala.deprecated")(using summon[Frame], cp).map: has =>
+                assert(!has)
+                succeed
     }
 
     // ── Leaf 142: findAnnotation-scala-present ─────────────────────────────────
@@ -239,15 +244,14 @@ class SymbolAnnotationQueryTest extends Test:
     // Then: returns Maybe.Present(a) where a.isInstanceOf[Tasty.Annotation].
     // Pins: INV-003
     "Leaf 142: findAnnotation returns Present Annotation for matching Scala annotation" in run {
-        buildFixture.map: cp =>
+        buildFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(10)).asInstanceOf[Tasty.Symbol.Method]
-            m.findAnnotation("scala.inline")(using cp) match
+            m.findAnnotation("scala.inline")(using summon[Frame], cp).map:
                 case Maybe.Present(a) =>
                     assert(a.isInstanceOf[Tasty.Annotation], s"Expected Annotation but got $a")
                     succeed
                 case _ =>
                     fail("Expected Present but got Absent")
-            end match
     }
 
     // ── Leaf 143: findAnnotation-java-present ──────────────────────────────────
@@ -256,15 +260,14 @@ class SymbolAnnotationQueryTest extends Test:
     // Then: returns Maybe.Present(a) where a.isInstanceOf[Tasty.JavaAnnotation].
     // Pins: INV-003
     "Leaf 143: findAnnotation returns Present JavaAnnotation for matching Java annotation" in run {
-        buildFixture.map: cp =>
+        buildFixture.flatMap: cp =>
             val f = cp.symbol(SymbolId(7)).asInstanceOf[Tasty.Symbol.Field]
-            f.findAnnotation("java.lang.Deprecated")(using cp) match
+            f.findAnnotation("java.lang.Deprecated")(using summon[Frame], cp).map:
                 case Maybe.Present(a) =>
                     assert(a.isInstanceOf[Tasty.JavaAnnotation], s"Expected JavaAnnotation but got $a")
                     succeed
                 case _ =>
                     fail("Expected Present but got Absent")
-            end match
     }
 
     // ── Leaf 144: findAnnotation-absent ────────────────────────────────────────
@@ -273,11 +276,11 @@ class SymbolAnnotationQueryTest extends Test:
     // Then: returns Maybe.Absent.
     // Pins: INV-003
     "Leaf 144: findAnnotation returns Absent when annotation not present" in run {
-        buildFixture.map: cp =>
-            val m      = cp.symbol(SymbolId(5)).asInstanceOf[Tasty.Symbol.Method]
-            val result = m.findAnnotation("missing.Anno")(using cp)
-            assert(!result.isDefined, s"Expected Absent but got $result")
-            succeed
+        buildFixture.flatMap: cp =>
+            val m = cp.symbol(SymbolId(5)).asInstanceOf[Tasty.Symbol.Method]
+            m.findAnnotation("missing.Anno")(using summon[Frame], cp).map: result =>
+                assert(!result.isDefined, s"Expected Absent but got $result")
+                succeed
     }
 
 end SymbolAnnotationQueryTest

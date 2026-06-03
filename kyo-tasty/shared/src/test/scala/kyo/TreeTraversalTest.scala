@@ -12,14 +12,14 @@ class TreeTraversalTest extends Test:
     "Ident has empty children" in {
         val n = Tasty.Name.Unsafe.init("x")
         import AllowUnsafe.embrace.danger
-        val tpe = Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(-1))
+        val tpe = Tasty.Type.Named(kyo.Tasty.SymbolId(-1))
         val t   = Tasty.Tree.Ident(n, tpe)
         assert(t.children.isEmpty)
     }
 
     "Apply has fun and args as children" in {
         import AllowUnsafe.embrace.danger
-        val tpe  = Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(-1))
+        val tpe  = Tasty.Type.Named(kyo.Tasty.SymbolId(-1))
         val fun  = Tasty.Tree.Ident(Tasty.Name.Unsafe.init("f"), tpe)
         val arg1 = Tasty.Tree.Literal(Tasty.Constant.IntConst(1))
         val arg2 = Tasty.Tree.Literal(Tasty.Constant.IntConst(2))
@@ -42,7 +42,7 @@ class TreeTraversalTest extends Test:
 
     "CaseDef with guard includes guard in children" in {
         import AllowUnsafe.embrace.danger
-        val tpe     = Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(-1))
+        val tpe     = Tasty.Type.Named(kyo.Tasty.SymbolId(-1))
         val pat     = Tasty.Tree.Ident(Tasty.Name.Unsafe.init("x"), tpe)
         val guard   = Tasty.Tree.Literal(Tasty.Constant.BooleanConst(true))
         val body    = Tasty.Tree.Literal(Tasty.Constant.IntConst(0))
@@ -54,7 +54,7 @@ class TreeTraversalTest extends Test:
 
     "CaseDef without guard has 2 children" in {
         import AllowUnsafe.embrace.danger
-        val tpe     = Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(-1))
+        val tpe     = Tasty.Type.Named(kyo.Tasty.SymbolId(-1))
         val pat     = Tasty.Tree.Ident(Tasty.Name.Unsafe.init("x"), tpe)
         val body    = Tasty.Tree.Literal(Tasty.Constant.IntConst(0))
         val caseDef = Tasty.Tree.CaseDef(pat, Maybe.Absent, body)

@@ -10,11 +10,11 @@ class SymbolIdVisibilityTest extends kyo.Test:
 
     // Leaf 4: no-public-construction compile pin.
     // Given: caller code outside package kyo.
-    // When: attempts kyo.internal.tasty.symbol.SymbolId.apply(0).
+    // When: attempts kyo.Tasty.SymbolId.apply(0).
     // Then: compilation fails because apply is private[kyo].
     // Pins: INV-001 (private[kyo] smart constructor).
     "SymbolId.apply is inaccessible from outside the kyo package" in {
-        typeCheckFailure("kyo.internal.tasty.symbol.SymbolId(0)")("does not take parameters")
+        typeCheckFailure("kyo.Tasty.SymbolId(0)")("does not take parameters")
     }
 
 end SymbolIdVisibilityTest

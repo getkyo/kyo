@@ -79,7 +79,7 @@ class DecoderFidelity5Wave2Test extends Test:
     // W2.4: Classpath.symbol with extreme SymbolId values does not panic.
     "W2.4: cp.symbol with -1, MAX_INT, and MIN_INT SymbolIds returns sentinel" in run {
         TestClasspaths.withClasspath().map: cp =>
-            import kyo.internal.tasty.symbol.SymbolId
+            import kyo.Tasty.SymbolId
             val a = cp.symbol(SymbolId(-1))
             val b = cp.symbol(SymbolId(Int.MaxValue))
             val c = cp.symbol(SymbolId(Int.MinValue))
@@ -95,8 +95,9 @@ class DecoderFidelity5Wave2Test extends Test:
 
     // W2.5: Symbol depth-64 cycle guard in fullName tolerates pathological owner chains.
     "W2.5: fullName tolerates non-degenerate symbol owner chains within budget" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath().flatMap: cp =>
             import Tasty.Name.asString
+            import Tasty.SymbolId.value
             var maxChainSym = cp.symbols.headOption.getOrElse(Tasty.Classpath.sentinelUnresolved)
             var maxChainLen = 0
             cp.symbols.foreach: s =>
@@ -115,9 +116,10 @@ class DecoderFidelity5Wave2Test extends Test:
                 if depth > maxChainLen && depth < 1024 then
                     maxChainLen = depth
                     maxChainSym = s
-            val fn = cp.fullName(maxChainSym).asString
-            assert(fn != null)
-            succeed
+            cp.fullName(maxChainSym).map: name =>
+                val fn = name.asString
+                assert(fn != null)
+                succeed
     }
 
     // W2.6: snapshot truncation at every 256-byte boundary up to first KB never panics.
@@ -512,18 +514,19 @@ class DecoderFidelity5Wave2Test extends Test:
 
     // W2.29: requireClass on an FQN that resolves to a Trait (not Class) raises NotFound.
     "W2.29: requireClass on Trait FQN raises NotFound (narrow-kind semantics)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath().flatMap: cp =>
             cp.allTraits.headOption match
                 case None => succeed
                 case Some(t) =>
-                    val fqn = cp.fullName(t).asString
-                    if fqn.isEmpty then succeed
-                    else
-                        Abort.run[TastyError](cp.requireClass(fqn)).map:
-                            case Result.Failure(_: TastyError.NotFound) => succeed
-                            case Result.Success(_)                      => succeed
-                            case other                                  => assertionFailure(s"unexpected: $other")
-                    end if
+                    cp.fullName(t).flatMap: name =>
+                        val fqn = name.asString
+                        if fqn.isEmpty then succeed
+                        else
+                            Abort.run[TastyError](cp.requireClass(fqn)).map:
+                                case Result.Failure(_: TastyError.NotFound) => succeed
+                                case Result.Success(_)                      => succeed
+                                case other                                  => assertionFailure(s"unexpected: $other")
+                        end if
     }
 
     // W2.30: cp.copy(...) creates a Classpath with a fresh empty bodyMemo (INV-004).

@@ -35,15 +35,15 @@ class AnnotationFidelityTest extends Test:
     //   embedded AnnotatedFixture provides 2 @deprecated symbols (AnnotatedFixtureDeprecated, deprecatedTopLevel).
     "F-G-001 / INV-004 (Phase 05): cp.symbolsAnnotatedWith(scala.deprecated).size >= 1" in run {
         val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
-            val annotated = classpath.symbolsAnnotatedWith("scala.deprecated")
-            assert(
-                annotated.size >= 1,
-                s"Expected >= 1 symbol annotated with scala.deprecated but found ${annotated.size}. " +
-                    s"Embedded fixtures include AnnotatedFixture with @deprecated symbols. " +
-                    s"If this fails, check that AnnotatedFixture TASTy bytes are in Embedded.scala and TestClasspaths loads them."
-            )
-            succeed
+        cp.flatMap: classpath =>
+            classpath.symbolsAnnotatedWith("scala.deprecated").map: annotated =>
+                assert(
+                    annotated.size >= 1,
+                    s"Expected >= 1 symbol annotated with scala.deprecated but found ${annotated.size}. " +
+                        s"Embedded fixtures include AnnotatedFixture with @deprecated symbols. " +
+                        s"If this fails, check that AnnotatedFixture TASTy bytes are in Embedded.scala and TestClasspaths loads them."
+                )
+                succeed
     }
 
     // F-G-001 leaf 2 (Phase 05): tailrec-found
@@ -61,13 +61,13 @@ class AnnotationFidelityTest extends Test:
     //   classpath; the proper fix is TYPEREFsymbol cross-file FQN tracking, a non-trivial decoder refactor.
     "F-G-001 (Phase 05): cp.symbolsAnnotatedWith(scala.annotation.tailrec).size >= 1" taggedAs jvmOnly in run {
         val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
-            val annotated = classpath.symbolsAnnotatedWith("scala.annotation.tailrec")
-            assert(
-                annotated.size >= 1,
-                s"Expected >= 1 symbol annotated with scala.annotation.tailrec but found ${annotated.size}"
-            )
-            succeed
+        cp.flatMap: classpath =>
+            classpath.symbolsAnnotatedWith("scala.annotation.tailrec").map: annotated =>
+                assert(
+                    annotated.size >= 1,
+                    s"Expected >= 1 symbol annotated with scala.annotation.tailrec but found ${annotated.size}"
+                )
+                succeed
     }
 
     // F-G-001 leaf 3 (Phase 05): annotation-tycon-preserved
@@ -79,15 +79,16 @@ class AnnotationFidelityTest extends Test:
     // Cross-platform: embedded AnnotatedFixture provides @deprecated symbols for JS/Native.
     "F-G-001 (Phase 05): a @deprecated symbol carries annotation with correct tycon FQN" in run {
         val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
-            val annotated = classpath.symbolsAnnotatedWith("scala.deprecated")
-            assert(annotated.nonEmpty, "Expected at least one @deprecated symbol (embedded AnnotatedFixture has 2)")
-            val sym = annotated.head
-            assert(
-                sym.hasAnnotation("scala.deprecated")(using classpath),
-                s"Symbol ${sym.name.asString} should report hasAnnotation(scala.deprecated)"
-            )
-            succeed
+        cp.flatMap: classpath =>
+            classpath.symbolsAnnotatedWith("scala.deprecated").flatMap: annotated =>
+                assert(annotated.nonEmpty, "Expected at least one @deprecated symbol (embedded AnnotatedFixture has 2)")
+                val sym = annotated.head
+                sym.hasAnnotation("scala.deprecated")(using summon[Frame], classpath).map: has =>
+                    assert(
+                        has,
+                        s"Symbol ${sym.name.asString} should report hasAnnotation(scala.deprecated)"
+                    )
+                    succeed
     }
 
     // F-B-006 / F-G-001 leaf 4 (Phase 05): inline-annotation-tree-decoded
@@ -121,20 +122,24 @@ class AnnotationFidelityTest extends Test:
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory (no filesystem needed).
     // Pins: CARRY-3 from decoder-fidelity-2; cold==warm parity for symbolsAnnotatedWith.
     "CARRY-3 (Phase 3.02): in-memory snapshot round-trip preserves symbolsAnnotatedWith count" in run {
-        TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
-            val coldCount = cold.symbolsAnnotatedWith("scala.deprecated").size
-            val warmCount = warm.symbolsAnnotatedWith("scala.deprecated").size
-            assert(
-                coldCount >= 1,
-                s"CARRY-3: cold classpath must have >= 1 @deprecated symbol; got $coldCount. " +
-                    s"Embedded AnnotatedFixture has 2 @deprecated symbols."
-            )
-            assert(
-                warmCount == coldCount,
-                s"CARRY-3: warm symbolsAnnotatedWith count ($warmCount) != cold ($coldCount). " +
-                    s"Annotation FQN round-trip through ANNOTS_ section failed."
-            )
-            succeed
+        TestClasspaths2.withSnapshotInMemory().flatMap: (cold, warm) =>
+            for
+                coldA <- cold.symbolsAnnotatedWith("scala.deprecated")
+                warmA <- warm.symbolsAnnotatedWith("scala.deprecated")
+            yield
+                val coldCount = coldA.size
+                val warmCount = warmA.size
+                assert(
+                    coldCount >= 1,
+                    s"CARRY-3: cold classpath must have >= 1 @deprecated symbol; got $coldCount. " +
+                        s"Embedded AnnotatedFixture has 2 @deprecated symbols."
+                )
+                assert(
+                    warmCount == coldCount,
+                    s"CARRY-3: warm symbolsAnnotatedWith count ($warmCount) != cold ($coldCount). " +
+                        s"Annotation FQN round-trip through ANNOTS_ section failed."
+                )
+                succeed
     }
 
 end AnnotationFidelityTest

@@ -1,7 +1,7 @@
 package kyo.internal.tasty.type_
 
 import kyo.*
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 import scala.collection.mutable
 
 /** Per-thread hash-cons arena for Tasty.Type values.

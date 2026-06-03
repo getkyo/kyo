@@ -1,10 +1,10 @@
 package kyo
 
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.classfile.ClassfileUnpickler
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.symbol.Interner
-import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
@@ -22,14 +22,14 @@ class QueryApiTest extends Test:
         case c: Tasty.Symbol.ClassLike => c.parentTypes
         case _                         => Chunk.empty
 
-    private def symTypeParamIds(sym: Tasty.Symbol): Chunk[kyo.internal.tasty.symbol.SymbolId] = sym match
+    private def symTypeParamIds(sym: Tasty.Symbol): Chunk[kyo.Tasty.SymbolId] = sym match
         case c: Tasty.Symbol.ClassLike   => c.typeParamIds
         case m: Tasty.Symbol.Method      => m.typeParamIds
         case ta: Tasty.Symbol.TypeAlias  => ta.typeParamIds
         case ot: Tasty.Symbol.OpaqueType => ot.typeParamIds
         case _                           => Chunk.empty
 
-    private def symDeclarationIds(sym: Tasty.Symbol): Chunk[kyo.internal.tasty.symbol.SymbolId] = sym match
+    private def symDeclarationIds(sym: Tasty.Symbol): Chunk[kyo.Tasty.SymbolId] = sym match
         case c: Tasty.Symbol.ClassLike => c.declarationIds
         case p: Tasty.Symbol.Package   => p.memberIds
         case _                         => Chunk.empty

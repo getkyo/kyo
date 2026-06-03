@@ -1,7 +1,7 @@
 package kyo
 
 import AllowUnsafe.embrace.danger
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 import scala.collection.immutable.IntMap
 
 /** Phase 01 plan-mandated test confirming that `body` is a raw field (not an effectful overload) on Symbol.Method in Phase 01.

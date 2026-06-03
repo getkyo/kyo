@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.tasty.symbol.SymbolId
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 07 (leaves 131-136): Symbol convenience accessors.
@@ -77,10 +77,10 @@ class SymbolConvenienceTest extends Test:
                 errors = Chunk.empty,
                 canonical = TypeArena.canonical()
             )
-            val fqn = cls.fullNameString(using cp)
+            cls.fullNameString(using summon[Frame], cp)
+        }.map: fqn =>
             assert(fqn == "scala.collection.List", s"Expected scala.collection.List but got $fqn")
             succeed
-        }
     }
 
     // ── Leaf 132: simpleName-asString ─────────────────────────────────────────

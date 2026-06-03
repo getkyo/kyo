@@ -1,8 +1,8 @@
 package kyo
 
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
-import kyo.internal.tasty.symbol.SymbolId
 import scala.collection.mutable
 
 /** Phase 06 plan-mandated tests pinning the Classpath immutability contract.

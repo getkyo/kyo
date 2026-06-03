@@ -1,10 +1,10 @@
 package kyo
 
+import kyo.Tasty.SymbolId
 import kyo.internal.tasty.classfile.ClassfileUnpickler
 import kyo.internal.tasty.scala2.Scala2PickleReader
 import kyo.internal.tasty.scala2.Scala2PickleResult
 import kyo.internal.tasty.symbol.Interner
-import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 
 /** Tests for Phase 10: Scala 2 pickle reader.
