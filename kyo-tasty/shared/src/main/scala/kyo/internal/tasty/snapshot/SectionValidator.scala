@@ -15,9 +15,13 @@ private[snapshot] object SectionValidator:
     /** Thrown when a section fails its structural invariant check.
       *
       * Carries the structured `TastyError.MalformedSection` so the caller can convert it to `Abort.fail` without losing type information.
+      *
+      * Internal sentinel: deliberately bypasses `KyoException` (no public-API crossing) and uses
+      * `enableSuppression=false, writableStackTrace=false` so the throw path skips stack-trace materialisation
+      * (NoStackTrace flags).
       */
     final class SectionValidationException(val error: TastyError.MalformedSection)
-        extends RuntimeException(s"section validation failed: ${error.name} ${error.reason}", null, true, false)
+        extends RuntimeException(s"section validation failed: ${error.name} ${error.reason}", null, false, false)
 
     /** Describes the expected structural layout of a KRFL section. */
     enum SectionLayout derives CanEqual:

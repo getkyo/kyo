@@ -35,7 +35,7 @@ class TypeUnpicklerTest extends Test:
 
     // plan: phase-02 bridge; Symbol.make(kind, flags, name).
     private def makeSym(name: String, kind: Tasty.SymbolKind = Tasty.SymbolKind.Class): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(kind, Tasty.Flags.empty, Tasty.Name(name))
+        Tasty.Symbol.makePlaceholder(kind, Tasty.Flags.empty, Tasty.Name.Unsafe.init(name))
 
     /** Encode an unsigned Nat in dotty's TASTy big-endian base-128 format.
       *
@@ -89,7 +89,7 @@ class TypeUnpicklerTest extends Test:
         val addrMap = IntMap(symAddr -> sym)
         // TYPEREFsymbol (116) = cat4: tag + symAddr Nat + qual sub-type.
         // qual = TYPEREFpkg (65) with nameRef 0 => need names[0].
-        val names     = Array(Tasty.Name("scala"))
+        val names     = Array(Tasty.Name.Unsafe.init("scala"))
         val qualBytes = cat2(TastyFormat.TYPEREFpkg, 0) // TYPEREFpkg nameRef=0
         val bytes     = cat4(TastyFormat.TYPEREFsymbol, symAddr, qualBytes)
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
@@ -108,7 +108,7 @@ class TypeUnpicklerTest extends Test:
         val sym        = makeSym("Int")
         val symAddr    = 10
         val addrMap    = IntMap(symAddr -> sym)
-        val names      = Array(Tasty.Name("scala"))
+        val names      = Array(Tasty.Name.Unsafe.init("scala"))
         val qualBytes  = cat2(TastyFormat.TYPEREFpkg, 0)
         val innerBytes = cat4(TastyFormat.TYPEREFsymbol, symAddr, qualBytes)
         // BYNAMEtype = category 3: tag(93) + sub-type
@@ -129,7 +129,7 @@ class TypeUnpicklerTest extends Test:
         val sym       = makeSym("String")
         val symAddr   = 5
         val addrMap   = IntMap(symAddr -> sym)
-        val names     = Array(Tasty.Name("scala"))
+        val names     = Array(Tasty.Name.Unsafe.init("scala"))
         val qualBytes = cat2(TastyFormat.TYPEREFpkg, 0)
         val elemBytes = cat4(TastyFormat.TYPEREFsymbol, symAddr, qualBytes)
         // REPEATED (149) = category 5: tag + length + elem_type
@@ -152,7 +152,7 @@ class TypeUnpicklerTest extends Test:
         val listAddr   = 20
         val stringAddr = 30
         val addrMap    = IntMap(listAddr -> listSym, stringAddr -> stringSym)
-        val names      = Array(Tasty.Name("scala"))
+        val names      = Array(Tasty.Name.Unsafe.init("scala"))
         val qual       = cat2(TastyFormat.TYPEREFpkg, 0)
         // APPLIEDtype (161) = cat5: [tycon=TYPEREFsymbol(listAddr, qual)] [arg=TYPEREFsymbol(stringAddr, qual)]
         val tycon = cat4(TastyFormat.TYPEREFsymbol, listAddr, qual)
@@ -183,7 +183,7 @@ class TypeUnpicklerTest extends Test:
         val sym     = makeSym("Int")
         val symAddr = 7
         val addrMap = IntMap(symAddr -> sym)
-        val names   = Array(Tasty.Name("scala"))
+        val names   = Array(Tasty.Name.Unsafe.init("scala"))
         val qual    = cat2(TastyFormat.TYPEREFpkg, 0)
         // firstTypeBytes: TYPEREFsymbol starting at position 0 in the combined view.
         val firstTypeBytes = cat4(TastyFormat.TYPEREFsymbol, symAddr, qual)
@@ -217,7 +217,7 @@ class TypeUnpicklerTest extends Test:
         val paramAddr  = 5
         val resultAddr = 10
         val addrMap    = IntMap(paramAddr -> paramSym, resultAddr -> resultSym)
-        val names      = Array(Tasty.Name("scala"), Tasty.Name("A"))
+        val names      = Array(Tasty.Name.Unsafe.init("scala"), Tasty.Name.Unsafe.init("A"))
         val qual       = cat2(TastyFormat.TYPEREFpkg, 0)
         // TYPELAMBDAtype (170) = cat5: [result_Type] [typeRef0 paramNameRef0]
         // result = TYPEREFsymbol(resultAddr, qual)
@@ -245,7 +245,7 @@ class TypeUnpicklerTest extends Test:
         val sym        = makeSym("Int")
         val symAddr    = 3
         val addrMap    = IntMap(symAddr -> sym)
-        val names      = Array(Tasty.Name("scala"))
+        val names      = Array(Tasty.Name.Unsafe.init("scala"))
         val qual       = cat2(TastyFormat.TYPEREFpkg, 0)
         val underlying = cat4(TastyFormat.TYPEREFsymbol, symAddr, qual)
         // Annotation term: TYPEREFpkg(0); decodes to TermRefPkg(names(0)).
@@ -274,7 +274,7 @@ class TypeUnpicklerTest extends Test:
         val sym        = makeSym("Int")
         val symAddr    = 3
         val addrMap    = IntMap(symAddr -> sym)
-        val names      = Array(Tasty.Name("scala"))
+        val names      = Array(Tasty.Name.Unsafe.init("scala"))
         val qual       = cat2(TastyFormat.TYPEREFpkg, 0)
         val underlying = cat4(TastyFormat.TYPEREFsymbol, symAddr, qual)
         // Annotation term: UNITconst; TreeUnpickler decodes this as Literal(UnitConst).
@@ -306,7 +306,7 @@ class TypeUnpicklerTest extends Test:
         val symA    = makeSym("A")
         val symB    = makeSym("B")
         val addrMap = IntMap(5 -> symA, 6 -> symB)
-        val names   = Array(Tasty.Name("scala"))
+        val names   = Array(Tasty.Name.Unsafe.init("scala"))
         val qual    = cat2(TastyFormat.TYPEREFpkg, 0)
         val left    = cat4(TastyFormat.TYPEREFsymbol, 5, qual)
         val right   = cat4(TastyFormat.TYPEREFsymbol, 6, qual)
@@ -327,7 +327,7 @@ class TypeUnpicklerTest extends Test:
         val symA    = makeSym("A")
         val symB    = makeSym("B")
         val addrMap = IntMap(5 -> symA, 6 -> symB)
-        val names   = Array(Tasty.Name("scala"))
+        val names   = Array(Tasty.Name.Unsafe.init("scala"))
         val qual    = cat2(TastyFormat.TYPEREFpkg, 0)
         val left    = cat4(TastyFormat.TYPEREFsymbol, 5, qual)
         val right   = cat4(TastyFormat.TYPEREFsymbol, 6, qual)
@@ -350,7 +350,7 @@ class TypeUnpicklerTest extends Test:
         val symBound = makeSym("Any")
         val symScrut = makeSym("X")
         val addrMap  = IntMap(1 -> symBound, 2 -> symScrut)
-        val names    = Array(Tasty.Name("scala"))
+        val names    = Array(Tasty.Name.Unsafe.init("scala"))
         val qual     = cat2(TastyFormat.TYPEREFpkg, 0)
         val bound    = cat4(TastyFormat.TYPEREFsymbol, 1, qual)
         val scrut    = cat4(TastyFormat.TYPEREFsymbol, 2, qual)
@@ -444,7 +444,7 @@ class TypeUnpicklerTest extends Test:
             case other             => fail(s"Expected Tasty.Type.Rec(...) but got $other")
         // Also verify TypeArena merge handles Rec/RecThis without overflow.
         val arena    = makeArena()
-        val sentinel = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("s"))
+        val sentinel = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name.Unsafe.init("s"))
         val rec      = Tasty.Type.Rec(Tasty.Type.Named(sentinel.id))
         val recThis  = Tasty.Type.RecThis(rec)
         arena.intern(rec)
@@ -457,7 +457,7 @@ class TypeUnpicklerTest extends Test:
     // Test 24 (redesigned for Phase 07): TYPEREFin with unknown FQN creates a Named(unresolved).
     // Phase 07 deleted UnresolvedRef; cross-file references now resolve to synthetic unresolved symbols directly.
     "decoding TYPEREFin with unknown FQN returns Named(unresolved) type" in run {
-        val names = Array(Tasty.Name("scala"), Tasty.Name("SomeCrossFileType"))
+        val names = Array(Tasty.Name.Unsafe.init("scala"), Tasty.Name.Unsafe.init("SomeCrossFileType"))
         // TYPEREFin (175) = cat5: [NameRef] [qual_Type] [namespace_Type]
         // NameRef = 1 (index to "SomeCrossFileType")
         // qual = TYPEREFpkg nameRef=0 ("scala")

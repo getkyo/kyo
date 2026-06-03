@@ -156,8 +156,14 @@ private[kyo] object JarCentralDirectory:
         parseCenRecordsAll(jarPath, cenBuf, cenSize)
     end parseAllEntries
 
-    /** Thrown internally to propagate TastyError through Java APIs that require checked exceptions. */
-    final private class TastyErrorWrapper(val error: TastyError) extends Exception
+    /** Thrown internally to propagate TastyError through Java APIs that require checked exceptions.
+      *
+      * Internal sentinel: caught by the adjacent JAR parser and re-lifted into `Abort.fail(error)` on the
+      * `Abort[TastyError]` row. Deliberately bypasses `KyoException` (no public-API crossing) and uses
+      * `enableSuppression=false, writableStackTrace=false` so the throw path skips stack-trace
+      * materialisation (NoStackTrace flags).
+      */
+    final private class TastyErrorWrapper(val error: TastyError) extends Exception(null, null, false, false)
 
     /** Core CEN parsing logic. Assumes raf is open and positioned at start. */
     private def listEntries(

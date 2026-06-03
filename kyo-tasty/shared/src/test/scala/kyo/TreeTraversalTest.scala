@@ -1,5 +1,6 @@
 package kyo
 
+import AllowUnsafe.embrace.danger
 import scala.concurrent.Future
 
 /** Tests for Tree traversal members (Phase 10 Item 9).
@@ -10,7 +11,7 @@ class TreeTraversalTest extends Test:
 
     // Leaf id:12 -- Tree.children covers all direct children
     "Ident has empty children" in {
-        val n = Tasty.Name("x")
+        val n = Tasty.Name.Unsafe.init("x")
         import AllowUnsafe.embrace.danger
         val tpe = Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(-1))
         val t   = Tasty.Tree.Ident(n, tpe)
@@ -21,7 +22,7 @@ class TreeTraversalTest extends Test:
     "Apply has fun and args as children" in {
         import AllowUnsafe.embrace.danger
         val tpe  = Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(-1))
-        val fun  = Tasty.Tree.Ident(Tasty.Name("f"), tpe)
+        val fun  = Tasty.Tree.Ident(Tasty.Name.Unsafe.init("f"), tpe)
         val arg1 = Tasty.Tree.Literal(Tasty.Constant.IntConst(1))
         val arg2 = Tasty.Tree.Literal(Tasty.Constant.IntConst(2))
         val app  = Tasty.Tree.Apply(fun, Chunk(arg1, arg2))
@@ -46,7 +47,7 @@ class TreeTraversalTest extends Test:
     "CaseDef with guard includes guard in children" in {
         import AllowUnsafe.embrace.danger
         val tpe     = Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(-1))
-        val pat     = Tasty.Tree.Ident(Tasty.Name("x"), tpe)
+        val pat     = Tasty.Tree.Ident(Tasty.Name.Unsafe.init("x"), tpe)
         val guard   = Tasty.Tree.Literal(Tasty.Constant.BooleanConst(true))
         val body    = Tasty.Tree.Literal(Tasty.Constant.IntConst(0))
         val caseDef = Tasty.Tree.CaseDef(pat, Maybe(guard), body)
@@ -59,7 +60,7 @@ class TreeTraversalTest extends Test:
     "CaseDef without guard has 2 children" in {
         import AllowUnsafe.embrace.danger
         val tpe     = Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(-1))
-        val pat     = Tasty.Tree.Ident(Tasty.Name("x"), tpe)
+        val pat     = Tasty.Tree.Ident(Tasty.Name.Unsafe.init("x"), tpe)
         val body    = Tasty.Tree.Literal(Tasty.Constant.IntConst(0))
         val caseDef = Tasty.Tree.CaseDef(pat, Maybe.Absent, body)
         assert(caseDef.children.size == 2)

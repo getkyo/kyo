@@ -22,11 +22,18 @@ object TreeUnpickler:
 
     /** Thrown on malformed or unsupported TASTy body content.
       *
+      * Internal sentinel: thrown from the body decode hot loop and caught by the adjacent reader, which
+      * converts it into a structured `TastyError.MalformedSection` (or related variant) on the
+      * `Abort[TastyError]` row. Deliberately bypasses `KyoException` (no public-API crossing, no `Frame`
+      * available deep in the per-byte decoder) and uses `enableSuppression=false, writableStackTrace=false`
+      * to skip stack-trace materialisation on the throw path.
+      *
       * @param byteOffset
       *   byte position in the ASTs section where the error was detected; 0L when the position is unavailable (e.g. when thrown from a
       *   context that does not hold a ByteView cursor).
       */
-    final class DecodeException(msg: String, val byteOffset: Long) extends RuntimeException(msg)
+    final class DecodeException(msg: String, val byteOffset: Long)
+        extends RuntimeException(msg, null, false, false)
 
     /** Decode a single Term tree from raw annotation pickle bytes.
       *
@@ -818,7 +825,7 @@ object TreeUnpickler:
                 // PARAMtype: cat-5 (tag + Length + binder_addr + paramNum). Param reference type.
                 val end = view.readEnd()
                 view.goto(end)
-                Tasty.Tree.Ident(Tasty.Name("param"), Tasty.Type.Named(makeUnresolvedSym("param").id))
+                Tasty.Tree.Ident(Tasty.Name.Unsafe.init("param"), Tasty.Type.Named(makeUnresolvedSym("param").id))
 
             // Explicit Unknown arms for macro/quote tags (legitimate but rare).
             case TastyFormat.QUOTE =>
@@ -1215,7 +1222,7 @@ object TreeUnpickler:
                 name
             case other =>
                 skipTreeBody(other, view)
-                Tasty.Name("")
+                Tasty.Name.Unsafe.init("")
         end match
     end extractPackageName
 
@@ -1305,14 +1312,14 @@ object TreeUnpickler:
 
     private def nameFromRef(nameRef: Int, ctx: DecodeCtx)(using AllowUnsafe): Tasty.Name =
         if nameRef >= 0 && nameRef < ctx.names.length then ctx.names(nameRef)
-        else Tasty.Name(s"name@$nameRef")
+        else Tasty.Name.Unsafe.init(s"name@$nameRef")
     end nameFromRef
 
     private def makeUnresolvedSym(name: String)(using AllowUnsafe): Tasty.Symbol =
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name(name)
+            Tasty.Name.Unsafe.init(name)
         )
     end makeUnresolvedSym
 

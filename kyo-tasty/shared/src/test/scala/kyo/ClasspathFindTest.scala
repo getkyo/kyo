@@ -56,7 +56,7 @@ class ClasspathFindTest extends Test:
         Sync.defer {
             val symWithId = Tasty.Symbol.Class(
                 SymbolId(0),
-                Tasty.Name("Bar"),
+                Tasty.Name.Unsafe.init("Bar"),
                 Tasty.Flags.empty,
                 SymbolId(-1),
                 kyo.Maybe.Absent,
@@ -87,7 +87,7 @@ class ClasspathFindTest extends Test:
             val result = cp.findClassByBinary("p/Foo$Bar")
             result match
                 case Maybe.Present(s) =>
-                    assert(s.name == Tasty.Name("Bar"), s"Expected symbol name Bar, got ${s.name}")
+                    assert(s.name == Tasty.Name.Unsafe.init("Bar"), s"Expected symbol name Bar, got ${s.name}")
                     succeed
                 case Maybe.Absent =>
                     fail("Expected Present(sym) for p/Foo$Bar but got Absent")

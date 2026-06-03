@@ -54,9 +54,9 @@ class ConstantTest extends Test:
     // Pins: T2.
     "Constant STRINGconst decodes name table entry to StringConst" in run {
         val names = Array(
-            Tasty.Name("dummy0"),
-            Tasty.Name("dummy1"),
-            Tasty.Name("hello")
+            Tasty.Name.Unsafe.init("dummy0"),
+            Tasty.Name.Unsafe.init("dummy1"),
+            Tasty.Name.Unsafe.init("hello")
         )
         val session = makeSession(names)
         val bytes   = encodeNat(2) // nameRef = 2

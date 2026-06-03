@@ -1,5 +1,6 @@
 package kyo
 
+import AllowUnsafe.embrace.danger
 import kyo.internal.tasty.symbol.SymbolId
 
 /** Phase 01 plan-mandated tests confirming exhaustive match on the Symbol hierarchy under -Xfatal-warnings.
@@ -31,7 +32,7 @@ class SymbolExhaustiveMatchTest extends Test:
             case _: Tasty.Symbol.Package      => "Package"
             case _: Tasty.Symbol.Unresolved   => "Unresolved"
 
-        val sym: Tasty.Symbol = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name("x"), SymbolId(-1))
+        val sym: Tasty.Symbol = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name.Unsafe.init("x"), SymbolId(-1))
         assert(kindLabel(sym) == "Unresolved")
         succeed
     }
@@ -50,7 +51,7 @@ class SymbolExhaustiveMatchTest extends Test:
 
         val obj: Tasty.Symbol.ClassLike = Tasty.Symbol.Object(
             id = SymbolId(1),
-            name = Tasty.Name("MyObj"),
+            name = Tasty.Name.Unsafe.init("MyObj"),
             flags = Tasty.Flags.empty,
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,

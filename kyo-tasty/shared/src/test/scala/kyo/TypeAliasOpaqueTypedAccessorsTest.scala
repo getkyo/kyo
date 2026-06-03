@@ -18,7 +18,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
     private def makeTypeParam(id: Int, name: String, ownerId: Int): Tasty.Symbol.TypeParam =
         Tasty.Symbol.TypeParam(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -34,7 +34,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
     ): Tasty.Symbol.TypeAlias =
         Tasty.Symbol.TypeAlias(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,
@@ -53,7 +53,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
     ): Tasty.Symbol.OpaqueType =
         Tasty.Symbol.OpaqueType(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,
@@ -73,7 +73,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
         val intId = SymbolId(0)
         val intSymbol = Tasty.Symbol.Class(
             intId,
-            Tasty.Name("Int"),
+            Tasty.Name.Unsafe.init("Int"),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,
@@ -132,7 +132,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
         val longId = SymbolId(0)
         val longSymbol = Tasty.Symbol.Class(
             longId,
-            Tasty.Name("Long"),
+            Tasty.Name.Unsafe.init("Long"),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,
@@ -172,7 +172,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
         val intId = SymbolId(0)
         val intSymbol = Tasty.Symbol.Class(
             intId,
-            Tasty.Name("Int"),
+            Tasty.Name.Unsafe.init("Int"),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,

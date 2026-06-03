@@ -73,10 +73,9 @@ final class ConstantPool(
                 case u: CpEntry.Utf8Lazy =>
                     // Sync.Unsafe.defer provides AllowUnsafe for the AtomicRef decode/cache access.
                     Sync.Unsafe.defer:
-                        u.decode(interner).string.get()
+                        u.decode(interner).string
                 case CpEntry.Utf8Decoded(e) =>
-                    Sync.Unsafe.defer:
-                        e.string.get()
+                    e.string
                 case other =>
                     // no cursor: constant pool accessor errors do not carry a stream position
                     Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Utf8 at pool[$idx], found ${tagName(other)}", 0L))

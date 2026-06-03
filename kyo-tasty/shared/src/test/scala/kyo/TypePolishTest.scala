@@ -1,5 +1,6 @@
 package kyo
 
+import AllowUnsafe.embrace.danger
 import kyo.internal.tasty.symbol.SymbolId
 import scala.collection.mutable.ArrayBuffer
 
@@ -16,7 +17,7 @@ class TypePolishTest extends Test:
     "Leaf 155: symbol returns Present(sym) for Type.Named" in run {
         val classSym = Tasty.Symbol.Class(
             SymbolId(5),
-            Tasty.Name("Foo"),
+            Tasty.Name.Unsafe.init("Foo"),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,
@@ -110,7 +111,7 @@ class TypePolishTest extends Test:
         val n = Tasty.Type.Named(SymbolId(0))
         val classSym = Tasty.Symbol.Class(
             SymbolId(0),
-            Tasty.Name("Foo"),
+            Tasty.Name.Unsafe.init("Foo"),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,
@@ -128,7 +129,7 @@ class TypePolishTest extends Test:
             given Tasty.Classpath = cp
             val cases: Seq[Tasty.Type] = Seq(
                 Tasty.Type.Named(SymbolId(0)),
-                Tasty.Type.TermRef(n, Tasty.Name("x")),
+                Tasty.Type.TermRef(n, Tasty.Name.Unsafe.init("x")),
                 Tasty.Type.Applied(n, Chunk(n)),
                 Tasty.Type.TypeLambda(Chunk.empty, n),
                 Tasty.Type.Function(Chunk(n), n, false),
@@ -137,7 +138,7 @@ class TypePolishTest extends Test:
                 Tasty.Type.ByName(n),
                 Tasty.Type.Repeated(n),
                 Tasty.Type.Array(n),
-                Tasty.Type.Refinement(n, Tasty.Name("m"), n),
+                Tasty.Type.Refinement(n, Tasty.Name.Unsafe.init("m"), n),
                 Tasty.Type.Rec(n),
                 Tasty.Type.RecThis(n),
                 Tasty.Type.AndType(n, n),

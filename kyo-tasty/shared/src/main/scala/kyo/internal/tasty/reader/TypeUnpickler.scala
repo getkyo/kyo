@@ -28,10 +28,12 @@ import scala.collection.mutable
   * into `Abort.fail(error)` so that `TastyError.UnknownTagInPosition` is preserved as the actual error variant rather than being
   * wrapped in the generic `MalformedSection` fallback that catches plain `Exception`.
   *
-  * Private to the reader package; not part of the public or internal API.
+  * Internal sentinel: deliberately bypasses `KyoException` (no public-API crossing) and uses
+  * `enableSuppression=false, writableStackTrace=false` so the throw path skips stack-trace materialisation
+  * (NoStackTrace flags). Private to the reader package; not part of the public or internal API.
   */
 final private[reader] class TastyErrorException(val error: TastyError)
-    extends RuntimeException(error.toString, null, true, false)
+    extends RuntimeException(error.toString, null, false, false)
 
 object TypeUnpickler:
 
@@ -52,10 +54,12 @@ object TypeUnpickler:
     private[kyo] val PHASE_B_ADDR_OFFSET: Int = 1 << 28
 
     val MatchCaseSentinel: Tasty.Symbol =
+        // Unsafe: module-level interned sentinel; intern runs exactly once at class load (§839 case 3).
+        import AllowUnsafe.embrace.danger
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name("$$MatchCase")
+            Tasty.Name.Unsafe.init("$$MatchCase")
         )
     end MatchCaseSentinel
 
@@ -67,10 +71,12 @@ object TypeUnpickler:
       * and THIS-unknown through this sentinel.
       */
     private[kyo] val sentinelUnresolved: Tasty.Symbol =
+        // Unsafe: module-level interned sentinel; intern runs exactly once at class load (§839 case 3).
+        import AllowUnsafe.embrace.danger
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name("<unresolved>")
+            Tasty.Name.Unsafe.init("<unresolved>")
         )
     end sentinelUnresolved
 
@@ -83,10 +89,12 @@ object TypeUnpickler:
       * discards the placeholder from inProgressRec once decoding completes.
       */
     private[kyo] val sentinelRecPlaceholder: Tasty.Symbol =
+        // Unsafe: module-level interned sentinel; intern runs exactly once at class load (§839 case 3).
+        import AllowUnsafe.embrace.danger
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name("<rec-placeholder>")
+            Tasty.Name.Unsafe.init("<rec-placeholder>")
         )
     end sentinelRecPlaceholder
 
@@ -347,7 +355,7 @@ object TypeUnpickler:
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name(fqn)
+            Tasty.Name.Unsafe.init(fqn)
         )
 
     /** Make a unique negative SymbolId for a cross-file FQN reference and record it in `fqns`.

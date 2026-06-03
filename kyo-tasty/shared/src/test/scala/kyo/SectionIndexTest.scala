@@ -74,7 +74,7 @@ class SectionIndexTest extends Test:
     // Test (Phase 21d T2): two-section encoding -- lookup of second section returns correct offset and length
     "two-section encoding: get(ASTs) returns Present with correct offset and length" in run {
         // Build a names array: names(0) = Name("NAMES"), names(1) = Name("ASTs").
-        val names = Array(Tasty.Name("NAMES"), Tasty.Name("ASTs"))
+        val names = Array(Tasty.Name.Unsafe.init("NAMES"), Tasty.Name.Unsafe.init("ASTs"))
         // Encode section table:
         //   Section 1: nameRef=0 (1 byte), len=10 (1 byte), 10 zero payload bytes. Header at offset 0.
         //              Payload starts at offset 2.

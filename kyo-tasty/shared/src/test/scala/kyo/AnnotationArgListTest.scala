@@ -1,5 +1,6 @@
 package kyo
 
+import AllowUnsafe.embrace.danger
 import kyo.internal.tasty.symbol.SymbolId
 
 /** Plan-mandated tests for Phase 08 (leaf 164): Annotation.arguments.
@@ -25,7 +26,7 @@ class AnnotationArgListTest extends Test:
     // Additional coverage: a single non-Apply tree appears as a single-element Chunk
     "Leaf 164b: arguments holds a single-element Chunk for a non-Apply tree" in run {
         val tpe    = Tasty.Type.Named(SymbolId(0))
-        val ident  = Tasty.Tree.Ident(Tasty.Name("x"), tpe)
+        val ident  = Tasty.Tree.Ident(Tasty.Name.Unsafe.init("x"), tpe)
         val ann    = Tasty.Annotation(tpe, Chunk(ident))
         val result = ann.arguments
         assert(result.length == 1, s"Expected 1 element for a single-tree annotation, got ${result.length}")

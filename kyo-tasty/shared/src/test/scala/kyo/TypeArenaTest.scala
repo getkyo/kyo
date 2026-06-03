@@ -1,5 +1,6 @@
 package kyo
 
+import AllowUnsafe.embrace.danger
 import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 
@@ -23,7 +24,7 @@ class TypeArenaTest extends Test:
     private def makeSym(name: String): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             freshId(),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,

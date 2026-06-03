@@ -84,7 +84,9 @@ final class Interner private (
                 end if
                 // Eagerly copy the byte slice so the Entry does not hold the parse buffer alive.
                 val copiedBytes = java.util.Arrays.copyOfRange(bytes, offset, offset + length)
-                val candidate = new Interner.Entry(hash, copiedBytes, OnceCell.init(() => Utf8.decode(copiedBytes, 0, copiedBytes.length)))
+                // Eagerly decode UTF-8 to String so the `string` field is referentially transparent;
+                // this lets Name.asString and SymbolBody.equals/hashCode stay outside the unsafe boundary.
+                val candidate = new Interner.Entry(hash, copiedBytes, Utf8.decode(copiedBytes, 0, copiedBytes.length))
                 // Per-slot CAS: no full-table copy needed.
                 if table.compareAndSet(slot, null, candidate) then
                     loadCounter.incrementAndGet(): Unit
@@ -182,13 +184,15 @@ object Interner:
     /** A single interned byte-sequence entry.
       *
       * The `bytes` field holds a private copy of the interned UTF-8 bytes (not a reference into the original parse buffer). The `string`
-      * field is a lazy `OnceCell[String]` that decodes the interned bytes to a `String` on first access. Equality between interned entries
-      * is reference equality (the interner guarantees unique `Entry` per unique byte sequence).
+      * field is the eagerly UTF-8-decoded form, materialized once at intern time. Eager decode keeps `Name.asString` and
+      * `SymbolBody.equals`/`hashCode` referentially transparent (no `AllowUnsafe` requirement on read), at the cost of paying the decode
+      * once per unique byte sequence rather than on first access. Equality between interned entries is reference equality (the interner
+      * guarantees unique `Entry` per unique byte sequence).
       */
     final class Entry(
         val hash: Int,
         val bytes: Array[Byte],
-        val string: OnceCell[String]
+        val string: String
     )
 
 end Interner

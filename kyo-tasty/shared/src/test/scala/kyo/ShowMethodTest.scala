@@ -14,10 +14,10 @@ class ShowMethodTest extends Test with TastyTestSupport:
         import kyo.internal.tasty.symbol.SymbolId
         import kyo.internal.tasty.type_.TypeArena
         Sync.defer {
-            val pkgWithId = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("p"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
+            val pkgWithId = Tasty.Symbol.Package(SymbolId(0), Tasty.Name.Unsafe.init("p"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
             val clsWithId = Tasty.Symbol.Class(
                 SymbolId(1),
-                Tasty.Name("Foo"),
+                Tasty.Name.Unsafe.init("Foo"),
                 Tasty.Flags.empty,
                 SymbolId(0),
                 kyo.Maybe.Absent,

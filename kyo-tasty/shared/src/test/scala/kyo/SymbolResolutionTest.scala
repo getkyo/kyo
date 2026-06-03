@@ -235,7 +235,7 @@ class SymbolResolutionTest extends Test:
     private def makeClassSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -252,13 +252,13 @@ class SymbolResolutionTest extends Test:
     end makeClassSym9
 
     private def makePkgSym9(id: Int, name: String): Tasty.Symbol.Package =
-        Tasty.Symbol.Package(SymbolId(id), Tasty.Name(name), Tasty.Flags.empty, SymbolId(id), Chunk.empty)
+        Tasty.Symbol.Package(SymbolId(id), Tasty.Name.Unsafe.init(name), Tasty.Flags.empty, SymbolId(id), Chunk.empty)
     end makePkgSym9
 
     private def makeMethodSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Method =
         Tasty.Symbol.Method(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -275,7 +275,7 @@ class SymbolResolutionTest extends Test:
     private def makeValSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Val =
         Tasty.Symbol.Val(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -289,7 +289,7 @@ class SymbolResolutionTest extends Test:
     private def makeVarSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Var =
         Tasty.Symbol.Var(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -405,7 +405,7 @@ class SymbolResolutionTest extends Test:
                 val _nested: Chunk[Tasty.Symbol]     = sym.nestedTypes
                 val _typeM: Chunk[Tasty.Symbol]      = sym.typeMembers
                 val _find: Maybe[Tasty.Symbol]       = sym.findMember("anything")
-                val _findN: Maybe[Tasty.Symbol]      = sym.findMemberByName(Tasty.Name("anything"))
+                val _findN: Maybe[Tasty.Symbol]      = sym.findMemberByName(Tasty.Name.Unsafe.init("anything"))
                 val _byKind: Chunk[Tasty.Symbol]     = sym.membersByKind(Tasty.SymbolKind.Method)
                 val _showStr: String                 = sym.show
             succeed

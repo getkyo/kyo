@@ -21,7 +21,7 @@ class ClassLikeAccessorsTest extends Test:
     private def makeClass(id: Int, name: String, ownerId: Int): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -39,7 +39,7 @@ class ClassLikeAccessorsTest extends Test:
     private def makeTrait(id: Int, name: String, ownerId: Int): Tasty.Symbol.Trait =
         Tasty.Symbol.Trait(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -57,7 +57,7 @@ class ClassLikeAccessorsTest extends Test:
     private def makeObject(id: Int, name: String, ownerId: Int): Tasty.Symbol.Object =
         Tasty.Symbol.Object(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -74,7 +74,7 @@ class ClassLikeAccessorsTest extends Test:
     private def makeMethod(id: Int, name: String, ownerId: Int): Tasty.Symbol.Method =
         Tasty.Symbol.Method(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -90,7 +90,7 @@ class ClassLikeAccessorsTest extends Test:
     private def makeVal(id: Int, name: String, ownerId: Int): Tasty.Symbol.Val =
         Tasty.Symbol.Val(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -103,7 +103,7 @@ class ClassLikeAccessorsTest extends Test:
     private def makeVar(id: Int, name: String, ownerId: Int): Tasty.Symbol.Var =
         Tasty.Symbol.Var(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -116,7 +116,7 @@ class ClassLikeAccessorsTest extends Test:
     private def makeField(id: Int, name: String, ownerId: Int): Tasty.Symbol.Field =
         Tasty.Symbol.Field(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -129,7 +129,7 @@ class ClassLikeAccessorsTest extends Test:
     private def makeTypeAlias(id: Int, name: String, ownerId: Int): Tasty.Symbol.TypeAlias =
         Tasty.Symbol.TypeAlias(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -142,7 +142,7 @@ class ClassLikeAccessorsTest extends Test:
     private def makeAbstractType(id: Int, name: String, ownerId: Int): Tasty.Symbol.AbstractType =
         Tasty.Symbol.AbstractType(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -154,7 +154,7 @@ class ClassLikeAccessorsTest extends Test:
     private def makeOpaqueType(id: Int, name: String, ownerId: Int): Tasty.Symbol.OpaqueType =
         Tasty.Symbol.OpaqueType(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -168,7 +168,7 @@ class ClassLikeAccessorsTest extends Test:
     private def makeTypeParam(id: Int, name: String, ownerId: Int): Tasty.Symbol.TypeParam =
         Tasty.Symbol.TypeParam(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -179,7 +179,7 @@ class ClassLikeAccessorsTest extends Test:
     private def makeTypeParamCo(id: Int, name: String, ownerId: Int): Tasty.Symbol.TypeParam =
         Tasty.Symbol.TypeParam(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags(Tasty.Flag.CoVariant),
             SymbolId(ownerId),
             Maybe.Absent,
@@ -190,7 +190,7 @@ class ClassLikeAccessorsTest extends Test:
     private def makeTypeParamContra(id: Int, name: String, ownerId: Int): Tasty.Symbol.TypeParam =
         Tasty.Symbol.TypeParam(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags(Tasty.Flag.ContraVariant),
             SymbolId(ownerId),
             Maybe.Absent,
@@ -512,7 +512,7 @@ class ClassLikeAccessorsTest extends Test:
         val classFlags = Tasty.Flags(Tasty.Flag.Final, Tasty.Flag.Case)
         val classSym = Tasty.Symbol.Class(
             SymbolId(1),
-            Tasty.Name("CaseFoo"),
+            Tasty.Name.Unsafe.init("CaseFoo"),
             classFlags,
             SymbolId(0),
             Maybe.Absent,
@@ -529,7 +529,7 @@ class ClassLikeAccessorsTest extends Test:
         val traitFlags = Tasty.Flags(Tasty.Flag.Abstract, Tasty.Flag.Sealed)
         val traitSym = Tasty.Symbol.Trait(
             SymbolId(2),
-            Tasty.Name("SealedTrait"),
+            Tasty.Name.Unsafe.init("SealedTrait"),
             traitFlags,
             SymbolId(0),
             Maybe.Absent,

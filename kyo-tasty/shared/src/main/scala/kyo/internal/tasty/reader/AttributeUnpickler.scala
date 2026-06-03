@@ -23,8 +23,15 @@ import kyo.internal.tasty.binary.ByteView
   */
 object AttributeUnpickler:
 
-    /** Sentinel exception used internally to signal a malformed unknown tag (not an AIOOBE). */
-    private class UnknownTagException(val tag: Int, val pos: Int) extends Exception
+    /** Sentinel exception used internally to signal a malformed unknown tag (not an AIOOBE).
+      *
+      * Internal sentinel: thrown from the attribute decode loop and caught by the adjacent driver, which
+      * converts it into a structured `TastyError.UnknownTagInPosition` on the `Abort[TastyError]` row.
+      * Deliberately bypasses `KyoException` (no public-API crossing) and uses
+      * `enableSuppression=false, writableStackTrace=false` to skip stack-trace materialisation on the throw path.
+      */
+    private class UnknownTagException(val tag: Int, val pos: Int)
+        extends Exception(null, null, false, false)
 
     /** Read the Attributes section from `view`.
       *

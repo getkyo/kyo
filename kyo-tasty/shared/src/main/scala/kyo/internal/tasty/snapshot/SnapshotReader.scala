@@ -547,7 +547,7 @@ object SnapshotReader:
         symCount: Int,
         namePool: Array[String],
         out: Array[Chunk[Tasty.Annotation]]
-    ): Unit =
+    )(using AllowUnsafe): Unit =
         val end   = offset + length
         val count = SnapshotFormat.readInt32LE(bytes, offset)
         var pos   = offset + 4
@@ -592,7 +592,7 @@ object SnapshotReader:
                     anns(k) = Tasty.Annotation(
                         annotationType = Tasty.Type.TermRef(
                             Tasty.Type.Tuple(Chunk.empty),
-                            Tasty.Name(fqn)
+                            Tasty.Name.Unsafe.init(fqn)
                         ),
                         arguments = Chunk.empty
                     )
@@ -1018,10 +1018,11 @@ object SnapshotReader:
 
         // Create partial Symbols with basic fields; relational fields filled by the caller.
         for idx <- order do
-            val raw        = raws(idx)
-            val kind       = kindFromOrd(raw.kindOrd)
-            val flags      = Tasty.Flags.fromBits(raw.flagBits)
-            val name       = if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name(namePool(raw.nameId)) else Tasty.Name("")
+            val raw   = raws(idx)
+            val kind  = kindFromOrd(raw.kindOrd)
+            val flags = Tasty.Flags.fromBits(raw.flagBits)
+            val name = if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name.Unsafe.init(namePool(raw.nameId))
+            else Tasty.Name.Unsafe.init("")
             val ownerIdInt = raw.ownerId
             val ownerIdVal = if ownerIdInt >= 0 && ownerIdInt < count then ownerIdInt else idx
             // For mmap path: body bytes are accessed via bodyView sub-view.
@@ -1330,10 +1331,11 @@ object SnapshotReader:
         // Create partial Symbols with basic fields; deserialize() fills in
         // parentTypes / typeParamIds / declarationIds and rebuilds final immutable Symbols.
         for idx <- order do
-            val raw        = raws(idx)
-            val kind       = kindFromOrd(raw.kindOrd)
-            val flags      = Tasty.Flags.fromBits(raw.flagBits)
-            val name       = if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name(namePool(raw.nameId)) else Tasty.Name("")
+            val raw   = raws(idx)
+            val kind  = kindFromOrd(raw.kindOrd)
+            val flags = Tasty.Flags.fromBits(raw.flagBits)
+            val name = if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name.Unsafe.init(namePool(raw.nameId))
+            else Tasty.Name.Unsafe.init("")
             val ownerIdInt = raw.ownerId
             // ownerId: use index directly; -1 means self-referential (root sentinel).
             val ownerIdVal = if ownerIdInt >= 0 && ownerIdInt < count then ownerIdInt else idx

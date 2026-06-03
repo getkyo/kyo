@@ -217,13 +217,16 @@ object ClasspathOrchestrator:
         // Timing instrumentation: snapshot nanoTime at each stage boundary.
         // AtomicLong.Unsafe used so decoder fibers can record t_decodeEnd from any thread.
         // §839 case 3; pipeline-launch boundary; timing slots allocated once per open() call.
-        given AllowUnsafe = AllowUnsafe.embrace.danger
-        val t_start       = AtomicLong.Unsafe.init(java.lang.System.nanoTime())
-        val t_listEnd     = AtomicLong.Unsafe.init(0L)
-        val t_decodeEnd   = AtomicLong.Unsafe.init(0L)
-        val t_mergeEnd    = AtomicLong.Unsafe.init(0L)
-
-        Sync.Unsafe.defer(Interner.init(numShards = numShards, initialShardCapacity = sizeHint)).flatMap { interner =>
+        // Sync.Unsafe.defer scopes the AllowUnsafe proof to just the AtomicLong constructions
+        // and the Interner.init, so the rest of the method body cannot pick up the proof implicitly.
+        Sync.Unsafe.defer {
+            val t_start     = AtomicLong.Unsafe.init(java.lang.System.nanoTime())
+            val t_listEnd   = AtomicLong.Unsafe.init(0L)
+            val t_decodeEnd = AtomicLong.Unsafe.init(0L)
+            val t_mergeEnd  = AtomicLong.Unsafe.init(0L)
+            val interner    = Interner.init(numShards = numShards, initialShardCapacity = sizeHint)
+            (t_start, t_listEnd, t_decodeEnd, t_mergeEnd, interner)
+        }.flatMap { case (t_start, t_listEnd, t_decodeEnd, t_mergeEnd, interner) =>
             Scope.run:
                 Channel.initUnscoped[(String, String)](entryCap, Access.MultiProducerMultiConsumer).flatMap: entryCh =>
                     Channel.initUnscoped[DecodeResult](resultCap, Access.MultiProducerMultiConsumer).flatMap: resultCh =>
@@ -1760,7 +1763,7 @@ object ClasspathOrchestrator:
             cached = InternalSymbol.makeSymbol(
                 Tasty.SymbolKind.Unresolved,
                 Tasty.Flags.empty,
-                Tasty.Name("<unresolved>")
+                Tasty.Name.Unsafe.init("<unresolved>")
             )
             _sentinelUnresolvedCached = cached
         end if
@@ -1784,7 +1787,7 @@ object ClasspathOrchestrator:
         val ghost = kyo.internal.tasty.symbol.Symbol.makeSymbol(
             Tasty.SymbolKind.Class,
             Tasty.Flags.empty,
-            Tasty.Name("GhostClass")
+            Tasty.Name.Unsafe.init("GhostClass")
         )
         state.fqnIndex("test.GhostClass") = ghost
         // allSyms intentionally left empty so symbolIdMap.getOrDefault(ghost, -1) == -1.

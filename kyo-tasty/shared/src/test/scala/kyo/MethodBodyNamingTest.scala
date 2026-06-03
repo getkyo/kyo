@@ -1,5 +1,6 @@
 package kyo
 
+import AllowUnsafe.embrace.danger
 import kyo.internal.tasty.symbol.SymbolId
 import scala.collection.immutable.IntMap
 
@@ -28,7 +29,7 @@ class MethodBodyNamingTest extends Test:
         )
         val m: Tasty.Symbol.Method = Tasty.Symbol.Method(
             id = SymbolId(99),
-            name = Tasty.Name("testMethod"),
+            name = Tasty.Name.Unsafe.init("testMethod"),
             flags = Tasty.Flags.empty,
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,

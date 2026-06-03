@@ -58,53 +58,63 @@ object Tasty:
 
     // ── Names and flags ─────────────────────────────────────────────────────
 
-    // A module-level interner used by Name.apply(String) so the public API stays unchanged.
-    private val globalInterner: Interner =
-        // Unsafe: module-level initializer; Interner.init has side effects (allocating shards)
-        // that must run exactly once at class load time (§839 case 3).
-        import AllowUnsafe.embrace.danger
-        Interner.init(numShards = 32, initialShardCapacity = 512)
+    // A module-level interner used by the unsafe-tier Name.Unsafe.init. Initialized lazily at first
+    // access from within a Sync.Unsafe.defer or Name.Unsafe.init boundary, so the AllowUnsafe proof
+    // is always supplied by the caller rather than embraced module-level.
+    private lazy val globalInterner: Interner =
+        // Unsafe: lazy module-level interner; created on first use from an Unsafe boundary. Interner.init
+        // has side effects (shard allocation); the lazy holder ensures it runs exactly once and only from
+        // a caller that already holds an AllowUnsafe proof (§839 case 3).
+        Interner.init(numShards = 32, initialShardCapacity = 512)(using AllowUnsafe.embrace.danger)
     end globalInterner
 
     /** An interned name backed by a byte sequence.
       *
-      * The internal representation is `Interner.Entry`, which stores raw UTF-8 bytes and decodes to a `String` lazily via
-      * `OnceCell[String]`. Reference equality on two `Name` values implies byte-level equality because the interner guarantees a unique
-      * `Entry` per unique byte sequence. The `CanEqual` instance delegates to reference equality, which is therefore correct.
+      * The internal representation is `Interner.Entry`, which stores raw UTF-8 bytes and the eagerly-decoded `String` form. Reference
+      * equality on two `Name` values implies byte-level equality because the interner guarantees a unique `Entry` per unique byte sequence.
+      * The `CanEqual` instance delegates to reference equality, which is therefore correct. Decoding eagerly at intern time keeps
+      * `asString` referentially transparent (no `AllowUnsafe` proof required to read).
       */
     opaque type Name = Interner.Entry
     object Name:
         /** Construct a `Name` from a `String` by encoding to UTF-8 and interning the bytes.
           *
+          * The safe-tier API: interning mutates a shared interner, so the operation is suspended into
+          * `Sync` rather than executed at the call site. Use `Name.Unsafe.init` when the caller already
+          * holds an `AllowUnsafe` proof.
+          *
           * Example:
           * ```scala
-          *   val n = Tasty.Name("scala.Predef")
-          *   n.asString == "scala.Predef"
+          *   val n: Tasty.Name < Sync = Tasty.Name.init("scala.Predef")
           * ```
           */
-        def apply(s: String): Name =
-            // Unsafe: Interner.intern mutates shard state; safe here because the interner is
-            // monotone (same input always produces the same interned entry) and thread-safe
-            // internally (§839 case 3).
-            import AllowUnsafe.embrace.danger
-            val bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-            globalInterner.intern(bytes, 0, bytes.length)
-        end apply
+        def init(s: String)(using Frame): Name < Sync =
+            Sync.Unsafe.defer(Unsafe.init(s))
 
         /** Wrap an already-interned `Entry` as a `Name`. For use by kyo-internal unpicklers only. */
         private[kyo] def wrap(entry: Interner.Entry): Name = entry
+
+        /** Unsafe-tier intern operation.
+          *
+          * Mirrors `Name.init` but runs synchronously without suspending into `Sync`. The interner is
+          * monotone (same input always produces the same interned entry) and thread-safe internally; the
+          * `AllowUnsafe` requirement marks the side effect on the shared intern table (§839 case 3).
+          */
+        object Unsafe:
+            def init(s: String)(using AllowUnsafe): Name =
+                val bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                globalInterner.intern(bytes, 0, bytes.length)
+        end Unsafe
 
         /** Reference equality is correct because the interner guarantees unique Entry per unique byte sequence. */
         given CanEqual[Name, Name] = CanEqual.canEqualAny
 
         extension (n: Name)
-            /** Decode the interned bytes to a String (lazily cached). Pure post-init: OnceCell.get() is referentially transparent. */
-            def asString: String = n.string.get()
+            /** Decode the interned bytes to a String. Pure: the decoded form is materialized eagerly at intern time. */
+            def asString: String = n.string
 
             /** True when the decoded string is empty. */
-            def isEmpty: Boolean =
-                import Name.asString
-                n.asString.isEmpty
+            def isEmpty: Boolean = n.string.isEmpty
         end extension
     end Name
 
@@ -1467,9 +1477,8 @@ object Tasty:
         // Name is opaque over Interner.Entry which uses reference equality; cross-classpath
         // comparisons require string-level comparison via Name.asString.
         private def namesEqual(a: Span[Name], b: Span[Name]): Boolean =
-            // Unsafe: Name.asString is an opaque-type extension that requires AllowUnsafe;
-            // safe to use here because this is a private helper called only during equals/hashCode.
-            import AllowUnsafe.embrace.danger
+            // Pure: Name.asString reads the eagerly-decoded String field on Interner.Entry; no
+            // side effect, no AllowUnsafe proof required.
             import Name.asString
             val len = a.size
             if len != b.size then false
@@ -1484,9 +1493,8 @@ object Tasty:
         end namesEqual
 
         override def hashCode(): Int =
-            // Unsafe: Name.asString requires AllowUnsafe; safe here because this is a pure
-            // read of interned byte content with no side effects.
-            import AllowUnsafe.embrace.danger
+            // Pure: Name.asString reads an eagerly-decoded String; this hashCode is referentially
+            // transparent and has no side effects.
             import Name.asString
             var h = 1
             h = 31 * h + bodyStart
@@ -3208,7 +3216,10 @@ object Tasty:
                         else go(ownerSym, depth + 1, nextAcc)
                     end if
             val parts = go(sym, 0, Nil)
-            Name(parts.mkString("."))
+            // Unsafe: interns into the shared globalInterner. Safe here because Classpath is constructed
+            // inside an Unsafe boundary (Sync.Unsafe.defer in ClasspathOrchestrator.runPhaseAB) and these
+            // pure-data query methods inherit that trust.
+            Name.Unsafe.init(parts.mkString("."))(using AllowUnsafe.embrace.danger)
         end fullName
 
         /** Decode the body bytes of `sym` into a `Tree`, memoizing the result.
@@ -3326,7 +3337,10 @@ object Tasty:
 
         /** Sentinel symbol returned by `Classpath.symbol` for out-of-range or unassigned ids. */
         val sentinelUnresolved: Symbol =
-            Symbol.Unresolved(SymbolId(-1), Name("<unresolved>"), SymbolId(-1))
+            // Unsafe: module-level interned sentinel; intern runs exactly once at class load (§839 case 3).
+            import AllowUnsafe.embrace.danger
+            Symbol.Unresolved(SymbolId(-1), Name.Unsafe.init("<unresolved>"), SymbolId(-1))
+        end sentinelUnresolved
 
         /** Sealed hierarchy for structured build-time observations accumulated in `Classpath.diagnostics`.
           *
@@ -3417,14 +3431,14 @@ object Tasty:
             // (a Seq[String] of file-system paths); the new entries use the `jrt:/` URI scheme that
             // JvmFileSource already handles. PlatformModuleOps.listJdkClassFiles is JVM-only; JS/Native
             // return Chunk.empty so this method degrades to the module-descriptor-only path.
-            val jdkClassFiles =
-                // Unsafe: AllowUnsafe.embrace.danger for the lazy jrtFileSystem access in PlatformModuleOps.
-                kyo.internal.tasty.query.PlatformModuleOps.listJdkClassFiles(moduleFilter)(using AllowUnsafe.embrace.danger)
-            for
-                cp         <- init(jdkClassFiles.toSeq ++ roots, ErrorMode.SoftFail)
-                jdkModules <- PlatformModuleOps.readJdkModuleDescriptors
-            yield cp.copy(moduleIndex = cp.moduleIndex ++ jdkModules)
-            end for
+            // Sync.Unsafe.defer supplies AllowUnsafe to just the listJdkClassFiles call, so the rest of
+            // the for-comprehension cannot pick up the proof implicitly.
+            Sync.Unsafe.defer(kyo.internal.tasty.query.PlatformModuleOps.listJdkClassFiles(moduleFilter)).map: jdkClassFiles =>
+                for
+                    cp         <- init(jdkClassFiles.toSeq ++ roots, ErrorMode.SoftFail)
+                    jdkModules <- PlatformModuleOps.readJdkModuleDescriptors
+                yield cp.copy(moduleIndex = cp.moduleIndex ++ jdkModules)
+                end for
         end initWithPlatformModulesFiltered
 
         /** Init a classpath from directory/file roots, using a snapshot cache in `cacheDir`.

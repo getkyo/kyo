@@ -23,7 +23,7 @@ class TypedSymbolFactoryTest extends Test:
             id = id,
             kind = kind,
             flags = flags,
-            name = Tasty.Name(name),
+            name = Tasty.Name.Unsafe.init(name),
             ownerId = ownerId,
             declaredType = Maybe.Absent,
             scaladoc = Maybe.Absent,

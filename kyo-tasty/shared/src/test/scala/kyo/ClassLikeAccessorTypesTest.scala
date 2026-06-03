@@ -19,7 +19,7 @@ class ClassLikeAccessorTypesTest extends Test:
     private def makeClass(id: Int, name: String): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,
@@ -37,7 +37,7 @@ class ClassLikeAccessorTypesTest extends Test:
     private def makeMethod(id: Int, name: String): Tasty.Symbol.Method =
         Tasty.Symbol.Method(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,
@@ -53,7 +53,7 @@ class ClassLikeAccessorTypesTest extends Test:
     private def makeVal(id: Int, name: String): Tasty.Symbol.Val =
         Tasty.Symbol.Val(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,

@@ -19,7 +19,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     private def makeClass(id: Int, name: String): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,
@@ -37,7 +37,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     private def makeTrait(id: Int, name: String): Tasty.Symbol.Trait =
         Tasty.Symbol.Trait(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,
@@ -55,7 +55,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     private def makeObject(id: Int, name: String): Tasty.Symbol.Object =
         Tasty.Symbol.Object(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,
@@ -72,7 +72,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     private def makeMethod(id: Int, name: String): Tasty.Symbol.Method =
         Tasty.Symbol.Method(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,
@@ -88,7 +88,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     private def makeVal(id: Int, name: String): Tasty.Symbol.Val =
         Tasty.Symbol.Val(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,
@@ -101,7 +101,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     private def makeVar(id: Int, name: String): Tasty.Symbol.Var =
         Tasty.Symbol.Var(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,
@@ -114,7 +114,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     private def makeTypeAlias(id: Int, name: String): Tasty.Symbol.TypeAlias =
         Tasty.Symbol.TypeAlias(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,
@@ -127,7 +127,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     private def makeOpaqueType(id: Int, name: String): Tasty.Symbol.OpaqueType =
         Tasty.Symbol.OpaqueType(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,
@@ -141,7 +141,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     private def makeAbstractType(id: Int, name: String): Tasty.Symbol.AbstractType =
         Tasty.Symbol.AbstractType(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,
@@ -153,7 +153,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     private def makeTypeParam(id: Int, name: String): Tasty.Symbol.TypeParam =
         Tasty.Symbol.TypeParam(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,
@@ -164,7 +164,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     private def makeParameter(id: Int, name: String): Tasty.Symbol.Parameter =
         Tasty.Symbol.Parameter(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(6),
             Maybe.Absent,
@@ -174,7 +174,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
         )
 
     private def makePackage(id: Int, name: String, ownerId: Int): Tasty.Symbol.Package =
-        Tasty.Symbol.Package(SymbolId(id), Tasty.Name(name), Tasty.Flags.empty, SymbolId(ownerId), Chunk.empty)
+        Tasty.Symbol.Package(SymbolId(id), Tasty.Name.Unsafe.init(name), Tasty.Flags.empty, SymbolId(ownerId), Chunk.empty)
 
     private def buildFixture(using Frame): Tasty.Classpath < Sync =
         Sync.defer:

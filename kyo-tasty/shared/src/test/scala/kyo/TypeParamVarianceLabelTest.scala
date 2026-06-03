@@ -1,5 +1,6 @@
 package kyo
 
+import AllowUnsafe.embrace.danger
 import kyo.internal.tasty.symbol.SymbolId
 
 /** Phase 08 followup for W-05-02: exercises `TypeParam.varianceLabel`.
@@ -14,7 +15,7 @@ class TypeParamVarianceLabelTest extends Test:
     private def makeTypeParam(id: Int, v: Tasty.Variance): Tasty.Symbol.TypeParam =
         Tasty.Symbol.TypeParam(
             SymbolId(id),
-            Tasty.Name("T"),
+            Tasty.Name.Unsafe.init("T"),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,

@@ -55,7 +55,7 @@ class CommentsUnpicklerTest extends Test:
         Tasty.Symbol.makePlaceholder(
             Tasty.SymbolKind.Class,
             Tasty.Flags.empty,
-            Tasty.Name(nameStr)
+            Tasty.Name.Unsafe.init(nameStr)
         )
     end makeTestSymbol
 

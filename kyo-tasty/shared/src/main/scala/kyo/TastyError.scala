@@ -21,6 +21,16 @@ package kyo
   *
   * **Equality.** Cases derive `CanEqual` so two `TastyError` values can be compared with `==` without an
   * import; payload fields are compared structurally.
+  *
+  * **Why `enum`, not `KyoException`?** This is a deliberate departure from the project default. `KyoException`
+  * exists to enrich values that get thrown across an effect-as-throwable boundary (capturing a `Frame`,
+  * suppressing the stack trace, and switching on dev / prod for the formatted message). `TastyError` is the
+  * opposite of that: it is the payload of `Abort[TastyError]` and is never thrown. Every callsite that surfaces
+  * a failure uses `Abort.fail(TastyError.X)`; every callsite that observes a failure pattern-matches on a
+  * `Result[TastyError, A]` (or runs an `Abort.run`). Because no value of this type ever crosses the
+  * `Throwable` boundary, it does not need `Frame` plumbing, NoStackTrace, or dev-aware formatting; it needs to
+  * be a pure ADT that the compiler can check for exhaustive matching. Modelling it as an `enum` gives exactly
+  * that and nothing more, which is the kyo-philosophy-correct shape for errors carried on the effect row.
   */
 enum TastyError derives CanEqual:
 

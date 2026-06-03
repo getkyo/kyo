@@ -1,5 +1,6 @@
 package kyo
 
+import AllowUnsafe.embrace.danger
 import kyo.internal.tasty.symbol.SymbolId
 
 /** Phase 01 plan-mandated tests for the sealed-trait Symbol hierarchy.
@@ -21,7 +22,7 @@ class SymbolHierarchyTest extends Test:
     "Leaf 1: Symbol.Class constructs correctly and isClass/isClassLike are true" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Class(
             id = SymbolId(7),
-            name = Tasty.Name("Foo"),
+            name = Tasty.Name.Unsafe.init("Foo"),
             flags = Tasty.Flags.empty,
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,
@@ -54,7 +55,7 @@ class SymbolHierarchyTest extends Test:
     "Leaf 2: Symbol.Trait with Sealed flag: isSealed and openLevel correct" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Trait(
             id = SymbolId(1),
-            name = Tasty.Name("T"),
+            name = Tasty.Name.Unsafe.init("T"),
             flags = Tasty.Flags(Tasty.Flag.Sealed),
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,
@@ -86,7 +87,7 @@ class SymbolHierarchyTest extends Test:
     "Leaf 3: Symbol.Method constructs correctly with paramListIds" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Method(
             id = SymbolId(2),
-            name = Tasty.Name("foo"),
+            name = Tasty.Name.Unsafe.init("foo"),
             flags = Tasty.Flags.empty,
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,
@@ -116,7 +117,7 @@ class SymbolHierarchyTest extends Test:
     "Leaf 4: Symbol.Val with Lazy flag: isVal/isLazy/isTerm true; isMethod false" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Val(
             id = SymbolId(3),
-            name = Tasty.Name("x"),
+            name = Tasty.Name.Unsafe.init("x"),
             flags = Tasty.Flags(Tasty.Flag.Lazy),
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,
@@ -141,7 +142,7 @@ class SymbolHierarchyTest extends Test:
     "Leaf 5: Symbol.TypeAlias body is a Type value; isTypeAlias and isTypeLike are true" in {
         val sym: Tasty.Symbol = Tasty.Symbol.TypeAlias(
             id = SymbolId(4),
-            name = Tasty.Name("Alias"),
+            name = Tasty.Name.Unsafe.init("Alias"),
             flags = Tasty.Flags.empty,
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,
@@ -168,7 +169,7 @@ class SymbolHierarchyTest extends Test:
     "Leaf 6: Symbol.OpaqueType has correct body and bounds sentinels" in {
         val sym: Tasty.Symbol = Tasty.Symbol.OpaqueType(
             id = SymbolId(5),
-            name = Tasty.Name("Money"),
+            name = Tasty.Name.Unsafe.init("Money"),
             flags = Tasty.Flags(Tasty.Flag.Opaque),
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,
@@ -196,7 +197,7 @@ class SymbolHierarchyTest extends Test:
     "Leaf 7: Symbol.TypeParam variance is preserved for Co/Contra/Invariant" in {
         val co = Tasty.Symbol.TypeParam(
             id = SymbolId(10),
-            name = Tasty.Name("A"),
+            name = Tasty.Name.Unsafe.init("A"),
             flags = Tasty.Flags.empty,
             ownerId = SymbolId(0),
             sourcePosition = Maybe.Absent,
@@ -205,7 +206,7 @@ class SymbolHierarchyTest extends Test:
         )
         val contra = Tasty.Symbol.TypeParam(
             id = SymbolId(11),
-            name = Tasty.Name("B"),
+            name = Tasty.Name.Unsafe.init("B"),
             flags = Tasty.Flags.empty,
             ownerId = SymbolId(0),
             sourcePosition = Maybe.Absent,
@@ -214,7 +215,7 @@ class SymbolHierarchyTest extends Test:
         )
         val inv = Tasty.Symbol.TypeParam(
             id = SymbolId(12),
-            name = Tasty.Name("C"),
+            name = Tasty.Name.Unsafe.init("C"),
             flags = Tasty.Flags.empty,
             ownerId = SymbolId(0),
             sourcePosition = Maybe.Absent,
@@ -238,7 +239,7 @@ class SymbolHierarchyTest extends Test:
     "Leaf 8: Symbol.Parameter declaredType and defaultArgId are preserved" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Parameter(
             id = SymbolId(13),
-            name = Tasty.Name("x"),
+            name = Tasty.Name.Unsafe.init("x"),
             flags = Tasty.Flags.empty,
             ownerId = SymbolId(0),
             sourcePosition = Maybe.Absent,
@@ -265,7 +266,7 @@ class SymbolHierarchyTest extends Test:
     "Leaf 9: Symbol.Package memberIds and constant abstract fields are correct" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Package(
             id = SymbolId(14),
-            name = Tasty.Name("scala"),
+            name = Tasty.Name.Unsafe.init("scala"),
             flags = Tasty.Flags.empty,
             ownerId = SymbolId(0),
             memberIds = Chunk(SymbolId(100), SymbolId(101))
@@ -289,7 +290,7 @@ class SymbolHierarchyTest extends Test:
     "Leaf 10: Symbol.Unresolved has empty flags and Absent accessors" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Unresolved(
             id = SymbolId(-1),
-            name = Tasty.Name("<unresolved>"),
+            name = Tasty.Name.Unsafe.init("<unresolved>"),
             ownerId = SymbolId(-1)
         )
         assert(sym.flags.bits == Tasty.Flags.empty.bits)
@@ -308,7 +309,7 @@ class SymbolHierarchyTest extends Test:
     "Leaf 11: two Symbol.Class with same non-negative id compare equal (id-based equality)" in {
         val a: Tasty.Symbol = Tasty.Symbol.Class(
             id = SymbolId(5),
-            name = Tasty.Name("A"),
+            name = Tasty.Name.Unsafe.init("A"),
             flags = Tasty.Flags.empty,
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,
@@ -324,7 +325,7 @@ class SymbolHierarchyTest extends Test:
         )
         val b: Tasty.Symbol = Tasty.Symbol.Class(
             id = SymbolId(5),
-            name = Tasty.Name("B"),
+            name = Tasty.Name.Unsafe.init("B"),
             flags = Tasty.Flags.empty,
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,
@@ -349,8 +350,8 @@ class SymbolHierarchyTest extends Test:
     // Then: returns false (identity rule for id=-1 is preserved).
     // Pins: INV-002.
     "Leaf 12: two Symbol.Unresolved with id=-1 are not equal (reference equality at id=-1)" in {
-        val x: Tasty.Symbol = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name("u"), SymbolId(-1))
-        val y: Tasty.Symbol = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name("u"), SymbolId(-1))
+        val x: Tasty.Symbol = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name.Unsafe.init("u"), SymbolId(-1))
+        val y: Tasty.Symbol = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name.Unsafe.init("u"), SymbolId(-1))
         assert(x != y, "Two distinct Unresolved symbols with id=-1 must not be equal (reference equality rule)")
         succeed
     }

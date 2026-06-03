@@ -1,5 +1,7 @@
 package kyo
 
+import AllowUnsafe.embrace.danger
+
 /** Plan-mandated test for Phase 08 (leaf 174): grep audit confirming no flat `final case class Symbol ` declaration survives in
   * `kyo-tasty/shared/src/main`.
   *
@@ -18,7 +20,7 @@ class FlatSymbolGrepAuditTest extends Test:
         // Constructing a Class subtype must compile and produce a Symbol (not a flat case class).
         val sym: Tasty.Symbol = Tasty.Symbol.Unresolved(
             kyo.internal.tasty.symbol.SymbolId(-1),
-            Tasty.Name("<unresolved>"),
+            Tasty.Name.Unsafe.init("<unresolved>"),
             kyo.internal.tasty.symbol.SymbolId(-1)
         )
         assert(sym.isInstanceOf[Tasty.Symbol], "Unresolved must be a Symbol")

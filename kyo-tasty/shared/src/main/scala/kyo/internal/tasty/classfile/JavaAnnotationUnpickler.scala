@@ -84,7 +84,7 @@ object JavaAnnotationUnpickler:
         else
             Sync.defer(readU2(view)).map: nameIdx =>
                 pool.utf8(nameIdx).map: elemName =>
-                    val key = Tasty.Name(elemName)
+                    val key = Tasty.Name.Unsafe.init(elemName)
                     readElementValue(view, pool, interner, depth).map: value =>
                         readElementValuePairs(view, pool, interner, total, idx + 1, acc.append((key, value)), depth)
 
@@ -151,7 +151,7 @@ object JavaAnnotationUnpickler:
                         pool.utf8(typeNameIdx).map: typeDescriptor =>
                             pool.utf8(constNameIdx).map: constName =>
                                 val enumTypeSym = descriptorToUnresolvedSymbol(typeDescriptor)
-                                Tasty.JavaAnnotation.Value.EnumVal(enumTypeSym, Tasty.Name(constName))
+                                Tasty.JavaAnnotation.Value.EnumVal(enumTypeSym, Tasty.Name.Unsafe.init(constName))
 
                 case 'c' =>
                     // Class literal: cp -> Utf8 class descriptor e.g. "Ljava/lang/String;"
@@ -199,7 +199,7 @@ object JavaAnnotationUnpickler:
         SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name(fqn)
+            Tasty.Name.Unsafe.init(fqn)
         )
     end descriptorToUnresolvedSymbol
 

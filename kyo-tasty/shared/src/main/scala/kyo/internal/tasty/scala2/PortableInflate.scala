@@ -5,7 +5,13 @@ import kyo.AllowUnsafe
 /** Pure-Scala RFC 1950 (ZLIB) inflate. No JVM dependencies. */
 object PortableInflate:
 
-    final class InflateException(msg: String, val byteOffset: Long) extends RuntimeException(msg)
+    /** Internal sentinel thrown from the inflate hot loop and caught by the adjacent decoder, which converts it
+      * into a structured `TastyError.CorruptedFile` on the `Abort[TastyError]` row. Deliberately bypasses
+      * `KyoException` (no public-API crossing, no `Frame` available in the inflate inner loop) and uses
+      * `enableSuppression=false, writableStackTrace=false` to skip stack-trace materialisation on the throw path.
+      */
+    final class InflateException(msg: String, val byteOffset: Long)
+        extends RuntimeException(msg, null, false, false)
 
     /** Bit-level reader over a byte array. LSB-first per DEFLATE spec. */
     final private[kyo] class BitStream(buf: Array[Byte], var bitOffset: Long):

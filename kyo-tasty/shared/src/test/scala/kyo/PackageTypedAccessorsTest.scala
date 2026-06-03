@@ -26,7 +26,7 @@ class PackageTypedAccessorsTest extends Test:
     private def makeClass(id: Int, name: String): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(4),
             Maybe.Absent,
@@ -44,7 +44,7 @@ class PackageTypedAccessorsTest extends Test:
     private def makeTrait(id: Int, name: String): Tasty.Symbol.Trait =
         Tasty.Symbol.Trait(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(4),
             Maybe.Absent,
@@ -62,7 +62,7 @@ class PackageTypedAccessorsTest extends Test:
     private def makeObject(id: Int, name: String): Tasty.Symbol.Object =
         Tasty.Symbol.Object(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(4),
             Maybe.Absent,
@@ -79,7 +79,7 @@ class PackageTypedAccessorsTest extends Test:
     private def makeSubPkg(id: Int, name: String, ownerId: Int): Tasty.Symbol.Package =
         Tasty.Symbol.Package(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Chunk.empty
@@ -88,7 +88,7 @@ class PackageTypedAccessorsTest extends Test:
     private def makeRootPkg(id: Int, name: String, memberIds: Chunk[SymbolId]): Tasty.Symbol.Package =
         Tasty.Symbol.Package(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             memberIds

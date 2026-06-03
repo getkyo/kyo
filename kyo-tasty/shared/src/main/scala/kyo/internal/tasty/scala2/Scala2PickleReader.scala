@@ -488,7 +488,7 @@ object Scala2PickleReader:
         val anyRefSym = SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Class,
             Tasty.Flags(Tasty.Flag.Scala2, Tasty.Flag.JavaDefined),
-            Tasty.Name("AnyRef")
+            Tasty.Name.Unsafe.init("AnyRef")
         )
         Tasty.Type.Named(anyRefSym.id)
     end buildAnyRefParent

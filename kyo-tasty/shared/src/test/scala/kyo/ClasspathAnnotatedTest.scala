@@ -26,7 +26,7 @@ class ClasspathAnnotatedTest extends Test:
     private def makeAnnotClass(id: Int, name: String, fqnName: String): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,
@@ -44,7 +44,7 @@ class ClasspathAnnotatedTest extends Test:
     private def makeMethod(id: Int, name: String, ownerId: Int, anns: Chunk[Tasty.Annotation]): Tasty.Symbol.Method =
         Tasty.Symbol.Method(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -60,7 +60,7 @@ class ClasspathAnnotatedTest extends Test:
     private def makeVal(id: Int, name: String, ownerId: Int, anns: Chunk[Tasty.Annotation]): Tasty.Symbol.Val =
         Tasty.Symbol.Val(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -73,7 +73,7 @@ class ClasspathAnnotatedTest extends Test:
     private def makeClass(id: Int, name: String, anns: Chunk[Tasty.Annotation]): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name(name),
+            Tasty.Name.Unsafe.init(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,
@@ -98,13 +98,13 @@ class ClasspathAnnotatedTest extends Test:
             //   4 -> Class   "PlainA"      (ownerId = -1, no annotation)
             //   5 -> Method  "m2"          (ownerId = 4, no annotation)
 
-            val scalaPkg        = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("scala"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
+            val scalaPkg = Tasty.Symbol.Package(SymbolId(0), Tasty.Name.Unsafe.init("scala"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
             val deprecatedClass = makeAnnotClass(1, "deprecated", "scala.deprecated")
             // We build it with ownerId pointing to the scala package (id 0)
             // but makeAnnotClass ignores ownerId, so rebuild inline:
             val deprecatedClassWithOwner = Tasty.Symbol.Class(
                 SymbolId(1),
-                Tasty.Name("deprecated"),
+                Tasty.Name.Unsafe.init("deprecated"),
                 Tasty.Flags.empty,
                 SymbolId(0),
                 Maybe.Absent,

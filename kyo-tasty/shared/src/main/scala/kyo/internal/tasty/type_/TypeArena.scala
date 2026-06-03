@@ -124,6 +124,13 @@ object TypeArena:
     /** Maximum recursion depth for TypeArena.internRec before DepthExceededException is thrown. */
     val MaxDepth: Int = 1024
 
-    /** Thrown when TypeArena.internRec encounters type nesting deeper than MaxDepth. */
-    final class DepthExceededException(msg: String) extends RuntimeException(msg)
+    /** Thrown when TypeArena.internRec encounters type nesting deeper than MaxDepth.
+      *
+      * Internal sentinel: thrown from the recursive intern loop and caught by the adjacent type-pass
+      * driver, which converts it into a structured `TastyError.MalformedSection` on the `Abort[TastyError]`
+      * row. Deliberately bypasses `KyoException` (no public-API crossing) and uses
+      * `enableSuppression=false, writableStackTrace=false` to skip stack-trace materialisation on the throw path.
+      */
+    final class DepthExceededException(msg: String)
+        extends RuntimeException(msg, null, false, false)
 end TypeArena

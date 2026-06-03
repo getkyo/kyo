@@ -1,5 +1,6 @@
 package kyo
 
+import AllowUnsafe.embrace.danger
 import kyo.internal.tasty.symbol.SymbolId
 
 /** Plan-mandated tests for Phase 08 (leaves 165-169): Position.show, Pickle.show, Flag.show, Flags.isEmpty, Name.isEmpty.
@@ -61,8 +62,8 @@ class SmallTypeShowTest extends Test:
     // When: .isEmpty on each
     // Then: true and false respectively
     "Leaf 169: Name.isEmpty returns true for empty and false for non-empty" in run {
-        val emptyName = Tasty.Name("")
-        val fooName   = Tasty.Name("Foo")
+        val emptyName = Tasty.Name.Unsafe.init("")
+        val fooName   = Tasty.Name.Unsafe.init("Foo")
         // The isEmpty extension is defined in object Name; imported via implicit scope.
         assert(emptyName.isEmpty, "Name(\"\").isEmpty must be true")
         assert(!fooName.isEmpty, "Name(\"Foo\").isEmpty must be false")
