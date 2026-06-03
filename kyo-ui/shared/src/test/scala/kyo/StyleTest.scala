@@ -676,6 +676,103 @@ class StyleTest extends Test:
         }
     }
 
+    "display" - {
+        "block" in {
+            val s = Style.display(Display.block)
+            assert(s.nonEmpty)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.block))
+            assert(s.toCss == "display: block;")
+        }
+
+        "inline" in {
+            val s = Style.display(Display.inline)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.inline))
+            assert(s.toCss == "display: inline;")
+        }
+
+        "inlineBlock" in {
+            val s = Style.display(Display.inlineBlock)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.inlineBlock))
+            assert(s.toCss == "display: inline-block;")
+        }
+
+        "listItem" in {
+            val s = Style.display(Display.listItem)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.listItem))
+            assert(s.toCss == "display: list-item;")
+        }
+
+        "block convenience" in {
+            assert(Style.block.props(0) == Style.Prop.DisplayProp(Display.block))
+            assert(Style.block.toCss == "display: block;")
+        }
+
+        "inline convenience" in {
+            assert(Style.inline.props(0) == Style.Prop.DisplayProp(Display.inline))
+            assert(Style.inline.toCss == "display: inline;")
+        }
+
+        "inlineBlock convenience" in {
+            assert(Style.inlineBlock.props(0) == Style.Prop.DisplayProp(Display.inlineBlock))
+            assert(Style.inlineBlock.toCss == "display: inline-block;")
+        }
+
+        "listItem convenience" in {
+            assert(Style.listItem.props(0) == Style.Prop.DisplayProp(Display.listItem))
+            assert(Style.listItem.toCss == "display: list-item;")
+        }
+
+        "selector overload" in {
+            val s = Style.display(_.inline)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.inline))
+        }
+
+        "dedup keeps last write" in {
+            val s = Style.block.inline
+            assert(s.props.size == 1)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.inline))
+            assert(s.toCss == "display: inline;")
+        }
+
+        "enum values" in {
+            assert(Display.block != Display.inline)
+            assert(Display.inline != Display.inlineBlock)
+            assert(Display.inlineBlock != Display.listItem)
+            assert(Display.listItem != Display.block)
+        }
+    }
+
+    "listStyle" - {
+        "disc" in {
+            val s = Style.listStyle(ListStyle.disc)
+            assert(s.props(0) == Style.Prop.ListStyleProp(ListStyle.disc))
+            assert(s.toCss == "list-style-type: disc;")
+        }
+
+        "decimal" in {
+            val s = Style.listStyle(ListStyle.decimal)
+            assert(s.props(0) == Style.Prop.ListStyleProp(ListStyle.decimal))
+            assert(s.toCss == "list-style-type: decimal;")
+        }
+
+        "none" in {
+            val s = Style.listStyle(ListStyle.none)
+            assert(s.props(0) == Style.Prop.ListStyleProp(ListStyle.none))
+            assert(s.toCss == "list-style-type: none;")
+        }
+
+        "selector overload" in {
+            val s = Style.listStyle(_.decimal)
+            assert(s.props(0) == Style.Prop.ListStyleProp(ListStyle.decimal))
+        }
+
+        "enum values" in {
+            assert(ListStyle.disc != ListStyle.decimal)
+            assert(ListStyle.decimal != ListStyle.none)
+            assert(ListStyle.none != ListStyle.disc)
+        }
+    }
+
     "flex grow/shrink" - {
         "flexGrow" in {
             val s = Style.flexGrow(2.0)
@@ -876,6 +973,18 @@ class StyleTest extends Test:
     "companion factory methods for new props" - {
         "position" in {
             assert(Style.position(Position.flow).props(0) == Style.empty.position(Position.flow).props(0))
+        }
+
+        "display" in {
+            assert(Style.display(Display.block).props(0) == Style.empty.display(Display.block).props(0))
+            assert(Style.block.props(0) == Style.empty.block.props(0))
+            assert(Style.inline.props(0) == Style.empty.inline.props(0))
+            assert(Style.inlineBlock.props(0) == Style.empty.inlineBlock.props(0))
+            assert(Style.listItem.props(0) == Style.empty.listItem.props(0))
+        }
+
+        "listStyle" in {
+            assert(Style.listStyle(ListStyle.disc).props(0) == Style.empty.listStyle(ListStyle.disc).props(0))
         }
 
         "flexGrow" in {

@@ -192,6 +192,15 @@ private[kyo] object CssStyleRenderer:
                 case Position.relative => "position: relative;"
                 case Position.dropdown => "position: absolute; top: 100%; right: 0; z-index: 50;"
                 case Position.sticky   => "position: sticky; top: 0; z-index: 100;"
+        case DisplayProp(v) => v match
+                case Display.block       => "display: block;"
+                case Display.inline      => "display: inline;"
+                case Display.inlineBlock => "display: inline-block;"
+                case Display.listItem    => "display: list-item;"
+        case ListStyleProp(v) => v match
+                case ListStyle.disc    => "list-style-type: disc;"
+                case ListStyle.decimal => "list-style-type: decimal;"
+                case ListStyle.none    => "list-style-type: none;"
         case HiddenProp        => "display: none;"
         case FlexGrowProp(v)   => s"flex-grow: ${fmt(v)};"
         case FlexShrinkProp(v) => s"flex-shrink: ${fmt(v)};"

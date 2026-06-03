@@ -207,7 +207,12 @@ object SiteApp:
     end searchResults
 
     private def resultList(hits: Chunk[DocsSearch.Hit], active: Int)(using Frame): UI =
-        UI.div.cssClass("search-results")(
+        // The element stays in the tree on the empty query for SSG<->bundle hydration parity, but an
+        // empty dropdown would otherwise paint a bare card (its bg/border/padding/shadow) as a faint
+        // pill under the header. `hidden` when there are no hits makes the reset's
+        // `[hidden]{display:none!important}` collapse it to nothing; a non-empty query renders the
+        // card as before. Both the SSG and bundle paths call this same function, so parity holds.
+        UI.div.cssClass("search-results").hidden(hits.isEmpty)(
             hits.toSeq.zipWithIndex.map { case (hit, i) =>
                 val base          = UI.a.cssClass("search-result")
                 val row           = if i == active then base.cssClass("search-result-active") else base

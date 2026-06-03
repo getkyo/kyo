@@ -362,6 +362,28 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def position(v: Position): Style                  = appendProp(Prop.PositionProp(v))
     def position(f: Position.type => Position): Style = position(f(Position))
 
+    // Display
+
+    /** Sets the CSS `display` mode, opting an element out of the default flex layout into normal
+      * document flow (`block`/`inline`/`inline-block`) or list-item rendering. Use this for flowing
+      * prose where inline runs must wrap within a line rather than stack as flex children.
+      */
+    def display(v: Display): Style                 = appendProp(Prop.DisplayProp(v))
+    def display(f: Display.type => Display): Style = display(f(Display))
+    def block: Style                               = display(Display.block)
+    def inline: Style                              = display(Display.inline)
+    def inlineBlock: Style                         = display(Display.inlineBlock)
+    def listItem: Style                            = display(Display.listItem)
+
+    // List marker
+
+    /** Sets the CSS `list-style-type` marker for a list (`disc`/`decimal`/`none`). The base reset
+      * suppresses markers with `list-style: none`, so a flowing prose list restores them by setting
+      * this back to `disc` (unordered) or `decimal` (ordered) on its `ul`/`ol`.
+      */
+    def listStyle(v: ListStyle): Style                   = appendProp(Prop.ListStyleProp(v))
+    def listStyle(f: ListStyle.type => ListStyle): Style = listStyle(f(ListStyle))
+
     // Flex grow/shrink
 
     def flexGrow(v: Double): Style   = appendProp(Prop.FlexGrowProp(math.max(0.0, v)))
@@ -534,6 +556,14 @@ object Style:
     def translate(x: Length.Px | Length.Pct, y: Length.Px | Length.Pct): Style = empty.translate(x, y)
     def position(v: Position): Style                                           = empty.position(v)
     def position(f: Position.type => Position): Style                          = empty.position(f)
+    def display(v: Display): Style                                             = empty.display(v)
+    def display(f: Display.type => Display): Style                             = empty.display(f)
+    def block: Style                                                           = empty.block
+    def inline: Style                                                          = empty.inline
+    def inlineBlock: Style                                                     = empty.inlineBlock
+    def listItem: Style                                                        = empty.listItem
+    def listStyle(v: ListStyle): Style                                         = empty.listStyle(v)
+    def listStyle(f: ListStyle.type => ListStyle): Style                       = empty.listStyle(f)
     def flexGrow(v: Double): Style                                             = empty.flexGrow(v)
     def flexShrink(v: Double): Style                                           = empty.flexShrink(v)
     def flexBasis(v: Length): Style                                            = empty.flexBasis(v)
@@ -716,6 +746,25 @@ object Style:
     enum Position derives CanEqual:
         case flow, overlay, relative, dropdown, sticky
 
+    /** Maps to the CSS `display` property for opting out of the default flex layout.
+      *
+      *   - `block`: a block-level box (`display: block`) that stacks vertically and fills its line.
+      *   - `inline`: an inline box (`display: inline`) that flows within a line of text and wraps with
+      *     it, so inline runs (code, links, emphasis) sit within a sentence instead of stacking.
+      *   - `inlineBlock`: an inline-level box that still honors width/height and padding
+      *     (`display: inline-block`), used for inline pills that need box metrics yet flow in a line.
+      *   - `listItem`: a list item (`display: list-item`) so the element renders its list marker.
+      */
+    enum Display derives CanEqual:
+        case block, inline, inlineBlock, listItem
+
+    /** Maps to the CSS `list-style-type` property: the marker a `list-item` renders. `disc` is the
+      * filled bullet for unordered lists, `decimal` the number for ordered lists, `none` suppresses
+      * the marker (the base reset default).
+      */
+    enum ListStyle derives CanEqual:
+        case disc, decimal, none
+
     /** Direction of a background gradient (the `to ...` keyword of a CSS `linear-gradient`). */
     enum GradientDirection derives CanEqual:
         case toRight, toLeft, toTop, toBottom, toTopRight, toTopLeft, toBottomRight, toBottomLeft
@@ -780,6 +829,10 @@ object Style:
         case TranslateProp(x: Length, y: Length)
         // Position
         case PositionProp(value: Position)
+        // Display
+        case DisplayProp(value: Display)
+        // List marker
+        case ListStyleProp(value: ListStyle)
         // Visibility
         case HiddenProp
         // Flex grow/shrink

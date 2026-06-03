@@ -627,13 +627,18 @@ object WebsiteStyles:
                     .bg(_.variable("bg")).borderRight(1.px, _.variable("line-soft"))
                     .padding(22.px, 14.px, 60.px, 24.px)
             )
+            // sidebar-nav is a <nav>, which the base reset gives align-items:center; Style.column
+            // flips the direction but leaves the center alignment, so each group would center at a
+            // different x by its content width (the "misaligned menu"). align(_.stretch) makes every
+            // group fill the sidebar width and share one left edge, and keeps the active-item
+            // highlight full-width rather than shrinking it to the label.
             .rule(
                 "sidebar-nav",
-                Style.column.gap(4.px)
+                Style.column.align(_.stretch).gap(4.px)
             )
             .rule(
                 "sidebar-group",
-                Style.column.gap(2.px).margin(0.px, 0.px, 20.px, 0.px)
+                Style.column.align(_.stretch).gap(2.px).margin(0.px, 0.px, 20.px, 0.px)
             )
             .rule(
                 "sidebar-group-name",
@@ -725,49 +730,105 @@ object WebsiteStyles:
     // ---- Docs: prose (content article), callouts, blockquote, tables ----
     private def docsProse: Stylesheet =
         Stylesheet.empty
+            // Document flow for the markdown article. The kyo-ui base reset makes EVERY element
+            // display:flex (block tags flex-column, inline tags flex-row), which shatters flowing
+            // prose: a paragraph's inline code/links/emphasis stack as full-width rows, code-block
+            // token spans stack vertically, and list items lose their markers. These rules opt the
+            // article back into normal CSS flow: block-level boxes for paragraphs/headings/lists/
+            // pre/tables, and inline boxes for the runs (links, spans, emphasis, inline code) so they
+            // wrap WITHIN a line. The article lives inside .docs-content; descendant rules emitted
+            // after the base reset already win the cascade, so display:inline overrides display:flex.
+            .rule(
+                Selector.cls("docs-content").descendant(Selector.tag("h1")),
+                Style.block
+            )
             // article headings + paragraphs (the transpiled content lives inside docs-content)
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("h2")),
-                Style.fontFamily(Style.FontFamily.Custom("var(--serif)")).fontSize(32.px)
+                Style.block.fontFamily(Style.FontFamily.Custom("var(--serif)")).fontSize(32.px)
                     .fontWeight(_.w600).letterSpacing(Length.Em(-0.01)).lineHeight(1.16)
                     .margin(0.px, 0.px, 4.px, 0.px).color(_.variable("ink"))
             )
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("h3")),
-                Style.fontSize(19.px).fontWeight(_.w700).letterSpacing(Length.Em(-0.005)).color(_.variable("text"))
+                Style.block.fontSize(19.px).fontWeight(_.w700).letterSpacing(Length.Em(-0.005)).color(_.variable("text"))
                     .margin(42.px, 0.px, 0.px, 0.px)
             )
             .rule(
-                Selector.cls("docs-content").descendant(Selector.tag("p")),
-                Style.color(_.variable("ink-prose")).margin(17.px, 0.px, 0.px, 0.px).fontSize(16.5.px).lineHeight(1.78)
+                Selector.cls("docs-content").descendant(Selector.tag("h4")),
+                Style.block.fontSize(16.px).fontWeight(_.w700).color(_.variable("text"))
+                    .margin(28.px, 0.px, 0.px, 0.px)
             )
             .rule(
+                Selector.cls("docs-content").descendant(Selector.tag("p")),
+                Style.block.color(_.variable("ink-prose")).margin(17.px, 0.px, 0.px, 0.px).fontSize(16.5.px).lineHeight(1.78)
+            )
+            // inline runs flow within a line of text (links, bold/italic spans, inline images)
+            .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("a")),
-                Style.color(_.variable("accent")).fontWeight(_.w500)
+                Style.inline.color(_.variable("accent")).fontWeight(_.w500)
                     .hover(_.underline)
             )
             .rule(
-                Selector.cls("docs-content").descendant(Selector.tag("li")),
-                Style.color(_.variable("ink-prose")).lineHeight(1.7).fontSize(16.px)
-                    .padding(0.px, 0.px, 0.px, 24.px).position(_.flow)
+                Selector.cls("docs-content").descendant(Selector.tag("span")),
+                Style.inline
             )
-            // inline code in prose
+            .rule(
+                Selector.cls("docs-content").descendant(Selector.tag("strong")),
+                Style.inline.fontWeight(_.w700).color(_.variable("ink"))
+            )
+            .rule(
+                Selector.cls("docs-content").descendant(Selector.tag("em")),
+                Style.inline.fontStyle(_.italic)
+            )
+            // lists: ul/ol are block boxes that carry their markers via list-style-type (the reset
+            // suppressed markers with list-style:none); li renders as a list-item so the bullet/number
+            // shows. padding-left indents the markers and nests sublists one level deeper.
+            .rule(
+                Selector.cls("docs-content").descendant(Selector.tag("ul")),
+                Style.block.listStyle(_.disc).padding(0.px, 0.px, 0.px, 26.px).margin(14.px, 0.px, 0.px, 0.px)
+            )
+            .rule(
+                Selector.cls("docs-content").descendant(Selector.tag("ol")),
+                Style.block.listStyle(_.decimal).padding(0.px, 0.px, 0.px, 26.px).margin(14.px, 0.px, 0.px, 0.px)
+            )
+            // a nested list tightens its top margin and indents under its parent item
+            .rule(
+                Selector.cls("docs-content").descendant(Selector.tag("li")).descendant(Selector.tag("ul")),
+                Style.margin(4.px, 0.px, 0.px, 0.px)
+            )
+            .rule(
+                Selector.cls("docs-content").descendant(Selector.tag("li")),
+                Style.listItem.color(_.variable("ink-prose")).lineHeight(1.7).fontSize(16.px)
+                    .margin(4.px, 0.px, 0.px, 0.px)
+            )
+            // inline code in prose: an inline-block pill so its padding/border render while it still
+            // flows within the sentence (a bare inline box would clip the vertical padding).
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("code")),
-                Style.fontFamily(Style.FontFamily.Custom("var(--mono)")).fontSize(0.84.em).color(_.variable("text"))
+                Style.inlineBlock.fontFamily(Style.FontFamily.Custom("var(--mono)")).fontSize(0.84.em).color(_.variable("text"))
                     .bg(_.variable("accent-ghost")).border(1.px, _.variable("accent-line"))
                     .padding(1.px, 6.px).rounded(5.px)
             )
-            // fenced code blocks
+            // fenced code blocks: a block <pre> with white-space:pre (UA default) preserves newlines;
+            // the inner <code> is block too, and its token spans flow inline so each source line reads
+            // left-to-right with the line breaks intact.
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("pre")),
-                Style.column.bg(_.variable("ink-section")).rounded(12.px).padding(18.px, 20.px)
+                Style.block.bg(_.variable("ink-section")).rounded(12.px).padding(18.px, 20.px)
                     .margin(24.px, 0.px, 0.px, 0.px).overflow(_.auto)
             )
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("pre")).descendant(Selector.tag("code")),
-                Style.fontFamily(Style.FontFamily.Custom("var(--mono)")).fontSize(13.5.px).lineHeight(1.7)
+                Style.block.fontFamily(Style.FontFamily.Custom("var(--mono)")).fontSize(13.5.px).lineHeight(1.7)
                     .color(darkText).bg(Color.transparent).border(0.px, Color.transparent).padding(0.px)
+            )
+            // token spans inside a code block flow horizontally on each line (they inherit the
+            // article span->inline rule, but the pre-code descendant rule pins it explicitly so the
+            // tokens never revert to stacked flex children regardless of selector specificity).
+            .rule(
+                Selector.cls("docs-content").descendant(Selector.tag("pre")).descendant(Selector.tag("span")),
+                Style.inline
             )
             // tables
             .rule(
