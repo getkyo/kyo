@@ -478,7 +478,7 @@ object TypeUnpickler:
                 ctx.session match
                     case s: DecodeSession =>
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
-                    case _ =>
+                    case null =>
                         // F-G-007 pass B: no session context -- use interned sentinel instead of per-fqn name
                         Tasty.Type.Named(sentinelUnresolved.id)
                 end match
@@ -489,7 +489,7 @@ object TypeUnpickler:
                 ctx.session match
                     case s: DecodeSession =>
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
-                    case _ =>
+                    case null =>
                         // F-G-007 pass B: no session context -- use interned sentinel instead of per-fqn name
                         Tasty.Type.Named(sentinelUnresolved.id)
                 end match
@@ -560,7 +560,7 @@ object TypeUnpickler:
                                     case None =>
                                         Tasty.Type.ThisType(sentinelUnresolved.id)
                                 end match
-                            case _ =>
+                            case null =>
                                 Tasty.Type.ThisType(sentinelUnresolved.id)
                         end match
                 end match
@@ -643,7 +643,7 @@ object TypeUnpickler:
                         import kyo.Tasty.SymbolId.value
                         ctx.session match
                             case s: DecodeSession => s.unresolvedIdToFqn.getOrElse(id.value, null)
-                            case _                => null
+                            case null             => null
                     case _ => null
                 TypeOps.applied(tycon, Chunk.from(args), fqnHint)
 
@@ -711,7 +711,7 @@ object TypeUnpickler:
                         import kyo.Tasty.SymbolId.value
                         ctx.session match
                             case s: DecodeSession => s.unresolvedIdToFqn.getOrElse(id.value, null)
-                            case _                => null
+                            case null             => null
                     case _ => null
                 TypeOps.andType(left, right, namedFqn(left), namedFqn(right))
 
@@ -815,7 +815,7 @@ object TypeUnpickler:
                                 simpleName
                         val fullFqn = if qualFqn.nonEmpty then qualFqn + "." + simpleName else simpleName
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fullFqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
-                    case _ =>
+                    case null =>
                         // F-G-007 pass B: no session context -- use interned sentinel
                         Tasty.Type.Named(sentinelUnresolved.id)
                 end match
@@ -884,13 +884,13 @@ object TypeUnpickler:
                     case Tasty.Type.Named(sid) if sid.value < -1 =>
                         ctx.session match
                             case s: DecodeSession => s.unresolvedIdToFqn.getOrElse(sid.value, "")
-                            case _                => ""
+                            case null             => ""
                     case _ => ""
                 val fullFqn = if qualFqn.nonEmpty then qualFqn + "." + nm else nm
                 ctx.session match
                     case s: DecodeSession =>
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fullFqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
-                    case _ =>
+                    case null =>
                         Tasty.Type.Named(sentinelUnresolved.id)
                 end match
 
@@ -932,13 +932,13 @@ object TypeUnpickler:
                     case Tasty.Type.Named(sid) if sid.value < -1 =>
                         ctx.session match
                             case s: DecodeSession => s.unresolvedIdToFqn.getOrElse(sid.value, "")
-                            case _                => ""
+                            case null             => ""
                     case _ => ""
                 val fullFqn = if qualFqn.nonEmpty then qualFqn + "." + nm else nm
                 ctx.session match
                     case s: DecodeSession =>
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fullFqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
-                    case _ =>
+                    case null =>
                         // F-G-007 pass B: no session context -- use interned sentinel
                         Tasty.Type.Named(sentinelUnresolved.id)
                 end match

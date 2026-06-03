@@ -1996,7 +1996,7 @@ object Tasty:
                             while k < psLn && !done do
                                 ps(k) match
                                     case pcl: Symbol.ClassLike => done = visit(pcl)
-                                    case _                     => ()
+                                    case null                  => ()
                                 k += 1
                             end while
                             done
@@ -2009,7 +2009,7 @@ object Tasty:
                 while pi < psLn && !done0 do
                     ps(pi) match
                         case pcl: Symbol.ClassLike => done0 = visit(pcl)
-                        case _                     => ()
+                        case null                  => ()
                     pi += 1
                 end while
                 found
@@ -3384,7 +3384,7 @@ object Tasty:
         def collisionReport: Chunk[Classpath.FqnCollision] =
             diagnostics.flatMap:
                 case c: Classpath.FqnCollision => Chunk(c)
-                case _                         => Chunk.empty
+                case null                      => Chunk.empty
 
         // ── typed Classpath-wide all* aggregations ──
 
