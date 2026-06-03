@@ -46,24 +46,36 @@ class RealClasspathFidelityTest extends Test:
         succeed
     }
 
-    // INV-001 leaf 2 (Phase 01): forty-five-pending-leaves-at-phase-01
-    // Given: the full fidelity test suite at the Phase 01 commit
-    // When: test runner reports pending counts
-    // Then: pending count is non-negative (structure check; phases reduce from 51 to 0 over time)
-    // Pins: INV-001 producer
+    // INV-001 leaf 2 (Phase 01, updated 2026-06-02): zero-pending-leaves-after-backlog-resolution
+    // Given: the fidelity-1 test suite at HEAD (Phase 01 + all subsequent phases)
+    // When: scanning shared/src/test + jvm/src/test for `in pending` markers
+    // Then: pending count is zero; the Phase 01 backlog of 51 leaves was reduced to 0 across all phases
+    //       (Fidelity-2 backlog was resolved 2026-06-02; Fidelity-1 backlog cleared by earlier phases).
+    //       The assertion now guards against the backlog re-growing silently rather than gating its initial state.
+    // Pins: INV-001 (no PENDING leaf may be reintroduced without explicit triage).
     // JVM-only (exception condition 1: dev tool, user is a developer on their dev machine): the leaf walks the
-    //   source tree to count pending markers (developer-time discipline guard, not a runtime decoder property).
+    //   worktree source tree to count pending markers (developer-time discipline guard, not a runtime decoder property).
     //   JS/Native test runs have no access to the worktree source tree.
-    "INV-001: at least 45 pending fidelity leaves exist at the Phase 01 commit" taggedAs jvmOnly in run {
+    "INV-001 (Phase 01, updated 2026-06-02): zero pending fidelity leaves remain after backlog resolution" taggedAs jvmOnly in run {
         val worktreeRoot = TestClasspaths2.findWorktreeRoot
-        val testDir      = s"$worktreeRoot/kyo-tasty/jvm/src/test/scala/kyo"
-        val allTestFiles = TestClasspaths2.walkFilesWithSuffix(testDir, ".scala")
+        val sharedDir    = s"$worktreeRoot/kyo-tasty/shared/src/test/scala/kyo"
+        val jvmDir       = s"$worktreeRoot/kyo-tasty/jvm/src/test/scala/kyo"
+        // Filter to *FidelityTest.scala (Fidelity-1 suffix only). Sibling RealClasspathFidelity2Test INV-001
+        // covers *Fidelity2Test.scala via TestClasspaths2.pendingLeafCount.
+        val allTestFiles =
+            (TestClasspaths2.walkFilesWithSuffix(sharedDir, "FidelityTest.scala")
+                ++ TestClasspaths2.walkFilesWithSuffix(jvmDir, "FidelityTest.scala"))
+                .filter(p => !p.endsWith("Fidelity2Test.scala"))
+        // Match the ScalaTest pending pattern at end-of-line: `"name" in pending` followed by newline.
+        // The trailing newline excludes docstring matches (e.g. "remain pending until Phase 13") and the
+        // scanner's own source (string literals like `"\" in pending"` are quote-terminated, not newline).
         var pendingCount = 0
+        val needle       = "\" in pending\n"
         allTestFiles.foreach: p =>
             val src = TestClasspaths2.readFileAsString(p)
             var idx = 0
             while idx < src.length do
-                val found = src.indexOf("in pending", idx)
+                val found = src.indexOf(needle, idx)
                 if found == -1 then idx = src.length
                 else
                     pendingCount += 1
@@ -71,8 +83,9 @@ class RealClasspathFidelityTest extends Test:
                 end if
             end while
         assert(
-            pendingCount >= 0,
-            s"Pending count must be non-negative; found $pendingCount"
+            pendingCount == 0,
+            s"Expected 0 pending fidelity-1 leaves (backlog resolved), found $pendingCount. " +
+                s"If a new pending is genuinely necessary, document a verdict (A/B/C/D) and update this threshold."
         )
         succeed
     }
