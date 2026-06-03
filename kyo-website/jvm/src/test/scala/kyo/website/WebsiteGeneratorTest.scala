@@ -634,6 +634,46 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
+    // ---- Test AF-11: escJson escapes control chars (newline, tab, CR, SOH) so JSON-LD stays valid ----
+
+    "escJson escapes control chars (newline, tab, carriage-return, SOH 0x01) in JSON-LD (AF-11)" in run {
+        // Inject a label with embedded control characters into the versions.json pipeline.
+        // The label value uses Scala escape sequences so scalac embeds the actual control chars:
+        // \n = 0x0A (LF), \t = 0x09 (tab), \r = 0x0D (CR), \u0001 = 0x01 (SOH).
+        val ctrlVersion = WebsiteContent(
+            "intro",
+            Chunk.empty,
+            WebsiteVersion("v1.0.0", "line1\nline2\ttabbed\rCR\u0001raw", false)
+        )
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(ctrlVersion), out, bundleDir)
+            json      <- readFile(out / "versions.json")
+        yield
+            // Extract the label value by finding the "label": " key and reading until the next
+            // unescaped closing quote. This avoids confusion with the structural newlines in
+            // the surrounding JSON array formatting.
+            val labelKey = "\"label\": \""
+            val lk       = json.indexOf(labelKey)
+            assert(lk >= 0, s"label key not found in versions.json: $json")
+            val vs = lk + labelKey.length
+            // Scan forward until the closing unescaped double-quote.
+            var i     = vs
+            var label = ""
+            while i < json.length && json.charAt(i) != '"' do
+                i += 1
+            label = json.substring(vs, i)
+            assert(label.contains("\\n"), s"LF must be escaped as \\n in label: $label")
+            assert(label.contains("\\t"), s"tab must be escaped as \\t in label: $label")
+            assert(label.contains("\\r"), s"CR must be escaped as \\r in label: $label")
+            assert(label.contains("\\u0001"), s"SOH must be escaped as \\u0001 in label: $label")
+            assert(!label.contains("\n"), s"literal LF must not appear in label value: $label")
+            assert(!label.contains("\t"), s"literal tab must not appear in label value: $label")
+            assert(!label.contains("\r"), s"literal CR must not appear in label value: $label")
+        end for
+    }
+
     // ---- Test: boot island round-trip (emit -> parse seeds the SPA) ----
 
     "docs page embeds #docs-island + #versions-island that parse back to seeded content" in run {

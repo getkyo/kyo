@@ -12,6 +12,11 @@ import scala.concurrent.ExecutionContext
   * These leaves exercise the actual classifier the nav fiber dispatches on, with no DOM, no fetch
   * stub, and no `Async`. They lock the AF-4 (unknown multi-segment slug) and AF-5 (island version
   * tag in `knownPrefixes`) robustness fixes against regression.
+  *
+  * AF-12 hardening: `knownPrefixes` and `knownSlugs` are derived via the real
+  * `WebsiteBundleMain.knownPrefixesOf` / `knownSlugsOf` helpers rather than being reconstructed
+  * locally. A regression in either derivation (e.g. removing the `+ island.content.version.tag`
+  * seed) directly fails the tests that call those helpers.
   */
 class RouterRobustnessTest extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoCoreTest:
 
@@ -24,8 +29,29 @@ class RouterRobustnessTest extends AsyncFreeSpec with NonImplicitAssertions with
     private def segmentsOf(route: String): Array[String] =
         route.split('/').filter(_.nonEmpty)
 
-    private val knownSlugs: Set[String]    = Set("kyo-core", "kyo-data")
-    private val knownPrefixes: Set[String] = Set("latest", "v1.0.0-RC2")
+    // A minimal island seeded with two known module slugs and a specific version tag.
+    private val islandVersion = WebsiteVersion("v1.0.0-RC2", "1.0.0-RC2", false)
+    private val islandModules = Chunk(
+        WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true)),
+        WebsiteModule("kyo-data", "Foundation", "kyo-data", "", WebsiteModule.Platforms(true, true, true))
+    )
+    private val islandContent = WebsiteContent(
+        "intro",
+        Chunk(WebsiteContent.Group("Foundation", islandModules)),
+        islandVersion
+    )
+    private val island = DocsClient.DocsIsland(islandContent, Chunk.empty, "")
+
+    // A versions list containing the island's own tag (the normal case when the versions island is
+    // present in the DOM).
+    private val versionsWithTag: Chunk[WebsiteVersion] =
+        Chunk(islandVersion)
+
+    // Derive the sets via the REAL helpers (AF-12): any regression in `knownPrefixesOf` or
+    // `knownSlugsOf` (e.g. removing the `+ island.content.version.tag` seed) directly fails the
+    // tests below.
+    private val knownPrefixes: Set[String] = WebsiteBundleMain.knownPrefixesOf(island, versionsWithTag)
+    private val knownSlugs: Set[String]    = WebsiteBundleMain.knownSlugsOf(island)
 
     // AF-4 reproduce: a multi-segment route whose last segment is NOT a known module slug must
     // classify as OffTree (full-navigate to a clean 404), NOT Module (fetch a missing content.md into
@@ -86,33 +112,54 @@ class RouterRobustnessTest extends AsyncFreeSpec with NonImplicitAssertions with
 
     // AF-5: when the versions island is absent the version set is empty, but the seeded docs island's
     // own version tag must still be in knownPrefixes so a nav to /<islandTag>/ classifies as Intro,
-    // not OffTree. This mirrors the `+ island.content.version.tag` seeding in WebsiteBundleMain.build.
+    // not OffTree. This exercises `knownPrefixesOf` directly (AF-12): removing the
+    // `+ island.content.version.tag` seed from that helper causes the assertion on `noIslandPrefixes`
+    // below to pass but the `Intro` assertion to fail, catching the regression.
     "island version tag is in knownPrefixes even when the versions island is absent (AF-5)" in {
-        // Simulate: versions island absent -> versions = Chunk.empty -> the version set is empty.
-        val versionsFromIsland: Set[String] = Set.empty
-        val islandVersionTag                = "v1.0.0-RC2"
-        val LatestPrefix                    = "latest"
+        val islandTag = islandVersion.tag
 
-        // Pre-fix knownPrefixes = Set("latest") would omit the island tag.
-        val knownPrefixesOld = versionsFromIsland + LatestPrefix
-        assert(!knownPrefixesOld.contains(islandVersionTag), "pre-fix: island tag absent from the version-only set")
+        // Simulate: versions island absent -> versions = Chunk.empty -> the version set has no tags.
+        val emptyVersionsIsland = Chunk.empty[WebsiteVersion]
+        val noIslandPrefixes    = WebsiteBundleMain.knownPrefixesOf(island, emptyVersionsIsland)
 
-        // Post-fix: the island tag is seeded in.
-        val knownPrefixesNew = versionsFromIsland + LatestPrefix + islandVersionTag
-        assert(knownPrefixesNew.contains(islandVersionTag), "post-fix: island tag must be in knownPrefixes")
+        // The set must still contain the island's own tag (AF-5 fix).
+        assert(
+            noIslandPrefixes.contains(islandTag),
+            s"island tag '$islandTag' must be in knownPrefixes even when versions island is absent"
+        )
+        assert(
+            noIslandPrefixes.contains("latest"),
+            "knownPrefixes must always contain 'latest'"
+        )
 
-        // A nav to /v1.0.0-RC2/ now classifies as Intro, not OffTree.
-        val kind = WebsiteBundleMain.classifyRoute(segmentsOf("/v1.0.0-RC2/"), knownPrefixesNew, Set.empty)
+        // A nav to /<islandTag>/ classifies as Intro when the island tag is seeded in.
+        val kind = WebsiteBundleMain.classifyRoute(segmentsOf(s"/$islandTag/"), noIslandPrefixes, Set.empty)
         assert(
             kind == WebsiteBundleMain.RouteKind.Intro,
-            s"/v1.0.0-RC2/ must classify as Intro when the island tag is in knownPrefixes, got: $kind"
+            s"/$islandTag/ must classify as Intro when the island tag is in knownPrefixes, got: $kind"
         )
-        // Without the island tag (the pre-fix set), the same nav would be OffTree.
-        val kindOld = WebsiteBundleMain.classifyRoute(segmentsOf("/v1.0.0-RC2/"), knownPrefixesOld, Set.empty)
+
+        // Regression oracle: if the seed were absent (pre-fix behaviour), the same nav degrades to
+        // OffTree. We verify this by building the pre-fix set explicitly.
+        val preFix  = emptyVersionsIsland.toSeq.map(_.tag).toSet + "latest"
+        val kindOld = WebsiteBundleMain.classifyRoute(segmentsOf(s"/$islandTag/"), preFix, Set.empty)
         assert(
             kindOld == WebsiteBundleMain.RouteKind.OffTree,
-            s"pre-fix (island tag absent), /v1.0.0-RC2/ degrades to OffTree, got: $kindOld"
+            s"pre-fix (island tag absent), /$islandTag/ degrades to OffTree, got: $kindOld"
         )
+        succeed
+    }
+
+    // AF-12 guard: knownSlugsOf must derive slugs from the island's module list, not a hand-coded set.
+    // Removing a module from `islandModules` above would fail the positive classification below.
+    "knownSlugsOf derives slugs from the real island module list (AF-12 guard)" in {
+        val slugs = WebsiteBundleMain.knownSlugsOf(island)
+        assert(slugs.contains("kyo-core"), "kyo-core must be in the derived slug set")
+        assert(slugs.contains("kyo-data"), "kyo-data must be in the derived slug set")
+        assert(!slugs.contains("kyo-stm"), "kyo-stm is not in the island, must not appear in derived slugs")
+        // A multi-segment route to a derived slug classifies as Module via the real helper output.
+        val kind = WebsiteBundleMain.classifyRoute(segmentsOf("/latest/kyo-data/"), knownPrefixes, slugs)
+        assert(kind == WebsiteBundleMain.RouteKind.Module, s"derived slug must classify as Module, got: $kind")
         succeed
     }
 

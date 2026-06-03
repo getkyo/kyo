@@ -110,7 +110,7 @@ object WebsiteBundleMain:
         // The active prefix is `latest` when on `/` (the SSG seeds the landing's header + island from
         // the latest version under `latest/`); otherwise it is the path's first physical segment so a
         // reader under `/v<X>/...` keeps navigating within that tree (WARN-1).
-        val prefix = activePrefix(initialRoute, island.content.version.tag)
+        val prefix = activePrefix(initialRoute)
         val home   = docsHome(island.content, prefix)
         // The physical trees a `/<prefix>/` intro route may legitimately name: `latest`, every
         // version's own tag, AND the seeded island's own version tag. A single-segment route outside
@@ -120,12 +120,11 @@ object WebsiteBundleMain:
         // within the island's own tree, so `/<islandTag>/` must classify as intro, not off-tree
         // (AF-5). When the versions island IS present the island tag is already in the version set,
         // so the extra term is idempotent.
-        val knownPrefixes: Set[String] =
-            versions.toSeq.map(_.tag).toSet + LatestPrefix + island.content.version.tag
+        val knownPrefixes: Set[String] = knownPrefixesOf(island, versions)
         // The known module slugs for the seeded tree, derived once from the island's module list. A
         // multi-segment route whose last segment is NOT in this set is off-tree (AF-4): it full-
         // navigates to a clean server 404 instead of fetching a missing content.md into a broken shell.
-        val knownSlugs: Set[String] = island.content.groups.flatMap(_.modules).map(_.slug).toSet
+        val knownSlugs: Set[String] = knownSlugsOf(island)
         // The island's Markdown is the current route's README when the initial route is a module page,
         // and "" on `/` and `/<prefix>/` (the SSG seeds an empty island there). Seed the cache so the
         // module branch reuses the first-paint content instead of re-fetching it.
@@ -145,7 +144,7 @@ object WebsiteBundleMain:
                 // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
                 UI.Ast.Reactive(articleRef.map(a => a))
             )
-            landingBody <- LandingApp.body(versions, home)
+            landingBody <- LandingApp.body(home)
             content     <- Signal.initRef[UI](if isRootRoute(initialRoute) then landingBody else docsBody)
             queryRef    <- Signal.initRef("")
             // Seed the search index with a title-only index built synchronously from the boot island
@@ -203,6 +202,27 @@ object WebsiteBundleMain:
             }
         end if
     end loadSearchIndex
+
+    /** Derive the set of known physical tree prefixes from the seeded island and the versions list.
+      *
+      * The set contains `latest`, every version tag from the versions list, and the island's own
+      * version tag. The island tag is included unconditionally so that `/<islandTag>/` classifies as
+      * [[RouteKind.Intro]] even when the `#versions-island` element is absent (i.e. `versions` is
+      * empty). When the versions island IS present the island tag is already in the set, making the
+      * extra term idempotent (AF-5).
+      */
+    private[website] def knownPrefixesOf(island: DocsClient.DocsIsland, versions: Chunk[WebsiteVersion]): Set[String] =
+        versions.toSeq.map(_.tag).toSet + LatestPrefix + island.content.version.tag
+
+    /** Derive the set of known module slugs for the seeded island's content tree.
+      *
+      * A multi-segment route whose last segment is NOT in this set is [[RouteKind.OffTree]]: the SPA
+      * full-navigates to a clean server 404 rather than fetching a missing `content.md` into a broken
+      * docs shell (AF-4). The set is derived directly from the island so a regression in the
+      * slug-derivation logic is caught by tests that call this helper.
+      */
+    private[website] def knownSlugsOf(island: DocsClient.DocsIsland): Set[String] =
+        island.content.groups.flatMap(_.modules).map(_.slug).toSet
 
     /** The four route kinds the nav fiber dispatches on, named so the classification is a pure,
       * testable decision separate from the effectful branch bodies in [[navFiber]].
@@ -415,10 +435,9 @@ object WebsiteBundleMain:
 
     /** The active physical prefix for the initial route. `/` resolves to `latest` (the tree the SSG
       * seeds the landing from); any other route uses its own leading segment so the reader stays in
-      * the tree they landed on (WARN-1), falling back to the seeded version tag only when the path has
-      * no leading segment but is not the root (defensive; should not occur in practice).
+      * the tree they landed on (WARN-1).
       */
-    private def activePrefix(path: String, versionTag: String): String =
+    private def activePrefix(path: String): String =
         val segments = path.split('/').filter(_.nonEmpty)
         if segments.isEmpty then LatestPrefix else segments(0)
     end activePrefix

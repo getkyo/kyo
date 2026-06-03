@@ -4,20 +4,16 @@ import kyo.*
 
 class LandingAppTest extends Test:
 
-    private val v1        = WebsiteVersion("v1.0.0-RC2", "1.0.0-RC2", true)
-    private val v0        = WebsiteVersion("v0.9.3", "0.9.3", false)
-    private val versions2 = Chunk(v1, v0)
-
     private val home = "/latest/kyo-core/"
 
-    private def renderLanding(versions: Chunk[WebsiteVersion])(using Frame): String < Async =
+    private def renderLanding(using Frame): String < Async =
         for
-            view <- LandingApp.body(versions, home)
+            view <- LandingApp.body(home)
             html <- UI.runRender(view).take(1).run
         yield html.headMaybe.getOrElse("")
 
     "all named sections present with data-section hooks and class=feat-grid (INV-012 consumer)" in run {
-        renderLanding(Chunk.empty).map { html =>
+        renderLanding.map { html =>
             assert(html.contains("data-section=\"hero\""))
             assert(html.contains("data-section=\"problem\""))
             assert(html.contains("data-section=\"promise\""))
@@ -33,7 +29,7 @@ class LandingAppTest extends Test:
     }
 
     "body renders no header (the header is owned by SiteApp, D5)" in run {
-        renderLanding(versions2).map { html =>
+        renderLanding.map { html =>
             // The landing body must NOT carry its own header chrome: no data-section="header",
             // no version dropdown, no search input. Those belong to the unified SiteApp shell.
             assert(!html.contains("data-section=\"header\""), "body must not render a header section")
@@ -43,7 +39,7 @@ class LandingAppTest extends Test:
     }
 
     "hero carries the headline copy" in run {
-        renderLanding(Chunk.empty).map { html =>
+        renderLanding.map { html =>
             assert(html.contains("Build with AI."))
             assert(html.contains("Ship something that "))
             assert(html.contains("holds"))
@@ -51,7 +47,7 @@ class LandingAppTest extends Test:
     }
 
     "outcomes grid has 6 cards each with module attribution hook" in run {
-        renderLanding(Chunk.empty).map { html =>
+        renderLanding.map { html =>
             val cellCount = countOccurrences(html, "class=\"cell\"")
             assert(cellCount == 6, s"expected 6 outcome cells, got $cellCount")
             assert(html.contains("data-module=\"kyo-prelude\""))
@@ -62,7 +58,7 @@ class LandingAppTest extends Test:
     }
 
     "platforms band names all three platforms" in run {
-        renderLanding(Chunk.empty).map { html =>
+        renderLanding.map { html =>
             assert(html.contains("JVM"))
             assert(html.contains("Browser and Node"))
             assert(html.contains("Native binary") || html.contains("Native"))
@@ -70,7 +66,7 @@ class LandingAppTest extends Test:
     }
 
     "in-body CTAs and footer doc links target the local docs home (Href.Path), not getkyo.io (D2)" in run {
-        renderLanding(versions2).map { html =>
+        renderLanding.map { html =>
             // The hero/depth/final-CTA/footer internal links now route locally to docsHome.
             assert(html.contains(s"""href="$home""""), s"in-body CTAs must target $home: $html")
             // No internal getkyo.io anchor links remain in the body CTAs (the Community footer
@@ -81,14 +77,14 @@ class LandingAppTest extends Test:
     }
 
     "footer keeps the external Community getkyo.io identity link (D2)" in run {
-        renderLanding(versions2).map { html =>
+        renderLanding.map { html =>
             // The Community column's getkyo.io link is an external identity link and stays external.
             assert(html.contains("getkyo.io"), "footer Community getkyo.io identity link must remain")
         }
     }
 
     "all content present without JS (INV-002 consumer)" in run {
-        renderLanding(versions2).map { html =>
+        renderLanding.map { html =>
             // kyo-ui HTML-encodes text: apostrophes become &#39;
             assert(html.contains("Failures don&#39;t stay hidden"))
             assert(html.contains("It can resume after a restart"))
@@ -104,15 +100,15 @@ class LandingAppTest extends Test:
     "body carries no DOM or IO in effect row" in run {
         // LandingApp.body returns UI < Sync (not UI < Async). Asserting via explicit annotation:
         // if the row widened to include Async the type annotation below would fail to compile.
-        val _: (Chunk[WebsiteVersion], String) => Frame ?=> UI < Sync = (v, h) => LandingApp.body(v, h)
+        val _: String => Frame ?=> UI < Sync = h => LandingApp.body(h)
         // Also verify the body can be built and rendered without error.
-        LandingApp.body(Chunk.empty, home).map { view =>
+        LandingApp.body(home).map { view =>
             assert(view != null, "body must be a concrete UI value")
         }
     }
 
     "logo hook present with relative path (footer brand, not raw.githubusercontent URL)" in run {
-        renderLanding(Chunk.empty).map { html =>
+        renderLanding.map { html =>
             assert(html.contains("/kyo.png"), "logo src must use relative path /kyo.png")
             assert(!html.contains("raw.githubusercontent"), "logo must NOT use raw.githubusercontent URL")
         }

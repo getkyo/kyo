@@ -53,7 +53,7 @@ class ChromeParityTest extends Test:
 
     "SiteApp landing-route shell: SSG vs RecordingBackend parity (INV-003)" in run {
         for
-            body  <- LandingApp.body(versions2, docsHomeRoute)
+            body  <- LandingApp.body(docsHomeRoute)
             view  <- siteShell(versions2, docsHomeRoute, body)
             ssg   <- UI.runRender(view).take(1).run.map(_.headMaybe.getOrElse(""))
             mount <- RecordingBackend.render(view)
@@ -83,7 +83,7 @@ class ChromeParityTest extends Test:
 
     "parity holds for the header dropdown subtree under SiteApp (INV-003)" in run {
         for
-            body  <- LandingApp.body(versions2, docsHomeRoute)
+            body  <- LandingApp.body(docsHomeRoute)
             view  <- siteShell(versions2, docsHomeRoute, body)
             ssg   <- UI.runRender(view).take(1).run.map(_.headMaybe.getOrElse(""))
             mount <- RecordingBackend.render(view)

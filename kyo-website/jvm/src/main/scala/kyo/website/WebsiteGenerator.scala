@@ -388,7 +388,7 @@ object WebsiteGenerator:
         val latest      = pickLatest(content)
         val landingHome = latest.fold("/")(c => docsHome(c, "latest"))
         for
-            body <- LandingApp.body(versions, landingHome)
+            body <- LandingApp.body(landingHome)
             view <- siteShell(versions, landingHome, body)
             html <- wrapFirst(opts, view)
             island      = latest.fold("")(c => docsIsland(c.copy(version = c.version.copy(latest = true)), versions, ""))
@@ -476,7 +476,27 @@ object WebsiteGenerator:
     end buildVersionsJson
 
     private def escJson(s: String): String =
-        s.replace("\\", "\\\\").replace("\"", "\\\"")
+        val sb = new java.lang.StringBuilder(s.length + 8)
+        var i  = 0
+        while i < s.length do
+            val c = s.charAt(i)
+            c match
+                case '\\' => sb.append("\\\\"); ()
+                case '"'  => sb.append("\\\""); ()
+                case '\n' => sb.append("\\n"); ()
+                case '\r' => sb.append("\\r"); ()
+                case '\t' => sb.append("\\t"); ()
+                case _ if c < 0x20 =>
+                    val hex = Integer.toHexString(c.toInt)
+                    if hex.length == 1 then sb.append("\\u000").append(hex)
+                    else sb.append("\\u00").append(hex)
+                    ()
+                case _ => sb.append(c); ()
+            end match
+            i += 1
+        end while
+        sb.toString
+    end escJson
 
     private def writeArtifactRootFiles(outDir: Path)(using Frame): Unit < (Sync & Abort[WebsiteException]) =
         for

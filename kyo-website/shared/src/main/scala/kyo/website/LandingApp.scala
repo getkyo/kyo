@@ -23,16 +23,13 @@ object LandingApp:
 
     /** The landing content body (header excluded, owned by `SiteApp`).
       *
-      * @param versions
-      *   The list of available documentation versions. Retained for a uniform call shape with the
-      *   SSG generator and the bundle; the header dropdown is now populated by `SiteApp`, not here.
       * @param docsHome
       *   The local docs home (`/<prefix>/<firstSlug>/`) every in-body "Start building" / "Get
       *   started" / "Documentation" / "Modules" / "Read the technical docs" call to action targets.
       * @return
       *   A `UI < Sync` value representing the landing content body.
       */
-    def body(versions: Chunk[WebsiteVersion], docsHome: String)(using Frame): UI < Sync =
+    def body(docsHome: String)(using Frame): UI < Sync =
         Sync.defer {
             UI.div.cssClass("wrap").data("section", "page")(
                 hero(docsHome),

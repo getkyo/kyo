@@ -98,7 +98,7 @@ class WebsiteStylesCoverageTest extends Test:
 
     private def landingHtml(using Frame): String < Async =
         for
-            body <- LandingApp.body(versions, "/latest/kyo-core/")
+            body <- LandingApp.body("/latest/kyo-core/")
             view <- shell("/latest/kyo-core/", body)
             html <- UI.runRender(view).take(1).run
         yield html.headMaybe.getOrElse("")
