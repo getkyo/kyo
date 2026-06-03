@@ -33,7 +33,7 @@ This document is the source of truth. The four core design choices in Section 22
 * Subtype checking and full type comparison beyond structural equality.
 * Multi-Scala-version support in one release.
 * Incremental classpath refresh (today: open a new `Classpath`).
-* Java module-info.class metadata. JPMS modules are out of scope; we read classes from JARs regardless of module declarations.
+* (JPMS modules are in scope as of v1: `module-info.class` is parsed into `ModuleDescriptor` and surfaced via `Classpath.modules` / `Classpath.findModule`; see Section 12 of the API surface.)
 
 ## 2. Performance Targets (calibrated)
 
@@ -1511,7 +1511,7 @@ The closest analog to kyo-tasty's design is GHC's `.hi` format combined with Ros
 * Incremental classpath refresh.
 * Phase C sharding for very large monorepos.
 * Hand-written `Reads` instances participating in `touchedFields` optimization.
-* Java module-info.class (JPMS).
+* (JPMS module-info.class: now supported via ModuleDescriptor / Classpath.findModule.)
 * C/C++ header parsing (sibling module, see Section 25).
 
 ## 25. Future Siblings

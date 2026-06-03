@@ -2,9 +2,6 @@ package kyo.internal.tasty.binary
 
 import kyo.AllowUnsafe
 
-/** Thrown when a varint continuation run exceeds the allowed byte count for the target type. */
-class MalformedVarintException(val byteOffset: Long, msg: String) extends RuntimeException(msg)
-
 /** TASTy LEB128 varint decoding.
   *
   * TASTy uses big-endian base-128 encoding, which is the OPPOSITE of standard little-endian LEB128:

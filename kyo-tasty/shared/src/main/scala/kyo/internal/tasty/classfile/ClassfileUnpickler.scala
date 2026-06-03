@@ -13,43 +13,6 @@ import kyo.internal.tasty.symbol.TypedSymbolFactory
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
-/** Result produced by ClassfileUnpickler for a single .class file.
-  *
-  * @param classSymbol
-  *   The Tasty.Symbol for the class or interface defined by this file.
-  * @param parents
-  *   Unresolved parent types: super class (if any) followed by implemented interfaces. The classpath orchestrator resolves these to real
-  *   symbols during the merge pass.
-  * @param innerClassTable
-  *   Map from inner binary name to (outer binary name, simple inner name). Outer is "" for anonymous/local classes.
-  * @param symbols
-  *   All field and method symbols declared by the class.
-  * @param arena
-  *   The TypeArena used during decoding; retained so the orchestrator can merge per-file arenas into the canonical arena.
-  */
-final case class ClassfileResult(
-    classSymbol: Tasty.Symbol,
-    parents: Chunk[Tasty.Type],
-    innerClassTable: Map[String, (String, String)],
-    symbols: Chunk[Tasty.Symbol],
-    typeParams: Chunk[Tasty.Symbol],
-    arena: TypeArena,
-    memberTypes: Map[Tasty.Symbol, Tasty.Type],
-    /** F-A3-001..004 fix: raw binary class names of parent types (e.g. "java/lang/Object", "java/io/Serializable").
-      *
-      * Parallel to `parents`: `parentBinaryNames(i)` is the binary name for `parents(i)`. Empty string entries indicate
-      * non-class parent slots (should not occur for JDK classes but preserved for safety). Populated by buildResult for
-      * use by ClasspathOrchestrator.finalizeMerge to resolve parent FQNs without re-parsing the classfile.
-      */
-    parentBinaryNames: Chunk[String] = Chunk.empty,
-    /** Dotted FQNs of permitted subclasses (from PermittedSubclasses attribute), e.g. "java.lang.Double".
-      *
-      * Non-empty only when the class has a PermittedSubclasses attribute (Java 17+ sealed classes).
-      * Used by ClasspathOrchestrator.finalizeMerge to resolve permittedSubclassIds for classfile symbols.
-      */
-    permittedSubclassFqns: Chunk[String] = Chunk.empty
-)
-
 /** Reads a JVM .class file from raw bytes and produces a ClassfileResult.
   *
   * Handles: magic, version, constant pool, access flags, this/super, interfaces, fields, methods, and class-level attributes (Signature,

@@ -61,8 +61,10 @@ final case class Box(width: Double, height: Double) extends Shape:
 
 <!-- doctest:setup
 ```scala
-import AllowUnsafe.embrace.danger
-val cp: Classpath = Sync.Unsafe.evalOrThrow(Classpath.fromPickles(Seq.empty))
+// Type-check stub: every block below sees `cp` and the implicit `Classpath`.
+// Acquisition happens through Classpath.init / fromPickles at runtime; the
+// stub keeps doctest blocks typed without performing any I/O.
+def cp: Classpath = ???
 given Classpath   = cp
 ```
 -->
@@ -85,7 +87,7 @@ from and how often you re-open the same roots:
 def init(roots: Seq[String]): Classpath < (Async & Scope & Abort[TastyError])
 def init(roots: Seq[String], mode: ErrorMode): Classpath < (Async & Scope & Abort[TastyError])
 def initCached(roots, cacheDir: String): Classpath < (Sync & Async & Scope & Abort[TastyError])
-def fromPickles(pickles: Seq[Pickle]): Classpath < Sync
+def fromPickles(pickles: Seq[Pickle]): Classpath < (Async & Scope & Abort[TastyError])
 ```
 
 `init` is the canonical entry point and runs the parallel per-file decoder.
@@ -233,10 +235,9 @@ threaded through the implicit classpath.
 ### Walking up: owners, parents, companions
 
 A symbol's owner chain is the path from itself up to the root package. The
-direct parent is the first declared parent (for a `Symbol.Class`, the
-`extends` class; for any classlike that explicitly extends nothing, the
-`Symbol.Class` for `scala.AnyRef`). The companion is the matching object or
-class at the same FQN.
+companion is the matching object or class at the same FQN. The first
+declared parent of a `Symbol.Class` (the `extends` class) is the head of
+`classLike.parents`, not a separate accessor.
 
 ```scala doctest:expect=skipped
 given Classpath       = cp
@@ -244,9 +245,10 @@ val box: Symbol.Class = cp.requireClass("example.Box")
 
 box.owner        // the example package (Symbol.Package)
 box.ownersChain  // Chunk(Box, example, <root>)
-box.directParent // AnyRef (a Symbol.Class)
-box.parents      // Chunk(AnyRef, Shape)  -- includes the trait
-box.companion    // Maybe[Symbol]  -- the companion object if any
+box.directParent // Maybe[Symbol]  -- the owner symbol (alias of `owner`)
+box.parentTypes  // Chunk(Type)       -- raw parent Types (AnyRef and Shape)
+box.parents      // Chunk(ClassLike)  -- resolved parent ClassLikes
+box.companion    // Maybe[Symbol]     -- the companion object if any
 ```
 
 For sealed hierarchies, `cls.permittedSubclasses` returns the
@@ -286,12 +288,14 @@ ones. `constructors(using cp)` returns `Chunk[Method]` of the class's `<init>` m
 ### Names, modifiers, visibility
 
 Every symbol has multiple naming projections, each answering a different
-question. `simpleName` is the local name. `fullName: Chunk[Name]` is the
-owner chain rendered as names. `fullNameString` joins it with `.` for
-human display. `binaryName` returns the JVM internal form
-(`example/Circle$Inner`). `signature` is the erased JVM descriptor for
-methods. `show` and `show(format: ShowFormat)` render a Scala-source-shaped
-string with configurable depth.
+question. `simpleName` is the local name. `fullName: Name` is the dotted
+fully-qualified name as a single interned `Name`. `fullNameString` decodes
+the same value to a `String` for human display. `binaryName` returns the
+JVM internal form (`example/Circle$Inner`). `signature` is a
+Scala-source-shaped declaration string (e.g. `def area: Double`,
+`class Box[T] extends Shape`), not a JVM erased descriptor. `show` and
+`show(format: ShowFormat)` render via `ShowFormat.FullyQualified`,
+`Simple`, or `Code`; `Code` delegates to `signature`.
 
 Modifiers live in `sym.flags: Flags`, a packed bitfield. The most-used
 predicates have direct getters: `isFinal`, `isAbstract`, `isCase`,
@@ -508,13 +512,13 @@ cp.allMethods // Chunk[Symbol.Method]
 chunks; they are what you reach for when you want to iterate roots
 rather than the full symbol table.
 
-JPMS modules are surfaced through the same classpath. `cp.modules`
-returns `Chunk[Symbol.Class]` for `module-info` classes,
-`cp.findModule(name)` looks one up by name, and the descriptors
-(`ModuleDescriptor`, `ModuleRequires`, `ModuleExports`, `ModuleOpens`,
-`ModuleProvides`) are reachable through the module symbol's
-`javaMetadata`. If you do not work with module-info classpaths, you can
-ignore this side of the API.
+JPMS modules are surfaced through a parallel descriptor index built from
+`module-info.class` files. `cp.modules` returns
+`Chunk[ModuleDescriptor]`; `cp.findModule(name)` looks one up by name; and
+each `ModuleDescriptor` carries `requires`, `exports`, `opens`, `uses`,
+and `provides` directives as plain immutable data (`ModuleRequires`,
+`ModuleExports`, `ModuleOpens`, `ModuleProvides`). If you do not work
+with module-info classpaths, you can ignore this side of the API.
 
 ## Errors
 

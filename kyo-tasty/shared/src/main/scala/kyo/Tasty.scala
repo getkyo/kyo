@@ -16,17 +16,41 @@ import scala.collection.immutable.IntMap
 
 /** kyo-tasty public entry object.
   *
-  * Reads Scala 3 TASTy files and Java classfiles through a unified Symbol/Type API. Cross-platform JVM, JS, Native.
+  * The single public namespace for the runtime reflection library. Reading a classpath gives back a `Classpath`
+  * snapshot; everything you can ask about a Scala 3 program is reachable through the types nested here.
   *
-  * Note on naming: all types are nested in `object Tasty` (`Tasty.Type`, `Tasty.Symbol`, etc.) to avoid polluting `kyo.*` and to keep
-  * separation from `kyo.Structure.Type` (kyo-schema's value-structure type tree). If both `Structure` and `Tasty` are imported in the same
-  * file, reference the types qualified (`Structure.Type`, `Tasty.Type`).
+  * **What lives here.** `Symbol` (and its sealed subtypes) is the declaration model: classes, traits, objects,
+  * methods, vals, vars, fields, type aliases, type parameters, parameters, packages. `Type` is the type model:
+  * named references, applied constructors, function shapes, intersections and unions, refinements. `Tree` is the
+  * AST model returned by `Symbol.bodyTree` for method and val bodies. `Annotation` / `JavaAnnotation` cover Scala
+  * and JVM annotations as parallel ADTs. `Classpath` is the in-memory index that resolves cross-symbol references
+  * and answers subclass / annotation / FQN queries.
+  *
+  * **Cross-platform.** The library compiles for JVM, JS, and Native; JVM-only paths (mmap, JAR, `jrt:/` JDK
+  * auto-discovery) are gated behind platform-specific source folders. The public API surface is identical across
+  * platforms; platform-specific behaviour is in the loader, not the model.
+  *
+  * **Naming.** All types are nested in `object Tasty` (`Tasty.Type`, `Tasty.Symbol`, etc.) to avoid polluting
+  * `kyo.*` and to keep separation from `kyo.Structure.Type` (kyo-schema's value-structure type tree). If both
+  * `Structure` and `Tasty` are imported in the same file, reference the types qualified (`Structure.Type`,
+  * `Tasty.Type`).
   */
 object Tasty:
 
     // ── Version ─────────────────────────────────────────────────────────────
 
+    /** Three-part version number used by both the TASTy wire format and the kyo-tasty snapshot format.
+      *
+      * `major.minor.experimental` matches the layout that the dotty `TastyFormat` constants advertise: a TASTy
+      * file declares its format version in the same shape, and the snapshot reader compares its embedded version
+      * against the running kyo-tasty release. Two `Version` values are equal when all three components match.
+      *
+      * `Tasty.supportedTastyVersion` is the version this release targets. Pickles whose version falls outside
+      * the supported range surface as `TastyError.UnsupportedVersion`, with the found and supported versions
+      * carried as fields so the caller can report the mismatch.
+      */
     final case class Version(major: Int, minor: Int, experimental: Int):
+        /** Render the version as `"<major>.<minor>.<experimental>"` (e.g. `"28.8.0"`). */
         def show: String = s"$major.$minor.$experimental"
 
     // The Scala 3 TASTy version this kyo-tasty release targets. Updated per release.
@@ -53,10 +77,10 @@ object Tasty:
         /** Construct a `Name` from a `String` by encoding to UTF-8 and interning the bytes.
           *
           * Example:
-          * {{{
+          * ```scala
           *   val n = Tasty.Name("scala.Predef")
           *   n.asString == "scala.Predef"
-          * }}}
+          * ```
           */
         def apply(s: String): Name =
             // Unsafe: Interner.intern mutates shard state; safe here because the interner is
@@ -84,11 +108,23 @@ object Tasty:
         end extension
     end Name
 
-    /** A bitmask of modifier flags. Combine via `|`; test membership via `contains`.
+    /** A packed set of `Flag` modifiers, treated as an immutable bitmask.
       *
-      * Backed by an opaque `Long`. The underlying bits are accessible only via `private[kyo]` accessors
-      * (`bits`, `Flags.fromBits`) used by the internal unpicklers and snapshot writer; public callers
-      * construct flag sets through `Flags.empty`, `Flags(flag, ...)`, or by `|`.
+      * Backed by an opaque `Long`: a single 64-bit word stores up to 64 distinct flag bits, so testing,
+      * combining, and equality are all O(1) and allocate nothing. Each public modifier (`Flag.Inline`,
+      * `Flag.Private`, ...) has a unique bit; `Flags` is the union of zero or more such bits.
+      *
+      * **Construction.** `Flags.empty` is the empty set. `Flags(flag, rest*)` constructs a set from one or
+      * more `Flag` values. `flags1 | flags2` is the union of two sets. The underlying bits are exposed only
+      * via `private[kyo]` accessors (`bits`, `Flags.fromBits`) for the internal unpicklers and snapshot
+      * writer; user code should not depend on a specific bit layout because the layout is not stable across
+      * kyo-tasty versions.
+      *
+      * **Querying.** `flags.contains(flag)` tests membership. `flags.isEmpty` returns true for the empty
+      * set. `flags.show` renders a human-readable representation (`"Flags(Inline, Private)"`).
+      *
+      * **Equality.** Reference / value equality on the underlying `Long`; `CanEqual[Flags, Flags]` is
+      * provided so `==` works without an import.
       */
     opaque type Flags = Long
 
@@ -150,9 +186,21 @@ object Tasty:
         end show
     end extension
 
-    /** A single modifier flag. Backed by an opaque single-bit `Long`. Each declared `val` on the
-      * `Flag` companion is a distinct flag with a unique bit. The bit pattern is not part of the
-      * public API; equality identifies a flag uniquely.
+    /** A single modifier flag declared on a `Symbol`.
+      *
+      * Each named `val` on the `Flag` companion (`Inline`, `Private`, `Protected`, `Final`, `Sealed`,
+      * `Abstract`, `Implicit`, `Given`, `Opaque`, `Case`, `Module`, `Synthetic`, `JavaDefined`, ...) is a
+      * distinct `Flag` value backed by a unique single-bit `Long`. The bit pattern is implementation
+      * detail; only equality is meaningful. The full named-flag list is the union of every Scala 3 source
+      * modifier plus the TASTy / JVM origin markers (`JavaDefined`, `JavaRecord`, `Scala2`, `Synthetic`,
+      * `Tracked`, ...) so callers can faithfully reflect the original declaration.
+      *
+      * **Usage.** A `Flag` is rarely used in isolation; the typical pattern is
+      * `flags.contains(Flag.X)` against a `Flags` set or `Flags(Flag.X, Flag.Y)` to construct one. The
+      * `Flag.name(flag)` helper returns the printable name (e.g. `"Inline"`) used by `Flags.show`.
+      *
+      * **Equality.** `CanEqual[Flag, Flag]` is provided so `==` works without an import; two `Flag`
+      * values are equal iff they share the same bit.
       */
     opaque type Flag = Long
 
@@ -326,6 +374,21 @@ object Tasty:
 
     // ── Symbol kinds ────────────────────────────────────────────────────────
 
+    /** Flat enumeration of every concrete `Symbol` subtype.
+      *
+      * Two ways to discriminate a `Symbol` exist side by side: a pattern match on the sealed `Symbol`
+      * hierarchy (`case _: Symbol.Class`, ...), and a single-value match on `sym.kind: SymbolKind`. The
+      * sealed-trait match is the recommended idiom because it carries the typed subtype into the case body;
+      * `SymbolKind` is here for callers that want a flat value-level discriminator (for example, a snapshot
+      * writer that persists the kind as a byte, a debug printer, or a switch table whose cases do not need
+      * the typed `Symbol`).
+      *
+      * Cases line up one-to-one with the `Symbol` subtypes: `Package`, `Class`, `Trait`, `Object`,
+      * `Method`, `Field`, `Val`, `Var`, `TypeAlias`, `OpaqueType`, `AbstractType`, `TypeParam`,
+      * `Parameter`, `EnumCase`, and `Unresolved`. `EnumCase` is `Symbol.EnumCase` (a subtype of
+      * `Symbol.Class`); `Unresolved` is `Symbol.Unresolved` (a placeholder for references the loader could
+      * not resolve in the current classpath).
+      */
     enum SymbolKind derives CanEqual:
         case Package, Class, Trait, Object, Method, Field, Val, Var,
             TypeAlias, OpaqueType, AbstractType, TypeParam, Parameter,
@@ -358,6 +421,21 @@ object Tasty:
 
     // ── Constants and annotations ───────────────────────────────────────────
 
+    /** Literal constant payload used inside `Type.ConstantType` and `Tree.Literal`.
+      *
+      * `Constant` is a sealed enum of typed literals: every Scala primitive (`IntConst`, `LongConst`,
+      * `FloatConst`, `DoubleConst`, `BooleanConst`, `CharConst`, `ByteConst`, `ShortConst`), strings
+      * (`StringConst`), `()` (`UnitConst`), `null` (`NullConst`), and class literals (`ClassConst(tpe)`).
+      *
+      * **Naming.** The `*Const` suffix is intentional and distinguishes these from `quoted.reflect.Constant`
+      * cases (which use the `*Constant` suffix). Do not confuse the two; they cover different value spaces.
+      * Literal values are not their own `Type` cases: a Scala constant type like `42` appears as
+      * `Type.ConstantType(IntConst(42))`, not as a top-level `Type.IntConst`.
+      *
+      * **Rendering.** `show` returns a Scala-source-shaped representation: strings are quoted, longs get the
+      * `L` suffix, floats get the `f` suffix, `()` and `null` render as themselves, class literals render as
+      * `classOf[T]`. Equality and hashing are structural via `derives CanEqual`.
+      */
     enum Constant derives CanEqual:
         case StringConst(s: String)
         case IntConst(i: Int)
@@ -429,6 +507,24 @@ object Tasty:
     /** The enclosing-method context for a local or anonymous class (JVMS EnclosingMethod attribute). */
     final case class EnclosingMethod(owner: Symbol, methodName: Name) derives CanEqual
 
+    /** JVM-only metadata attached to symbols sourced from `.class` files.
+      *
+      * Carried by `Symbol.javaMetadata: Maybe[JavaMetadata]` and `Absent` on symbols that come from TASTy
+      * sources only (where the equivalent information lives in `Symbol.flags`, `Annotation`, etc.). This
+      * companion exposes the JVM-specific attributes that have no clean TASTy analogue: the JVM access flag
+      * word, the `throws` clause, the `EnclosingMethod` attribute for local / anonymous classes, the `Record`
+      * component table for Java records, the bootstrap method table, the nest host / nest members for
+      * Java 11+ nestmates, parameter-name groups, and runtime type annotations.
+      *
+      * **Annotations.** `annotations` carries `RuntimeVisibleAnnotations` and `RuntimeInvisibleAnnotations`
+      * decoded into the `JavaAnnotation` ADT; `runtimeTypeAnnotations` covers the type-annotation flavour
+      * (`RuntimeVisibleTypeAnnotations` and its invisible sibling). Scala-side annotations on the same symbol
+      * still live in the symbol's `annotations` field, not here.
+      *
+      * **Access flags.** `accessFlags` is the raw 16-bit access flag word; `isJvmPublic`, `isJvmPrivate`,
+      * `isJvmProtected`, `isJvmStatic`, and `isJvmFinal` are the common predicates. For flags without a
+      * predicate, mask `accessFlags` against the JVMS constants directly.
+      */
     final case class JavaMetadata(
         throwsTypes: Chunk[Type],
         annotations: Chunk[JavaAnnotation],
@@ -458,8 +554,33 @@ object Tasty:
 
     end JavaMetadata
 
+    /** A Java retention-class annotation decoded from a `.class` file's
+      * `RuntimeVisibleAnnotations` / `RuntimeInvisibleAnnotations` attribute.
+      *
+      * Kept structurally separate from `Annotation` (the Scala-source annotation type) because the value
+      * spaces are different: a Java annotation's element values are primitive constants, class literals, enum
+      * constants, nested annotations, and arrays thereof, while a Scala annotation carries arbitrary
+      * `Tree.Apply` arguments. Mixing the two into a single ADT would require either lossy normalisation or
+      * a sum type at every callsite; keeping them parallel keeps each side honest.
+      *
+      * `annotationClass` is the resolved `Symbol` for the annotation interface (e.g. the symbol of
+      * `java.lang.SuppressWarnings`). `values` is the ordered list of `(elementName, value)` pairs as they
+      * appeared in the classfile; element names are interned `Name` values and ordering matches the source
+      * declaration. Element values are typed via the `JavaAnnotation.Value` enum nested in the companion.
+      *
+      * **Querying.** `Symbol.hasAnnotation(fqn)` and `Symbol.getAnnotation(fqn)` walk both this list and the
+      * Scala `annotations` list (where applicable), so the common "is this symbol annotated with X" question
+      * does not need to branch on the value space.
+      */
     final case class JavaAnnotation(annotationClass: Symbol, values: Chunk[(Name, JavaAnnotation.Value)])
     object JavaAnnotation:
+        /** Typed value space for a Java annotation element. Mirrors the `element_value` shapes defined by
+          * JVMS §4.7.16.1: every primitive constant, string, class literal, enum constant, nested annotation,
+          * and array of any of those. Cases nest recursively through `ArrayVal` and `AnnotationVal`.
+          *
+          * Note: the JVM annotation format collapses `char`, `byte`, and `short` element values into
+          * `IntVal`, so there are no separate `CharVal`, `ByteVal`, or `ShortVal` cases.
+          */
         enum Value:
             case StringVal(s: String)
             case IntVal(i: Int)
@@ -569,6 +690,30 @@ object Tasty:
 
     // ── Type ADT ────────────────────────────────────────────────────────────
 
+    /** Structural representation of a Scala type as it appears in TASTy.
+      *
+      * `Type` is a sealed enum of around two dozen cases covering the full Scala 3 type language: nominal references
+      * (`Named`, `TermRef`, `TypeRef`), type constructors (`Applied`, `TypeLambda`, `Function`, `ContextFunction`,
+      * `Tuple`), composite shapes (`AndType`, `OrType`, `Refinement`, `Annotated`), self / super / this references
+      * (`ThisType`, `SuperType`, `ParamRef`), bounds and wildcards (`Bounds`, `Wildcard`), and match-type machinery
+      * (`MatchType`, `MatchCase`, `Skolem`, `FlexibleType`, `Rec`, `RecThis`). Constant payloads (`Type.ConstantType`)
+      * carry a `Constant` value.
+      *
+      * **Hash-consing.** During Classpath construction every `Type` is interned through a `TypeArena`; after Pass C
+      * all surviving `Type` values are canonical within `Classpath.canonical`. Structurally equal types produced at
+      * different decode sites share the same reference, so reference equality is sound for cache keys. Construction
+      * of an off-arena `Type` (for example, a synthetic `Named(id)` built by user code) is allowed but will not
+      * benefit from interning.
+      *
+      * **Sentinels.** Three reserved cases (`Nothing`, `Any`, `Unknown`) stand in for missing bounds and
+      * unresolvable types. They are distinct enum cases, not magic `Named` ids; pattern matching is the canonical
+      * way to detect them.
+      *
+      * **Traversal.** `children` returns first-level structural children; `foreach` is a pre-order walk; `symbol`
+      * resolves the head symbol of a `Named` (and returns `Absent` otherwise); `show(using cp)` renders a
+      * Scala-source-shaped string. The subtype check `isSubtypeOf` is structural, uses the implicit `Classpath`
+      * to resolve parents, and returns a three-way `SubtypeVerdict` rather than a `Boolean`.
+      */
     enum Type:
         case Named(symbolId: SymbolId)
         case TermRef(prefix: Type, name: Name)
@@ -578,13 +723,10 @@ object Tasty:
 
         /** Context function type: `(A1, ..., AN) ?=> R`.
           *
-          * Wire-level: `APPLIEDtype` whose constructor has FQN `scala.ContextFunctionN`. Previously decoded as
-          * `Type.Function(params, result, isContext = true)`. This dedicated case is structurally distinct so callers can
-          * pattern-match `?=>` vs `=>` without testing a Boolean flag, and `Type.Function` remains unchanged for
-          * backward compatibility (HARD RULE 4 layered preservation).
-          *
-          * F-A2-005: every method decoded from a `scala.ContextFunctionN` applied type now produces this case;
-          * methods decoded from `scala.FunctionN` continue to produce `Type.Function(_, _, isContext = false)`.
+          * Wire-level: `APPLIEDtype` whose constructor has FQN `scala.ContextFunctionN`. Dedicated case so callers
+          * can pattern-match `?=>` against `=>` without testing a Boolean flag. Methods decoded from
+          * `scala.ContextFunctionN` produce this case; methods decoded from `scala.FunctionN` produce
+          * `Type.Function(_, _, isContext = false)`.
           */
         case ContextFunction(params: Chunk[Type], result: Type)
         case Tuple(elements: Chunk[Type])
@@ -608,27 +750,24 @@ object Tasty:
 
         /** Match-type case: `pat => rhs`. Wire-level TASTy tag MATCHCASEtype (192).
           *
-          * First-class ADT case (F-A-006). The prior decoder emitted
-          * `Applied(Named(MatchCaseSentinel), Chunk(pat, rhs))` because no first-class
-          * case existed. Additive; existing exhaustive matches via Type.children remain
-          * total via the wildcard fallback.
+          * First-class ADT case for a single match-type arm. Exhaustive matches over `Type` should add this
+          * case; existing matches that traverse via `Type.children` remain total via the wildcard fallback.
           */
         case MatchCase(pat: Type, rhs: Type)
 
-        /** Type-position reference (F-A-009). Wire tag TYPEREF (117).
+        /** Type-position reference. Wire tag TYPEREF (117).
           *
-          * Semantically distinct from TermRef (term-position reference). Previously all TYPEREF
-          * nodes were decoded as Type.TermRef; this case corrects the shape. Callers that need
-          * to distinguish type references from term references should match on TypeRef.
-          * typeFqnString handles both TermRef and TypeRef for annotation FQN matching.
+          * Semantically distinct from `TermRef` (term-position reference). Callers that need to distinguish
+          * type references from term references should match on `TypeRef`. `typeFqnString` handles both
+          * `TermRef` and `TypeRef` for annotation FQN matching.
           */
         case TypeRef(qual: Type, name: Name)
 
-        /** Explicit type bounds (F-A-010). Wire tags TYPEBOUNDS (163) and TYPEBOUNDStpt (164).
+        /** Explicit type bounds. Wire tags TYPEBOUNDS (163) and TYPEBOUNDStpt (164).
           *
-          * Represents `lo .. hi` as declared in source. Previously both tags decoded as
-          * Type.Wildcard(lo, hi); Type.Bounds is semantically distinct and allows callers to
-          * identify explicit bounds positions vs wildcard usage sites.
+          * Represents `lo .. hi` as declared in source. Distinct from `Type.Wildcard`, which carries the
+          * bounds of an unspecified type argument (`_ <: A`); `Type.Bounds` carries the bounds at an
+          * explicit-bounds declaration site.
           */
         case Bounds(lo: Type, hi: Type)
 
@@ -717,10 +856,24 @@ object Tasty:
 
     /** Structural representation of a TASTy expression or definition body.
       *
-      * Produced by `Symbol.body` (lazy, memoized). Each case mirrors a TASTy AST tag. Trees may reference `Tasty.Type` and `Tasty.Symbol`
-      * values. All sub-trees are strict (no lazy slots); memoization is handled at the `body` accessor level.
+      * Produced on demand by `Symbol.bodyTree` and `Classpath.decodeBody`; the result is memoised on the
+      * `Classpath` keyed by `SymbolId`. Each case mirrors a TASTy AST tag; the case naming follows the dotty
+      * `TastyFormat` layout so the dotty reference is the source of truth for the wire-level encoding.
       *
-      * Reference: dotty TastyFormat.scala AST tag layout.
+      * **Strict sub-trees.** All sub-trees are eagerly populated when a body is decoded; the laziness lives at
+      * the body boundary, not inside the AST. Within a tree, cross-references to symbols travel as `Symbol`
+      * values (already resolved through the implicit `Classpath`) and references to types travel as `Type`
+      * values from the canonical arena.
+      *
+      * **Categories.** Term-level cases (`Apply`, `Select`, `Ident`, `Block`, `If`, `Match`, ...) cover expression
+      * bodies. Definition cases (`ValDef`, `DefDef`, `TypeDef`, `ClassDef`, `PackageDef`, `Template`) appear
+      * inside class templates. Type-position cases (`AppliedType`, `RefinedType`, `AnnotatedType`, `MatchType`,
+      * `TypeBounds`, ...) appear inside type trees referenced by `tpt` slots. Pattern cases (`Bind`, `Unapply`,
+      * `Alternative`) appear under `CaseDef`. `Shared` carries a back-reference address used to deduplicate
+      * sub-trees within the source TASTy file.
+      *
+      * **Traversal.** `children`, `foreach`, `collect`, `find`, `foldLeft`, and `exists` cover the structural walks
+      * the typical caller needs; `show(using cp)` renders a Scala-source-shaped string for debugging.
       */
     enum Tree derives CanEqual:
         /** Term reference by name (IDENT tag). */
@@ -921,15 +1074,14 @@ object Tasty:
         /** Term-position path-dependent reference (F-B-004). Wire tag TERMREFin (174).
           *
           * prefix is the qualifier tree (encoded as Tree.Ident(name, qualType)). name identifies the
-          * referenced member. Replaces the fabricated Tree.Select placeholder from Phase 05.
+          * referenced member.
           */
         case TermRef(prefix: Tree, name: Name)
 
-        /** Repeated (varargs) sequence literal (F-B-005). Wire tag REPEATED (149).
+        /** Repeated (varargs) sequence literal. Wire tag REPEATED (149).
           *
-          * elems are the element trees. tpe is Type.Wildcard(Nothing, Any) as a placeholder until
-          * a future phase infers the element type from context.
-          * Replaces the fabricated Tree.Apply(Ident("_repeated", ...), trees) placeholder.
+          * elems are the element trees. tpe is the static element type for typed callers; when the element
+          * type is not statically known the placeholder `Type.Wildcard(Nothing, Any)` is carried.
           */
         case SeqLiteral(elems: Chunk[Tree], tpe: Type)
 
@@ -1088,22 +1240,73 @@ object Tasty:
 
     // ── Supporting ADTs for the Symbol hierarchy ────────────────────────────
 
-    /** Variance of a type parameter or abstract type member. */
+    /** Variance of a type parameter or abstract type member.
+      *
+      * Three cases: `Invariant` (no variance annotation), `Covariant` (declared with `+`), and
+      * `Contravariant` (declared with `-`). Returned by `Symbol.TypeParam.variance` for every type parameter
+      * in the model and by the bounds machinery wherever a variance position is meaningful.
+      *
+      * The decoder reads the variance directly from the TASTy flag set on the type parameter symbol (the
+      * `CoVariant` and `ContraVariant` flag bits); the absence of either flag is `Invariant`. The convenience
+      * accessor `Symbol.TypeParam.varianceLabel` returns the printable form (`""`, `"+"`, `"-"`) so callers
+      * rendering signatures do not have to do their own dispatch.
+      */
     enum Variance derives CanEqual:
         case Invariant, Covariant, Contravariant
 
-    /** Lower / upper bounds at the Symbol layer (typed against `Type`, distinct from `Tree.TypeBounds` which is bytecode-level). */
+    /** Lower / upper bounds on a type parameter or abstract type member.
+      *
+      * Carries the resolved `Type` values for both ends of the bound: `lower` is the lower bound (typically
+      * `Type.Nothing` when unbounded), `upper` is the upper bound (typically `Type.Any` when unbounded). Used
+      * by `Symbol.TypeParam.bounds`, `Symbol.AbstractType.bounds`, and `Symbol.OpaqueType.bounds`.
+      *
+      * **Naming overlap.** This is the Symbol-layer bounds type, distinct from `Tree.TypeBounds` which is the
+      * wire-level AST node that appears inside a `Tree`. The Symbol layer is what user code typically wants:
+      * `Tree.TypeBounds` only matters when traversing a decoded body tree. Both are kept for layer separation.
+      *
+      * Equality is structural via `derives CanEqual`; two `TypeBounds` values are equal when both bound
+      * fields are equal.
+      */
     final case class TypeBounds(lower: Type, upper: Type) derives CanEqual
 
-    /** Visibility of a symbol, derived from `flags`. ScopedPrivate / ScopedProtected indicate the `Local` flag is also set. */
+    /** Source-level visibility of a symbol, derived from `Symbol.flags`.
+      *
+      * Five cases: `Public` (no `private` / `protected` modifier), `Private` (the `Private` flag is set),
+      * `Protected` (the `Protected` flag is set), and the two scoped flavours `ScopedPrivate` /
+      * `ScopedProtected` which indicate the `Local` flag is also set (Scala's `private[this]` /
+      * `protected[this]` analogues).
+      *
+      * Returned by `Symbol.visibility`. The mapping from raw flag bits to this enum is in
+      * `Symbol.visibility`; user code should match on the enum rather than poking at the underlying flags,
+      * because the flag combinations that produce each case are not stable across kyo-tasty versions.
+      */
     enum Visibility derives CanEqual:
         case Private, Protected, Public, ScopedPrivate, ScopedProtected
 
-    /** Inheritance-openness level, derived from `flags`. */
+    /** Inheritance-openness level of a class-like symbol, derived from `Symbol.flags`.
+      *
+      * Four cases: `Final` (the `Final` flag is set; subclassing rejected), `Sealed` (the `Sealed` flag is
+      * set; subclasses restricted to the same compilation unit and surfaced via `permittedSubclasses`),
+      * `Open` (the `Open` flag is set; explicitly inheritable across compilation units), and `Default` (no
+      * openness flag is set; subclassable but the compiler emits warnings under `-Wopen`).
+      *
+      * Returned by `Symbol.openLevel`. The order of precedence when multiple flags are set is
+      * `Final > Sealed > Open > Default`, which is what `Symbol.openLevel` enforces.
+      */
     enum OpenLevel derives CanEqual:
         case Open, Default, Sealed, Final
 
-    /** Format selector for `Symbol.show(format)`. */
+    /** Format selector for `Symbol.show(format: ShowFormat)`.
+      *
+      * Three cases controlling how a symbol prints when callers want a single string per symbol.
+      * `FullyQualified` returns the dotted FQN (`example.Box`). `Simple` returns just the local name
+      * (`Box`). `Code` returns the source-shaped declaration string (`class Box[T] extends Shape`) which
+      * is what `Symbol.signature` produces.
+      *
+      * Equivalent to a function from `Symbol` to `String`; provided as an enum so callers can pattern-match
+      * on the chosen format when rendering, log it, or pass it through a config. The default rendering used
+      * by `Symbol.show()` (no argument) is `FullyQualified`.
+      */
     enum ShowFormat derives CanEqual:
         case FullyQualified, Simple, Code
 
@@ -1190,7 +1393,7 @@ object Tasty:
 
         /** Render this SymbolBody without leaking array identity hashes.
           *
-          * F-W2-23 fix: the default case-class toString prints `sectionBytes` and `names` as `[B@<hash>` and
+          * The default case-class toString prints `sectionBytes` and `names` as `[B@<hash>` and
           * `[Lkyo.Tasty$Name;@<hash>` respectively, which is useless for debugging. This override renders
           * `sectionBytes` as `len=<N>` and `names` as `names=[<N> entries]` so assertion failure messages and
           * debug logs contain actionable information.
@@ -1211,7 +1414,7 @@ object Tasty:
       * Resolution methods (`owner`, `fullName`, `binaryName`, etc.) require a `Classpath` in scope and are pure data accessors with no
       * effect row.
       *
-      * Equality contract (F-W2-16): `derives CanEqual` enables `==` comparisons between any two `Symbol` values regardless of their concrete
+      * Equality contract: `derives CanEqual` enables `==` comparisons between any two `Symbol` values regardless of their concrete
       * subtype. Equality is implemented via a custom `equals` that compares `SymbolId` values: two symbols are equal if and only if
       * `id.value == other.id.value` and neither id is the sentinel (-1). Comparing a `Symbol.Class` to a `Symbol.Trait` always returns
       * `false` even when they represent the same named entity after a kind-change, because their `SymbolId` values differ. Use `id` for
@@ -1262,9 +1465,8 @@ object Tasty:
           * (defined with the `macro` keyword or `inline`) are not synthetic. The `isInstanceOf[Symbol.Method]` gate
           * prevents non-method symbols from matching even if they somehow carry Flag.Macro.
           *
-          * Deviation from Phase 11 plan AFTER snippet: the plan used `Symbol.EnumCase` pattern match which does not exist
-          * until Phase 13. This implementation uses `!flags.contains(Flag.Synthetic)` as a conservative substitute;
-          * see phase-11/decisions.md.
+          * Synthetic helpers (compiler-generated wrappers that happen to carry `Flag.Macro`) are filtered
+          * out by `!flags.contains(Flag.Synthetic)`; only the source-declared macro returns true.
           */
         def isMacro: Boolean =
             flags.contains(Flag.Macro) && !flags.contains(Flag.Synthetic) && this.isInstanceOf[Symbol.Method]
@@ -1294,18 +1496,16 @@ object Tasty:
 
         /** Symbol is both `inline` and `transparent`.
           *
-          * F-A2-003 fix: Scala 3 TASTy sets both Flag.Inline and Flag.Transparent on
-          * `transparent inline` methods. The previous `isTransparent` predicate only checked
-          * Flag.Transparent, missing inline-only transparent methods; `isInline` only checked
-          * Flag.Inline, missing the transparent qualification. Combining both flags gives the
-          * correct predicate for the user-visible `transparent inline def` construct.
+          * Scala 3 TASTy sets both `Flag.Inline` and `Flag.Transparent` on `transparent inline` methods, so
+          * the user-visible `transparent inline def` construct is identified by the conjunction of both
+          * flags rather than by `isInline` or `isTransparent` alone.
           */
         def isTransparentInline: Boolean = flags.contains(Flag.Inline) && flags.contains(Flag.Transparent)
 
         /** Symbol marked as a `given` instance.
           *
-          * F-E-004 fix: using-clause parameters also carry Flag.Given but are NOT `given` instances in the user-facing sense. Excluding
-          * `isParameter` prevents false positives for every `using foo: Foo` parameter.
+          * Using-clause parameters also carry `Flag.Given` but are not `given` instances in the user-facing
+          * sense; excluding `isParameter` prevents false positives for every `using foo: Foo` parameter.
           */
         def isGiven: Boolean      = flags.contains(Flag.Given) && !isParameter
         def isContextual: Boolean = flags.contains(Flag.Given) // alias retained per layered/no-restriction
@@ -1604,7 +1804,7 @@ object Tasty:
 
     end Symbol
 
-    /** Companion of `Symbol`; carries the intermediate sealed traits, the 14 final case classes, and the Phase 01-only bridge factories. */
+    /** Companion of `Symbol`; carries the intermediate sealed traits, the 14 final case classes, and internal factories used by the loader. */
     object Symbol:
 
         // ── Intermediate sealed traits ────────────────────────────────────────
@@ -1944,8 +2144,8 @@ object Tasty:
             /** The return type derived from `declaredType`.
               *
               * When `declaredType` is `Type.Function(params, result, isContext)` or `Type.ContextFunction(params, result)`, returns
-              * `result`. For any other declared type shape the value is returned as-is. Best-effort per Q-002 resolution: a method whose
-              * type is not yet a Function (e.g., a Scala 2 stub) returns the raw declared type.
+              * `result`. For any other declared type shape the value is returned as-is: a method whose
+              * type is not a Function (e.g., a Scala 2 stub) returns the raw declared type.
               */
             def returnType(using cp: Classpath): Maybe[Type] =
                 declaredType.map:
@@ -1960,10 +2160,10 @@ object Tasty:
 
             /** True when this method is a macro AND transparent.
               *
-              * F-A2-003 (Phase 2.09): transparent macros carry both Flag.Macro and Flag.Transparent.
-              * This is a strict subset of isMacro (which only requires Flag.Macro without Flag.Synthetic).
-              * Use `isTransparentInline` for all transparent inline methods; use this for the subset that
-              * are also macros (i.e., implemented via quotes/splices).
+              * Transparent macros carry both `Flag.Macro` and `Flag.Transparent`. This is a strict subset
+              * of `isMacro` (which only requires `Flag.Macro` without `Flag.Synthetic`). Use
+              * `isTransparentInline` for all transparent inline methods; use this for the subset that are
+              * also macros (i.e., implemented via quotes / splices).
               */
             def isMacroTransparent: Boolean =
                 flags.contains(Flag.Macro) && !flags.contains(Flag.Synthetic) && flags.contains(Flag.Transparent)
@@ -2344,7 +2544,7 @@ object Tasty:
           * not the originating one. Cross-classpath operations should resolve by FQN via `findSymbol` / `findClass` / `findObject`, not
           * by SymbolId.
           *
-          * Sentinel cases (F-W2-19, F-W2-22):
+          * Sentinel cases:
           *   - `id.value == -1`: the canonical sentinel value (SymbolId.sentinel); returns `sentinelUnresolved`.
           *   - `id.value < 0` (including `Int.MinValue`): any negative index is treated identically to -1 and returns `sentinelUnresolved`.
           *     Only -1 is documented as the sentinel by convention, but all negative values are safe.
@@ -2364,7 +2564,7 @@ object Tasty:
           * Pure O(1) lookup in the immutable fqnIndex. Returns `Absent` if the FQN is not registered. For typed lookups that narrow to a
           * specific subtype, use `findClass`, `findTrait`, `findObject`, `findClassLike`, or `findPackage`.
           *
-          * Null safety (F-W2-4): a `null` `fqn` argument resolves to `Maybe.Absent` (Scala Map.get(null) returns None). No NPE is raised.
+          * Null safety: a `null` `fqn` argument resolves to `Maybe.Absent` (Scala Map.get(null) returns None). No NPE is raised.
           * Defensive null checks in call sites are unnecessary.
           */
         def findSymbol(fqn: String): Maybe[Symbol] =
@@ -2379,13 +2579,13 @@ object Tasty:
           *
           * Includes sealed abstract classes (e.g. `scala.Option`); use `findConcreteClass` to restrict to non-abstract classes.
           *
-          * Null safety (F-W2-4): a `null` `fqn` argument returns `Maybe.Absent`; no NPE is raised. An empty string `""` also returns
+          * Null safety: a `null` `fqn` argument returns `Maybe.Absent`; no NPE is raised. An empty string `""` also returns
           * `Maybe.Absent` because no symbol is registered under the empty key.
           *
           * Example:
-          * {{{
+          * ```scala
           *   val sym: Maybe[Symbol.Class] = cp.findClass("scala.collection.List")
-          * }}}
+          * ```
           */
         def findClass(fqn: String): Maybe[Symbol.Class] =
             fqnIndex.get(fqn) match
@@ -2400,14 +2600,14 @@ object Tasty:
           * Returns `Absent` when the FQN is not registered, when the symbol is not a Class, or when the matched Class has the Abstract
           * flag set (e.g. `scala.Option`, `scala.Either`). Use `findClass` when abstract classes are acceptable.
           *
-          * Q-004 layered addition: `findClass` remains permissive per HARD RULE 4; this method is the narrow accessor for callers that
+          * `findClass` remains permissive (returns sealed abstract classes); this method is the narrow accessor for callers that
           * need a concrete, instantiable class.
           *
           * Example:
-          * {{{
+          * ```scala
           *   cp.findConcreteClass("scala.Some")    // Present(_)
           *   cp.findConcreteClass("scala.Option")  // Absent (abstract)
-          * }}}
+          * ```
           */
         def findConcreteClass(fqn: String): Maybe[Symbol.Class] =
             findClass(fqn).filter(!_.isAbstract)
@@ -2422,7 +2622,7 @@ object Tasty:
           * Note: a count > 0 is expected behavior when the classpath does not include all transitive
           * dependencies. It is not an error condition.
           *
-          * Performance (F-W2-7): the result is computed once and cached. Repeated calls are O(1). The
+          * Performance: the result is computed once and cached. Repeated calls are O(1). The
           * cache is NOT a constructor parameter and is NOT preserved by `cp.copy(...)`; copying recomputes
           * it lazily on the next access of the new Classpath.
           */
@@ -2507,7 +2707,7 @@ object Tasty:
           *
           * Returns an empty Chunk when no match is found.
           *
-          * Performance (F-W2-24): O(1) lookup via an internal name index built lazily on first access.
+          * Performance: O(1) lookup via an internal name index built lazily on first access.
           * The index maps interned `Name` values to `Chunk[Symbol.Class]`. Subsequent calls on the same
           * `Classpath` instance are O(1). The index is NOT preserved by `cp.copy(...)`; copying rebuilds
           * it lazily on the next `findClassByName` call of the new Classpath.
@@ -2561,7 +2761,7 @@ object Tasty:
           *
           * Pure O(1) lookup; no I/O.
           *
-          * Nested-class handling (F-W2-15): the naive `'/' -> '.'` and `'$' -> '.'` translation fails for binary names that include
+          * Nested-class handling: the naive `'/' -> '.'` and `'$' -> '.'` translation fails for binary names that include
           * anonymous-class or local-class suffixes such as `com/example/Foo$1` (produces `com.example.Foo.1`) or
           * `com/example/Foo$$anon$1` (produces `com.example.Foo..anon.1` with a double dot). This method passes the translated dotted
           * name through `FqnNormalizer.canonicalSourceFqn` to apply the same normalization rules as the cold-load path, so that most
@@ -2581,7 +2781,7 @@ object Tasty:
 
         /** Require a class by FQN; fails with `TastyError.InvalidFqn` when `fqn` is empty, or `TastyError.NotFound` when absent.
           *
-          * Empty-string behavior (F-W2-17 fix): an empty `fqn` is a caller-side programming error. Rather than returning
+          * Empty-string behavior: an empty `fqn` is a caller-side programming error. Rather than returning
           * `TastyError.NotFound("")` (which looks like a normal lookup miss), this method now raises
           * `TastyError.InvalidFqn("", "fqn must be non-empty")` so the caller can distinguish a bad input from a genuine
           * not-found result.
@@ -2670,7 +2870,7 @@ object Tasty:
         /** All ClassLike symbols (Class, Trait, Object, EnumCase) at any nesting depth.
           *
           * F-G-006 fix: the prior implementation returned `Chunk[Symbol.Class]`, excluding Trait and Object. Widening to `Symbol.ClassLike`
-          * restores the invariant `allClasses.size >= topLevelClasses.size`. The return type widening is additive per HARD RULE 4 (ClassLike
+          * restores the invariant `allClasses.size >= topLevelClasses.size`. The return type widening is additive (ClassLike
           * is a supertype of Class; existing code that pattern-matches on `Symbol.Class` continues to work over the subset).
           */
         def allClasses: Chunk[Symbol.ClassLike] =
@@ -3007,7 +3207,7 @@ object Tasty:
 
         /** Init the classpath and additionally pre-load JDK `module-info.class` entries from the JDK module image.
           *
-          * Q-006 / F-D-001: opt-in JDK auto-discovery. On JVM, reads module-info.class files for all JDK modules from the `jrt:/`
+          * Opt-in JDK auto-discovery. On JVM, reads module-info.class files for all JDK modules from the `jrt:/`
           * virtual filesystem (mounted automatically by the JVM) and merges them into the returned classpath's `moduleIndex`. After the
           * call, `cp.findModule("java.base")` and other JDK modules resolve. On Scala.js and Scala Native, `jrt:/` is not available;
           * this method fails with `TastyError.UnsupportedPlatform`.
@@ -3023,7 +3223,7 @@ object Tasty:
           * decode time from ~27,000 classfiles (all JDK modules) to ~7,000 (java.base only), making it suitable for test fixtures. The
           * production `initWithPlatformModules` always passes an empty filter, which walks all modules.
           *
-          * HARD RULE 7: the returned Classpath is immutable; this overload does not weaken that invariant.
+          * The returned Classpath is immutable; this overload does not weaken that invariant.
           */
         private[kyo] def initWithPlatformModulesFiltered(
             roots: Seq[String],
@@ -3064,7 +3264,7 @@ object Tasty:
           *
           * An empty `pickles` sequence returns an empty `Classpath` with no symbols and no errors.
           *
-          * F-W2-3 fix: previous implementation silently returned an empty `Classpath` regardless of the `pickles` argument. Now each
+          * Each
           * pickle's bytes are decoded and merged into the returned classpath.
           */
         def fromPickles(pickles: Seq[Pickle])(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
@@ -3214,9 +3414,9 @@ object Tasty:
           *
           * Equivalent to `cp.copy(errors = newErrors)` but accessible from `kyo.internal.*` callers via `private[kyo]`.
           *
-          * F-W2-13: the stale "Phase 07 removes this" scaladoc has been removed. The Classpath case class is
-          * `final case class Classpath private[Tasty](...)`, so `cp.copy(...)` is inaccessible from outside
-          * `object Tasty` because the constructor is `private[Tasty]`. This helper remains the correct bridge.
+          * The Classpath case class is `final case class Classpath private[Tasty](...)`, so `cp.copy(...)` is
+          * inaccessible from outside `object Tasty` because the constructor is `private[Tasty]`. This helper
+          * is the correct bridge for internal callers that must adjust the errors field.
           */
         private[kyo] def copyWithErrors(cp: Classpath, newErrors: Chunk[TastyError]): Classpath =
             cp.copy(errors = newErrors)
@@ -3225,8 +3425,6 @@ object Tasty:
           *
           * Called from `ClasspathOrchestrator.init` after running the decode pipeline with only the valid roots. Accessible from
           * `kyo.internal.*` callers via `private[kyo]`.
-          *
-          * F-W2-13: the stale "Phase 07 removes this" scaladoc has been removed (see copyWithErrors note above).
           */
         private[kyo] def copyWithPreErrors(cp: Classpath, preErrors: Chunk[TastyError]): Classpath =
             cp.copy(errors = preErrors ++ cp.errors)
@@ -3244,14 +3442,31 @@ object Tasty:
 
     // ── Snapshot management ─────────────────────────────────────────────────
 
-    /** Snapshot cache management utilities. */
+    /** Snapshot cache management utilities for the `Classpath.initCached` path.
+      *
+      * `initCached` writes a binary snapshot file (extension `.krfl`) keyed by a digest of the input roots,
+      * so repeat opens of the same classpath restore the in-memory state without re-decoding the underlying
+      * `.tasty` / `.class` files. Over time the cache directory accumulates snapshots for roots that are no
+      * longer relevant (different commits, different sbt projects, transient builds); this companion exposes
+      * the maintenance operations a long-running process needs.
+      *
+      * **Eviction.** `evictOlderThan(cacheDir, d)` deletes any `*.krfl` file in `cacheDir` whose
+      * modification time is older than `d`, returning silently. It does not recurse, and it does not look
+      * at file contents; the policy is purely age-based. The operation carries `Sync & Abort[TastyError]`
+      * because it touches the disk; expect `SnapshotIoError` when the directory cannot be read.
+      *
+      * **What lives elsewhere.** The snapshot read / write path is internal; the only public surface for
+      * snapshot files is `Classpath.initCached` (writes on miss, reads on hit) and this object (eviction).
+      * Errors produced by the snapshot path are all in `TastyError` (`SnapshotFormatError`,
+      * `SnapshotVersionMismatch`, `SnapshotIoError`, `DigestMismatch`).
+      */
     object Snapshot:
 
         /** Delete snapshot files in `cacheDir` whose modification time is older than `d`.
           *
           * Only deletes files matching `*.krfl`. Does not recurse into subdirectories.
           *
-          * Performance (F-W2-25): stats all `.krfl` files, sorts them by mtime ascending (oldest first), deletes in order and stops at the
+          * Performance: stats all `.krfl` files, sorts them by mtime ascending (oldest first), deletes in order and stops at the
           * first file whose age is within `d`. When most files are fresh this early-exit avoids unnecessary delete attempts on files that
           * are clearly within the retention window.
           *
@@ -3267,7 +3482,7 @@ object Tasty:
 
         /** Internal overload that accepts a custom FileSource for testing.
           *
-          * F-W2-25 fix: stats all files, sorts by mtime ascending (oldest first), deletes until the first non-stale entry, then stops.
+          * Stats all files, sorts by mtime ascending (oldest first), deletes until the first non-stale entry, then stops.
           * This avoids unnecessary delete calls for files within the retention window and is O(N) stat syscalls + O(N log N) sort.
           */
         private[kyo] def evictOlderThanWithSource(

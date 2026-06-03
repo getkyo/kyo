@@ -2,7 +2,25 @@ package kyo
 
 /** Closed error ADT for kyo-tasty.
   *
-  * No exception ever crosses the public API boundary; every failure path returns `Abort.fail(TastyError.X)`.
+  * Every failure path in the public API is `Abort.fail(TastyError.X)`. No exception ever crosses the API
+  * boundary: a bug in user TASTy bytes, a missing class, a malformed snapshot, or an unsupported feature all
+  * resolve into one of the named cases below, and the caller can exhaustively pattern-match.
+  *
+  * **Grouping.** The cases group by the surface they cover.
+  *
+  *   - **File-level decode**: `FileNotFound`, `CorruptedFile`, `UnsupportedVersion`, `MalformedSection`,
+  *     `ClassfileFormatError`, `UnknownTagInPosition`, `InconsistentClasspath`. Raised during `Classpath.init`;
+  *     in `ErrorMode.SoftFail` they accumulate in `cp.errors`, in `ErrorMode.FailFast` they abort the open.
+  *   - **Lookup**: `SymbolNotFound` (orphan `SymbolId`), `NotFound` (FQN absent), `InvalidFqn` (caller passed
+  *     a syntactically invalid FQN to a `require*` method).
+  *   - **Snapshot cache**: `SnapshotFormatError`, `SnapshotVersionMismatch`, `SnapshotIoError`,
+  *     `DigestMismatch`. Raised by the `initCached` path when the cache file is corrupt, stale, or unreadable.
+  *   - **Lifecycle**: `ClasspathClosed` (use-after-scope-exit), `ClasspathBuilding` (read during construction).
+  *   - **Platform / reserved**: `UnsupportedPlatform` (JVM-only feature called on JS / Native),
+  *     `NotImplemented` (a TASTy feature recognised but not yet decoded by this release).
+  *
+  * **Equality.** Cases derive `CanEqual` so two `TastyError` values can be compared with `==` without an
+  * import; payload fields are compared structurally.
   */
 enum TastyError derives CanEqual:
 
