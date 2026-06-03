@@ -20,10 +20,20 @@ import scala.collection.mutable
   *
   * Scaladoc: 8-35 lines.
   */
-final class MemoryFileSource(files: mutable.HashMap[String, Array[Byte]] = mutable.HashMap.empty) extends FileSource:
+final class MemoryFileSource(
+    files: mutable.HashMap[String, Array[Byte]] = mutable.HashMap.empty,
+    mtimes: mutable.HashMap[String, Long] = mutable.HashMap.empty
+) extends FileSource:
 
     /** Register a path-to-bytes entry. Overwrites any prior entry for the same path. */
     def add(path: String, bytes: Array[Byte]): Unit = files(path) = bytes
+
+    /** Set the mtime in milliseconds for a path. If unset, `stat` reports `mtimeMs = 0L`.
+      *
+      * Provided for tests that exercise `DigestComputer.compute` semantics (mtime-driven cache invalidation) without depending on a real
+      * filesystem. The in-memory mtime is hand-controlled; tests can simulate "+1 hour" by calling `setMtime(path, prior + 3600000)`.
+      */
+    def setMtime(path: String, mtimeMs: Long): Unit = mtimes(path) = mtimeMs
 
     def read(path: String)(using Frame): Array[Byte] < (Sync & Abort[TastyError]) =
         files.get(path) match
@@ -51,6 +61,6 @@ final class MemoryFileSource(files: mutable.HashMap[String, Array[Byte]] = mutab
         Sync.defer(files.contains(path) || files.keys.exists(_.startsWith(path + "/")))
 
     def stat(path: String)(using Frame): FileSource.FileStat < (Sync & Abort[TastyError]) =
-        Sync.defer(FileSource.FileStat(0L, files.get(path).map(_.length.toLong).getOrElse(0L)))
+        Sync.defer(FileSource.FileStat(mtimes.getOrElse(path, 0L), files.get(path).map(_.length.toLong).getOrElse(0L)))
 
 end MemoryFileSource
