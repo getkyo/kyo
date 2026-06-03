@@ -126,18 +126,24 @@ object WebsiteStyles:
     // ---- Landing: header / nav / buttons / version control ----
     private def landingChrome: Stylesheet =
         Stylesheet.empty
-            // sticky header
+            // Base header tag rule: reset the default flow positioning; the .site-header rule below
+            // applies the sticky positioning with top+z-index via Position.sticky.
             .rule(
                 Selector.tag("header"),
                 Style.position(_.flow).bg(_.variable("bg")).borderBottom(1.px, _.variable("line-soft"))
             )
-            // Unified site header (G2): a full-bleed bar whose inner row is capped at 1500px (the
-            // docs-shell width) and centered, so the one header sits above both the 1120px landing
-            // body and the 1500px docs 3-pane without ever appearing narrower than the docs content.
+            // Unified site header (G2): a full-bleed sticky bar whose inner row is capped at 1500px
+            // (the docs-shell width) and centered, so the one header sits above both the 1120px
+            // landing body and the 1500px docs 3-pane without ever appearing narrower than the docs
+            // content. Position.sticky renders position:sticky; top:0; z-index:100 so the bar pins
+            // at the viewport top on scroll and layers above page content. The .search-results
+            // dropdown uses Position.dropdown (z-index:50) but is a descendant of .site-header so
+            // stacking-context rules ensure it renders above siblings of the header, not below.
             .rule(
                 "site-header",
                 Style.column.width(Length.Pct(100))
                     .bg(_.variable("bg")).borderBottom(1.px, _.variable("line-soft"))
+                    .position(_.sticky)
             )
             .rule(
                 "site-header-inner",
@@ -831,10 +837,17 @@ object WebsiteStyles:
     // ---- Responsive breakpoints ----
     private def responsive: Stylesheet =
         Stylesheet.empty
-            // hide landing nav links + ghost button on narrow viewports
+            // On narrow viewports the unified header wraps to two rows so all nav targets stay
+            // reachable (AF-3). Row 1: brand + nav links. Row 2: search + version + CTA.
+            // .site-header-inner drops its fixed 60px height and gains flex-wrap; .right takes the
+            // full width of the second row (ml-auto still pushes it right on wide viewports).
+            // .btn-ghost (the GitHub icon-only button used elsewhere) is hidden on small screens
+            // because the text "GitHub" link in .links already covers the target.
             .media(Stylesheet.MediaQuery.maxWidth(820.px))(
                 Stylesheet.empty
-                    .rule("links", Style.displayNone)
+                    .rule("site-header-inner", Style.flexWrap(_.wrap).height(Length.Auto).padding(8.px, 16.px).gap(8.px))
+                    .rule("links", Style.gap(14.px).margin(0.px))
+                    .rule("right", Style.width(Length.Pct(100)).margin(0.px, 0.px, 8.px, 0.px))
                     .rule("btn-ghost", Style.displayNone)
             )
             // outcome + feature grids collapse: 2-up at 880px, 1-up at 560px

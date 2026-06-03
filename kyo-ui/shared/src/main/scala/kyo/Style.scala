@@ -707,9 +707,14 @@ object Style:
       *   - `dropdown`: an absolutely-positioned panel anchored under the right edge of its nearest
       *     positioned ancestor (`position: absolute; top: 100%; right: 0`), layered above sibling
       *     content. Used for menus and result panels that drop below a trigger.
+      *   - `sticky`: a sticky-positioned element (`position: sticky; top: 0; z-index: 100`) that
+      *     scrolls with the document until it reaches the viewport top, then pins in place. The
+      *     embedded `top: 0` and `z-index: 100` ensure the bar sticks immediately at the top edge
+      *     and layers above scrolling page content (dropdown at z-index 50 still floats above it
+      *     because the dropdown is a descendant of the sticky bar). Used for persistent site headers.
       */
     enum Position derives CanEqual:
-        case flow, overlay, relative, dropdown
+        case flow, overlay, relative, dropdown, sticky
 
     /** Direction of a background gradient (the `to ...` keyword of a CSS `linear-gradient`). */
     enum GradientDirection derives CanEqual:

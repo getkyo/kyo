@@ -191,6 +191,7 @@ private[kyo] object CssStyleRenderer:
                 case Position.overlay  => "position: fixed; top: 0; left: 0; width: 100%; height: 100%;"
                 case Position.relative => "position: relative;"
                 case Position.dropdown => "position: absolute; top: 100%; right: 0; z-index: 50;"
+                case Position.sticky   => "position: sticky; top: 0; z-index: 100;"
         case HiddenProp        => "display: none;"
         case FlexGrowProp(v)   => s"flex-grow: ${fmt(v)};"
         case FlexShrinkProp(v) => s"flex-shrink: ${fmt(v)};"

@@ -657,10 +657,22 @@ class StyleTest extends Test:
             assert(s.props(0) == Style.Prop.PositionProp(Position.dropdown))
         }
 
+        "sticky" in {
+            val s = Style.position(Position.sticky)
+            assert(s.props(0) == Style.Prop.PositionProp(Position.sticky))
+            assert(s.toCss.contains("position: sticky;"))
+            assert(s.toCss.contains("top: 0;"))
+            assert(s.toCss.contains("z-index: 100;"))
+        }
+
         "enum values" in {
             assert(Position.flow != Position.overlay)
             assert(Position.relative != Position.dropdown)
             assert(Position.overlay != Position.dropdown)
+            assert(Position.sticky != Position.flow)
+            assert(Position.sticky != Position.overlay)
+            assert(Position.sticky != Position.relative)
+            assert(Position.sticky != Position.dropdown)
         }
     }
 
