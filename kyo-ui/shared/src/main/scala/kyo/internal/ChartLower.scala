@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import kyo.UI.render
 
 /** Lowers a `ChartSpec[A]` to an `Svg.Root` for static data.
   *
@@ -1271,12 +1272,172 @@ private[kyo] object ChartLower:
         Chunk.from(xLine.toOption.toSeq ++ yLine.toOption.toSeq)
     end lowerRule
 
+    // ---- reactive helpers ----
+
+    /** Returns true when the y-scale's domain is fully determined by the `ScaleOverride` (not the data).
+      *
+      * A fixed domain means the y-axis ticks are independent of the live rows and can be drawn once in the
+      * static frame. An inferred domain means the ticks must live inside the reactive region so they update
+      * when the data changes.
+      */
+    private def isYDomainFixed(yOverride: Maybe[ScaleOverride]): Boolean =
+        yOverride.flatMap(_.kind) match
+            case Present(ScaleKind.Linear(_, _)) => true
+            case Present(ScaleKind.Log)          => true
+            case _                               => false
+    end isYDomainFixed
+
+    /** Build the domain-independent portion of the static frame for a live chart.
+      *
+      * Includes: background rect, axis lines, legend chrome. If the y-domain is fixed (by a `ScaleOverride`),
+      * also includes the full y-axis (ticks, labels, gridlines); otherwise the y-axis is omitted here and
+      * included inside the reactive region where it can update with the data.
+      *
+      * The x-axis ticks and labels are NOT included in the static frame: they depend on the live x-scale
+      * (which tracks the current category set) and are therefore placed inside the reactive region by
+      * `buildReactiveRegion`. Only the axis border lines (bottom and left) are static.
+      *
+      * No `url(#id)` references are emitted (N4-guard satisfied).
+      */
+    private[kyo] def buildStaticFrameLive[A](
+        layout: Layout,
+        xs: Scale,
+        ysL: Scale,
+        ysR: Maybe[Scale],
+        spec: ChartSpec[A],
+        initialRows: Chunk[A]
+    )(using Frame): Chunk[Svg.SvgElement] =
+        val background  = buildBackground(layout, spec.theme)
+        val axisLines   = buildAxisLines(layout, ysR)
+        val legendElems = buildLegend(layout, spec, initialRows)
+        val yAxisElems: Chunk[Svg.SvgElement] =
+            if isYDomainFixed(spec.yScaleOverride) then
+                val leftAxis = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false)
+                val rightAxis = ysR match
+                    case Present(ysR_) => buildYAxis(layout, ysR_, spec.yAxisRightCfg.getOrElse(AxisConfig.default), isRight = true)
+                    case Absent        => Chunk.empty
+                leftAxis ++ rightAxis
+            else Chunk.empty
+        background ++ axisLines ++ yAxisElems ++ legendElems
+    end buildStaticFrameLive
+
+    /** Build the reactive region `Svg.G` for one emission of the live signal.
+      *
+      * The x-axis ticks are always included here so they use the same live `xs` scale that drives the marks:
+      * for a band (categorical) x-axis the tick labels must match the actual category keys, which come from
+      * the data, not from an empty-rows initial resolution. Building them from `Chunk.empty` would produce a
+      * Linear [0,1] fallback and emit numeric labels (0, 0.25, ...) instead of the band category labels.
+      *
+      * When the y-domain is inferred from the data, the y-axis ticks are also included here so they update
+      * with the data range. When the y-domain is fixed, only the marks and x-axis are included (the static
+      * y-axis already lives in the outer frame).
+      *
+      * The returned `Svg.G` is the child that the engine replaces on each signal emission.
+      */
+    private def buildReactiveRegion[A](
+        rows: Chunk[A],
+        spec: ChartSpec[A],
+        layout: Layout,
+        xs: Scale,
+        ysL: Scale,
+        ysR: Maybe[Scale]
+    )(using Frame): Svg.G =
+        val marksG     = marksRegion(rows, spec.marks, layout, xs, ysL, ysR)
+        val xAxisElems = buildXAxis(layout, xs, spec.xAxisCfg)
+        if isYDomainFixed(spec.yScaleOverride) then
+            // Fixed y-domain: y-axis is static; only x-axis ticks and marks are reactive.
+            val xAxisG = xAxisElems.foldLeft(Svg.g): (g, el) =>
+                el match
+                    case l: Svg.Line => g(l)
+                    case t: Svg.Text => g(t)
+                    case other       => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+            Svg.g(xAxisG)(marksG)
+        else
+            // Inferred domain: include y-axis ticks AND x-axis ticks inside the reactive region.
+            val leftAxisElems = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false)
+            val rightAxisElems = ysR match
+                case Present(ysR_) => buildYAxis(layout, ysR_, spec.yAxisRightCfg.getOrElse(AxisConfig.default), isRight = true)
+                case Absent        => Chunk.empty
+            val allElems: Chunk[Svg.SvgElement] = leftAxisElems ++ rightAxisElems ++ xAxisElems
+            val axisG = allElems.foldLeft(Svg.g): (g, el) =>
+                el match
+                    case l: Svg.Line => g(l)
+                    case t: Svg.Text => g(t)
+                    case other       => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+            Svg.g(axisG)(marksG)
+        end if
+    end buildReactiveRegion
+
+    /** Lower a `ChartSpec[A]` with a `DataSource.Live` signal to an `Svg.Root`.
+      *
+      * The static frame (background, axis lines, x-axis, legend, and the y-axis when the domain is fixed) is
+      * drawn once. The marks region (and the y-axis ticks when the domain is inferred) is wrapped in
+      * `signal.render` so it re-renders on each emission.
+      *
+      * Partition logic:
+      *   - Fixed domain (`yScale(_.linear(lo,hi))` or `yScale(_.log)`): the y-scale is computed once from the
+      *     override, so the y-axis is static. Only the marks `Svg.G` is reactive.
+      *   - Inferred domain (default): the y-scale is recomputed from each new batch of rows. Both the y-axis
+      *     ticks and the marks live inside the reactive `Svg.G` so the tick labels update with the data.
+      *
+      * The x-scale is always computed from the first emission via `initialRows`. For a categorically-typed x
+      * axis (band scale) the category set is fixed to the initial categories; this is the Phase-05 constraint
+      * (dynamic category insertion is a Phase-06+ concern).
+      *
+      * N4-guard: no `url(#id)` references are emitted; `Frame.internal` is safe.
+      */
+    private[kyo] def lowerLive[A](spec: ChartSpec[A], signal: Signal[Chunk[A]])(using Frame): Svg.Root =
+        val layout = buildLayout(spec)
+        // Use a fixed initial row set for the layout/x-scale/ysR-presence check.
+        // For Phase 05 the x-scale is computed from the signal's current value via initConst or the first
+        // emission. We resolve from Chunk.empty to get a stable layout; the reactive region re-resolves the
+        // y-scale per emission.
+        val initialRows: Chunk[A] = Chunk.empty
+        val xs                    = resolveXScale(initialRows, spec.marks, layout, spec.xScaleOverride)
+        val hasRight = spec.marks.toSeq.exists:
+            case m: Mark.Bar[A, ?, ?]   => m.axis == Axis.Right
+            case m: Mark.Line[A, ?, ?]  => m.axis == Axis.Right
+            case m: Mark.Area[A, ?, ?]  => m.axis == Axis.Right
+            case m: Mark.Point[A, ?, ?] => m.axis == Axis.Right
+            case _                      => false
+        // For fixed domain, compute ysL once from the override; for inferred domain, ysL is recomputed per
+        // emission inside the reactive region.
+        val ysLFixed: Maybe[Scale] =
+            if isYDomainFixed(spec.yScaleOverride) then Present(resolveYScale(initialRows, spec.marks, layout, spec.yScaleOverride))
+            else Absent
+        val ysRFixed: Maybe[Scale] =
+            if hasRight || spec.yAxisRightCfg.isDefined then
+                Present(resolveYRightScale(initialRows, spec.marks, layout))
+            else Absent
+        // Static frame: drawn once, never changes.
+        val ysLForFrame = ysLFixed.getOrElse(resolveYScale(initialRows, spec.marks, layout, spec.yScaleOverride))
+        val staticFrame = buildStaticFrameLive(layout, xs, ysLForFrame, ysRFixed, spec, initialRows)
+        val vb          = Svg.ViewBox(0.0, 0.0, layout.svgW, layout.svgH)
+        val baseSvg     = Svg.svg.width(layout.svgW).height(layout.svgH).viewBox(vb)
+        val withFrame = staticFrame.foldLeft(baseSvg): (acc, el) =>
+            el match
+                case r: Svg.Rect => acc(r)
+                case l: Svg.Line => acc(l)
+                case t: Svg.Text => acc(t)
+                case g: Svg.G    => acc(g)
+                case other       => acc(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+        // Reactive region: re-renders on each signal emission.
+        val reactiveMarks: UI.Ast.Reactive[Svg.G] = signal.render: rows =>
+            // Re-resolve x-scale from the current rows so categorical axes expand when categories are added.
+            val xsLive  = resolveXScale(rows, spec.marks, layout, spec.xScaleOverride)
+            val ysLLive = ysLFixed.getOrElse(resolveYScale(rows, spec.marks, layout, spec.yScaleOverride))
+            val ysRLive: Maybe[Scale] =
+                if hasRight || spec.yAxisRightCfg.isDefined then Present(resolveYRightScale(rows, spec.marks, layout))
+                else Absent
+            buildReactiveRegion(rows, spec, layout, xsLive, ysLLive, ysRLive)
+        withFrame(reactiveMarks)
+    end lowerLive
+
     // ---- main entry point ----
 
     /** Lower a `ChartSpec[A]` to an `Svg.Root`.
       *
-      * Handles only `DataSource.Static` through Phase 04. For `DataSource.Live` the reactive path (Phase 05)
-      * is needed; Phases 03/04 emit an empty root for live data as a safe fallback.
+      * Dispatches to `lowerStatic` for `DataSource.Static` and `lowerLive` for `DataSource.Live`.
       *
       * N4-guard: no `url(#id)` references are emitted by the frame or marks (plain rects/lines/text only),
       * so `Frame.internal` is safe here. When gradient/clip/marker refs are added in a later phase, the
@@ -1286,7 +1447,7 @@ private[kyo] object ChartLower:
         given Frame = Frame.internal
         spec.data match
             case DataSource.Static(rows) => lowerStatic(rows, spec)
-            case DataSource.Live(_)      => Svg.svg
+            case DataSource.Live(signal) => lowerLive(spec, signal)
     end lower
 
     private def lowerStatic[A](rows: Chunk[A], spec: ChartSpec[A])(using Frame): Svg.Root =

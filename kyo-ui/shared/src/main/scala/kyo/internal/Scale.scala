@@ -302,7 +302,11 @@ private[kyo] object Scale:
             if nice then
                 val tks = niceTicks(lo, hi, 5)
                 if tks.isEmpty then (lo, hi)
-                else (tks(0), tks(tks.size - 1))
+                // math.max ensures the domain always contains the data maximum; niceTicks rounds
+                // DOWN to the last nice step (e.g. max=5000 -> last tick=4000 < 5000), so without
+                // the max guard the tallest bar would be clipped to full height and lose magnitude.
+                else (math.min(lo, tks(0)), math.max(hi, tks(tks.size - 1)))
+                end if
             else (lo, hi)
         Linear(nLo, nHi, rangeLo, rangeHi)
     end fitLinear
