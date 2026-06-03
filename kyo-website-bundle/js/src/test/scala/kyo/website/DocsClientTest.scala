@@ -62,7 +62,7 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
             "/v1.0.0/manifest.json" -> manifestJson
         )) {
             for
-                table <- DocsClient.routeTable
+                table <- DocsClient.routeTable("v1.0.0")
             yield
                 assert(table.versions.size == 2, s"Expected 2 versions, got: ${table.versions.size}")
                 assert(table.modules.size == 3, s"Expected 3 modules, got: ${table.modules.size}")
@@ -89,7 +89,7 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
             "/v1.0.0/manifest.json" -> manifestJson
         )) {
             for
-                table <- DocsClient.routeTable
+                table <- DocsClient.routeTable("v1.0.0")
             yield
                 val coreHeadings = table.headingsBySlug.getOrElse("kyo-core", Chunk.empty)
                 assert(coreHeadings.size == 2, s"kyo-core must have 2 headings, got: $coreHeadings")
@@ -132,7 +132,7 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
             "/v1.0.0/manifest.json" -> "[]"
         )) {
             for
-                table <- DocsClient.routeTable
+                table <- DocsClient.routeTable("v1.0.0")
             yield
                 assert(table.versions.size == 1, s"Expected 1 version, got: ${table.versions.size}")
                 assert(
@@ -189,7 +189,7 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
             "/v1.0.0/manifest.json" -> manifestJson
         )) {
             for
-                table <- DocsClient.routeTable
+                table <- DocsClient.routeTable("v1.0.0")
             yield
                 assert(table.modules.size == 3, s"unbalanced brackets must not change the element count, got: ${table.modules.size}")
                 assert(table.modules(0).slug == "kyo-data", s"first slug: ${table.modules(0).slug}")
@@ -221,7 +221,7 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
             "/v1.0.0/manifest.json" -> "[]"
         )) {
             for
-                table <- DocsClient.routeTable
+                table <- DocsClient.routeTable("v1.0.0")
             yield
                 assert(table.versions.size == 2, s"unbalanced brackets must not change the version count, got: ${table.versions.size}")
                 assert(table.versions(0).tag == "v1.0.0", s"first tag: ${table.versions(0).tag}")
@@ -230,6 +230,47 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
                 assert(table.versions(1).tag == "v0.9.3", s"second tag: ${table.versions(1).tag}")
                 assert(table.versions(1).label == "0.9.3 }brace{", s"second label must survive intact, got: ${table.versions(1).label}")
                 assert(!table.versions(1).latest, "second version must be latest=false")
+            end for
+        }
+    }
+
+    // AF-8 reproduce: routeTable must fetch the ACTIVE prefix's manifest, not always the latest.
+    // A non-latest reader (browsing /v0.9.3/...) whose heading index is built from the LATEST manifest
+    // gets heading routes /<oldPrefix>/<slug>/#<latestSlug> whose fragment can land nowhere. This stubs
+    // DIFFERENT latest vs old manifests and asserts routeTable("v0.9.3") returns the OLD version's
+    // headings. Before the fix, routeTable took no argument and always fetched the latest manifest, so
+    // this assertion failed (the v0.9.3 reader got "new-heading" instead of "old-heading"). The
+    // signature change itself is the compile-time reproduce signal.
+    "routeTable(activePrefix) fetches the active prefix's manifest, not always the latest (AF-8)" in run {
+        val versionsJson =
+            """[{"tag":"v1.0.0","label":"1.0.0","latest":true},{"tag":"v0.9.3","label":"0.9.3","latest":false}]"""
+        // The latest manifest has "new-heading"; the old manifest has "old-heading" instead.
+        val latestManifestJson =
+            """[{"slug":"kyo-core","group":"Effects","title":"kyo-core",""" +
+                """"toc":[{"level":2,"text":"New heading","slug":"new-heading"}]}]"""
+        val oldManifestJson =
+            """[{"slug":"kyo-core","group":"Effects","title":"kyo-core",""" +
+                """"toc":[{"level":2,"text":"Old heading","slug":"old-heading"}]}]"""
+        withFetch(Map(
+            "/versions.json"        -> versionsJson,
+            "/v1.0.0/manifest.json" -> latestManifestJson, // latest -- must NOT be used
+            "/v0.9.3/manifest.json" -> oldManifestJson     // old version -- must be used
+        )) {
+            for
+                table <- DocsClient.routeTable("v0.9.3")
+            yield
+                val coreHeadings = table.headingsBySlug.getOrElse("kyo-core", Chunk.empty)
+                assert(
+                    coreHeadings.exists(_.slug == "old-heading"),
+                    s"routeTable for v0.9.3 must use the v0.9.3 manifest headings, got: $coreHeadings"
+                )
+                assert(
+                    !coreHeadings.exists(_.slug == "new-heading"),
+                    s"routeTable for v0.9.3 must NOT use the latest manifest headings, got: $coreHeadings"
+                )
+                // The versions list must still be parsed from /versions.json (only the manifest URL
+                // changed), so the dropdown still has every version.
+                assert(table.versions.size == 2, s"routeTable must still parse all versions, got: ${table.versions.size}")
             end for
         }
     }

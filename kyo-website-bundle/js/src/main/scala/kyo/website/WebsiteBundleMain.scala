@@ -112,9 +112,20 @@ object WebsiteBundleMain:
         // reader under `/v<X>/...` keeps navigating within that tree (WARN-1).
         val prefix = activePrefix(initialRoute, island.content.version.tag)
         val home   = docsHome(island.content, prefix)
-        // The physical trees a `/<prefix>/` intro route may legitimately name: `latest` plus every
-        // version's own tag. A single-segment route outside this set is off-tree and full-navigates.
-        val knownPrefixes: Set[String] = versions.toSeq.map(_.tag).toSet + LatestPrefix
+        // The physical trees a `/<prefix>/` intro route may legitimately name: `latest`, every
+        // version's own tag, AND the seeded island's own version tag. A single-segment route outside
+        // this set is off-tree and full-navigates. Including the island tag decouples intro
+        // classification from the `#versions-island` element: when that island is absent (a non-SSG
+        // harness, or a page that omits it) `versions` is empty, but the reader is still browsing
+        // within the island's own tree, so `/<islandTag>/` must classify as intro, not off-tree
+        // (AF-5). When the versions island IS present the island tag is already in the version set,
+        // so the extra term is idempotent.
+        val knownPrefixes: Set[String] =
+            versions.toSeq.map(_.tag).toSet + LatestPrefix + island.content.version.tag
+        // The known module slugs for the seeded tree, derived once from the island's module list. A
+        // multi-segment route whose last segment is NOT in this set is off-tree (AF-4): it full-
+        // navigates to a clean server 404 instead of fetching a missing content.md into a broken shell.
+        val knownSlugs: Set[String] = island.content.groups.flatMap(_.modules).map(_.slug).toSet
         // The island's Markdown is the current route's README when the initial route is a module page,
         // and "" on `/` and `/<prefix>/` (the SSG seeds an empty island there). Seed the cache so the
         // module branch reuses the first-paint content instead of re-fetching it.
@@ -141,7 +152,7 @@ object WebsiteBundleMain:
             // (titles/slugs/groups), so the very first keystroke already matches module titles without
             // waiting on a fetch. The heading-aware index loads lazily on first focus (onSearchFocus).
             searchIndex <- Signal.initRef(titleIndex(island.content, prefix))
-            _           <- navFiber(route, knownPrefixes, island, content, articleRef, tocRef, landingBody, docsBody)
+            _           <- navFiber(route, knownPrefixes, knownSlugs, island, content, articleRef, tocRef, landingBody, docsBody)
             view <- SiteApp.view(
                 versions,
                 home,
@@ -183,7 +194,7 @@ object WebsiteBundleMain:
         else
             searchIndexLoaded = true
             val modules = content.groups.flatMap(_.modules)
-            Abort.run[Throwable](Abort.catching[Throwable](DocsClient.routeTable)).map {
+            Abort.run[Throwable](Abort.catching[Throwable](DocsClient.routeTable(prefix))).map {
                 case Result.Success(table) =>
                     searchIndex.set(DocsSearch.headingIndex(prefix, modules, s => table.headingsBySlug.getOrElse(s, Chunk.empty)))
                 case Result.Failure(_) | Result.Panic(_) =>
@@ -193,15 +204,47 @@ object WebsiteBundleMain:
         end if
     end loadSearchIndex
 
-    /** The single nav fiber. On each new route it picks one of four branches:
-      *   - root `/` (zero path segments): swap `content` to the landing body, no reload (D1).
-      *   - module `/<prefix>/<slug>/` (two or more segments): fetch + transpile `content.md` (cache),
-      *     update `articleRef`/`tocRef`, and swap `content` to the docs body.
-      *   - intro `/<knownPrefix>/` (exactly one segment that names a real tree, `latest` or a known
-      *     version tag): clear the article/TOC and swap to the empty-article docs body.
-      *   - genuinely off-tree (a single segment that is NOT a known prefix): a full browser navigation
-      *     as the narrow safety fallback, so the server resolves the real page or a 404 instead of the
-      *     SPA rendering a docs shell for a route that does not exist.
+    /** The four route kinds the nav fiber dispatches on, named so the classification is a pure,
+      * testable decision separate from the effectful branch bodies in [[navFiber]].
+      *
+      *   - [[Landing]]: the root `/` (zero path segments).
+      *   - [[Module]]: a `/<prefix>/<slug>/` page whose last segment names a known module.
+      *   - [[Intro]]: a single-segment `/<knownPrefix>/` route naming a real tree.
+      *   - [[OffTree]]: anything else (an unknown prefix, OR a multi-segment route whose last segment
+      *     is not a known module slug), which hands off to a full browser navigation.
+      */
+    private[website] enum RouteKind derives CanEqual:
+        case Landing, Module, Intro, OffTree
+
+    /** Classify a route's path segments into a [[RouteKind]], the pure decision [[navFiber]] dispatches
+      * on. A multi-segment route is a [[Module]] ONLY when its last segment is a known module slug;
+      * an unknown multi-segment slug (e.g. `/latest/does-not-exist/`) is [[OffTree]] so it full-
+      * navigates to a clean server 404 instead of fetching a missing `content.md` into a broken docs
+      * shell (AF-4). A single-segment route is an [[Intro]] only when it names a known prefix.
+      */
+    private[website] def classifyRoute(
+        segments: Array[String],
+        knownPrefixes: Set[String],
+        knownSlugs: Set[String]
+    ): RouteKind =
+        if segments.isEmpty then RouteKind.Landing
+        else if segments.length >= 2 && knownSlugs.contains(segments(segments.length - 1)) then RouteKind.Module
+        else if segments.length == 1 && knownPrefixes.contains(segments(0)) then RouteKind.Intro
+        else RouteKind.OffTree
+    end classifyRoute
+
+    /** The single nav fiber. On each new route it dispatches on [[classifyRoute]] into one of four
+      * branches:
+      *   - [[RouteKind.Landing]] (root `/`): swap `content` to the landing body, no reload (D1).
+      *   - [[RouteKind.Module]] (`/<prefix>/<slug>/` whose last segment is a known module slug): fetch +
+      *     transpile `content.md` (cache), update `articleRef`/`tocRef`, and swap `content` to the docs
+      *     body.
+      *   - [[RouteKind.Intro]] (`/<knownPrefix>/`, exactly one segment naming a real tree, `latest` or a
+      *     known version tag): clear the article/TOC and swap to the empty-article docs body.
+      *   - [[RouteKind.OffTree]] (an unknown single-segment prefix OR a multi-segment route whose last
+      *     segment is not a known module slug, e.g. `/latest/does-not-exist/`, AF-4): a full browser
+      *     navigation as the narrow safety fallback, so the server resolves the real page or a clean 404
+      *     instead of the SPA fetching a missing `content.md` into a broken docs shell.
       *
       * Same-document `#anchor` clicks never reach this fiber: `UILocation` skips same-document links
       * (`UILocation.scala:60-62`), so a TOC or landing `#how` anchor scrolls natively without changing
@@ -210,6 +253,7 @@ object WebsiteBundleMain:
     private def navFiber(
         route: Signal[String],
         knownPrefixes: Set[String],
+        knownSlugs: Set[String],
         island: DocsClient.DocsIsland,
         content: SignalRef[UI],
         articleRef: SignalRef[UI],
@@ -223,42 +267,44 @@ object WebsiteBundleMain:
                     nextRoute <- route.next
                     segments = nextRoute.split('/').filter(_.nonEmpty)
                     _ <-
-                        if segments.isEmpty then
-                            // Root `/`: swap to the landing body (no reload, D1).
-                            content.set(landingBody).andThen(updateHead(nextRoute, island))
-                        else if segments.length >= 2 then
-                            // Module route: fetch/transpile content.md, update article + TOC, show docs.
-                            for
-                                md <- Sync.defer(markdownCache.getOrElse(nextRoute, ""))
-                                fetched <-
-                                    if md.nonEmpty then Sync.defer(md)
-                                    else
-                                        DocsClient.fetchMarkdown(nextRoute).map { f =>
-                                            seedMarkdownCache(nextRoute, f)
-                                            f
-                                        }
-                                rendered <- DocsMarkdown.transpile(fetched)
-                                _        <- articleRef.set(rendered.article)
-                                _        <- tocRef.set(rendered.headings)
-                                _        <- content.set(docsBody)
-                                _        <- updateHead(nextRoute, island)
-                                // After the article re-renders, scroll to the URL hash if present (a
-                                // heading-hit search result navigates to /<prefix>/<slug>/#<heading>;
-                                // the anchor element only exists once this branch renders the article).
-                                _ <- scrollToHash()
-                            yield ()
-                        else if knownPrefixes.contains(segments(0)) then
-                            // Intro `/<knownPrefix>/`: empty-article docs shell, no content.md fetch.
-                            articleRef.set(UI.empty)
-                                .andThen(tocRef.set(Chunk.empty))
-                                .andThen(content.set(docsBody))
-                                .andThen(updateHead(nextRoute, island))
-                        else
-                            // Off-tree single-segment route: hand off to a full browser navigation so the
-                            // server resolves the real page or a 404 (narrow fallback; D1).
-                            // Unsafe: DOM bridge for the off-tree full-navigate fallback.
-                            Sync.defer(dom.window.location.href = nextRoute)
-                        end if
+                        classifyRoute(segments, knownPrefixes, knownSlugs) match
+                            case RouteKind.Landing =>
+                                // Root `/`: swap to the landing body (no reload, D1).
+                                content.set(landingBody).andThen(updateHead(nextRoute, island))
+                            case RouteKind.Module =>
+                                // Module route: fetch/transpile content.md, update article + TOC, show docs.
+                                for
+                                    md <- Sync.defer(markdownCache.getOrElse(nextRoute, ""))
+                                    fetched <-
+                                        if md.nonEmpty then Sync.defer(md)
+                                        else
+                                            DocsClient.fetchMarkdown(nextRoute).map { f =>
+                                                seedMarkdownCache(nextRoute, f)
+                                                f
+                                            }
+                                    rendered <- DocsMarkdown.transpile(fetched)
+                                    _        <- articleRef.set(rendered.article)
+                                    _        <- tocRef.set(rendered.headings)
+                                    _        <- content.set(docsBody)
+                                    _        <- updateHead(nextRoute, island)
+                                    // After the article re-renders, scroll to the URL hash if present (a
+                                    // heading-hit search result navigates to /<prefix>/<slug>/#<heading>;
+                                    // the anchor element only exists once this branch renders the article).
+                                    _ <- scrollToHash()
+                                yield ()
+                            case RouteKind.Intro =>
+                                // Intro `/<knownPrefix>/`: empty-article docs shell, no content.md fetch.
+                                articleRef.set(UI.empty)
+                                    .andThen(tocRef.set(Chunk.empty))
+                                    .andThen(content.set(docsBody))
+                                    .andThen(updateHead(nextRoute, island))
+                            case RouteKind.OffTree =>
+                                // Off-tree route: a single segment that is not a known prefix, OR a multi-
+                                // segment route whose last segment is not a known module slug (AF-4). Hand off
+                                // to a full browser navigation so the server resolves the real page or a clean
+                                // 404 instead of fetching a missing content.md into a broken docs shell (D1).
+                                // Unsafe: DOM bridge for the off-tree full-navigate fallback.
+                                Sync.defer(dom.window.location.href = nextRoute)
                 yield Loop.continue
             }
         }
@@ -297,31 +343,53 @@ object WebsiteBundleMain:
         }
     end updateHead
 
+    /** The bounded scroll-poll budget: up to [[ScrollMaxAttempts]] lookups, [[ScrollPollInterval]]
+      * apart, for a total settle budget of 200ms (10 * 20ms), well within human perception of a snap
+      * nav. The article patch applies on the event loop after `content.set`, so the first attempt may
+      * miss; each subsequent attempt yields the event loop a chance to apply the patch (AF-9).
+      */
+    private val ScrollMaxAttempts: Int       = 10
+    private val ScrollPollInterval: Duration = 20.millis
+
     /** Scroll the element named by the current URL hash into view, if any.
       *
       * A heading-hit search result navigates to `/<prefix>/<slug>/#<heading-slug>`: the browser does
       * not auto-scroll because the article (and so the `#<heading-slug>` element) only renders after
-      * the route changes and this fiber swaps the content. This reads `window.location.hash` and
-      * scrolls the matching element into view once the article has rendered. The short settle yields
-      * to the reactive article patch (which applies on the event loop after `content.set`) so the
-      * anchor element is in the DOM before the lookup; a missing hash or missing element is a no-op.
+      * the route changes and this fiber swaps the content. This reads `window.location.hash` once and,
+      * when present, polls for the anchor element with a BOUNDED retry: up to [[ScrollMaxAttempts]]
+      * lookups [[ScrollPollInterval]] apart, yielding the event loop between attempts so the reactive
+      * article patch has a chance to apply before each lookup (AF-9). On a large article the patch may
+      * not have applied on the first attempt, so a single fixed-sleep lookup raced the render and the
+      * scroll silently no-op'd; the bounded poll lands it once the anchor appears. A missing hash, or
+      * an element that never appears after the full budget, is a clean no-op (no crash, no console
+      * error): the slug may have changed in a new version or the article is not on this route.
+      *
+      * The poll is a [[Loop]] over the attempt count (not mutual recursion), so the iteration state is
+      * an explicit `Int` carried by the loop and there is no self-referencing closure to leak.
       */
     private def scrollToHash()(using Frame): Unit < Async =
-        for
-            // Yield to the event loop so the reactive article patch has applied before we look up the
-            // anchor element.
-            _ <- Async.sleep(60.millis)
-            _ <- Sync.defer {
-                val hash = dom.window.location.hash
-                if hash.length > 1 then
-                    // Unsafe: DOM bridge to scroll to the fragment target. Plain DOM reads/calls on the
-                    // single-threaded JS event loop; no Kyo state involved.
-                    val id = hash.substring(1)
-                    val el = dom.document.getElementById(id)
-                    if el != null then el.scrollIntoView()
-                end if
-            }
-        yield ()
+        // Unsafe: DOM bridge to read the fragment target. Plain DOM reads on the single-threaded JS
+        // event loop; no Kyo state involved.
+        Sync.defer(dom.window.location.hash).map { hash =>
+            if hash.length <= 1 then Kyo.unit
+            else
+                val id = hash.substring(1)
+                Loop[Int, Unit, Async](0) { attempt =>
+                    // Unsafe: DOM bridge to look up and scroll to the fragment target. Plain DOM
+                    // reads/calls on the single-threaded JS event loop; no Kyo state involved.
+                    Sync.defer(dom.document.getElementById(id)).map { el =>
+                        if el != null then
+                            el.scrollIntoView()
+                            Loop.done
+                        else if attempt >= ScrollMaxAttempts - 1 then
+                            // Bounded retry exhausted: give up cleanly, the anchor never appeared.
+                            Loop.done
+                        else
+                            Async.sleep(ScrollPollInterval).andThen(Loop.continue(attempt + 1))
+                    }
+                }
+            end if
+        }
     end scrollToHash
 
     private def isRootRoute(path: String): Boolean =

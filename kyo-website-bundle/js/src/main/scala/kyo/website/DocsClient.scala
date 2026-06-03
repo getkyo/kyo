@@ -69,20 +69,28 @@ object DocsClient:
     def fetchMarkdown(route: String)(using Frame): String < Async =
         fetch(markdownUrl(route))
 
-    /** Fetch and parse the route table (versions + module manifest).
+    /** Fetch and parse the route table (versions + module manifest) for the ACTIVE prefix.
       *
-      * GETs `/versions.json` and the current version's `manifest.json`, then assembles a
-      * [[RouteTable]]. If either request fails the returned `Async` fails.
+      * GETs `/versions.json` (for the version dropdown) and `/$activePrefix/manifest.json` (the
+      * manifest of the tree the reader is browsing), then assembles a [[RouteTable]]. If either
+      * request fails the returned `Async` fails.
       *
+      * `activePrefix` is the caller's own tree prefix (`latest` or a version tag like `v0.9.3`), so a
+      * reader on an older version gets the heading index built from THAT version's `toc`, not the
+      * latest version's. Building the heading index from the latest manifest while stamping hits with
+      * the old prefix would produce `/<oldPrefix>/<slug>/#<latestSlug>` fragments that land nowhere
+      * (AF-8). The caller (`WebsiteBundleMain.loadSearchIndex`) already knows its active prefix.
+      *
+      * @param activePrefix
+      *   The physical tree prefix whose `manifest.json` to fetch (`latest` or a version tag).
       * @return
       *   The parsed [[DocsClient.RouteTable]], wrapped in `Async`.
       */
-    def routeTable(using Frame): DocsClient.RouteTable < Async =
+    def routeTable(activePrefix: String)(using Frame): DocsClient.RouteTable < Async =
         for
             versionsJson <- fetch("/versions.json")
             versions     <- parseVersions(versionsJson)
-            currentVersion = versions.headMaybe.map(_.tag).getOrElse("latest")
-            manifestJson <- fetch(s"/$currentVersion/manifest.json")
+            manifestJson <- fetch(s"/$activePrefix/manifest.json")
             modules      <- parseManifest(manifestJson)
             headings     <- parseHeadings(manifestJson)
         yield RouteTable(versions, modules, headings)
