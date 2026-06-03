@@ -141,19 +141,26 @@ object Codec:
           */
         def captureValue(): Reader
 
-        /** Read the next value as a shape-agnostic [[Structure.Value]] tree.
-          *
-          * The default implementation throws [[SchemaNotSerializableException]] so codecs that cannot introspect shape fail fast with a
-          * clear message rather than the cryptic [[UnknownVariantException]] that arises from treating a raw record as a discriminated
-          * union. Implementations that can detect shape (StructureValueReader, JsonReader) override this to materialize the next value as a
-          * Structure.Value directly. Used by the identity [[Schema]] for Structure.Value so that wire formats which carry plain records
-          * (standard JSON-RPC arguments, MCP tool inputs) round-trip without forcing a kyo-schema-tagged variant wrapper.
-          */
-        def captureStructure(): Structure.Value =
-            throw SchemaNotSerializableException(
-                "captureStructure not supported by this Reader; decode Structure.Value from a JSON or Structure source instead."
-            )(using frame)
     end Reader
+
+    /** Reader capability for self-describing wire formats that can materialize a value into [[Structure.Value]]
+      * regardless of its shape.
+      *
+      * Readers that walk a self-describing wire (JSON, YAML) or an in-memory value tree extend this trait;
+      * binary codecs without per-value type tags (e.g. Protobuf) do not. The identity [[Schema]] for
+      * `Structure.Value` requires this capability, so the type system prevents a `Structure.Value` from being
+      * decoded through a non-introspecting codec instead of failing at runtime with a misleading
+      * [[UnknownVariantException]].
+      */
+    trait IntrospectingReader extends Reader:
+        /** Read the next wire value into a [[Structure.Value]] tree, regardless of its shape.
+          *
+          * Walks the next value at the cursor (object, array, scalar, or null) and materializes it as the
+          * corresponding `Value` node. Used by the identity Schema for `Structure.Value` so that plain wire
+          * records round-trip without forcing a tagged-union wrapper.
+          */
+        def readStructure(): Structure.Value
+    end IntrospectingReader
 
     /** Abstract base for codec-specific serialization output.
       *

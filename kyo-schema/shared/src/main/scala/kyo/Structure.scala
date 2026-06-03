@@ -320,7 +320,7 @@ object Structure:
     object Value:
 
         /** Identity [[Schema]] for [[Value]]: writes shape-aware (Record -> object, Sequence -> array, scalars unwrapped) and reads via
-          * [[kyo.Codec.Reader.captureStructure]] which materializes the next wire value directly into the Value tree.
+          * [[kyo.Codec.IntrospectingReader.readStructure]] which materializes the next wire value directly into the Value tree.
           *
           * The auto-derived enum-Schema would emit a tagged-union wrapper like `{"Record":{...}}` and refuse a plain JSON object like
           * `{"path":"."}` (raising [[UnknownVariantException]] because "path" is not a known discriminator). That tagged form is an internal
@@ -328,6 +328,10 @@ object Structure:
           * has, reads accept whatever shape the wire carries. The override of `fromStructureValue` keeps top-level `Structure.decode[Value]`
           * a zero-cost passthrough; `serializeRead` covers the case where Value is a field of an outer case class being decoded by the
           * macro-generated reader.
+          *
+          * Reading requires a [[kyo.Codec.IntrospectingReader]] (JSON, YAML, or Structure source). Binary codecs without per-value type
+          * tags cannot decode a `Value` and the type-mismatch is reported with a precise diagnostic instead of bubbling up as an
+          * `UnknownVariantException` from the auto-derived shape.
           */
         given valueSchema: Schema[Value] =
             new Schema[Value](Seq.empty):
@@ -335,7 +339,12 @@ object Structure:
                 @publicInBinary private[kyo] def serializeWrite(value: Value, writer: Codec.Writer): Unit =
                     Schema.writeStructureValue(writer, value)
                 @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): Value =
-                    reader.captureStructure()
+                    reader match
+                        case ir: Codec.IntrospectingReader => ir.readStructure()
+                        case other =>
+                            throw SchemaNotSerializableException(
+                                s"Schema[Structure.Value] requires a self-describing reader (JSON, YAML, or Structure source); got ${other.getClass.getSimpleName}"
+                            )(using reader.frame)
                 @publicInBinary private[kyo] def getter(value: Value): Maybe[Any] = Maybe(value)
                 @publicInBinary private[kyo] def setter(value: Value, next: Any): Value =
                     next match

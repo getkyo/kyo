@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import kyo.Codec.IntrospectingReader
 import kyo.Codec.Reader
 
 /** Reader that traverses an in-memory [[kyo.Structure.Value]] tree as if it were a byte stream.
@@ -20,7 +21,7 @@ import kyo.Codec.Reader
   * @see
   *   [[kyo.Structure.Value]] for the value tree data model
   */
-final class StructureValueReader(root: Structure.Value)(using _frame: Frame) extends Reader:
+final class StructureValueReader(root: Structure.Value)(using _frame: Frame) extends IntrospectingReader:
     override def frame: Frame = _frame
 
     sealed private trait StackFrame
@@ -192,7 +193,7 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
         new StructureValueReader(v)
     end captureValue
 
-    override def captureStructure(): Structure.Value = currentValue
+    def readStructure(): Structure.Value = currentValue
 
     def mapStart(): Int         = objectStart()
     def mapEnd(): Unit          = objectEnd()

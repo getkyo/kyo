@@ -368,7 +368,12 @@ object Json:
         private def readJsonSchema(reader: Codec.Reader): JsonSchema =
             // Capture the raw value tree, then route by the `type` discriminator (or `oneOf`). Avoids juggling Reader cursor
             // state across the variant-specific branches.
-            val sv = reader.captureStructure()
+            val sv = reader match
+                case ir: Codec.IntrospectingReader => ir.readStructure()
+                case other =>
+                    throw SchemaNotSerializableException(
+                        s"Schema[Json.JsonSchema] requires a self-describing reader (JSON or YAML); got ${other.getClass.getSimpleName}"
+                    )(using reader.frame)
             fromStructureValue(sv)
         end readJsonSchema
 

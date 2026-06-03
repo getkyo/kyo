@@ -2,11 +2,12 @@ package kyo.internal
 
 import java.nio.charset.StandardCharsets
 import kyo.*
+import kyo.Codec.IntrospectingReader
 import kyo.Codec.Reader
 import scala.annotation.tailrec
 
 // Parses UTF-8 byte input directly, avoiding String intermediary on the decode path.
-final class JsonReader private (private var input: Span[Byte], private var _frame: Frame) extends Reader:
+final class JsonReader private (private var input: Span[Byte], private var _frame: Frame) extends IntrospectingReader:
     override def frame: Frame = _frame
     private var pos           = 0
 
@@ -626,7 +627,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         new JsonReader(input.slice(start, end), _frame)
     end captureValue
 
-    override def captureStructure(): Structure.Value =
+    override def readStructure(): Structure.Value =
         skipWhitespace()
         if pos >= input.size then error("Unexpected end of input while reading Structure.Value")
         peek() match
@@ -637,7 +638,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
                 @tailrec def loop(): Unit =
                     if hasNextField() then
                         val name  = field()
-                        val value = captureStructure()
+                        val value = readStructure()
                         discard(acc.addOne((name, value)))
                         loop()
                 loop()
@@ -650,7 +651,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
                 val acc  = scala.collection.mutable.ArrayBuffer.empty[Structure.Value]
                 @tailrec def loop(): Unit =
                     if hasNextElement() then
-                        discard(acc.addOne(captureStructure()))
+                        discard(acc.addOne(readStructure()))
                         loop()
                 loop()
                 discard(n)
@@ -669,7 +670,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
                     Structure.Value.Integer(numStr.toLong)
                 end if
         end match
-    end captureStructure
+    end readStructure
 
     // Release this reader back to the thread-local pool
     override def release(): Unit =

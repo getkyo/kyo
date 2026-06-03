@@ -72,7 +72,7 @@ class TestWriter extends Writer:
     def result(): Span[Byte] = Span.empty
 end TestWriter
 
-class TestReader(tokens: List[Token])(using _frame: Frame) extends Reader:
+class TestReader(tokens: List[Token])(using _frame: Frame) extends Codec.IntrospectingReader:
     override def frame: Frame = _frame
     private var pos           = 0
     private var _lastField    = ""
@@ -201,14 +201,14 @@ class TestReader(tokens: List[Token])(using _frame: Frame) extends Reader:
         new TestReader(captured)
     end captureValue
 
-    override def captureStructure(): Structure.Value =
+    override def readStructure(): Structure.Value =
         peek() match
             case _: Token.ObjectStart =>
                 discard(objectStart())
                 val acc = scala.collection.mutable.ArrayBuffer.empty[(String, Structure.Value)]
                 while hasNextField() do
                     val name  = field()
-                    val value = captureStructure()
+                    val value = readStructure()
                     discard(acc.addOne((name, value)))
                 end while
                 objectEnd()
@@ -217,18 +217,18 @@ class TestReader(tokens: List[Token])(using _frame: Frame) extends Reader:
                 discard(arrayStart())
                 val acc = scala.collection.mutable.ArrayBuffer.empty[Structure.Value]
                 while hasNextElement() do
-                    discard(acc.addOne(captureStructure()))
+                    discard(acc.addOne(readStructure()))
                 arrayEnd()
                 Structure.Value.Sequence(Chunk.from(acc.toSeq))
             case _: Token.MapStart =>
                 // writeStructureValue emits string-keyed MapEntries via writer.fieldBytes (a FieldName token), not as a
-                // separate value-token. Read each entry as `field() -> captureStructure()` so the symmetric round-trip
+                // separate value-token. Read each entry as `field() -> readStructure()` so the symmetric round-trip
                 // reconstructs a MapEntries with Str keys.
                 discard(mapStart())
                 val acc = scala.collection.mutable.ArrayBuffer.empty[(Structure.Value, Structure.Value)]
                 while hasNextEntry() do
                     val k = field()
-                    val v = captureStructure()
+                    val v = readStructure()
                     discard(acc.addOne((Structure.Value.Str(k), v)))
                 end while
                 mapEnd()
@@ -250,7 +250,7 @@ class TestReader(tokens: List[Token])(using _frame: Frame) extends Reader:
             case _: Token.InstantVal  => Structure.Value.Str(instant().toString)
             case _: Token.DurationVal => Structure.Value.Str(duration().toString)
             case other                => throw TypeMismatchException(scala.Nil, "value-shaped token", other.toString)
-    end captureStructure
+    end readStructure
 
     def mapStart(): Int = next() match
         case Token.MapStart(size) => size
