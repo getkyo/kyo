@@ -303,6 +303,134 @@ class ChartAxisTest extends Test:
         assert(leftTickLabels.nonEmpty, s"Expected left-axis tick labels left of plotX but found none")
     }
 
+    // ---- Test 6a (ISSUE 1): dual-axis chrome is color-coded to its single bound mark ----
+    // In a dual-axis combo (bar on left = mark 0, line on right = mark 1) the left axis chrome must take
+    // the bar's palette color (palette(0) = blue) and the right axis chrome the line's palette color
+    // (palette(1) = orange), so a reader can tell which y-axis each series uses. The x-axis stays neutral.
+
+    "dual-axis combo color-codes each y-axis chrome to its single bound mark (left=palette(0), right=palette(1))" in {
+        // Neutral light-theme chrome color, matching ChartLower.LightThemeTextColor (#374151).
+        val neutral = Style.Color.hex("#374151").getOrElse(Style.Color.black)
+        val rows = Chunk(
+            Row2Ax("Jan", Usd(1000), 10.0),
+            Row2Ax("Feb", Usd(2000), 20.0)
+        )
+        val spec = Chart(rows)(
+            bar(x = _.month, y = _.revenue),
+            line(x = _.month, y = _.growthPct, axis = Axis.Right)
+        )
+            .yAxis(_.left.label("Revenue"))
+            .yAxisRight(_.right.label("Growth %"))
+            .xAxis(_.bottom)
+        val root  = summon[Conversion[ChartSpec[Row2Ax], Svg.Root]](spec)
+        val texts = frameTextsIn(root)
+
+        // Left axis tick labels: TextAnchor.End at x < plotX. Their fill must be palette(0) = blue.
+        val leftTickLabels = texts.filter: t =>
+            t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End) &&
+                t.svgAttrs.x.exists { case Coord.Num(v) => v < PlotX; case _ => false }
+        assert(leftTickLabels.nonEmpty, "Expected left-axis tick labels")
+        leftTickLabels.foldLeft(succeed): (_, t) =>
+            assert(colorOf(t.svgAttrs.fill) == Style.Color.blue, s"Left tick label should be palette(0) (blue) but was ${t.svgAttrs.fill}")
+
+        // Right axis tick labels: TextAnchor.Start at x > plotX + plotW. Their fill must be palette(1) = orange.
+        val rightTickLabels = texts.filter: t =>
+            t.svgAttrs.textAnchor.contains(Svg.TextAnchor.Start) &&
+                t.svgAttrs.x.exists { case Coord.Num(v) => v > PlotX + PlotWTwoAx; case _ => false }
+        assert(rightTickLabels.nonEmpty, "Expected right-axis tick labels")
+        rightTickLabels.foldLeft(succeed): (_, t) =>
+            assert(
+                colorOf(t.svgAttrs.fill) == Style.Color.orange,
+                s"Right tick label should be palette(1) (orange) but was ${t.svgAttrs.fill}"
+            )
+
+        // The rotated "Revenue" (left) label must be blue and "Growth %" (right) label orange.
+        def isRotated(t: Svg.Text): Boolean = t.svgAttrs.transform.toSeq.exists:
+            case _: Svg.Transform.Rotate => true
+            case _                       => false
+        val revenueLabel = texts.find(t =>
+            isRotated(t) && t.children.exists { case UI.Ast.Text("Revenue") => true; case _ => false }
+        ).getOrElse(fail("Expected a rotated 'Revenue' axis label"))
+        val growthLabel = texts.find(t =>
+            isRotated(t) && t.children.exists { case UI.Ast.Text("Growth %") => true; case _ => false }
+        ).getOrElse(fail("Expected a rotated 'Growth %' axis label"))
+        assert(
+            colorOf(revenueLabel.svgAttrs.fill) == Style.Color.blue,
+            s"Left axis label should be blue but was ${revenueLabel.svgAttrs.fill}"
+        )
+        assert(
+            colorOf(growthLabel.svgAttrs.fill) == Style.Color.orange,
+            s"Right axis label should be orange but was ${growthLabel.svgAttrs.fill}"
+        )
+
+        // The shared x-axis chrome stays neutral (not tied to either series color).
+        val xTickLabels = texts.filter(t => t.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Hanging))
+        assert(xTickLabels.nonEmpty, "Expected x-axis tick labels")
+        xTickLabels.foldLeft(succeed): (_, t) =>
+            assert(colorOf(t.svgAttrs.fill) == neutral, s"X-axis tick label should stay neutral ($neutral) but was ${t.svgAttrs.fill}")
+    }
+
+    // ---- Test 6b (ISSUE 2): rotated axis labels sit at the outer margin edge, clear of tick numbers ----
+    // The dual-axis gallery cell is 360x240 with MarginLeft=60 and a right-axis margin (MarginRight=60).
+    // The rotated "Revenue" label must sit near the left SVG edge (x in [12,16]) and the rotated
+    // "Growth %" label near the right SVG edge, so neither overlaps the tick numbers, which sit
+    // adjacent to the axis line (left numbers extend left from x=60; right numbers extend right from x=300).
+
+    "rotated y-axis labels sit at the outer margin edge, clear of the tick numbers (360x240 dual-axis)" in {
+        val rows = Chunk(
+            Row2Ax("Jan", Usd(45000), 0.0),
+            Row2Ax("Feb", Usd(52000), 15.6),
+            Row2Ax("Mar", Usd(48000), -7.7)
+        )
+        val spec = Chart(rows)(
+            bar(x = _.month, y = _.revenue),
+            line(x = _.month, y = _.growthPct, axis = Axis.Right)
+        )
+            .yAxis(_.left.label("Revenue"))
+            .yAxisRight(_.right.label("Growth %"))
+            .xAxis(_.bottom)
+            .size(360, 240)
+        val root  = summon[Conversion[ChartSpec[Row2Ax], Svg.Root]](spec)
+        val texts = frameTextsIn(root)
+
+        // The rotated axis labels are the texts carrying a Transform.Rotate.
+        def isRotated(t: Svg.Text): Boolean = t.svgAttrs.transform.toSeq.exists:
+            case _: Svg.Transform.Rotate => true
+            case _                       => false
+
+        val revenueLabel = texts.find(t =>
+            isRotated(t) && t.children.exists {
+                case UI.Ast.Text("Revenue") => true; case _ => false
+            }
+        ).getOrElse(fail("Expected a rotated 'Revenue' axis label"))
+        val growthLabel = texts.find(t =>
+            isRotated(t) && t.children.exists {
+                case UI.Ast.Text("Growth %") => true; case _ => false
+            }
+        ).getOrElse(fail("Expected a rotated 'Growth %' axis label"))
+
+        // Left "Revenue" label centred near the left SVG edge (x in [12,16]).
+        val revenueX = numOf(revenueLabel.svgAttrs.x)
+        assert(revenueX >= 12.0 && revenueX <= 16.0, s"Revenue label x should be in [12,16] but was $revenueX")
+
+        // Right "Growth %" label centred near the right SVG edge (x near 360), past the right tick numbers.
+        // Right axis line is at plotX+plotW = 60 + (360-60-60) = 300; tick numbers extend right from x=309.
+        val growthX = numOf(growthLabel.svgAttrs.x)
+        assert(growthX >= 340.0 && growthX <= 360.0, s"Growth %% label x should be near the right edge [340,360] but was $growthX")
+
+        // The labels must clear the tick numbers: left ticks (TextAnchor.End) sit at x ~= 51 and extend
+        // leftward; the Revenue label centre at ~14 is left of any tick-number right edge.
+        val leftTickLabels = texts.filter(t =>
+            t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End) &&
+                t.svgAttrs.x.exists { case Coord.Num(v) => v < PlotX; case _ => false }
+        )
+        assert(leftTickLabels.nonEmpty, "Expected left-axis tick numbers")
+        // Revenue label x (~14) must be strictly left of every left tick-number anchor x (~51).
+        leftTickLabels.foldLeft(succeed): (_, t) =>
+            val tx = numOf(t.svgAttrs.x)
+            assert(revenueX < tx, s"Revenue label ($revenueX) must be left of tick number anchor ($tx)")
+    }
+
     // ---- Test 7: theme(_.dark) sets background rect fill to the dark color ----
 
     "theme(_.dark) sets the background rect fill to the dark theme color" in {
@@ -555,6 +683,109 @@ class ChartAxisTest extends Test:
             bYs.toSeq.exists(y => math.abs(y - PlotY) < Tol),
             s"Normalized top group (B) must reach plotY=$PlotY but path y-values are: $bYs"
         )
+    }
+
+    // ---- Test 13 (ISSUE 1): a GROUPED bar's y-axis chrome stays NEUTRAL, not palette(0) ----
+    // A grouped bar (a single bar mark WITH a color channel) renders in multiple category colors, so painting
+    // its y-axis a single palette color (blue) would misrepresent the series. The y-axis chrome must use the
+    // neutral light-theme color instead. This tightens the iteration-2 rule, which color-coded any single
+    // bound mark regardless of whether it rendered as one solid color.
+
+    "grouped bar (color channel) keeps a NEUTRAL y-axis chrome, not palette(0)" in {
+        val neutral = Style.Color.hex("#374151").getOrElse(Style.Color.black)
+        val rows = Chunk(
+            Sale("Jan", Usd(1000), Region.NA),
+            Sale("Jan", Usd(2000), Region.EU),
+            Sale("Jan", Usd(1500), Region.APAC)
+        )
+        val spec = Chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+
+        // Left y-axis tick labels use TextAnchor.End. Their fill must be the neutral chrome, not blue.
+        val leftTickLabels = frameTextsIn(root).filter(_.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
+        assert(leftTickLabels.nonEmpty, "Expected left y-axis tick labels for the grouped bar")
+        leftTickLabels.foldLeft(succeed): (_, t) =>
+            val c = colorOf(t.svgAttrs.fill)
+            assert(c == neutral, s"Grouped-bar y-axis tick should be neutral ($neutral) but was $c")
+            assert(c != Style.Color.blue, s"Grouped-bar y-axis tick must NOT be palette(0) (blue) but was $c")
+    }
+
+    // ---- Test 14 (ISSUE 1): a STACKED bar's y-axis chrome stays NEUTRAL, not palette(0) ----
+    // A stacked bar (a single bar mark WITH a stack grouping) also renders in multiple category colors, so its
+    // y-axis chrome must use the neutral color rather than a single palette color.
+
+    "stacked bar (stack grouping) keeps a NEUTRAL y-axis chrome, not palette(0)" in {
+        val neutral = Style.Color.hex("#374151").getOrElse(Style.Color.black)
+        case class SRow(x: String, group: String, value: Double)
+        given CanEqual[SRow, SRow] = CanEqual.derived
+        val rows = Chunk(
+            SRow("Jan", "A", 300.0),
+            SRow("Jan", "B", 700.0)
+        )
+        val spec = Chart(rows)(bar(x = _.x, y = _.value, stack = by(_.group)))
+        val root = summon[Conversion[ChartSpec[SRow], Svg.Root]](spec)
+
+        val leftTickLabels = frameTextsIn(root).filter(_.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
+        assert(leftTickLabels.nonEmpty, "Expected left y-axis tick labels for the stacked bar")
+        leftTickLabels.foldLeft(succeed): (_, t) =>
+            val c = colorOf(t.svgAttrs.fill)
+            assert(c == neutral, s"Stacked-bar y-axis tick should be neutral ($neutral) but was $c")
+            assert(c != Style.Color.blue, s"Stacked-bar y-axis tick must NOT be palette(0) (blue) but was $c")
+    }
+
+    // ---- Test 15 (ISSUE 1): a single-color line keeps its color-coded y-axis chrome ----
+    // A line mark with no color channel renders as one solid color, so ISSUE 1 still color-codes its y-axis
+    // chrome (tick labels) to that mark's palette color (palette(0) = blue). This confirms the tightened rule
+    // does not over-correct: solid-color marks remain color-coded.
+
+    "single-color line keeps its y-axis chrome color-coded to palette(0) (blue)" in {
+        case class LRow(month: String, value: Double)
+        given CanEqual[LRow, LRow] = CanEqual.derived
+        val rows                   = Chunk(LRow("Jan", 100.0), LRow("Feb", 200.0), LRow("Mar", 150.0))
+        val spec                   = Chart(rows)(line(x = _.month, y = _.value)).yAxis(_.left.grid)
+        val root                   = summon[Conversion[ChartSpec[LRow], Svg.Root]](spec)
+
+        val leftTickLabels = frameTextsIn(root).filter(_.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
+        assert(leftTickLabels.nonEmpty, "Expected left y-axis tick labels for the line chart")
+        leftTickLabels.foldLeft(succeed): (_, t) =>
+            assert(
+                colorOf(t.svgAttrs.fill) == Style.Color.blue,
+                s"Single-color line y-axis tick should be palette(0) (blue) but was ${t.svgAttrs.fill}"
+            )
+    }
+
+    // ---- Test 16 (ISSUE 2): gridlines are ALWAYS neutral, even when the axis chrome is color-coded ----
+    // Gridlines are a background reference, not axis identity. In a single-color line chart the y-axis tick
+    // labels are color-coded to palette(0) (blue), but the gridlines must stay the neutral gridline color, not
+    // inherit the color-coded chrome (no blue gridlines).
+
+    "gridlines in a color-coded line chart use the neutral grid color, not palette(0)" in {
+        val neutral = Style.Color.hex("#374151").getOrElse(Style.Color.black)
+        case class LRow(month: String, value: Double)
+        given CanEqual[LRow, LRow] = CanEqual.derived
+        val rows                   = Chunk(LRow("Jan", 100.0), LRow("Feb", 200.0), LRow("Mar", 150.0))
+        val spec                   = Chart(rows)(line(x = _.month, y = _.value)).yAxis(_.left.grid.ticks(3))
+        val root                   = summon[Conversion[ChartSpec[LRow], Svg.Root]](spec)
+
+        // Gridlines span the full plot width and carry a strokeOpacity (distinct from axis lines).
+        val gridLines = frameLinesIn(root).filter: l =>
+            l.svgAttrs.x1.exists(_ == PlotX) && l.svgAttrs.x2.exists(_ == PlotX + PlotW) &&
+                l.svgAttrs.y1 == l.svgAttrs.y2 && l.svgAttrs.strokeOpacity.isDefined
+        assert(gridLines.nonEmpty, "Expected gridlines in the line chart")
+
+        // Confirm the y-axis chrome IS color-coded (tick labels blue) so the gridline check is meaningful.
+        val leftTickLabels = frameTextsIn(root).filter(_.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
+        assert(leftTickLabels.nonEmpty, "Expected color-coded left tick labels")
+        assert(
+            colorOf(leftTickLabels(0).svgAttrs.fill) == Style.Color.blue,
+            "Precondition: line-chart y-axis tick labels must be color-coded (blue)"
+        )
+
+        // Despite the color-coded chrome, gridlines stay neutral, never palette(0).
+        gridLines.foldLeft(succeed): (_, l) =>
+            val c = colorOf(l.svgAttrs.stroke)
+            assert(c == neutral, s"Gridline stroke should be the neutral grid color ($neutral) but was $c")
+            assert(c != Style.Color.blue, s"Gridline must NOT be palette(0) (blue) but was $c")
     }
 
 end ChartAxisTest

@@ -25,6 +25,11 @@ private[kyo] object ChartLower:
     /** Default point radius when no `size` channel is supplied. */
     private val DefaultRadius = 4.0
 
+    /** Stroke width (pixels) of the separating outline drawn around each `point` circle so that overlapping
+      * or adjacent bubbles read as distinct discs rather than merging into one blob.
+      */
+    private val PointStrokeWidth = 1.5
+
     /** Swatch size (pixels) for legend color boxes. */
     private val SwatchSize = 12.0
 
@@ -36,6 +41,13 @@ private[kyo] object ChartLower:
 
     /** Tick mark half-length (pixels extending past the axis line). */
     private val TickLen = 5.0
+
+    /** Inset (pixels) from the SVG edge at which a rotated y-axis label is centred.
+      *
+      * The label is placed at the outer edge of its margin column (left label near `AxisLabelInset`, right
+      * label near `svgW - AxisLabelInset`) so it clears the tick numbers that sit adjacent to the axis line.
+      */
+    private val AxisLabelInset = 14.0
 
     /** Default chart colors used when no `colorScale` override is set. */
     private val DefaultPalette: Chunk[Style.Color] = Chunk(
@@ -55,11 +67,85 @@ private[kyo] object ChartLower:
     /** Light-theme background color. */
     private val LightBg: Style.Color = Style.Color.white
 
-    /** Default mark fill for dark-theme charts: a light color visible on the dark background. */
-    private val DarkThemeMarkColor: Style.Color = Style.Color.hex("#60a5fa").getOrElse(Style.Color.blue)
+    /** Axis chrome color (tick lines, tick labels, axis labels) on the light theme: a dark gray readable on white. */
+    private val LightThemeTextColor: Style.Color = Style.Color.hex("#374151").getOrElse(Style.Color.black)
 
-    /** Default mark fill for light-theme charts: the first palette entry (blue). */
-    private val LightThemeMarkColor: Style.Color = Style.Color.blue
+    /** Axis chrome color (tick lines, tick labels, axis labels) on the dark theme: a light gray readable on dark. */
+    private val DarkThemeTextColor: Style.Color = Style.Color.hex("#e5e7eb").getOrElse(Style.Color.white)
+
+    /** Resolve the axis chrome color (tick lines, tick labels, axis labels) for the given theme. */
+    private def axisChromeColor(theme: Theme): Style.Color =
+        if theme.isDark then DarkThemeTextColor else LightThemeTextColor
+
+    /** The y-axis a data-series mark binds to. Rule marks are reference annotations, not series, and are
+      * excluded from axis-to-mark binding by the caller.
+      */
+    private def markAxisOf[A](mark: Mark[A]): Axis = mark match
+        case m: Mark.Bar[A, ?, ?]   => m.axis
+        case m: Mark.Line[A, ?, ?]  => m.axis
+        case m: Mark.Area[A, ?, ?]  => m.axis
+        case m: Mark.Point[A, ?, ?] => m.axis
+        case m: Mark.Rule[A]        => m.axis
+
+    /** Whether a mark renders as ONE solid color, i.e. it has no `color` channel and is not stack-grouped.
+      *
+      * A grouped or stacked mark (a `color` channel present, or a `stack` grouping present) renders in
+      * multiple category colors, so its y-axis must not be color-coded to a single palette color. Rule marks
+      * are reference annotations and never count as a solid-color series here. Line and Point marks have no
+      * stacking, so only their `color` channel matters.
+      */
+    private def isSolidColorMark[A](mark: Mark[A]): Boolean = mark match
+        case m: Mark.Bar[A, ?, ?]   => m.color.isEmpty && m.stack.group.isEmpty
+        case m: Mark.Area[A, ?, ?]  => m.color.isEmpty && m.stack.group.isEmpty
+        case m: Mark.Line[A, ?, ?]  => m.color.isEmpty
+        case m: Mark.Point[A, ?, ?] => m.color.isEmpty
+        case _: Mark.Rule[A]        => false
+
+    /** Resolve the chrome color for one y-axis so a reader can tell which axis a series uses.
+      *
+      * When exactly ONE data-series mark (Bar/Line/Area/Point, not Rule) binds to `axis` AND that mark renders
+      * as one solid color (no `color` channel, not stack-grouped), the axis chrome (tick labels, tick marks,
+      * axis line, rotated axis label) takes that mark's palette color via its per-mark palette index
+      * (mark 0 -> palette(0), mark 1 -> palette(1), ...). When zero or multiple marks bind to the axis, or the
+      * single bound mark is grouped/stacked (multi-color), the neutral theme chrome color is used so a single
+      * palette color does not misrepresent a multi-color series and the chart stays legible.
+      */
+    private def axisChromeColorFor[A](theme: Theme, marks: Chunk[Mark[A]], axis: Axis): Style.Color =
+        val bound: Chunk[(Mark[A], Int)] = marks.zipWithIndex.collect:
+            case (m, i) if !m.isInstanceOf[Mark.Rule[?]] && markAxisOf(m) == axis => (m, i)
+        bound match
+            case Chunk((mark, idx)) if isSolidColorMark(mark) => markDefaultColor(theme, idx)
+            case _                                            => axisChromeColor(theme)
+    end axisChromeColorFor
+
+    /** Gridline color: ALWAYS the neutral theme chrome color, regardless of whether the axis chrome is
+      * color-coded to a bound mark. Gridlines are a background reference, not axis identity, so they read as a
+      * neutral light gray on the light theme and a subtle light line on the dark theme (the strokeOpacity is
+      * applied at the draw site).
+      */
+    private def gridlineColor(theme: Theme): Style.Color =
+        axisChromeColor(theme)
+
+    /** Separating outline color for `point` circles: the theme background color (white on light, the dark
+      * background on dark) so each filled bubble is bordered by a thin contrasting ring and adjacent bubbles
+      * read as distinct discs instead of merging.
+      */
+    private def pointSeparatorColor(theme: Theme): Style.Color =
+        if theme.isDark then DarkBg else LightBg
+
+    /** Resolve the palette used for per-mark default colors: the theme palette when set, else `DefaultPalette`. */
+    private def themePalette(theme: Theme): Chunk[Style.Color] =
+        theme.palette.getOrElse(DefaultPalette)
+
+    /** Resolve the default color for the mark at `markIndex` (cycling the theme palette).
+      *
+      * Used when a mark has no explicit `color` channel so that a multi-mark chart (e.g. a bar plus a line)
+      * gives each mark a distinct palette color: mark 0 uses palette(0), mark 1 uses palette(1), and so on.
+      */
+    private def markDefaultColor(theme: Theme, markIndex: Int): Style.Color =
+        val p = themePalette(theme)
+        if p.isEmpty then DefaultPalette(0) else p(markIndex % p.size)
+    end markDefaultColor
 
     /** Reserved space at the top of the plot for the legend (pixels).
       *
@@ -410,40 +496,70 @@ private[kyo] object ChartLower:
         spec: ChartSpec[A],
         rows: Chunk[A]
     )(using Frame): Chunk[Svg.SvgElement] =
-        val background = buildBackground(layout, spec.theme)
-        val axisLines  = buildAxisLines(layout, ysR)
-        val leftAxis   = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false)
+        // Per-axis chrome color: when exactly one mark binds to an axis, its chrome matches that mark's
+        // palette color so a reader can tell which axis a series uses; otherwise the neutral theme color.
+        val leftChrome  = axisChromeColorFor(spec.theme, spec.marks, Axis.Left)
+        val rightChrome = axisChromeColorFor(spec.theme, spec.marks, Axis.Right)
+        val gridColor   = gridlineColor(spec.theme)
+        val background  = buildBackground(layout, spec.theme)
+        val axisLines   = buildAxisLines(layout, ysR, spec.theme, leftChrome, rightChrome)
+        val leftAxis    = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false, spec.theme, leftChrome, gridColor)
         val rightAxis = ysR match
-            case Present(ysR_) => buildYAxis(layout, ysR_, spec.yAxisRightCfg.getOrElse(AxisConfig.default), isRight = true)
-            case Absent        => Chunk.empty
-        val xAxisElems  = buildXAxis(layout, xs, spec.xAxisCfg)
+            case Present(ysR_) =>
+                buildYAxis(
+                    layout,
+                    ysR_,
+                    spec.yAxisRightCfg.getOrElse(AxisConfig.default),
+                    isRight = true,
+                    spec.theme,
+                    rightChrome,
+                    gridColor
+                )
+            case Absent => Chunk.empty
+        val xAxisElems  = buildXAxis(layout, xs, spec.xAxisCfg, spec.theme)
         val legendElems = buildLegend(layout, spec, rows)
         background ++ axisLines ++ leftAxis ++ rightAxis ++ xAxisElems ++ legendElems
     end buildFrame
 
-    /** Background rectangle filled with the theme color. */
+    /** Background rectangle filled with the theme color.
+      *
+      * Covers the WHOLE SVG canvas (not only the plot rectangle) so that on the dark theme the entire chart,
+      * including the axis margins where tick numbers and axis labels live, reads as dark. The light theme uses
+      * white, matching the page background.
+      */
     private def buildBackground(layout: Layout, theme: Theme)(using Frame): Chunk[Svg.SvgElement] =
         val color = if theme.isDark then DarkBg else LightBg
         Chunk(
             Svg.rect
-                .x(layout.plotX)
-                .y(layout.plotY)
-                .width(layout.plotW)
-                .height(layout.plotH)
+                .x(0.0)
+                .y(0.0)
+                .width(layout.svgW)
+                .height(layout.svgH)
                 .fill(Svg.Paint.Color(color))
         )
     end buildBackground
 
-    /** Axis lines bordering the plot area (left + bottom). */
-    private def buildAxisLines(layout: Layout, ysR: Maybe[Scale])(using Frame): Chunk[Svg.SvgElement] =
+    /** Axis lines bordering the plot area (left + bottom + optional right).
+      *
+      * The left axis line takes `leftChrome` and the right axis line `rightChrome` so each vertical axis
+      * line matches its bound series. The bottom (shared x) axis line keeps the neutral theme chrome.
+      */
+    private def buildAxisLines(
+        layout: Layout,
+        ysR: Maybe[Scale],
+        theme: Theme,
+        leftChrome: Style.Color,
+        rightChrome: Style.Color
+    )(using Frame): Chunk[Svg.SvgElement] =
+        val chrome = axisChromeColor(theme)
         val leftLine = Svg.line
             .x1(layout.plotX).y1(layout.plotY)
             .x2(layout.plotX).y2(layout.plotBaseline)
-            .stroke(Svg.Paint.Color(Style.Color.gray))
+            .stroke(Svg.Paint.Color(leftChrome))
         val bottomLine = Svg.line
             .x1(layout.plotX).y1(layout.plotBaseline)
             .x2(layout.plotX + layout.plotW).y2(layout.plotBaseline)
-            .stroke(Svg.Paint.Color(Style.Color.gray))
+            .stroke(Svg.Paint.Color(chrome))
         val rightLine: Maybe[Svg.SvgElement] = ysR match
             case Present(_) =>
                 val rx = layout.plotX + layout.plotW
@@ -451,7 +567,7 @@ private[kyo] object ChartLower:
                     Svg.line
                         .x1(rx).y1(layout.plotY)
                         .x2(rx).y2(layout.plotBaseline)
-                        .stroke(Svg.Paint.Color(Style.Color.gray))
+                        .stroke(Svg.Paint.Color(rightChrome))
                 )
             case Absent => Absent
         val base = Chunk[Svg.SvgElement](leftLine, bottomLine)
@@ -460,12 +576,21 @@ private[kyo] object ChartLower:
             case Absent     => base
     end buildAxisLines
 
-    /** Build the left or right y-axis: gridlines (if enabled), tick marks, and tick labels. */
+    /** Build the left or right y-axis: gridlines (if enabled), tick marks, and tick labels.
+      *
+      * `chrome` colors this axis's IDENTITY chrome (tick marks, tick labels, rotated axis label). It matches
+      * the bound series when exactly one solid-color mark binds to this axis, else the neutral theme color.
+      * `gridColor` colors the gridlines and is ALWAYS the neutral theme color: gridlines are a background
+      * reference, not axis identity, so they never take a color-coded chrome.
+      */
     private def buildYAxis(
         layout: Layout,
         ys: Scale,
         cfg: AxisConfig,
-        isRight: Boolean
+        isRight: Boolean,
+        theme: Theme,
+        chrome: Style.Color,
+        gridColor: Style.Color
     )(using Frame): Chunk[Svg.SvgElement] =
         val ticks  = ys.ticks(cfg.tickCount)
         val axisX  = if isRight then layout.plotX + layout.plotW else layout.plotX
@@ -478,14 +603,14 @@ private[kyo] object ChartLower:
             else
                 val tick = ticks(i)
                 val py   = tick.pixel
-                // gridline
+                // gridline: always the neutral grid color, never the (possibly color-coded) axis chrome
                 val grid: Maybe[Svg.SvgElement] =
                     if cfg.showGrid && !isRight then
                         Present(
                             Svg.line
                                 .x1(layout.plotX).y1(py)
                                 .x2(layout.plotX + layout.plotW).y2(py)
-                                .stroke(Svg.Paint.Color(Style.Color.gray))
+                                .stroke(Svg.Paint.Color(gridColor))
                                 .strokeOpacity(0.3)
                         )
                     else Absent
@@ -495,12 +620,12 @@ private[kyo] object ChartLower:
                         Svg.line
                             .x1(axisX).y1(py)
                             .x2(axisX + TickLen).y2(py)
-                            .stroke(Svg.Paint.Color(Style.Color.gray))
+                            .stroke(Svg.Paint.Color(chrome))
                     else
                         Svg.line
                             .x1(axisX - TickLen).y1(py)
                             .x2(axisX).y2(py)
-                            .stroke(Svg.Paint.Color(Style.Color.gray))
+                            .stroke(Svg.Paint.Color(chrome))
                 // tick label: apply the formatter to the domain value, not the pixel position
                 val labelStr = cfg.tickFormat match
                     case Present(f) => f(tick.value)
@@ -511,6 +636,7 @@ private[kyo] object ChartLower:
                         .y(py)
                         .textAnchor(anchor)
                         .dominantBaseline(Svg.DominantBaseline.Middle)
+                        .fill(Svg.Paint.Color(chrome))
                         .apply(labelStr)
                 val elements = grid match
                     case Present(g) => Chunk[Svg.SvgElement](g, tickMark, tickLabel)
@@ -518,28 +644,32 @@ private[kyo] object ChartLower:
                 loop(i + 1, acc ++ elements)
         val base = loop(0, Chunk.empty)
         // axis label: rotate vertically so the full string fits in the margin column without clipping.
-        // Left axis: rotate -90 degrees around the label centre, place in the left margin.
-        // Right axis: rotate +90 degrees around the label centre, place in the right margin.
+        // The label sits at the OUTER edge of its margin so it never overlaps the tick numbers, which sit
+        // adjacent to the axis line (left numbers extend left from the axis, right numbers extend right).
+        //   Left axis: rotate -90 degrees, centred near the left edge of the SVG (x = AxisLabelInset).
+        //   Right axis: rotate +90 degrees, centred near the right edge of the SVG (x = svgW - AxisLabelInset).
         cfg.axisLabel match
             case Present(lbl) =>
                 val midY = layout.plotY + layout.plotH / 2.0
                 val labelElem: Svg.SvgElement =
                     if isRight then
-                        val cx = axisX + MarginRightAxis / 2.0
+                        val cx = layout.svgW - AxisLabelInset
                         Svg.text
                             .x(cx)
                             .y(midY)
                             .textAnchor(Svg.TextAnchor.Middle)
                             .dominantBaseline(Svg.DominantBaseline.Auto)
+                            .fill(Svg.Paint.Color(chrome))
                             .transform(Svg.Transform.Rotate(90.0, Present(cx), Present(midY)))
                             .apply(lbl)
                     else
-                        val cx = MarginLeft / 2.0
+                        val cx = AxisLabelInset
                         Svg.text
                             .x(cx)
                             .y(midY)
                             .textAnchor(Svg.TextAnchor.Middle)
                             .dominantBaseline(Svg.DominantBaseline.Auto)
+                            .fill(Svg.Paint.Color(chrome))
                             .transform(Svg.Transform.Rotate(-90.0, Present(cx), Present(midY)))
                             .apply(lbl)
                 base.append(labelElem)
@@ -551,10 +681,12 @@ private[kyo] object ChartLower:
     private def buildXAxis(
         layout: Layout,
         xs: Scale,
-        cfg: AxisConfig
+        cfg: AxisConfig,
+        theme: Theme
     )(using Frame): Chunk[Svg.SvgElement] =
-        val ticks = xs.ticks(cfg.tickCount)
-        val axisY = layout.plotBaseline
+        val ticks  = xs.ticks(cfg.tickCount)
+        val axisY  = layout.plotBaseline
+        val chrome = axisChromeColor(theme)
 
         @scala.annotation.tailrec
         def loop(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
@@ -566,7 +698,7 @@ private[kyo] object ChartLower:
                     Svg.line
                         .x1(px).y1(axisY)
                         .x2(px).y2(axisY + TickLen)
-                        .stroke(Svg.Paint.Color(Style.Color.gray))
+                        .stroke(Svg.Paint.Color(chrome))
                 // tick label: apply the formatter to the domain value when present
                 val xLabelStr = cfg.tickFormat match
                     case Present(f) => f(tick.value)
@@ -577,6 +709,7 @@ private[kyo] object ChartLower:
                         .y(axisY + TickLen + 4.0)
                         .textAnchor(Svg.TextAnchor.Middle)
                         .dominantBaseline(Svg.DominantBaseline.Hanging)
+                        .fill(Svg.Paint.Color(chrome))
                         .apply(xLabelStr)
                 loop(i + 1, acc.append(tickMark).append(tickLabel))
         val base = loop(0, Chunk.empty)
@@ -588,6 +721,7 @@ private[kyo] object ChartLower:
                         .x(layout.plotX + layout.plotW / 2.0)
                         .y(layout.svgH - 4.0)
                         .textAnchor(Svg.TextAnchor.Middle)
+                        .fill(Svg.Paint.Color(chrome))
                         .apply(lbl)
                 base.append(labelElem)
             case Absent => base
@@ -805,7 +939,13 @@ private[kyo] object ChartLower:
         spec: Maybe[ChartSpec[A]] = Absent,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Svg.G =
-        val allShapes: Chunk[UI] = marks.flatMap: mark =>
+        // Each mark with no explicit color channel uses a DISTINCT palette color by its index so that a
+        // multi-mark chart (e.g. a bar plus a line) shows e.g. blue bars and an orange line. A single-mark
+        // chart uses palette(0). Grouped/stacked color-channel marks keep mapping color categories to the
+        // palette (handled inside the per-mark lowerers).
+        val theme = spec.map(_.theme).getOrElse(Theme.default)
+        val allShapes: Chunk[UI] = marks.zipWithIndex.flatMap: (mark, markIdx) =>
+            val markColor = markDefaultColor(theme, markIdx)
             val ys = mark match
                 case m: Mark.Bar[A, ?, ?]   => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
                 case m: Mark.Line[A, ?, ?]  => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
@@ -815,17 +955,19 @@ private[kyo] object ChartLower:
             mark match
                 case m: Mark.Bar[A, ?, ?] =>
                     spec match
-                        case Present(s) => lowerBar(rows, m, layout, xs, ys, s, internalHoverRef).asInstanceOf[Chunk[UI]]
-                        case Absent     => lowerBar(rows, m, layout, xs, ys).asInstanceOf[Chunk[UI]]
+                        case Present(s) => lowerBar(rows, m, layout, xs, ys, markColor, s, internalHoverRef).asInstanceOf[Chunk[UI]]
+                        case Absent     => lowerBar(rows, m, layout, xs, ys, markColor).asInstanceOf[Chunk[UI]]
                 case m: Mark.Line[A, ?, ?] =>
                     spec match
-                        case Present(s) => lowerLine(rows, m, layout, xs, ys, Present(s), internalHoverRef).asInstanceOf[Chunk[UI]]
-                        case Absent     => lowerLine(rows, m, layout, xs, ys).asInstanceOf[Chunk[UI]]
-                case m: Mark.Area[A, ?, ?] => lowerArea(rows, m, layout, xs, ys).asInstanceOf[Chunk[UI]]
+                        case Present(s) =>
+                            lowerLine(rows, m, layout, xs, ys, markColor, Present(s), internalHoverRef).asInstanceOf[Chunk[UI]]
+                        case Absent => lowerLine(rows, m, layout, xs, ys, markColor).asInstanceOf[Chunk[UI]]
+                case m: Mark.Area[A, ?, ?] => lowerArea(rows, m, layout, xs, ys, markColor).asInstanceOf[Chunk[UI]]
                 case m: Mark.Point[A, ?, ?] =>
                     spec match
-                        case Present(s) => lowerPoint(rows, m, layout, xs, ys, Present(s), internalHoverRef).asInstanceOf[Chunk[UI]]
-                        case Absent     => lowerPoint(rows, m, layout, xs, ys).asInstanceOf[Chunk[UI]]
+                        case Present(s) =>
+                            lowerPoint(rows, m, layout, xs, ys, markColor, Present(s), internalHoverRef, theme).asInstanceOf[Chunk[UI]]
+                        case Absent => lowerPoint(rows, m, layout, xs, ys, markColor, theme = theme).asInstanceOf[Chunk[UI]]
                 case m: Mark.Rule[A] => lowerRuleChildren(m, layout, xs, ys)
             end match
         allShapes.foldLeft(Svg.g): (g, el) =>
@@ -856,6 +998,7 @@ private[kyo] object ChartLower:
         layout: Layout,
         xs: Scale,
         ys: Scale,
+        defaultColor: Style.Color,
         spec: ChartSpec[A] = null.asInstanceOf[ChartSpec[A]],
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
@@ -866,7 +1009,7 @@ private[kyo] object ChartLower:
             case Absent =>
                 mark.color match
                     case Absent =>
-                        lowerBarSimple(rows, mark, layout, xs, ys, specMaybe, internalHoverRef)
+                        lowerBarSimple(rows, mark, layout, xs, ys, defaultColor, specMaybe, internalHoverRef)
                     case Present(colorCh) =>
                         lowerBarGrouped(rows, mark, colorCh.asInstanceOf[Channel[A, Any]], layout, xs, ys, specMaybe, internalHoverRef)
         end match
@@ -878,15 +1021,13 @@ private[kyo] object ChartLower:
         layout: Layout,
         xs: Scale,
         ys: Scale,
+        defaultFill: Style.Color,
         spec: Maybe[ChartSpec[A]] = Absent,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         val baseline = layout.plotBaseline
-        // Use a theme-aware default fill so bars are visible on both light and dark backgrounds.
-        // A bar with no explicit color uses the first palette entry rather than the browser default (black).
-        val defaultFill: Style.Color = spec match
-            case Present(s) => if s.theme.isDark then DarkThemeMarkColor else LightThemeMarkColor
-            case Absent     => LightThemeMarkColor
+        // A bar with no explicit color channel uses the per-mark default fill (palette color by mark index),
+        // not the browser default (black), so it is visible and distinct from other marks in a combo chart.
         @scala.annotation.tailrec
         def loop(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
             if i >= rows.size then acc
@@ -1103,13 +1244,14 @@ private[kyo] object ChartLower:
         layout: Layout,
         xs: Scale,
         ys: Scale,
+        defaultColor: Style.Color,
         spec: Maybe[ChartSpec[A]] = Absent,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         mark.color match
             case Absent =>
-                // No color channel: single series using the first palette color.
-                Chunk(lowerLineSeries(rows, mark, layout, xs, ys, DefaultPalette(0)))
+                // No color channel: single series whose stroke is the per-mark default color (palette by mark index).
+                Chunk(lowerLineSeries(rows, mark, layout, xs, ys, defaultColor))
             case Present(colorCh) =>
                 val colorKeys: Chunk[String] = rows.foldLeft(Chunk.empty[String]): (acc, row) =>
                     val key = colorCh.accessor(row.asInstanceOf[A]).toString
@@ -1184,7 +1326,8 @@ private[kyo] object ChartLower:
         mark: Mark.Area[A, X, Y],
         layout: Layout,
         xs: Scale,
-        ys: Scale
+        ys: Scale,
+        defaultColor: Style.Color = DefaultPalette(0)
     )(using Frame): Chunk[Svg.SvgElement] =
         val baseline = layout.plotBaseline
         mark.y match
@@ -1212,7 +1355,9 @@ private[kyo] object ChartLower:
                             val lastX  = points(points.size - 1)._1
                             val firstX = points(0)._1
                             val pd2    = topPd.lineTo(lastX, baseline).lineTo(firstX, baseline).close
-                            Chunk(Svg.path.d(pd2))
+                            // Fill with the per-mark default color (translucent so layered areas remain legible)
+                            // rather than the browser default (black).
+                            Chunk(Svg.path.d(pd2).fill(Svg.Paint.Color(defaultColor)).fillOpacity(0.7))
                         end if
             case Absent =>
                 // y0/y1 band form: not yet implemented; emits empty
@@ -1364,9 +1509,12 @@ private[kyo] object ChartLower:
         layout: Layout,
         xs: Scale,
         ys: Scale,
+        defaultColor: Style.Color,
         spec: Maybe[ChartSpec[A]] = Absent,
-        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
+        theme: Theme = Theme.default
     )(using Frame): Chunk[Svg.SvgElement] =
+        val separator = pointSeparatorColor(theme)
         @scala.annotation.tailrec
         def loop(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
             if i >= rows.size then acc
@@ -1385,7 +1533,15 @@ private[kyo] object ChartLower:
                                     case Present(fn) => fn(row)
                                     case Absent      => DefaultRadius
                                 val iAttrs = spec.map(s => buildInteractionAttrs(row, s, internalHoverRef)).getOrElse(UI.Ast.Attrs())
-                                val c      = Svg.circle.cx(cx).cy(cy).r(r).withAttrs(iAttrs)
+                                // Fill points with the per-mark default color rather than the browser default (black),
+                                // and add a thin contrasting outline (theme background color) so overlapping or
+                                // adjacent bubbles read as distinct discs instead of merging into one blob.
+                                val c = Svg.circle
+                                    .cx(cx).cy(cy).r(r)
+                                    .fill(Svg.Paint.Color(defaultColor))
+                                    .stroke(Svg.Paint.Color(separator))
+                                    .strokeWidth(PointStrokeWidth)
+                                    .withAttrs(iAttrs)
                                 acc.append(c)
                             case _ => acc
                         end match
@@ -1671,14 +1827,14 @@ private[kyo] object ChartLower:
         layout: Layout,
         xs: Scale,
         ys: Scale,
+        defaultFill: Style.Color,
         spec: ChartSpec[A],
         fromGeom: Map[String, MarkGeom],
         newGeom: Map[String, MarkGeom]
     )(using Frame): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
-        val baseline    = layout.plotBaseline
-        val durStr      = formatDur(spec.animateCfg.duration)
-        val animOk      = spec.animateCfg.enabled
-        val defaultFill = if spec.theme.isDark then DarkThemeMarkColor else LightThemeMarkColor
+        val baseline = layout.plotBaseline
+        val durStr   = formatDur(spec.animateCfg.duration)
+        val animOk   = spec.animateCfg.enabled
         @scala.annotation.tailrec
         def loop(
             i: Int,
@@ -1745,6 +1901,7 @@ private[kyo] object ChartLower:
         layout: Layout,
         xs: Scale,
         ys: Scale,
+        defaultColor: Style.Color,
         spec: ChartSpec[A],
         fromGeom: Map[String, MarkGeom],
         newGeom: Map[String, MarkGeom]
@@ -1754,7 +1911,7 @@ private[kyo] object ChartLower:
         // Compute the raw paths first (same as non-transition path but we need the PathData for morph).
         val rawPaths: Chunk[Svg.Path] = mark.color match
             case Absent =>
-                Chunk(lowerLineSeries(rows, mark, layout, xs, ys, DefaultPalette(0)))
+                Chunk(lowerLineSeries(rows, mark, layout, xs, ys, defaultColor))
             case Present(colorCh) =>
                 val colorKeys: Chunk[String] = rows.foldLeft(Chunk.empty[String]): (acc, row) =>
                     val key = colorCh.accessor(row.asInstanceOf[A]).toString
@@ -1815,6 +1972,7 @@ private[kyo] object ChartLower:
         layout: Layout,
         xs: Scale,
         ys: Scale,
+        defaultColor: Style.Color,
         spec: ChartSpec[A],
         fromGeom: Map[String, MarkGeom],
         newGeom: Map[String, MarkGeom]
@@ -1822,12 +1980,12 @@ private[kyo] object ChartLower:
         // Stacked area: fall through to plain lowerArea (no per-group path tracking yet).
         val isStacked = mark.y.isDefined && mark.stack.group.isDefined
         if isStacked then
-            val elems = lowerArea(rows, mark, layout, xs, ys)
+            val elems = lowerArea(rows, mark, layout, xs, ys, defaultColor)
             (elems, newGeom)
         else
             val animOk = spec.animateCfg.enabled
             val durStr = formatDur(spec.animateCfg.duration)
-            val rawPaths: Chunk[Svg.Path] = lowerArea(rows, mark, layout, xs, ys).collect:
+            val rawPaths: Chunk[Svg.Path] = lowerArea(rows, mark, layout, xs, ys, defaultColor).collect:
                 case p: Svg.Path => p
             val keyOffset = newGeom.size
             val (elems, updatedGeom) = rawPaths.foldLeft((Chunk.empty[Svg.SvgElement], newGeom)):
@@ -1893,8 +2051,10 @@ private[kyo] object ChartLower:
         val fromGeom: Map[String, MarkGeom] =
             if isRepeatPull then t.fromGeom else t.currentGeom
         // Produce SVG shapes and accumulate new geometry in a single pass.
-        val (shapes, newGeom) = spec.marks.foldLeft((Chunk.empty[Svg.SvgElement], Map.empty[String, MarkGeom])):
-            case ((accElems, accGeom), mark) =>
+        // Each mark with no explicit color channel uses a distinct palette color by its index (per-mark default).
+        val (shapes, newGeom) = spec.marks.zipWithIndex.foldLeft((Chunk.empty[Svg.SvgElement], Map.empty[String, MarkGeom])):
+            case ((accElems, accGeom), (mark, markIdx)) =>
+                val markColor = markDefaultColor(spec.theme, markIdx)
                 val ys = mark match
                     case m: Mark.Bar[A, ?, ?]   => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
                     case m: Mark.Line[A, ?, ?]  => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
@@ -1905,22 +2065,23 @@ private[kyo] object ChartLower:
                     case m: Mark.Bar[A, ?, ?] if m.stack.group.isEmpty && m.color.isEmpty =>
                         // Simple ungrouped bar: supports keyed SMIL transitions.
                         // fromGeom is the stable animation origin for this call (same on every pull of this emission).
-                        val (elems, geom) = lowerBarSimpleWithTransitions(rows, m, layout, xs, ys, spec, fromGeom, accGeom)
+                        val (elems, geom) = lowerBarSimpleWithTransitions(rows, m, layout, xs, ys, markColor, spec, fromGeom, accGeom)
                         (accElems ++ elems, geom)
                     case m: Mark.Line[A, ?, ?] if animOk =>
                         // Line path: declarative SMIL `d` morph when command counts match; snaps otherwise.
                         // fromGeom carries the previous PathData for the `from` side of the SMIL animate.
-                        val (elems, geom) = lowerLineWithTransitions(rows, m, layout, xs, ys, spec, fromGeom, accGeom)
+                        val (elems, geom) = lowerLineWithTransitions(rows, m, layout, xs, ys, markColor, spec, fromGeom, accGeom)
                         (accElems ++ elems, geom)
                     case m: Mark.Area[A, ?, ?] if animOk =>
                         // Area path: same declarative SMIL `d` morph discipline as line.
-                        val (elems, geom) = lowerAreaWithTransitions(rows, m, layout, xs, ys, spec, fromGeom, accGeom)
+                        val (elems, geom) = lowerAreaWithTransitions(rows, m, layout, xs, ys, markColor, spec, fromGeom, accGeom)
                         (accElems ++ elems, geom)
-                    case m: Mark.Bar[A, ?, ?]   => (accElems ++ lowerBar(rows, m, layout, xs, ys), accGeom)
-                    case m: Mark.Line[A, ?, ?]  => (accElems ++ lowerLine(rows, m, layout, xs, ys), accGeom)
-                    case m: Mark.Area[A, ?, ?]  => (accElems ++ lowerArea(rows, m, layout, xs, ys), accGeom)
-                    case m: Mark.Point[A, ?, ?] => (accElems ++ lowerPoint(rows, m, layout, xs, ys), accGeom)
-                    case m: Mark.Rule[A]        => (accElems ++ lowerRule(m, layout, xs, ys), accGeom)
+                    case m: Mark.Bar[A, ?, ?]  => (accElems ++ lowerBar(rows, m, layout, xs, ys, markColor), accGeom)
+                    case m: Mark.Line[A, ?, ?] => (accElems ++ lowerLine(rows, m, layout, xs, ys, markColor), accGeom)
+                    case m: Mark.Area[A, ?, ?] => (accElems ++ lowerArea(rows, m, layout, xs, ys, markColor), accGeom)
+                    case m: Mark.Point[A, ?, ?] =>
+                        (accElems ++ lowerPoint(rows, m, layout, xs, ys, markColor, theme = spec.theme), accGeom)
+                    case m: Mark.Rule[A] => (accElems ++ lowerRule(m, layout, xs, ys), accGeom)
                 end match
         // Write the new state only when this is a genuinely new emission.
         // On repeat pulls, the ref is left untouched so the next real emission still sees the correct fromGeom.
@@ -1971,15 +2132,27 @@ private[kyo] object ChartLower:
         spec: ChartSpec[A],
         initialRows: Chunk[A]
     )(using Frame): Chunk[Svg.SvgElement] =
+        val leftChrome  = axisChromeColorFor(spec.theme, spec.marks, Axis.Left)
+        val rightChrome = axisChromeColorFor(spec.theme, spec.marks, Axis.Right)
+        val gridColor   = gridlineColor(spec.theme)
         val background  = buildBackground(layout, spec.theme)
-        val axisLines   = buildAxisLines(layout, ysR)
+        val axisLines   = buildAxisLines(layout, ysR, spec.theme, leftChrome, rightChrome)
         val legendElems = buildLegend(layout, spec, initialRows)
         val yAxisElems: Chunk[Svg.SvgElement] =
             if isYDomainFixed(spec.yScaleOverride) then
-                val leftAxis = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false)
+                val leftAxis = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false, spec.theme, leftChrome, gridColor)
                 val rightAxis = ysR match
-                    case Present(ysR_) => buildYAxis(layout, ysR_, spec.yAxisRightCfg.getOrElse(AxisConfig.default), isRight = true)
-                    case Absent        => Chunk.empty
+                    case Present(ysR_) =>
+                        buildYAxis(
+                            layout,
+                            ysR_,
+                            spec.yAxisRightCfg.getOrElse(AxisConfig.default),
+                            isRight = true,
+                            spec.theme,
+                            rightChrome,
+                            gridColor
+                        )
+                    case Absent => Chunk.empty
                 leftAxis ++ rightAxis
             else Chunk.empty
         background ++ axisLines ++ yAxisElems ++ legendElems
@@ -2011,7 +2184,7 @@ private[kyo] object ChartLower:
         val marksG = stateRef match
             case Present(ref) => marksRegionWithTransitions(rows, spec, layout, xs, ysL, ysR, ref)
             case Absent       => marksRegion(rows, spec.marks, layout, xs, ysL, ysR, Present(spec), internalHoverRef)
-        val xAxisElems = buildXAxis(layout, xs, spec.xAxisCfg)
+        val xAxisElems = buildXAxis(layout, xs, spec.xAxisCfg, spec.theme)
         if isYDomainFixed(spec.yScaleOverride) then
             // Fixed y-domain: y-axis is static; only x-axis ticks and marks are reactive.
             val xAxisG = xAxisElems.foldLeft(Svg.g): (g, el) =>
@@ -2022,10 +2195,22 @@ private[kyo] object ChartLower:
             Svg.g(xAxisG)(marksG)
         else
             // Inferred domain: include y-axis ticks AND x-axis ticks inside the reactive region.
-            val leftAxisElems = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false)
+            val leftChrome    = axisChromeColorFor(spec.theme, spec.marks, Axis.Left)
+            val rightChrome   = axisChromeColorFor(spec.theme, spec.marks, Axis.Right)
+            val gridColor     = gridlineColor(spec.theme)
+            val leftAxisElems = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false, spec.theme, leftChrome, gridColor)
             val rightAxisElems = ysR match
-                case Present(ysR_) => buildYAxis(layout, ysR_, spec.yAxisRightCfg.getOrElse(AxisConfig.default), isRight = true)
-                case Absent        => Chunk.empty
+                case Present(ysR_) =>
+                    buildYAxis(
+                        layout,
+                        ysR_,
+                        spec.yAxisRightCfg.getOrElse(AxisConfig.default),
+                        isRight = true,
+                        spec.theme,
+                        rightChrome,
+                        gridColor
+                    )
+                case Absent => Chunk.empty
             val allElems: Chunk[Svg.SvgElement] = leftAxisElems ++ rightAxisElems ++ xAxisElems
             val axisG = allElems.foldLeft(Svg.g): (g, el) =>
                 el match

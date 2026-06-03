@@ -223,6 +223,34 @@ class ChartLowerTest extends Test:
             case Absent     => fail("Expected r to be Present")
     }
 
+    // ---- Test 4b (ISSUE 2): point circles carry a separating outline stroke ----
+    // A filled point with no outline lets overlapping/adjacent bubbles merge into one blob. Each point
+    // circle must have BOTH a fill (the per-mark palette color) AND a stroke (the separating outline,
+    // the theme background color: white on the light theme) with a positive stroke width.
+
+    "point circle has both a palette fill and a separating outline stroke (light theme background color)" in {
+        case class Row(x: String, y: Int)
+        val rows    = Chunk(Row("a", 0), Row("b", 100))
+        val spec    = Chart(rows)(point(x = _.x, y = _.y))
+        val root    = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val circles = circlesIn(root)
+        assert(circles.nonEmpty, s"Expected at least one circle but got ${circles.size}")
+        circles.foldLeft(succeed): (_, c) =>
+            // fill is the per-mark palette color: a single point mark is mark 0 -> palette(0) = blue.
+            c.svgAttrs.fill match
+                case Present(Svg.Paint.Color(col)) =>
+                    assert(col == Style.Color.blue, s"Point fill should be palette(0) (blue) but got $col")
+                case other => fail(s"Expected a point color fill but got $other")
+            end match
+            // stroke is the separating outline: the light theme background color (white).
+            c.svgAttrs.stroke match
+                case Present(Svg.Paint.Color(col)) =>
+                    assert(col == Style.Color.white, s"Point separating stroke should be the light background (white) but got $col")
+                case other => fail(s"Expected a point separating stroke color but got $other")
+            end match
+            assert(c.svgAttrs.strokeWidth.isDefined, "Point must have a positive stroke width for the separating outline")
+    }
+
     // ---- Test 5: rule at y=Const lowers to Svg.Line spanning the plot ----
 
     "rule(y=Const(1000)) lowers to an Svg.Line spanning the plot at scaled y" in {
@@ -391,6 +419,59 @@ class ChartLowerTest extends Test:
         end match
     }
 
+    // ---- Test 10b: single-mark default color is palette(0) ----
+    // A chart with a single mark and no explicit color channel uses the first palette entry (blue).
+
+    "single-mark bar uses palette(0) (blue) as its default fill" in {
+        val rows  = Chunk(Sale("Jan", Usd(1000)))
+        val spec  = Chart(rows)(bar(x = _.month, y = _.revenue))
+        val root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val rects = rectsIn(root)
+        assert(rects.size == 1, s"Expected 1 rect but got ${rects.size}")
+        rects(0).svgAttrs.fill match
+            case Present(Svg.Paint.Color(c)) =>
+                assert(c == Style.Color.blue, s"Single-mark bar should use palette(0) (blue) but got $c")
+            case other => fail(s"Expected a color fill but got $other")
+        end match
+    }
+
+    // ---- Test 10c (ISSUE 1): multi-mark combo assigns DISTINCT palette colors per mark index ----
+    // In a combo chart (bar + line, both without an explicit color channel) mark 0 (bar) must use
+    // palette(0) (blue) and mark 1 (line) must use palette(1) (orange), so the line is visually
+    // distinguishable from the bars rather than sharing the same default color.
+
+    "combo (bar + line) assigns distinct per-mark palette colors: bar=palette(0), line=palette(1)" in {
+        case class Combo(month: String, revenue: Double, growth: Double)
+        given CanEqual[Combo, Combo] = CanEqual.derived
+        val rows                     = Chunk(Combo("Jan", 1000.0, 10.0), Combo("Feb", 2000.0, 20.0))
+        val spec = Chart(rows)(
+            bar(x = _.month, y = _.revenue),
+            line(x = _.month, y = _.growth, axis = Axis.Right)
+        )
+            .yAxis(_.left)
+            .yAxisRight(_.right)
+        val root = summon[Conversion[ChartSpec[Combo], Svg.Root]](spec)
+
+        // Bar mark (index 0): fill must be palette(0) = blue.
+        val rects = rectsIn(root)
+        assert(rects.nonEmpty, s"Expected at least one bar rect but got ${rects.size}")
+        rects.foreach: r =>
+            r.svgAttrs.fill match
+                case Present(Svg.Paint.Color(c)) =>
+                    assert(c == Style.Color.blue, s"Bar (mark 0) should be palette(0) (blue) but got $c")
+                case other => fail(s"Expected a bar color fill but got $other")
+
+        // Line mark (index 1): stroke must be palette(1) = orange (distinct from the bar's blue).
+        val paths = pathsIn(root)
+        assert(paths.size == 1, s"Expected 1 line path but got ${paths.size}")
+        paths(0).svgAttrs.stroke match
+            case Present(Svg.Paint.Color(c)) =>
+                assert(c == Style.Color.orange, s"Line (mark 1) should be palette(1) (orange) but got $c")
+                assert(c != Style.Color.blue, "Line color must differ from the bar color in a combo chart")
+            case other => fail(s"Expected a line stroke color but got $other")
+        end match
+    }
+
     // ---- Test 11: dark-theme bar uses a light/visible fill color ----
     // Regression for the bug where dark-theme bars used browser-default black fill,
     // making them invisible on the dark (#1f2937) background.
@@ -412,6 +493,70 @@ class ChartLowerTest extends Test:
             case Present(Svg.Paint.None) => fail("Dark-theme bar fill must not be None")
             case other                   => fail(s"Expected a color fill but got $other")
         end match
+    }
+
+    // ---- Test 12 (ISSUE 3 + ISSUE 1): dark-theme axis text colors ----
+    // On the dark theme the SVG background is dark, so axis text must not be the browser default black.
+    // The shared x-axis chrome stays the neutral light gray (#e5e7eb). The left y-axis is bound to exactly
+    // one mark (the single bar = mark 0), so ISSUE 1 color-codes its tick labels to that mark's palette
+    // color (palette(0) = blue), not the neutral gray.
+
+    "dark-theme axis text: x-axis stays neutral light gray, single-mark y-axis is color-coded (never black)" in {
+        // Neutral light text color used on the dark theme (must match ChartLower.DarkThemeTextColor).
+        val lightText = Style.Color.hex("#e5e7eb").getOrElse(Style.Color.white)
+        val rows      = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
+        val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
+            .yAxis(_.left.ticks(3))
+            .xAxis(_.bottom.label("Month"))
+            .theme(_.dark)
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+
+        // Frame texts (tick labels and the x-axis label) live directly under the root.
+        val texts = root.children.flatMap:
+            case t: Svg.Text => Chunk(t)
+            case _           => Chunk.empty
+        assert(texts.nonEmpty, "Expected axis text elements on the dark theme")
+
+        // No axis text may be black on the dark theme.
+        texts.foldLeft(succeed): (_, t) =>
+            t.svgAttrs.fill match
+                case Present(Svg.Paint.Color(c)) => assert(c != Style.Color.black, "Dark-theme axis text must not be black")
+                case other                       => fail(s"Expected a fill color on dark-theme axis text but got $other")
+
+        // x-axis chrome stays the neutral light gray: x tick labels (DominantBaseline.Hanging) and the
+        // bottom "Month" label (TextAnchor.Middle, no rotation).
+        val xTexts = texts.filter(t =>
+            t.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Hanging) ||
+                t.children.exists { case UI.Ast.Text("Month") => true; case _ => false }
+        )
+        assert(xTexts.nonEmpty, "Expected x-axis tick labels and/or the Month label")
+        xTexts.foldLeft(succeed): (_, t) =>
+            t.svgAttrs.fill match
+                case Present(Svg.Paint.Color(c)) => assert(c == lightText, s"X-axis text should stay neutral $lightText but got $c")
+                case other                       => fail(s"Expected an x-axis text fill but got $other")
+
+        // Left y-axis tick labels (TextAnchor.End) are color-coded to the single bound mark: palette(0) = blue.
+        val leftTicks = texts.filter(t => t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
+        assert(leftTicks.nonEmpty, "Expected left y-axis tick labels")
+        leftTicks.foldLeft(succeed): (_, t) =>
+            t.svgAttrs.fill match
+                case Present(Svg.Paint.Color(c)) =>
+                    assert(c == Style.Color.blue, s"Single-mark y-axis tick should be palette(0) (blue) but got $c")
+                case other => fail(s"Expected a left y-axis tick fill but got $other")
+    }
+
+    // ---- Test 13 (ISSUE 3): dark-theme background covers the whole SVG canvas ----
+    // The background rect must span the entire SVG (not only the plot rect) so the axis margins read dark.
+
+    "dark-theme background rect covers the whole SVG canvas" in {
+        val rows = Chunk(Sale("Jan", Usd(1000)))
+        val spec = Chart(rows)(bar(x = _.month, y = _.revenue)).theme(_.dark).size(360, 240)
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val bg   = root.children.collectFirst { case r: Svg.Rect => r }.getOrElse(fail("Expected a background rect"))
+        assertClose(numOf(bg.svgAttrs.x), 0.0, "background x")
+        assertClose(numOf(bg.svgAttrs.y), 0.0, "background y")
+        assertClose(numOf(bg.svgAttrs.width), 360.0, "background width spans full SVG")
+        assertClose(numOf(bg.svgAttrs.height), 240.0, "background height spans full SVG")
     }
 
 end ChartLowerTest
