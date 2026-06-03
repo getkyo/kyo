@@ -61,6 +61,13 @@ object DocsApp:
       *   the new module's sections expand and the previous module's collapse on a navigation.
       * @param article
       *   The transpiled article subtree to embed in the content area. May be a `Reactive` node.
+      * @param contentLoading
+      *   Whether the content area's article is mid-load (the bundle has cleared `articleRef`/`tocRef`
+      *   and the new route's `content.md` fetch is in flight). The prev/next pager is gated on this so
+      *   it stays hidden during the brief empty-article window and only appears once the article does,
+      *   avoiding a footer-at-top flash. Pass `Signal.initConst(false)` for a static page (the SSG, or a
+      *   test): a static page is always loaded, so the pager renders exactly as before. The bundle passes
+      *   its `loadingRef`, set true at the start of a content fetch and false once the article is set.
       * @return
       *   A `UI < Sync` representing the 2-pane docs content body.
       */
@@ -69,7 +76,8 @@ object DocsApp:
         prefix: String,
         route: Signal[String],
         tocSignal: Signal[Chunk[DocsMarkdown.Heading]],
-        article: UI
+        article: UI,
+        contentLoading: Signal[Boolean]
     )(using Frame): UI < Sync =
         for
             // Mobile sidebar disclosure (B6). Below 860px the sidebar is hidden by default; this ref
@@ -91,7 +99,7 @@ object DocsApp:
             UI.div.cssClass("docs-shell")(
                 navToggle(navOpenRef),
                 sidebar(content, route, prefix, navOpenRef, tocSignal),
-                contentArea(article, allModules, route, prefix)
+                contentArea(article, allModules, route, prefix, contentLoading)
             )
     end body
 
@@ -197,11 +205,26 @@ object DocsApp:
                 .onClick(navOpenRef.updateAndGet(!_).unit)(if open then "Close modules" else "Browse modules")
         })
 
-    private def contentArea(article: UI, modules: Chunk[WebsiteModule], route: Signal[String], prefix: String)(using Frame): UI =
+    private def contentArea(
+        article: UI,
+        modules: Chunk[WebsiteModule],
+        route: Signal[String],
+        prefix: String,
+        contentLoading: Signal[Boolean]
+    )(using Frame): UI =
         UI.main.cssClass("docs-content")(
             article,
+            // The prev/next pager is gated on `contentLoading` so it never paints at the top of an
+            // empty content area while the new route's article is mid-fetch (which read as a footer
+            // flash before the article filled in and pushed it down). combineLatest re-emits when EITHER
+            // the route OR the loading flag changes, so the pager hides the instant a content fetch
+            // starts and reappears, with the correct route's links, the instant the article is ready.
+            // On the SSG and the bundle's first paint `contentLoading` is constant/false, so the pager
+            // renders exactly as before (hydration parity).
             // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
-            UI.Ast.Reactive(route.map(r => prevNextNav(modules, r, prefix)))
+            UI.Ast.Reactive(route.combineLatest(contentLoading).map { case (r, loading) =>
+                if loading then UI.empty else prevNextNav(modules, r, prefix)
+            })
         )
     end contentArea
 

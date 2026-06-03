@@ -183,9 +183,12 @@ object WebsiteGenerator:
             // so the bundle fetches and re-transpiles it exactly like a module page (D6/INV-009).
             rendered   <- DocsMarkdown.transpile(c.intro)
             fixedRoute <- Signal.initRef(route)
-            body       <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(rendered.headings), rendered.article)
-            view       <- siteShell(versions, docsHome(c, prefix), body)
-            html       <- wrapFirst(introOpts(c, prefix, route, rendered.headings, isCurrentLatest), view)
+            // The SSG emits one fully-loaded static page per route, so content is never mid-load:
+            // `contentLoading` is constant false and the prev/next pager renders exactly as the bundle's
+            // first paint does (loadingRef initialised false), keeping SSG and bundle output identical.
+            body <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(rendered.headings), rendered.article, Signal.initConst(false))
+            view <- siteShell(versions, docsHome(c, prefix), body)
+            html <- wrapFirst(introOpts(c, prefix, route, rendered.headings, isCurrentLatest), view)
             island = docsIsland(c, versions, c.intro)
             _ <- writeRoute(outDir / prefix / "index.html", injectIslands(html, island, versions))
             _ <- writeString(s"$prefix/content.md", outDir / prefix / "content.md", c.intro)
@@ -205,9 +208,10 @@ object WebsiteGenerator:
         for
             rendered   <- DocsMarkdown.transpile(module.readme)
             fixedRoute <- Signal.initRef(route)
-            body       <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(rendered.headings), rendered.article)
-            view       <- siteShell(versions, docsHome(c, prefix), body)
-            html       <- wrapFirst(docOpts(c, prefix, module.slug, route, isCurrentLatest), view)
+            // Constant-false `contentLoading`: a static SSG page is always loaded (see emitIntroPage).
+            body <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(rendered.headings), rendered.article, Signal.initConst(false))
+            view <- siteShell(versions, docsHome(c, prefix), body)
+            html <- wrapFirst(docOpts(c, prefix, module.slug, route, isCurrentLatest), view)
             island = docsIsland(c, versions, module.readme)
             _ <- writeRoute(outDir / prefix / module.slug / "index.html", injectIslands(html, island, versions))
             _ <- writeString(

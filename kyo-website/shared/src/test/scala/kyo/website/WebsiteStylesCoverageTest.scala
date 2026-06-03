@@ -148,7 +148,8 @@ class WebsiteStylesCoverageTest extends Test:
                 "v0.9.0",
                 route,
                 Signal.initConst(toc),
-                rendered.article
+                rendered.article,
+                Signal.initConst(false)
             )
             view <- shell("/v0.9.0/kyo-core/", body)
             html <- UI.runRender(view).take(1).run

@@ -133,6 +133,12 @@ object WebsiteBundleMain:
             initialRendered <- DocsMarkdown.transpile(island.markdown)
             articleRef      <- Signal.initRef[UI](initialRendered.article)
             tocRef          <- Signal.initRef[Chunk[DocsMarkdown.Heading]](initialRendered.headings)
+            // Content-loading flag, false at first paint (the boot island is already rendered into
+            // articleRef/tocRef above). `showContentRoute` sets it true the instant a navigation clears
+            // those refs for an async content.md fetch, and false once the fetched article/TOC are set
+            // (or the fetch fails), so the prev/next pager (gated on this in DocsApp.contentArea) only
+            // appears together with the article and never flashes at the top of the empty content area.
+            loadingRef <- Signal.initRef(false)
             // ONE docs body instance, reused on every docs navigation. Its sidebar/article/TOC react
             // to `route`/`articleRef`/`tocRef`, so swapping module-to-module only updates those refs;
             // `content` is set to this body once (when arriving from the landing) and then left alone.
@@ -142,7 +148,8 @@ object WebsiteBundleMain:
                 route,
                 tocRef,
                 // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
-                UI.Ast.Reactive(articleRef.map(a => a))
+                UI.Ast.Reactive(articleRef.map(a => a)),
+                loadingRef
             )
             landingBody <- LandingApp.body(home)
             content     <- Signal.initRef[UI](if isRootRoute(initialRoute) then landingBody else docsBody)
@@ -151,7 +158,7 @@ object WebsiteBundleMain:
             // (titles/slugs/groups), so the very first keystroke already matches module titles without
             // waiting on a fetch. The heading-aware index loads lazily on first focus (onSearchFocus).
             searchIndex <- Signal.initRef(titleIndex(island.content, prefix))
-            _           <- navFiber(route, knownPrefixes, knownSlugs, island, content, articleRef, tocRef, landingBody, docsBody)
+            _ <- navFiber(route, knownPrefixes, knownSlugs, island, content, articleRef, tocRef, loadingRef, landingBody, docsBody)
             view <- SiteApp.view(
                 versions,
                 home,
@@ -280,6 +287,7 @@ object WebsiteBundleMain:
         content: SignalRef[UI],
         articleRef: SignalRef[UI],
         tocRef: SignalRef[Chunk[DocsMarkdown.Heading]],
+        loadingRef: SignalRef[Boolean],
         landingBody: UI,
         docsBody: UI
     )(using Frame): Fiber[Nothing, Any] < Sync =
@@ -295,7 +303,7 @@ object WebsiteBundleMain:
                                 content.set(landingBody).andThen(updateHead(nextRoute, island))
                             case RouteKind.Module =>
                                 // Module route: fetch/transpile content.md, update article + TOC, show docs.
-                                showContentRoute(nextRoute, island, content, articleRef, tocRef, docsBody)
+                                showContentRoute(nextRoute, island, content, articleRef, tocRef, loadingRef, docsBody)
                             case RouteKind.Intro =>
                                 // Intro/overview `/<knownPrefix>/`: the root-README overview is now real
                                 // content served at `/<prefix>/content.md`, so the intro is a content route
@@ -303,7 +311,7 @@ object WebsiteBundleMain:
                                 // show docs. The Overview is the active rail item (DocsApp keys it on the
                                 // single-segment intro route), and its `## ` sections come from the TOC set
                                 // here.
-                                showContentRoute(nextRoute, island, content, articleRef, tocRef, docsBody)
+                                showContentRoute(nextRoute, island, content, articleRef, tocRef, loadingRef, docsBody)
                             case RouteKind.OffTree =>
                                 // Off-tree route: a single segment that is not a known prefix, OR a multi-
                                 // segment route whose last segment is not a known module slug (AF-4). Hand off
@@ -330,6 +338,7 @@ object WebsiteBundleMain:
         content: SignalRef[UI],
         articleRef: SignalRef[UI],
         tocRef: SignalRef[Chunk[DocsMarkdown.Heading]],
+        loadingRef: SignalRef[Boolean],
         docsBody: UI
     )(using Frame): Unit < Async =
         for
@@ -344,21 +353,34 @@ object WebsiteBundleMain:
             // about which page is loaded (a brief empty reads as "loading", stale content reads as "my click
             // did nothing"). For an already-cached route the reset and the real set run back-to-back in this
             // fiber, so the empty frame collapses into the same paint and is never visible.
-            _  <- tocRef.set(Chunk.empty)
-            _  <- articleRef.set(UI.empty)
-            md <- Sync.defer(markdownCache.getOrElse(nextRoute, ""))
-            fetched <-
-                if md.nonEmpty then Sync.defer(md)
-                else
-                    DocsClient.fetchMarkdown(nextRoute).map { f =>
-                        seedMarkdownCache(nextRoute, f)
-                        f
-                    }
-            rendered <- DocsMarkdown.transpile(fetched)
-            _        <- articleRef.set(rendered.article)
-            _        <- tocRef.set(rendered.headings)
-            _        <- content.set(docsBody)
-            _        <- updateHead(nextRoute, island)
+            //
+            // Raising `loadingRef` alongside the clear hides the prev/next pager for the same window: the
+            // pager is keyed on the `route` signal (which flips synchronously on click), not on whether the
+            // article has loaded, so without this gate it would paint at the TOP of the now-empty content
+            // area (a footer flash) until the article filled in and pushed it down. With the gate the pager
+            // stays hidden until the article is set, then both appear together. `Sync.ensure` lowers the flag
+            // on EVERY exit (success, fetch failure, or panic) so it never sticks true and strand the pager
+            // hidden.
+            _ <- loadingRef.set(true)
+            _ <- Sync.ensure(loadingRef.set(false)) {
+                for
+                    _  <- tocRef.set(Chunk.empty)
+                    _  <- articleRef.set(UI.empty)
+                    md <- Sync.defer(markdownCache.getOrElse(nextRoute, ""))
+                    fetched <-
+                        if md.nonEmpty then Sync.defer(md)
+                        else
+                            DocsClient.fetchMarkdown(nextRoute).map { f =>
+                                seedMarkdownCache(nextRoute, f)
+                                f
+                            }
+                    rendered <- DocsMarkdown.transpile(fetched)
+                    _        <- articleRef.set(rendered.article)
+                    _        <- tocRef.set(rendered.headings)
+                yield ()
+            }
+            _ <- content.set(docsBody)
+            _ <- updateHead(nextRoute, island)
             // After the article re-renders, scroll to the URL hash if present (a heading-hit search
             // result navigates to /<prefix>/<slug>/#<heading>; the anchor element only exists once this
             // branch renders the article). With NO hash (sidebar nav, prev/next) reset to the top so the

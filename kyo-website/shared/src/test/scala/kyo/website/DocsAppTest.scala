@@ -16,13 +16,14 @@ class DocsAppTest extends Test:
         route: Signal[String],
         toc: Chunk[DocsMarkdown.Heading],
         article: UI,
-        prefix: String = ""
+        prefix: String = "",
+        contentLoading: Boolean = false
     )(using Frame): String < Async =
         val resolvedPrefix = if prefix.nonEmpty then prefix
         else if content.version.latest then "latest"
         else content.version.tag
         for
-            view <- DocsApp.body(content, resolvedPrefix, route, Signal.initConst(toc), article)
+            view <- DocsApp.body(content, resolvedPrefix, route, Signal.initConst(toc), article, Signal.initConst(contentLoading))
             html <- UI.runRenderPage(testHead)(view).take(1).run.map(_.headMaybe.getOrElse(""))
         yield html
         end for
@@ -261,6 +262,36 @@ class DocsAppTest extends Test:
             // The rendered prev/next nav must contain links to the adjacent modules.
             assert(html.contains("/latest/mod-a/"), s"prev link to mod-a not found in prev-next nav: $html")
             assert(html.contains("/latest/mod-c/"), s"next link to mod-c not found in prev-next nav: $html")
+        end for
+    }
+
+    // Leaf 9b: the prev/next pager is gated on `contentLoading`. While content is loading (the bundle
+    // cleared the article for an async content.md fetch) the pager is ABSENT, so it cannot flash at the
+    // top of the empty content area (the footer flash). Once content is loaded it renders as in leaf 9.
+    "prev/next pager is hidden while content is loading and shown once loaded (leaf 9b)" in run {
+        val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true))
+        val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true))
+        val modC = WebsiteModule("mod-c", "Foundation", "Mod C", "", WebsiteModule.Platforms(true, true, true))
+        val content = WebsiteContent(
+            intro = "",
+            groups = Chunk(WebsiteContent.Group("Foundation", Chunk(modA, modB, modC))),
+            version = WebsiteVersion("latest", "latest", true)
+        )
+        for
+            route       <- fixedRoute("/latest/mod-b/")
+            loadingHtml <- rendered(content, route, Chunk.empty, UI.empty, contentLoading = true)
+            loadedHtml  <- rendered(content, route, Chunk.empty, UI.empty, contentLoading = false)
+        yield
+            // The `prev-next` class is unique to the content-area pager (the sidebar uses `nav-item`),
+            // so its absence proves the pager is gone while loading even though the sidebar still lists
+            // every module link. While loading the pager is absent; once loaded it renders.
+            assert(!loadingHtml.contains("prev-next"), s"prev-next pager must be ABSENT while content is loading: $loadingHtml")
+            assert(loadedHtml.contains("prev-next"), s"prev-next pager must render once content is loaded: $loadedHtml")
+            // Once loaded the pager carries the adjacent-module links exactly as leaf 9. Scope the link
+            // check to the pager substring so it asserts the pager's own links, not the sidebar's.
+            val loadedPager = loadedHtml.substring(loadedHtml.indexOf("prev-next"))
+            assert(loadedPager.contains("/latest/mod-a/"), s"prev link to mod-a must render in the pager once loaded: $loadedPager")
+            assert(loadedPager.contains("/latest/mod-c/"), s"next link to mod-c must render in the pager once loaded: $loadedPager")
         end for
     }
 

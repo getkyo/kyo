@@ -74,7 +74,9 @@ class ChromeParityTest extends Test:
             rendered <- DocsMarkdown.transpile(src)
             route    <- Signal.initRef[String](docsHomeRoute)
             reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
-            body  <- DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), reactive)
+            // SSG and the bundle's first paint are both fully loaded: contentLoading is constant false,
+            // so the prev/next pager is part of the parity contract (present in both renders).
+            body  <- DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), reactive, Signal.initConst(false))
             view  <- siteShell(versions2, docsHomeRoute, body)
             ssg   <- UI.runRender(view).take(1).run.map(_.headMaybe.getOrElse(""))
             mount <- RecordingBackend.render(view)
@@ -89,6 +91,13 @@ class ChromeParityTest extends Test:
             assert(normalize(ssg).contains("sidebar-sections"), s"SSG must render the rail's nested section outline: ${normalize(ssg)}")
             assert(normalize(ssg).contains("#scope"), s"SSG must render the #scope section link in the rail: ${normalize(ssg)}")
             assert(!normalize(ssg).contains("docs-toc"), s"the removed right-TOC pane (docs-toc) must not be emitted: ${normalize(ssg)}")
+            // With contentLoading=const-false the prev/next pager is in the loaded state, so it renders in
+            // both the SSG and the bundle's first mount: the loading gate must not hide it on a static page.
+            assert(normalize(ssg).contains("prev-next"), s"SSG must render the prev/next pager in the loaded state: ${normalize(ssg)}")
+            assert(
+                normalize(mount).contains("prev-next"),
+                s"mount must render the prev/next pager in the loaded state: ${normalize(mount)}"
+            )
         end for
     }
 
@@ -102,7 +111,8 @@ class ChromeParityTest extends Test:
             rendered <- DocsMarkdown.transpile(intro)
             route    <- Signal.initRef[String]("/latest/")
             reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
-            body  <- DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), reactive)
+            // Constant-false contentLoading: see the docs-route parity leaf above.
+            body  <- DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), reactive, Signal.initConst(false))
             view  <- siteShell(versions2, docsHomeRoute, body)
             ssg   <- UI.runRender(view).take(1).run.map(_.headMaybe.getOrElse(""))
             mount <- RecordingBackend.render(view)
@@ -171,7 +181,7 @@ class ChromeParityTest extends Test:
             rendered <- DocsMarkdown.transpile(src)
             route    <- Signal.initRef[String]("/latest/kyo-core/")
             reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
-            view <- DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), reactive)
+            view <- DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), reactive, Signal.initConst(false))
             html <- UI.runRenderPage(testHead)(view).take(1).run.map(_.headMaybe.getOrElse(""))
         yield
             assert(html.contains("data-kyo-reactive"), s"data-kyo-reactive not found: $html")
