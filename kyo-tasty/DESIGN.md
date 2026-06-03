@@ -672,28 +672,45 @@ Case-class-based `Reads` remains the default for codegen and IDE-style queries. 
 
 ## 12. Public API
 
-Single top-level entry point `kyo.Tasty` with nested types. Avoids polluting `kyo.*` with `Symbol` (which would clash with `scala.Symbol`) or `Type` (which would clash with `scala.reflect.runtime.universe.Type`).
+Single top-level entry point `kyo.Tasty` with nested types. Avoids polluting `kyo.*` with `Symbol` (which would clash with `scala.Symbol`) or `Type` (which would clash with `scala.reflect.runtime.universe.Type`). The shape below mirrors the current `kyo.Tasty` source; types referenced as `/* see Section N */` are detailed elsewhere in this document.
 
 ```scala
-object Reflect:
+object Tasty:
 
-    opaque type Classpath = Classpath.Internal
-    object Classpath:
-        def open(roots: Seq[Path]): Classpath < (Sync & Scope & Abort[TastyError])
-        def openCached(roots: Seq[Path], cacheDir: Path): Classpath < (Sync & Scope & Abort[TastyError])
-        def fromPickles(pickles: Seq[Pickle]): Classpath < Sync
-        def open(roots: Seq[Path], strict: Boolean): Classpath < (Sync & Scope & Abort[TastyError])
+    // Versioning
+    final case class Version(major: Int, minor: Int, experimental: Int):
+        def show: String
+    val supportedTastyVersion: Version = Version(28, 8, 0)
 
-    final class Symbol /* see Section 7 */
-    enum SymbolKind            /* see Section 7 */
-    enum Type                  /* see Section 9 */
+    // Names, flags, kinds
     opaque type Name
+    object Name:
+        def init(s: String)(using Frame): Name < Sync
+        object Unsafe:
+            def init(s: String)(using AllowUnsafe): Name
+
     opaque type Flags
-    type FQN = String                          // dotted form; binary form via Symbol.binaryName
-    final case class Pickle(uuid: UUID, version: Version, bytes: Span[Byte])
-    final case class Version(major: Int, minor: Int, experimental: Int)
-    final case class Annotation(annotationType: Type, argsPickle: Span[Byte])  // Scala-side; argsPickle is the unparsed body pickle (deferred per Section 6's lazy-body strategy). For Java see JavaAnnotation in Section 7.
-    enum Constant:
+    object Flags:
+        val Empty: Flags
+        // bitwise ops, predicates: contains(Flag), |, &, withFlag, etc.
+
+    opaque type Flag
+    object Flag /* see Section 7 */
+
+    enum SymbolKind derives CanEqual:
+        case Package, Class, Trait, Object, Method, Field, Val, Var,
+             TypeAlias, OpaqueType, AbstractType, TypeParam, Parameter,
+             EnumCase, Unresolved
+
+    // Loader-error mode and subtype verdict
+    enum ErrorMode derives CanEqual:
+        case SoftFail, FailFast
+
+    enum SubtypeVerdict derives CanEqual:
+        case Sub, NotSub, Unknown
+
+    // Constants, positions, annotations
+    enum Constant derives CanEqual:
         case StringConst(s: String)
         case IntConst(i: Int)
         case LongConst(l: Long)
@@ -706,168 +723,261 @@ object Reflect:
         case UnitConst
         case NullConst
         case ClassConst(tpe: Type)
-    opaque type FieldSet = Long                // bit-packed field markers; ops: |, &, contains
-    object FieldSet:
-        val Name, BinaryName, Flags, Kind, Owner, DeclaredType,
-            Parents, TypeParams, Members, Companion,
-            JavaSpecific, ParamTypes, Annotations, Positions, Comments,
-            All, Empty: FieldSet
 
-    // Schema-driven reading. Reads.read is effectful because Symbol's resolving
-    // accessors (declaredType, parents, declarations) return < Sync & Abort[TastyError].
-    // Symbol carries its home Classpath internally; no implicit needed.
-    trait Reads[A]:
-        def read(sym: Symbol): A < (Sync & Abort[TastyError])
-        val symbolKinds: Set[SymbolKind]
-        val needsBodies: Boolean
-        val touchedFields: FieldSet
+    final case class Position(sourceFile: Maybe[String], line: Int, column: Int)
 
-    object Reads:
-        inline def derived[A]: Reads[A]   // see Section 13
+    // Scala annotations carry decoded argument trees; a decode failure produces
+    // arguments = Chunk.empty and lands a MalformedSection in cp.errors.
+    final case class Annotation(annotationType: Type, arguments: Chunk[Tree])
 
-    // FQN helpers
-    def classFqn[A](using Tag[A]): String < Abort[TastyError]
-    // Non-parameterized types only. Restricted because Tag[A].show
-    // produces structured rendering for parameterized types
-    // (e.g. "scala.List[scala.Int]"), not a clean FQN.
+    // Java records, method param-name tables, enclosing-method attribute
+    final case class RecordComponent(name: Name, tpe: Type) derives CanEqual
+    final case class ParamGroup(methodName: Name, parameterNames: Chunk[Name]) derives CanEqual
+    final case class EnclosingMethod(owner: Symbol, methodName: Name) derives CanEqual
 
-    // Record interop: project a Symbol's fields into a typed Record (Section 11).
-    // The macro maps each field name in F to the corresponding Symbol accessor
-    // and composes effectful accessors via for/yield.
-    inline def symbolToRecord[F: Fields](sym: Symbol): Record[F] < (Sync & Abort[TastyError])
+    // Java-side metadata
+    final case class JavaMetadata(/* JVM access flags, throws clause, EnclosingMethod,
+                                     record components, nest host / nest members,
+                                     bootstrap methods, parameter-name groups, runtime annotations */)
 
-    // Queries
-    extension (cp: Classpath)
-        def findClass(fqn: String):     Maybe[Symbol] < (Sync & Abort[TastyError])
-        def findPackage(fqn: String):   Maybe[Symbol] < (Sync & Abort[TastyError])
-        def packages:                   Chunk[Symbol] < (Sync & Abort[TastyError])
-        def topLevelClasses:            Chunk[Symbol] < (Sync & Abort[TastyError])
-        def query[A](using Reads[A]):   Query[A]
-        def errors:                     Chunk[TastyError] < Sync  // partial-classpath mode
-end Reflect
+    // JVM annotation form (parallel to Scala-side Annotation)
+    final case class JavaAnnotation(
+        annotationClass: Symbol,
+        values: Chunk[(Name, JavaAnnotation.Value)]
+    )
+    object JavaAnnotation:
+        enum Value:
+            case StringVal, IntVal, LongVal, FloatVal, DoubleVal, BoolVal,
+                 ClassVal, EnumVal, ArrayVal, AnnotationVal
+            // char / byte / short element values fold into IntVal per the
+            // classfile annotation element-value encoding.
 
-enum TastyError:
+    // Module descriptors (module-info entries; JVM Java 9+ modules)
+    final case class ModuleRequires(/* ... */)
+    final case class ModuleExports(/* ... */)
+    final case class ModuleOpens(/* ... */)
+    final case class ModuleProvides(/* ... */)
+    final case class ModuleDescriptor(/* ... */)
+
+    // Type ADT (see Section 9 for full case list)
+    enum Type:
+        case Named(id: SymbolId)
+        case Applied(base: Type, args: Chunk[Type])
+        case Function(params: Chunk[Type], result: Type, isContext: Boolean)
+        case ContextFunction(params: Chunk[Type], result: Type)
+        case Tuple(elements: Chunk[Type])
+        case AndType(l: Type, r: Type)
+        case OrType(l: Type, r: Type)
+        case Annotated(under: Type, annotation: Annotation)
+        case Refinement(/* ... */)
+        case ConstantType(c: Constant)
+        case Wildcard(lo: Type, hi: Type)
+        case Bounds(lo: Type, hi: Type)
+        case Nothing
+        case Any
+        case Unknown
+        /* plus ByName, Repeated, Array, Rec, RecThis, SuperType, Skolem, MatchType,
+           FlexibleType, MatchCase, TypeRef, TypeLambda; see Section 9 */
+        def isSubtypeOf(other: Type)(using cp: Classpath): SubtypeVerdict
+        def visit(f: Type => Unit): Unit
+        def children: Chunk[Type]
+        def foreach(f: Type => Unit): Unit
+        def symbol(using cp: Classpath): Maybe[Symbol]
+        def show(using cp: Classpath): String
+
+    // Tree ADT (decoded lazily from SymbolBody bytes via decodeBody / bodyTree)
+    enum Tree derives CanEqual /* see Section 6 for the wire-level mapping */
+
+    // Bounds, variance, visibility, openness
+    enum Variance derives CanEqual:
+        case Invariant, Covariant, Contravariant
+    final case class TypeBounds(lower: Type, upper: Type) derives CanEqual
+    enum Visibility derives CanEqual
+    enum OpenLevel derives CanEqual
+
+    // Symbol model (sealed trait + nested subtypes; see Section 7)
+    sealed trait Symbol derives CanEqual:
+        def name: Name
+        def flags: Flags
+        def ownerId: SymbolId
+        def kind: SymbolKind
+        def owner(using cp: Classpath): Maybe[Symbol]
+        def companion(using cp: Classpath): Maybe[Symbol]
+        def ownersChain(using cp: Classpath): Chunk[Symbol]
+        def parents(using cp: Classpath): Chunk[Symbol]
+        def declarations(using cp: Classpath): Chunk[Symbol]
+        def membersByKind(k: SymbolKind)(using cp: Classpath): Chunk[Symbol]
+        def hasAnnotation(annotationFqn: String)(using cp: Classpath, allow: AllowUnsafe): Boolean
+        // Body decode is the only post-open Symbol accessor that carries Sync & Abort:
+        def bodyTree(using Frame, Classpath): Maybe[Tree] < (Sync & Abort[TastyError])
+        // Plus: position, declaredType, annotations, javaMetadata, ...
+
+    object Symbol:
+        sealed trait ClassLike extends Symbol
+        final class Class      extends ClassLike
+        final class Trait      extends ClassLike
+        final class Object_    extends ClassLike
+        final class Method     extends Symbol
+        final class Val        extends Symbol
+        final class Var        extends Symbol
+        final class Field      extends Symbol
+        final class Package    extends Symbol
+        final class TypeAlias  extends Symbol
+        final class OpaqueType extends Symbol
+        // ... see Section 7
+
+    // The lazy-body envelope: AST bytes, local name table, address map.
+    final case class SymbolBody private[kyo] (/* ... */)
+
+    // In-memory pickle: header UUID, format version, raw .tasty bytes
+    final case class Pickle(uuid: String, version: Version, bytes: Span[Byte])
+
+    // Immutable in-memory classpath snapshot. Constructor is private[Tasty];
+    // construction goes through Classpath.init, initCached, fromPickles, or
+    // fromPicklesWithSymbols. All accessors below are pure post-open.
+    final case class Classpath private[Tasty] (
+        symbols: Chunk[Symbol],
+        rootSymbolId: SymbolId,
+        topLevelClassIds: Chunk[SymbolId],
+        packageIds: Chunk[SymbolId],
+        /* private[kyo] fqnIndex, etc. */
+    ):
+        def symbol(id: SymbolId): Symbol
+        def findClass(fqn: String): Maybe[Symbol.Class]
+        def findClassLike(fqn: String): Maybe[Symbol.ClassLike]
+        def findPackage(fqn: String): Maybe[Symbol.Package]
+        def findClassesByName(simpleName: String): Chunk[Symbol.Class]
+        def findClassByBinary(binaryName: String): Maybe[Symbol.Class]
+        def packages: Chunk[Symbol.Package]
+        def topLevelClasses: Chunk[Symbol.ClassLike]
+        def directSubclassesOf(sym: Symbol.ClassLike): Chunk[Symbol.ClassLike]
+        def subclassesOf(sym: Symbol.ClassLike): Chunk[Symbol.ClassLike]
+        def symbolsAnnotatedWith(annotationFqn: String)(using AllowUnsafe): Chunk[Symbol]
+        def companion(sym: Symbol): Maybe[Symbol]
+        // Only effectful accessor on the snapshot: lazy AST decode + memo.
+        def bodyTree(sym: Symbol)(using Frame): Maybe[Tree] < (Sync & Abort[TastyError])
+        def errors: Chunk[TastyError]
+    end Classpath
+
+    object Classpath:
+        // Default load: SoftFail mode, async I/O, scoped for mmap / JAR pool teardown.
+        def init(roots: Seq[String])(using Frame)
+            : Classpath < (Async & Scope & Abort[TastyError])
+        def init(roots: Seq[String], mode: ErrorMode)(using Frame)
+            : Classpath < (Async & Scope & Abort[TastyError])
+        // Snapshot-cached load: writes/reads `*.krfl` files in cacheDir keyed on root digests.
+        def initCached(roots: Seq[String], cacheDir: String)(using Frame)
+            : Classpath < (Sync & Async & Scope & Abort[TastyError])
+        // In-memory: skips the filesystem entirely.
+        def fromPickles(pickles: Seq[Pickle])(using Frame)
+            : Classpath < (Async & Scope & Abort[TastyError])
+        // Internal; tests construct a Classpath from a pre-built Symbol chunk.
+        private[kyo] def fromPicklesWithSymbols(symbols: Chunk[Symbol])(using Frame)
+            : Classpath < Sync
+    end Classpath
+
+    // Snapshot cache maintenance, independent of the init path
+    object Snapshot:
+        def evictOlderThan(cacheDir: String, maxAge: Duration)(using Frame)
+            : Unit < (Sync & Abort[TastyError])
+    end Snapshot
+end Tasty
+```
+
+### Effect rows at a glance
+
+| Surface | Effect row | Notes |
+|---|---|---|
+| `Classpath.init` / variants | `Async & Scope & Abort[TastyError]` | I/O is `Async`; `Scope` is required because mmap arenas and JAR pools register Scope finalizers. |
+| `Classpath.initCached` | `Sync & Async & Scope & Abort[TastyError]` | `Sync` is the cache snapshot read/write; `Async` is the underlying classpath walk on a miss. |
+| `Classpath.fromPickles` | `Async & Scope & Abort[TastyError]` | No filesystem; the `Async` row covers the decode pipeline. |
+| `Classpath.bodyTree` / `Symbol.bodyTree` | `Sync & Abort[TastyError]` | Only post-open accessor that suspends. Lazy decode is memoised per classpath instance keyed by `SymbolId`. |
+| `Snapshot.evictOlderThan` | `Sync & Abort[TastyError]` | Touches disk; returns `Unit`. |
+| Every other accessor on `Classpath`, `Symbol`, `Type`, `Tree` | pure | No effect row at all. The `using cp: Classpath` clause is the only resolution-time argument. |
+
+### Error mode at load time
+
+The `ErrorMode` argument to `Classpath.init` governs decode-error handling during the classpath walk:
+
+* `SoftFail` (default): malformed entries land in `cp.errors`; the classpath is returned with whatever symbols decoded successfully.
+* `FailFast`: any decode error raises `Abort[TastyError]` immediately.
+
+Either way, queries on the returned classpath are pure: a missing FQN surfaces as `Maybe.Absent`, and a subtype check against an unresolved parent surfaces as `SubtypeVerdict.Unknown`.
+
+### `TastyError` ADT (19 cases)
+
+```scala
+enum TastyError derives CanEqual:
     case FileNotFound(path: String)
     case CorruptedFile(path: String, at: Long, reason: String)
     case UnsupportedVersion(found: Tasty.Version, supported: Tasty.Version)
-    case InconsistentClasspath(file: String, expectedUuid: UUID, foundUuid: UUID)
+    case InconsistentClasspath(file: String, expectedUuid: java.util.UUID, foundUuid: java.util.UUID)
+    case FqnCollisionError(fqn: String)
     case MalformedSection(name: String, reason: String, byteOffset: Long)
     case SymbolNotFound(fqn: String)
+    case NotFound(fqn: String)
     case ClassfileFormatError(path: String, reason: String, byteOffset: Long)
-    case ClasspathClosed
-    case ClasspathBuilding   // defense-in-depth; never observable in correct usage
+    case ClasspathClosed(context: String)
+    case ClasspathBuilding(context: String)
     case SnapshotFormatError(path: String, reason: String, byteOffset: Long)
     case SnapshotVersionMismatch(found: Tasty.Version, supported: Tasty.Version)
-    case NotImplemented(feature: String)         // v1 stub for deferred features (e.g., tree body decode)
+    case SnapshotIoError(cause: String)
+    case NotImplemented(feature: String)
+    case UnsupportedPlatform(feature: String)
+    case UnknownTagInPosition(tag: Int, position: String)
+    case InvalidFqn(fqn: String, reason: String)
+    case DigestMismatch(expected: String, actual: String)
 end TastyError
 ```
 
-### `symbolToRecord` field-to-accessor mapping
-
-The macro for `symbolToRecord[F]` walks the field intersection in `F` and emits one Symbol-accessor call per field. Supported field names map deterministically:
-
-| Field name in F | Accessor | Value type | Effectful? |
-|---|---|---|---|
-| `"name"` | `sym.name` | `Name` | no |
-| `"binaryName"` | `sym.binaryName` | `String` | no |
-| `"flags"` | `sym.flags` | `Flags` | no |
-| `"kind"` | `sym.kind` | `SymbolKind` | no |
-| `"owner"` | `sym.owner` | `Symbol` | no |
-| `"isInline"` / `"isContextual"` / `"isOpaque"` / `"isPackageObject"` / `"isModule"` / `"isJava"` | the predicate | `Boolean` | no |
-| `"declaredType"` | `sym.declaredType` | `Type` | yes |
-| `"parents"` | `sym.parents` | `Chunk[Type]` | yes |
-| `"typeParams"` | `sym.typeParams` | `Chunk[Symbol]` | yes |
-| `"declarations"` | `sym.declarations` | `Chunk[Symbol]` | yes |
-| `"companion"` | `sym.companion` | `Maybe[Symbol]` | yes |
-| `"javaSpecific"` | `sym.javaSpecific` | `Maybe[JavaMetadata]` | no |
-| any other name | macro error | | |
-
-The macro generates `for/yield` to thread the `Sync & Abort[TastyError]` effect across the resolving accessors, and direct reads for pure accessors. Field value types in `F` must match the accessor's return type or the macro fails with `report.errorAndAbort`.
-
-Example:
-
-```scala
-type ClassView =
-    "name"         ~ Name &
-    "flags"        ~ Flags &
-    "parents"      ~ Chunk[Type] &
-    "declarations" ~ Chunk[Symbol]
-
-val view: Record[ClassView] < (Sync & Abort[TastyError]) =
-    Tasty.symbolToRecord[ClassView](classSym)
-```
-
-The macro propagates `touchedFields` to the unpickler (Section 13), so `symbolToRecord[F]` participates in the same skeleton-pruning optimization as `derives Tasty.Reads`.
-
-### Query combinators
-
-```scala
-// Query is obtained via cp.query[A] and closes over its source Classpath.
-// .run and .stream do not need an implicit Classpath; the binding is captured at construction.
-final class Query[A] private[kyo] (impl: Query.Internal[A]):
-    def filter(p: A => Boolean):           Query[A]
-    def where(p: Tasty.Symbol => Boolean): Query[A]
-    def withFlag(f: Flag):                 Query[A]
-    def named(name: String):               Query[A]
-    def extending(parent: Symbol):         Query[A]
-    def map[B](f: A => B):                 Query[B]
-    def stream: Stream[A, Sync & Abort[TastyError]]
-    def run:    Chunk[A] < (Sync & Abort[TastyError])
-```
-
-Implementation: combinators compose into an intermediate plan; `.run` and `.stream` translate the plan into a single traversal over the bound classpath's symbol cache, touching only the fields the `Reads[A]` declares.
+`FqnCollisionError` and `NotFound` are distinct from `SymbolNotFound`: collision errors fire when two classpath entries claim the same dotted FQN, and `NotFound` covers loader paths where the input did not name a known artefact. `UnsupportedPlatform` is raised by JVM-only entry points (such as `Classpath.initWithPlatformModules`) when invoked on JS or Native.
 
 ### Three usage examples
 
-**Codegen (kyo-ts shape):**
+**Open a classpath and walk top-level classes.**
 
 ```scala
-case class FacadeType(name: Name, pkg: String, flags: Flags,
-                      parents: Chunk[Type], methods: Chunk[FacadeMethod]) derives Tasty.Reads
-case class FacadeMethod(name: Name, flags: Flags, returnType: Type,
-                        params: Chunk[Type]) derives Tasty.Reads
-
-def run: Unit < (Sync & Abort[TastyError] & Scope) =
+def listClasses(roots: Seq[String]): Chunk[String] < (Async & Scope & Abort[TastyError]) =
     for
-        cp    <- Tasty.Classpath.openCached(jsTargetDirs, cacheDir = ".kyo-tasty-cache")
-        types <- cp.query[FacadeType].where(_.flags.contains(Flag.Public)).run
-        _     <- Kyo.foreach(types)(emitFacade)
-    yield ()
+        cp <- Tasty.Classpath.init(roots)
+    yield cp.topLevelClasses.map(_.name.toString)
 ```
 
-**IDE hover** (Symbol accessors do not require an implicit Classpath; the Symbol's `home` carries it):
+**Resolve a class by FQN and decode one method body.**
 
 ```scala
-def hover(fqn: String, member: String): Maybe[String] < (Sync & Abort[TastyError] & Scope) =
+def methodBody(fqn: String, method: String)
+    : Maybe[Tasty.Tree] < (Async & Scope & Sync & Abort[Tasty.TastyError]) =
     for
-        cp  <- Tasty.Classpath.openCached(roots, cacheDir)
-        cls <- cp.findClass(fqn)
-        out <- cls.fold(Kyo.pure(Absent)) { c =>
-                   c.declarations.map { decls =>
-                       decls.find(_.name.toString == member).fold(Kyo.pure(Absent)) { s =>
-                           s.declaredType.map(t => Present(s"${s.name}: ${t.show}"))
-                       }
-                   }
-               }
+        cp  <- Tasty.Classpath.init(Seq("target/scala-3.6.0/classes"))
+        out <- cp.findClass(fqn) match
+            case Maybe.Absent => Kyo.pure(Maybe.empty[Tasty.Tree])
+            case Maybe.Present(cls) =>
+                given Tasty.Classpath = cp
+                cls.declarations.find(s => s.kind == Tasty.SymbolKind.Method && s.name.toString == method) match
+                    case Maybe.Absent          => Kyo.pure(Maybe.empty[Tasty.Tree])
+                    case Maybe.Present(method) => method.bodyTree
     yield out
 ```
 
-**Runtime reflection:**
+**Subtype check with the three-way verdict.**
 
 ```scala
-def fieldsOf[A: Tag]: Chunk[(String, Type)] < (Sync & Abort[TastyError] & Scope) =
+def isShape(fqn: String): Tasty.SubtypeVerdict < (Async & Scope & Abort[Tasty.TastyError]) =
     for
-        cp     <- Tasty.Classpath.openCached(runtimeRoots, cacheDir)
-        fqn    <- Tasty.classFqn[A]
-        clsOpt <- cp.findClass(fqn)
-        cls    <- clsOpt.fold(Abort.fail(TastyError.SymbolNotFound(fqn)))(Kyo.pure)
-        ds     <- cls.declarations
-        flds    = ds.filter(_.kind == SymbolKind.Val)
-        out    <- Kyo.foreach(flds)(f => f.declaredType.map(t => (f.name.toString, t)))
-    yield out
+        cp <- Tasty.Classpath.init(Seq("classes"))
+        given Tasty.Classpath = cp
+        verdict = cp.findClass(fqn) match
+            case Maybe.Absent => Tasty.SubtypeVerdict.Unknown
+            case Maybe.Present(cls) =>
+                val candidate = Tasty.Type.Named(cls.id)
+                cp.findClass("example.Shape") match
+                    case Maybe.Absent          => Tasty.SubtypeVerdict.Unknown
+                    case Maybe.Present(target) => candidate.isSubtypeOf(Tasty.Type.Named(target.id))
+    yield verdict
 ```
 
-`Maybe.fold(ifEmpty: B)(ifDefined: A => B)` takes a value for the empty branch, not a function. The `Kyo.pure` wraps the `Symbol` so both branches have type `Symbol < (Sync & Abort[TastyError])`.
+A `SubtypeVerdict.Unknown` outcome typically means the parent chain references a class that is not loaded into `cp`; open the JAR that supplies it and try again rather than collapsing the verdict to `NotSub`.
 
 ## 13. `Tasty.Reads` Derivation Macro
 

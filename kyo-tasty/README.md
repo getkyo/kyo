@@ -25,12 +25,13 @@ The reading arc is **load -> look up -> navigate -> inspect -> decode**.
 
 ```scala
 import kyo.*
+import kyo.AllowUnsafe.embrace.danger
 import kyo.Tasty.*
 
 val program: Chunk[String] < (Async & Scope & Abort[TastyError]) =
     Classpath.init(Seq("target/scala-3.7.4/classes")).map { cp =>
         given Classpath = cp
-        cp.allClasses.map(_.fullNameString)
+        cp.allClassLike.map(_.fullNameString)
     }
 ```
 
@@ -100,9 +101,11 @@ mmap arenas; once the scope exits, the snapshot is closed and accessors will
 raise `TastyError.ClasspathClosed`.
 
 Cache maintenance for the `initCached` path is handled outside the init call.
-`Snapshot.evictOlderThan(cacheDir, maxAge: Duration)` deletes snapshot files
-older than `maxAge` and returns a `Chunk[String]` of evicted filenames; it
-carries `Sync & Abort[TastyError]` because it actually touches the disk.
+`Snapshot.evictOlderThan(cacheDir, maxAge: Duration)` deletes any `*.krfl` file
+in `cacheDir` whose modified time is older than `maxAge`. The return type is
+`Unit < (Sync & Abort[TastyError])`: the call touches the disk and surfaces I/O
+errors through `Abort`, but the list of evicted files is not part of the
+contract.
 
 > **Note:** `Tasty.supportedTastyVersion` is `28.8.0`. Pickles whose TASTy version falls outside the supported range produce `TastyError.UnsupportedVersion` rather than a best-effort decode; check this constant if you are loading classfiles from a different Scala 3 toolchain version.
 
@@ -126,6 +129,8 @@ useful, but it is an incomplete view of the roots. `FailFast` is the right
 choice in CI or test harnesses where you want any decode error to surface.
 
 ```scala
+import kyo.AllowUnsafe.embrace.danger
+
 Classpath.init(Seq("target/classes"), ErrorMode.FailFast).map { cp =>
     given Classpath = cp
     cp.findClass("example.Circle").map(_.fullNameString)
@@ -318,23 +323,29 @@ The cases you will actually write code against are these:
 
 ```scala doctest:expect=skipped
 tpe match
-    case Type.Named(id)             => // a class/trait/type alias reference
-    case Type.Applied(tycon, args)  => // List[Int], Map[String, Int]
-    case Type.Function(params, res) => // (Int, String) => Boolean
-    case Type.Tuple(elems)          => // (Int, String, Boolean)
-    case Type.AndType(l, r)         => // A & B
-    case Type.OrType(l, r)          => // A | B
-    case Type.Annotated(under, ann) => // T @unchecked
-    case _                          => // ConstantType, RefinedType, ByName, ...
+    case Type.Named(id)                  => // a class/trait/type alias reference
+    case Type.Applied(tycon, args)       => // List[Int], Map[String, Int]
+    case Type.Function(params, res, _)   => // (Int, String) => Boolean
+    case Type.ContextFunction(params, r) => // (using Ctx) => A
+    case Type.Tuple(elems)               => // (Int, String, Boolean)
+    case Type.AndType(l, r)              => // A & B
+    case Type.OrType(l, r)               => // A | B
+    case Type.Annotated(under, ann)      => // T @unchecked
+    case _                               => // ConstantType, Refinement, ByName, ...
 end match
 ```
 
-Three sentinel values stand in for missing or unresolvable bounds:
-`Type.Nothing`, `Type.Any`, and `Type.Unknown`. They are `Type.Named`
-values with reserved negative `SymbolId`s (`-100`, `-101`, `-102`), so a
-pattern match on `Type.Named` will catch them. Compare against the
-sentinels by reference (`tpe eq Type.Unknown`) when you need to distinguish
-"genuinely Any" from a load-time fallback. `Constant` is the payload type inside `Type.ConstantType` and `Tree.Literal`. Its cases use the `Const` suffix: `StringConst`, `IntConst`, `LongConst`, `FloatConst`, `DoubleConst`, `BooleanConst`, `CharConst`, `ByteConst`, `ShortConst`, `UnitConst`, `NullConst`, `ClassConst`. (The `*Constant` names belong to Scala 3's `quoted.reflect.Constant`, not to `Tasty.Constant`; do not confuse the two.) Literal values are not their own `Type` cases.
+Three sentinel cases stand in for missing or unresolvable bounds:
+`Type.Nothing`, `Type.Any`, and `Type.Unknown`. They are first-class
+cases on the `Type` enum, not `Type.Named` values: pattern-match them
+directly when you need to distinguish "genuinely Any" from a load-time
+fallback. `Constant` is the payload type inside `Type.ConstantType` and
+`Tree.Literal`. Its cases use the `Const` suffix: `StringConst`,
+`IntConst`, `LongConst`, `FloatConst`, `DoubleConst`, `BooleanConst`,
+`CharConst`, `ByteConst`, `ShortConst`, `UnitConst`, `NullConst`,
+`ClassConst`. (The `*Constant` names belong to Scala 3's
+`quoted.reflect.Constant`, not to `Tasty.Constant`; do not confuse the
+two.) Literal values are not their own `Type` cases.
 
 ### Subtype checking and the three-way verdict
 
@@ -363,7 +374,9 @@ means "open the JAR that supplies the missing parent and try again",
 not "this is not a subtype".
 
 For walking nested types, `tpe.children`, `tpe.foreach(f)`, and
-`tpe.symbolMaybe` are the traversal primitives. `tpe.show(using cp)`
+`tpe.symbol(using cp)` are the traversal primitives (the last returns
+`Maybe[Symbol]` for the nominal head of a `Type.Named`, `Absent`
+otherwise). `tpe.show(using cp)`
 renders a Scala-source-shaped string. The small support enums
 `TypeBounds(lo, hi)`, `Variance` (`Invariant`, `Covariant`,
 `Contravariant`), and `Visibility` are referenced from various symbol and
@@ -442,15 +455,19 @@ circle.getAnnotation("scala.deprecated") // Maybe[Annotation]
 whose annotation class is a subclass of `fqn` (so a `@MyDeprecated extends
 scala.deprecated` is caught by querying for `scala.deprecated`).
 
-`Annotation` carries `annotationType: Type` and `args: Maybe[Tree]`. The
-`args` slot is `Maybe` because annotation decode can fail independently of
-the symbol decode; a `MalformedSection` lands in `cp.errors` and the
-annotation is still present, just without its decoded args. To unwrap the
-args as a flat list of `Tree`s, `annotation.argList` returns the children
-of the underlying `Tree.Apply` when the args are call-shaped.
+`Annotation` carries `annotationType: Type` and
+`arguments: Chunk[Tree]`. Each entry of `arguments` is one argument tree
+in source order, already decoded against the canonical type arena. A
+decode failure produces an empty `arguments` chunk and lands a
+`TastyError.MalformedSection` in `cp.errors`; the annotation itself is
+still present, just without its decoded arguments. Treat
+`arguments.isEmpty` as the "no decoded args" signal; there is no separate
+`Maybe` wrapper on the slot.
 
 `JavaAnnotation` carries `annotationClass: Symbol` and
-`values: Map[Name, JavaAnnotation.Value]`. `JavaAnnotation.Value` is a
+`values: Chunk[(Name, JavaAnnotation.Value)]` (an ordered chunk of pairs,
+preserving the element order from the classfile attribute).
+`JavaAnnotation.Value` is a
 sealed ADT whose cases are `StringVal`, `IntVal`, `LongVal`, `FloatVal`,
 `DoubleVal`, `BoolVal`, `ClassVal`, `EnumVal`, `ArrayVal`, `AnnotationVal`;
 the last two nest recursively (note: the JVM annotation format collapses
@@ -498,14 +515,13 @@ When you need every symbol of a kind, the `all*` accessors do a linear
 scan and return a typed `Chunk`:
 
 ```scala
-cp.allClasses // Chunk[Symbol.ClassLike] (Class + Trait + Object + EnumCase)
-cp.allTraits  // Chunk[Symbol.Trait]
-cp.allObjects // Chunk[Symbol.Object]
-cp.allMethods // Chunk[Symbol.Method]
+cp.allClassLike // Chunk[Symbol.ClassLike] (Class + Trait + Object + EnumCase)
+cp.allTraits    // Chunk[Symbol.Trait]
+cp.allObjects   // Chunk[Symbol.Object]
+cp.allMethods   // Chunk[Symbol.Method]
 // ... plus allVals, allVars, allFields, allTypeAliases,
 //     allOpaqueTypes, allAbstractTypes, allTypeParams,
 //     allParameters, allPackages, allUnresolved.
-// allClassLike is an alias for allClasses.
 ```
 
 `cp.topLevelClasses` and `cp.packages` are O(1) accessors of pre-built
@@ -557,6 +573,7 @@ sorted by FQN. Every accessor below is pure; the only effect comes from
 
 ```scala
 import kyo.*
+import kyo.AllowUnsafe.embrace.danger
 import kyo.Tasty.*
 
 def shapeImplementations(roots: Seq[String]): Chunk[String] < (Async & Scope & Abort[TastyError]) =

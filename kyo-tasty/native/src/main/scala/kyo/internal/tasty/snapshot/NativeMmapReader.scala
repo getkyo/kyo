@@ -50,19 +50,3 @@ object NativeMmapReader:
     end init
 
 end NativeMmapReader
-
-@extern
-private object NativeMmapBindings:
-    @name("open")
-    def openFile(path: CString, flags: CInt): CInt = extern
-    def close(fd: CInt): CInt                      = extern
-    def mmap(
-        addr: Ptr[Byte],
-        length: CSize,
-        prot: CInt,
-        flags: CInt,
-        fd: CInt,
-        offset: CLong
-    ): Ptr[Byte] = extern
-    def munmap(addr: Ptr[Byte], length: CSize): CInt = extern
-end NativeMmapBindings

@@ -409,8 +409,18 @@ object Tasty:
 
     /** Controls error handling during classpath open.
       *
-      * `SoftFail`: decode errors accumulate in `cp.errors`; the classpath is returned regardless. `FailFast`: any decode error immediately
-      * raises `Abort[TastyError]`.
+      * Passed to `Classpath.init` (and its cached variant) to select between a tolerant load and an early
+      * abort. The mode only governs decode errors found while walking the classpath; missing entries that
+      * surface later (an FQN that resolves to no symbol, a subtype check that touches an unresolved parent)
+      * are reported through their own return shapes (`Maybe`, `SubtypeVerdict.Unknown`) regardless of mode.
+      *
+      *   - `SoftFail`: decode errors accumulate in `cp.errors`; the classpath is returned regardless and
+      *     all subsequent queries operate on the best-effort symbol set. Use this for IDE / tooling paths
+      *     where progress is preferable to total failure.
+      *   - `FailFast`: any decode error immediately raises `Abort[TastyError]` from `init`. Use this for
+      *     batch tools (CI checks, codegen) where a malformed classpath should abort the run.
+      *
+      * Equality is structural via `derives CanEqual`.
       */
     enum ErrorMode derives CanEqual:
         case SoftFail
@@ -421,9 +431,18 @@ object Tasty:
 
     /** Three-way result of a subtype check.
       *
+      * Returned by `Type.isSubtypeOf` to encode the difference between "decided no" and "could not decide".
+      * Subtype resolution walks the parent chain of `Type.Named` references through the classpath; the
+      * classpath may not contain every transitive parent (typical when a host application links against a
+      * subset of the runtime libraries), so the check is partial by construction.
+      *
       *   - `Sub`: the subtype relation definitively holds (`t <: other`).
       *   - `NotSub`: the subtype relation definitively does not hold.
-      *   - `Unknown`: the check could not reach a definitive verdict (budget exhausted, or parent chain absent from the classpath).
+      *   - `Unknown`: the check could not reach a definitive verdict (recursion budget exhausted, or a
+      *     parent chain referenced an `Unresolved` symbol not present in the loaded classpath). Treat
+      *     `Unknown` as "neither yes nor no"; do not collapse it to either side.
+      *
+      * Equality is structural via `derives CanEqual`.
       */
     enum SubtypeVerdict derives CanEqual:
         case Sub, NotSub, Unknown
@@ -479,9 +498,18 @@ object Tasty:
 
     /** Source position attached to a TASTy symbol.
       *
-      * `sourceFile` is the file name from the Attributes section (if present). `line` and `column` are 1-based (line 1 = first line of the
-      * file; column 1 = first character of the line). `Absent` for classfile symbols and for TASTy symbols in a file without a Positions
-      * section.
+      * Carried by `Symbol.position: Maybe[Position]`. `Absent` for classfile-sourced symbols and for
+      * TASTy symbols loaded from a file without a Positions section; otherwise populated from the TASTy
+      * Positions table during classpath open. Positions point at the symbol's declaration site, not at
+      * every reference to it. There is no per-tree positional information; the public model deliberately
+      * stops at the symbol level.
+      *
+      * `sourceFile` is the file name from the Attributes section (if present), exactly as recorded in the
+      * pickle (no path normalisation). `line` and `column` are 1-based (line 1 is the first line of the
+      * file; column 1 is the first character of the line). A column of 0 is possible when the underlying
+      * TASTy entry carried no column information.
+      *
+      * Equality is structural across all three fields (case class auto-generation).
       */
     final case class Position(sourceFile: Maybe[String], line: Int, column: Int):
         /** Human-readable representation: `file:line:column`, or `<unknown>:line:column` when `sourceFile` is absent. */
@@ -493,13 +521,20 @@ object Tasty:
         end show
     end Position
 
-    /** A Scala annotation as it appears on a [[Type]] (`Type.Annotated`).
+    /** A Scala annotation as it appears on a `Type.Annotated` (and, indirectly, on a `Symbol`).
       *
-      * Both `annotationType` and `arguments` are populated during Classpath open Pass B. A decode failure produces `arguments = Chunk.empty`
-      * and appends a TastyError.MalformedSection to the file-result error list, which flows into cp.errors.
+      * Annotations attach to types in the Scala 3 model; a symbol's annotations are reachable by walking
+      * its `declaredType` and collecting the `Type.Annotated` wrappers. `annotationType` carries the
+      * annotation class as a `Type` (typically `Type.Named` to the annotation class symbol). `arguments`
+      * carries the argument trees in source order, each a `Tree.Literal`, `Tree.Apply`, `Tree.Select`, or
+      * other AST shape consistent with what was written at the annotation call site.
       *
-      * `annotationType` is resolved best-effort during pass 1 and may be a placeholder symbol. Equality and hashing are structural over
-      * both fields (case class auto-generation).
+      * **Decode.** Both fields are populated during Classpath open Pass B. A decode failure produces
+      * `arguments = Chunk.empty` and appends a `TastyError.MalformedSection` to the file-result error
+      * list, which flows into `cp.errors`. `annotationType` is resolved best-effort during pass 1 and may
+      * reference a placeholder symbol when the annotation class itself is not in the loaded classpath.
+      *
+      * Equality and hashing are structural over both fields (case class auto-generation).
       */
     final case class Annotation(annotationType: Type, arguments: Chunk[Tree])
 
@@ -508,13 +543,41 @@ object Tasty:
         given CanEqual[Annotation, Annotation] = CanEqual.canEqualAny
     end Annotation
 
-    /** A single declared field of a Java record (JVMS Record attribute entry). */
+    /** A single declared field of a Java record (JVMS `Record` attribute entry).
+      *
+      * Carried by `JavaMetadata.recordComponents: Chunk[RecordComponent]` on the symbol of the record
+      * class itself. Java records expose their components in declaration order; the loader preserves that
+      * order so the chunk index aligns with the canonical constructor parameter list.
+      *
+      * `name` is the component's source-level name; `tpe` is its declared type as resolved against the
+      * classpath at load time. Equality is structural across both fields. Present only on JVM symbols
+      * (the attribute is JVMS-defined); `Absent` on TASTy-sourced symbols even if they happen to be record
+      * classes, because the record-ness lives in the JVM attribute and not in the TASTy ADT.
+      */
     final case class RecordComponent(name: Name, tpe: Type) derives CanEqual
 
-    /** Parameter-name table for one method overload: the method's name plus the names of its parameters in source order. */
+    /** Parameter-name table for one method overload: the method's name plus the names of its parameters in source order.
+      *
+      * Carried by `JavaMetadata.parameterNames: Chunk[ParamGroup]` on the owning class symbol. Java classfiles
+      * record parameter names in a `MethodParameters` attribute when compiled with `-parameters`; the loader
+      * groups those entries by their owning method so each `ParamGroup` corresponds to one overload of
+      * `methodName`. `parameterNames` is in source order and may be empty (no `MethodParameters` attribute or
+      * a zero-arity method).
+      *
+      * Equality is structural across both fields (case class auto-generation).
+      */
     final case class ParamGroup(methodName: Name, parameterNames: Chunk[Name]) derives CanEqual
 
-    /** The enclosing-method context for a local or anonymous class (JVMS EnclosingMethod attribute). */
+    /** The enclosing-method context for a local or anonymous class (JVMS `EnclosingMethod` attribute).
+      *
+      * Carried by `JavaMetadata.enclosingMethod: Maybe[EnclosingMethod]` on the symbol of a local or
+      * anonymous class. The JVMS records the immediately enclosing method for any class that was declared
+      * inside one; absent otherwise. `owner` is the enclosing method's owner class symbol, and `methodName`
+      * is the enclosing method's source-level name. Use this to walk back from an anonymous inner class
+      * symbol to the method that declared it.
+      *
+      * Equality is structural across both fields (case class auto-generation).
+      */
     final case class EnclosingMethod(owner: Symbol, methodName: Name) derives CanEqual
 
     /** JVM-only metadata attached to symbols sourced from `.class` files.
@@ -2625,6 +2688,13 @@ object Tasty:
 
     /** In-memory TASTy pickle: header UUID, format version, and raw `.tasty` bytes.
       *
+      * A `Pickle` is the smallest input unit the classpath loader accepts: one `.tasty` file decoded into
+      * its header and body. `Classpath.fromPickles` and `Classpath.fromPicklesWithSymbols` accept a `Chunk`
+      * of `Pickle` values for tests and out-of-band classpath construction; the standard `Classpath.init`
+      * path reads pickles from files / JARs and never exposes them to user code. `bytes` is the unmodified
+      * `.tasty` payload (header included), captured as a `Span[Byte]` so the loader can slice subsections
+      * without copying.
+      *
       * **UUID representation.** The `uuid` field is a `String` because the TASTy header stores the UUID
       * inline as two little-endian longs; treating it as an opaque hex string avoids parsing it twice
       * (once to validate, once to render in diagnostics) on the hot path. `TastyError.InconsistentClasspath`
@@ -2632,6 +2702,9 @@ object Tasty:
       * the point a mismatch is detected and consumed at the API boundary, where the structured type is
       * preferable for equality and formatting. The dual representation is intentional; do not normalise
       * one to the other without measuring the allocation cost on the cold-load path.
+      *
+      * **Equality.** Structural over all three fields (case class auto-generation). Two `Pickle` values
+      * are equal when their UUIDs match, their versions match, and their byte spans compare element-wise.
       */
     final case class Pickle(uuid: String, version: Version, bytes: Span[Byte]):
         /** Human-readable summary: `Pickle(<uuid> v<version> <n>B)`. */
