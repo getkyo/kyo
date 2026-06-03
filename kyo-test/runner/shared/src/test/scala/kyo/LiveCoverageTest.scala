@@ -1,0 +1,380 @@
+package kyo
+
+import java.util.concurrent.atomic.AtomicInteger
+import kyo.*
+import kyo.internal.Platform
+import kyo.test.PlatformSet
+import kyo.test.PlatformTestBuilder
+import kyo.test.RunConfig
+import kyo.test.TestBuilder
+import kyo.test.TestFilter
+import kyo.test.TestResult
+import kyo.test.internal.TestBase
+import kyo.test.runner.TestRunner
+
+// ── Fixture suites (private object so classOf[...] resolves via reflection; extend TestBase[Any]
+//    directly so sbt does NOT auto-discover them as real suites). ────────────────────────────────
+
+private object LiveCoverageFixtures:
+
+    // ── 1. repeat ─────────────────────────────────────────────────────────────────────────────
+
+    val repeatCounter: AtomicInteger = new AtomicInteger(0)
+
+    class RepeatSuite extends TestBase[Any]:
+        "r".times(3) in Sync.defer(repeatCounter.incrementAndGet()).andThen(succeed)
+    end RepeatSuite
+
+    val rfCounter: AtomicInteger = new AtomicInteger(0)
+
+    class RepeatFailFastSuite extends TestBase[Any]:
+        "rf".times(5) in Sync.defer(rfCounter.incrementAndGet()).map(n => assert(n != 3))
+    end RepeatFailFastSuite
+
+    // ── 2. focus ───────────────────────────────────────────────────────────────────────────────
+
+    class FocusSuite extends TestBase[Any]:
+        "f".focus in succeed
+        "p1" in succeed
+        "p2" in succeed
+    end FocusSuite
+
+    // ── 3. tag filtering ──────────────────────────────────────────────────────────────────────
+
+    class TagSuite extends TestBase[Any]:
+        "a".tagged("slow") in succeed
+        "b" in succeed
+    end TagSuite
+
+    // ── 4. platform filter ────────────────────────────────────────────────────────────────────
+
+    class PlatformSuite extends TestBase[Any]:
+        "js-only".js in succeed
+    end PlatformSuite
+
+    // ── 4b. onlyX platform filter ─────────────────────────────────────────────────────────────
+
+    class OnlyPlatformSuite extends TestBase[Any]:
+        "only-js".onlyJs in succeed
+    end OnlyPlatformSuite
+
+    // ── 5. flaky ──────────────────────────────────────────────────────────────────────────────
+
+    val flakyCounter: AtomicInteger = new AtomicInteger(0)
+
+    class FlakySuite extends TestBase[Any]:
+        // .flaky = 3 retries with linear 100ms backoff = up to 4 total attempts
+        "fl".flaky in Sync.defer(flakyCounter.incrementAndGet()).map { n =>
+            if n < 4 then assert(false, s"attempt $n")
+            else succeed
+        }
+    end FlakySuite
+
+    // ── 6. handle ─────────────────────────────────────────────────────────────────────────────
+
+    class HandleSuite extends TestBase[Any]:
+        "uses-env".handle[Env[Int]](
+            [A] => (b: A < (Env[Int] & Async & Abort[Any] & Scope)) => Env.run(42)(b)
+        ) in Env.get[Int].map(v => assert(v == 42))
+    end HandleSuite
+
+    // ── 7. typeCheck suite macros ─────────────────────────────────────────────────────────────
+
+    class TypeCheckSuite extends TestBase[Any]:
+        "tc-fail" in typeCheckFailure("val x: Int = \"s\"")("""Required: Int""")
+        "tc-ok" in typeCheck("val x: Int = 5")
+    end TypeCheckSuite
+
+    // ── 8. pendingUntilFixed ──────────────────────────────────────────────────────────────────
+
+    class PufStillFailingSuite extends TestBase[Any]:
+        "p".pendingUntilFixed("known") in assert(1 == 2)
+    end PufStillFailingSuite
+
+    class PufNowPassingSuite extends TestBase[Any]:
+        "p".pendingUntilFixed("known") in assert(1 == 1)
+    end PufNowPassingSuite
+
+    // ── 9. assertEventually ───────────────────────────────────────────────────────────────────
+
+    val evCounter: AtomicInteger = new AtomicInteger(0)
+
+    class EventuallySuite extends TestBase[Any]:
+        "ev" in assertEventually(Sync.defer(evCounter.incrementAndGet() >= 3))
+    end EventuallySuite
+
+    class EventuallyTimeoutSuite extends TestBase[Any]:
+        "ev-to".timeout(200.millis) in assertEventually(Sync.defer(false))
+    end EventuallyTimeoutSuite
+
+    // ── 10. ignore ────────────────────────────────────────────────────────────────────────────
+
+    val ignoreCounter: AtomicInteger = new AtomicInteger(0)
+
+    class IgnoreSuite extends TestBase[Any]:
+        "ig".ignore in Sync.defer(ignoreCounter.incrementAndGet()).andThen(succeed)
+    end IgnoreSuite
+
+    // ── 11. plain pending (non-xfail) ────────────────────────────────────────────────────────
+
+    val pendingCounter: AtomicInteger = new AtomicInteger(0)
+
+    class PendingSuite extends TestBase[Any]:
+        "pd".pending("known reason") in Sync.defer(pendingCounter.incrementAndGet()).andThen(succeed)
+    end PendingSuite
+
+    // ── 12. only(false) ──────────────────────────────────────────────────────────────────────
+
+    val onlyCounter: AtomicInteger = new AtomicInteger(0)
+
+    class OnlyFalseSuite extends TestBase[Any]:
+        "oc".only(false) in Sync.defer(onlyCounter.incrementAndGet()).andThen(succeed)
+    end OnlyFalseSuite
+
+    // ── 13. retry + repeat combined ──────────────────────────────────────────────────────────
+    // retry(1).times(2): 2 outer repeat iterations; each iteration fails on the first attempt
+    // then passes on the retry. Body called 2 * (1+1) = 4 times total.
+
+    val retryRepeatCounter: AtomicInteger = new AtomicInteger(0)
+
+    class RetryRepeatSuite extends TestBase[Any]:
+        "rr".retry(1).times(2) in Sync.defer {
+            val n = retryRepeatCounter.incrementAndGet()
+            // fail on attempts 1 and 3 (first attempt of each outer iteration), pass on 2 and 4
+            if n % 2 == 1 then assert(false, s"attempt $n: expected to fail on first try")
+            else succeed
+        }
+    end RetryRepeatSuite
+
+end LiveCoverageFixtures
+
+/** Live-path execution tests for kyo-test runner behaviors.
+  *
+  * Each leaf exercises a feature through TestRunner.runReport and asserts on the produced TestReport, NOT on builder metadata.
+  */
+class LiveCoverageTest extends kyo.test.Test[Any]:
+
+    // ── 1a. repeat: body runs N times ────────────────────────────────────────────────────────
+
+    "repeat: body runs exactly N times and passes" in {
+        LiveCoverageFixtures.repeatCounter.set(0)
+        TestRunner.runReport(classOf[LiveCoverageFixtures.RepeatSuite]).map { report =>
+            assert(report.passed == 1)
+            assert(
+                LiveCoverageFixtures.repeatCounter.get() == 3,
+                s"expected repeatCounter == 3 but got ${LiveCoverageFixtures.repeatCounter.get()}"
+            )
+        }
+    }
+
+    // ── 1b. repeat: fail-fast on failing iteration ────────────────────────────────────────────
+
+    "repeat: fail-fast stops at the failing iteration" in {
+        LiveCoverageFixtures.rfCounter.set(0)
+        TestRunner.runReport(classOf[LiveCoverageFixtures.RepeatFailFastSuite]).map { report =>
+            assert(report.failed == 1)
+            assert(
+                LiveCoverageFixtures.rfCounter.get() == 3,
+                s"expected rfCounter == 3 (fail on iteration 3) but got ${LiveCoverageFixtures.rfCounter.get()}"
+            )
+        }
+    }
+
+    // ── 2. focus ──────────────────────────────────────────────────────────────────────────────
+
+    "focus: focused leaf passes; plain leaves are skipped" in {
+        TestRunner.runReport(classOf[LiveCoverageFixtures.FocusSuite]).map { report =>
+            assert(report.passed == 1)
+            assert(report.skipped == 2)
+        }
+    }
+
+    // ── 3. tag filtering ─────────────────────────────────────────────────────────────────────
+    // applyFilter removes leaves whose tags are in tagsExclude from the ordered list entirely
+    // (they do not appear in the final report at all). So totalLeaves == 1, passed == 1.
+
+    "tag filter: tagsExclude removes matching leaves from the report" in {
+        val config = RunConfig.default.copy(filter = TestFilter(tagsExclude = Set("slow")))
+        TestRunner.runReport(classOf[LiveCoverageFixtures.TagSuite], config).map { report =>
+            assert(report.totalLeaves == 1)
+            assert(report.passed == 1)
+        }
+    }
+
+    // ── 4. platform filter ────────────────────────────────────────────────────────────────────
+    // `.js` is a compile-time gate (PlatformSet.OnlyJs): on a disabled platform `gateOf[P]` is the
+    // literal `false`, so the leaf body is NOT emitted and the leaf is ABSENT (not skipped). On JVM
+    // and Native the suite therefore registers zero leaves; on JS the leaf is present and passes.
+    // This is the new compile-time-exclusion behavior that replaced the old runtime registerSkipped.
+
+    "platform filter: js-only leaf is compile-excluded off JS" in {
+        TestRunner.runReport(classOf[LiveCoverageFixtures.PlatformSuite]).map { report =>
+            if Platform.isJS then
+                assert(report.totalLeaves == 1, s"JS: expected totalLeaves==1 but got $report")
+                assert(report.passed == 1, s"JS: expected passed==1 but got $report")
+            else
+                // Off JS the leaf body is not emitted: the suite has no leaves at all.
+                assert(report.totalLeaves == 0, s"non-JS: expected totalLeaves==0 (leaf absent) but got $report")
+                assert(report.skipped == 0, s"non-JS: expected skipped==0 (leaf absent, not skipped) but got $report")
+        }
+    }
+
+    // ── 4b. onlyX platform filter: onlyJs leaf is compile-excluded off JS ─────────────────────
+
+    "onlyX platform filter: onlyJs leaf is compile-excluded off JS" in {
+        TestRunner.runReport(classOf[LiveCoverageFixtures.OnlyPlatformSuite]).map { report =>
+            if Platform.isJS then
+                assert(report.totalLeaves == 1, s"JS: expected totalLeaves==1 but got $report")
+                assert(report.passed == 1, s"JS: expected passed==1 but got $report")
+            else
+                assert(report.totalLeaves == 0, s"non-JS: expected totalLeaves==0 (leaf absent) but got $report")
+                assert(report.skipped == 0, s"non-JS: expected skipped==0 (leaf absent, not skipped) but got $report")
+        }
+    }
+
+    // ── 4c. platform filter carries decorators forward ────────────────────────────────────────
+    // A decorator chained after the filter (`.onlyJvm.tagged(...)`) produces a PlatformTestBuilder
+    // whose phantom P is preserved, so the underlying TestBuilder metadata still flows to the gate.
+
+    "platform filter: chained decorator preserves builder metadata" in {
+        val taggedBuilder: PlatformTestBuilder[PlatformSet.OnlyJvm] = "x".onlyJvm.tagged("slow")
+        assert(taggedBuilder.builder.tags == Set("slow"))
+        assert(taggedBuilder.builder.name == "x")
+    }
+
+    // ── 5a. flaky: retries until passing ─────────────────────────────────────────────────────
+
+    "flaky: retries up to 4 attempts then passes" in {
+        LiveCoverageFixtures.flakyCounter.set(0)
+        TestRunner.runReport(classOf[LiveCoverageFixtures.FlakySuite]).map { report =>
+            assert(report.passed == 1)
+            assert(
+                LiveCoverageFixtures.flakyCounter.get() == 4,
+                s"expected flakyCounter == 4 (3 retries + 1 pass) but got ${LiveCoverageFixtures.flakyCounter.get()}"
+            )
+        }
+    }
+
+    // ── 5b. flaky builder metadata ────────────────────────────────────────────────────────────
+
+    "flaky: builder has flaky tag and retrySchedule Present" in {
+        val builder: TestBuilder = "x".flaky
+        assert(builder.tags.contains("flaky"))
+        assert(builder.retrySchedule.isDefined)
+    }
+
+    // ── 6. handle ─────────────────────────────────────────────────────────────────────────────
+
+    "handle: leaf discharging Env[Int] via .handle runs to Passed" in {
+        TestRunner.runReport(classOf[LiveCoverageFixtures.HandleSuite]).map { report =>
+            assert(report.passed == 1)
+        }
+    }
+
+    // ── 7. typeCheck suite macros ─────────────────────────────────────────────────────────────
+
+    "typeCheck/typeCheckFailure suite macros execute and pass" in {
+        TestRunner.runReport(classOf[LiveCoverageFixtures.TypeCheckSuite]).map { report =>
+            assert(report.passed == 2)
+        }
+    }
+
+    // ── 8a. pendingUntilFixed: still-failing body reports Pending ─────────────────────────────
+
+    "pendingUntilFixed: still-failing body reports Pending" in {
+        TestRunner.runReport(classOf[LiveCoverageFixtures.PufStillFailingSuite]).map { report =>
+            assert(report.pending == 1)
+        }
+    }
+
+    // ── 8b. pendingUntilFixed: now-passing body reports Failed with tripwire message ───────────
+
+    "pendingUntilFixed: now-passing body reports Failed with remove-marker message" in {
+        TestRunner.runReport(classOf[LiveCoverageFixtures.PufNowPassingSuite]).map { report =>
+            assert(report.failed == 1)
+            val (_, result) = report.suiteReports.head.leafResults.head
+            result match
+                case TestResult.Failed(diagram, _, _, _) =>
+                    assert(
+                        diagram.contains("remove the pendingUntilFixed marker"),
+                        s"expected diagram to contain 'remove the pendingUntilFixed marker' but got: $diagram"
+                    )
+                case other =>
+                    assert(false, s"expected Failed but got $other")
+            end match
+        }
+    }
+
+    // ── 9a. assertEventually: polls until condition holds ─────────────────────────────────────
+
+    "assertEventually: polls until condition holds and passes" in {
+        LiveCoverageFixtures.evCounter.set(0)
+        TestRunner.runReport(classOf[LiveCoverageFixtures.EventuallySuite]).map { report =>
+            assert(report.passed == 1)
+        }
+    }
+
+    // ── 9b. assertEventually: times out when condition never holds ────────────────────────────
+
+    "assertEventually: times out when condition never holds" in {
+        // On JS/Native the timeout timer may not race the body in the same way as JVM, but the
+        // assertEventually loop runs forever with a 10ms poll; even on JS the timeout fires and
+        // the test framework surfaces a TimedOut result.
+        TestRunner.runReport(classOf[LiveCoverageFixtures.EventuallyTimeoutSuite]).map { report =>
+            assert(report.timedOut == 1, s"expected timedOut==1 but got $report")
+        }
+    }
+
+    // ── 10. ignore: body does NOT run; leaf reports Ignored ──────────────────────────────────
+
+    "ignore: leaf reports Ignored and body does not run" in {
+        LiveCoverageFixtures.ignoreCounter.set(0)
+        TestRunner.runReport(classOf[LiveCoverageFixtures.IgnoreSuite]).map { report =>
+            assert(report.ignored == 1, s"expected ignored==1 but got $report")
+            assert(
+                LiveCoverageFixtures.ignoreCounter.get() == 0,
+                s"expected ignoreCounter == 0 (body must NOT run) but got ${LiveCoverageFixtures.ignoreCounter.get()}"
+            )
+        }
+    }
+
+    // ── 11. plain pending: body does NOT run; leaf reports Pending ───────────────────────────
+
+    "pending: leaf reports Pending and body does not run" in {
+        LiveCoverageFixtures.pendingCounter.set(0)
+        TestRunner.runReport(classOf[LiveCoverageFixtures.PendingSuite]).map { report =>
+            assert(report.pending == 1, s"expected pending==1 but got $report")
+            assert(
+                LiveCoverageFixtures.pendingCounter.get() == 0,
+                s"expected pendingCounter == 0 (body must NOT run) but got ${LiveCoverageFixtures.pendingCounter.get()}"
+            )
+        }
+    }
+
+    // ── 12. only(false): body does NOT run; leaf reports Skipped ─────────────────────────────
+
+    "only(false): leaf reports Skipped and body does not run" in {
+        LiveCoverageFixtures.onlyCounter.set(0)
+        TestRunner.runReport(classOf[LiveCoverageFixtures.OnlyFalseSuite]).map { report =>
+            assert(report.skipped == 1, s"expected skipped==1 but got $report")
+            assert(
+                LiveCoverageFixtures.onlyCounter.get() == 0,
+                s"expected onlyCounter == 0 (body must NOT run) but got ${LiveCoverageFixtures.onlyCounter.get()}"
+            )
+        }
+    }
+
+    // ── 13. retry + repeat combined ──────────────────────────────────────────────────────────
+
+    "retry+repeat: retry(1).times(2) with first-attempt-fails body runs 4 times total and passes" in {
+        LiveCoverageFixtures.retryRepeatCounter.set(0)
+        TestRunner.runReport(classOf[LiveCoverageFixtures.RetryRepeatSuite]).map { report =>
+            assert(report.passed == 1, s"expected passed==1 but got $report")
+            assert(
+                LiveCoverageFixtures.retryRepeatCounter.get() == 4,
+                s"expected retryRepeatCounter == 4 (2 outer * 2 per retry) but got ${LiveCoverageFixtures.retryRepeatCounter.get()}"
+            )
+        }
+    }
+
+end LiveCoverageTest

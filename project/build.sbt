@@ -16,6 +16,15 @@
 Compile / unmanagedSourceDirectories +=
     baseDirectory.value.getParentFile / "kyo-compat" / "plugin" / "src" / "main" / "scala"
 
+// Same pattern for the in-tree `sbt-kyo-test` plugin so that build.sbt
+// can call `.enablePlugins(kyo.test.sbt.KyoTestPlugin)` directly. The
+// plugin is also declared as a regular `sbt-kyo-test` project in the
+// root build.sbt for external publication. ScalaJSPlugin and
+// ScalaNativePlugin (referenced by the JS/Native companions) come
+// from `project/plugins.sbt`.
+Compile / unmanagedSourceDirectories +=
+    baseDirectory.value.getParentFile / "kyo-test" / "sbt" / "src" / "main" / "scala"
+
 // Wire the in-tree `kyo-doctest-plugin` plugin into the meta-build so build.sbt
 // can reference `KyoDoctestPlugin` + its setting keys without resolving the
 // plugin from ivy. Same pattern as kyo-compat-plugin above. Eliminates the
