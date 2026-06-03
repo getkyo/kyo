@@ -34,8 +34,14 @@ private[kyo] object Scale:
         case Linear, Log, Band, Time, Ordinal
     end Kind
 
-    /** A single tick: a formatted label and its pixel position on the range axis. */
-    final case class Tick(label: String, pixel: Double)
+    /** A single tick: the domain value, a formatted label, and the pixel position on the range axis.
+      *
+      * `value` is the raw domain coordinate (continuous ticks carry the actual numeric value; time ticks carry
+      * epoch millis as Double; categorical ticks carry the zero-based category index). This field is what the
+      * `tickFormat` function in `AxisConfig` receives, so formatters always see the domain quantity, not the
+      * screen pixel.
+      */
+    final case class Tick(value: Double, label: String, pixel: Double)
 
     /** Construct a scale of `kind` over `extent`, mapping into `[rangeLo, rangeHi]` pixels.
       *
@@ -115,7 +121,7 @@ private[kyo] object Scale:
 
         def ticks(maxTicks: Int): Chunk[Tick] =
             niceTicks(domainMin, domainMax, maxTicks).map: v =>
-                Tick(NumberFormat.double(v), apply(Domain.Continuous(v)))
+                Tick(v, NumberFormat.double(v), apply(Domain.Continuous(v)))
 
         def bandwidth: Double = 0.0
     end Linear
@@ -158,7 +164,7 @@ private[kyo] object Scale:
                 if exp > hi || acc.size >= maxTicks then acc
                 else
                     val v = math.pow(10.0, exp.toDouble)
-                    loop(exp + 1, acc.append(Tick(NumberFormat.double(v), apply(Domain.Continuous(v)))))
+                    loop(exp + 1, acc.append(Tick(v, NumberFormat.double(v), apply(Domain.Continuous(v)))))
             loop(lo, Chunk.empty)
         end ticks
 
@@ -192,12 +198,23 @@ private[kyo] object Scale:
                         val xOffset = i.toDouble * slot + (slot - bandW) / 2.0
                         rangeLo + xOffset
             case Domain.Continuous(v) =>
-                val i = v.toInt
-                if i >= 0 && i < n then
-                    val xOffset = i.toDouble * slot + (slot - bandW) / 2.0
-                    rangeLo + xOffset
-                else rangeLo
-                end if
+                // First try the numeric value as a category key (handles overridden Band scales
+                // where the data is a numeric type but the scale was forced to Band via xScale(_.band)).
+                // This converts e.g. Continuous(2020.0) to "2020" before trying integer index lookup.
+                val keyStr = NumberFormat.double(v)
+                keyIndex.get(keyStr) match
+                    case Some(i) =>
+                        val xOffset = i.toDouble * slot + (slot - bandW) / 2.0
+                        rangeLo + xOffset
+                    case None =>
+                        // Fall back to treating v as a 0-based index (original behavior)
+                        val i = v.toInt
+                        if i >= 0 && i < n then
+                            val xOffset = i.toDouble * slot + (slot - bandW) / 2.0
+                            rangeLo + xOffset
+                        else rangeLo
+                        end if
+                end match
             case Domain.Temporal(_) => rangeLo
 
         def invert(px: Double): Domain =
@@ -209,7 +226,7 @@ private[kyo] object Scale:
         def ticks(maxTicks: Int): Chunk[Tick] =
             keys.take(maxTicks).zipWithIndex.map: (k, i) =>
                 val xOffset = i.toDouble * slot + (slot - bandW) / 2.0 + bandW / 2.0
-                Tick(k, rangeLo + xOffset)
+                Tick(i.toDouble, k, rangeLo + xOffset)
 
         def bandwidth: Double = bandW
     end Band
@@ -235,7 +252,7 @@ private[kyo] object Scale:
 
         def ticks(maxTicks: Int): Chunk[Tick] =
             niceTicks(domainMin.toDouble, domainMax.toDouble, maxTicks).map: v =>
-                Tick(v.toLong.toString, apply(Domain.Temporal(v.toLong)))
+                Tick(v, v.toLong.toString, apply(Domain.Temporal(v.toLong)))
 
         def bandwidth: Double = 0.0
     end Time
@@ -270,7 +287,7 @@ private[kyo] object Scale:
 
         def ticks(maxTicks: Int): Chunk[Tick] =
             keys.take(maxTicks).zipWithIndex.map: (k, i) =>
-                Tick(k, i.toDouble)
+                Tick(i.toDouble, k, i.toDouble)
 
         def bandwidth: Double = 0.0
     end Ordinal

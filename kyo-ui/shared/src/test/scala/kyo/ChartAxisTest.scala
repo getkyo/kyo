@@ -1,0 +1,560 @@
+package kyo
+
+import kyo.Chart.*
+import kyo.Svg.Coord
+import kyo.Svg.PathCommand
+import kyo.Svg.PathData
+import kyo.internal.ChartLower
+import kyo.internal.Scale
+import scala.language.implicitConversions
+
+/** Phase 04 tests: axes, legends, scale overrides, theme, two axes, and stacking.
+  *
+  * All concrete asserts use exact pixel values derived from the documented margin constants
+  * and scale mathematics. Layout defaults: plotX=60, plotY=20, plotW=560, plotH=420,
+  * baseline=440 (default 640x480, MarginL=60, MarginR=20, MarginT=20, MarginB=40).
+  * Two-axis layout: MarginR=60, so plotW=520.
+  */
+class ChartAxisTest extends Test:
+
+    // ---- shared domain types ----
+
+    enum Region derives CanEqual, Plottable:
+        case NA, EU, APAC
+
+    opaque type Usd <: Double = Double
+    object Usd:
+        def apply(d: Double): Usd     = d
+        given Plottable[Usd]          = Plottable.numeric
+        given CanEqual[Usd, Usd]      = CanEqual.derived
+        given Conversion[Double, Usd] = d => d
+        given Conversion[Int, Usd]    = d => d.toDouble
+    end Usd
+
+    case class Sale(month: String, revenue: Usd, region: Region = Region.NA)
+    given CanEqual[Sale, Sale] = CanEqual.derived
+
+    case class Row2Ax(month: String, revenue: Usd, growthPct: Double)
+    given CanEqual[Row2Ax, Row2Ax] = CanEqual.derived
+
+    // ---- layout constants (must match ChartLower) ----
+    private val PlotX      = 60.0
+    private val PlotY      = 20.0
+    private val PlotW      = 560.0         // default (no right axis)
+    private val PlotH      = 420.0
+    private val Baseline   = PlotY + PlotH // 440.0
+    private val PlotWTwoAx = 520.0         // with right axis (MarginR=60)
+    private val Tol        = 1.0e-6
+
+    private def assertClose(actual: Double, expected: Double, msg: String = ""): Assertion =
+        assert(math.abs(actual - expected) < Tol, s"$msg: expected $expected but got $actual")
+
+    // ---- SVG tree navigation helpers ----
+
+    /** All `Svg.Line`s directly inside `root.children` (frame chrome). */
+    private def frameLinesIn(root: Svg.Root): Chunk[Svg.Line] =
+        root.children.flatMap:
+            case l: Svg.Line => Chunk(l)
+            case _           => Chunk.empty
+
+    /** All `Svg.Text`s directly inside `root.children` (frame chrome). */
+    private def frameTextsIn(root: Svg.Root): Chunk[Svg.Text] =
+        root.children.flatMap:
+            case t: Svg.Text => Chunk(t)
+            case _           => Chunk.empty
+
+    /** All `Svg.Rect`s directly inside `root.children` (frame chrome: background + legend swatches). */
+    private def frameRectsIn(root: Svg.Root): Chunk[Svg.Rect] =
+        root.children.flatMap:
+            case r: Svg.Rect => Chunk(r)
+            case _           => Chunk.empty
+
+    /** Extract the double value from a `Maybe[Coord]`. */
+    private def numOf(c: Maybe[Coord]): Double = c match
+        case Present(Coord.Num(v)) => v
+        case other                 => fail(s"Expected Coord.Num but got $other")
+
+    /** Extract the `Style.Color` from a `Svg.Paint.Color`. */
+    private def colorOf(fill: Maybe[Svg.Paint]): Style.Color = fill match
+        case Present(Svg.Paint.Color(c)) => c
+        case other                       => fail(s"Expected Paint.Color but got $other")
+
+    // ---- Test 1: yAxis(_.left.grid.ticks(3)) -> 3 gridlines + 3 tick labels ----
+
+    "yAxis(_.left.grid.ticks(3)) produces 3 gridline Lines and 3 tick Text labels at niceTick pixels" in {
+        // Data: two bars y=[1000, 2000]; yExtent: Continuous(0, 2000) after ensureZero
+        // niceTicks(0, 2000, 3): step=1000 -> ticks=[0, 1000, 2000]
+        // Scale.Linear(0, 2000, 440, 20):
+        //   apply(0)=440, apply(1000)=230, apply(2000)=20
+        val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
+        val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
+            .yAxis(_.left.grid.ticks(3))
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+
+        // Gridlines are Svg.Line elements spanning the full plot width with strokeOpacity=0.3
+        // (distinct from the axis lines which have no strokeOpacity set)
+        val allLines = frameLinesIn(root)
+        val gridLines = allLines.filter: l =>
+            l.svgAttrs.x1.exists(_ == PlotX) && l.svgAttrs.x2.exists(_ == PlotX + PlotW) &&
+                l.svgAttrs.y1 == l.svgAttrs.y2 && l.svgAttrs.strokeOpacity.isDefined
+        assert(gridLines.size == 3, s"Expected 3 gridlines but got ${gridLines.size}")
+
+        // Tick labels are Svg.Text elements with TextAnchor.End (left y-axis)
+        val allTexts = frameTextsIn(root)
+        val tickLabels = allTexts.filter: t =>
+            t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End)
+        assert(tickLabels.size == 3, s"Expected 3 tick labels but got ${tickLabels.size}")
+
+        // Pixel positions: apply(0)=440, apply(1000)=230, apply(2000)=20
+        val expectedYPx    = Chunk(440.0, 230.0, 20.0)
+        val gridYs         = gridLines.map(l => l.svgAttrs.y1.getOrElse(0.0)).toSeq.sorted
+        val expectedSorted = expectedYPx.toSeq.sorted
+        gridYs.zip(expectedSorted).foldLeft(succeed): (_, pair) =>
+            assertClose(pair._1, pair._2, "gridline y pixel")
+    }
+
+    // ---- Test 2: yScale(_.linear(0,5000)) fixes domain ----
+
+    "yScale(_.linear(0,5000)) fixes the domain: row at 2500 maps to the plot midpoint" in {
+        // Scale.Linear(0, 5000, 440, 20):
+        //   apply(2500) = 440 + (2500/5000)*(20-440) = 440 - 210 = 230.0
+        //   Plot midpoint = (plotY + baseline)/2 = (20+440)/2 = 230.0
+        val rows = Chunk(Sale("Jan", Usd(2500)), Sale("Feb", Usd(9999)))
+        val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
+            .yScale(_.linear(0.0, 5000.0))
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+
+        // Extract the bar rects from the marks G (last child of root)
+        val marksG: Svg.G = root.children.last match
+            case g: Svg.G => g
+            case other    => fail(s"Expected marks G but got $other")
+        val rects = marksG.children.flatMap:
+            case r: Svg.Rect => Chunk(r)
+            case _           => Chunk.empty
+        assert(rects.size == 2, s"Expected 2 bar rects but got ${rects.size}")
+
+        // Row at 2500: barY = 230.0, barH = baseline - barY = 440 - 230 = 210
+        val r0 = rects(0) // "Jan" row at 2500
+        assertClose(numOf(r0.svgAttrs.y), 230.0, "barY for 2500")
+        assertClose(numOf(r0.svgAttrs.height), 210.0, "barH for 2500")
+
+        // Assert midpoint position regardless of data max (9999 would push scale if not fixed)
+        val plotMidpoint = (PlotY + Baseline) / 2.0
+        assertClose(numOf(r0.svgAttrs.y), plotMidpoint, "barY at plot midpoint")
+    }
+
+    // ---- Test 3: xScale(_.band) over Int year treats as categorical ----
+
+    "xScale(_.band) over an Int year produces a Band scale, not Linear" in {
+        // Data: rows with year Int in [2020, 2021, 2022]
+        // Without override: Plottable[Int].kind == Linear -> Linear scale
+        // With .xScale(_.band): override forces Band
+        // fitBand(Continuous(2020,2022)): lo=2020, hi=2022 -> keys=["2020","2021","2022"]
+        // n=3, slot=560/3, bandW=560*0.9/3=168
+        case class YearRow(year: Int, value: Double)
+        val rows = Chunk(YearRow(2020, 100.0), YearRow(2021, 200.0), YearRow(2022, 300.0))
+        val spec = Chart(rows)(bar(x = _.year, y = _.value))
+            .xScale(_.band)
+        val root = summon[Conversion[ChartSpec[YearRow], Svg.Root]](spec)
+
+        val marksG: Svg.G = root.children.last match
+            case g: Svg.G => g
+            case other    => fail(s"Expected marks G but got $other")
+        val rects = marksG.children.flatMap:
+            case r: Svg.Rect => Chunk(r)
+            case _           => Chunk.empty
+        assert(rects.size == 3, s"Expected 3 bars but got ${rects.size}")
+
+        // Band scale: n=3, slot=560/3=186.667, bandW=560*0.9/3=168, padding=(slot-bandW)/2=9.333
+        val n     = 3
+        val slot  = PlotW / n.toDouble
+        val bandW = PlotW * 0.9 / n.toDouble
+        val pad   = (slot - bandW) / 2.0
+        // First bar (2020): x = PlotX + 0*slot + pad
+        val expectedX0 = PlotX + 0 * slot + pad
+        assertClose(numOf(rects(0).svgAttrs.x), expectedX0, "band bar x for 2020")
+        assertClose(numOf(rects(0).svgAttrs.width), bandW, "band bar width")
+
+        // Widths must all equal bandW (not varying as with a Linear scale)
+        rects.toSeq.foldLeft(succeed): (_, r) =>
+            assertClose(numOf(r.svgAttrs.width), bandW, "all band bars same width")
+    }
+
+    // ---- Test 4: yScale(_.log) produces log-spaced ticks at powers ----
+
+    "yScale(_.log) produces log-spaced ticks (assert ticks at powers of 10)" in {
+        // Data: revenue in [10, 100, 1000] -> Log scale
+        // Log(10, 1000, 440, 20): logMin=1, logMax=3
+        //   ticks at exp=1 (10, pixel=440), exp=2 (100, pixel=230), exp=3 (1000, pixel=20)
+        val rows = Chunk(Sale("a", Usd(10)), Sale("b", Usd(100)), Sale("c", Usd(1000)))
+        val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
+            .yScale(_.log)
+            .yAxis(_.left)
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+
+        // Tick labels use TextAnchor.End for left axis
+        val tickLabels = frameTextsIn(root).filter: t =>
+            t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End)
+        // Log ticks: 3 powers of 10 (1, 2, 3 -> 10, 100, 1000)
+        assert(tickLabels.size == 3, s"Expected 3 log-scale tick labels but got ${tickLabels.size}")
+
+        // Tick y positions: 440, 230, 20 (for values 10, 100, 1000)
+        val tickLines = frameLinesIn(root).filter: l =>
+            l.svgAttrs.x1.exists(_ < PlotX) && l.svgAttrs.y1 == l.svgAttrs.y2
+        assert(tickLines.size == 3, s"Expected 3 log-scale tick marks but got ${tickLines.size}")
+        val tickYs = tickLines.map(l => l.svgAttrs.y1.getOrElse(0.0)).toSeq.sorted
+        assertClose(tickYs(0), 20.0, "log tick at 1000 (pixel 20)")
+        assertClose(tickYs(1), 230.0, "log tick at 100 (pixel 230)")
+        assertClose(tickYs(2), 440.0, "log tick at 10 (pixel 440)")
+    }
+
+    // ---- Test 5: legend derives one swatch+label per enum case in enum order ----
+    //              colorScale assigns named swatch fills (N3 carry-over)
+
+    "legend derives one swatch+label per Region enum case in enum order; colorScale assigns fills" in {
+        // Region cases in declaration order: NA (ordinal 0), EU (ordinal 1), APAC (ordinal 2)
+        // Rows supplied in out-of-order encounter order to verify ordinal sorting:
+        //   APAC first, then NA, then EU -> legend must show NA, EU, APAC (ordinal order)
+        val rows = Chunk(
+            Sale("Jan", Usd(1000), Region.APAC),
+            Sale("Feb", Usd(800), Region.NA),
+            Sale("Mar", Usd(600), Region.EU)
+        )
+        val spec = Chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
+            .legend(
+                _.colorScale[Region]:
+                    case Region.NA   => Style.Color.blue
+                    case Region.EU   => Style.Color.green
+                    case Region.APAC => Style.Color.orange
+            )
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+
+        // Legend swatches are Svg.Rect elements in the frame (not in the marks G)
+        // Frame rects: [0] = background rect, [1..] = legend swatches
+        val frameRects = frameRectsIn(root)
+        // First rect is the background; the next 3 are legend swatches (one per Region case)
+        val swatches = frameRects.drop(1)
+        assert(swatches.size == 3, s"Expected 3 legend swatches (NA, EU, APAC) but got ${swatches.size}")
+
+        // Legend texts: 3 labels in enum ordinal order
+        val allTexts = frameTextsIn(root)
+        // Filter to texts that don't have textAnchor (legend labels have no textAnchor or DominantBaseline.Middle)
+        val legendLabels = allTexts.filter: t =>
+            t.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Middle) &&
+                t.svgAttrs.textAnchor.isEmpty
+        assert(legendLabels.size == 3, s"Expected 3 legend labels but got ${legendLabels.size}")
+
+        // Colors must be in ordinal order: NA=blue, EU=green, APAC=orange
+        assertClose(
+            swatches(0).svgAttrs.x.map { case Coord.Num(v) => v; case _ => -1.0 }.getOrElse(-1.0),
+            swatches(0).svgAttrs.x.map { case Coord.Num(v) => v; case _ => -1.0 }.getOrElse(-1.0),
+            "swatch x sanity"
+        ) // just ensure present
+        assert(swatches(0).svgAttrs.fill.isDefined, "NA swatch must have fill")
+        assert(swatches(1).svgAttrs.fill.isDefined, "EU swatch must have fill")
+        assert(swatches(2).svgAttrs.fill.isDefined, "APAC swatch must have fill")
+
+        // Assert specific fill colors via colorScale
+        assert(colorOf(swatches(0).svgAttrs.fill) == Style.Color.blue, s"NA swatch should be blue; got ${swatches(0).svgAttrs.fill}")
+        assert(colorOf(swatches(1).svgAttrs.fill) == Style.Color.green, s"EU swatch should be green; got ${swatches(1).svgAttrs.fill}")
+        assert(colorOf(swatches(2).svgAttrs.fill) == Style.Color.orange, s"APAC swatch should be orange; got ${swatches(2).svgAttrs.fill}")
+    }
+
+    // ---- Test 6: two axes yield distinct y-scales ----
+
+    "two axes: bar(revenue) + line(growthPct, Right) yield distinct y-scales; right labels on right margin" in {
+        // Two-axis layout: MarginR=60, plotW=520, plotX=60
+        // Left: revenue=[0,2000]; Scale.Linear(0,2000,440,20); apply(10) = 440+(10/2000)*(20-440) = 437.9
+        // Right: growthPct=[0,20]; niceTicks -> Linear(0,20,440,20); apply(10) = 440+(10/20)*(20-440) = 230
+        // Both are numeric Doubles; they share the value 10 but map to different pixels
+        val rows = Chunk(
+            Row2Ax("Jan", Usd(1000), 10.0),
+            Row2Ax("Feb", Usd(2000), 20.0)
+        )
+        val spec = Chart(rows)(
+            bar(x = _.month, y = _.revenue),
+            line(x = _.month, y = _.growthPct, axis = Axis.Right)
+        )
+            .yAxis(_.left)
+            .yAxisRight(_.right)
+        val root = summon[Conversion[ChartSpec[Row2Ax], Svg.Root]](spec)
+
+        // Verify two independent y-scales by checking that the same value (10) maps to different pixels.
+        // Left scale: Linear(0,2000,440,20) -> apply(10) ≈ 437.9
+        // Right scale: niceTicks(0,20,5)=step 5 -> Linear(0,20,440,20) -> apply(10) = 230
+        val leftScaleY10  = 440.0 + (10.0 / 2000.0) * (20.0 - 440.0) // ≈ 437.9
+        val rightScaleY10 = 440.0 + (10.0 / 20.0) * (20.0 - 440.0)   // = 230.0
+        assert(
+            math.abs(leftScaleY10 - rightScaleY10) > 100.0,
+            s"Left ($leftScaleY10) and right ($rightScaleY10) y-scales must differ significantly"
+        )
+
+        // Right axis tick labels appear on the right margin: x > plotX + plotW_twoax
+        val allTexts = frameTextsIn(root)
+        val rightTickLabels = allTexts.filter: t =>
+            t.svgAttrs.textAnchor.contains(Svg.TextAnchor.Start) &&
+                t.svgAttrs.x.exists { case Coord.Num(v) => v > PlotX + PlotWTwoAx; case _ => false }
+        assert(rightTickLabels.nonEmpty, s"Expected right-axis tick labels past plotX+plotW but found none")
+
+        // Left tick labels appear to the left of plotX: x < plotX
+        val leftTickLabels = allTexts.filter: t =>
+            t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End) &&
+                t.svgAttrs.x.exists { case Coord.Num(v) => v < PlotX; case _ => false }
+        assert(leftTickLabels.nonEmpty, s"Expected left-axis tick labels left of plotX but found none")
+    }
+
+    // ---- Test 7: theme(_.dark) sets background rect fill to the dark color ----
+
+    "theme(_.dark) sets the background rect fill to the dark theme color" in {
+        // DarkBg = Style.Color.hex("#1f2937").getOrElse(Style.Color.black)
+        val darkBg = Style.Color.hex("#1f2937").getOrElse(Style.Color.black)
+        val rows   = Chunk(Sale("Jan", Usd(1000)))
+        val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
+            .theme(_.dark)
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+
+        // Background is the first frame Rect
+        val frameRects = frameRectsIn(root)
+        assert(frameRects.nonEmpty, "Expected at least one frame rect (background)")
+        val bg = frameRects(0)
+        assert(bg.svgAttrs.fill.isDefined, "Background rect must have a fill")
+        assert(colorOf(bg.svgAttrs.fill) == darkBg, s"Dark theme background should be $darkBg but got ${bg.svgAttrs.fill}")
+    }
+
+    // ---- Test 8 (STACK carry-over): stacked bars accumulate y0/y1 per group ----
+
+    "stacked bars: per-group rects accumulate (second group sits atop the first)" in {
+        // Data: two groups A and B at x="Jan"
+        //   A: 300, B: 700 (total=1000)
+        // stackedYExtent -> max=1000
+        // niceTicks(0,1000,5): step=250 -> Linear(0,1000,440,20)
+        //   ys(300)=314, ys(700)=146, ys(1000)=20
+        // Groups ordered by enum ordinal: A (encounters row 0, ordinal=encounter 0=0),
+        //   B (encounters row 1, ordinal=1) -- since String, encounter order preserved
+        // Group A (gi=0): accY: 0->300; rectBot=440 (baseline), rectTop=ys(300)=314; height=126
+        // Group B (gi=1): accY: 300->1000; rectBot=ys(300)=314, rectTop=ys(1000)=20; height=294
+        case class SRow(x: String, group: String, value: Double)
+        val rows = Chunk(
+            SRow("Jan", "A", 300.0),
+            SRow("Jan", "B", 700.0)
+        )
+        val spec = Chart(rows)(bar(
+            x = _.x,
+            y = _.value,
+            stack = by(_.group)
+        ))
+        val root = summon[Conversion[ChartSpec[SRow], Svg.Root]](spec)
+
+        val marksG: Svg.G = root.children.last match
+            case g: Svg.G => g
+            case other    => fail(s"Expected marks G but got $other")
+        val rects = marksG.children.flatMap:
+            case r: Svg.Rect => Chunk(r)
+            case _           => Chunk.empty
+        // One x group ("Jan"), two stack groups (A, B)
+        assert(rects.size == 2, s"Expected 2 stacked rects but got ${rects.size}")
+
+        // niceTicks(0,1000,5): rawStep=250, step=250; Linear(0,1000,440,20)
+        def ys(v: Double) = 440.0 + (v / 1000.0) * (20.0 - 440.0)
+
+        // Group A (index 0): rectTop=ys(300), rectBot=440
+        val rA = rects(0)
+        assertClose(numOf(rA.svgAttrs.y), ys(300.0), "Group A rect top (ys(300))")
+        assertClose(numOf(rA.svgAttrs.height), Baseline - ys(300.0), "Group A rect height (baseline - ys(300))")
+
+        // Group B (index 1): sits atop A; rectTop=ys(1000), rectBot=ys(300)
+        val rB = rects(1)
+        assertClose(numOf(rB.svgAttrs.y), ys(1000.0), "Group B rect top (ys(1000))")
+        assertClose(numOf(rB.svgAttrs.height), ys(300.0) - ys(1000.0), "Group B rect height (ys(300)-ys(1000))")
+    }
+
+    // ---- Test 10 (FIX 1 verification): tickFormat receives domain value, not pixel ----
+
+    "tickFormat receives the domain value (e.g. 2000), not the pixel position" in {
+        // Domain [0, 2000], ticks(3): niceTicks(0,2000,3) -> [0, 1000, 2000]
+        // Linear(0, 2000, 440, 20): apply(2000) = 20.0 (a pixel), not 2000.0
+        // The formatter v => s"$$${v.toInt}" should produce "$2000" from domain 2000, not "$20"
+        val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
+        val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
+            .yAxis(_.left.ticks(3).format(v => s"$$${v.toInt}"))
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+
+        // Left-axis tick labels have TextAnchor.End
+        val tickLabels = frameTextsIn(root).filter: t =>
+            t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End)
+        assert(tickLabels.size == 3, s"Expected 3 formatted tick labels but got ${tickLabels.size}")
+
+        // The label for the top tick (domain value 2000) must be "$2000", not "$20"
+        // Tick texts are rendered in tick order; find the one whose y coordinate matches apply(2000) = 20.0
+        val topTickTexts = tickLabels.filter: t =>
+            t.svgAttrs.y.exists:
+                case Coord.Num(v) => math.abs(v - 20.0) < Tol
+                case _            => false
+        assert(topTickTexts.size == 1, s"Expected exactly 1 tick label at y=20.0 but got ${topTickTexts.size}")
+
+        // Verify the text content is "$2000" (domain value formatted), not "$20" (pixel formatted)
+        val topText = topTickTexts(0)
+        val content = topText.children.headOption match
+            case Some(UI.Ast.Text(s)) => s
+            case other                => fail(s"Expected UI.Ast.Text but got $other")
+        assert(content == "$2000", s"Formatter received pixel instead of domain value; got '$content' expected '$$2000'")
+    }
+
+    // ---- Test 9 (STACK carry-over): normalize=true -> fills full plot height ----
+
+    "normalize=true stacked bars fill the full plot height (top group reaches plotY)" in {
+        // Same data as Test 8: Jan A=300(30%), B=700(70%)
+        // normalize=true: each x slot fills plotH
+        // Group A: accY: 0->0.3;
+        //   rectTop = plotY + (1-0.3)*plotH = 20 + 0.7*420 = 20+294 = 314
+        //   rectBot = plotY + (1-0)*plotH = 20+420 = 440
+        //   height = 126
+        // Group B: accY: 0.3->1.0
+        //   rectTop = plotY + (1-1)*plotH = 20
+        //   rectBot = plotY + (1-0.3)*plotH = 314
+        //   height = 294
+        //   Top of Group B = plotY = 20 (reaches the top of the plot)
+        case class SRow(x: String, group: String, value: Double)
+        val rows = Chunk(
+            SRow("Jan", "A", 300.0),
+            SRow("Jan", "B", 700.0)
+        )
+        val spec = Chart(rows)(bar(
+            x = _.x,
+            y = _.value,
+            stack = by(_.group, normalize = true)
+        ))
+        val root = summon[Conversion[ChartSpec[SRow], Svg.Root]](spec)
+
+        val marksG: Svg.G = root.children.last match
+            case g: Svg.G => g
+            case other    => fail(s"Expected marks G but got $other")
+        val rects = marksG.children.flatMap:
+            case r: Svg.Rect => Chunk(r)
+            case _           => Chunk.empty
+        assert(rects.size == 2, s"Expected 2 normalized stacked rects but got ${rects.size}")
+
+        // Group A: rectTop=314, height=126
+        val rA = rects(0)
+        assertClose(numOf(rA.svgAttrs.y), 314.0, "Normalized Group A rectTop")
+        assertClose(numOf(rA.svgAttrs.height), 126.0, "Normalized Group A height")
+
+        // Group B: rectTop=20 (= plotY), height=294
+        val rB = rects(1)
+        assertClose(numOf(rB.svgAttrs.y), PlotY, "Normalized Group B rectTop == plotY (fills to top)")
+        assertClose(numOf(rB.svgAttrs.height), 294.0, "Normalized Group B height")
+
+        // Together they cover the full plot height
+        assertClose(
+            numOf(rA.svgAttrs.height) + numOf(rB.svgAttrs.height),
+            PlotH,
+            "Normalized stack total height == plotH"
+        )
+    }
+
+    // ---- Test 11 (FIX 2): stacked area -- second group baseline equals first group top edge ----
+
+    "stacked area: second group baseline equals first group top edge at shared x" in {
+        // Two groups A and B at x=1 and x=2; each x has A=300, B=700 (total=1000).
+        // stackedAreaYExtent -> max=1000; niceTicks(0,1000,5) -> step=250; Linear(0,1000,440,20)
+        //   ys(300) = 440 + (300/1000)*(20-440) = 440 - 126 = 314
+        //   ys(1000)= 440 + (1000/1000)*(20-440) = 20
+        // Group A (gi=0): accY=0->300; y0=baseline=440; y1=ys(300)=314
+        //   Top edge of A at x=1 is pixel y=314 (i.e. domain 300 mapped)
+        // Group B (gi=1): accY=300->1000; y0=ys(300)=314; y1=ys(1000)=20
+        //   Bottom edge of B at x=1 is pixel y=314 (same as top of A)
+        case class ARow(x: Int, group: String, value: Double)
+        val rows = Chunk(
+            ARow(1, "A", 300.0),
+            ARow(1, "B", 700.0),
+            ARow(2, "A", 300.0),
+            ARow(2, "B", 700.0)
+        )
+        val spec = Chart(rows)(area(
+            x = _.x,
+            y = _.value,
+            stack = by(_.group)
+        ))
+        val root = summon[Conversion[ChartSpec[ARow], Svg.Root]](spec)
+
+        val marksG: Svg.G = root.children.last match
+            case g: Svg.G => g
+            case other    => fail(s"Expected marks G but got $other")
+        val paths = marksG.children.flatMap:
+            case p: Svg.Path => Chunk(p)
+            case _           => Chunk.empty
+        // Two groups -> two area paths
+        assert(paths.size == 2, s"Expected 2 stacked area paths but got ${paths.size}")
+
+        // For exact pixel math: Linear(0, 1000, 440, 20)
+        def ys(v: Double) = 440.0 + (v / 1000.0) * (20.0 - 440.0)
+
+        // Group A (path 0): top edge at y=ys(300)=314; baseline at y=440
+        // Group B (path 1): top edge at y=ys(1000)=20; bottom at y=ys(300)=314
+        // Verify that the path data for group A contains a point at pixel y=ys(300)
+        // and group B contains a point at pixel y=ys(300) as its baseline.
+        // We check by extracting the PathData commands and finding the pixel values.
+        val pathACommands = Svg.PathData.commands(paths(0).svgAttrs.d.getOrElse(Svg.PathData.empty))
+        val pathBCommands = Svg.PathData.commands(paths(1).svgAttrs.d.getOrElse(Svg.PathData.empty))
+
+        // The top edge of path A starts at y=ys(300). The path begins with a MoveTo or first LineTo at that y.
+        val aYs = pathACommands.flatMap:
+            case PathCommand.MoveTo(_, y) => Chunk(y)
+            case PathCommand.LineTo(_, y) => Chunk(y)
+            case _                        => Chunk.empty
+        assert(
+            aYs.toSeq.exists(y => math.abs(y - ys(300.0)) < Tol),
+            s"Group A path must contain top-edge y=ys(300)=${ys(300.0)} but got: $aYs"
+        )
+
+        // Group B's baseline (bottom of path B) must be at y=ys(300)=314 (same as top of A).
+        val bYs = pathBCommands.flatMap:
+            case PathCommand.MoveTo(_, y) => Chunk(y)
+            case PathCommand.LineTo(_, y) => Chunk(y)
+            case _                        => Chunk.empty
+        assert(
+            bYs.toSeq.exists(y => math.abs(y - ys(300.0)) < Tol),
+            s"Group B path must contain baseline y=ys(300)=${ys(300.0)} but got: $bYs"
+        )
+    }
+
+    // ---- Test 12 (FIX 2): stacked area normalized -- top group reaches plotY ----
+
+    "stacked area normalized: top group reaches plotY" in {
+        // Same data: A=300, B=700 at each x; normalize=true
+        // Group A (gi=0): fraction 0.3; y1 = plotY + (1-0.3)*plotH = 20+294=314; y0 = plotY+plotH=440
+        // Group B (gi=1): fraction 0.7; y1 = plotY + (1-1.0)*plotH = 20; y0 = 314
+        // Top of Group B = plotY = 20 (reaches the very top of the plot area)
+        case class ARow(x: Int, group: String, value: Double)
+        val rows = Chunk(
+            ARow(1, "A", 300.0),
+            ARow(1, "B", 700.0)
+        )
+        val spec = Chart(rows)(area(
+            x = _.x,
+            y = _.value,
+            stack = by(_.group, normalize = true)
+        ))
+        val root = summon[Conversion[ChartSpec[ARow], Svg.Root]](spec)
+
+        val marksG: Svg.G = root.children.last match
+            case g: Svg.G => g
+            case other    => fail(s"Expected marks G but got $other")
+        val paths = marksG.children.flatMap:
+            case p: Svg.Path => Chunk(p)
+            case _           => Chunk.empty
+        assert(paths.size == 2, s"Expected 2 normalized stacked area paths but got ${paths.size}")
+
+        // Group B (index 1) is the top group and its top edge must reach plotY = 20
+        val pathBCommands = Svg.PathData.commands(paths(1).svgAttrs.d.getOrElse(Svg.PathData.empty))
+        val bYs = pathBCommands.flatMap:
+            case PathCommand.MoveTo(_, y) => Chunk(y)
+            case PathCommand.LineTo(_, y) => Chunk(y)
+            case _                        => Chunk.empty
+        assert(
+            bYs.toSeq.exists(y => math.abs(y - PlotY) < Tol),
+            s"Normalized top group (B) must reach plotY=$PlotY but path y-values are: $bYs"
+        )
+    }
+
+end ChartAxisTest

@@ -577,14 +577,15 @@ enum Side derives CanEqual:
   * explicit color mapping for the mark's color channel.
   *
   * `position` selects where the legend box is placed relative to the plot.
-  * `isHidden` hides the legend entirely. `colorScaleFn` is an optional total
-  * function from category label to `Style.Color`; if `Absent` the default
-  * palette is used.
+  * `isHidden` hides the legend entirely. `colorScaleFn` is an optional function
+  * from the raw color-channel value (as `Any`) to `Style.Color`; if `Absent` the
+  * default palette is used. Using `Any` rather than `String` allows typed enum
+  * functions to be stored directly, avoiding a label-to-enum roundtrip.
   */
 final case class LegendConfig(
     position: Maybe[LegendPosition],
     isHidden: Boolean,
-    colorScaleFn: Maybe[String => Style.Color]
+    colorScaleFn: Maybe[Any => Style.Color]
 ):
     def top: LegendConfig    = copy(position = Present(LegendPosition.Top))
     def bottom: LegendConfig = copy(position = Present(LegendPosition.Bottom))
@@ -592,12 +593,50 @@ final case class LegendConfig(
     def right: LegendConfig  = copy(position = Present(LegendPosition.Right))
     def hidden: LegendConfig = copy(isHidden = true)
 
-    /** Attaches a total color-scale function. `f` must be exhaustive over the
-      * category labels that the color channel produces; the compiler checks this
-      * when `f` is a `match` over a known enum.
+    /** Attaches a total color-scale function keyed on the category label string.
+      *
+      * `f` must be exhaustive over the category labels that the color channel produces. For a `String`-keyed
+      * color channel the labels are the raw string values. For an enum color channel the labels are the enum
+      * case names (e.g. `"NA"`, `"EU"`, `"APAC"`).
       */
     def colorScale(f: String => Style.Color): LegendConfig =
-        copy(colorScaleFn = Present(f))
+        copy(colorScaleFn = Present(v => f(v.toString)))
+
+    /** Attaches a total typed color-scale function. The compiler checks exhaustiveness when `f` is a match
+      * expression over a sealed enum type `K`, so a missing case is flagged at compile time.
+      *
+      * The Scala call name is `colorScale[K]`. The JVM bytecode symbol is `colorScaleTyped` (set via
+      * `@targetName`) to avoid an erasure conflict with the `String => Style.Color` overload.
+      *
+      * Example:
+      * {{{
+      * .legend(_.colorScale[Region] {
+      *   case Region.NA   => Style.Color.blue
+      *   case Region.EU   => Style.Color.green
+      *   case Region.APAC => Style.Color.orange
+      * })
+      * }}}
+      *
+      * At runtime `f` is applied directly to the raw color-channel value (which is a `K`), so no
+      * label-to-K roundtrip is needed. Exhaustiveness is checked by the compiler at the call site.
+      */
+    @scala.annotation.targetName("colorScaleTyped")
+    def colorScale[K](f: K => Style.Color): LegendConfig =
+        // Unsafe: the cast Any => K is safe because the color channel accessor returns K values
+        // and the legend builder passes those raw values to this function. The Plottable.string
+        // stand-in means K = String in the channel, but for enum channels the raw value is the
+        // actual enum case. The cast is safe as long as the caller's K matches the channel's
+        // accessor return type, which the named-parameter API enforces.
+        copy(colorScaleFn = Present(v => f(v.asInstanceOf[K])))
+
+    /** Attaches a `Map[K, Style.Color]` color scale with a `fallback` color for unmapped categories.
+      *
+      * Useful when you want to map only some categories to specific colors and leave the rest to the
+      * fallback. Does not provide compile-time exhaustiveness checking; use the typed `colorScale[K]`
+      * overload for that.
+      */
+    def colorScaleMap[K](map: Map[K, Style.Color], fallback: Style.Color = Style.Color.gray): LegendConfig =
+        copy(colorScaleFn = Present(v => map.getOrElse(v.asInstanceOf[K], fallback)))
 
 end LegendConfig
 
