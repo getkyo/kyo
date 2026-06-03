@@ -298,66 +298,61 @@ object LiveDashboard extends KyoApp:
                 tile("p99 latency", fmt0(v) + " ms", color)
             }
 
+            // A chart whose data source is a `Signal` is reactive by construction: the layer redraws only the
+            // marks region on each emission and keeps the frame (axes, legend) stable, so no `.render` wrapper
+            // is needed. (Wrapping would rebuild the whole chart per tick and reset the animation state.)
             // Throughput bar chart: FIXED y-domain so the axis stays put; bars animate to new heights.
-            throughputChart = throughput.render { _ =>
-                Chart(throughput)(bar(x = _.name, y = _.rps, color = _.name))
-                    .yAxis(_.left.grid.ticks(4))
-                    .xAxis(_.bottom)
-                    .yScale(_.linear(0.0, rpsMax))
-                    .legend(_.hidden)
-                    .theme(_.dark)
-                    .animate(_.ease(400.millis))
-                    .size(chartW, chartH)
-                    .toSvg
-            }
+            throughputChart = Chart(throughput)(bar(x = _.name, y = _.rps, color = _.name))
+                .yAxis(_.left.grid.ticks(4))
+                .xAxis(_.bottom)
+                .yScale(_.linear(0.0, rpsMax))
+                .legend(_.hidden)
+                .theme(_.dark)
+                .animate(_.ease(400.millis))
+                .size(chartW, chartH)
+                .toSvg
 
             // Latency lines over the fixed 24-slot rolling window: one line per series via the color channel,
             // so the layer derives a p50/p99 legend. Cyan p50 and amber p99 stay distinct from the bars.
-            latencyChart = latency.render { _ =>
-                Chart(latency)(line(x = _.t, y = _.ms, color = _.series))
-                    .yAxis(_.left.grid.ticks(4))
-                    .xAxis(_.bottom.format(timeAxisLabel))
-                    .yScale(_.linear(0.0, latMax))
-                    .legend(
-                        _.top.colorScale {
-                            case "p50" => scCyan
-                            case _     => scAmber
-                        }
-                    )
-                    .theme(_.dark)
-                    .animate(_.ease(400.millis))
-                    .size(chartW, chartH)
-                    .toSvg
-            }
+            latencyChart = Chart(latency)(line(x = _.t, y = _.ms, color = _.series))
+                .yAxis(_.left.grid.ticks(4))
+                .xAxis(_.bottom.format(timeAxisLabel))
+                .yScale(_.linear(0.0, latMax))
+                .legend(
+                    _.top.colorScale {
+                        case "p50" => scCyan
+                        case _     => scAmber
+                    }
+                )
+                .theme(_.dark)
+                .animate(_.ease(400.millis))
+                .size(chartW, chartH)
+                .toSvg
 
             // Status stacked bar grouped by code, colored by monitoring convention: 2xx green, 4xx amber, 5xx red.
-            statusChart = status.render { _ =>
-                Chart(status)(bar(x = _.name, y = _.count, stack = by(_.code)))
-                    .yAxis(_.left.grid.ticks(4))
-                    .xAxis(_.bottom)
-                    .legend(
-                        _.top.colorScale {
-                            case "2xx" => scGreen
-                            case "4xx" => scAmber
-                            case _     => scRed
-                        }
-                    )
-                    .theme(_.dark)
-                    .size(chartW, chartH)
-                    .toSvg
-            }
+            statusChart = Chart(status)(bar(x = _.name, y = _.count, stack = by(_.code)))
+                .yAxis(_.left.grid.ticks(4))
+                .xAxis(_.bottom)
+                .legend(
+                    _.top.colorScale {
+                        case "2xx" => scGreen
+                        case "4xx" => scAmber
+                        case _     => scRed
+                    }
+                )
+                .theme(_.dark)
+                .size(chartW, chartH)
+                .toSvg
 
             // Error-rate line over the rolling window: fills the bottom-right cell so all four quadrants balance.
-            errorChart = errRate.render { _ =>
-                Chart(errRate)(line(x = _.t, y = _.pct))
-                    .yAxis(_.left.grid.ticks(4))
-                    .xAxis(_.bottom.format(timeAxisLabel))
-                    .yScale(_.linear(0.0, 10.0))
-                    .theme(_.dark)
-                    .animate(_.ease(400.millis))
-                    .size(chartW, chartH)
-                    .toSvg
-            }
+            errorChart = Chart(errRate)(line(x = _.t, y = _.pct))
+                .yAxis(_.left.grid.ticks(4))
+                .xAxis(_.bottom.format(timeAxisLabel))
+                .yScale(_.linear(0.0, 10.0))
+                .theme(_.dark)
+                .animate(_.ease(400.millis))
+                .size(chartW, chartH)
+                .toSvg
 
             // Pause / resume control; label reacts to the paused signal.
             pauseBtn = paused.render { isPaused =>
