@@ -1197,6 +1197,48 @@ val twoAxis: Svg.Root =
         .toSvg
 ```
 
+### More one-liners
+
+An `area` mark fills between a y value and the baseline (or between `y0` and `y1` for a band):
+
+```scala
+case class AreaRow(month: String, revenue: Double)
+val areaRows: Chunk[AreaRow] = Chunk(AreaRow("Jan", 1000.0), AreaRow("Feb", 1200.0))
+
+val areaChart: Svg.Root = Chart(areaRows)(area(x = _.month, y = _.revenue)).toSvg
+```
+
+A `rule` is a reference line at a constant (or `Signal`-tracked) value; here a horizontal target line:
+
+```scala
+case class RuleRow(month: String, revenue: Double)
+val ruleRows: Chunk[RuleRow] = Chunk(RuleRow("Jan", 1000.0), RuleRow("Feb", 1200.0))
+
+val withTarget: Svg.Root =
+    Chart(ruleRows)(
+        line(x = _.month, y = _.revenue),
+        rule[RuleRow, Double](y = RuleValue.Const(1100.0, summon[Plottable[Double]]))
+    ).toSvg
+```
+
+`curve` selects the interpolation between vertices. `Curve.monotone` smooths the line; `Curve.stepAfter` draws a staircase:
+
+```scala
+case class CurveRow(month: String, revenue: Double)
+val curveRows: Chunk[CurveRow] = Chunk(CurveRow("Jan", 1000.0), CurveRow("Feb", 1200.0))
+
+val smooth: Svg.Root = Chart(curveRows)(line(x = _.month, y = _.revenue, curve = Curve.monotone)).toSvg
+```
+
+`.yScale(_.log)` overrides the inferred scale with a log scale. A time x-axis needs nothing special: just map `x` to an `Instant` accessor (it has a `Plottable` instance):
+
+```scala
+case class Hit(at: Instant, count: Double)
+val hits: Chunk[Hit] = Chunk(Hit(Instant.Epoch, 10.0), Hit(Instant.Epoch + 1.minute, 100.0))
+
+val logOverTime: Svg.Root = Chart(hits)(line(x = _.at, y = _.count)).yScale(_.log).toSvg
+```
+
 ### Reactivity
 
 Pass a `Signal[Chunk[A]]` instead of a `Chunk[A]` to get a live chart. The marks region redraws on each emission; the frame, axes, and legend stay put. The marks and channels are identical to the static form:
