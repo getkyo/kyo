@@ -189,6 +189,20 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def overflow(v: Overflow): Style                  = appendProp(Prop.OverflowProp(v))
     def overflow(f: Overflow.type => Overflow): Style = overflow(f(Overflow))
 
+    /** Maps to the CSS `overflow-x` property: clips/scrolls the HORIZONTAL axis only, leaving the
+      * vertical axis at its default. Use over [[overflow]] when only one axis should scroll, so the
+      * other axis never reserves space for a scrollbar nor draws a stray scrollbar track.
+      */
+    def overflowX(v: Overflow): Style                  = appendProp(Prop.OverflowXProp(v))
+    def overflowX(f: Overflow.type => Overflow): Style = overflowX(f(Overflow))
+
+    /** Maps to the CSS `overflow-y` property: clips/scrolls the VERTICAL axis only, leaving the
+      * horizontal axis at its default. Use over [[overflow]] when only one axis should scroll, so the
+      * other axis never reserves space for a scrollbar nor draws a stray scrollbar track.
+      */
+    def overflowY(v: Overflow): Style                  = appendProp(Prop.OverflowYProp(v))
+    def overflowY(f: Overflow.type => Overflow): Style = overflowY(f(Overflow))
+
     // Sizing: any size including auto
 
     /** Sizing setters. Each accepts any [[kyo.Length]] (including `auto`) and clamps explicit lengths to non-negative. */
@@ -552,6 +566,10 @@ object Style:
     def justify(f: Justification.type => Justification): Style                      = empty.justify(f)
     def overflow(v: Overflow): Style                                                = empty.overflow(v)
     def overflow(f: Overflow.type => Overflow): Style                               = empty.overflow(f)
+    def overflowX(v: Overflow): Style                                               = empty.overflowX(v)
+    def overflowX(f: Overflow.type => Overflow): Style                              = empty.overflowX(f)
+    def overflowY(v: Overflow): Style                                               = empty.overflowY(v)
+    def overflowY(f: Overflow.type => Overflow): Style                              = empty.overflowY(f)
     def width(v: Length): Style                                                     = empty.width(v)
     def height(v: Length): Style                                                    = empty.height(v)
     def minWidth(v: Length): Style                                                  = empty.minWidth(v)
@@ -916,6 +934,8 @@ object Style:
         case Align(value: Alignment)
         case Justify(value: Justification)
         case OverflowProp(value: Overflow)
+        case OverflowXProp(value: Overflow)
+        case OverflowYProp(value: Overflow)
         // Sizing
         case Width(value: Length)
         case Height(value: Length)

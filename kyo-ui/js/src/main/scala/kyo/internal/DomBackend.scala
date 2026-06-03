@@ -20,9 +20,18 @@ private[kyo] object DomBackend:
         }
     end mount
 
-    /** Injects a rendered stylesheet CSS string into the live document. */
+    /** Injects a rendered stylesheet CSS string into the live document.
+      *
+      * The base reset is injected first (idempotently) so it precedes the authored CSS in document
+      * order, matching the SSG page head where `baseCss` is emitted before `head.css`. The reset is a
+      * foundational layer authored stylesheets are meant to override (e.g. `body { font-family }`); if
+      * it were appended AFTER the sheet (as happens when an app calls `runStylesheet` before `runMount`,
+      * which injects the reset), its equal-specificity `body` rule would win on document order and clobber
+      * the app's own `body` font, producing a fallback-font flash. Injecting the reset first here makes the
+      * cascade order independent of which entry point runs first.
+      */
     private[kyo] def injectStylesheet(sheet: Stylesheet)(using Frame): Unit < Sync =
-        Sync.defer(DomStyleSheet.injectStylesheet(sheet.render))
+        DomStyleSheet.injectBase().andThen(Sync.defer(DomStyleSheet.injectStylesheet(sheet.render)))
 
     private def mountInto(ui: UI, container: dom.Element)(using Frame): Unit < (Async & Scope) =
         for

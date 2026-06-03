@@ -333,6 +333,19 @@ object WebsiteBundleMain:
         docsBody: UI
     )(using Frame): Unit < Async =
         for
+            // Clear the shared refs BEFORE the (async) content fetch so the rail's active-module reactive
+            // never paints stale content from the PREVIOUS module while the new module's content.md is in
+            // flight. The `route` signal flips synchronously on click, so the rail keys the NEW module as
+            // active immediately; without this reset it would expand showing the OLD module's `## ` sections
+            // (tocRef still holds them) and the article would still show the OLD page, both for the full
+            // fetch window (~400ms on a cold module), then correct. Resetting tocRef to empty makes the
+            // newly-active module expand with NO sections until the real ones arrive (a clean empty over a
+            // stale list), and resetting articleRef to empty blanks the article column rather than lying
+            // about which page is loaded (a brief empty reads as "loading", stale content reads as "my click
+            // did nothing"). For an already-cached route the reset and the real set run back-to-back in this
+            // fiber, so the empty frame collapses into the same paint and is never visible.
+            _  <- tocRef.set(Chunk.empty)
+            _  <- articleRef.set(UI.empty)
             md <- Sync.defer(markdownCache.getOrElse(nextRoute, ""))
             fetched <-
                 if md.nonEmpty then Sync.defer(md)

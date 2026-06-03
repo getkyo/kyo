@@ -611,6 +611,33 @@ class StyleTest extends Test:
             assert(Style.overflow(Style.Overflow.auto).toCss == "overflow: auto;")
         }
 
+        "overflowX single axis" in {
+            assert(Style.overflowX(Style.Overflow.auto).toCss == "overflow-x: auto;")
+            assert(Style.overflowX(Style.Overflow.hidden).toCss == "overflow-x: hidden;")
+            assert(Style.overflowX(_.scroll).toCss == "overflow-x: scroll;")
+        }
+
+        "overflowY single axis" in {
+            assert(Style.overflowY(Style.Overflow.auto).toCss == "overflow-y: auto;")
+            assert(Style.overflowY(Style.Overflow.hidden).toCss == "overflow-y: hidden;")
+            assert(Style.overflowY(_.visible).toCss == "overflow-y: visible;")
+        }
+
+        "overflowX and overflowY are distinct kinds that coexist" in {
+            // overflow-x and overflow-y are separate Prop cases, so both survive on one style; this is
+            // the rail's case (vertical scroll, horizontal clipped) without enabling both axes via the
+            // single `overflow` shorthand.
+            assert(
+                Style.overflowY(_.auto).overflowX(_.hidden).toCss == "overflow-y: auto; overflow-x: hidden;"
+            )
+        }
+
+        "single-axis overflow does not collapse into the both-axis overflow" in {
+            // The shorthand `overflow` is a different Prop kind from `overflowY`, so setting one does not
+            // replace the other under last-write-wins.
+            val s = Style.overflow(_.hidden).overflowY(_.auto)
+            assert(s.toCss == "overflow: hidden; overflow-y: auto;")
+        }
     }
 
     "pseudo-states" - {

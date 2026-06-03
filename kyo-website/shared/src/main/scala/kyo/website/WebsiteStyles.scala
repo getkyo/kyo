@@ -690,13 +690,18 @@ object WebsiteStyles:
             // content height in the docs-shell flex row instead of stretching to the full article
             // height (a stretched item cannot stick). max-height:calc(100vh - 60px) caps the rail to
             // the viewport below the header, and overflow-y:auto lets a tall module list scroll WITHIN
-            // the floating rail rather than off-screen. Below 860px the responsive block flips the rail
-            // to display:none (it becomes the toggle-revealed drawer), where sticky no longer applies.
+            // the floating rail rather than off-screen. overflow-y (NOT the both-axis `overflow`)
+            // is deliberate: the rail only ever overflows vertically, so enabling the horizontal axis
+            // too would let the browser reserve/draw a horizontal scrollbar track along the rail bottom
+            // (the stray horizontal bar) when a classic scrollbar OS shrinks the client box; scoping to
+            // the vertical axis removes that bottom-edge bar while keeping the vertical scroll. Below
+            // 860px the responsive block flips the rail to display:none (it becomes the toggle-revealed
+            // drawer), where sticky no longer applies.
             .rule(
                 "docs-sidebar",
                 Style.column.width(260.px).flexShrink(0.0)
                     .position(_.sticky).top(60.px).alignSelf(_.start)
-                    .maxHeight(Length.Calc("100vh - 60px")).overflow(_.auto)
+                    .maxHeight(Length.Calc("100vh - 60px")).overflowY(_.auto)
                     .bg(_.variable("bg")).borderRight(1.px, _.variable("line-soft"))
                     .padding(22.px, 14.px, 60.px, 24.px)
             )

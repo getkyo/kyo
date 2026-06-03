@@ -166,6 +166,8 @@ private[kyo] object CssStyleRenderer:
         case Align(v)          => s"align-items: ${alignment(v)};"
         case Justify(v)        => s"justify-content: ${justification(v)};"
         case OverflowProp(v)   => s"overflow: ${overflow(v)};"
+        case OverflowXProp(v)  => s"overflow-x: ${overflow(v)};"
+        case OverflowYProp(v)  => s"overflow-y: ${overflow(v)};"
         case Width(v)          => s"width: ${size(v)};"
         case Height(v)         => s"height: ${size(v)};"
         case MinWidth(v)       => s"min-width: ${size(v)};"
