@@ -11,11 +11,12 @@ import scala.collection.mutable
 /** JVM-only tests for SnapshotRoundTrip that require `FileChannel.map` (mmap).
   *
   * Per Phase 2 post-audit (cross-platform parity), the four digest leaves (T-J1, T-J3, T-J4, T-J5) were migrated to
-  * `shared/src/test/scala/kyo/SnapshotDigestTest.scala` using `MemoryFileSource` (DigestComputer treats any path with a `.jar` suffix as a
-  * jar root). The remaining leaves stay here:
+  * `shared/src/test/scala/kyo/SnapshotDigestTest.scala` using `MemoryFileSource`. G16b (post-close sym.body) was migrated to
+  * `shared/src/test/scala/kyo/SnapshotRoundTripTest.scala` since sym.body will be cross-platform when Phase 04 implements it.
+  *
+  * Remaining leaf:
   *   - G16a: writes a snapshot to a real temp file and reads it back via mmap (`PlatformMmapReader.readMapped`). Tests the mmap path itself,
   *     which is a JVM `FileChannel.map` concern; no cross-platform analog.
-  *   - G16b: pending (post-close `sym.body` on a mmap-loaded snapshot is deferred to Phase 04).
   */
 class SnapshotRoundTripJvmTest extends Test:
 
@@ -113,14 +114,6 @@ class SnapshotRoundTripJvmTest extends Test:
                     fail(s"Unexpected failure: $e")
                 case Result.Panic(t) =>
                     throw t
-    }
-
-    // Test G16b (Phase 16): post-close sym.body on mmap-loaded snapshot returns ClasspathClosed (jvmOnly).
-    // Writes a snapshot to a real temp file, loads it via readMapped inside a Scope.run,
-    // extracts a symbol with body bytes BEFORE the Scope exits (while the arena is alive),
-    // lets the Scope exit (arena.close fires), then calls sym.body post-close and asserts ClasspathClosed.
-    "post-close sym.body on mmap-loaded snapshot returns ClasspathClosed" in {
-        pending // plan: phase-02; sym.body effectful method deferred to Phase 04
     }
 
 end SnapshotRoundTripJvmTest

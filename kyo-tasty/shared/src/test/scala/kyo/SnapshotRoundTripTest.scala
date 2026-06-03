@@ -941,4 +941,15 @@ class SnapshotRoundTripTest extends Test:
                 throw t
     }
 
+    // Test G16b (Phase 16, migrated Phase 2 post-audit): post-close sym.body on mmap-loaded snapshot returns ClasspathClosed.
+    // Writes a snapshot to a real file, loads it via readMapped inside a Scope.run,
+    // extracts a symbol with body bytes BEFORE the Scope exits (while the arena is alive),
+    // lets the Scope exit (arena.close fires), then calls sym.body post-close and asserts ClasspathClosed.
+    // Cross-platform: sym.body will be a cross-platform effectful method when Phase 04 implements it.
+    // Migration: was jvmOnly placeholder in SnapshotRoundTripJvmTest; moved here so Phase 04 can implement
+    // it cross-platform without needing a JVM-specific file.
+    "post-close sym.body on mmap-loaded snapshot returns ClasspathClosed" in {
+        pending // plan: phase-02; sym.body effectful method deferred to Phase 04
+    }
+
 end SnapshotRoundTripTest
