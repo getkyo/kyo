@@ -1429,13 +1429,24 @@ private[kyo] object ChartLower:
     /** Per-key geometry captured from one render frame.
       *
       * `Bar` stores the scaled height and y-coordinate so the next render can compute SMIL `from`/`to`
-      * values. `LinePath` records the SVG path command count for the bounded stepped-morph tween
-      * implemented in Phase 08 (LINE/AREA PATH-MORPH TWEEN carry-over from Phase 06 verify BLOCKER 1).
+      * values for bar SMIL transitions.
+      *
+      * `LinePath` stores the full `PathData` produced by the previous emission. On the next emission,
+      * if the new path has the same command count as the stored one (a structural match -- same number
+      * of MoveTo/LineTo/Close in the same order), a declarative SMIL `animate` is emitted on the `d`
+      * attribute with `from` = the previous rendered `d` string and `to` = the new one. The browser
+      * drives the interpolation; no fiber is required, which fits the pure `Svg.Root` lowering.
+      *
+      * If the command counts DIFFER (e.g. a category was added or removed), the path SNAPS with no
+      * animate child. This is a documented v1 limitation: a structural path morph requires a bounded
+      * stepped-interpolation fiber that can only be launched from an effectful mount hook, which the
+      * pure `Svg.Root` lowering does not provide. `AnimateConfig.morphSteps` is reserved for a future
+      * effectful chart mount API and is not used here.
       */
     sealed private[kyo] trait MarkGeom
     private[kyo] object MarkGeom:
-        final case class Bar(height: Double, y: Double) extends MarkGeom
-        final case class LinePath(commandCount: Int)    extends MarkGeom
+        final case class Bar(height: Double, y: Double)   extends MarkGeom
+        final case class LinePath(pathData: Svg.PathData) extends MarkGeom
     end MarkGeom
 
     /** Three-slot transition state for a live chart, held in a chart-private `AtomicRef.Unsafe`.
@@ -1526,6 +1537,66 @@ private[kyo] object ChartLower:
             .repeatCount("1")
     end smilAnimate
 
+    /** Build one SMIL `Svg.Animate` child that animates the `d` path attribute using string `from`/`to`.
+      *
+      * Used for the declarative line/area path morph: when the previous and new paths have the same
+      * command structure (same count and types), the browser interpolates the vertex coordinates.
+      * N4-guard: no `url(#id)` refs.
+      */
+    private def smilAnimatePath(fromD: String, toD: String, dur: String)(using Frame): Svg.Animate =
+        Svg.animate
+            .attributeName("d")
+            .from(fromD)
+            .to(toD)
+            .dur(dur)
+            .begin("0s")
+            .repeatCount("1")
+    end smilAnimatePath
+
+    /** Render a `PathData` to its SVG `d` attribute string, using the same format as `HtmlRenderer`.
+      *
+      * The result is identical to what `HtmlRenderer` would write for `svgAttr(sb, "d", ...)` so the
+      * SMIL `from`/`to` strings round-trip correctly through the browser's SMIL engine. Integers are
+      * rendered without a decimal point; fractions use the shortest representation.
+      *
+      * Used for path-morph SMIL `animate` children: the previous path's rendered string becomes `from`
+      * and the new path's rendered string becomes `to`.
+      */
+    private def renderPathDataStr(d: Svg.PathData): String =
+        def fmtD(v: Double): String = NumberFormat.double(v)
+        def cmd(c: Svg.PathCommand): String = c match
+            case Svg.PathCommand.MoveTo(x, y)   => s"M${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.MoveBy(dx, dy) => s"m${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.LineTo(x, y)   => s"L${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.LineBy(dx, dy) => s"l${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.HLineTo(x)     => s"H${fmtD(x)}"
+            case Svg.PathCommand.HLineBy(dx)    => s"h${fmtD(dx)}"
+            case Svg.PathCommand.VLineTo(y)     => s"V${fmtD(y)}"
+            case Svg.PathCommand.VLineBy(dy)    => s"v${fmtD(dy)}"
+            case Svg.PathCommand.CubicTo(c1x, c1y, c2x, c2y, x, y) =>
+                s"C${fmtD(c1x)} ${fmtD(c1y)} ${fmtD(c2x)} ${fmtD(c2y)} ${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.CubicBy(c1x, c1y, c2x, c2y, dx, dy) =>
+                s"c${fmtD(c1x)} ${fmtD(c1y)} ${fmtD(c2x)} ${fmtD(c2y)} ${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.SmoothCubicTo(c2x, c2y, x, y) =>
+                s"S${fmtD(c2x)} ${fmtD(c2y)} ${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.SmoothCubicBy(c2x, c2y, dx, dy) =>
+                s"s${fmtD(c2x)} ${fmtD(c2y)} ${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.QuadTo(cx, cy, x, y)   => s"Q${fmtD(cx)} ${fmtD(cy)} ${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.QuadBy(cx, cy, dx, dy) => s"q${fmtD(cx)} ${fmtD(cy)} ${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.SmoothQuadTo(x, y)     => s"T${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.SmoothQuadBy(dx, dy)   => s"t${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.ArcTo(rx, ry, xRot, largeArc, sweep, x, y) =>
+                val la = if largeArc then 1 else 0
+                val sw = if sweep then 1 else 0
+                s"A${fmtD(rx)} ${fmtD(ry)} ${fmtD(xRot)} $la $sw ${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.ArcBy(rx, ry, xRot, largeArc, sweep, dx, dy) =>
+                val la = if largeArc then 1 else 0
+                val sw = if sweep then 1 else 0
+                s"a${fmtD(rx)} ${fmtD(ry)} ${fmtD(xRot)} $la $sw ${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.Close => "Z"
+        Svg.PathData.commands(d).map(cmd).mkString(" ")
+    end renderPathDataStr
+
     /** Lower a simple bar mark with keyed enter/update SMIL transitions.
       *
       * For each row:
@@ -1593,12 +1664,22 @@ private[kyo] object ChartLower:
         loop(0, Chunk.empty, newGeom)
     end lowerBarSimpleWithTransitions
 
-    /** Lower a line mark with keyed-transition awareness.
+    /** Lower a line mark with keyed-transition awareness, emitting a declarative SMIL path morph when
+      * the previous and new paths have the same command structure.
       *
-      * Path morphs (line `d` attribute) cannot use a single SMIL `animate` across differing command counts,
-      * so no `animate` children are emitted (lines snap in Phase 06). The bounded stepped-morph tween is
-      * implemented in Phase 08. The current geometry (command count) is recorded in `newGeom` so Phase 08
-      * can use it to bound the interpolation step count via `spec.animateCfg.morphSteps`.
+      * When animation is enabled and a previous `MarkGeom.LinePath` entry exists in `fromGeom` for the
+      * same path slot, the command counts of the previous and new paths are compared:
+      *   - Same count (structural match -- stable x-categories, changing y-values): the path is emitted
+      *     with one `Svg.animate` child `attributeName="d" from={prevD} to={newD}`. The browser drives
+      *     the interpolation declaratively; no fiber or mount hook is required.
+      *   - Different count (structural change, e.g. a category added or removed): the path snaps with no
+      *     animate child. This is a documented v1 limitation: a structural path morph requires a bounded
+      *     stepped-interpolation fiber that can only be launched from an effectful mount hook, which the
+      *     pure `Svg.Root` lowering does not provide. `AnimateConfig.morphSteps` is reserved for a
+      *     future effectful chart mount API.
+      *
+      * The current `PathData` is always recorded in `newGeom` under `"line-{index}"` keys so the next
+      * emission can use it as the `from` path.
       *
       * N4-guard: no `url(#id)` refs.
       */
@@ -1609,9 +1690,13 @@ private[kyo] object ChartLower:
         xs: Scale,
         ys: Scale,
         spec: ChartSpec[A],
+        fromGeom: Map[String, MarkGeom],
         newGeom: Map[String, MarkGeom]
     )(using Frame): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
-        val paths: Chunk[Svg.SvgElement] = mark.color match
+        val animOk = spec.animateCfg.enabled
+        val durStr = formatDur(spec.animateCfg.duration)
+        // Compute the raw paths first (same as non-transition path but we need the PathData for morph).
+        val rawPaths: Chunk[Svg.Path] = mark.color match
             case Absent =>
                 Chunk(lowerLineSeries(rows, mark, layout, xs, ys))
             case Present(colorCh) =>
@@ -1621,16 +1706,99 @@ private[kyo] object ChartLower:
                 colorKeys.map: key =>
                     val seriesRows = rows.filter(r => colorCh.accessor(r).toString == key)
                     lowerLineSeries(seriesRows, mark, layout, xs, ys)
-        // Record command count for each path (for future stepped-tween bounding)
-        val updatedGeom = paths.foldLeft(newGeom): (g, el) =>
-            el match
-                case p: Svg.Path =>
-                    val cmdCount = Svg.PathData.commands(p.svgAttrs.d.getOrElse(Svg.PathData.empty)).size
-                    val pathKey  = "line-" + g.size.toString
-                    g.updated(pathKey, MarkGeom.LinePath(cmdCount))
-                case _ => g
-        (paths, updatedGeom)
+        // Build the base geom key offset to avoid collision with earlier-pass keys.
+        val keyOffset = newGeom.size
+        // For each raw path: optionally attach a SMIL animate on `d`, then record the new PathData.
+        val (elems, updatedGeom) = rawPaths.foldLeft((Chunk.empty[Svg.SvgElement], newGeom)):
+            case ((accElems, accGeom), rawPath) =>
+                val idx      = accElems.size
+                val pathKey  = "line-" + (keyOffset + idx).toString
+                val newPd    = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
+                val newGeom2 = accGeom.updated(pathKey, MarkGeom.LinePath(newPd))
+                val emittedPath: Svg.SvgElement =
+                    if !animOk then rawPath
+                    else
+                        fromGeom.get(pathKey) match
+                            case Some(MarkGeom.LinePath(prevPd)) =>
+                                val prevCount = Svg.PathData.commands(prevPd).size
+                                val newCount  = Svg.PathData.commands(newPd).size
+                                if prevCount == newCount && prevCount > 0 then
+                                    // Structural match: same command count -> declarative SMIL morph.
+                                    val fromD = renderPathDataStr(prevPd)
+                                    val toD   = renderPathDataStr(newPd)
+                                    rawPath(smilAnimatePath(fromD, toD, durStr))
+                                else
+                                    // Structural change (category added/removed): path snaps, no animate.
+                                    rawPath
+                                end if
+                            case _ =>
+                                // No previous path for this slot (first emission or new series): snap.
+                                rawPath
+                (accElems.append(emittedPath), newGeom2)
+        (elems, updatedGeom)
     end lowerLineWithTransitions
+
+    /** Lower an area mark with keyed-transition awareness, emitting a declarative SMIL path morph when
+      * the previous and new paths have the same command structure.
+      *
+      * Mirrors `lowerLineWithTransitions` for area paths. A simple (non-stacked) area mark produces one
+      * closed path; the SMIL morph fires when the previous path's command count equals the new one.
+      *
+      * Stacked area marks fall through to the plain `lowerArea` because multi-path stacking uses
+      * per-group path indices that would need per-group geometry tracking not yet plumbed in v1.
+      *
+      * Structural path morphs (different command count) snap: see `lowerLineWithTransitions` scaladoc
+      * for the v1 limitation note.
+      *
+      * N4-guard: no `url(#id)` refs.
+      */
+    private def lowerAreaWithTransitions[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Area[A, X, Y],
+        layout: Layout,
+        xs: Scale,
+        ys: Scale,
+        spec: ChartSpec[A],
+        fromGeom: Map[String, MarkGeom],
+        newGeom: Map[String, MarkGeom]
+    )(using Frame): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
+        // Stacked area: fall through to plain lowerArea (no per-group path tracking yet).
+        val isStacked = mark.y.isDefined && mark.stack.group.isDefined
+        if isStacked then
+            val elems = lowerArea(rows, mark, layout, xs, ys)
+            (elems, newGeom)
+        else
+            val animOk = spec.animateCfg.enabled
+            val durStr = formatDur(spec.animateCfg.duration)
+            val rawPaths: Chunk[Svg.Path] = lowerArea(rows, mark, layout, xs, ys).collect:
+                case p: Svg.Path => p
+            val keyOffset = newGeom.size
+            val (elems, updatedGeom) = rawPaths.foldLeft((Chunk.empty[Svg.SvgElement], newGeom)):
+                case ((accElems, accGeom), rawPath) =>
+                    val idx      = accElems.size
+                    val pathKey  = "area-" + (keyOffset + idx).toString
+                    val newPd    = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
+                    val newGeom2 = accGeom.updated(pathKey, MarkGeom.LinePath(newPd))
+                    val emittedPath: Svg.SvgElement =
+                        if !animOk then rawPath
+                        else
+                            fromGeom.get(pathKey) match
+                                case Some(MarkGeom.LinePath(prevPd)) =>
+                                    val prevCount = Svg.PathData.commands(prevPd).size
+                                    val newCount  = Svg.PathData.commands(newPd).size
+                                    if prevCount == newCount && prevCount > 0 then
+                                        val fromD = renderPathDataStr(prevPd)
+                                        val toD   = renderPathDataStr(newPd)
+                                        rawPath(smilAnimatePath(fromD, toD, durStr))
+                                    else
+                                        rawPath
+                                    end if
+                                case _ =>
+                                    rawPath
+                    (accElems.append(emittedPath), newGeom2)
+            (elems, updatedGeom)
+        end if
+    end lowerAreaWithTransitions
 
     /** Build the marks region `Svg.G` for a reactive emission with keyed enter/update transitions.
       *
@@ -1683,8 +1851,13 @@ private[kyo] object ChartLower:
                         val (elems, geom) = lowerBarSimpleWithTransitions(rows, m, layout, xs, ys, spec, fromGeom, accGeom)
                         (accElems ++ elems, geom)
                     case m: Mark.Line[A, ?, ?] if animOk =>
-                        // Line path: no SMIL animate in Phase 06 (snaps); command counts recorded for Phase 08.
-                        val (elems, geom) = lowerLineWithTransitions(rows, m, layout, xs, ys, spec, accGeom)
+                        // Line path: declarative SMIL `d` morph when command counts match; snaps otherwise.
+                        // fromGeom carries the previous PathData for the `from` side of the SMIL animate.
+                        val (elems, geom) = lowerLineWithTransitions(rows, m, layout, xs, ys, spec, fromGeom, accGeom)
+                        (accElems ++ elems, geom)
+                    case m: Mark.Area[A, ?, ?] if animOk =>
+                        // Area path: same declarative SMIL `d` morph discipline as line.
+                        val (elems, geom) = lowerAreaWithTransitions(rows, m, layout, xs, ys, spec, fromGeom, accGeom)
                         (accElems ++ elems, geom)
                     case m: Mark.Bar[A, ?, ?]   => (accElems ++ lowerBar(rows, m, layout, xs, ys), accGeom)
                     case m: Mark.Line[A, ?, ?]  => (accElems ++ lowerLine(rows, m, layout, xs, ys), accGeom)

@@ -208,12 +208,20 @@ class ChartTransitionTest extends Test:
         end for
     }
 
-    // ---- Test 4: LINE under .animate(_.ease(...)) lowers to <path> with no <animate> child ----
+    // ---- Test 4: LINE under .animate(_.ease(...)) emits a SMIL <animate> on d (Phase 08 morph) ----
 
-    "LINE animate: lowers to <path> with no <animate> child (lines snap in Phase 06; stepped morph is Phase 08)" in run {
-        // A line chart with animation enabled. In Phase 06 SMIL cannot morph paths with different command
-        // counts, so line marks emit no <animate> children (graceful snap). The bounded stepped-morph tween
-        // is implemented in Phase 08 (LINE/AREA PATH-MORPH TWEEN carry-over from Phase 06 verify BLOCKER 1).
+    "LINE animate: stable-category update emits <animate attributeName=\"d\"> with from/to d strings" in run {
+        // Phase 08: a line chart with animation enabled and stable categories (same command structure)
+        // now emits a SMIL `<animate attributeName="d" from=... to=...>` child on the path element.
+        // Jan and Feb are present in both emissions, so the Band scale produces the same x positions
+        // and the command count is 2 (MoveTo + LineTo) before and after.
+        //
+        // Band scale (Jan, Feb), plotX=60, plotW=560, n=2, slot=280, padding=0.1, bandW=252:
+        //   px_Jan = 60 + 0*280 + (280-252)/2 = 60 + 14 = 74
+        //   px_Feb = 60 + 1*280 + (280-252)/2 = 60 + 294 = 354
+        // Y scale linear(0,4000), baseline=440, top=20: pixel(v) = 440 - v*0.105
+        //   initial: Jan=1000 -> py=335, Feb=2000 -> py=230  (from: "M74 335 L354 230")
+        //   updated: Jan=3000 -> py=125, Feb=500  -> py=387.5 (to:   "M74 125 L354 387.5")
         val initial = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val updated = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
         for
@@ -226,12 +234,25 @@ class ChartTransitionTest extends Test:
             _     <- ref.set(updated)
             html1 <- HtmlRenderer.render(root, Seq.empty)
         yield
-            // The rendered HTML must contain a <path element (the line).
+            // Both renders must contain a <path element (the line).
             assert(html0.contains("<path"), s"Expected <path in initial render:\n$html0")
             assert(html1.contains("<path"), s"Expected <path in updated render:\n$html1")
-            // No <animate element: line paths snap in Phase 06.
-            assert(!html0.contains("<animate"), s"Expected no <animate for line path (initial):\n$html0")
-            assert(!html1.contains("<animate"), s"Expected no <animate for line path (updated):\n$html1")
+            // The initial render has no previous path, so no animate on first emission.
+            assert(!html0.contains("<animate"), s"Expected no <animate on first emission (no prev path):\n$html0")
+            // The updated render must contain a SMIL animate on attributeName="d".
+            assert(
+                html1.contains("attributeName=\"d\""),
+                s"Expected attributeName=d in updated render (path morph):\n$html1"
+            )
+            // The from/to strings must match the computed path coordinates.
+            assert(
+                html1.contains("from=\"M74 335 L354 230\""),
+                s"Expected from=M74 335 L354 230 in updated render:\n$html1"
+            )
+            assert(
+                html1.contains("to=\"M74 125 L354 387.5\""),
+                s"Expected to=M74 125 L354 387.5 in updated render:\n$html1"
+            )
         end for
     }
 

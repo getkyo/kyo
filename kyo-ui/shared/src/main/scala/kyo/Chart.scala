@@ -669,9 +669,11 @@ object Theme:
   *
   * `ease(d)` enables one-shot SMIL transitions with duration `d`. `none` disables all transitions. The easing
   * function is fixed to ease-in-out-cubic (the demo's pattern); named easing variants are additive extensions.
-  * `morphSteps` bounds the number of interpolation steps emitted for path-morph transitions (line/area marks)
-  * where SMIL cannot be used; this caps the server-push cost for live charts. Used as the argument to
-  * `.animate(f)`: write `_.ease(300.millis)` or `_.none`.
+  * `morphSteps` is reserved for a future effectful chart-mount API that will drive a bounded stepped
+  * path-morph interpolation for line/area marks whose command structure changes between updates. The
+  * current pure `Svg.Root` lowering animates same-structure path morphs with declarative SMIL (an
+  * `animate` on the `d` attribute) and snaps structural changes; `morphSteps` is not consulted by it.
+  * Used as the argument to `.animate(f)`: write `_.ease(300.millis)` or `_.none`.
   */
 final case class AnimateConfig(
     enabled: Boolean,
