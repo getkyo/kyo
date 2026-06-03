@@ -1790,6 +1790,9 @@ lazy val `kyo-test-sbt` =
     project
         .in(file("kyo-test/sbt"))
         .enablePlugins(SbtPlugin)
+        // sbt plugin (Scala 2.12), no README: the doctest plugin has nothing to validate here and otherwise
+        // runs scalafmt against unrelated blocks and fails. Disable it as the other plugin modules do.
+        .disablePlugins(KyoDoctestPlugin)
         .settings(
             name               := "sbt-kyo-test",
             sbtPlugin          := true,
@@ -1803,6 +1806,7 @@ lazy val `kyo-test-sbt-publish` =
     project
         .in(file("kyo-test/sbt-publish"))
         .enablePlugins(SbtPlugin, BuildInfoPlugin)
+        .disablePlugins(KyoDoctestPlugin)
         .dependsOn(`kyo-test-sbt`)
         .settings(
             name                                   := "sbt-kyo-test-publish",
