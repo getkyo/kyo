@@ -189,7 +189,7 @@ class SymbolResolutionTest extends Test:
                 cp.findClass("kyo.fixtures.PlainClass") match
                     case Present(sym) => Kyo.lift(sym match
                             case c: Tasty.Symbol.ClassLike => c.parentTypes;
-                            case _                         => Chunk.empty[Tasty.Type])
+                            case null                      => Chunk.empty[Tasty.Type])
                     case Absent => Abort.fail(TastyError.MalformedSection("ASTs", "PlainClass not found", 0L))).map:
                 case Result.Success(parents) =>
                     assert(parents.nonEmpty, "PlainClass should have at least one parent type (cross-file ref resolved)")

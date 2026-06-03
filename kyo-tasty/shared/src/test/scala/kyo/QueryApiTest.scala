@@ -919,6 +919,8 @@ class QueryApiTest extends Test:
                 assert(file == "foo.tasty")
                 assert(exp.equals(expected))
                 assert(fnd.equals(found))
+            case other =>
+                fail(s"Expected TastyError.InconsistentClasspath but got $other")
         end match
     }
 

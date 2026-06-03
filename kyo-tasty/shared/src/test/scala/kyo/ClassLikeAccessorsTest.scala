@@ -507,12 +507,11 @@ class ClassLikeAccessorsTest extends Test:
                 given Tasty.Classpath = cp
                 val found             = cp.findClass("kyo.fixtures.PlainClass")
                 found match
-                    case Maybe.Present(sym: Tasty.Symbol.ClassLike) =>
+                    case Maybe.Present(sym) =>
                         val comp: Maybe[Tasty.Symbol] = sym.companion
                         // companion may or may not be indexed for this fixture; success means the call compiles and returns
                         succeed
-                    case Maybe.Present(_) => succeed
-                    case Maybe.Absent     => succeed).map:
+                    case Maybe.Absent => succeed).map:
                 case Result.Success(a) => a
                 case Result.Failure(e) => fail(s"Unexpected failure: $e")
                 case Result.Panic(t)   => throw t

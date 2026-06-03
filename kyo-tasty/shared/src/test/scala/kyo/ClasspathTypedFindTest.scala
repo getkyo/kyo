@@ -108,10 +108,8 @@ class ClasspathTypedFindTest extends Test:
     "Leaf 101: findClass returns Present[Class] for a class FQN" in run {
         buildFixture.map: cp =>
             cp.findClass("pkg.A") match
-                case Maybe.Present(c: Tasty.Symbol.Class) =>
+                case Maybe.Present(c) =>
                     assert(c.name.asString == "A", s"Expected Class name 'A' but got '${c.name.asString}'")
-                case Maybe.Present(other) =>
-                    fail(s"Expected Symbol.Class but got $other")
                 case Maybe.Absent =>
                     fail("Expected Present for pkg.A but got Absent")
     }
@@ -135,10 +133,8 @@ class ClasspathTypedFindTest extends Test:
     "Leaf 103: findTrait returns Present[Trait] for a trait FQN" in run {
         buildFixture.map: cp =>
             cp.findTrait("pkg.T") match
-                case Maybe.Present(t: Tasty.Symbol.Trait) =>
+                case Maybe.Present(t) =>
                     assert(t.name.asString == "T", s"Expected Trait name 'T' but got '${t.name.asString}'")
-                case Maybe.Present(other) =>
-                    fail(s"Expected Symbol.Trait but got $other")
                 case Maybe.Absent =>
                     fail("Expected Present for pkg.T but got Absent")
     }
@@ -151,10 +147,8 @@ class ClasspathTypedFindTest extends Test:
     "Leaf 104: findObject returns Present[Object] for an object FQN" in run {
         buildFixture.map: cp =>
             cp.findObject("pkg.O") match
-                case Maybe.Present(o: Tasty.Symbol.Object) =>
+                case Maybe.Present(o) =>
                     assert(o.name.asString == "O", s"Expected Object name 'O' but got '${o.name.asString}'")
-                case Maybe.Present(other) =>
-                    fail(s"Expected Symbol.Object but got $other")
                 case Maybe.Absent =>
                     fail("Expected Present for pkg.O but got Absent")
     }
@@ -194,10 +188,8 @@ class ClasspathTypedFindTest extends Test:
     "Leaf 106: findPackage returns Present[Package] for a package FQN" in run {
         buildFixture.map: cp =>
             cp.findPackage("pkg") match
-                case Maybe.Present(p: Tasty.Symbol.Package) =>
+                case Maybe.Present(p) =>
                     assert(p.name.asString == "pkg", s"Expected Package name 'pkg' but got '${p.name.asString}'")
-                case Maybe.Present(other) =>
-                    fail(s"Expected Symbol.Package but got $other")
                 case Maybe.Absent =>
                     fail("Expected Present for pkg but got Absent")
     }
@@ -213,7 +205,7 @@ class ClasspathTypedFindTest extends Test:
             assert(result.size == 2, s"Expected 2 classes named A but got ${result.size}: $result")
             result.foreach:
                 case _: Tasty.Symbol.Class => ()
-                case other                 => fail(s"Expected Symbol.Class but got $other")
+                case null                  => fail("Expected Symbol.Class but got null")
             assert(result.forall(_.name.asString == "A"), s"All results must be named 'A' but got: ${result.map(_.name.asString)}")
     }
 
@@ -225,10 +217,8 @@ class ClasspathTypedFindTest extends Test:
     "Leaf 108: findClassByBinary returns Present[Class] for a binary name" in run {
         buildFixture.map: cp =>
             cp.findClassByBinary("pkg/A") match
-                case Maybe.Present(c: Tasty.Symbol.Class) =>
+                case Maybe.Present(c) =>
                     assert(c.name.asString == "A", s"Expected Class name 'A' but got '${c.name.asString}'")
-                case Maybe.Present(other) =>
-                    fail(s"Expected Symbol.Class but got $other")
                 case Maybe.Absent =>
                     fail("Expected Present for pkg/A but got Absent")
     }

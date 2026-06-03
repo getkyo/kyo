@@ -91,6 +91,9 @@ object TypeKey:
                 31 * computeHash(qual) + name.hashCode + 15
             case Tasty.Type.Bounds(lo, hi) =>
                 31 * computeHash(lo) + computeHash(hi) + 16
+            case Tasty.Type.Nothing => 18
+            case Tasty.Type.Any     => 19
+            case Tasty.Type.Unknown => 20
 
     def structuralEquals(a: Tasty.Type, b: Tasty.Type): Boolean =
         (a, b) match

@@ -118,8 +118,8 @@ class ClasspathSubclassTypedTest extends Test:
                     direct.foreach:
                         case cl: Tasty.Symbol.ClassLike =>
                             ()
-                        case other =>
-                            fail(s"Expected Symbol.ClassLike but got $other")
+                        case null =>
+                            fail("Expected Symbol.ClassLike but got null")
                     assert(
                         direct.map(_.name.asString).toSet == Set("B"),
                         s"Expected exactly Set(B) but got ${direct.map(_.name.asString).toSet}"
@@ -147,7 +147,7 @@ class ClasspathSubclassTypedTest extends Test:
                     assert(impls.size == 3, s"Expected 3 implementations but got ${impls.size}: $names")
                     impls.foreach:
                         case _: Tasty.Symbol.Class => ()
-                        case other                 => fail(s"Expected Symbol.Class but got $other")
+                        case null                  => fail("Expected Symbol.Class but got null")
                     assert(
                         impls.map(_.name.asString).toSet == Set("B", "C", "CFromA"),
                         s"Expected exactly Set(B, C, CFromA) but got ${impls.map(_.name.asString).toSet}"

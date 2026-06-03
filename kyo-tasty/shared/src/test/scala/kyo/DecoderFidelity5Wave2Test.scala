@@ -234,7 +234,7 @@ class DecoderFidelity5Wave2Test extends Test:
             given Tasty.Classpath = cp
             val candidate = cp.allClassLike.find:
                 case c: Tasty.Symbol.ClassLike => c.body.isDefined
-                case _                         => false
+                case null                      => false
             candidate match
                 case None => succeed
                 case Some(sym) =>

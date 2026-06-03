@@ -499,11 +499,11 @@ class SnapshotRoundTripTest extends Test:
                                 // We check declarationIds.length as a proxy.
                                 val coldDeclNames = (coldSym match
                                     case c: Tasty.Symbol.ClassLike => c.declarationIds;
-                                    case _                         => Chunk.empty
+                                    case null                      => Chunk.empty
                                 ).map(_.value.toString).toSet
                                 val warmDeclNames = (warmSym match
                                     case c: Tasty.Symbol.ClassLike => c.declarationIds;
-                                    case _                         => Chunk.empty
+                                    case null                      => Chunk.empty
                                 ).map(_.value.toString).toSet
                                 if coldDeclNames.nonEmpty && warmDeclNames.isEmpty then
                                     allGood = false
@@ -515,7 +515,7 @@ class SnapshotRoundTripTest extends Test:
                     for warmSym <- warmClasses do
                         val parentsChunk = warmSym match
                             case c: Tasty.Symbol.ClassLike => c.parentTypes;
-                            case _                         => Chunk.empty
+                            case null                      => Chunk.empty
                         assert(parentsChunk != null, s"${warmSym.name.asString}: parentTypes was null after snapshot load")
                     end for
                     succeed
@@ -607,7 +607,7 @@ class SnapshotRoundTripTest extends Test:
                     warmCp.findClass("test.Foo") match
                         case Maybe.Present(sym) => sym match
                                 case c: Tasty.Symbol.ClassLike => c.parentTypes;
-                                case _                         => Chunk.empty
+                                case null                      => Chunk.empty
                         case Maybe.Absent => Abort.fail(TastyError.NotImplemented("test.Foo not found after snapshot load"))
         .map:
             case Result.Success(parents) =>
@@ -849,8 +849,6 @@ class SnapshotRoundTripTest extends Test:
                         assert(memoSize == 1, s"bodyMemo must have exactly 1 entry after first decodeBody call, got $memoSize")
                 case Result.Success((_, None)) =>
                     fail("No body-bearing symbol found in warm classpath; fixture must have at least one body")
-                case Result.Success(_) =>
-                    fail("Unexpected tuple shape")
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure in Leaf 4: $e")
                 case Result.Panic(t) =>

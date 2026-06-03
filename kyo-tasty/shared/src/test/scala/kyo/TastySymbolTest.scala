@@ -115,7 +115,7 @@ class TastySymbolTest extends Test:
                 cp.findClass("kyo.fixtures.PlainClass") match
                     case Present(sym) => Kyo.lift(sym match
                             case c: Tasty.Symbol.ClassLike => c.parentTypes;
-                            case _                         => Chunk.empty[Tasty.Type])
+                            case null                      => Chunk.empty[Tasty.Type])
                     case Absent => Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(parents) =>
                     assert(

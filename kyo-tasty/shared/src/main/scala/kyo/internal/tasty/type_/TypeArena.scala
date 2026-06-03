@@ -84,6 +84,9 @@ final class TypeArena:
                     Tasty.Type.TypeRef(internRec(qual, depth), name)
                 case Tasty.Type.Bounds(lo, hi) =>
                     Tasty.Type.Bounds(internRec(lo, depth), internRec(hi, depth))
+                case Tasty.Type.Nothing => t
+                case Tasty.Type.Any     => t
+                case Tasty.Type.Unknown => t
             end match
         end recurse
 

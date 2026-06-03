@@ -857,7 +857,7 @@ object AstUnpickler:
     )(using Frame, AllowUnsafe): Maybe[Tasty.Annotation] =
         if view.position >= annEnd then return Absent
         val nextTag = view.peekByte(view.position) & 0xff
-        val tyconResult =
+        val tyconResult: Maybe[Tasty.Type] =
             try
                 if isTreeTptTag(nextTag) then
                     // Annotation tycon emitted as a TPT tag (e.g. IDENTtpt, APPLIEDtpt).

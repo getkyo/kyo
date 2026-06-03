@@ -49,12 +49,10 @@ class ClasspathTypedSymbolsTest extends Test:
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass")).map:
-                case Result.Success(Maybe.Present(sym: Tasty.Symbol.Class)) =>
+                case Result.Success(Maybe.Present(sym)) =>
                     import Tasty.Name.asString
                     assert(sym.name.asString == "PlainClass", s"Expected name PlainClass but got ${sym.name.asString}")
                     succeed
-                case Result.Success(Maybe.Present(other)) =>
-                    fail(s"Expected Symbol.Class but got ${other.getClass.getSimpleName}")
                 case Result.Success(Maybe.Absent) =>
                     fail("Expected findClass to return Present but got Absent")
                 case Result.Failure(e) => fail(s"Unexpected failure: $e")

@@ -25,6 +25,8 @@ class TypeSymbolIdTest extends Test:
         named match
             case Tasty.Type.Named(symbolId) =>
                 assert(symbolId.value == 42, s"Expected symbolId.value == 42 but got ${symbolId.value}")
+            case other =>
+                fail(s"Expected Type.Named but got $other")
         end match
     }
 
@@ -45,6 +47,8 @@ class TypeSymbolIdTest extends Test:
                         resolved.kind == Tasty.SymbolKind.Unresolved,
                         s"Expected kind=Unresolved but got ${resolved.kind}"
                     )
+                case other =>
+                    fail(s"Expected Type.Named but got $other")
             end match
     }
 
