@@ -118,6 +118,9 @@ def bar[A, X: Plottable, Y: Plottable](
     y: A => Y,
     color: A => Any = Unset.of[A, Any],
     stack: Grouping[A] = Grouping.none[A],
+    opacity: A => Double = Unset.of[A, Double],
+    label: A => String = Unset.of[A, String],
+    tooltip: A => String = Unset.of[A, String],
     axis: Axis = Axis.Left
 )(using Frame): Mark[A] =
     val xCh = Channel[A, X](x, summon[Plottable[X]])
@@ -125,7 +128,10 @@ def bar[A, X: Plottable, Y: Plottable](
     val colorMaybe: Maybe[Channel[A, ?]] =
         if Unset.supplied(color) then Present(Channel[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]]))
         else Absent
-    Mark.Bar(xCh, yCh, colorMaybe, stack, Absent, Absent, Absent, axis)
+    val opacityMaybe: Maybe[A => Double] = if Unset.supplied(opacity) then Present(opacity) else Absent
+    val labelMaybe: Maybe[A => String]   = if Unset.supplied(label) then Present(label) else Absent
+    val tooltipMaybe: Maybe[A => String] = if Unset.supplied(tooltip) then Present(tooltip) else Absent
+    Mark.Bar(xCh, yCh, colorMaybe, stack, opacityMaybe, labelMaybe, tooltipMaybe, axis)
 end bar
 
 /** Creates a line mark.
@@ -142,6 +148,9 @@ def line[A, X: Plottable, Y: Plottable](
     color: A => Any = Unset.of[A, Any],
     curve: Curve = Curve.linear,
     defined: A => Boolean = Unset.of[A, Boolean],
+    opacity: A => Double = Unset.of[A, Double],
+    label: A => String = Unset.of[A, String],
+    tooltip: A => String = Unset.of[A, String],
     axis: Axis = Axis.Left
 )(using Frame): Mark[A] =
     val xCh = Channel[A, X](x, summon[Plottable[X]])
@@ -151,7 +160,10 @@ def line[A, X: Plottable, Y: Plottable](
         else Absent
     val definedMaybe: Maybe[A => Boolean] =
         if Unset.supplied(defined) then Present(defined) else Absent
-    Mark.Line(xCh, yCh, colorMaybe, curve, definedMaybe, Absent, Absent, Absent, axis)
+    val opacityMaybe: Maybe[A => Double] = if Unset.supplied(opacity) then Present(opacity) else Absent
+    val labelMaybe: Maybe[A => String]   = if Unset.supplied(label) then Present(label) else Absent
+    val tooltipMaybe: Maybe[A => String] = if Unset.supplied(tooltip) then Present(tooltip) else Absent
+    Mark.Line(xCh, yCh, colorMaybe, curve, definedMaybe, opacityMaybe, labelMaybe, tooltipMaybe, axis)
 end line
 
 /** Creates an area mark.
@@ -171,6 +183,9 @@ def area[A, X: Plottable, Y: Plottable](
     color: A => Any = Unset.of[A, Any],
     stack: Grouping[A] = Grouping.none[A],
     curve: Curve = Curve.linear,
+    opacity: A => Double = Unset.of[A, Double],
+    label: A => String = Unset.of[A, String],
+    tooltip: A => String = Unset.of[A, String],
     axis: Axis = Axis.Left
 )(using Frame): Mark[A] =
     val xCh                           = Channel[A, X](x, summon[Plottable[X]])
@@ -181,7 +196,10 @@ def area[A, X: Plottable, Y: Plottable](
     val colorMaybe: Maybe[Channel[A, ?]] =
         if Unset.supplied(color) then Present(Channel[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]]))
         else Absent
-    Mark.Area(xCh, yMaybe, y0Maybe, y1Maybe, colorMaybe, stack, curve, Absent, Absent, Absent, axis)
+    val opacityMaybe: Maybe[A => Double] = if Unset.supplied(opacity) then Present(opacity) else Absent
+    val labelMaybe: Maybe[A => String]   = if Unset.supplied(label) then Present(label) else Absent
+    val tooltipMaybe: Maybe[A => String] = if Unset.supplied(tooltip) then Present(tooltip) else Absent
+    Mark.Area(xCh, yMaybe, y0Maybe, y1Maybe, colorMaybe, stack, curve, opacityMaybe, labelMaybe, tooltipMaybe, axis)
 end area
 
 /** Creates a point (scatter/bubble) mark.
@@ -195,8 +213,12 @@ def point[A, X: Plottable, Y: Plottable](
     x: A => X,
     y: A => Y,
     color: A => Any = Unset.of[A, Any],
-    size: A => Double = Unset.of[A, Double],
+    size: A => Double = Unset.of[A, Double],   // D7: sqrt-area scaled magnitude
+    sizePx: A => Double = Unset.of[A, Double], // D7 escape hatch: raw pixel radius
     symbol: A => Symbol = Unset.of[A, Symbol],
+    opacity: A => Double = Unset.of[A, Double], // D4
+    label: A => String = Unset.of[A, String],   // D5
+    tooltip: A => String = Unset.of[A, String], // D6
     axis: Axis = Axis.Left
 )(using Frame): Mark[A] =
     val xCh = Channel[A, X](x, summon[Plottable[X]])
@@ -204,9 +226,16 @@ def point[A, X: Plottable, Y: Plottable](
     val colorMaybe: Maybe[Channel[A, ?]] =
         if Unset.supplied(color) then Present(Channel[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]]))
         else Absent
-    val sizeMaybe: Maybe[A => Double]   = if Unset.supplied(size) then Present(size) else Absent
-    val symbolMaybe: Maybe[A => Symbol] = if Unset.supplied(symbol) then Present(symbol) else Absent
-    Mark.Point(xCh, yCh, colorMaybe, sizeMaybe, Absent, symbolMaybe, Absent, Absent, Absent, axis)
+    val sizeSup   = Unset.supplied(size)
+    val sizePxSup = Unset.supplied(sizePx)
+    // Q-005: when both size and sizePx are supplied, size wins and sizePx is dropped.
+    val sizeMaybe: Maybe[A => Double]    = if sizeSup then Present(size) else Absent
+    val sizePxMaybe: Maybe[A => Double]  = if sizePxSup && !sizeSup then Present(sizePx) else Absent
+    val symbolMaybe: Maybe[A => Symbol]  = if Unset.supplied(symbol) then Present(symbol) else Absent
+    val opacityMaybe: Maybe[A => Double] = if Unset.supplied(opacity) then Present(opacity) else Absent
+    val labelMaybe: Maybe[A => String]   = if Unset.supplied(label) then Present(label) else Absent
+    val tooltipMaybe: Maybe[A => String] = if Unset.supplied(tooltip) then Present(tooltip) else Absent
+    Mark.Point(xCh, yCh, colorMaybe, sizeMaybe, sizePxMaybe, symbolMaybe, opacityMaybe, labelMaybe, tooltipMaybe, axis)
 end point
 
 /** Creates a reference line mark.

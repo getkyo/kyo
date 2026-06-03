@@ -50,15 +50,17 @@ private[kyo] object ChartFoundations:
     def distinctKeyed[A](rows: Chunk[A], key: A => CatKey): Chunk[(CatKey, A)] =
         if rows.isEmpty then Chunk.empty
         else
+            // Set-backed O(1) membership keeps this O(n); a @tailrec inner def walks the rows.
             val seen = scala.collection.mutable.HashSet.empty[CatKey]
-            val buf  = Chunk.newBuilder[(CatKey, A)]
-            val it   = rows.iterator
-            while it.hasNext do
-                val row = it.next()
-                val k   = key(row)
-                if seen.add(k) then buf += ((k, row))
-            end while
-            buf.result()
+            @scala.annotation.tailrec
+            def loop(i: Int, acc: Chunk[(CatKey, A)]): Chunk[(CatKey, A)] =
+                if i >= rows.size then acc
+                else
+                    val row = rows(i)
+                    val k   = key(row)
+                    if seen.add(k) then loop(i + 1, acc.append((k, row)))
+                    else loop(i + 1, acc)
+            loop(0, Chunk.empty)
 
     /** Per-chart deterministic id prefix for `url(#id)`-bearing defs.
       *

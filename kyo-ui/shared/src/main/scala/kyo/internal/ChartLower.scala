@@ -390,15 +390,16 @@ private[kyo] object ChartLower:
 
     /** Compute the stacked y-extent for a Bar mark with a stack grouping.
       *
-      * For each distinct x value, sums the y contributions of all stack groups and returns the maximum sum as the
-      * extent upper bound (lower bound is zero after `ensureZero`).
+      * For each distinct x value, separately tracks the sum of positive contributions
+      * (posSum) and the sum of negative contributions (negSum). Returns
+      * `Extent.Continuous(minNegSum, maxPosSum)` so that negative stacks extend the
+      * axis below zero. `ensureZero` in `yLeftExtent` ensures zero is always in-domain.
       */
     private def stackedYExtent[A, X, Y](rows: Chunk[A], mark: Mark.Bar[A, X, Y]): Maybe[Extent] =
-        val groupFn = mark.stack.group.getOrElse((_: A) => "")
-        // Build: xKey -> totalY
+        // Build xKey -> (posSum, negSum) across all groups at that x slot.
         @scala.annotation.tailrec
-        def loop(i: Int, totals: Map[String, Double]): Map[String, Double] =
-            if i >= rows.size then totals
+        def loop(i: Int, sums: Map[String, (Double, Double)]): Map[String, (Double, Double)] =
+            if i >= rows.size then sums
             else
                 val row = rows(i)
                 val xKey = mark.x.plottable.toDomain(mark.x.accessor(row)) match
@@ -407,13 +408,15 @@ private[kyo] object ChartLower:
                 val yVal = mark.y.plottable.toDomain(mark.y.accessor(row)) match
                     case Present(Domain.Continuous(v)) => v
                     case _                             => 0.0
-                val newTotal = totals.getOrElse(xKey, 0.0) + yVal
-                loop(i + 1, totals.updated(xKey, newTotal))
-        val totals = loop(0, Map.empty)
-        if totals.isEmpty then Absent
+                val (pos, neg) = sums.getOrElse(xKey, (0.0, 0.0))
+                val newPair    = if yVal >= 0.0 then (pos + yVal, neg) else (pos, neg + yVal)
+                loop(i + 1, sums.updated(xKey, newPair))
+        val sums = loop(0, Map.empty)
+        if sums.isEmpty then Absent
         else
-            val maxTotal = totals.values.fold(0.0)(math.max)
-            Present(Extent.Continuous(0.0, maxTotal))
+            val maxPosSum = sums.values.map(_._1).fold(0.0)(math.max)
+            val minNegSum = sums.values.map(_._2).fold(0.0)(math.min)
+            Present(Extent.Continuous(minNegSum, maxPosSum))
         end if
     end stackedYExtent
 
@@ -843,7 +846,7 @@ private[kyo] object ChartLower:
         if spec.legendCfg.isHidden then Chunk.empty
         else
             // Prefer a color channel; fall back to the stack grouping that colors the stacked segments.
-            legendChannel(spec.marks) match
+            val colorItems: Chunk[Svg.SvgElement] = legendChannel(spec.marks) match
                 case Absent           => Chunk.empty
                 case Present(colorCh) =>
                     // categories: Chunk[(label, rawValue)] sorted by enum ordinal when applicable
@@ -853,8 +856,82 @@ private[kyo] object ChartLower:
                         val palette = resolvePalette(spec, categories)
                         buildLegendItems(layout, categories, palette, spec.legendCfg, axisChromeColor(spec.theme))
                     end if
-            end match
+
+            // Size legend: emitted when any Point mark has a size channel (INV-015, test 8).
+            val sizeItems: Chunk[Svg.SvgElement] = spec.marks.flatMap:
+                case m: Mark.Point[A, ?, ?] =>
+                    m.size match
+                        case Present(fn) =>
+                            buildSizeLegend(layout, rows, m, axisChromeColor(spec.theme), colorItems.size)
+                        case Absent => Chunk.empty
+                case _ => Chunk.empty
+
+            colorItems ++ sizeItems
+        end if
     end buildLegend
+
+    /** Build representative size-bubble legend items for a point mark with a size channel.
+      *
+      * Emits two representative circles (min and max magnitude) with their magnitude labels,
+      * placed in the legend region to the right of any color-legend items.
+      */
+    private def buildSizeLegend[A, X, Y](
+        layout: Layout,
+        rows: Chunk[A],
+        mark: Mark.Point[A, X, Y],
+        labelColor: Style.Color,
+        colorItemCount: Int
+    )(using Frame): Chunk[Svg.SvgElement] =
+        mark.size match
+            case Absent      => Chunk.empty
+            case Present(fn) =>
+                // Fold magnitude extent over all rows with defined y.
+                @scala.annotation.tailrec
+                def foldMag(i: Int, mn: Double, mx: Double): (Double, Double) =
+                    if i >= rows.size then (mn, mx)
+                    else
+                        val row = rows(i)
+                        if mark.y.accessor(row).isDefined then
+                            val mag = fn(row)
+                            foldMag(i + 1, math.min(mn, mag), math.max(mx, mag))
+                        else foldMag(i + 1, mn, mx)
+                        end if
+                val (magMin, magMax) = foldMag(0, Double.MaxValue, Double.MinValue)
+                if magMin == Double.MaxValue then Chunk.empty
+                else
+                    val scale = SizeScale(magMin, magMax, SizeScale.DefaultRMin, SizeScale.DefaultRMax)
+                    val rMin  = scale.radius(magMin)
+                    val rMax  = scale.radius(magMax)
+                    // Place size bubbles in the legend region after color swatches.
+                    val startX  = layout.plotX + colorItemCount.toDouble * 80.0
+                    val legendY = MarginTop + LegendReservedH / 2.0
+                    val minCirc = Svg.circle
+                        .cx(startX + rMin)
+                        .cy(legendY)
+                        .r(rMin)
+                        .fill(Svg.Paint.Color(DefaultPalette(0)))
+                        .fillOpacity(0.5)
+                    val minLabel = Svg.text
+                        .x(startX + rMin * 2.0 + 4.0)
+                        .y(legendY)
+                        .dominantBaseline(Svg.DominantBaseline.Middle)
+                        .fill(Svg.Paint.Color(labelColor))
+                        .apply(NumberFormat.double(magMin))
+                    val maxCirc = Svg.circle
+                        .cx(startX + rMin * 2.0 + 50.0 + rMax)
+                        .cy(legendY)
+                        .r(rMax)
+                        .fill(Svg.Paint.Color(DefaultPalette(0)))
+                        .fillOpacity(0.5)
+                    val maxLabel = Svg.text
+                        .x(startX + rMin * 2.0 + 50.0 + rMax * 2.0 + 4.0)
+                        .y(legendY)
+                        .dominantBaseline(Svg.DominantBaseline.Middle)
+                        .fill(Svg.Paint.Color(labelColor))
+                        .apply(NumberFormat.double(magMax))
+                    Chunk(minCirc, minLabel, maxCirc, maxLabel)
+                end if
+    end buildSizeLegend
 
     /** The channel that drives the legend: the first `color` channel, or, when none is present, the first
       * Bar/Area `stack` grouping (which colors the stacked segments).
@@ -911,24 +988,17 @@ private[kyo] object ChartLower:
       * directly (no label-to-K roundtrip).
       */
     private def collectColorCategoriesWithRaw[A](rows: Chunk[A], colorCh: Channel[A, ?]): Chunk[(String, Any)] =
-        // Dedup by CatKey (INV-002): replaces the O(n^2) toSeq.exists(_._1 == label) with O(1) HashSet lookup.
-        // Collect (label, rawValue, ordinal) triples; sort by ordinal for enum declaration order.
-        val seenKeys = scala.collection.mutable.HashSet.empty[ChartFoundations.CatKey]
-        @scala.annotation.tailrec
-        def loop(i: Int, acc: Chunk[(String, Any, Int)]): Chunk[(String, Any, Int)] =
-            if i >= rows.size then acc
-            else
-                val raw = colorCh.accessor(rows(i))
-                val key = ChartFoundations.categoryKey(raw)
-                if seenKeys.add(key) then
-                    val label = raw.toString
-                    val ordinal = raw match
-                        case e: scala.reflect.Enum => e.ordinal
-                        case _                     => acc.size // stable encounter-order index
-                    loop(i + 1, acc.append((label, raw, ordinal)))
-                else loop(i + 1, acc)
-                end if
-        val triples = loop(0, Chunk.empty)
+        // Dedup by CatKey (INV-002, WARN-2): delegate to ChartFoundations.distinctKeyed (O(n), Set-backed)
+        // instead of inlining a fresh HashSet. distinctKeyed returns first-seen (CatKey, row) in encounter
+        // order; derive (label, rawValue, ordinal) from each representative row.
+        val distinct = ChartFoundations.distinctKeyed(rows, r => ChartFoundations.categoryKey(colorCh.accessor(r)))
+        val triples = distinct.zipWithIndex.map: (pair, encounterIdx) =>
+            val raw   = colorCh.accessor(pair._2)
+            val label = raw.toString
+            val ordinal = raw match
+                case e: scala.reflect.Enum => e.ordinal
+                case _                     => encounterIdx // stable encounter-order index
+            (label, raw, ordinal)
         // Sort by ordinal so enum cases appear in declaration order.
         // toSeq here is acceptable: it is a terminal operation on a small collection, not a hot membership scan.
         triples.toSeq.sortBy(_._3).foldLeft(Chunk.empty[(String, Any)])((acc, t) => acc.append((t._1, t._2)))
@@ -1119,6 +1189,7 @@ private[kyo] object ChartLower:
                 case p: Svg.Path   => g(p)
                 case c: Svg.Circle => g(c)
                 case l: Svg.Line   => g(l)
+                case t: Svg.Text   => g(t)
                 case inner: Svg.G  => g(inner)
                 case _             => g
     end marksRegion
@@ -1190,14 +1261,37 @@ private[kyo] object ChartLower:
                                 val barY   = ys.apply(yd)
                                 val barH   = baseline - barY
                                 val iAttrs = spec.map(s => buildInteractionAttrs(row, s, internalHoverRef)).getOrElse(UI.Ast.Attrs())
-                                val r = Svg.rect
+                                val baseRect = Svg.rect
                                     .x(barX)
                                     .y(barY)
                                     .width(barW)
                                     .height(barH)
                                     .fill(Svg.Paint.Color(defaultFill))
                                     .withAttrs(iAttrs)
-                                acc.append(r)
+                                // Opacity channel (INV-019).
+                                val withOpacity = mark.opacity match
+                                    case Present(fn) => baseRect.fillOpacity(math.max(0.0, math.min(1.0, fn(row))))
+                                    case Absent      => baseRect
+                                // Tooltip channel (INV-019).
+                                val withTooltip = mark.tooltip match
+                                    case Present(fn) => withOpacity(Svg.title(fn(row)))
+                                    case Absent      => withOpacity
+                                // Label channel: emit Svg.text above the bar (INV-019).
+                                val labelElems: Chunk[Svg.SvgElement] = mark.label match
+                                    case Present(fn) =>
+                                        val lx = barX + barW / 2.0
+                                        val ly = barY - 2.0
+                                        Chunk(
+                                            Svg.text
+                                                .x(lx)
+                                                .y(ly)
+                                                .textAnchor(Svg.TextAnchor.Middle)
+                                                .dominantBaseline(Svg.DominantBaseline.Auto)
+                                                .fill(Svg.Paint.Color(defaultFill))
+                                                .apply(fn(row))
+                                        )
+                                    case Absent => Chunk.empty
+                                acc.append(withTooltip) ++ labelElems
                         end match
                 loop(i + 1, nextAcc)
         loop(0, Chunk.empty)
@@ -1332,8 +1426,11 @@ private[kyo] object ChartLower:
                 val groupMap = dataMap.getOrElse(xKey, Map.empty)
                 val totalY   = groupKeys.foldLeft(0.0)((s, gk) => s + groupMap.getOrElse(gk, 0.0))
 
+                // posAcc and negAcc are threaded as loopGroup parameters, reset to 0.0 for each
+                // new x-key iteration (INV-018). posAcc accumulates positive contributions upward
+                // from the baseline; negAcc accumulates negative contributions downward.
                 @scala.annotation.tailrec
-                def loopGroup(gi: Int, accY: Double, acc2: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
+                def loopGroup(gi: Int, posAcc: Double, negAcc: Double, acc2: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
                     if gi >= groupKeys.size then acc2
                     else
                         val gk   = groupKeys(gi)
@@ -1342,32 +1439,78 @@ private[kyo] object ChartLower:
                             if mark.stack.normalize then
                                 if totalY > 0.0 then rawY / totalY else 0.0
                             else rawY
-                        val newAccY = accY + effectiveY
-                        val rectTop =
+                        // Signed stack: positive values stack upward; negative values stack downward.
+                        // (segLo, segHi) bound the segment; nextPosAcc/nextNegAcc carry forward.
+                        val (segLo, segHi, nextPosAcc, nextNegAcc) =
                             if mark.stack.normalize then
-                                plotTop + (1.0 - newAccY) * layout.plotH
+                                // Normalize mode only handles positive values; treat as before.
+                                val hi = posAcc + effectiveY; (posAcc, hi, hi, negAcc)
+                            else if effectiveY >= 0.0 then
+                                val hi = posAcc + effectiveY; (posAcc, hi, hi, negAcc)
                             else
-                                ys.apply(Domain.Continuous(newAccY))
-                        val rectBot =
+                                val lo = negAcc + effectiveY; (lo, negAcc, posAcc, lo)
+                        val topPx =
                             if mark.stack.normalize then
-                                plotTop + (1.0 - accY) * layout.plotH
-                            else if accY == 0.0 then baseline
-                            else ys.apply(Domain.Continuous(accY))
-                        val rectH     = rectBot - rectTop
+                                plotTop + (1.0 - segHi) * layout.plotH
+                            else ys.apply(Domain.Continuous(segHi))
+                        val botPx =
+                            if mark.stack.normalize then
+                                plotTop + (1.0 - segLo) * layout.plotH
+                            else if segLo == 0.0 && segHi >= 0.0 then baseline
+                            else ys.apply(Domain.Continuous(segLo))
+                        // rectY and rectH are always geometry-safe: min/abs ensure non-negative height.
+                        val rectY     = math.min(topPx, botPx)
+                        val rectH     = math.abs(topPx - botPx)
                         val fillColor = if gi < groupPalette.size then groupPalette(gi) else DefaultPalette(gi % DefaultPalette.size)
-                        // Skip emission when the group contributes nothing at this x slot (FIX 3a)
+                        // Skip emission when the group contributes nothing at this x slot.
                         val nextAcc2 =
                             if rawY == 0.0 then acc2
                             else
-                                val r = Svg.rect
+                                // Apply opacity channel if present.
+                                val baseRect = Svg.rect
                                     .x(bandX)
-                                    .y(rectTop)
+                                    .y(rectY)
                                     .width(bandW)
                                     .height(rectH)
                                     .fill(Svg.Paint.Color(fillColor))
-                                acc2.append(r)
-                        loopGroup(gi + 1, newAccY, nextAcc2)
-                val rectsForX = loopGroup(0, 0.0, Chunk.empty)
+                                // Look up the row for this x+group combination to apply per-datum channels.
+                                // (There is at most one row per x+group; take the first match.)
+                                val rowForSlot: Maybe[A] = rows.toSeq
+                                    .find: r =>
+                                        val xMatch = mark.x.plottable.toDomain(mark.x.accessor(r)) match
+                                            case Present(d) => domainKey(d) == xKey
+                                            case Absent     => false
+                                        val gMatch = groupFn(r).toString == gk
+                                        xMatch && gMatch
+                                    .fold[Maybe[A]](Absent)(Present(_))
+                                val withChannels: Chunk[Svg.SvgElement] = rowForSlot match
+                                    case Absent => Chunk(baseRect)
+                                    case Present(r) =>
+                                        val withOpacity = mark.opacity match
+                                            case Present(fn) => baseRect.fillOpacity(math.max(0.0, math.min(1.0, fn(r))))
+                                            case Absent      => baseRect
+                                        val labelElems: Chunk[Svg.SvgElement] = mark.label match
+                                            case Present(fn) =>
+                                                val labelStr = fn(r)
+                                                val lx       = bandX + bandW / 2.0
+                                                val ly       = rectY - 2.0
+                                                Chunk(
+                                                    Svg.text
+                                                        .x(lx)
+                                                        .y(ly)
+                                                        .textAnchor(Svg.TextAnchor.Middle)
+                                                        .dominantBaseline(Svg.DominantBaseline.Auto)
+                                                        .fill(Svg.Paint.Color(fillColor))
+                                                        .apply(labelStr)
+                                                )
+                                            case Absent => Chunk.empty
+                                        val withTooltip = mark.tooltip match
+                                            case Present(fn) => withOpacity(Svg.title(fn(r)))
+                                            case Absent      => withOpacity
+                                        Chunk(withTooltip) ++ labelElems
+                                acc2 ++ withChannels
+                        loopGroup(gi + 1, nextPosAcc, nextNegAcc, nextAcc2)
+                val rectsForX = loopGroup(0, 0.0, 0.0, Chunk.empty)
                 loopX(xi + 1, acc ++ rectsForX)
         loopX(0, Chunk.empty)
     end lowerBarStacked
@@ -1411,6 +1554,56 @@ private[kyo] object ChartLower:
                     lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor)
     end lowerLine
 
+    // Collect all pixel (x, y) pairs for each contiguous defined segment in the series.
+    // A gap (undefined row, Absent y, or non-finite coordinates) ends a segment.
+    // Returns a Chunk of segments, each segment is a non-empty Chunk of pixel pairs.
+    private def collectLineSegments[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Line[A, X, Y],
+        xs: Scale,
+        ys: Scale
+    ): Chunk[Chunk[(Double, Double)]] =
+        @scala.annotation.tailrec
+        def loop(i: Int, curSeg: Chunk[(Double, Double)], segs: Chunk[Chunk[(Double, Double)]]): Chunk[Chunk[(Double, Double)]] =
+            if i >= rows.size then
+                if curSeg.isEmpty then segs else segs.append(curSeg)
+            else
+                val row = rows(i)
+                val isDefined = mark.defined match
+                    case Present(fn) => fn(row)
+                    case Absent      => true
+                if !isDefined then
+                    // Gap: flush the current segment if non-empty and start fresh.
+                    val nextSegs = if curSeg.isEmpty then segs else segs.append(curSeg)
+                    loop(i + 1, Chunk.empty, nextSegs)
+                else
+                    mark.y.accessor(row) match
+                        case Absent =>
+                            val nextSegs = if curSeg.isEmpty then segs else segs.append(curSeg)
+                            loop(i + 1, Chunk.empty, nextSegs)
+                        case Present(yv) =>
+                            val xd = mark.x.plottable.toDomain(mark.x.accessor(row))
+                            val yd = mark.y.plottable.toDomain(yv)
+                            (xd, yd) match
+                                case (Present(x), Present(y)) =>
+                                    val px = xs.apply(x)
+                                    val py = ys.apply(y)
+                                    // WARN-2 (phase-1 audit): skip non-finite pixel coordinates.
+                                    if java.lang.Double.isFinite(px) && java.lang.Double.isFinite(py) then
+                                        loop(i + 1, curSeg.append((px, py)), segs)
+                                    else
+                                        val nextSegs = if curSeg.isEmpty then segs else segs.append(curSeg)
+                                        loop(i + 1, Chunk.empty, nextSegs)
+                                    end if
+                                case _ =>
+                                    val nextSegs = if curSeg.isEmpty then segs else segs.append(curSeg)
+                                    loop(i + 1, Chunk.empty, nextSegs)
+                            end match
+                    end match
+                end if
+        loop(0, Chunk.empty, Chunk.empty)
+    end collectLineSegments
+
     private def lowerLineSeries[A, X, Y](
         rows: Chunk[A],
         mark: Mark.Line[A, X, Y],
@@ -1419,48 +1612,39 @@ private[kyo] object ChartLower:
         ys: Scale,
         strokeColor: Style.Color = Style.Color.blue
     )(using Frame): Svg.Path =
-        @scala.annotation.tailrec
-        def loop(i: Int, pd: Svg.PathData, started: Boolean): Svg.PathData =
-            if i >= rows.size then pd
+        // Collect contiguous defined segments. Each segment is then threaded through
+        // CurvePath.append for the chosen interpolation (INV-016, G13 from prep.md).
+        val segments = collectLineSegments(rows, mark, xs, ys)
+        val pathData: Svg.PathData = segments.foldLeft(Svg.PathData.empty): (pd, seg) =>
+            if seg.isEmpty then pd
             else
-                val row = rows(i)
-                val isDefined = mark.defined match
-                    case Present(fn) => fn(row)
-                    case Absent      => true
-                if !isDefined then
-                    loop(i + 1, pd, false)
-                else
-                    mark.y.accessor(row) match
-                        case Absent =>
-                            loop(i + 1, pd, false)
-                        case Present(yv) =>
-                            val xd = mark.x.plottable.toDomain(mark.x.accessor(row))
-                            val yd = mark.y.plottable.toDomain(yv)
-                            (xd, yd) match
-                                case (Present(x), Present(y)) =>
-                                    val px = xs.apply(x)
-                                    val py = ys.apply(y)
-                                    if !started then
-                                        // First point of a new segment: MoveTo (from or moveTo if resuming after gap)
-                                        val newPd =
-                                            if Svg.PathData.commands(pd).isEmpty then Svg.PathData.from(px, py)
-                                            else pd.moveTo(px, py)
-                                        loop(i + 1, newPd, true)
-                                    else
-                                        loop(i + 1, pd.lineTo(px, py), true)
-                                    end if
-                                case _ =>
-                                    loop(i + 1, pd, false)
-                            end match
-                end if
-        val pathData = loop(0, Svg.PathData.empty, false)
+                val p0 = seg(0)
+                // moveTo the first point of the segment; then append remaining points via CurvePath.
+                val startPd = if Svg.PathData.commands(pd).isEmpty then Svg.PathData.from(p0._1, p0._2) else pd.moveTo(p0._1, p0._2)
+                CurvePath.append(startPd, seg.drop(1), mark.curve)
         // A line path must be stroked, not filled. Without explicit fill=none the browser fills the
-        // closed polygon formed by the path endpoints, producing a black bowtie/filled-polygon artefact.
-        Svg.path
+        // closed polygon formed by the path endpoints, producing a black bowtie artefact.
+        val basePath = Svg.path
             .d(pathData)
             .fill(Svg.Paint.None)
             .stroke(Svg.Paint.Color(strokeColor))
             .strokeWidth(2.0)
+        // Opacity channel: for a line, apply as strokeOpacity (INV-019).
+        val withOpacity = mark.opacity match
+            case Present(fn) =>
+                // Use the first row to evaluate line-level opacity (series-level channel, not per-datum).
+                rows.toSeq.headOption match
+                    case Some(r) => basePath.strokeOpacity(math.max(0.0, math.min(1.0, fn(r))))
+                    case None    => basePath
+            case Absent => basePath
+        // Tooltip channel: attach a title child on the path element for browser tooltip.
+        mark.tooltip match
+            case Present(fn) =>
+                rows.toSeq.headOption match
+                    case Some(r) => withOpacity(Svg.title(fn(r)))
+                    case None    => withOpacity
+            case Absent => withOpacity
+        end match
     end lowerLineSeries
 
     /** Lower a `Mark.Area` to closed `Svg.Path`(s).
@@ -1468,7 +1652,7 @@ private[kyo] object ChartLower:
       * Three dispatch paths:
       *   1. `mark.stack.group` is `Present` and `mark.y` is `Present`: stacked area (groups sit atop each other).
       *   2. `mark.y` is `Present` and no stack: single area fills between y values and the plot baseline.
-      *   3. `mark.y` is `Absent`: the `y0`/`y1` band form (not yet implemented; emits empty).
+      *   3. `mark.y` is `Absent`: the `y0`/`y1` band form (INV-017: closed ribbon between two edges).
       */
     private def lowerArea[A, X, Y](
         rows: Chunk[A],
@@ -1485,7 +1669,7 @@ private[kyo] object ChartLower:
                     case Present(_) =>
                         lowerAreaStacked(rows, mark, yCh, layout, xs, ys)
                     case Absent =>
-                        // Collect (px, py) pairs, skipping gaps
+                        // Collect (px, py) pairs, skipping non-finite gaps (WARN-2 from phase-1 audit).
                         val points: Chunk[(Double, Double)] = rows.flatMap: row =>
                             yCh.accessor(row) match
                                 case Absent => Chunk.empty
@@ -1493,26 +1677,107 @@ private[kyo] object ChartLower:
                                     val xd = mark.x.plottable.toDomain(mark.x.accessor(row))
                                     val yd = yCh.plottable.toDomain(yv)
                                     (xd, yd) match
-                                        case (Present(x), Present(y)) => Chunk((xs.apply(x), ys.apply(y)))
-                                        case _                        => Chunk.empty
+                                        case (Present(x), Present(y)) =>
+                                            val px = xs.apply(x)
+                                            val py = ys.apply(y)
+                                            if java.lang.Double.isFinite(px) && java.lang.Double.isFinite(py) then
+                                                Chunk((px, py))
+                                            else Chunk.empty
+                                        case _ => Chunk.empty
+                                    end match
                         if points.isEmpty then Chunk.empty
                         else
-                            // Top edge forward
-                            val topPd: Svg.PathData = points.tail.foldLeft(Svg.PathData.from(points(0)._1, points(0)._2)): (pd, pt) =>
-                                pd.lineTo(pt._1, pt._2)
-                            // Baseline back: from last x at baseline to first x at baseline, then close
+                            // Top edge forward via CurvePath (INV-016 applied to area).
+                            val startPd = Svg.PathData.from(points(0)._1, points(0)._2)
+                            val topPd   = CurvePath.append(startPd, points.drop(1), mark.curve)
+                            // Baseline back: from last x at baseline to first x at baseline, then close.
                             val lastX  = points(points.size - 1)._1
                             val firstX = points(0)._1
                             val pd2    = topPd.lineTo(lastX, baseline).lineTo(firstX, baseline).close
-                            // Fill with the per-mark default color (translucent so layered areas remain legible)
-                            // rather than the browser default (black).
-                            Chunk(Svg.path.d(pd2).fill(Svg.Paint.Color(defaultColor)).fillOpacity(0.7))
+                            // Apply opacity channel if present; default fillOpacity=0.7 (INV-019).
+                            val baseOpacity = 0.7
+                            val opacity = mark.opacity match
+                                case Present(fn) =>
+                                    rows.toSeq.headOption.map(r => math.max(0.0, math.min(1.0, fn(r)))).getOrElse(baseOpacity)
+                                case Absent => baseOpacity
+                            val basePath = Svg.path.d(pd2).fill(Svg.Paint.Color(defaultColor)).fillOpacity(opacity)
+                            val withTooltip = mark.tooltip match
+                                case Present(fn) =>
+                                    rows.toSeq.headOption match
+                                        case Some(r) => basePath(Svg.title(fn(r)))
+                                        case None    => basePath
+                                case Absent => basePath
+                            Chunk(withTooltip)
                         end if
             case Absent =>
-                // y0/y1 band form: not yet implemented; emits empty
-                Chunk.empty
+                // y0/y1 band form: render a closed ribbon between the two edges (INV-017).
+                buildBandRibbon(rows, mark, xs, ys, defaultColor)
         end match
     end lowerArea
+
+    /** Build the closed ribbon path for the area band form (`y0` and `y1` supplied, `y` absent).
+      *
+      * The ribbon runs forward along the y1 edge (curve-interpolated), then backward along the
+      * y0 edge, then closes. Invalid combinations (only `y0` or only `y1`, or neither) emit
+      * `Chunk.empty` so that sibling marks still render (Q-005 / INV-017 / G9 from prep.md).
+      */
+    private def buildBandRibbon[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Area[A, X, Y],
+        xs: Scale,
+        ys: Scale,
+        fillColor: Style.Color
+    )(using Frame): Chunk[Svg.SvgElement] =
+        // Both y0 and y1 must be Present for a valid band (G9 from prep.md).
+        (mark.y0, mark.y1) match
+            case (Present(ch0), Present(ch1)) =>
+                // Collect (xPx, y0Px, y1Px) triples for each row, skipping non-finite values (WARN-2).
+                val pts: Chunk[(Double, Double, Double)] = rows.flatMap: row =>
+                    val xd  = mark.x.plottable.toDomain(mark.x.accessor(row))
+                    val y0d = ch0.plottable.toDomain(ch0.accessor(row))
+                    val y1d = ch1.plottable.toDomain(ch1.accessor(row))
+                    (xd, y0d, y1d) match
+                        case (Present(xdom), Present(y0dom), Present(y1dom)) =>
+                            val xPx  = xs.apply(xdom)
+                            val y0Px = ys.apply(y0dom)
+                            val y1Px = ys.apply(y1dom)
+                            if java.lang.Double.isFinite(xPx) && java.lang.Double.isFinite(y0Px) && java.lang.Double.isFinite(y1Px) then
+                                Chunk((xPx, y0Px, y1Px))
+                            else Chunk.empty
+                        case _ => Chunk.empty
+                    end match
+                if pts.isEmpty then Chunk.empty
+                else
+                    // Forward along y1 edge (curved per mark.curve).
+                    val y1pts     = pts.map(t => (t._1, t._3))
+                    val startPd   = Svg.PathData.from(y1pts(0)._1, y1pts(0)._2)
+                    val forwardPd = CurvePath.append(startPd, y1pts.drop(1), mark.curve)
+                    // Backward along y0 edge, traversed in reverse order, curved per mark.curve too
+                    // (leaf 19): both band edges must reflect the curve, not just the forward y1 edge.
+                    // The connecting edge from the last y1 vertex down to the last y0 vertex is a single
+                    // lineTo; the remaining reversed y0 vertices feed CurvePath.append so the y0 edge curves.
+                    val y0ptsRev    = Chunk.from(pts.toSeq.reverse.map(t => (t._1, t._2)))
+                    val connectedPd = forwardPd.lineTo(y0ptsRev(0)._1, y0ptsRev(0)._2)
+                    val ribbonPd    = CurvePath.append(connectedPd, y0ptsRev.drop(1), mark.curve).close
+                    val baseOpacity = 0.7
+                    val opacity = mark.opacity match
+                        case Present(fn) =>
+                            rows.toSeq.headOption.map(r => math.max(0.0, math.min(1.0, fn(r)))).getOrElse(baseOpacity)
+                        case Absent => baseOpacity
+                    val basePath = Svg.path.d(ribbonPd).fill(Svg.Paint.Color(fillColor)).fillOpacity(opacity)
+                    val withTooltip = mark.tooltip match
+                        case Present(fn) =>
+                            rows.toSeq.headOption match
+                                case Some(r) => basePath(Svg.title(fn(r)))
+                                case None    => basePath
+                        case Absent => basePath
+                    Chunk(withTooltip)
+                end if
+            case _ =>
+                // Only one edge supplied or neither: invalid combo, skip deterministically (INV-017).
+                Chunk.empty
+        end match
+    end buildBandRibbon
 
     /** Lower a stacked `Mark.Area`: for each distinct group, emit a closed area path whose baseline is the
       * top edge of the previous group at each x position.
@@ -1644,13 +1909,21 @@ private[kyo] object ChartLower:
         loopGroups(0, Map.empty, Chunk.empty)
     end lowerAreaStacked
 
-    /** Lower a `Mark.Point` to `Svg.Circle`s.
+    /** Lower a `Mark.Point` to glyphs (circle, square, triangle, diamond, or cross).
       *
-      * Each row with a defined y produces one circle. The radius comes from the `size` channel if present, or the
-      * `DefaultRadius` constant otherwise.
+      * Color channel (INV-013): when `mark.color` is `Present`, rows are split by
+      * `ChartFoundations.categoryKey` and each category gets a distinct palette color
+      * via the same `resolvePalette` the legend uses. Without a color channel, all
+      * points use `defaultColor`.
       *
-      * When `spec` is supplied, hover and click handlers are attached to each circle so `spec.onHover` and
-      * `spec.onSelect` refs receive the typed row on pointer events.
+      * Size channel (INV-015): `sizePx` overrides with raw pixel radius; `size` uses a
+      * sqrt-area scale built from the magnitude extent over all rows. Absent: `DefaultRadius`.
+      *
+      * Symbol channel (INV-014): dispatches on `Symbol` to circle (`Svg.circle`) or a
+      * path glyph helper (square, triangle, diamond, cross).
+      *
+      * Channels (INV-019): `opacity` sets `fillOpacity`; `label` emits an `Svg.text`
+      * above the glyph; `tooltip` attaches a `<title>` child.
       */
     private def lowerPoint[A, X, Y](
         rows: Chunk[A],
@@ -1664,6 +1937,49 @@ private[kyo] object ChartLower:
         theme: Theme = Theme.default
     )(using Frame): Chunk[Svg.SvgElement] =
         val separator = pointSeparatorColor(theme)
+
+        // Build the sqrt-area size scale once from the full row set (G5 from prep.md).
+        val sizeScale: Maybe[SizeScale] = mark.size match
+            case Present(fn) =>
+                // Fold the magnitude extent, skipping rows with Absent y (gap rows).
+                @scala.annotation.tailrec
+                def foldMag(i: Int, mn: Double, mx: Double): (Double, Double) =
+                    if i >= rows.size then (mn, mx)
+                    else
+                        val row   = rows(i)
+                        val hasPt = mark.y.accessor(row).isDefined
+                        if hasPt then
+                            val mag = fn(row)
+                            foldMag(i + 1, math.min(mn, mag), math.max(mx, mag))
+                        else foldMag(i + 1, mn, mx)
+                        end if
+                val (magMin, magMax) = foldMag(0, Double.MaxValue, Double.MinValue)
+                val safeMin          = if magMin == Double.MaxValue then 0.0 else magMin
+                val safeMax          = if magMax == Double.MinValue then 0.0 else magMax
+                Present(SizeScale(safeMin, safeMax, SizeScale.DefaultRMin, SizeScale.DefaultRMax))
+            case Absent => Absent
+
+        // Resolve color categories when a color channel is present (INV-013, G6 from prep.md).
+        val colorResolved: Maybe[(Chunk[(String, Any)], Chunk[Style.Color])] = mark.color match
+            case Present(colorCh) =>
+                val cats = collectColorCategoriesWithRaw(rows, colorCh)
+                val palette = spec match
+                    case Present(s) => resolvePalette(s, cats)
+                    case Absent     => cats.zipWithIndex.map((_, i) => DefaultPalette.toSeq.apply(i % DefaultPalette.size))
+                Present((cats, palette))
+            case Absent => Absent
+
+        // Build per-row color lookup: CatKey -> Style.Color.
+        val colorByKey: scala.collection.immutable.Map[ChartFoundations.CatKey, Style.Color] =
+            colorResolved match
+                case Absent => scala.collection.immutable.Map.empty
+                case Present((cats, palette)) =>
+                    cats.zipWithIndex.foldLeft(scala.collection.immutable.Map.empty[ChartFoundations.CatKey, Style.Color]): (m, pair) =>
+                        val ((label, raw), idx) = pair
+                        val key                 = ChartFoundations.categoryKey(raw)
+                        val color = if idx < palette.size then palette(idx) else DefaultPalette.toSeq.apply(idx % DefaultPalette.size)
+                        m.updated(key, color)
+
         @scala.annotation.tailrec
         def loop(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
             if i >= rows.size then acc
@@ -1678,25 +1994,132 @@ private[kyo] object ChartLower:
                             case (Present(x), Present(y)) =>
                                 val cx = xs.apply(x)
                                 val cy = ys.apply(y)
-                                val r = mark.size match
-                                    case Present(fn) => fn(row)
-                                    case Absent      => DefaultRadius
-                                val iAttrs = spec.map(s => buildInteractionAttrs(row, s, internalHoverRef)).getOrElse(UI.Ast.Attrs())
-                                // Fill points with the per-mark default color rather than the browser default (black),
-                                // and add a thin contrasting outline (theme background color) so overlapping or
-                                // adjacent bubbles read as distinct discs instead of merging into one blob.
-                                val c = Svg.circle
-                                    .cx(cx).cy(cy).r(r)
-                                    .fill(Svg.Paint.Color(defaultColor))
-                                    .stroke(Svg.Paint.Color(separator))
-                                    .strokeWidth(PointStrokeWidth)
-                                    .withAttrs(iAttrs)
-                                acc.append(c)
+                                // WARN-2 (phase-1 audit): skip non-finite pixel coordinates.
+                                if !java.lang.Double.isFinite(cx) || !java.lang.Double.isFinite(cy) then acc
+                                else
+                                    // Resolve radius: sizePx > size > DefaultRadius.
+                                    val r = mark.sizePx match
+                                        case Present(fn) => fn(row)
+                                        case Absent =>
+                                            sizeScale match
+                                                case Present(sc) => sc.radius(mark.size.map(_(row)).getOrElse(DefaultRadius))
+                                                case Absent      => DefaultRadius
+
+                                    // Resolve fill color.
+                                    val fillColor = mark.color match
+                                        case Absent => defaultColor
+                                        case Present(colorCh) =>
+                                            val key = ChartFoundations.categoryKey(colorCh.accessor(row))
+                                            colorByKey.getOrElse(key, defaultColor)
+
+                                    val iAttrs = spec.map(s => buildInteractionAttrs(row, s, internalHoverRef)).getOrElse(UI.Ast.Attrs())
+
+                                    // Resolve symbol and build the glyph shape (INV-014).
+                                    val sym = mark.symbol.map(_(row)).getOrElse(Symbol.circle)
+
+                                    // Opacity channel (INV-019).
+                                    val opacity = mark.opacity match
+                                        case Present(fn) => Present(math.max(0.0, math.min(1.0, fn(row))))
+                                        case Absent      => Absent
+
+                                    // Build glyph elements (circle or path-based).
+                                    val glyphElems: Chunk[Svg.SvgElement] = sym match
+                                        case Symbol.circle =>
+                                            val base = Svg.circle
+                                                .cx(cx).cy(cy).r(r)
+                                                .fill(Svg.Paint.Color(fillColor))
+                                                .stroke(Svg.Paint.Color(separator))
+                                                .strokeWidth(PointStrokeWidth)
+                                                .withAttrs(iAttrs)
+                                            val withOp = opacity match
+                                                case Present(op) => base.fillOpacity(op)
+                                                case Absent      => base
+                                            val withTip = mark.tooltip match
+                                                case Present(fn) => withOp(Svg.title(fn(row)))
+                                                case Absent      => withOp
+                                            Chunk(withTip)
+                                        case Symbol.cross =>
+                                            // Cross: two perpendicular Svg.Line elements (INV-014, G7 from prep.md).
+                                            val h = Svg.line.x1(cx - r).y1(cy).x2(cx + r).y2(cy)
+                                                .stroke(Svg.Paint.Color(fillColor)).strokeWidth(PointStrokeWidth + 0.5)
+                                                .withAttrs(iAttrs)
+                                            val v = Svg.line.x1(cx).y1(cy - r).x2(cx).y2(cy + r)
+                                                .stroke(Svg.Paint.Color(fillColor)).strokeWidth(PointStrokeWidth + 0.5)
+                                            Chunk(h, v)
+                                        case _ =>
+                                            val pd = sym match
+                                                case Symbol.square   => squarePath(cx, cy, r)
+                                                case Symbol.triangle => trianglePath(cx, cy, r)
+                                                case Symbol.diamond  => diamondPath(cx, cy, r)
+                                                case _               => squarePath(cx, cy, r) // unreachable
+                                            val base = Svg.path.d(pd)
+                                                .fill(Svg.Paint.Color(fillColor))
+                                                .stroke(Svg.Paint.Color(separator))
+                                                .strokeWidth(PointStrokeWidth)
+                                                .withAttrs(iAttrs)
+                                            val withOp = opacity match
+                                                case Present(op) => base.fillOpacity(op)
+                                                case Absent      => base
+                                            val withTip = mark.tooltip match
+                                                case Present(fn) => withOp(Svg.title(fn(row)))
+                                                case Absent      => withOp
+                                            Chunk(withTip)
+
+                                    // Label channel: emit Svg.text above the glyph (INV-019).
+                                    val labelElems: Chunk[Svg.SvgElement] = mark.label match
+                                        case Present(fn) =>
+                                            val labelStr = fn(row)
+                                            Chunk(
+                                                Svg.text
+                                                    .x(cx)
+                                                    .y(cy - r - 2.0)
+                                                    .textAnchor(Svg.TextAnchor.Middle)
+                                                    .dominantBaseline(Svg.DominantBaseline.Auto)
+                                                    .fill(Svg.Paint.Color(fillColor))
+                                                    .apply(labelStr)
+                                            )
+                                        case Absent => Chunk.empty
+
+                                    acc ++ glyphElems ++ labelElems
+                                end if
                             case _ => acc
                         end match
                 loop(i + 1, nextAcc)
         loop(0, Chunk.empty)
     end lowerPoint
+
+    // ---- Symbol glyph path helpers (INV-014) ----
+
+    /** Square path centered at (cx, cy) with half-width r.
+      * Corners at (cx-r, cy-r), (cx+r, cy-r), (cx+r, cy+r), (cx-r, cy+r).
+      */
+    private def squarePath(cx: Double, cy: Double, r: Double): Svg.PathData =
+        Svg.PathData.from(cx - r, cy - r)
+            .lineTo(cx + r, cy - r)
+            .lineTo(cx + r, cy + r)
+            .lineTo(cx - r, cy + r)
+            .close
+
+    /** Equilateral triangle centered at (cx, cy) with circumradius r.
+      * Apex at (cx, cy-r); base vertices at (cx-r*sin(pi/3), cy+r/2) and (cx+r*sin(pi/3), cy+r/2).
+      */
+    private def trianglePath(cx: Double, cy: Double, r: Double): Svg.PathData =
+        val h = r * math.sin(math.Pi / 3.0)
+        Svg.PathData.from(cx, cy - r)
+            .lineTo(cx + h, cy + r / 2.0)
+            .lineTo(cx - h, cy + r / 2.0)
+            .close
+    end trianglePath
+
+    /** Diamond path (rotated square) centered at (cx, cy) with arm length r.
+      * Points: top (cx, cy-r), right (cx+r, cy), bottom (cx, cy+r), left (cx-r, cy).
+      */
+    private def diamondPath(cx: Double, cy: Double, r: Double): Svg.PathData =
+        Svg.PathData.from(cx, cy - r)
+            .lineTo(cx + r, cy)
+            .lineTo(cx, cy + r)
+            .lineTo(cx - r, cy)
+            .close
 
     /** Lower a `Mark.Rule` to an `Svg.Line` spanning the full plot width (horizontal rule) or height (vertical rule).
       *

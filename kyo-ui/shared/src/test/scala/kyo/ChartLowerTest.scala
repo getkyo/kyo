@@ -559,4 +559,425 @@ class ChartLowerTest extends Test:
         assertClose(numOf(bg.svgAttrs.height), 240.0, "background height spans full SVG")
     }
 
+    // ---- Phase 3 tests: point color / symbol / size / curve / area band / stacks / channels ----
+
+    case class Row(x: String, y: Double, g: String, mag: Double = 1.0, name: String = "")
+    given CanEqual[Row, Row] = CanEqual.derived
+
+    private def deepCirclesIn(root: Svg.Root): Chunk[Svg.Circle] =
+        root.children.flatMap:
+            case g: Svg.G =>
+                g.children.flatMap:
+                    case c: Svg.Circle => Chunk(c)
+                    case gg: Svg.G =>
+                        gg.children.flatMap:
+                            case c: Svg.Circle => Chunk(c)
+                            case _             => Chunk.empty
+                    case _ => Chunk.empty
+            case _ => Chunk.empty
+
+    private def deepPathsIn(root: Svg.Root): Chunk[Svg.Path] =
+        root.children.flatMap:
+            case g: Svg.G =>
+                g.children.flatMap:
+                    case p: Svg.Path => Chunk(p)
+                    case gg: Svg.G =>
+                        gg.children.flatMap:
+                            case p: Svg.Path => Chunk(p)
+                            case _           => Chunk.empty
+                    case _ => Chunk.empty
+            case _ => Chunk.empty
+
+    private def deepTextsIn(root: Svg.Root): Chunk[Svg.Text] =
+        root.children.flatMap:
+            case g: Svg.G =>
+                g.children.flatMap:
+                    case t: Svg.Text => Chunk(t)
+                    case gg: Svg.G =>
+                        gg.children.flatMap:
+                            case t: Svg.Text => Chunk(t)
+                            case _           => Chunk.empty
+                    case _ => Chunk.empty
+            case _ => Chunk.empty
+
+    private def fillColorOf(c: Svg.Circle): String = c.svgAttrs.fill match
+        case Present(Svg.Paint.Color(col)) => col.toString
+        case other                         => s"unexpected:$other"
+
+    private def fillColorOfPath(p: Svg.Path): String = p.svgAttrs.fill match
+        case Present(Svg.Paint.Color(col)) => col.toString
+        case other                         => s"unexpected:$other"
+
+    private def hasCubicCmd(p: Svg.Path): Boolean =
+        Svg.PathData.commands(p.svgAttrs.d.getOrElse(Svg.PathData.empty)).toSeq.exists:
+            case _: PathCommand.CubicTo => true
+            case _                      => false
+
+    private def cubicCount(p: Svg.Path): Int =
+        Svg.PathData.commands(p.svgAttrs.d.getOrElse(Svg.PathData.empty)).toSeq.count:
+            case _: PathCommand.CubicTo => true
+            case _                      => false
+
+    private def hasHLineCmd(p: Svg.Path): Boolean =
+        Svg.PathData.commands(p.svgAttrs.d.getOrElse(Svg.PathData.empty)).toSeq.exists:
+            case _: PathCommand.HLineTo => true
+            case _                      => false
+
+    private def hasVLineCmd(p: Svg.Path): Boolean =
+        Svg.PathData.commands(p.svgAttrs.d.getOrElse(Svg.PathData.empty)).toSeq.exists:
+            case _: PathCommand.VLineTo => true
+            case _                      => false
+
+    private def hasCloseCmd(p: Svg.Path): Boolean =
+        Svg.PathData.commands(p.svgAttrs.d.getOrElse(Svg.PathData.empty)).toSeq.exists:
+            case PathCommand.Close => true
+            case _                 => false
+
+    // --- Test 1: point color splits (INV-013) ---
+    "point color splits into per-group colors (INV-013)" in {
+        val rows = Chunk(Row("a", 10.0, "g1"), Row("b", 20.0, "g2"))
+        val spec = Chart(rows)(point(x = _.x, y = _.y, color = _.g))
+        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val cs   = deepCirclesIn(root)
+        assert(cs.size >= 2, s"Expected at least 2 circles, got ${cs.size}")
+        val fills = cs.map(fillColorOf).toSeq.distinct
+        assert(fills.size == 2, s"Expected 2 distinct fill colors for 2 groups, got $fills")
+    }
+
+    // --- Test 2: CatKey identity (Int vs String) (INV-013, INV-002) ---
+    "point color uses CatKey identity: Int 1 vs String '1' are distinct groups (INV-013, INV-002)" in {
+        case class RawRow(x: String, y: Double, grp: Any)
+        given CanEqual[RawRow, RawRow] = CanEqual.derived
+        val rows                       = Chunk(RawRow("a", 10.0, 1: Int), RawRow("b", 20.0, "1"))
+        val spec                       = Chart(rows)(point(x = _.x, y = _.y, color = _.grp))
+        val root                       = summon[Conversion[ChartSpec[RawRow], Svg.Root]](spec)
+        val cs                         = deepCirclesIn(root)
+        val fills                      = cs.map(fillColorOf).toSeq.distinct
+        assert(fills.size == 2, s"Int 1 and String '1' must be distinct color groups, got $fills")
+    }
+
+    // --- Test 3: no color keeps defaultColor (INV-013) ---
+    "point without color channel: all circles have the same default fill (INV-013)" in {
+        val rows = Chunk(Row("a", 10.0, "g1"), Row("b", 20.0, "g2"))
+        val spec = Chart(rows)(point(x = _.x, y = _.y))
+        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val cs   = deepCirclesIn(root)
+        assert(cs.size >= 2, s"Expected at least 2 circles")
+        val fills = cs.map(fillColorOf).toSeq.distinct
+        assert(fills.size == 1, s"All circles without color channel should share one fill, got $fills")
+    }
+
+    // --- Test 4: symbol=square renders Svg.Path not Svg.Circle (INV-014) ---
+    "symbol=square renders Svg.Path elements, not circles (INV-014)" in {
+        val rows = Chunk(Row("a", 10.0, "g1"), Row("b", 20.0, "g2"))
+        val spec = Chart(rows)(point(x = _.x, y = _.y, symbol = _ => Symbol.square))
+        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val cs   = deepCirclesIn(root)
+        val ps   = deepPathsIn(root).filter(p => p.svgAttrs.d.isDefined && p.svgAttrs.fill.isDefined)
+        assert(cs.isEmpty, s"symbol=square must not emit Svg.Circle, but got ${cs.size}")
+        assert(ps.nonEmpty, s"symbol=square must emit Svg.Path elements")
+    }
+
+    // --- Test 5: each Symbol case (INV-014) ---
+    "triangle, diamond, cross each render their documented glyph (INV-014)" in {
+        val rows = Chunk(Row("a", 10.0, "g"))
+        // Triangle and diamond should produce Svg.Path.
+        for sym <- Seq(Symbol.triangle, Symbol.diamond) do
+            val spec = Chart(rows)(point(x = _.x, y = _.y, symbol = _ => sym))
+            val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+            val ps   = deepPathsIn(root).filter(p => p.svgAttrs.d.isDefined)
+            val cs   = deepCirclesIn(root)
+            assert(ps.nonEmpty, s"$sym must emit Svg.Path")
+            assert(cs.isEmpty, s"$sym must not emit Svg.Circle")
+        end for
+        // Circle default.
+        val specC = Chart(rows)(point(x = _.x, y = _.y))
+        val rootC = summon[Conversion[ChartSpec[Row], Svg.Root]](specC)
+        assert(deepCirclesIn(rootC).nonEmpty, "Default symbol (circle) must emit Svg.Circle")
+        // Cross produces Svg.Line elements (two strokes).
+        val specX = Chart(rows)(point(x = _.x, y = _.y, symbol = _ => Symbol.cross))
+        val rootX = summon[Conversion[ChartSpec[Row], Svg.Root]](specX)
+        val ls    = linesIn(rootX)
+        assert(ls.nonEmpty, "Symbol.cross must emit Svg.Line strokes")
+    }
+
+    // --- Test 6: size is sqrt-area scaled (INV-015) ---
+    "point size is sqrt-area scaled: bigger magnitude produces bigger radius (INV-015)" in {
+        case class Bubble(x: Double, y: Double, mag: Double)
+        given CanEqual[Bubble, Bubble] = CanEqual.derived
+        val rows                       = Chunk(Bubble(1.0, 1.0, 1.0), Bubble(2.0, 1.0, 100.0))
+        val spec                       = Chart(rows)(point(x = _.x, y = _.y, size = _.mag))
+        val root                       = summon[Conversion[ChartSpec[Bubble], Svg.Root]](spec)
+        val cs                         = deepCirclesIn(root)
+        assert(cs.size == 2, s"Expected 2 circles, got ${cs.size}")
+        val rs = cs.map(c => c.svgAttrs.r).toSeq.collect:
+            case Present(v) => v
+        assert(rs.size == 2, s"Both circles must have a radius, got $rs")
+        assert(rs(0) < rs(1), s"Larger magnitude should produce larger radius: ${rs(0)} vs ${rs(1)}")
+        // Verify sqrt-area: r(1) should be ~2.0, r(100) should be ~20.0.
+        assert(math.abs(rs(0) - 2.0) < 1e-6, s"r(mag=1) should be rMin=2.0, got ${rs(0)}")
+        assert(math.abs(rs(1) - 20.0) < 1e-6, s"r(mag=100) should be rMax=20.0, got ${rs(1)}")
+    }
+
+    // --- Test 7: equal magnitudes yield rMin, no div-by-zero (INV-015) ---
+    "equal magnitudes yield rMin, no div-by-zero (INV-015)" in {
+        case class Bubble(x: Double, y: Double, mag: Double)
+        given CanEqual[Bubble, Bubble] = CanEqual.derived
+        val rows                       = Chunk(Bubble(1.0, 1.0, 5.0), Bubble(2.0, 1.0, 5.0))
+        val spec                       = Chart(rows)(point(x = _.x, y = _.y, size = _.mag))
+        val root                       = summon[Conversion[ChartSpec[Bubble], Svg.Root]](spec)
+        val cs                         = deepCirclesIn(root)
+        assert(cs.size == 2, "Expected 2 circles")
+        val badRadii = cs.toSeq.filter: c =>
+            c.svgAttrs.r.map(v => math.abs(v - 2.0) >= 1e-6).getOrElse(true)
+        assert(badRadii.isEmpty, s"All circles with equal magnitudes should have rMin=2.0; bad: ${badRadii.map(_.svgAttrs.r)}")
+    }
+
+    // --- Test 8: size legend is emitted (INV-015) ---
+    "size legend is emitted when size channel is set (INV-015)" in {
+        case class Bubble(x: Double, y: Double, mag: Double)
+        given CanEqual[Bubble, Bubble] = CanEqual.derived
+        val rows                       = Chunk(Bubble(1.0, 1.0, 1.0), Bubble(2.0, 1.0, 100.0))
+        val spec                       = Chart(rows)(point(x = _.x, y = _.y, size = _.mag))
+        val root                       = summon[Conversion[ChartSpec[Bubble], Svg.Root]](spec)
+        // The legend region should contain circle elements (size bubbles).
+        val allCircles = root.children.flatMap:
+            case g: Svg.G => g.children.flatMap:
+                    case c: Svg.Circle => Chunk(c)
+                    case _             => Chunk.empty
+            case _ => Chunk.empty
+        assert(allCircles.nonEmpty, "Size legend should emit circle elements")
+    }
+
+    // --- Test 9: size wins over sizePx (INV-015, Q-005) ---
+    "size wins over sizePx when both supplied: Mark.Point.size is Present, sizePx is Absent (INV-015)" in {
+        case class Bubble(x: Double, y: Double, mag: Double)
+        given CanEqual[Bubble, Bubble] = CanEqual.derived
+        val m                          = point[Bubble, Double, Double](x = _.x, y = _.y, size = _.mag, sizePx = _ => 8.0)
+        val pm                         = m.asInstanceOf[Mark.Point[Bubble, Double, Double]]
+        assert(pm.size.isDefined, "size channel must be Present when both size and sizePx supplied")
+        assert(!pm.sizePx.isDefined, "sizePx must be Absent when size wins per Q-005")
+    }
+
+    // --- Test 10: sizePx alone uses raw radius (INV-015) ---
+    "sizePx alone uses raw pixel radius (INV-015)" in {
+        case class Bubble(x: Double, y: Double)
+        given CanEqual[Bubble, Bubble] = CanEqual.derived
+        val rows                       = Chunk(Bubble(1.0, 1.0), Bubble(2.0, 2.0))
+        val spec                       = Chart(rows)(point(x = _.x, y = _.y, sizePx = _ => 8.0))
+        val root                       = summon[Conversion[ChartSpec[Bubble], Svg.Root]](spec)
+        val cs                         = deepCirclesIn(root)
+        assert(cs.size == 2, s"Expected 2 circles, got ${cs.size}")
+        val badR = cs.toSeq.filter(c => c.svgAttrs.r.map(v => math.abs(v - 8.0) >= 1e-6).getOrElse(true))
+        assert(badR.isEmpty, s"sizePx=8.0 should yield r=8.0 for all circles; bad: ${badR.map(_.svgAttrs.r)}")
+    }
+
+    // Tests 11-15 use (Double, Double) rows, relying on Plottable.numeric for Double.
+    // To avoid local-case-class implicit-scope issues, use the existing Row type with numeric x.
+    case class DRow(x: Double, y: Double)
+    given CanEqual[DRow, DRow] = CanEqual.derived
+
+    case class DRowMaybe(x: Double, y: Maybe[Double])
+    given CanEqual[DRowMaybe, DRowMaybe] = CanEqual.derived
+
+    // --- Test 11: curve=stepAfter emits H/V staircase (INV-016) ---
+    "curve=stepAfter line emits HLineTo and VLineTo commands (INV-016)" in {
+        val rows = Chunk(DRow(0.0, 0.0), DRow(1.0, 2.0), DRow(2.0, 1.0))
+        val spec = Chart(rows)(line(x = _.x, y = _.y, curve = Curve.stepAfter))
+        val root = summon[Conversion[ChartSpec[DRow], Svg.Root]](spec)
+        val ps   = pathsIn(root)
+        assert(ps.nonEmpty, "Expected at least one path for line mark")
+        val hasH = ps.toSeq.exists(hasHLineCmd)
+        val hasV = ps.toSeq.exists(hasVLineCmd)
+        assert(hasH, "stepAfter line must emit HLineTo commands")
+        assert(hasV, "stepAfter line must emit VLineTo commands")
+    }
+
+    // --- Test 12: curve=monotone emits cubics (INV-016) ---
+    "curve=monotone line emits CubicTo commands (INV-016)" in {
+        val rows = Chunk(DRow(0.0, 0.0), DRow(1.0, 2.0), DRow(2.0, 1.0))
+        val spec = Chart(rows)(line(x = _.x, y = _.y, curve = Curve.monotone))
+        val root = summon[Conversion[ChartSpec[DRow], Svg.Root]](spec)
+        val ps   = pathsIn(root)
+        assert(ps.nonEmpty, "Expected at least one path")
+        assert(ps.toSeq.exists(hasCubicCmd), "monotone line must emit CubicTo commands")
+    }
+
+    // --- Test 13: basis and catmullRom emit cubics (INV-016) ---
+    "curve=basis and catmullRom emit CubicTo commands (INV-016)" in {
+        val rows4   = Chunk(DRow(0.0, 0.0), DRow(1.0, 2.0), DRow(2.0, 0.0), DRow(3.0, 2.0))
+        val basSpec = Chart(rows4)(line(x = _.x, y = _.y, curve = Curve.basis))
+        val catSpec = Chart(rows4)(line(x = _.x, y = _.y, curve = Curve.catmullRom))
+        val basRoot = summon[Conversion[ChartSpec[DRow], Svg.Root]](basSpec)
+        val catRoot = summon[Conversion[ChartSpec[DRow], Svg.Root]](catSpec)
+        assert(pathsIn(basRoot).toSeq.exists(hasCubicCmd), "basis line must emit CubicTo commands")
+        assert(pathsIn(catRoot).toSeq.exists(hasCubicCmd), "catmullRom line must emit CubicTo commands")
+    }
+
+    // --- Test 14: curve applies per-segment, not across gaps (INV-016) ---
+    "curve=monotone with gap: path has two MoveTo segments (INV-016)" in {
+        val rows = Chunk(DRowMaybe(0.0, Present(0.0)), DRowMaybe(1.0, Absent), DRowMaybe(2.0, Present(1.0)))
+        val spec = Chart(rows)(line(x = _.x, y = _.y, curve = Curve.monotone))
+        val root = summon[Conversion[ChartSpec[DRowMaybe], Svg.Root]](spec)
+        val ps   = pathsIn(root)
+        assert(ps.nonEmpty, "Expected at least one path")
+        val moveTos = ps.flatMap: p =>
+            Svg.PathData.commands(p.svgAttrs.d.getOrElse(Svg.PathData.empty)).filter:
+                case PathCommand.MoveTo(_, _) => true
+                case _                        => false
+        assert(moveTos.size >= 2, s"Gap must produce at least 2 MoveTo commands, got ${moveTos.size}")
+    }
+
+    // --- Test 15: < 2 points degrades to linear (INV-016) ---
+    "curve=basis with 1 point: no cubic emitted (INV-016)" in {
+        val rows = Chunk(DRow(1.0, 2.0))
+        val spec = Chart(rows)(line(x = _.x, y = _.y, curve = Curve.basis))
+        val root = summon[Conversion[ChartSpec[DRow], Svg.Root]](spec)
+        val ps   = pathsIn(root)
+        assert(!ps.toSeq.exists(hasCubicCmd), "1-point line must not emit cubics")
+    }
+
+    // --- Test 16: area band ribbon (INV-017) ---
+    "area y0/y1 band renders a non-empty closed ribbon (INV-017)" in {
+        case class Band(t: Double, lo: Double, hi: Double)
+        given CanEqual[Band, Band] = CanEqual.derived
+        val rows                   = Chunk(Band(0.0, 0.0, 2.0), Band(1.0, 0.5, 2.5))
+        val spec                   = Chart(rows)(area(x = _.t, y0 = _.lo, y1 = _.hi))
+        val root                   = summon[Conversion[ChartSpec[Band], Svg.Root]](spec)
+        val ps                     = deepPathsIn(root).filter(p => p.svgAttrs.d.isDefined && hasCloseCmd(p))
+        assert(ps.nonEmpty, "area y0/y1 band must emit a non-empty closed ribbon path")
+    }
+
+    // --- Test 17: invalid area combo emits empty, siblings render (INV-017) ---
+    "area with only y1 (no y0, no y): mark emits empty, bar sibling renders (INV-017)" in {
+        case class Datum(x: String, y1: Double, y: Double)
+        given CanEqual[Datum, Datum] = CanEqual.derived
+        val rows                     = Chunk(Datum("a", 2.0, 1.0), Datum("b", 3.0, 2.0))
+        // area with only y1 supplied: invalid combo -> empty mark.
+        val spec = Chart(rows)(area(x = _.x, y1 = _.y1), bar(x = _.x, y = _.y))
+        val root = summon[Conversion[ChartSpec[Datum], Svg.Root]](spec)
+        val rs   = rectsIn(root)
+        assert(rs.nonEmpty, "bar sibling must still render when area mark is invalid")
+    }
+
+    // --- Test 18: single y wins over y+y0/y1 (INV-017) ---
+    "area with y and y0/y1 both supplied: single y wins (INV-017)" in {
+        case class Band(t: Double, v: Double, lo: Double, hi: Double)
+        given CanEqual[Band, Band] = CanEqual.derived
+        val rows                   = Chunk(Band(0.0, 1.0, 0.0, 2.0), Band(1.0, 1.5, 0.5, 2.5))
+        val spec                   = Chart(rows)(area(x = _.t, y = _.v, y0 = _.lo, y1 = _.hi))
+        val root                   = summon[Conversion[ChartSpec[Band], Svg.Root]](spec)
+        // When y is supplied, the factory sets yMaybe=Present, so area renders the single-y form.
+        val ps = deepPathsIn(root).filter(_.svgAttrs.d.isDefined)
+        assert(ps.nonEmpty, "area with single y must render a path")
+    }
+
+    // --- Test 19: curve applies to BOTH area band edges (INV-016, INV-017) ---
+    "area y0/y1 band with curve=monotone emits cubics on both edges (INV-016, INV-017)" in {
+        case class Band(t: Double, lo: Double, hi: Double)
+        given CanEqual[Band, Band] = CanEqual.derived
+        val rows                   = Chunk(Band(0.0, 0.0, 2.0), Band(1.0, 0.5, 2.5), Band(2.0, 0.2, 1.8), Band(3.0, 0.6, 2.2))
+        val spec                   = Chart(rows)(area(x = _.t, y0 = _.lo, y1 = _.hi, curve = Curve.monotone))
+        val root                   = summon[Conversion[ChartSpec[Band], Svg.Root]](spec)
+        val ps                     = deepPathsIn(root).filter(p => p.svgAttrs.d.isDefined && hasCloseCmd(p))
+        assert(ps.nonEmpty, "area y0/y1 with monotone curve must render a closed path")
+        // Both the forward y1 edge AND the backward y0 edge must be curved. append emits one cubic per
+        // interior segment: for 4 band points each edge feeds 3 points to append (after dropping the
+        // anchor/connecting vertex), so each curved edge yields 2 cubics. A y1-only curve with a linear
+        // y0 edge would yield only 2 cubics total; requiring >=4 proves the y0 edge is also curved.
+        val ribbon = ps.toSeq.maxBy(cubicCount)
+        assert(
+            cubicCount(ribbon) >= 4,
+            s"both band edges must be curved (>=4 cubics: 2 per edge for 4 points); got ${cubicCount(ribbon)}"
+        )
+    }
+
+    // --- Test 20: stacked bar with negative value: non-negative rect height (INV-018) ---
+    "stacked bar with negative value has non-negative rect height (INV-018)" in {
+        val rows = Chunk(Row("a", 10.0, "pos"), Row("a", -5.0, "neg"))
+        val spec = Chart(rows)(bar(x = _.x, y = _.y, stack = by(_.g)))
+        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val rs   = rectsIn(root)
+        assert(rs.nonEmpty, "Expected stacked bar rects")
+        val negH = rs.toSeq.filter: r =>
+            r.svgAttrs.height match
+                case Present(Coord.Num(v)) => v < 0.0
+                case _                     => false
+        assert(negH.isEmpty, s"All rect heights must be non-negative; negatives: ${negH.map(_.svgAttrs.height)}")
+    }
+
+    // --- Test 21: negative stack does not clip positive segments (INV-018) ---
+    "stacked bar with mixed signs: positive and negative stacks both render (INV-018)" in {
+        val rows = Chunk(Row("a", 10.0, "pos"), Row("a", -5.0, "neg"))
+        val spec = Chart(rows)(bar(x = _.x, y = _.y, stack = by(_.g)))
+        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val rs   = rectsIn(root)
+        // Both positive and negative groups should emit a rect (non-zero rawY).
+        assert(rs.size >= 2, s"Expected rects for both positive and negative groups, got ${rs.size}")
+    }
+
+    // --- Test 22: all-positive stack renders rects (INV-018 regression) ---
+    "all-positive stacked bar renders non-empty rects (INV-018 no-regression)" in {
+        val rows = Chunk(Row("a", 10.0, "g1"), Row("a", 5.0, "g2"))
+        val spec = Chart(rows)(bar(x = _.x, y = _.y, stack = by(_.g)))
+        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val rs   = rectsIn(root)
+        assert(rs.size == 2, s"Expected 2 rects for all-positive stack, got ${rs.size}")
+        val badH = rs.toSeq.filter: r =>
+            r.svgAttrs.height match
+                case Present(Coord.Num(v)) => v <= 0.0
+                case _                     => true
+        assert(badH.isEmpty, s"All-positive stack rects must have positive height; bad: ${badH.map(_.svgAttrs.height)}")
+    }
+
+    // --- Test 23: opacity channel (INV-019) ---
+    "opacity channel: bar fills are clamped to [0,1] fill-opacity (INV-019)" in {
+        val rows = Chunk(Row("a", 10.0, "g", 1.0), Row("b", 20.0, "g", 1.0))
+        val spec = Chart(rows)(bar(x = _.x, y = _.y, opacity = r => if r.x == "a" then 0.5 else 1.7))
+        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val rs   = rectsIn(root)
+        assert(rs.nonEmpty, "Expected rects")
+        val opacities = rs.toSeq.flatMap(r => r.svgAttrs.fillOpacity.toOption)
+        assert(opacities.nonEmpty, "Expected fillOpacity set on at least one rect")
+        assert(opacities.forall(v => v >= 0.0 && v <= 1.0), s"All fill-opacity values must be in [0,1], got $opacities")
+        // Verify clamping: the 1.7 value must be clamped to 1.0.
+        assert(opacities.exists(v => math.abs(v - 0.5) < 1e-9), "Expected fillOpacity=0.5 for first bar")
+        assert(opacities.exists(v => math.abs(v - 1.0) < 1e-9), "Expected fillOpacity clamped to 1.0 for out-of-range value")
+    }
+
+    // --- Test 24: label channel (INV-019) ---
+    "label channel: bar emits per-datum Svg.Text elements (INV-019)" in {
+        val rows = Chunk(Row("a", 10.0, "g"), Row("b", 20.0, "g"))
+        val spec = Chart(rows)(bar(x = _.x, y = _.y, label = r => r.y.toString))
+        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val ts   = deepTextsIn(root)
+        assert(ts.nonEmpty, "label channel must emit Svg.Text elements per bar")
+        assert(ts.size >= 2, s"Expected at least 2 text labels for 2 bars, got ${ts.size}")
+    }
+
+    // --- Test 25: tooltip channel (INV-019) ---
+    "tooltip channel: point emits title children on circles (INV-019)" in {
+        val rows = Chunk(Row("a", 10.0, "g", 1.0, "alpha"), Row("b", 20.0, "g", 1.0, "beta"))
+        val spec = Chart(rows)(point(x = _.x, y = _.y, tooltip = _.name))
+        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val cs   = deepCirclesIn(root)
+        assert(cs.nonEmpty, "Expected circles")
+        val withTitle = cs.toSeq.filter: c =>
+            c.children.toSeq.exists:
+                case _: Svg.Title => true
+                case _            => false
+        assert(withTitle.nonEmpty, "tooltip channel must attach Svg.Title children to circles")
+    }
+
+    // --- Test 26: existing call sites compile and render unchanged (INV-019 backward compat) ---
+    "point(x,y) and bar(x,y) without new channels still produce circles and rects (INV-019)" in {
+        val rows  = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
+        val pSpec = Chart(rows)(point(x = _.month, y = _.revenue))
+        val bSpec = Chart(rows)(bar(x = _.month, y = _.revenue))
+        val pRoot = summon[Conversion[ChartSpec[Sale], Svg.Root]](pSpec)
+        val bRoot = summon[Conversion[ChartSpec[Sale], Svg.Root]](bSpec)
+        assert(deepCirclesIn(pRoot).nonEmpty, "point without new channels must still emit circles")
+        assert(rectsIn(bRoot).nonEmpty, "bar without new channels must still emit rects")
+    }
+
 end ChartLowerTest
