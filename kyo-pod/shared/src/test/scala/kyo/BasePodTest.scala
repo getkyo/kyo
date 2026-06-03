@@ -10,6 +10,12 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
 
     override def timeout = 60.seconds
 
+    // Container ops contend on a single daemon, so leaves must run sequentially: the runBackends design (below)
+    // assumes "<=1 in-flight container op per daemon", which only holds with sequential leaves. kyo-test defaults to
+    // parallel leaves whereas the ScalaTest base ran them sequentially, so restore that. Without it, parallel leaves
+    // race the daemon and produce port conflicts, already-exists, image-pull, and backend errors.
+    override def config = super.config.sequential
+
     // Linux CI's container runtime (podman REST API) intermittently takes longer than
     // the production 5-second `HttpClientConfig.timeout` default for ordinary Container ops
     // (init, exec, stats) under load — every test request would fail with HttpTimeoutException.

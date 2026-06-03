@@ -20,7 +20,7 @@ class ContainerItTest extends BasePodTest:
     ): Unit < (Async & Abort[ContainerException]) =
         def attempt(remaining: Int): Unit < (Async & Abort[ContainerException]) =
             c.exec("ping", "-c", "3", "-W", "2", host).map { r =>
-                if r.isSuccess then ()
+                if r.isSuccess then succeed(s"$host is reachable: ping exited 0")
                 else if remaining <= 0 then
                     fail(s"ping $host failed: exit=${r.exitCode.toInt} out=${r.stdout} err=${r.stderr}")
                 else Async.sleep(1.second).andThen(attempt(remaining - 1))
