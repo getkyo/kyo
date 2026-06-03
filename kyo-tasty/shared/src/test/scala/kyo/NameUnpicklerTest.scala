@@ -44,8 +44,10 @@ class NameUnpicklerTest extends Test:
         }.map { result =>
             result match
                 case Result.Success(names) =>
-                    assert(names.nonEmpty)
-                    assert(names.length == 29)
+                    assert(names.length == 29, s"Expected 29 names but got ${names.length}")
+                    // First-name sanity check: the very first entry must decode to a non-empty string.
+                    import Tasty.Name.asString
+                    assert(names(0).asString.nonEmpty, s"Expected names(0) to be non-empty but got '${names(0).asString}'")
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
                 case Result.Panic(t) =>

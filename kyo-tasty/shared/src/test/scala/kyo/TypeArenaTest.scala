@@ -98,7 +98,12 @@ class TypeArenaTest extends Test:
         arena.intern(recFull)
         val canon = TypeArena.canonical()
         arena.merge(canon)
-        assert(canon.values.nonEmpty)
+        // After merging the Rec(RecThis(rec)) cycle, the canonical arena must contain at least 2 distinct
+        // interned types: the outer Rec and the inner sentinel Named (the RecThis is a back-reference that
+        // shares the outer Rec slot). Re-interning the same recFull must yield a structurally equal Type.
+        assert(canon.values.size >= 2, s"Expected at least 2 interned nodes after Rec/RecThis merge but got ${canon.values.size}")
+        val interned = canon.intern(recFull)
+        assert(interned == recFull, "Re-interning recFull must yield a structurally equal type")
     }
 
     // Test 5: after merge, structurally-equal types from two arenas are reference-equal.
@@ -174,7 +179,12 @@ class TypeArenaTest extends Test:
         arena.intern(t)
         val canon = TypeArena.canonical()
         arena.merge(canon)
-        assert(canon.values.nonEmpty)
+        // At depth MaxDepth-1, the canonical arena must contain at least MaxDepth-1 distinct Applied nodes
+        // plus the leaf Named, so values.size must be >= MaxDepth-1.
+        assert(
+            canon.values.size >= TypeArena.MaxDepth - 1,
+            s"Expected at least ${TypeArena.MaxDepth - 1} interned nodes after MaxDepth-1 nest but got ${canon.values.size}"
+        )
     }
 
     // Test 8 (T4, Rec depth boundary): Rec-type nesting at MaxDepth-1 succeeds.

@@ -1,7 +1,6 @@
 package kyo
 
 import AllowUnsafe.embrace.danger
-import scala.concurrent.Future
 
 /** Tests for Tree traversal members (Phase 10 Item 9).
   *
@@ -16,7 +15,6 @@ class TreeTraversalTest extends Test:
         val tpe = Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(-1))
         val t   = Tasty.Tree.Ident(n, tpe)
         assert(t.children.isEmpty)
-        Future.successful(succeed)
     }
 
     "Apply has fun and args as children" in {
@@ -31,7 +29,6 @@ class TreeTraversalTest extends Test:
         assert(app.children(0).equals(fun))
         assert(app.children(1).equals(arg1))
         assert(app.children(2).equals(arg2))
-        Future.successful(succeed)
     }
 
     "Block children are stats :+ expr" in {
@@ -41,7 +38,6 @@ class TreeTraversalTest extends Test:
         val b    = Tasty.Tree.Block(Chunk(lit1, lit2), lit3)
         assert(b.children.size == 3)
         assert(b.children(2).equals(lit3))
-        Future.successful(succeed)
     }
 
     "CaseDef with guard includes guard in children" in {
@@ -54,7 +50,6 @@ class TreeTraversalTest extends Test:
         val ch      = caseDef.children
         assert(ch.size == 3, s"Expected 3 children, got ${ch.size}")
         assert(ch.exists(_.equals(guard)), "guard missing from children")
-        Future.successful(succeed)
     }
 
     "CaseDef without guard has 2 children" in {
@@ -64,7 +59,6 @@ class TreeTraversalTest extends Test:
         val body    = Tasty.Tree.Literal(Tasty.Constant.IntConst(0))
         val caseDef = Tasty.Tree.CaseDef(pat, Maybe.Absent, body)
         assert(caseDef.children.size == 2)
-        Future.successful(succeed)
     }
 
     "foreach visits all nodes in pre-order" in {
@@ -78,7 +72,6 @@ class TreeTraversalTest extends Test:
         assert(visited.size == 5, s"Expected 5 visits, got ${visited.size}")
         assert(visited(0).equals(outer), "first visit should be outer")
         assert(visited(1).equals(block), "second visit should be block")
-        Future.successful(succeed)
     }
 
     "collect returns matching nodes" in {
@@ -87,7 +80,6 @@ class TreeTraversalTest extends Test:
         val block = Tasty.Tree.Block(Chunk(lit1, lit2), lit1)
         val ints  = block.collect { case Tasty.Tree.Literal(Tasty.Constant.IntConst(i)) => i }
         assert(ints.toSet == Set(1), s"Expected Set(1), got $ints")
-        Future.successful(succeed)
     }
 
     "find returns first matching node" in {
@@ -101,7 +93,6 @@ class TreeTraversalTest extends Test:
         // Maybe.Present wraps the found node; use get to compare via equals
         assert(found.isDefined, "Expected a node to be found")
         assert(found.get.equals(lit2), s"Expected lit2, got ${found.get}")
-        Future.successful(succeed)
     }
 
     "find returns Absent when no node matches" in {
@@ -112,7 +103,6 @@ class TreeTraversalTest extends Test:
             case _                                                 => false
         }
         assert(found == Maybe.Absent)
-        Future.successful(succeed)
     }
 
     "foldLeft accumulates values" in {
@@ -124,7 +114,6 @@ class TreeTraversalTest extends Test:
             case (acc, _)                                              => acc
         }
         assert(sum == 3, s"Expected 3, got $sum")
-        Future.successful(succeed)
     }
 
 end TreeTraversalTest

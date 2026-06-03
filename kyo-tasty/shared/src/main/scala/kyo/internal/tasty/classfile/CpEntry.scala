@@ -8,7 +8,7 @@ import kyo.internal.tasty.symbol.Interner
   * Entries are indexed 1..count-1 (slot 0 is unused per the JVM spec). UTF-8 entries are stored as raw byte offsets and decoded on first
   * access via the Interner.
   */
-sealed trait CpEntry
+sealed abstract class CpEntry
 
 object CpEntry:
 

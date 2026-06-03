@@ -97,8 +97,10 @@ class ClasspathTypedRequireTest extends Test:
     "Leaf 110: requireClass succeeds for an existing class FQN" in run {
         buildFixture.flatMap: cp =>
             Abort.run[TastyError](cp.requireClass("pkg.A")).map:
-                case Result.Success(c) =>
-                    assert(c.isInstanceOf[Tasty.Symbol.Class], s"Expected Symbol.Class but got $c")
+                case Result.Success(c: Tasty.Symbol.Class) =>
+                    assert(c.name.asString == "A", s"Expected Class name 'A' but got '${c.name.asString}'")
+                case Result.Success(other) =>
+                    fail(s"Expected Symbol.Class but got $other")
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
                 case Result.Panic(t) =>
@@ -131,8 +133,10 @@ class ClasspathTypedRequireTest extends Test:
     "Leaf 112: requireTrait succeeds for an existing trait FQN" in run {
         buildFixture.flatMap: cp =>
             Abort.run[TastyError](cp.requireTrait("pkg.T")).map:
-                case Result.Success(t) =>
-                    assert(t.isInstanceOf[Tasty.Symbol.Trait], s"Expected Symbol.Trait but got $t")
+                case Result.Success(t: Tasty.Symbol.Trait) =>
+                    assert(t.name.asString == "T", s"Expected Trait name 'T' but got '${t.name.asString}'")
+                case Result.Success(other) =>
+                    fail(s"Expected Symbol.Trait but got $other")
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
                 case Result.Panic(t) =>
@@ -147,8 +151,10 @@ class ClasspathTypedRequireTest extends Test:
     "Leaf 113: requireObject succeeds for an existing object FQN" in run {
         buildFixture.flatMap: cp =>
             Abort.run[TastyError](cp.requireObject("pkg.O")).map:
-                case Result.Success(o) =>
-                    assert(o.isInstanceOf[Tasty.Symbol.Object], s"Expected Symbol.Object but got $o")
+                case Result.Success(o: Tasty.Symbol.Object) =>
+                    assert(o.name.asString == "O", s"Expected Object name 'O' but got '${o.name.asString}'")
+                case Result.Success(other) =>
+                    fail(s"Expected Symbol.Object but got $other")
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
                 case Result.Panic(t) =>
@@ -163,8 +169,10 @@ class ClasspathTypedRequireTest extends Test:
     "Leaf 114: requireClassLike succeeds for a trait FQN" in run {
         buildFixture.flatMap: cp =>
             Abort.run[TastyError](cp.requireClassLike("pkg.T")).map:
-                case Result.Success(c) =>
-                    assert(c.isInstanceOf[Tasty.Symbol.ClassLike], s"Expected ClassLike but got $c")
+                case Result.Success(c: Tasty.Symbol.ClassLike) =>
+                    assert(c.name.asString == "T", s"Expected ClassLike name 'T' but got '${c.name.asString}'")
+                case Result.Success(other) =>
+                    fail(s"Expected ClassLike but got $other")
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
                 case Result.Panic(t) =>
@@ -179,8 +187,10 @@ class ClasspathTypedRequireTest extends Test:
     "Leaf 115: requirePackage succeeds for an existing package FQN" in run {
         buildFixture.flatMap: cp =>
             Abort.run[TastyError](cp.requirePackage("pkg")).map:
-                case Result.Success(p) =>
-                    assert(p.isInstanceOf[Tasty.Symbol.Package], s"Expected Symbol.Package but got $p")
+                case Result.Success(p: Tasty.Symbol.Package) =>
+                    assert(p.name.asString == "pkg", s"Expected Package name 'pkg' but got '${p.name.asString}'")
+                case Result.Success(other) =>
+                    fail(s"Expected Symbol.Package but got $other")
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
                 case Result.Panic(t) =>
@@ -214,8 +224,10 @@ class ClasspathTypedRequireTest extends Test:
         buildFixture.flatMap: cp =>
             val effect: Tasty.Symbol.Class < Abort[TastyError] = cp.requireClass("pkg.A")
             Abort.run[TastyError](effect).map:
-                case Result.Success(c) =>
-                    assert(c.isInstanceOf[Tasty.Symbol.Class])
+                case Result.Success(c: Tasty.Symbol.Class) =>
+                    assert(c.name.asString == "A", s"Expected Class name 'A' but got '${c.name.asString}'")
+                case Result.Success(other) =>
+                    fail(s"Expected Symbol.Class but got $other")
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
                 case Result.Panic(t) =>

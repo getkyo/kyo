@@ -23,11 +23,16 @@ class FlatSymbolGrepAuditTest extends Test:
             Tasty.Name.Unsafe.init("<unresolved>"),
             kyo.internal.tasty.symbol.SymbolId(-1)
         )
-        assert(sym.isInstanceOf[Tasty.Symbol], "Unresolved must be a Symbol")
+        sym match
+            case u: Tasty.Symbol.Unresolved =>
+                assert(u.name.asString == "<unresolved>", s"Expected name '<unresolved>' but got '${u.name.asString}'")
+            case other => fail(s"Expected Symbol.Unresolved but got $other")
+        end match
         assert(sym.isUnresolved, "isUnresolved must be true")
-        // A flat final case class Symbol would not be a sealed trait subtype.
-        assert(!sym.isInstanceOf[Tasty.Symbol.Class], "Unresolved must not match Class")
-        succeed
+        // A flat final case class Symbol would not be a sealed trait subtype: confirm Unresolved is not a Class subtype.
+        sym match
+            case _: Tasty.Symbol.Class => fail("Unresolved must not match Class")
+            case _                     => assert(!sym.isClass, "Unresolved must not be a Class")
     }
 
 end FlatSymbolGrepAuditTest

@@ -1,7 +1,5 @@
 package kyo
 
-import scala.concurrent.Future
-
 /** Tests for show methods on Symbol, Type, Tree, and Constant (Phase 10 Items 4 and 14).
   *
   * Leaf id:7. Pins: INV-005.
@@ -86,7 +84,6 @@ class ShowMethodTest extends Test with TastyTestSupport:
         assert(Tasty.Constant.ShortConst(2.toShort).show == "2")
         assert(Tasty.Constant.UnitConst.show == "()")
         assert(Tasty.Constant.NullConst.show == "null")
-        Future.successful(succeed)
     }
 
 end ShowMethodTest

@@ -3,7 +3,6 @@ package kyo
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
-import scala.concurrent.Future
 
 /** JVM-only benchmark regression infrastructure tests (Phase 27, INV-027).
   *
@@ -77,7 +76,7 @@ class BenchmarkRegressionTest extends Test:
             s"P27-T1 baseline status: cold_load_ms=$coldVal  $preCampaignNote"
         )
 
-        Future.successful(succeed)
+        succeed
     }
 
     // Test 2 (INV-027): post-campaign baseline file exists and warm_cache_ms is valid.
@@ -118,7 +117,7 @@ class BenchmarkRegressionTest extends Test:
             s"P27-T2 baseline status: warm_cache_ms=$warmVal  $preCampaignNote"
         )
 
-        Future.successful(succeed)
+        succeed
     }
 
 end BenchmarkRegressionTest

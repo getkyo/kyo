@@ -1,7 +1,5 @@
 package kyo
 
-import scala.concurrent.Future
-
 /** Tests for case class consistency of Position, ModuleDescriptor, Pickle, Version (Phase 10 Item 16).
   *
   * Leaf ids: 17, partial of 16. Pins: Steering rule on case classes for pure data.
@@ -18,7 +16,6 @@ class CaseClassConsistencyTest extends Test:
         assert(v2.minor == 9)
         assert(v1.show == "28.8.0")
         assert(v2.show == "28.9.0")
-        Future.successful(succeed)
     }
 
     "Position is a case class with copy" in {
@@ -29,7 +26,6 @@ class CaseClassConsistencyTest extends Test:
         // structural equality via equals (Scala case class auto-generates equals)
         val p2: Any = Tasty.Position(Maybe("Foo.scala"), 10, 5)
         assert(p1.equals(p2), "Position equality failed")
-        Future.successful(succeed)
     }
 
     "Pickle is a case class with copy" in {
@@ -40,7 +36,6 @@ class CaseClassConsistencyTest extends Test:
         assert(p1.equals(p2), "Pickle equality failed")
         val p3 = p1.copy(uuid = "uuid-2")
         assert(p3.uuid == "uuid-2")
-        Future.successful(succeed)
     }
 
     "ModuleDescriptor is a case class" in {
@@ -56,7 +51,6 @@ class CaseClassConsistencyTest extends Test:
         val md2 = md.copy(name = "java.lang")
         assert(md.name == "java.base")
         assert(md2.name == "java.lang")
-        Future.successful(succeed)
     }
 
     // Leaf id:16 partial -- directSubclassesOf / Constant.show / Annotation.arguments synchronous Chunk
@@ -64,7 +58,6 @@ class CaseClassConsistencyTest extends Test:
         val c = Tasty.Constant.StringConst("test")
         val s = c.show
         assert(s == "\"test\"")
-        Future.successful(succeed)
     }
 
     "Annotation.arguments is a synchronous Chunk[Tree]" in {
@@ -73,7 +66,6 @@ class CaseClassConsistencyTest extends Test:
         val ann                          = Tasty.Annotation(tpe, Chunk.empty)
         val arguments: Chunk[Tasty.Tree] = ann.arguments
         assert(arguments.isEmpty)
-        Future.successful(succeed)
     }
 
 end CaseClassConsistencyTest

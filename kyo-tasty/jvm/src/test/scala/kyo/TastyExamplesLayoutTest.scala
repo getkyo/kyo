@@ -3,7 +3,6 @@ package kyo
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
-import scala.concurrent.Future
 import scala.jdk.CollectionConverters.*
 
 /** JVM-only source-layout tests for INV-022 (Phase 26: kyo-tasty-examples extraction).
@@ -20,17 +19,17 @@ class TastyExamplesLayoutTest extends Test:
         // first and is deferred.
         val worktreeRoot = findWorktreeRoot
         val examplesDir  = worktreeRoot.resolve("kyo-tasty/shared/src/main/scala/kyo/tasty/examples")
-        val exists       = Files.exists(examplesDir)
-        if exists then
+        if Files.exists(examplesDir) then
             val scalaFiles = Files.list(examplesDir).iterator.asScala
                 .filter(p => p.getFileName.toString.endsWith(".scala"))
                 .toList
             assert(
                 scalaFiles.isEmpty,
                 s"INV-022 violated: kyo-tasty/shared/src/main/scala/kyo/tasty/examples/ still contains .scala files: ${scalaFiles.map(_.getFileName).mkString(", ")}"
-            ): Unit
+            )
+        else
+            succeed
         end if
-        Future.successful(succeed)
     }
 
     "kyo-tasty-examples sources at expected path with correct package" in {
@@ -67,7 +66,6 @@ class TastyExamplesLayoutTest extends Test:
             packageErrors.isEmpty,
             s"INV-022: package declaration errors: ${packageErrors.mkString("; ")}"
         )
-        Future.successful(succeed)
     }
 
     /** Walk up from user.dir until a directory containing build.sbt is found; that is the worktree root.

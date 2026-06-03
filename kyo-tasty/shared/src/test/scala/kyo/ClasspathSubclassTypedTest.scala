@@ -115,7 +115,12 @@ class ClasspathSubclassTypedTest extends Test:
                     assert(direct.size == 1, s"Expected 1 direct subclass but got ${direct.size}")
                     val names = direct.map(_.name.asString).toSeq.toSet
                     assert(names.contains("B"), s"Expected B in direct subclasses: $names")
-                    assert(direct.forall(_.isInstanceOf[Tasty.Symbol.ClassLike]), "All results must be ClassLike")
+                    direct.foreach:
+                        case cl: Tasty.Symbol.ClassLike =>
+                            ()
+                        case other =>
+                            fail(s"Expected Symbol.ClassLike but got $other")
+                    assert(direct.forall(_.name.asString.nonEmpty), "All ClassLike entries must have a non-empty name")
                 case Maybe.Absent =>
                     fail("Expected to find class A in fixture")
     }
@@ -137,7 +142,10 @@ class ClasspathSubclassTypedTest extends Test:
                     assert(names.contains("CFromA"), s"Expected CFromA (transitive) in implementations: $names")
                     assert(!names.contains("AbsA"), s"AbsA (abstract) must be excluded: $names")
                     assert(impls.size == 3, s"Expected 3 implementations but got ${impls.size}: $names")
-                    assert(impls.forall(_.isInstanceOf[Tasty.Symbol.Class]), "All results must be Symbol.Class")
+                    impls.foreach:
+                        case _: Tasty.Symbol.Class => ()
+                        case other                 => fail(s"Expected Symbol.Class but got $other")
+                    assert(impls.forall(_.name.asString.nonEmpty), "All Class entries must have a non-empty name")
                 case Maybe.Absent =>
                     fail("Expected to find trait T in fixture")
     }

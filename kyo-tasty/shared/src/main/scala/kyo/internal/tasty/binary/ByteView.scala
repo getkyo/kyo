@@ -4,14 +4,14 @@ import kyo.AllowUnsafe
 
 /** A window into a byte buffer, tracking a mutable read cursor.
   *
-  * ByteView is a sealed trait with two concrete cases:
+  * ByteView is a sealed abstract class with two concrete cases:
   *   - Heap: backed by an in-memory Array[Byte] with start/end bounds and a mutable cursor.
   *   - Mapped: stub for memory-mapped file support (Phase 7).
   *
   * All cursor-advancing operations are performed on the concrete Heap instance; there is no effect wrapper here because ByteView is a
   * low-level building block used inside Sync.defer blocks at the call site.
   */
-sealed trait ByteView:
+sealed abstract class ByteView:
 
     /** Read the byte at absolute position `at` without advancing the cursor. */
     def peekByte(at: Long): Byte

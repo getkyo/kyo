@@ -1,7 +1,5 @@
 package kyo
 
-import scala.concurrent.Future
-
 /** Tests for ErrorMode enum (Phase 10 Item 2).
   *
   * Pins: steering rule on enum over Boolean sentinel.
@@ -20,7 +18,6 @@ class ErrorModeTest extends Test:
         assert(Tasty.ErrorMode.SoftFail != Tasty.ErrorMode.FailFast)
         assert(Tasty.ErrorMode.SoftFail == Tasty.ErrorMode.SoftFail)
         assert(Tasty.ErrorMode.FailFast == Tasty.ErrorMode.FailFast)
-        Future.successful(succeed)
     }
 
     "ErrorMode derives CanEqual" in {
@@ -28,7 +25,6 @@ class ErrorModeTest extends Test:
         val a: Tasty.ErrorMode = Tasty.ErrorMode.SoftFail
         val b: Tasty.ErrorMode = Tasty.ErrorMode.FailFast
         assert(a != b)
-        Future.successful(succeed)
     }
 
 end ErrorModeTest

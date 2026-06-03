@@ -193,13 +193,15 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
             // Find any real FQN from the loaded classpath
             val anyFqn = cp.fqnIndex.keys.headOption.getOrElse("PlainClass")
             cp.requireSymbol(anyFqn).map: sym =>
-                assert(sym.isInstanceOf[Tasty.Symbol], s"requireSymbol returned a non-Symbol: $sym")
                 import Tasty.Name.asString
+                assert(
+                    sym.name.asString == anyFqn.split('.').last || sym.name.asString.nonEmpty,
+                    s"requireSymbol returned a symbol with an empty or unexpected name: '${sym.name.asString}' for fqn '$anyFqn'"
+                )
                 assert(
                     sym.name.asString.nonEmpty,
                     "requireSymbol returned a symbol with an empty name."
                 )
-                succeed
     }
 
     // Leaf 7 (F-A5-001 ClasspathBuilding): classpath-building-fires-from-orchestrator

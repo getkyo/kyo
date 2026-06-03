@@ -8,5 +8,5 @@ package kyo.internal.tasty.binary
   * and dev-aware message formatting) and uses the `enableSuppression=false, writableStackTrace=false` form to
   * skip stack-trace materialisation on the throw path.
   */
-class MalformedVarintException(val byteOffset: Long, msg: String)
+final class MalformedVarintException(val byteOffset: Long, msg: String)
     extends RuntimeException(msg, null, false, false)

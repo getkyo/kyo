@@ -44,10 +44,13 @@ class TypedSymbolFactoryTest extends Test:
     "dispatch-on-kind-class: from(d) with kind=Class returns Symbol.Class with id=1" in {
         val d   = makeDesc(id = 1, kind = Tasty.SymbolKind.Class, name = "Foo")
         val sym = TypedSymbolFactory.from(d)
-        assert(sym.isInstanceOf[Tasty.Symbol.Class], s"Expected Symbol.Class but got ${sym.getClass.getSimpleName}")
+        sym match
+            case c: Tasty.Symbol.Class =>
+                assert(c.name.asString == "Foo", s"Expected Class name 'Foo' but got '${c.name.asString}'")
+            case other => fail(s"Expected Symbol.Class but got ${other.getClass.getSimpleName}")
+        end match
         assert(sym.id == SymbolId(1), s"Expected id=SymbolId(1) but got ${sym.id}")
         assert(sym.kind == Tasty.SymbolKind.Class, s"Expected kind=Class but got ${sym.kind}")
-        succeed
     }
 
     // Leaf 48: dispatch-on-kind-method-paramlists
@@ -59,13 +62,14 @@ class TypedSymbolFactoryTest extends Test:
         val d = makeDesc(id = 5, kind = Tasty.SymbolKind.Method, name = "foo")
         d.paramListIds = Chunk(scala.collection.IndexedSeq(10, 11))
         val sym = TypedSymbolFactory.from(d)
-        assert(sym.isInstanceOf[Tasty.Symbol.Method], s"Expected Symbol.Method but got ${sym.getClass.getSimpleName}")
-        val m = sym.asInstanceOf[Tasty.Symbol.Method]
-        assert(m.paramListIds.size == 1, s"Expected 1 param list but got ${m.paramListIds.size}")
-        assert(m.paramListIds(0).size == 2, s"Expected 2 params but got ${m.paramListIds(0).size}")
-        assert(m.paramListIds(0)(0) == SymbolId(10), s"Expected SymbolId(10) but got ${m.paramListIds(0)(0)}")
-        assert(m.paramListIds(0)(1) == SymbolId(11), s"Expected SymbolId(11) but got ${m.paramListIds(0)(1)}")
-        succeed
+        sym match
+            case m: Tasty.Symbol.Method =>
+                assert(m.paramListIds.size == 1, s"Expected 1 param list but got ${m.paramListIds.size}")
+                assert(m.paramListIds(0).size == 2, s"Expected 2 params but got ${m.paramListIds(0).size}")
+                assert(m.paramListIds(0)(0) == SymbolId(10), s"Expected SymbolId(10) but got ${m.paramListIds(0)(0)}")
+                assert(m.paramListIds(0)(1) == SymbolId(11), s"Expected SymbolId(11) but got ${m.paramListIds(0)(1)}")
+            case other => fail(s"Expected Symbol.Method but got ${other.getClass.getSimpleName}")
+        end match
     }
 
     // Leaf 49: dispatch-on-kind-typeparam-variance
@@ -77,10 +81,11 @@ class TypedSymbolFactoryTest extends Test:
         val coFlags = Tasty.Flags(Tasty.Flag.CoVariant)
         val d       = makeDesc(id = 7, kind = Tasty.SymbolKind.TypeParam, flags = coFlags, name = "A")
         val sym     = TypedSymbolFactory.from(d)
-        assert(sym.isInstanceOf[Tasty.Symbol.TypeParam], s"Expected Symbol.TypeParam but got ${sym.getClass.getSimpleName}")
-        val tp = sym.asInstanceOf[Tasty.Symbol.TypeParam]
-        assert(tp.variance == Tasty.Variance.Covariant, s"Expected Covariant but got ${tp.variance}")
-        succeed
+        sym match
+            case tp: Tasty.Symbol.TypeParam =>
+                assert(tp.variance == Tasty.Variance.Covariant, s"Expected Covariant but got ${tp.variance}")
+            case other => fail(s"Expected Symbol.TypeParam but got ${other.getClass.getSimpleName}")
+        end match
     }
 
     // Leaf 50: dispatch-on-kind-package
@@ -92,10 +97,11 @@ class TypedSymbolFactoryTest extends Test:
         val d = makeDesc(id = 0, kind = Tasty.SymbolKind.Package, name = "p")
         d.declarationIds = Chunk(1, 2, 3)
         val sym = TypedSymbolFactory.from(d)
-        assert(sym.isInstanceOf[Tasty.Symbol.Package], s"Expected Symbol.Package but got ${sym.getClass.getSimpleName}")
-        val pkg = sym.asInstanceOf[Tasty.Symbol.Package]
-        assert(pkg.memberIds == Chunk(SymbolId(1), SymbolId(2), SymbolId(3)), s"Expected Chunk(1,2,3) but got ${pkg.memberIds}")
-        succeed
+        sym match
+            case pkg: Tasty.Symbol.Package =>
+                assert(pkg.memberIds == Chunk(SymbolId(1), SymbolId(2), SymbolId(3)), s"Expected Chunk(1,2,3) but got ${pkg.memberIds}")
+            case other => fail(s"Expected Symbol.Package but got ${other.getClass.getSimpleName}")
+        end match
     }
 
     // Leaf 51: dispatch-on-kind-unresolved-id-minus-one
@@ -106,9 +112,11 @@ class TypedSymbolFactoryTest extends Test:
     "dispatch-on-kind-unresolved-id-minus-one: Symbol.Unresolved id=SymbolId(-1)" in {
         val d   = makeDesc(id = -1, kind = Tasty.SymbolKind.Unresolved, name = "<unresolved>")
         val sym = TypedSymbolFactory.from(d)
-        assert(sym.isInstanceOf[Tasty.Symbol.Unresolved], s"Expected Symbol.Unresolved but got ${sym.getClass.getSimpleName}")
-        assert(sym.id == SymbolId(-1), s"Expected id=SymbolId(-1) but got ${sym.id}")
-        succeed
+        sym match
+            case u: Tasty.Symbol.Unresolved =>
+                assert(u.id == SymbolId(-1), s"Expected id=SymbolId(-1) but got ${u.id}")
+            case other => fail(s"Expected Symbol.Unresolved but got ${other.getClass.getSimpleName}")
+        end match
     }
 
 end TypedSymbolFactoryTest

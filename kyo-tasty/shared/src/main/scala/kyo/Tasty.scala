@@ -2102,14 +2102,18 @@ object Tasty:
                         case _            => Chunk.empty
 
             /** All direct declarations of this classlike as an unfiltered Chunk[Symbol]. */
-            override def declarations(using cp: Classpath): Chunk[Symbol] = declarationIds.map(cp.symbol)
+            override def declarations(using cp: Classpath): Chunk[Symbol] =
+                if declarationIds.isEmpty then Chunk.empty
+                else declarationIds.map(cp.symbol)
 
             /** All method-kind declarations of this classlike. */
             override def methods(using cp: Classpath): Chunk[Method] =
-                declarationIds.flatMap: id =>
-                    cp.symbol(id) match
-                        case m: Method => Chunk(m)
-                        case _         => Chunk.empty
+                if declarationIds.isEmpty then Chunk.empty
+                else
+                    declarationIds.flatMap: id =>
+                        cp.symbol(id) match
+                            case m: Method => Chunk(m)
+                            case _         => Chunk.empty
 
             /** All constructor declarations (name == "<init>") of this classlike. */
             def constructors(using cp: Classpath): Chunk[Method] =
@@ -2118,52 +2122,66 @@ object Tasty:
 
             /** All val-kind declarations of this classlike. */
             override def vals(using cp: Classpath): Chunk[Val] =
-                declarationIds.flatMap: id =>
-                    cp.symbol(id) match
-                        case v: Val => Chunk(v)
-                        case _      => Chunk.empty
+                if declarationIds.isEmpty then Chunk.empty
+                else
+                    declarationIds.flatMap: id =>
+                        cp.symbol(id) match
+                            case v: Val => Chunk(v)
+                            case _      => Chunk.empty
 
             /** All var-kind declarations of this classlike. */
             override def vars(using cp: Classpath): Chunk[Var] =
-                declarationIds.flatMap: id =>
-                    cp.symbol(id) match
-                        case v: Var => Chunk(v)
-                        case _      => Chunk.empty
+                if declarationIds.isEmpty then Chunk.empty
+                else
+                    declarationIds.flatMap: id =>
+                        cp.symbol(id) match
+                            case v: Var => Chunk(v)
+                            case _      => Chunk.empty
 
             /** All field-kind declarations (Java-only) of this classlike. */
             override def fields(using cp: Classpath): Chunk[Field] =
-                declarationIds.flatMap: id =>
-                    cp.symbol(id) match
-                        case f: Field => Chunk(f)
-                        case _        => Chunk.empty
+                if declarationIds.isEmpty then Chunk.empty
+                else
+                    declarationIds.flatMap: id =>
+                        cp.symbol(id) match
+                            case f: Field => Chunk(f)
+                            case _        => Chunk.empty
 
             /** All nested class, trait, and object declarations of this classlike. */
             override def nestedTypes(using cp: Classpath): Chunk[ClassLike] =
-                declarationIds.flatMap: id =>
-                    cp.symbol(id) match
-                        case c: ClassLike => Chunk(c)
-                        case _            => Chunk.empty
+                if declarationIds.isEmpty then Chunk.empty
+                else
+                    declarationIds.flatMap: id =>
+                        cp.symbol(id) match
+                            case c: ClassLike => Chunk(c)
+                            case _            => Chunk.empty
 
             /** All type alias declarations of this classlike. */
             def typeAliases(using cp: Classpath): Chunk[TypeAlias] =
-                declarationIds.flatMap: id =>
-                    cp.symbol(id) match
-                        case t: TypeAlias => Chunk(t)
-                        case _            => Chunk.empty
+                if declarationIds.isEmpty then Chunk.empty
+                else
+                    declarationIds.flatMap: id =>
+                        cp.symbol(id) match
+                            case t: TypeAlias => Chunk(t)
+                            case _            => Chunk.empty
 
             /** All abstract type declarations of this classlike. */
             def abstractTypes(using cp: Classpath): Chunk[AbstractType] =
-                declarationIds.flatMap: id =>
-                    cp.symbol(id) match
-                        case t: AbstractType => Chunk(t)
-                        case _               => Chunk.empty
+                if declarationIds.isEmpty then Chunk.empty
+                else
+                    declarationIds.flatMap: id =>
+                        cp.symbol(id) match
+                            case t: AbstractType => Chunk(t)
+                            case _               => Chunk.empty
 
             /** All opaque type declarations of this classlike. */
             def opaqueTypes(using cp: Classpath): Chunk[OpaqueType] =
-                declarationIds.flatMap: id =>
-                    cp.symbol(id) match
-                        case t: OpaqueType => Chunk(t)
-                        case _             => Chunk.empty
+                if declarationIds.isEmpty then Chunk.empty
+                else
+                    declarationIds.flatMap: id =>
+                        cp.symbol(id) match
+                            case t: OpaqueType => Chunk(t)
+                            case _             => Chunk.empty
 
             /** Resolve the companion of this classlike (companion object for a Class or Trait; companion class for an Object). */
             override def companion(using cp: Classpath): Maybe[Symbol] = cp.companion(this)
@@ -2179,6 +2197,7 @@ object Tasty:
 
         // ── 14 final case classes ─────────────────────────────────────────────
 
+        // Not final: EnumCase extends Class as a subtype (see EnumCase below).
         case class Class private[kyo] (
             id: SymbolId,
             name: Name,

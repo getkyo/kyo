@@ -152,10 +152,11 @@ class TreeAdtVariantCoverageTest extends Test:
         val names  = Array(Tasty.Name.Unsafe.init("self"))
         val pickle = Array[Byte](118.toByte, (0 | 0x80).toByte, TastyFormat.UNITconst.toByte)
         decodePickle(pickle, names, noSym) match
-            case Result.Success(t: Tasty.Tree.SelfDef) => succeed
-            case Result.Success(other)                 => fail(s"Expected Tree.SelfDef but got $other")
-            case Result.Failure(e)                     => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                       => throw t
+            case Result.Success(t @ Tasty.Tree.SelfDef(name, _)) =>
+                assert(name.asString == "self", s"Expected SelfDef name 'self' but got '${name.asString}'")
+            case Result.Success(other) => fail(s"Expected Tree.SelfDef but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -171,10 +172,11 @@ class TreeAdtVariantCoverageTest extends Test:
             (1 | 0x80).toByte
         )
         decodePickle(pickle, names, addrMap) match
-            case Result.Success(t: Tasty.Tree.Super) => succeed
-            case Result.Success(other)               => fail(s"Expected Tree.Super but got $other")
-            case Result.Failure(e)                   => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                     => throw t
+            case Result.Success(Tasty.Tree.Super(_, mix)) =>
+                assert(mix.isEmpty, s"Expected no-mix Super but got mix=$mix")
+            case Result.Success(other) => fail(s"Expected Tree.Super but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -193,10 +195,11 @@ class TreeAdtVariantCoverageTest extends Test:
             (2 | 0x80).toByte
         )
         decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), addrMap) match
-            case Result.Success(t: Tasty.Tree.SuperType) => succeed
-            case Result.Success(other)                   => fail(s"Expected Tree.SuperType but got $other")
-            case Result.Failure(e)                       => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                         => throw t
+            case Result.Success(Tasty.Tree.SuperType(thistpe, supertpe)) =>
+                assert(thistpe != null && supertpe != null, "SuperType must have both thistpe and supertpe")
+            case Result.Success(other) => fail(s"Expected Tree.SuperType but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -215,10 +218,11 @@ class TreeAdtVariantCoverageTest extends Test:
             TastyFormat.UNITconst.toByte
         )
         decodePickle(pickle, names, addrMap) match
-            case Result.Success(t: Tasty.Tree.RefinedType) => succeed
-            case Result.Success(other)                     => fail(s"Expected Tree.RefinedType but got $other")
-            case Result.Failure(e)                         => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                           => throw t
+            case Result.Success(Tasty.Tree.RefinedType(_, name, _)) =>
+                assert(name.asString == "Base", s"Expected refinement name 'Base' but got '${name.asString}'")
+            case Result.Success(other) => fail(s"Expected Tree.RefinedType but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -237,10 +241,11 @@ class TreeAdtVariantCoverageTest extends Test:
             (2 | 0x80).toByte
         )
         decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), addrMap) match
-            case Result.Success(t: Tasty.Tree.AndType) => succeed
-            case Result.Success(other)                 => fail(s"Expected Tree.AndType but got $other")
-            case Result.Failure(e)                     => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                       => throw t
+            case Result.Success(Tasty.Tree.AndType(left, right)) =>
+                assert(left != null && right != null, "AndType must have both left and right")
+            case Result.Success(other) => fail(s"Expected Tree.AndType but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -259,10 +264,11 @@ class TreeAdtVariantCoverageTest extends Test:
             (2 | 0x80).toByte
         )
         decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), addrMap) match
-            case Result.Success(t: Tasty.Tree.OrType) => succeed
-            case Result.Success(other)                => fail(s"Expected Tree.OrType but got $other")
-            case Result.Failure(e)                    => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                      => throw t
+            case Result.Success(Tasty.Tree.OrType(left, right)) =>
+                assert(left != null && right != null, "OrType must have both left and right")
+            case Result.Success(other) => fail(s"Expected Tree.OrType but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -276,10 +282,11 @@ class TreeAdtVariantCoverageTest extends Test:
             TastyFormat.UNITconst.toByte
         )
         decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), noSym) match
-            case Result.Success(t: Tasty.Tree.AnnotatedType) => succeed
-            case Result.Success(other)                       => fail(s"Expected Tree.AnnotatedType but got $other")
-            case Result.Failure(e)                           => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                             => throw t
+            case Result.Success(Tasty.Tree.AnnotatedType(parent, annot)) =>
+                assert(parent != null && annot != null, "AnnotatedType must have both parent and annot")
+            case Result.Success(other) => fail(s"Expected Tree.AnnotatedType but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -289,10 +296,11 @@ class TreeAdtVariantCoverageTest extends Test:
     "RecType: RECtype tag decodes to Tree.RecType" in run {
         val pickle = Array[Byte](TastyFormat.RECtype.toByte, TastyFormat.UNITconst.toByte)
         decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), noSym) match
-            case Result.Success(t: Tasty.Tree.RecType) => succeed
-            case Result.Success(other)                 => fail(s"Expected Tree.RecType but got $other")
-            case Result.Failure(e)                     => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                       => throw t
+            case Result.Success(Tasty.Tree.RecType(parent)) =>
+                assert(parent != null, "RecType must have parent")
+            case Result.Success(other) => fail(s"Expected Tree.RecType but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -301,10 +309,11 @@ class TreeAdtVariantCoverageTest extends Test:
     "RecThisAddr: RECthis byte + addr decodes to Tree.RecThisAddr" in run {
         val pickle = Array[Byte](TastyFormat.RECthis.toByte, (3 | 0x80).toByte)
         decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), noSym) match
-            case Result.Success(Tasty.Tree.RecThisAddr(3)) => succeed
-            case Result.Success(other)                     => fail(s"Expected Tree.RecThisAddr(3) but got $other")
-            case Result.Failure(e)                         => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                           => throw t
+            case Result.Success(Tasty.Tree.RecThisAddr(addr)) =>
+                assert(addr == 3, s"Expected RecThisAddr addr=3 but got addr=$addr")
+            case Result.Success(other) => fail(s"Expected Tree.RecThisAddr(3) but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -321,10 +330,11 @@ class TreeAdtVariantCoverageTest extends Test:
             (1 | 0x80).toByte
         )
         decodePickle(pickle, names, addrMap) match
-            case Result.Success(t: Tasty.Tree.IdentTpt) => succeed
-            case Result.Success(other)                  => fail(s"Expected Tree.IdentTpt but got $other")
-            case Result.Failure(e)                      => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                        => throw t
+            case Result.Success(Tasty.Tree.IdentTpt(name, _)) =>
+                assert(name.asString == "Int", s"Expected IdentTpt name 'Int' but got '${name.asString}'")
+            case Result.Success(other) => fail(s"Expected Tree.IdentTpt but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -341,10 +351,11 @@ class TreeAdtVariantCoverageTest extends Test:
             (1 | 0x80).toByte
         )
         decodePickle(pickle, names, addrMap) match
-            case Result.Success(t: Tasty.Tree.SelectTpt) => succeed
-            case Result.Success(other)                   => fail(s"Expected Tree.SelectTpt but got $other")
-            case Result.Failure(e)                       => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                         => throw t
+            case Result.Success(Tasty.Tree.SelectTpt(_, name)) =>
+                assert(name.asString == "pkg", s"Expected SelectTpt name 'pkg' but got '${name.asString}'")
+            case Result.Success(other) => fail(s"Expected Tree.SelectTpt but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -360,10 +371,11 @@ class TreeAdtVariantCoverageTest extends Test:
             (1 | 0x80).toByte
         )
         decodePickle(pickle, names, addrMap) match
-            case Result.Success(t: Tasty.Tree.SingletonTpt) => succeed
-            case Result.Success(other)                      => fail(s"Expected Tree.SingletonTpt but got $other")
-            case Result.Failure(e)                          => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                            => throw t
+            case Result.Success(Tasty.Tree.SingletonTpt(tpe)) =>
+                assert(tpe != null, "SingletonTpt must have tpe")
+            case Result.Success(other) => fail(s"Expected Tree.SingletonTpt but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -380,10 +392,11 @@ class TreeAdtVariantCoverageTest extends Test:
             (1 | 0x80).toByte
         )
         decodePickle(pickle, names, addrMap) match
-            case Result.Success(t: Tasty.Tree.ByNameTpt) => succeed
-            case Result.Success(other)                   => fail(s"Expected Tree.ByNameTpt but got $other")
-            case Result.Failure(e)                       => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                         => throw t
+            case Result.Success(Tasty.Tree.ByNameTpt(inner)) =>
+                assert(inner != null, "ByNameTpt must have inner type")
+            case Result.Success(other) => fail(s"Expected Tree.ByNameTpt but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -398,10 +411,11 @@ class TreeAdtVariantCoverageTest extends Test:
             (1 | 0x80).toByte
         )
         decodePickle(pickle, names, addrMap) match
-            case Result.Success(t: Tasty.Tree.ByNameType) => succeed
-            case Result.Success(other)                    => fail(s"Expected Tree.ByNameType but got $other")
-            case Result.Failure(e)                        => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                          => throw t
+            case Result.Success(Tasty.Tree.ByNameType(arg)) =>
+                assert(arg != null, "ByNameType must have arg")
+            case Result.Success(other) => fail(s"Expected Tree.ByNameType but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -412,10 +426,11 @@ class TreeAdtVariantCoverageTest extends Test:
         val names  = Array(Tasty.Name.Unsafe.init("java"))
         val pickle = Array[Byte](TastyFormat.TYPEREFpkg.toByte, (0 | 0x80).toByte)
         decodePickle(pickle, names, noSym) match
-            case Result.Success(Tasty.Tree.TypeRefPkg(n)) if n.asString == "java" => succeed
-            case Result.Success(other)                                            => fail(s"Expected Tree.TypeRefPkg(java) but got $other")
-            case Result.Failure(e)                                                => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                                                  => throw t
+            case Result.Success(Tasty.Tree.TypeRefPkg(n)) =>
+                assert(n.asString == "java", s"Expected TypeRefPkg name 'java' but got '${n.asString}'")
+            case Result.Success(other) => fail(s"Expected Tree.TypeRefPkg(java) but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -424,10 +439,11 @@ class TreeAdtVariantCoverageTest extends Test:
     "TypeRefDirect: TYPEREFdirect tag decodes to Tree.TypeRefDirect" in run {
         val pickle = Array[Byte](TastyFormat.TYPEREFdirect.toByte, (5 | 0x80).toByte)
         decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), noSym) match
-            case Result.Success(Tasty.Tree.TypeRefDirect(5)) => succeed
-            case Result.Success(other)                       => fail(s"Expected Tree.TypeRefDirect(5) but got $other")
-            case Result.Failure(e)                           => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                             => throw t
+            case Result.Success(Tasty.Tree.TypeRefDirect(addr)) =>
+                assert(addr == 5, s"Expected TypeRefDirect addr=5 but got addr=$addr")
+            case Result.Success(other) => fail(s"Expected Tree.TypeRefDirect(5) but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -446,10 +462,11 @@ class TreeAdtVariantCoverageTest extends Test:
             (2 | 0x80).toByte
         )
         decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), addrMap) match
-            case Result.Success(t: Tasty.Tree.TypeRefSymbol) => succeed
-            case Result.Success(other)                       => fail(s"Expected Tree.TypeRefSymbol but got $other")
-            case Result.Failure(e)                           => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                             => throw t
+            case Result.Success(Tasty.Tree.TypeRefSymbol(addr, _)) =>
+                assert(addr == 1, s"Expected TypeRefSymbol addr=1 but got addr=$addr")
+            case Result.Success(other) => fail(s"Expected Tree.TypeRefSymbol but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -468,10 +485,11 @@ class TreeAdtVariantCoverageTest extends Test:
             (2 | 0x80).toByte
         )
         decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), addrMap) match
-            case Result.Success(t: Tasty.Tree.TermRefSymbol) => succeed
-            case Result.Success(other)                       => fail(s"Expected Tree.TermRefSymbol but got $other")
-            case Result.Failure(e)                           => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                             => throw t
+            case Result.Success(Tasty.Tree.TermRefSymbol(addr, _)) =>
+                assert(addr == 1, s"Expected TermRefSymbol addr=1 but got addr=$addr")
+            case Result.Success(other) => fail(s"Expected Tree.TermRefSymbol but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -481,10 +499,11 @@ class TreeAdtVariantCoverageTest extends Test:
         val names  = Array(Tasty.Name.Unsafe.init("List"))
         val pickle = Array[Byte](TastyFormat.IMPORTED.toByte, (0 | 0x80).toByte)
         decodePickle(pickle, names, noSym) match
-            case Result.Success(t: Tasty.Tree.Imported) => succeed
-            case Result.Success(other)                  => fail(s"Expected Tree.Imported but got $other")
-            case Result.Failure(e)                      => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                        => throw t
+            case Result.Success(Tasty.Tree.Imported(qual)) =>
+                assert(qual != null, "Imported must have qual")
+            case Result.Success(other) => fail(s"Expected Tree.Imported but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -494,10 +513,11 @@ class TreeAdtVariantCoverageTest extends Test:
         val names  = Array(Tasty.Name.Unsafe.init("AB"))
         val pickle = Array[Byte](TastyFormat.RENAMED.toByte, (0 | 0x80).toByte)
         decodePickle(pickle, names, noSym) match
-            case Result.Success(Tasty.Tree.Renamed(n)) if n.asString == "AB" => succeed
-            case Result.Success(other)                                       => fail(s"Expected Tree.Renamed(AB) but got $other")
-            case Result.Failure(e)                                           => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                                             => throw t
+            case Result.Success(Tasty.Tree.Renamed(n)) =>
+                assert(n.asString == "AB", s"Expected Renamed name 'AB' but got '${n.asString}'")
+            case Result.Success(other) => fail(s"Expected Tree.Renamed(AB) but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -512,10 +532,11 @@ class TreeAdtVariantCoverageTest extends Test:
             (1 | 0x80).toByte
         )
         decodePickle(pickle, names, addrMap) match
-            case Result.Success(t: Tasty.Tree.ExplicitTpt) => succeed
-            case Result.Success(other)                     => fail(s"Expected Tree.ExplicitTpt but got $other")
-            case Result.Failure(e)                         => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                           => throw t
+            case Result.Success(Tasty.Tree.ExplicitTpt(inner)) =>
+                assert(inner != null, "ExplicitTpt must have inner type")
+            case Result.Success(other) => fail(s"Expected Tree.ExplicitTpt but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -524,10 +545,11 @@ class TreeAdtVariantCoverageTest extends Test:
     "Bounded: BOUNDED tag decodes to Tree.Bounded" in run {
         val pickle = Array[Byte](TastyFormat.BOUNDED.toByte, TastyFormat.UNITconst.toByte)
         decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), noSym) match
-            case Result.Success(t: Tasty.Tree.Bounded) => succeed
-            case Result.Success(other)                 => fail(s"Expected Tree.Bounded but got $other")
-            case Result.Failure(e)                     => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                       => throw t
+            case Result.Success(Tasty.Tree.Bounded(bound)) =>
+                assert(bound != null, "Bounded must have bound")
+            case Result.Success(other) => fail(s"Expected Tree.Bounded but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -550,10 +572,12 @@ class TreeAdtVariantCoverageTest extends Test:
             (2 | 0x80).toByte
         )
         decodePickle(pickle, names, addrMap) match
-            case Result.Success(t: Tasty.Tree.SelectOuter) => succeed
-            case Result.Success(other)                     => fail(s"Expected Tree.SelectOuter but got $other")
-            case Result.Failure(e)                         => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                           => throw t
+            case Result.Success(Tasty.Tree.SelectOuter(_, name, levels, _)) =>
+                assert(levels == 1, s"Expected SelectOuter levels=1 but got $levels")
+                assert(name.asString == "outerVal", s"Expected SelectOuter name 'outerVal' but got '${name.asString}'")
+            case Result.Success(other) => fail(s"Expected Tree.SelectOuter but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -569,10 +593,11 @@ class TreeAdtVariantCoverageTest extends Test:
             (1 | 0x80).toByte
         )
         decodePickle(pickle, names, addrMap) match
-            case Result.Success(t: Tasty.Tree.FlexibleType) => succeed
-            case Result.Success(other)                      => fail(s"Expected Tree.FlexibleType but got $other")
-            case Result.Failure(e)                          => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                            => throw t
+            case Result.Success(Tasty.Tree.FlexibleType(arg)) =>
+                assert(arg != null, "FlexibleType must have arg")
+            case Result.Success(other) => fail(s"Expected Tree.FlexibleType but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
@@ -587,10 +612,11 @@ class TreeAdtVariantCoverageTest extends Test:
             (1 | 0x80).toByte
         )
         decodePickle(pickle, names, addrMap) match
-            case Result.Success(t: Tasty.Tree.Elided) => succeed
-            case Result.Success(other)                => fail(s"Expected Tree.Elided but got $other")
-            case Result.Failure(e)                    => fail(s"Expected success but got failure $e")
-            case Result.Panic(t)                      => throw t
+            case Result.Success(Tasty.Tree.Elided(inner)) =>
+                assert(inner != null, "Elided must have inner type")
+            case Result.Success(other) => fail(s"Expected Tree.Elided but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
         end match
     }
 
