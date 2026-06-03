@@ -13,14 +13,15 @@ import kyo.internal.tasty.reader.TastyHeader
 import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.type_.TypeArena
 
-/** Tests for ClassfileUnpickler using JDK classfiles loaded via getResourceAsStream.
+/** Tests for ClassfileUnpickler using JDK classfiles.
   *
-  * Leaf classification (decoder-fidelity-3 Phase 3.04 CARRY-4 audit, updated Phase 2 post-audit):
-  *   - Tests 1, 2, 5, 7, 8, 9, 11 (migrated to cross-platform in Phase 2): now use Embedded fixture classfiles or
-  *     inline synthetic bytes. These assert decoder shape properties that are equally proven by small fixtures.
-  *   - Tests 3, 4, 6, 12-17 (jvmOnly): pin specific JDK shapes (ArrayList generics, TimeUnit enum, FileInputStream
-  *     throws, Function BootstrapMethods, HashMap NestHost/NestMembers, ClassDesc PermittedSubclasses, Modifier
-  *     MethodParameters). Migration would weaken the pin to real-JDK behavior; defensibly JVM-only.
+  * Leaf classification:
+  *   - Tests 1, 2, 5, 7, 8, 9, 11: use Embedded fixture classfiles or inline synthetic bytes. These assert
+  *     decoder shape properties that are equally proven by small fixtures.
+  *   - Tests 4, 12, 13, 14, 15, 16, 17 (cross-platform via EmbeddedClassfiles): pin specific JDK shapes
+  *     (ArrayList generics, FileInputStream throws, Function BootstrapMethods, HashMap NestHost/NestMembers,
+  *     ClassDesc PermittedSubclasses, Modifier MethodParameters). The pinned JDK classfile bytes are embedded
+  *     in EmbeddedClassfiles.scala so the assertions run on JS/Native as well.
   *   - Test 10 (cross-platform): constructs a bad-magic byte array inline; no classloader needed.
   *   - Test 18 (cross-platform): constructs a synthetic classfile from raw bytes using ByteArrayOutputStream.
   */
@@ -41,9 +42,9 @@ class ClassfileReaderTest extends Test:
         case t: Tasty.Symbol.Trait => t.permittedSubclassIds
         case _                     => Maybe.Absent
 
-    /** Load raw bytes for a JVM class by binary path. Only works on JVM. */
+    /** Load raw bytes for a JDK class by binary path from EmbeddedClassfiles (cross-platform). */
     private def loadClassBytes(binaryPath: String): Array[Byte] =
-        TestResourceLoader.loadBytes(binaryPath)
+        kyo.fixtures.EmbeddedClassfiles.loadJdkClass(binaryPath)
 
     private def readClass(binaryPath: String)(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
         val bytes = loadClassBytes(binaryPath)
@@ -119,7 +120,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 4: ArrayList.class has at least one TypeParam via class Signature attribute
     // -------------------------------------------------------------------------
-    "reading ArrayList.class: typeParams contains at least one TypeParam with non-empty name" taggedAs jvmOnly in run {
+    "reading ArrayList.class: typeParams contains at least one TypeParam with non-empty name" in run {
         readClass("java/util/ArrayList.class").map: result =>
             val sym = result.classSymbol
             assert(sym.name.asString == "ArrayList", s"Expected 'ArrayList', got '${sym.name.asString}'")
@@ -353,7 +354,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 12: throwsTypes is non-empty for a method declared throws
     // -------------------------------------------------------------------------
-    "a method declared 'throws IOException' has non-empty throwsTypes in symbols" taggedAs jvmOnly in run {
+    "a method declared 'throws IOException' has non-empty throwsTypes in symbols" in run {
         // FileInputStream constructor throws IOException
         readClass("java/io/FileInputStream.class").map: result =>
             val methodsWithThrows = result.symbols.filter: sym =>
@@ -374,7 +375,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 13 (M8/INV-008): BootstrapMethods attribute is parsed and exposed
     // -------------------------------------------------------------------------
-    "M8: BootstrapMethods attribute is parsed into metadata.bootstrapMethods" taggedAs jvmOnly in run {
+    "M8: BootstrapMethods attribute is parsed into metadata.bootstrapMethods" in run {
         // java.util.function.Function uses BootstrapMethods for lambda-compose default methods
         readClass("java/util/function/Function.class").map: result =>
             val md = symJavaMetadata(result.classSymbol).getOrElse(fail("Expected javaMetadata Present"))
@@ -390,7 +391,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 14 (M8/INV-008): NestHost attribute is parsed and exposed
     // -------------------------------------------------------------------------
-    "M8: NestHost attribute is parsed into metadata.nestHost for an inner class" taggedAs jvmOnly in run {
+    "M8: NestHost attribute is parsed into metadata.nestHost for an inner class" in run {
         // java.util.HashMap$Node is an inner class of HashMap; has NestHost = java/util/HashMap
         readClass("java/util/HashMap$Node.class").map: result =>
             val md = symJavaMetadata(result.classSymbol).getOrElse(fail("Expected javaMetadata Present"))
@@ -408,7 +409,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 15 (M8/INV-008): NestMembers attribute is parsed and exposed
     // -------------------------------------------------------------------------
-    "M8: NestMembers attribute is parsed into metadata.nestMembers for an outer class" taggedAs jvmOnly in run {
+    "M8: NestMembers attribute is parsed into metadata.nestMembers for an outer class" in run {
         // java.util.HashMap has inner classes; NestMembers lists them
         readClass("java/util/HashMap.class").map: result =>
             val md = symJavaMetadata(result.classSymbol).getOrElse(fail("Expected javaMetadata Present"))
@@ -421,7 +422,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 16 (M8/INV-008): PermittedSubclasses attribute is parsed and exposed
     // -------------------------------------------------------------------------
-    "M8: PermittedSubclasses attribute is parsed for a sealed interface" taggedAs jvmOnly in run {
+    "M8: PermittedSubclasses attribute is parsed for a sealed interface" in run {
         // java.lang.constant.ClassDesc is a sealed interface (JDK 12+) with known permitted subclasses
         readClass("java/lang/constant/ClassDesc.class").map: result =>
             val md = symJavaMetadata(result.classSymbol).getOrElse(fail("Expected javaMetadata Present"))
@@ -441,7 +442,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 17 (M8/INV-008): MethodParameters attribute is parsed and exposed
     // -------------------------------------------------------------------------
-    "M8: MethodParameters attribute is parsed into method symbol metadata.paramNames" taggedAs jvmOnly in run {
+    "M8: MethodParameters attribute is parsed into method symbol metadata.paramNames" in run {
         // java.lang.module.ModuleDescriptor$Requires$Modifier has MethodParameters in its constructor
         readClass("java/lang/module/ModuleDescriptor$Requires$Modifier.class").map: result =>
             val methodsWithParams = result.symbols.filter: sym =>

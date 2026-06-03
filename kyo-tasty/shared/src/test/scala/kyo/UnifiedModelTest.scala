@@ -29,9 +29,9 @@ class UnifiedModelTest extends Test:
 
     private val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
 
-    /** Load JDK class bytes by binary path. JVM-only. */
+    /** Load JDK class bytes by binary path from EmbeddedClassfiles (cross-platform). */
     private def loadJdkClass(binaryPath: String): Array[Byte] =
-        TestResourceLoader.loadBytes(binaryPath)
+        kyo.fixtures.EmbeddedClassfiles.loadJdkClass(binaryPath)
 
     /** Load fixture bytes from test resources (TASTy or .class files). */
     private def loadFixture(name: String): Array[Byte] =

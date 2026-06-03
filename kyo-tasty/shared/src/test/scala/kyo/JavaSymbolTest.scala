@@ -16,9 +16,10 @@ import kyo.internal.tasty.type_.TypeArena
   *
   * Tests 1-10 as specified in execution-plan.md Phase 5b and PHASE-5b-PREP.md §7.3.
   *
-  * Tests that load JDK classfiles (test 9: java.lang.Deprecated) remain JVM-only. Tests 4, 5, 6, 7, 8, 10 were migrated in Phase 2
-  * post-audit to use Embedded fixture classfiles (throwsFixtureClass, arrayRecordClass, pointRecordClass, anonymousFixture1Class). Test 3
-  * uses synthetic classfile bytes (cross-platform). Tests 1, 2 use the existing arrayRecordClass fixture (cross-platform).
+  * Test 9 (java.lang.Deprecated) loads a real JDK classfile from EmbeddedClassfiles, so the assertion runs on
+  * JS/Native as well. Tests 4, 5, 6, 7, 8, 10 use Embedded fixture classfiles (throwsFixtureClass,
+  * arrayRecordClass, pointRecordClass, anonymousFixture1Class). Test 3 uses synthetic classfile bytes
+  * (cross-platform). Tests 1, 2 use the existing arrayRecordClass fixture (cross-platform).
   */
 class JavaSymbolTest extends Test:
 
@@ -52,9 +53,9 @@ class JavaSymbolTest extends Test:
         case m: Tasty.Symbol.Method    => m.javaMetadata
         case _                         => Maybe.Absent
 
-    /** Load JDK class bytes by binary path. JVM-only. */
+    /** Load JDK class bytes by binary path from EmbeddedClassfiles (cross-platform). */
     private def loadJdkClass(binaryPath: String): Array[Byte] =
-        TestResourceLoader.loadBytes(binaryPath)
+        kyo.fixtures.EmbeddedClassfiles.loadJdkClass(binaryPath)
 
     /** Load fixture class bytes from test resources. JVM-only. */
     private def loadFixture(name: String): Array[Byte] =
@@ -357,7 +358,7 @@ class JavaSymbolTest extends Test:
     // -------------------------------------------------------------------------
     // Test 9: annotations for @Deprecated class contains Retention annotation
     // -------------------------------------------------------------------------
-    "JavaMetadata.annotations for java.lang.Deprecated includes @Retention" taggedAs jvmOnly in run {
+    "JavaMetadata.annotations for java.lang.Deprecated includes @Retention" in run {
         // java.lang.Deprecated is annotated with @Retention(RetentionPolicy.RUNTIME)
         // and @Documented. We test that at least one annotation is present with
         // class name containing "Retention" or "Documented".

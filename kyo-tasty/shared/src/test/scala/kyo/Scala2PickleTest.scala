@@ -8,11 +8,8 @@ import kyo.internal.tasty.type_.TypeArena
 
 /** Tests for Phase 10: Scala 2 pickle reader.
   *
-  * Tests 1-4 and 6-9 use hand-crafted synthetic bytes and are cross-platform. Test 5 loads a JDK classfile via TestResourceLoader and
-  * remains jvmOnly.
-  *
-  * Phase 2.12 corrective: tests 1-4, 6-7 ungated because they use only synthetic bytes; test 5 is the only genuinely JVM-only test in
-  * this file (requires JDK java/lang/Object.class via TestResourceLoader).
+  * All tests are cross-platform. Tests 1-4 and 6-10 use hand-crafted synthetic pickle bytes. Test 5 uses
+  * Embedded.throwsFixtureClass to verify that a non-Scala2 classfile is not tagged with Flag.Scala2.
   *
   * Tests use hand-crafted synthetic Scala 2 pickle bytes (raw format, no compact encoding) because generating real Scala 2 classfiles
   * during the agent run requires a Scala 2 compiler. Deviations from plan (see PHASE-10-IMPL-NOTES.md).
