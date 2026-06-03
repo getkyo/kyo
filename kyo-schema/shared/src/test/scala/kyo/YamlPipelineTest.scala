@@ -642,6 +642,77 @@ age: 30
                 )
             }
         }
+
+        "encodes through processors and writes events to a handler" in {
+            val value   = MTPerson("Alice", 30)
+            val encoded = Yaml.pipeline.through(scalarRewrite("Alice", "Alicia")).encode(value).getOrThrow
+
+            val scalars = new Yaml.Events.Handler[Chunk[String], Nothing]:
+                override def scalar(
+                    context: Chunk[String],
+                    scalarValue: String,
+                    meta: Yaml.ScalarMeta
+                ): Result[Nothing, Chunk[String]] =
+                    Result.succeed(context :+ scalarValue)
+            end scalars
+            val written = Yaml.pipeline.through(identityProcessor).write(value, Chunk.empty[String])(scalars)
+
+            assertResult(
+                (
+                    encoded = Result.succeed(MTPerson("Alicia", 30)),
+                    written = Result.succeed(Chunk("name", "Alice", "age", "30"))
+                )
+            ) {
+                (
+                    encoded = Yaml.decode[MTPerson](encoded),
+                    written = written
+                )
+            }
+        }
+
+        "decodes and builds a CST from UTF-8 bytes" in {
+            val bytes =
+                Span.from("name: Alice\nage: 30\n".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+            assertResult(
+                (
+                    decoded = Result.succeed(MTPerson("Alice", 30)),
+                    cstRendered = Result.succeed("name: Alice\nage: 30\n")
+                )
+            ) {
+                (
+                    decoded = Yaml.pipeline.decodeBytes[MTPerson](bytes),
+                    cstRendered = Yaml.pipeline.cstBytes(bytes).map(_.render(using Yaml.WriterConfig.Default))
+                )
+            }
+        }
+
+        "decodes a single value selected from a stream transform" in {
+            val yaml = "---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n"
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentIndex = Maybe(Yaml.DocumentIndex(1)))
+            val pipeline =
+                Yaml.pipeline.reader(config).throughCstStream(stream => Result.succeed(stream))
+
+            assert(pipeline.decode[MTPerson](yaml) == Result.succeed(MTPerson("Bob", 25)))
+        }
+
+        "propagates a failing CST transform across a stream render" in {
+            val yaml = "---\nname: Alice\n---\nname: Bob\n"
+            val pipeline =
+                Yaml.pipeline
+                    .throughCstStream(stream => Result.succeed(stream))
+                    .throughCst(_ => Result.fail(PipelineError.Rejected))
+
+            assert(pipeline.render(yaml) == Result.fail(PipelineError.Rejected))
+        }
+
+        "fails decodeAll when a CST stream document cannot decode" in {
+            val stream =
+                Yaml.cstAll("---\nname: Alice\nage: 30\n---\nname: Bob\n").getOrThrow
+
+            assert(Yaml.pipeline.decodeAll[MTPerson](stream).isFailure)
+        }
     }
 
     private val identityProcessor: Yaml.Events.Processor[Nothing] =

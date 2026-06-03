@@ -1856,6 +1856,119 @@ class YamlCstTest extends Test:
                 )
             }
         }
+
+        "renders an edited document whose root is a scalar an alias or a block scalar" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val span = Yaml.Cst.SourceSpan(mark, mark)
+            val scalarRoot =
+                Yaml.cst("# c\nhello\n").getOrThrow
+                    .replace(Yaml.Cst.Path.root, scalar("world"))
+                    .getOrThrow
+            val aliasRoot =
+                Yaml.cst("# c\nx: 1\n").getOrThrow
+                    .replace(
+                        Yaml.Cst.Path.root,
+                        Yaml.Cst.Node.Alias(Yaml.Anchor("a"), Yaml.Cst.AliasSyntax.Canonical, span, Absent)
+                    )
+                    .getOrThrow
+            val blockRoot =
+                Yaml.cst("# c\nx: 1\n").getOrThrow
+                    .replace(
+                        Yaml.Cst.Path.root,
+                        Yaml.Cst.Node.Scalar(
+                            "one\ntwo",
+                            Yaml.Cst.ScalarSyntax.Canonical,
+                            Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Literal, mark),
+                            span,
+                            Absent
+                        )
+                    )
+                    .getOrThrow
+
+            assertResult((scalarComment = true, scalarValue = true, alias = true, block = true)) {
+                (
+                    scalarComment = scalarRoot.render(using Yaml.WriterConfig.Default).contains("# c"),
+                    scalarValue = scalarRoot.render(using Yaml.WriterConfig.Default).contains("world"),
+                    alias = aliasRoot.render(using Yaml.WriterConfig.Default).contains("*a"),
+                    block = blockRoot.render(using Yaml.WriterConfig.Default).contains("|")
+                )
+            }
+        }
+
+        "renders an edited commented document with quoted and escaped scalar values" in {
+            val yaml =
+                """# cfg
+                  |single: 'a''b'
+                  |double: "x\ty"
+                  |plain: ok
+                  |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow
+                    .replace(Yaml.Cst.Path.root / "plain", scalar("done"))
+                    .getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assertResult(
+                (
+                    comment = true,
+                    singleQuoted = true,
+                    escapedTab = true,
+                    reparses = true,
+                    decodes = Result.succeed(Map("single" -> "a'b", "double" -> "x\ty", "plain" -> "done"))
+                )
+            ) {
+                (
+                    comment = rendered.contains("# cfg"),
+                    singleQuoted = rendered.contains("'a''b'"),
+                    escapedTab = rendered.contains("\\t"),
+                    reparses = Yaml.cst(rendered).isSuccess,
+                    decodes = Yaml.decode[Map[String, String]](rendered)
+                )
+            }
+        }
+
+        "renders an edited commented document with start and end markers" in {
+            val config =
+                Yaml.WriterConfig.Default.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.StartAndEnd)
+            val rendered =
+                Yaml.cst("# c\nname: Alice\n").getOrThrow
+                    .replace(Yaml.Cst.Path.root / "name", scalar("Bob"))
+                    .getOrThrow
+                    .render(using config)
+
+            assertResult((start = true, end = true, comment = true, edited = true)) {
+                (
+                    start = rendered.startsWith("---\n"),
+                    end = rendered.contains("..."),
+                    comment = rendered.contains("# c"),
+                    edited = rendered.contains("name: Bob")
+                )
+            }
+        }
+
+        "renders a tagged block scalar inside an edited commented document" in {
+            val yaml =
+                """# c
+                  |name: Alice
+                  |block: !!str |-
+                  |  one
+                  |  two
+                  |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow
+                    .replace(Yaml.Cst.Path.root / "name", scalar("Bob"))
+                    .getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assertResult((blockHeader = true, tag = true, content = true, reparses = true)) {
+                (
+                    blockHeader = rendered.contains("|-"),
+                    tag = rendered.contains("!!str"),
+                    content = rendered.contains("\n  one\n  two"),
+                    reparses = Yaml.cst(rendered).isSuccess
+                )
+            }
+        }
     }
 
     "Yaml.Cst as a source" - {
