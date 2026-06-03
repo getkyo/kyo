@@ -5,8 +5,9 @@ package kyo
   * The primary case is a class selector ([[kyo.Selector.cls]]) targeting elements that carry a
   * matching [[kyo.UI.cssClass]]. `id` and `data-*` selectors are also provided for the existing
   * `UI.id`/`UI.data` hooks. A pseudo-class/element variant (`:hover`, `:focus`, `::before`, ...)
-  * is attached with [[kyo.Selector.pseudo]]; a descendant combinator with [[kyo.Selector.descendant]].
-  * Selectors are immutable values; building one never mutates the receiver.
+  * is attached with [[kyo.Selector.pseudo]]; a descendant combinator with [[kyo.Selector.descendant]]
+  * and a direct-child combinator with [[kyo.Selector.child]]. Selectors are immutable values;
+  * building one never mutates the receiver.
   *
   * @see
   *   [[kyo.Stylesheet.rule]] for the rule a selector heads
@@ -28,6 +29,12 @@ final case class Selector private[kyo] (css: String) derives CanEqual:
 
     /** A descendant combinator: `parent.descendant(child)` yields `parent child`. */
     def descendant(child: Selector): Selector = Selector(css + " " + child.css)
+
+    /** A direct-child combinator: `parent.child(c)` yields `parent > c`, matching only `c` elements
+      * that are immediate children of `parent` (not deeper descendants). Use this when a descendant
+      * combinator would over-reach into a nested subtree that must keep its own styling.
+      */
+    def child(c: Selector): Selector = Selector(css + " > " + c.css)
 
 end Selector
 

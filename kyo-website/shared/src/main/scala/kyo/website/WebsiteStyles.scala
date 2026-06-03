@@ -19,7 +19,7 @@ import kyo.*
   * lay out as a column, inline tags as a row), so the sheet expresses layout through the flex
   * setters (`row`, `column`, `align`, `justify`, `gap`, `flexWrap`, `flexGrow`, `flexBasis`,
   * `width`) rather than CSS Grid. Multi-column card grids are `flex-wrap` + percentage widths; the
-  * docs 3-pane shell is a flex row with fixed sidebar/TOC widths and a growing content column. The
+  * docs 2-pane shell is a flex row with a fixed-width left rail and a growing content column. The
   * reference's purely decorative `radial-gradient` glow overlays (drawn via `::before`
   * pseudo-elements) are not expressible through `Style` (no pseudo-element content, `bgGradient`
   * is linear-only); the dark sections instead carry the solid dark background and light text that
@@ -78,7 +78,7 @@ object WebsiteStyles:
                 "radius-sm"    -> "10px",
                 "wrap"         -> "1120px",
                 "sidebar-w"    -> "260px",
-                "toc-w"        -> "220px",
+                "content-w"    -> "820px",
                 "header-h"     -> "60px"
             )
             ++ baseTypography
@@ -93,7 +93,6 @@ object WebsiteStyles:
             ++ docsShell
             ++ docsSidebar
             ++ docsContent
-            ++ docsToc
             ++ docsProse
             ++ docsTokens
             ++ responsive
@@ -135,8 +134,8 @@ object WebsiteStyles:
             )
             // Unified site header (G2): a full-bleed sticky bar whose inner row is capped at 1500px
             // (the docs-shell width) and centered, so the one header sits above both the 1120px
-            // landing body and the 1500px docs 3-pane without ever appearing narrower than the docs
-            // content. Position.sticky renders position:sticky; top:0; z-index:100 so the bar pins
+            // landing body and the 1500px docs 2-pane row without ever appearing narrower than the
+            // docs content. Position.sticky renders position:sticky; top:0; z-index:100 so the bar pins
             // at the viewport top on scroll and layers above page content. The .search-results
             // dropdown uses Position.dropdown (z-index:50) but is a descendant of .site-header so
             // stacking-context rules ensure it renders above siblings of the header, not below.
@@ -650,9 +649,13 @@ object WebsiteStyles:
             )
     end notFound
 
-    // ---- Docs: 3-pane shell ----
+    // ---- Docs: 2-pane shell ----
     private def docsShell: Stylesheet =
         Stylesheet.empty
+            // The 2-pane row: a fixed-width left rail (.docs-sidebar) and a growing content column
+            // (.docs-content, capped to a comfortable reading width via .docs-content-wrap). The right
+            // TOC pane is gone; its content now nests in the rail under the active module. The shell
+            // stays capped at 1500px so it never exceeds the unified header's inner row.
             .rule(
                 "docs-shell",
                 Style.row.align(_.start).flexWrap(_.noWrap)
@@ -707,16 +710,49 @@ object WebsiteStyles:
                     .borderLeft(2.px, Color.transparent)
                     .hover(_.color(_.variable("text")).bg(_.variable("surface")))
             )
+            // The active module is a COLUMN (not the base row): it stacks the module link above its
+            // expanded in-page section outline (.sidebar-sections), so the sections read as a nested
+            // tree beneath the link rather than sitting beside it. align(_.start) keeps the link and
+            // the outline both pinned to the left edge.
             .rule(
                 "nav-item-active",
-                Style.color(_.variable("accent")).bg(_.variable("accent-ghost"))
+                Style.column.align(_.start)
+                    .color(_.variable("accent")).bg(_.variable("accent-ghost"))
                     .borderLeft(2.px, _.variable("accent"))
             )
-            // the inner anchor fills the row so the whole item is the link target
+            // the inner anchor fills the row so the whole item is the link target. Scope to the DIRECT
+            // anchor child so the nested section links (.sidebar-section, descendants of the same
+            // .nav-item via the .sidebar-sections <ul>) are NOT swept up by this module-link rule and
+            // keep their own dim color + left indent.
             .rule(
-                Selector.cls("nav-item").descendant(Selector.tag("a")),
+                Selector.cls("nav-item").child(Selector.tag("a")),
                 Style.color(_.variable("text-dim")).width(Length.Pct(100)).textDecoration(_.none)
             )
+            // The active module's nested in-page section list (the former right-TOC content, moved into
+            // the rail). A <ul> is a flex element under the base reset that inherits align-items:center
+            // from the <nav> ancestor; align(_.start) pins every section link to the rail's left edge
+            // (fixing the old centered-TOC bug). A subtle left guide line + small top margin set the
+            // outline apart from the module link above it; the slightly smaller dim text reads as
+            // secondary navigation. Full width so the indented links share one left edge.
+            .rule(
+                "sidebar-sections",
+                Style.column.align(_.start).width(Length.Pct(100))
+                    .gap(1.px).margin(6.px, 0.px, 2.px, 8.px)
+                    .borderLeft(1.px, _.variable("line-soft"))
+            )
+            // A section link: left-aligned, dim, no underline, brightening to ink on hover. The base
+            // indent (left padding) is set per level below.
+            .rule(
+                "sidebar-section",
+                Style.row.align(_.start).width(Length.Pct(100))
+                    .fontSize(12.5.px).lineHeight(1.35).color(_.variable("muted"))
+                    .padding(4.px, 8.px, 4.px, 12.px).rounded(6.px).textDecoration(_.none)
+                    .hover(_.color(_.variable("ink")))
+            )
+            // Level-2 sits at the base indent; level-3+ steps one level deeper so the outline reads as
+            // a shallow tree.
+            .rule("sidebar-section-l2", Style.padding(4.px, 8.px, 4.px, 12.px))
+            .rule("sidebar-section-l3", Style.padding(4.px, 8.px, 4.px, 24.px).color(_.variable("faint")))
             // Mobile module-nav toggle (B6): a full-width disclosure button shown by default and
             // hidden on wide viewports by the >=861px media query (where the sidebar is always
             // visible). Clicking it flips the sidebar's `docs-sidebar-open` class, which the <860px
@@ -734,9 +770,15 @@ object WebsiteStyles:
     // ---- Docs: main content column ----
     private def docsContent: Stylesheet =
         Stylesheet.empty
+            // The article column. With the right TOC pane gone, prose would stretch across the whole
+            // remaining width and read poorly, so cap it to a comfortable measure (var --content-w,
+            // 820px) and keep it left-aligned right next to the rail: the column still flex-grows to
+            // claim the row, but maxWidth holds the line length and the empty space falls to the right
+            // (NOT centered), so the article sits beside the sidebar rather than drifting to the middle.
             .rule(
                 "docs-content",
                 Style.column.flexGrow(1.0).flexBasis(0.px).minWidth(0.px)
+                    .maxWidth(820.px)
                     .overflow(_.auto).padding(40.px, 52.px, 90.px, 52.px)
             )
             // prev/next footer (two boxes)
@@ -772,38 +814,6 @@ object WebsiteStyles:
                 Style.inline
             )
     end docsContent
-
-    // ---- Docs: right table-of-contents ----
-    private def docsToc: Stylesheet =
-        Stylesheet.empty
-            .rule(
-                "docs-toc",
-                Style.column.width(220.px).flexShrink(0.0)
-                    .height(Length.Pct(100)).maxHeight(Length.Px(10000)).overflow(_.auto)
-                    .padding(40.px, 24.px, 60.px, 8.px)
-            )
-            .rule(
-                "toc-nav",
-                Style.column.gap(2.px)
-            )
-            .rule(
-                "toc-item",
-                Style.row.align(_.center).fontSize(13.px).color(_.variable("muted"))
-                    .padding(5.px, 0.px, 5.px, 12.px).borderLeft(1.px, _.variable("line-soft"))
-                    .lineHeight(1.4)
-                    .hover(_.color(_.variable("text")))
-            )
-            .rule(
-                Selector.cls("toc-item").descendant(Selector.tag("a")),
-                Style.color(_.variable("muted")).fontSize(13.px).width(Length.Pct(100)).textDecoration(_.none)
-                    .hover(_.color(_.variable("text")))
-            )
-            .rule("toc-h1", Style.padding(5.px, 0.px, 5.px, 12.px))
-            .rule("toc-h2", Style.padding(5.px, 0.px, 5.px, 12.px))
-            .rule("toc-h3", Style.padding(5.px, 0.px, 5.px, 24.px))
-            .rule("toc-h4", Style.padding(5.px, 0.px, 5.px, 36.px))
-            .rule("sub", Style.fontSize(12.5.px).color(_.variable("faint")))
-    end docsToc
 
     // ---- Docs: prose (content article), callouts, blockquote, tables ----
     private def docsProse: Stylesheet =
@@ -1022,12 +1032,10 @@ object WebsiteStyles:
                     .rule("fcat", Style.flexBasis(Length.Pct(100)))
                     .rule("stat", Style.column.align(_.center).textAlign(_.center).gap(14.px))
             )
-            // docs 3-pane is side-by-side only on wide viewports; below, collapse the TOC then sidebar
+            // docs 2-pane is side-by-side on wide viewports (rail + content); below 860px the rail
+            // collapses into a toggle-revealed drawer (handled by the <860px block further down).
             .media(Stylesheet.MediaQuery.minWidth(1024.px))(
                 Stylesheet.empty.rule("docs-shell", Style.row.align(_.start).flexWrap(_.noWrap))
-            )
-            .media(Stylesheet.MediaQuery.maxWidth(1100.px))(
-                Stylesheet.empty.rule("docs-toc", Style.displayNone)
             )
             // Wide viewports show the sidebar inline and have no need for the disclosure button.
             .media(Stylesheet.MediaQuery.minWidth(861.px))(
@@ -1050,8 +1058,10 @@ object WebsiteStyles:
                             .margin(0.px, 0.px, 12.px, 0.px).borderRight(0.px, Color.transparent)
                             .border(1.px, _.variable("line")).rounded(12.px).padding(16.px, 16.px, 20.px, 16.px)
                     )
-                    // flex-basis 100% so the content always claims a full row of its own under the toggle.
-                    .rule("docs-content", Style.flexBasis(Length.Pct(100)).padding(28.px, 22.px, 80.px, 22.px))
+                    // flex-basis 100% so the content always claims a full row of its own under the toggle;
+                    // maxWidth back to 100% so the narrow article fills its row instead of keeping the
+                    // wide-viewport 820px reading cap (which would leave dead space on a phone).
+                    .rule("docs-content", Style.flexBasis(Length.Pct(100)).maxWidth(Length.Pct(100)).padding(28.px, 22.px, 80.px, 22.px))
             )
             // dark-mode palette override
             .media(Stylesheet.MediaQuery.prefersDark)(

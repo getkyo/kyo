@@ -589,9 +589,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test P7-12: TOC links resolve to article anchors (INV-004 e2e) ----
+    // ---- Test P7-12: rail section links resolve to article anchors (INV-004 e2e) ----
 
-    "TOC links resolve to article anchors (INV-004 e2e) (P7-12)" in run {
+    "rail section links resolve to article anchors (INV-004 e2e) (P7-12)" in run {
         val readme = "# Alpha\n## Beta\nText.\n### Gamma\nMore.\n"
         val mod    = WebsiteModule("anchors", "Foundation", "anchors", readme, WebsiteModule.Platforms(true, true, true))
         val content =
@@ -602,15 +602,20 @@ class WebsiteGeneratorTest extends Test:
             _         <- emit(Chunk(content), out, bundleDir)
             html      <- readFile(out / "v1.0.0" / "anchors" / "index.html")
         yield
-            // Every TOC href="#slug" must have a matching id="slug" in the article.
+            // Every in-rail section href="#slug" must have a matching id="slug" in the article.
             val hrefs = "href=\"#([a-z0-9-]+)\"".r.findAllMatchIn(html).map(_.group(1)).toSet
-            assert(hrefs.nonEmpty, s"expected TOC fragment hrefs, found none: $html")
+            assert(hrefs.nonEmpty, s"expected rail section fragment hrefs, found none: $html")
             for slug <- hrefs do
-                assert(html.contains(s"""id="$slug""""), s"TOC href #$slug has no matching article id: $html")
+                assert(html.contains(s"""id="$slug""""), s"section href #$slug has no matching article id: $html")
+            // The section outline lists level-2+ headings (beta, gamma). The level-1 page title (alpha)
+            // is the module link in the rail, NOT a #slug section link, even though the article still
+            // carries its id="alpha" anchor (so any external/deep link to it still resolves).
             assert(
-                hrefs.contains("alpha") && hrefs.contains("beta") && hrefs.contains("gamma"),
-                s"expected alpha/beta/gamma slugs, got: $hrefs"
+                hrefs.contains("beta") && hrefs.contains("gamma"),
+                s"expected beta/gamma section slugs, got: $hrefs"
             )
+            assert(!hrefs.contains("alpha"), s"the level-1 page title (alpha) must not be a section link, got: $hrefs")
+            assert(html.contains("""id="alpha""""), s"the article must still carry the h1 id=alpha anchor: $html")
         end for
     }
 

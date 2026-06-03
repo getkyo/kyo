@@ -93,46 +93,96 @@ class DocsAppTest extends Test:
         end for
     }
 
-    // Leaf 3: TOC one link per heading with slug hrefs (INV-004)
-    "TOC one link per heading with slug hrefs INV-004 (leaf 3)" in run {
+    private def coreContent(ver: WebsiteVersion = WebsiteVersion("latest", "latest", true))(using Frame): WebsiteContent =
+        WebsiteContent(
+            intro = "",
+            groups = Chunk(
+                WebsiteContent.Group(
+                    "Foundation",
+                    Chunk(WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true)))
+                )
+            ),
+            version = ver
+        )
+
+    // Leaf 3: the active module's nested sections render one `#slug` link per section heading (INV-004).
+    // The level-1 page-title heading is the module link itself, so it is NOT repeated as a section link.
+    "active module nested sections: one #slug link per section heading, level-1 skipped (leaf 3)" in run {
         val toc = Chunk(
             DocsMarkdown.Heading(1, "kyo-core", "kyo-core"),
-            DocsMarkdown.Heading(2, "Scope", "scope")
+            DocsMarkdown.Heading(2, "Scope", "scope"),
+            DocsMarkdown.Heading(2, "Channels and queues", "channels-and-queues")
         )
         for
             route <- fixedRoute("/latest/kyo-core/")
-            html  <- rendered(emptyContent(), route, toc, UI.empty)
+            html  <- rendered(coreContent(), route, toc, UI.empty)
         yield
-            assert(html.contains("#kyo-core"), s"kyo-core anchor not found: $html")
-            assert(html.contains("#scope"), s"scope anchor not found: $html")
+            // The nested section list is present under the active module.
+            assert(html.contains("sidebar-sections"), s"sidebar-sections list not found: $html")
+            // Level-2 section headings render as #slug fragment links.
+            assert(html.contains("#scope"), s"scope section anchor not found: $html")
+            assert(html.contains("#channels-and-queues"), s"channels-and-queues section anchor not found: $html")
+            // The level-1 page-title heading is the module link, not repeated as a #slug section link.
+            assert(!html.contains("#kyo-core"), s"level-1 page title must NOT appear as a section link: $html")
         end for
     }
 
-    // Leaf 4: TOC entries carry distinct per-level hooks (toc-h1 / toc-h2 / toc-h3), WARN-2
-    "TOC entries carry distinct per-level hooks (leaf 4)" in run {
+    // Leaf 3b: a NON-active module renders no nested sections (the outline collapses when not current).
+    "non-active module renders no nested sections (leaf 3b)" in run {
         val toc = Chunk(
-            DocsMarkdown.Heading(1, "Top", "top"),
+            DocsMarkdown.Heading(1, "kyo-data", "kyo-data"),
+            DocsMarkdown.Heading(2, "Scope", "scope")
+        )
+        val content = WebsiteContent(
+            intro = "",
+            groups = Chunk(
+                WebsiteContent.Group(
+                    "Foundation",
+                    Chunk(
+                        WebsiteModule("kyo-data", "Foundation", "kyo-data", "", WebsiteModule.Platforms(true, true, true)),
+                        WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true))
+                    )
+                )
+            ),
+            version = WebsiteVersion("latest", "latest", true)
+        )
+        for
+            // The reader is on kyo-data, so only kyo-data is active; kyo-core must stay bare.
+            route <- fixedRoute("/latest/kyo-data/")
+            html  <- rendered(content, route, toc, UI.empty)
+        yield
+            // Exactly one nested section list is emitted (the active module's), not one per module.
+            val sectionListCount = "sidebar-sections".r.findAllIn(html).length
+            assert(sectionListCount == 1, s"expected exactly one nested section list (active module only), got $sectionListCount: $html")
+            // The active module (kyo-data) shows its section link.
+            assert(html.contains("#scope"), s"active module section anchor not found: $html")
+            // kyo-core is present as a bare module link but carries no nested sections.
+            assert(html.contains("/latest/kyo-core/"), s"kyo-core module link not found: $html")
+        end for
+    }
+
+    // Leaf 4: nested section links carry distinct per-level indent hooks (sidebar-section-l2 / -l3).
+    "nested section links carry distinct per-level indent hooks (leaf 4)" in run {
+        val toc = Chunk(
+            DocsMarkdown.Heading(1, "Top", "top"), // page title, skipped (becomes the module link)
             DocsMarkdown.Heading(2, "Mid", "mid"),
             DocsMarkdown.Heading(3, "Deep", "deep")
         )
         for
             route <- fixedRoute("/latest/kyo-core/")
-            html  <- rendered(emptyContent(), route, toc, UI.empty)
+            html  <- rendered(coreContent(), route, toc, UI.empty)
         yield
-            // Each level gets its own indentation hook; the three are structurally distinguishable.
-            assert(html.contains("toc-h1"), s"level-1 hook (toc-h1) missing: $html")
-            assert(html.contains("toc-h2"), s"level-2 hook (toc-h2) missing: $html")
-            assert(html.contains("toc-h3"), s"level-3 hook (toc-h3) missing: $html")
-            // The level-2 entry must NOT carry the level-1 or level-3 hook, and vice versa: locate the
-            // anchor for each slug and check the class on its enclosing div precedes it distinctly.
-            val h1Idx = html.indexOf("toc-h1")
-            val h2Idx = html.indexOf("toc-h2")
-            val h3Idx = html.indexOf("toc-h3")
-            assert(h1Idx < h2Idx && h2Idx < h3Idx, s"per-level hooks must appear in level order: h1=$h1Idx h2=$h2Idx h3=$h3Idx")
-            // Only level-3+ carries the `sub` indentation marker; level-2 does not.
-            val subIdx = html.indexOf("toc-h3 sub")
-            assert(subIdx >= 0, s"level-3 must carry the `sub` marker: $html")
-            assert(!html.contains("toc-h2 sub"), s"level-2 must NOT carry the `sub` marker: $html")
+            // Level-2 and level-3 each get their own indent hook; the two are structurally distinguishable.
+            assert(html.contains("sidebar-section-l2"), s"level-2 hook (sidebar-section-l2) missing: $html")
+            assert(html.contains("sidebar-section-l3"), s"level-3 hook (sidebar-section-l3) missing: $html")
+            // The level-1 page title is skipped, so there is no level-1 section hook at all.
+            assert(!html.contains("sidebar-section-l1"), s"level-1 must not produce a section hook: $html")
+            // The hooks appear in level order (l2 before l3) since the headings are in document order.
+            val l2Idx = html.indexOf("sidebar-section-l2")
+            val l3Idx = html.indexOf("sidebar-section-l3")
+            assert(l2Idx < l3Idx, s"per-level hooks must appear in level order: l2=$l2Idx l3=$l3Idx")
+            // The level-3 link must NOT carry the level-2 hook and vice versa: the two class strings differ.
+            assert(!html.contains("sidebar-section-l2 sidebar-section-l3"), s"a single link must not carry both level hooks: $html")
         end for
     }
 

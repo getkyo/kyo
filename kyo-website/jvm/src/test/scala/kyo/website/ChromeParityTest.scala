@@ -4,7 +4,7 @@ import kyo.*
 import kyo.UI.PageHead
 
 /** Verifies INV-003 hydration parity for the unified `SiteApp` shell on BOTH a landing route and a
-  * docs route, plus the docs-shell 3-pane body.
+  * docs route, plus the docs-shell 2-pane body.
   *
   * The central hydration contract: the SSG-emitted shell for a route and the bundle's first render
   * of the same route must produce a structurally identical `data-kyo-path` tree, because
@@ -65,7 +65,11 @@ class ChromeParityTest extends Test:
     }
 
     "SiteApp docs-route shell: SSG vs RecordingBackend parity (INV-003)" in run {
-        val src = "## Scope\n\nSome text.\n"
+        // A "## Scope" section under the (level-1) page title, so the active module's nested section
+        // outline (.sidebar-sections with a #scope link) renders. Both the SSG and the bundle's first
+        // mount must produce that nested outline identically, which is exactly the hydration contract
+        // now that the outline lives inside the rail (no separate right TOC pane).
+        val src = "# kyo-core\n\n## Scope\n\nSome text.\n"
         for
             rendered <- DocsMarkdown.transpile(src)
             route    <- Signal.initRef[String](docsHomeRoute)
@@ -74,10 +78,17 @@ class ChromeParityTest extends Test:
             view  <- siteShell(versions2, docsHomeRoute, body)
             ssg   <- UI.runRender(view).take(1).run.map(_.headMaybe.getOrElse(""))
             mount <- RecordingBackend.render(view)
-        yield assert(
-            normalize(ssg) == normalize(mount),
-            "SSG (runRender) and mount (RecordingBackend) must produce identical HTML for the docs route shell (INV-003)"
-        )
+        yield
+            assert(
+                normalize(ssg) == normalize(mount),
+                "SSG (runRender) and mount (RecordingBackend) must produce identical HTML for the docs route shell (INV-003)"
+            )
+            // The nested section outline (the former right-TOC content, now in the rail) is part of the
+            // parity contract: both paths render the active module's section list with the #scope link,
+            // and no separate right-TOC pane class is emitted anymore.
+            assert(normalize(ssg).contains("sidebar-sections"), s"SSG must render the rail's nested section outline: ${normalize(ssg)}")
+            assert(normalize(ssg).contains("#scope"), s"SSG must render the #scope section link in the rail: ${normalize(ssg)}")
+            assert(!normalize(ssg).contains("docs-toc"), s"the removed right-TOC pane (docs-toc) must not be emitted: ${normalize(ssg)}")
         end for
     }
 

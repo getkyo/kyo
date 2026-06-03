@@ -14,14 +14,14 @@ class WebsiteStylesTest extends Test:
         assert(css.contains(".feat-grid"))
     }
 
-    "render contains at least one @media block with docs 3-pane rule and a :hover pseudo-state rule (INV-012)" in {
+    "render contains at least one @media block with docs 2-pane rule and a :hover pseudo-state rule (INV-012)" in {
         val css = WebsiteStyles.sheet.render
         assert(css.contains("@media"))
-        // The docs 3-pane grid rule: .docs-shell inside the @media (min-width: 1024px) block.
+        // The docs 2-pane row rule: .docs-shell inside the @media (min-width: 1024px) block.
         // renderSheet emits "@media (min-width: 1024px) {\n.docs-shell { ... }\n}\n"
         assert(
             css.contains("@media (min-width: 1024px) {"),
-            "must have @media (min-width: 1024px) breakpoint for the docs 3-pane grid"
+            "must have @media (min-width: 1024px) breakpoint for the docs 2-pane row"
         )
         val mediaIdx     = css.indexOf("@media (min-width: 1024px) {")
         val docsShellIdx = css.indexOf(".docs-shell", mediaIdx)
