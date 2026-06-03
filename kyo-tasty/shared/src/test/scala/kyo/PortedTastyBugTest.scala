@@ -15,10 +15,10 @@ import kyo.internal.TestClasspaths
   * issue established. A failing test indicates a real kyo-tasty bug that needs
   * a fix; failures are NOT to be weakened to pass.
   *
-  * Placed in jvm/src/test because it exercises real classfile / jar loading via
-  * TestClasspaths.standard; the same fixtures are present in the cross-platform
-  * fixture set so the suite can later be migrated to shared/ when the JS/Native
-  * embedded fixture set is regenerated.
+  * Lives in shared/src/test: every fixture FQN exercised here is embedded in
+  * `kyo.fixtures.Embedded` and registered by the platform-specific
+  * `TestClasspaths.withClasspath`, so JVM (real classpath), JS (embedded), and
+  * Native (embedded) all dispatch to the same checks.
   */
 class PortedTastyBugTest extends Test:
 
