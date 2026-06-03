@@ -653,7 +653,7 @@ object TypeUnpickler:
                 val annotationType = Tasty.Type.Named(sentinelUnresolved.id)
                 val annotation =
                     if ctx.sectionBytes == null then
-                        Tasty.Annotation(annotationType, Maybe.Absent)
+                        Tasty.Annotation(annotationType, Chunk.empty)
                     else
                         val pickle = java.util.Arrays.copyOfRange(ctx.sectionBytes, termStart, endInt)
                         val maybeTree: Maybe[Tasty.Tree] =
@@ -684,7 +684,13 @@ object TypeUnpickler:
                                         case null             => ()
                                     end match
                                     Maybe.Absent
-                        Tasty.Annotation(annotationType, maybeTree)
+                        val args: Chunk[Tasty.Tree] = maybeTree match
+                            case Maybe.Present(t) =>
+                                t match
+                                    case Tasty.Tree.Apply(_, applyArgs) => applyArgs
+                                    case other                          => Chunk(other)
+                            case Maybe.Absent => Chunk.empty
+                        Tasty.Annotation(annotationType, args)
                 Tasty.Type.Annotated(underlying, annotation)
 
             case TastyFormat.ANDtype =>

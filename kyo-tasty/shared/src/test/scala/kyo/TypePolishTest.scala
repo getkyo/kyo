@@ -3,17 +3,17 @@ package kyo
 import kyo.internal.tasty.symbol.SymbolId
 import scala.collection.mutable.ArrayBuffer
 
-/** Plan-mandated tests for Phase 08 (leaves 155-160): Type.symbolMaybe, Type.children, Type.foreach.
+/** Plan-mandated tests for Phase 08 (leaves 155-160): Type.symbol, Type.children, Type.foreach.
   *
   * Pins: INV-002.
   */
 class TypePolishTest extends Test:
 
-    // ── Leaf 155: symbolMaybe-named ───────────────────────────────────────────
+    // ── Leaf 155: symbol-named ───────────────────────────────────────────
     // Given: Type.Named(SymbolId(5)) in a cp where SymbolId(5) is a Symbol.Class.
-    // When: t.symbolMaybe
+    // When: t.symbol
     // Then: returns Maybe.Present(c) where c.id == SymbolId(5)
-    "Leaf 155: symbolMaybe returns Present(sym) for Type.Named" in run {
+    "Leaf 155: symbol returns Present(sym) for Type.Named" in run {
         val classSym = Tasty.Symbol.Class(
             SymbolId(5),
             Tasty.Name("Foo"),
@@ -33,23 +33,23 @@ class TypePolishTest extends Test:
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(classSym)).map: cp =>
             given Tasty.Classpath = cp
             val t: Tasty.Type     = Tasty.Type.Named(SymbolId(0))
-            val result            = t.symbolMaybe
-            assert(result.isDefined, "symbolMaybe must return Present for Named")
+            val result            = t.symbol
+            assert(result.isDefined, "symbol must return Present for Named")
             result match
                 case Maybe.Present(sym) => assert(sym.isInstanceOf[Tasty.Symbol.Class])
                 case Maybe.Absent       => fail("should not be Absent")
             succeed
     }
 
-    // ── Leaf 156: symbolMaybe-non-named ──────────────────────────────────────
+    // ── Leaf 156: symbol-non-named ──────────────────────────────────────
     // Given: Type.Function(Chunk.empty, Type.Named(SymbolId(5)))
-    // When: t.symbolMaybe
+    // When: t.symbol
     // Then: returns Maybe.Absent (head is not Named)
-    "Leaf 156: symbolMaybe returns Absent for non-Named types" in run {
+    "Leaf 156: symbol returns Absent for non-Named types" in run {
         Tasty.Classpath.fromPickles(Nil).map: cp =>
             given Tasty.Classpath = cp
             val t                 = Tasty.Type.Function(Chunk.empty, Tasty.Type.Named(SymbolId(5)), false)
-            assert(!t.symbolMaybe.isDefined, "symbolMaybe must return Absent for non-Named type")
+            assert(!t.symbol.isDefined, "symbol must return Absent for non-Named type")
             succeed
     }
 
@@ -142,7 +142,7 @@ class TypePolishTest extends Test:
                 Tasty.Type.RecThis(n),
                 Tasty.Type.AndType(n, n),
                 Tasty.Type.OrType(n, n),
-                Tasty.Type.Annotated(n, Tasty.Annotation(n, Maybe.Absent)),
+                Tasty.Type.Annotated(n, Tasty.Annotation(n, Chunk.empty)),
                 Tasty.Type.ConstantType(Tasty.Constant.IntConst(0)),
                 Tasty.Type.ThisType(SymbolId(0)),
                 Tasty.Type.SuperType(n, n),

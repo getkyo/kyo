@@ -161,9 +161,9 @@ class SymbolHierarchyTest extends Test:
 
     // Given: a Symbol.OpaqueType literal with body=Type.Named(SymbolId(60)),
     //   bounds=TypeBounds(Type.Nothing, Type.Any).
-    // When: read body, bounds.lower, bounds.upper, isOpaqueTypeKind.
+    // When: read body, bounds.lower, bounds.upper, isOpaqueType.
     // Then: body==Type.Named(SymbolId(60)); bounds.lower==Type.Nothing;
-    //   bounds.upper==Type.Any; isOpaqueTypeKind==true.
+    //   bounds.upper==Type.Any; isOpaqueType==true.
     // Pins: INV-008, INV-009.
     "Leaf 6: Symbol.OpaqueType has correct body and bounds sentinels" in {
         val sym: Tasty.Symbol = Tasty.Symbol.OpaqueType(
@@ -182,7 +182,7 @@ class SymbolHierarchyTest extends Test:
         assert(ot.body == Tasty.Type.Named(SymbolId(60)))
         assert(ot.bounds.lower == Tasty.Type.Nothing)
         assert(ot.bounds.upper == Tasty.Type.Any)
-        assert(sym.isOpaqueTypeKind)
+        assert(sym.isOpaqueType)
         succeed
     }
 

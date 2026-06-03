@@ -594,7 +594,7 @@ object SnapshotReader:
                             Tasty.Type.Tuple(Chunk.empty),
                             Tasty.Name(fqn)
                         ),
-                        args = kyo.Maybe.Absent
+                        arguments = Chunk.empty
                     )
                     k += 1
                 end while

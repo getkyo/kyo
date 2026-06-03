@@ -2,7 +2,6 @@ package kyo
 
 import kyo.internal.tasty.symbol.SymbolId
 import scala.collection.immutable.IntMap
-import scala.compiletime.testing.typeCheckErrors
 
 /** Phase 01 plan-mandated test confirming that `body` is a raw field (not an effectful overload) on Symbol.Method in Phase 01.
   *
@@ -45,13 +44,9 @@ class MethodBodyNamingTest extends Test:
         val rawBody: Maybe[Tasty.SymbolBody] = m.body
         assert(rawBody.isDefined, "m.body must return Maybe.Present when body was passed at construction")
 
-        // typeCheckErrors verifies there is no method accepting (using Classpath, Frame) on Symbol.Method
-        val errors = typeCheckErrors("m.body(using ???, ???)")
-        assert(
-            errors.nonEmpty,
-            "Expected typeCheckErrors to be non-empty for 'm.body(using ...)' (no effectful overload in Phase 01)"
-        )
-        succeed
+        // typeCheckFailure pins the expected error: Maybe[SymbolBody] does not accept using-clause application
+        // because body is a plain field, not an effectful overload with implicit parameters.
+        typeCheckFailure("m.body(using ???, ???)")("does not take parameters")
     }
 
 end MethodBodyNamingTest

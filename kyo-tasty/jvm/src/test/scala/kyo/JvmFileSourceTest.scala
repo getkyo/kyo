@@ -206,44 +206,42 @@ class JvmFileSourceTest extends Test:
     }
 
     // T-M2: Concurrent reads from a single JarMappedReader.
-    //        8 threads each read all 3 entries; assert correctness from every thread.
-    "T-M2: JarMappedReader concurrent reads from multiple threads return correct bytes" taggedAs jvmOnly in {
-        val dir     = makeTempDir()
-        val jarPath = s"$dir/mmap-concurrent.jar"
-        writeJar(
-            jarPath,
-            Seq(
-                ("kyo/Alpha.tasty", knownBytes1),
-                ("kyo/Beta.tasty", knownBytes2),
-                ("kyo/Gamma.tasty", knownBytes3)
+    //        8 fibers each read all 3 entries; assert correctness from every fiber.
+    "T-M2: JarMappedReader concurrent reads from multiple threads return correct bytes" taggedAs jvmOnly in run {
+        import AllowUnsafe.embrace.danger
+        Async.timeout(10.seconds) {
+            val dir     = makeTempDir()
+            val jarPath = s"$dir/mmap-concurrent.jar"
+            writeJar(
+                jarPath,
+                Seq(
+                    ("kyo/Alpha.tasty", knownBytes1),
+                    ("kyo/Beta.tasty", knownBytes2),
+                    ("kyo/Gamma.tasty", knownBytes3)
+                )
             )
-        )
-        val reader = JarMappedReader.init(jarPath)
-
-        val threadCount = 8
-        val errors      = new java.util.concurrent.CopyOnWriteArrayList[String]()
-        val latch       = new java.util.concurrent.CountDownLatch(threadCount)
-
-        for tid <- 0 until threadCount do
-            val task: Runnable = () =>
-                try
-                    val r1 = reader.readEntry("kyo/Alpha.tasty")
-                    val r2 = reader.readEntry("kyo/Beta.tasty")
-                    val r3 = reader.readEntry("kyo/Gamma.tasty")
-                    if !java.util.Arrays.equals(r1, knownBytes1) then
-                        errors.add(s"Thread $tid: Alpha bytes mismatch"): Unit
-                    if !java.util.Arrays.equals(r2, knownBytes2) then
-                        errors.add(s"Thread $tid: Beta bytes mismatch"): Unit
-                    if !java.util.Arrays.equals(r3, knownBytes3) then
-                        errors.add(s"Thread $tid: Gamma bytes mismatch"): Unit
-                catch
-                    case ex: Throwable => errors.add(s"Thread $tid threw: ${ex.getMessage}"): Unit
-                finally latch.countDown()
-            new Thread(task).start()
-        end for
-
-        latch.await(10, java.util.concurrent.TimeUnit.SECONDS)
-        assert(errors.isEmpty, s"Concurrent read errors: ${errors.toArray.mkString(", ")}")
+            val reader     = JarMappedReader.init(jarPath)
+            val fiberCount = 8
+            for
+                startLatch <- Latch.init(1)
+                fibers <- Kyo.foreach(Chunk.from(0 until fiberCount)): fid =>
+                    Fiber.initUnscoped(
+                        startLatch.await.andThen {
+                            Sync.defer {
+                                val r1 = reader.readEntry("kyo/Alpha.tasty")
+                                val r2 = reader.readEntry("kyo/Beta.tasty")
+                                val r3 = reader.readEntry("kyo/Gamma.tasty")
+                                assert(java.util.Arrays.equals(r1, knownBytes1), s"Fiber $fid: Alpha bytes mismatch")
+                                assert(java.util.Arrays.equals(r2, knownBytes2), s"Fiber $fid: Beta bytes mismatch")
+                                assert(java.util.Arrays.equals(r3, knownBytes3), s"Fiber $fid: Gamma bytes mismatch")
+                            }
+                        }
+                    )
+                _ <- startLatch.release
+                _ <- Kyo.foreach(fibers)(_.get)
+            yield succeed
+            end for
+        }
     }
 
     // T-M3: Jar with GPB bit-3 set (data-descriptor entries where LFH carries 0 sizes).

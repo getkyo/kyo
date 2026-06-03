@@ -348,7 +348,7 @@ class JavaSymbolTest extends Test:
                 components.nonEmpty,
                 s"Expected non-empty recordComponents for PointRecord; got empty"
             )
-            val names = components.map(_._1.asString).toList
+            val names = components.map(_.name.asString).toList
             assert(
                 names.contains("x") && names.contains("y"),
                 s"Expected record components 'x' and 'y', got $names"
@@ -392,7 +392,7 @@ class JavaSymbolTest extends Test:
             assert(meta.isDefined, "Expected javaMetadata Present for AnonymousFixture$1")
             val enclosing = meta.get.enclosingMethod
             assert(enclosing.isDefined, s"Expected enclosingMethod Present for AnonymousFixture$$1; got Absent")
-            val methodName = enclosing.get._2.asString
+            val methodName = enclosing.get.methodName.asString
             assert(
                 methodName == "enclosingMethodFixture",
                 s"Expected enclosingMethod name 'enclosingMethodFixture', got '$methodName'"

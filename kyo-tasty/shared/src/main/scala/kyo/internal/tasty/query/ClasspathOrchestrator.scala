@@ -904,7 +904,7 @@ object ClasspathOrchestrator:
                             val idx = symbolIdMap.get(sym)
                             if idx >= 0 && idx < count then
                                 val remapped = annBuf.map: ann =>
-                                    Tasty.Annotation(remapType(ann.annotationType, frRemapAnn), ann.args)
+                                    Tasty.Annotation(remapType(ann.annotationType, frRemapAnn), ann.arguments)
                                 descs(idx).annotations = Chunk.from(remapped.toSeq)
                             end if
                         end for

@@ -238,17 +238,17 @@ class TypeUnpicklerTest extends Test:
         }
     }
 
-    // Test 18: decoding ANNOTATEDtype eagerly decodes the annotation term into args: Maybe[Tree].
-    // Phase 08 (INV-006): args is now a plain Maybe[Tree] field populated eagerly during Pass B.
-    // The annotation term TYPEREFpkg(0) decodes to a TermRefPkg tree; args = Present(tree).
-    "decoding ANNOTATEDtype eagerly populates Annotation.args as Maybe[Tree]" in run {
+    // Test 18: decoding ANNOTATEDtype eagerly decodes the annotation term into arguments: Chunk[Tree].
+    // Phase 08 (INV-006): arguments is now a plain Chunk[Tree] field populated eagerly during Pass B.
+    // The annotation term TYPEREFpkg(0) decodes to a TermRefPkg tree; arguments holds a single-element Chunk.
+    "decoding ANNOTATEDtype eagerly populates Annotation.arguments as Chunk[Tree]" in run {
         val sym        = makeSym("Int")
         val symAddr    = 3
         val addrMap    = IntMap(symAddr -> sym)
         val names      = Array(Tasty.Name("scala"))
         val qual       = cat2(TastyFormat.TYPEREFpkg, 0)
         val underlying = cat4(TastyFormat.TYPEREFsymbol, symAddr, qual)
-        // Annotation term: TYPEREFpkg(0) -- decodes to TermRefPkg(names(0)).
+        // Annotation term: TYPEREFpkg(0); decodes to TermRefPkg(names(0)).
         val annTerm = cat2(TastyFormat.TYPEREFpkg, 0)
         // ANNOTATEDtype (153) = cat5: [underlying] [annTerm]
         val bytes = cat5(TastyFormat.ANNOTATEDtype, underlying ++ annTerm)
@@ -257,8 +257,8 @@ class TypeUnpicklerTest extends Test:
                 t match
                     case Tasty.Type.Annotated(_, ann) =>
                         assert(
-                            ann.args.nonEmpty,
-                            s"Expected Present args but got ${ann.args}"
+                            ann.arguments.nonEmpty,
+                            s"Expected non-empty arguments but got ${ann.arguments}"
                         )
                         succeed
                     case other =>
@@ -268,37 +268,36 @@ class TypeUnpicklerTest extends Test:
         }
     }
 
-    // Test 18b: Annotation.args for a UNITconst term is Present(Literal(UnitConst)) after eager decode.
-    // Phase 08 (INV-006): args is a plain Maybe[Tree] field -- no Abort.run needed to access it.
-    "ANNOTATEDtype with UNITconst term: Annotation.args = Present(Literal(UnitConst))" in run {
+    // Test 18b: Annotation.arguments for a UNITconst term is Chunk(Literal(UnitConst)) after eager decode.
+    // Phase 08 (INV-006): arguments is a plain Chunk[Tree] field; no Abort.run needed to access it.
+    "ANNOTATEDtype with UNITconst term: Annotation.arguments == Chunk(Literal(UnitConst))" in run {
         val sym        = makeSym("Int")
         val symAddr    = 3
         val addrMap    = IntMap(symAddr -> sym)
         val names      = Array(Tasty.Name("scala"))
         val qual       = cat2(TastyFormat.TYPEREFpkg, 0)
         val underlying = cat4(TastyFormat.TYPEREFsymbol, symAddr, qual)
-        // Annotation term: UNITconst -- TreeUnpickler decodes this as Literal(UnitConst).
+        // Annotation term: UNITconst; TreeUnpickler decodes this as Literal(UnitConst).
         val annTerm = Array(TastyFormat.UNITconst.toByte)
         val bytes   = cat5(TastyFormat.ANNOTATEDtype, underlying ++ annTerm)
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
             case Result.Success(t) =>
                 t match
                     case Tasty.Type.Annotated(_, ann) =>
-                        ann.args match
-                            case Present(Tasty.Tree.Literal(_: Tasty.Constant.UnitConst.type)) => succeed
-                            case Present(other) => fail(s"Expected Literal(UnitConst) but got $other")
-                            case Absent         => fail("Expected Present args but got Absent")
+                        ann.arguments match
+                            case Chunk(Tasty.Tree.Literal(_: Tasty.Constant.UnitConst.type)) => succeed
+                            case other => fail(s"Expected Chunk(Literal(UnitConst)) but got $other")
                     case other => fail(s"Expected Annotated but got $other")
             case Result.Failure(e) => fail(s"Expected success but got $e")
             case Result.Panic(t)   => throw t
         }
     }
 
-    // Test 18c: Annotation constructed directly with Maybe.Absent has no args (synthetic annotation).
+    // Test 18c: Annotation constructed directly with Chunk.empty has no arguments (synthetic annotation).
     // Phase 08 (INV-006): pure case class, no decode context needed.
-    "Annotation(type, Maybe.Absent).args == Maybe.Absent without any effect" in run {
-        val ann = Tasty.Annotation(Tasty.Type.Named(makeSym("Foo").id), Maybe.Absent)
-        assert(ann.args == Maybe.Absent, s"Expected Maybe.Absent but got ${ann.args}")
+    "Annotation(type, Chunk.empty).arguments is empty without any effect" in run {
+        val ann = Tasty.Annotation(Tasty.Type.Named(makeSym("Foo").id), Chunk.empty)
+        assert(ann.arguments.isEmpty, s"Expected empty arguments but got ${ann.arguments}")
         succeed
     }
 

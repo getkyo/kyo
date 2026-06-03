@@ -255,43 +255,38 @@ object Tasty:
 
     /** A Scala annotation as it appears on a [[Type]] (`Type.Annotated`).
       *
-      * Both `annotationType` and `args` are populated during Classpath open Pass B. A decode failure produces `args = Maybe.Absent` and
-      * appends a TastyError.MalformedSection to the file-result error list, which flows into cp.errors.
+      * Both `annotationType` and `arguments` are populated during Classpath open Pass B. A decode failure produces `arguments = Chunk.empty`
+      * and appends a TastyError.MalformedSection to the file-result error list, which flows into cp.errors.
       *
       * `annotationType` is resolved best-effort during pass 1 and may be a placeholder symbol. Equality and hashing are structural over
       * both fields (case class auto-generation).
       */
-    final case class Annotation(annotationType: Type, args: Maybe[Tree]):
-
-        /** Decoded annotation argument trees as a typed Chunk.
-          *
-          * When `args` holds a `Tree.Apply(_, applyArgs)`, returns the argument list. When `args` holds any other tree, wraps it in a
-          * single-element Chunk. When `args` is `Absent`, returns an empty Chunk.
-          */
-        def argList: Chunk[Tree] = args match
-            case Maybe.Present(tree) =>
-                tree match
-                    case Tree.Apply(_, applyArgs) => applyArgs
-                    case _                        => Chunk(tree)
-            case Maybe.Absent => Chunk.empty
-
-    end Annotation
+    final case class Annotation(annotationType: Type, arguments: Chunk[Tree])
 
     object Annotation:
         /** CanEqual instance for structural equality comparisons in tests. */
         given CanEqual[Annotation, Annotation] = CanEqual.canEqualAny
     end Annotation
 
+    /** A single declared field of a Java record (JVMS Record attribute entry). */
+    final case class RecordComponent(name: Name, tpe: Type) derives CanEqual
+
+    /** Parameter-name table for one method overload: the method's name plus the names of its parameters in source order. */
+    final case class ParamGroup(methodName: Name, parameterNames: Chunk[Name]) derives CanEqual
+
+    /** The enclosing-method context for a local or anonymous class (JVMS EnclosingMethod attribute). */
+    final case class EnclosingMethod(owner: Symbol, methodName: Name) derives CanEqual
+
     final case class JavaMetadata(
         throwsTypes: Chunk[Type],
         annotations: Chunk[JavaAnnotation],
-        enclosingMethod: Maybe[(Symbol, Name)],
+        enclosingMethod: Maybe[EnclosingMethod],
         accessFlags: Int,
-        recordComponents: Chunk[(Name, Type)],
+        recordComponents: Chunk[RecordComponent],
         bootstrapMethods: Chunk[Chunk[Int]],
         nestHost: Maybe[Symbol],
         nestMembers: Chunk[Symbol],
-        paramNames: Chunk[(Name, Chunk[Name])],
+        paramNames: Chunk[ParamGroup],
         runtimeTypeAnnotations: Chunk[JavaAnnotation]
     ):
         /** True when `ACC_PUBLIC` (0x0001) is set in `accessFlags`. */
@@ -311,7 +306,7 @@ object Tasty:
 
     end JavaMetadata
 
-    final case class JavaAnnotation(annotationClass: Symbol, values: Map[Name, JavaAnnotation.Value])
+    final case class JavaAnnotation(annotationClass: Symbol, values: Chunk[(Name, JavaAnnotation.Value)])
     object JavaAnnotation:
         enum Value:
             case StringVal(s: String)
@@ -485,6 +480,15 @@ object Tasty:
           */
         case Bounds(lo: Type, hi: Type)
 
+        /** Sentinel lower-bound type used in `TypeBounds` when no concrete lower bound is known. */
+        case Nothing
+
+        /** Sentinel upper-bound type used in `TypeBounds` when no concrete upper bound is known. */
+        case Any
+
+        /** Sentinel unknown type used when `declaredType` is absent but a concrete `Type` field is required. */
+        case Unknown
+
         /** Structural subtype check.
           *
           * Pure: walks Type cases recursively; uses cp.symbol(id) to resolve parents when needed. Returns Sub when this is a subtype of
@@ -528,9 +532,10 @@ object Tasty:
 
         /** Resolve the symbol referenced by this Type's nominal head, when present.
           *
-          * `Type.Named(id)` resolves to `cp.symbol(id)`. All other shapes return `Maybe.Absent`.
+          * `Type.Named(id)` resolves to `cp.symbol(id)`. All other shapes return `Maybe.Absent`. The return type carries `Maybe`, so the
+          * method name remains `symbol`; callers use `tpe.symbol.map(...)` to handle the optional result.
           */
-        def symbolMaybe(using cp: Classpath): Maybe[Symbol] = this match
+        def symbol(using cp: Classpath): Maybe[Symbol] = this match
             case Type.Named(id) => Maybe(cp.symbol(id))
             case _              => Maybe.Absent
 
@@ -544,30 +549,15 @@ object Tasty:
                 case Function(ps, r, isCtx) => s"(${ps.map(_.show).mkString(", ")}) ${if isCtx then "?=>" else "=>"} ${r.show}"
                 case ContextFunction(ps, r) => s"(${ps.map(_.show).mkString(", ")}) ?=> ${r.show}"
                 case Tuple(es)              => s"(${es.map(_.show).mkString(", ")})"
+                case Nothing                => "Nothing"
+                case Any                    => "Any"
+                case Unknown                => "<unknown>"
                 case other                  => other.toString
             end match
         end show
     end Type
 
     object Type:
-        /** Sentinel lower-bound type used in `TypeBounds` when no concrete lower bound is known.
-          *
-          * Represented as `Named(SymbolId(-100))`. Phase 01 bridge; Phase 08 may replace with a real Nothing lookup.
-          */
-        val Nothing: Type = Type.Named(SymbolId(-100))
-
-        /** Sentinel upper-bound type used in `TypeBounds` when no concrete upper bound is known.
-          *
-          * Represented as `Named(SymbolId(-101))`. Phase 01 bridge; Phase 08 may replace with a real Any lookup.
-          */
-        val Any: Type = Type.Named(SymbolId(-101))
-
-        /** Sentinel unknown type used in `fromFlat` when `declaredType` is absent but a concrete `Type` field is required.
-          *
-          * Represented as `Named(SymbolId(-102))`. Phase 01 bridge.
-          */
-        val Unknown: Type = Type.Named(SymbolId(-102))
-
         given CanEqual[Type, Type] = CanEqual.canEqualAny
     end Type
 
@@ -601,11 +591,15 @@ object Tasty:
 
         /** Find first node satisfying `p` in pre-order. */
         def find(p: Tree => Boolean): Maybe[Tree] =
-            var found: Tree | Null = null
-            foreach: t =>
-                if (found eq null) && p(t) then found = t
-            // safe: null-guarded
-            if found eq null then Maybe.Absent else Maybe(found.asInstanceOf[Tree])
+            val acc = Chunk.newBuilder[Tree]
+            def go(t: Tree): Boolean =
+                if p(t) then
+                    acc += t
+                    true
+                else t.children.iterator.exists(go)
+            discard(go(this))
+            val result = acc.result()
+            if result.isEmpty then Maybe.Absent else Maybe(result.head)
         end find
 
         /** Left-fold over all nodes in pre-order. */
@@ -1087,12 +1081,12 @@ object Tasty:
         def sourcePosition: Maybe[Position]
 
         override def equals(other: Any): Boolean =
-            other.isInstanceOf[Symbol] && {
-                val that = other.asInstanceOf[Symbol]
-                import kyo.internal.tasty.symbol.SymbolId.value
-                if id.value == -1 || that.id.value == -1 then this eq that
-                else id == that.id
-            }
+            other match
+                case that: Symbol =>
+                    import kyo.internal.tasty.symbol.SymbolId.value
+                    if id.value == -1 || that.id.value == -1 then this.eq(that)
+                    else id == that.id
+                case _ => false
         override def hashCode(): Int =
             import kyo.internal.tasty.symbol.SymbolId.value
             if id.value == -1 then java.lang.System.identityHashCode(this)
@@ -1141,7 +1135,7 @@ object Tasty:
         def isFieldAccessor: Boolean = flags.contains(Flag.FieldAccessor)
         def isExported: Boolean      = flags.contains(Flag.Exported)
         def isLocal: Boolean         = flags.contains(Flag.Local)
-        def isHasDefault: Boolean    = flags.contains(Flag.HasDefault)
+        def hasDefault: Boolean      = flags.contains(Flag.HasDefault)
         def isInvisible: Boolean     = flags.contains(Flag.Invisible)
         def isInto: Boolean          = flags.contains(Flag.Into)
         def isInlineProxy: Boolean   = flags.contains(Flag.InlineProxy)
@@ -1173,20 +1167,20 @@ object Tasty:
         def isOpaque: Boolean     = flags.contains(Flag.Opaque)
 
         // 14 kind discriminators computed structurally
-        def isPackage: Boolean        = this.isInstanceOf[Symbol.Package]
-        def isClass: Boolean          = this.isInstanceOf[Symbol.Class]
-        def isTrait: Boolean          = this.isInstanceOf[Symbol.Trait]
-        def isObject: Boolean         = this.isInstanceOf[Symbol.Object]
-        def isMethod: Boolean         = this.isInstanceOf[Symbol.Method]
-        def isField: Boolean          = this.isInstanceOf[Symbol.Field]
-        def isVal: Boolean            = this.isInstanceOf[Symbol.Val]
-        def isVar: Boolean            = this.isInstanceOf[Symbol.Var]
-        def isTypeAlias: Boolean      = this.isInstanceOf[Symbol.TypeAlias]
-        def isOpaqueTypeKind: Boolean = this.isInstanceOf[Symbol.OpaqueType]
-        def isAbstractType: Boolean   = this.isInstanceOf[Symbol.AbstractType]
-        def isTypeParam: Boolean      = this.isInstanceOf[Symbol.TypeParam]
-        def isParameter: Boolean      = this.isInstanceOf[Symbol.Parameter]
-        def isUnresolved: Boolean     = this.isInstanceOf[Symbol.Unresolved]
+        def isPackage: Boolean      = this.isInstanceOf[Symbol.Package]
+        def isClass: Boolean        = this.isInstanceOf[Symbol.Class]
+        def isTrait: Boolean        = this.isInstanceOf[Symbol.Trait]
+        def isObject: Boolean       = this.isInstanceOf[Symbol.Object]
+        def isMethod: Boolean       = this.isInstanceOf[Symbol.Method]
+        def isField: Boolean        = this.isInstanceOf[Symbol.Field]
+        def isVal: Boolean          = this.isInstanceOf[Symbol.Val]
+        def isVar: Boolean          = this.isInstanceOf[Symbol.Var]
+        def isTypeAlias: Boolean    = this.isInstanceOf[Symbol.TypeAlias]
+        def isOpaqueType: Boolean   = this.isInstanceOf[Symbol.OpaqueType]
+        def isAbstractType: Boolean = this.isInstanceOf[Symbol.AbstractType]
+        def isTypeParam: Boolean    = this.isInstanceOf[Symbol.TypeParam]
+        def isParameter: Boolean    = this.isInstanceOf[Symbol.Parameter]
+        def isUnresolved: Boolean   = this.isInstanceOf[Symbol.Unresolved]
 
         // 5 composite predicates
         def isClassLike: Boolean = this.isInstanceOf[Symbol.ClassLike]
@@ -1264,18 +1258,15 @@ object Tasty:
         def ownersChain(using cp: Classpath): Chunk[Symbol] =
             val out     = Chunk.newBuilder[Symbol]
             val visited = new java.util.HashSet[Int]()
-            var cur     = this: Symbol
-            var depth   = 0
-            var stop    = false
-            while !stop && depth < 64 && visited.add(cur.id.value) do
-                out += cur
-                val ownerSym = cp.symbol(cur.ownerId)
-                if ownerSym.id == cur.id || ownerSym.id.value == -1 then stop = true
+            @scala.annotation.tailrec
+            def go(cur: Symbol, depth: Int): Unit =
+                if depth >= 64 || !visited.add(cur.id.value) then ()
                 else
-                    cur = ownerSym
-                    depth += 1
-                end if
-            end while
+                    out += cur
+                    val ownerSym = cp.symbol(cur.ownerId)
+                    if ownerSym.id == cur.id || ownerSym.id.value == -1 then ()
+                    else go(ownerSym, depth + 1)
+            go(this, 0)
             out.result()
         end ownersChain
 
@@ -1310,8 +1301,8 @@ object Tasty:
             end match
         end hasAnnotation
 
-        /** Subtype-aware annotation getter; first Scala match preferred, then first Java match. */
-        def getAnnotation(annotationFqn: String)(using cp: Classpath): Maybe[Annotation | JavaAnnotation] =
+        /** Subtype-aware annotation lookup; first Scala match preferred, then first Java match. */
+        def findAnnotation(annotationFqn: String)(using cp: Classpath): Maybe[Annotation | JavaAnnotation] =
             def matchScala(a: Annotation): Boolean =
                 import Name.asString
                 cp.typeFqnString(a.annotationType) == annotationFqn
@@ -1335,7 +1326,7 @@ object Tasty:
                 case p: Symbol.Parameter    => Maybe(p.annotations.find(matchScala).orNull)
                 case _                      => Maybe.Absent
             end match
-        end getAnnotation
+        end findAnnotation
 
         /** Human-readable signature. For Method: `def name[Tps](p1: T1, ...): R`. For Class / Trait / Object: `kind name[Tps] extends
           * parents`. For Val / Var / Field: `kind name: T`. For TypeAlias / OpaqueType: `name = body`. Other subtypes return `simpleName`.
@@ -1578,8 +1569,8 @@ object Tasty:
             /** Resolve the companion of this classlike (companion object for a Class or Trait; companion class for an Object). */
             override def companion(using cp: Classpath): Maybe[Symbol] = cp.companion(this)
 
-            /** Find every direct declaration whose simple name equals `name`. The singular `findMember` returns the first match. */
-            def findMembers(name: String)(using cp: Classpath): Chunk[Symbol] =
+            /** Collect every direct declaration whose simple name equals `name`. The singular `findMember` returns the first match. */
+            def collectMembers(name: String)(using cp: Classpath): Chunk[Symbol] =
                 import Name.asString
                 declarations.filter(_.name.asString == name)
 
@@ -1833,8 +1824,8 @@ object Tasty:
                 flags.contains(Flag.Macro) && !flags.contains(Flag.Synthetic) && flags.contains(Flag.Transparent)
 
             /** Decode the body bytes into a Tree, memoizing the result. Returns Absent when no body is present. */
-            def bodyTree(using cp: Classpath, frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
-                cp.decodeBody(this)
+            def bodyTree(using frame: Frame, cp: Classpath): Maybe[Tree] < (Sync & Abort[TastyError]) =
+                cp.bodyTree(this)
 
         end Method
 
@@ -1851,8 +1842,8 @@ object Tasty:
         ) extends TermLike:
 
             /** Decode the body bytes into a Tree, memoizing the result. Returns Absent when no body is present. */
-            def bodyTree(using cp: Classpath, frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
-                cp.decodeBody(this)
+            def bodyTree(using frame: Frame, cp: Classpath): Maybe[Tree] < (Sync & Abort[TastyError]) =
+                cp.bodyTree(this)
 
         end Val
 
@@ -1869,8 +1860,8 @@ object Tasty:
         ) extends TermLike:
 
             /** Decode the body bytes into a Tree, memoizing the result. Returns Absent when no body is present. */
-            def bodyTree(using cp: Classpath, frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
-                cp.decodeBody(this)
+            def bodyTree(using frame: Frame, cp: Classpath): Maybe[Tree] < (Sync & Abort[TastyError]) =
+                cp.bodyTree(this)
 
         end Var
 
@@ -2116,9 +2107,9 @@ object Tasty:
 
     // ── Pickle (in-memory TASTy + classfile bytes) ──────────────────────────
 
-    final case class Pickle(uuid: String, version: Version, bytes: Chunk[Byte]):
+    final case class Pickle(uuid: String, version: Version, bytes: Span[Byte]):
         /** Human-readable summary: `Pickle(<uuid> v<version> <n>B)`. */
-        def show: String = s"Pickle($uuid v${version.show} ${bytes.length}B)"
+        def show: String = s"Pickle($uuid v${version.show} ${bytes.size}B)"
     end Pickle
 
     // ── Classpath ───────────────────────────────────────────────────────────
@@ -2139,11 +2130,11 @@ object Tasty:
         rootSymbolId: SymbolId,
         topLevelClassIds: Chunk[SymbolId],
         packageIds: Chunk[SymbolId],
-        fqnIndex: Map[String, SymbolId],
-        packageIndex: Map[String, SymbolId],
-        subclassIndex: Map[SymbolId, Chunk[SymbolId]],
-        companionIndex: Map[SymbolId, SymbolId],
-        moduleIndex: Map[String, ModuleDescriptor],
+        private[kyo] val fqnIndex: Map[String, SymbolId],
+        private[kyo] val packageIndex: Map[String, SymbolId],
+        private[kyo] val subclassIndex: Map[SymbolId, Chunk[SymbolId]],
+        private[kyo] val companionIndex: Map[SymbolId, SymbolId],
+        private[kyo] val moduleIndex: Map[String, ModuleDescriptor],
         errors: Chunk[TastyError],
         canonical: kyo.internal.tasty.type_.TypeArena,
         /** Structured diagnostics accumulated during classpath initialization.
@@ -2155,7 +2146,7 @@ object Tasty:
           * Unlike `errors` (which carries decode-time failures such as `MalformedSection`), `diagnostics` carries build-time observations
           * about the classpath shape itself.
           */
-        diagnostics: Chunk[Classpath.Diagnostic] = Chunk.empty,
+        diagnostics: Chunk[Classpath.Diagnostic],
         /** Map from negative SymbolId values to their fully-qualified name string for annotation types that could not be resolved
           * because the defining library (e.g. scala-library) is not on the classpath.
           *
@@ -2163,12 +2154,12 @@ object Tasty:
           * `symbolsAnnotatedWith` to find symbols annotated with `scala.deprecated` or `scala.annotation.tailrec` even on JS/Native
           * where the embedded fixture set does not include scala-library.
           */
-        unresolvedFqnByNegId: Map[Int, String] = Map.empty
+        unresolvedFqnByNegId: Map[Int, String]
     ):
         // NOT constructor parameters -- excluded from auto-generated equals / hashCode / copy / unapply.
         // A cp.copy(...) call produces a new Classpath with fresh empty memos; this is correct because
         // memoized results are an optimization, not observable state.
-        private lazy val bodyMemo: java.util.concurrent.ConcurrentHashMap[SymbolId, Either[TastyError, Tree]] =
+        private lazy val bodyMemo: java.util.concurrent.ConcurrentHashMap[SymbolId, Result[TastyError, Tree]] =
             new java.util.concurrent.ConcurrentHashMap()
 
         // F-W2-7: cached unresolvedTypeReferenceCount -- linear scan performed once and memoized.
@@ -2674,27 +2665,21 @@ object Tasty:
           */
         def fullName(sym: Symbol): Name =
             import Name.asString
-            val parts   = new scala.collection.mutable.ArrayBuffer[String]()
-            var cur     = sym
-            var depth   = 0
-            var stop    = false
             val visited = new java.util.HashSet[Int]()
-            while !stop && depth < 64 && visited.add(cur.id.value) do
-                val n = cur.name.asString
-                if n.nonEmpty then parts.prepend(n)
-                val ownerId = cur.ownerId
-                if ownerId == cur.id || ownerId.value == -1 then
-                    stop = true
+            @scala.annotation.tailrec
+            def go(cur: Symbol, depth: Int, acc: List[String]): List[String] =
+                if depth >= 64 || !visited.add(cur.id.value) then acc
                 else
-                    val ownerSym = symbol(ownerId)
-                    if ownerSym.id == cur.id || ownerSym.name.asString.isEmpty then
-                        stop = true
+                    val n          = cur.name.asString
+                    val nextAcc    = if n.nonEmpty then n :: acc else acc
+                    val ownerIdCur = cur.ownerId
+                    if ownerIdCur == cur.id || ownerIdCur.value == -1 then nextAcc
                     else
-                        cur = ownerSym
-                        depth += 1
+                        val ownerSym = symbol(ownerIdCur)
+                        if ownerSym.id == cur.id || ownerSym.name.asString.isEmpty then nextAcc
+                        else go(ownerSym, depth + 1, nextAcc)
                     end if
-                end if
-            end while
+            val parts = go(sym, 0, Nil)
             Name(parts.mkString("."))
         end fullName
 
@@ -2707,9 +2692,9 @@ object Tasty:
           * subsequent calls for the same `sym` return the stored result without re-decoding. The memo is keyed by `sym.id` (SymbolId) and
           * is per-Classpath instance; `cp.copy(...)` produces a fresh memo.
           *
-          * Called by `Symbol.body(using cp, frame)`. INV-010: AllowUnsafe does not appear on this signature.
+          * Called by `Symbol.bodyTree(using frame, cp)`. INV-010: AllowUnsafe does not appear on this signature.
           */
-        def decodeBody(sym: Symbol)(using Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
+        def bodyTree(sym: Symbol)(using Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
             val maybeBody: Maybe[SymbolBody] = sym match
                 case c: Symbol.Class  => c.body
                 case t: Symbol.Trait  => t.body
@@ -2723,34 +2708,37 @@ object Tasty:
                 case Maybe.Present(blob) =>
                     Sync.Unsafe.defer:
                         val cached = bodyMemo.get(sym.id)
-                        if cached ne null then
+                        if cached != null then
                             cached match
-                                case Right(t) => Maybe(t)
-                                case Left(e)  => Abort.fail(e)
+                                case Result.Success(t) => Maybe(t)
+                                case Result.Failure(e) => Abort.fail(e)
+                                case Result.Panic(t)   => throw t
                         else
-                            val result: Either[TastyError, Tree] =
+                            val result: Result[TastyError, Tree] =
                                 try
                                     val syms = symbols
-                                    Right(kyo.internal.tasty.reader.TreeUnpickler.decodeSync(
+                                    Result.Success(kyo.internal.tasty.reader.TreeUnpickler.decodeSync(
                                         blob,
                                         sym,
-                                        idx => if idx >= 0 && idx < syms.length then syms(idx) else sym
+                                        idx => if idx >= 0 && idx < syms.size then syms(idx) else sym
                                     ))
                                 catch
                                     case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
-                                        Left(TastyError.MalformedSection("ASTs", ex.getMessage, ex.byteOffset))
+                                        Result.Failure(TastyError.MalformedSection("ASTs", ex.getMessage, ex.byteOffset))
                                     case _: ArrayIndexOutOfBoundsException =>
-                                        Left(TastyError.MalformedSection("ASTs", "truncated body", 0L))
+                                        Result.Failure(TastyError.MalformedSection("ASTs", "truncated body", 0L))
                                     case _: IllegalStateException =>
-                                        // F-W2-2: mmap arena closed before decodeBody ran; documented contract is ClasspathClosed.
-                                        Left(TastyError.ClasspathClosed(s"decodeBody(sym.id=${sym.id.value})"))
+                                        // F-W2-2: mmap arena closed before bodyTree ran; documented contract is ClasspathClosed.
+                                        Result.Failure(TastyError.ClasspathClosed(s"bodyTree(sym.id=${sym.id.value})"))
                             bodyMemo.put(sym.id, result)
                             result match
-                                case Right(t) => Maybe(t)
-                                case Left(e)  => Abort.fail(e)
+                                case Result.Success(t) => Maybe(t)
+                                case Result.Failure(e) => Abort.fail(e)
+                                case Result.Panic(t)   => throw t
+                            end match
                         end if
             end match
-        end decodeBody
+        end bodyTree
 
         /** Package-private memo size for test verification. NOT part of the public API. */
         private[kyo] def bodyMemoSize: Int = bodyMemo.size()
@@ -2786,17 +2774,21 @@ object Tasty:
         private def transitiveClassLikeSubclasses(root: Symbol): Chunk[Symbol.ClassLike] =
             val visited = scala.collection.mutable.HashSet.empty[SymbolId]
             val out     = Chunk.newBuilder[Symbol.ClassLike]
-            val queue   = scala.collection.mutable.Queue(root.id)
-            while queue.nonEmpty do
-                val curId = queue.dequeue()
-                subclassIndex.getOrElse(curId, Chunk.empty).foreach: childId =>
-                    if visited.add(childId) then
-                        symbol(childId) match
-                            case c: Symbol.ClassLike =>
-                                out += c
-                                queue.enqueue(childId)
-                            case _ =>
-            end while
+            @scala.annotation.tailrec
+            def bfs(frontier: Chunk[SymbolId]): Unit =
+                if frontier.isEmpty then ()
+                else
+                    val next = frontier.flatMap: curId =>
+                        subclassIndex.getOrElse(curId, Chunk.empty).flatMap: childId =>
+                            if visited.add(childId) then
+                                symbol(childId) match
+                                    case c: Symbol.ClassLike =>
+                                        out += c
+                                        Chunk(childId)
+                                    case _ => Chunk.empty[SymbolId]
+                            else Chunk.empty[SymbolId]
+                    bfs(next)
+            bfs(Chunk(root.id))
             out.result()
         end transitiveClassLikeSubclasses
 
@@ -2850,6 +2842,23 @@ object Tasty:
           */
         def init(roots: Seq[String], mode: ErrorMode)(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
             initImpl(roots, mode)
+
+        /** Initialize a classpath and pass it to `f`, returning `f`'s result.
+          *
+          * Mirrors the `init`/`initWith` pattern used elsewhere in Kyo: the classpath is built via `init(roots)`, then `f` runs with it as
+          * its first argument. Scope semantics are inherited from `init`; the classpath remains open for the duration of `f` and is closed
+          * when the enclosing `Scope` exits.
+          */
+        def initWith[A, S](roots: Seq[String])(f: Classpath => A < S)(using Frame): A < (Async & Scope & Abort[TastyError] & S) =
+            init(roots).map(f)
+
+        /** Initialize a classpath, run `f` with it, and discard the classpath when `f` completes.
+          *
+          * Equivalent to `Scope.run(initWith(roots)(f))`: the classpath is created inside a fresh scope so that finalizers (JAR pool
+          * closures, mmap arena releases) fire as soon as `f` returns, instead of leaking into the caller's scope.
+          */
+        def use[A, S](roots: Seq[String])(f: Classpath => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
+            Scope.run(initWith(roots)(f))
 
         /** Init the classpath and additionally pre-load JDK `module-info.class` entries from the JDK module image.
           *
@@ -2964,7 +2973,9 @@ object Tasty:
                     companionIndex = Map.empty,
                     moduleIndex = Map.empty,
                     errors = Chunk.empty,
-                    canonical = TypeArena.canonical()
+                    canonical = TypeArena.canonical(),
+                    diagnostics = Chunk.empty,
+                    unresolvedFqnByNegId = Map.empty
                 )
 
         /** Internal: init implementation, delegates to ClasspathOrchestrator. */
@@ -3091,38 +3102,23 @@ object Tasty:
     /** Snapshot cache management utilities. */
     object Snapshot:
 
-        /** Delete snapshot files in `cacheDir` whose modification time is older than `maxAgeMs` milliseconds.
-          *
-          * Only deletes files matching `*.krfl`. Does not recurse into subdirectories.
-          *
-          * Performance (F-W2-25 fix): stats all `.krfl` files, sorts them by mtime ascending (oldest first), then deletes in order and
-          * stops at the first file whose age is within `maxAgeMs`. When most files are fresh this early-exit avoids unnecessary delete
-          * attempts on files that are clearly within the retention window.
-          *
-          * Units (F-W2-32): `maxAgeMs` is in *milliseconds*. To delete files older than 1 hour pass `3_600_000L`. For convenience
-          * the `evictOlderThan(cacheDir, d: Duration)` overload accepts a `Duration` directly.
-          *
-          * @param cacheDir
-          *   directory containing snapshot files
-          * @param maxAgeMs
-          *   maximum age in milliseconds; files older than this are deleted
-          */
-        def evictOlderThan(cacheDir: String, maxAgeMs: Long)(using Frame): Unit < (Sync & Abort[TastyError]) =
-            val source = PlatformFileSource.get
-            evictOlderThanWithSource(cacheDir, maxAgeMs, source)
-        end evictOlderThan
-
         /** Delete snapshot files in `cacheDir` whose modification time is older than `d`.
           *
           * Only deletes files matching `*.krfl`. Does not recurse into subdirectories.
           *
-          * Units (F-W2-32): `d` is a `Duration`; this overload converts to milliseconds before delegating to
-          * the Long overload. A literal numeric call (e.g. `evictOlderThan(dir, 1000)`) will resolve to the
-          * `Long`-milliseconds overload, not this one.
+          * Performance (F-W2-25): stats all `.krfl` files, sorts them by mtime ascending (oldest first), deletes in order and stops at the
+          * first file whose age is within `d`. When most files are fresh this early-exit avoids unnecessary delete attempts on files that
+          * are clearly within the retention window.
+          *
+          * @param cacheDir
+          *   directory containing snapshot files
+          * @param d
+          *   maximum age; files older than this are deleted
           */
-        @scala.annotation.targetName("evictOlderThanDuration")
         def evictOlderThan(cacheDir: String, d: Duration)(using Frame): Unit < (Sync & Abort[TastyError]) =
-            evictOlderThan(cacheDir, d.toMillis)
+            val source = PlatformFileSource.get
+            evictOlderThanWithSource(cacheDir, d.toMillis, source)
+        end evictOlderThan
 
         /** Internal overload that accepts a custom FileSource for testing.
           *

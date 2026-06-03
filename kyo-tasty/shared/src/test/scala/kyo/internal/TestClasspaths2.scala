@@ -120,7 +120,7 @@ private[kyo] object TestClasspaths2:
       */
     def loadEmbeddedWithSink(using Frame): (Tasty.Classpath, WarningSink) < (Sync & Async & Scope & Abort[TastyError]) =
         import AllowUnsafe.embrace.danger
-        val buf = scala.collection.mutable.ArrayBuffer.empty[String]
+        val bufRef = AtomicRef.Unsafe.init(Chunk.empty[String])
         val sinkLogger: Log.Unsafe = new Log.Unsafe:
             def level: Log.Level                                                       = Log.Level.warn
             def trace(msg: => String)(using Frame, AllowUnsafe): Unit                  = ()
@@ -130,15 +130,15 @@ private[kyo] object TestClasspaths2:
             def info(msg: => String)(using Frame, AllowUnsafe): Unit                   = ()
             def info(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit  = ()
             def warn(msg: => String)(using Frame, AllowUnsafe): Unit =
-                val m = msg; buf.synchronized { discard(buf += m) }
+                val m = msg; discard(bufRef.updateAndGet(_ :+ m))
             def warn(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit =
-                val m = msg; buf.synchronized { discard(buf += m) }
+                val m = msg; discard(bufRef.updateAndGet(_ :+ m))
             def error(msg: => String)(using Frame, AllowUnsafe): Unit                  = ()
             def error(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit = ()
         end sinkLogger
         Log.let(Log(sinkLogger)) {
             TestClasspaths.withClasspath().map: cp =>
-                (cp, WarningSink(buf.toSeq))
+                (cp, WarningSink(bufRef.get().toSeq))
         }
     end loadEmbeddedWithSink
 

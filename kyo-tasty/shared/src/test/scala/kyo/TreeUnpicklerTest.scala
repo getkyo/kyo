@@ -402,12 +402,12 @@ class TreeUnpicklerTest extends Test:
         end match
     }
 
-    // Test B (INV-006): Annotation with Absent args (empty pickle case) holds Maybe.Absent.
-    // Phase 08: empty annotation pickle path produces Absent directly in ANNOTATEDtype.
-    "Phase17-B: Annotation with Maybe.Absent args holds Absent" in {
+    // Test B (INV-006): Annotation with an empty arguments chunk (empty pickle case) holds Chunk.empty.
+    // Phase 08: empty annotation pickle path produces an empty chunk directly in ANNOTATEDtype.
+    "Phase17-B: Annotation with an empty arguments chunk holds Chunk.empty" in {
         val sym = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Foo"))
-        val ann = Tasty.Annotation(Tasty.Type.Named(sym.id), Maybe.Absent)
-        assert(ann.args == Maybe.Absent, s"Expected Absent but got ${ann.args}")
+        val ann = Tasty.Annotation(Tasty.Type.Named(sym.id), Chunk.empty)
+        assert(ann.arguments.isEmpty, s"Expected empty arguments but got ${ann.arguments}")
         succeed
     }
 

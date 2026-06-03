@@ -4,6 +4,7 @@ import kyo.internal.tasty.classfile.ClassfileUnpickler
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.symbol.Interner
+import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
@@ -854,9 +855,8 @@ class QueryApiTest extends Test:
                         Abort.run[TastyError](Kyo.lift(symDeclaredType(valuesSym))).map:
                             case Result.Success(tpeMaybe) =>
                                 tpeMaybe match
-                                    case kyo.Maybe.Present(Tasty.Type.Array(Tasty.Type.Named(_))) =>
-                                        // plan: phase-05; name check (int/Int) deferred to Phase 09.
-                                        assert(true)
+                                    case kyo.Maybe.Present(Tasty.Type.Array(Tasty.Type.Named(elemId))) =>
+                                        assert(elemId.value == -1, s"int array element stub must carry SymbolId(-1), got ${elemId.value}")
                                     case kyo.Maybe.Present(Tasty.Type.Array(other)) =>
                                         fail(s"Expected Array(Named('int')) but got Array($other)")
                                     case kyo.Maybe.Present(other) =>

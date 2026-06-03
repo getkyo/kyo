@@ -2,6 +2,7 @@ package kyo
 
 import kyo.internal.tasty.classfile.JavaSignatures
 import kyo.internal.tasty.symbol.Interner
+import kyo.internal.tasty.symbol.SymbolId
 
 /** Tests for the JVM generic signature parser (JVMS §4.7.9.1).
   *
@@ -26,8 +27,8 @@ class JavaSignaturesTest extends Test:
                     // plan: phase-05; name check deferred to Phase 09.
                     assert(args.length == 1, s"Expected 1 arg, got ${args.length}")
                     args(0) match
-                        case Tasty.Type.Named(_) =>
-                            assert(true)
+                        case Tasty.Type.Named(innerId) =>
+                            assert(innerId.value == -1, s"Stub symbol must carry SymbolId(-1), got ${innerId.value}")
                         case other =>
                             fail(s"Expected Named for type arg, got $other")
                     end match
@@ -41,9 +42,8 @@ class JavaSignaturesTest extends Test:
     "parseFieldSignature of [I produces Array(Named(intSym))" in run {
         JavaSignatures.parseFieldSignature("[I", interner).map: tpe =>
             tpe match
-                case Tasty.Type.Array(Tasty.Type.Named(_)) =>
-                    // plan: phase-05; name check (Int) deferred to Phase 09.
-                    assert(true)
+                case Tasty.Type.Array(Tasty.Type.Named(elemId)) =>
+                    assert(elemId.value == -1, s"Primitive int stub must carry SymbolId(-1), got ${elemId.value}")
                 case other =>
                     fail(s"Expected Array(Named(intSym)), got $other")
     }
@@ -54,9 +54,8 @@ class JavaSignaturesTest extends Test:
     "parseFieldSignature of [[Ljava/lang/String; produces Array(Array(Named))" in run {
         JavaSignatures.parseFieldSignature("[[Ljava/lang/String;", interner).map: tpe =>
             tpe match
-                case Tasty.Type.Array(Tasty.Type.Array(Tasty.Type.Named(_))) =>
-                    // plan: phase-05; name check (java.lang.String) deferred to Phase 09.
-                    assert(true)
+                case Tasty.Type.Array(Tasty.Type.Array(Tasty.Type.Named(elemId))) =>
+                    assert(elemId.value == -1, s"String stub must carry SymbolId(-1), got ${elemId.value}")
                 case other =>
                     fail(s"Expected Array(Array(Named)), got $other")
     }
@@ -69,9 +68,9 @@ class JavaSignaturesTest extends Test:
             tpe match
                 case Tasty.Type.Applied(_, args) if args.length == 1 =>
                     args(0) match
-                        case Tasty.Type.Wildcard(Tasty.Type.Named(_), Tasty.Type.Named(_)) =>
-                            // plan: phase-05; name checks (Nothing, java.lang.Number) deferred to Phase 09.
-                            assert(true)
+                        case Tasty.Type.Wildcard(Tasty.Type.Named(lowerId), Tasty.Type.Named(upperId)) =>
+                            assert(lowerId.value == -1, s"Nothing lower bound stub must carry SymbolId(-1), got ${lowerId.value}")
+                            assert(upperId.value == -1, s"Number upper bound stub must carry SymbolId(-1), got ${upperId.value}")
                         case other =>
                             fail(s"Expected Wildcard(Named,Named) for covariant arg, got $other")
                 case other =>
@@ -86,9 +85,9 @@ class JavaSignaturesTest extends Test:
             tpe match
                 case Tasty.Type.Applied(_, args) if args.length == 1 =>
                     args(0) match
-                        case Tasty.Type.Wildcard(Tasty.Type.Named(_), Tasty.Type.Named(_)) =>
-                            // plan: phase-05; name checks (java.lang.Number, Object) deferred to Phase 09.
-                            assert(true)
+                        case Tasty.Type.Wildcard(Tasty.Type.Named(lowerId), Tasty.Type.Named(upperId)) =>
+                            assert(lowerId.value == -1, s"Number lower bound stub must carry SymbolId(-1), got ${lowerId.value}")
+                            assert(upperId.value == -1, s"Object upper bound stub must carry SymbolId(-1), got ${upperId.value}")
                         case other =>
                             fail(s"Expected Wildcard(Named,Named) for contravariant arg, got $other")
                 case other =>
@@ -101,9 +100,8 @@ class JavaSignaturesTest extends Test:
     "parseFieldSignature of raw Ljava/util/List; produces Named (not Applied)" in run {
         JavaSignatures.parseFieldSignature("Ljava/util/List;", interner).map: tpe =>
             tpe match
-                case Tasty.Type.Named(_) =>
-                    // plan: phase-05; name check (java.util.List) deferred to Phase 09.
-                    assert(true)
+                case Tasty.Type.Named(rawId) =>
+                    assert(rawId.value == -1, s"Raw type stub must carry SymbolId(-1), got ${rawId.value}")
                 case other =>
                     fail(s"Expected Named for raw type, got $other")
     }
@@ -122,8 +120,8 @@ class JavaSignaturesTest extends Test:
             fnTpe.params(0) match
                 case Tasty.Type.Applied(Tasty.Type.Named(_), args) if args.length == 1 =>
                     args(0) match
-                        case Tasty.Type.Named(_) =>
-                            assert(true)
+                        case Tasty.Type.Named(typeParamId) =>
+                            assert(typeParamId.value == -1, s"Type param T stub must carry SymbolId(-1), got ${typeParamId.value}")
                         case other =>
                             fail(s"Expected Named for T in List<T>, got $other")
                     end match

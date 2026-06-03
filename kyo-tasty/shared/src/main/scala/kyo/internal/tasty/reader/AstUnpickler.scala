@@ -916,7 +916,7 @@ object AstUnpickler:
                         case _ =>
                             tycon
                 view.goto(annEnd)
-                Present(Tasty.Annotation(enrichedTycon, Maybe.Absent))
+                Present(Tasty.Annotation(enrichedTycon, Chunk.empty))
         end match
     end decodeAnnotationBlock
 

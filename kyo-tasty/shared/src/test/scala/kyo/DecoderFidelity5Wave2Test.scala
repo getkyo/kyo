@@ -237,10 +237,10 @@ class DecoderFidelity5Wave2Test extends Test:
                 case None => succeed
                 case Some(sym) =>
                     Async.collectAll(
-                        (0 until 8).map(_ => cp.decodeBody(sym).map(_.isDefined))
+                        (0 until 8).map(_ => cp.bodyTree(sym).map(_.isDefined))
                     ).map: hits =>
                         val first = hits.head
-                        assert(hits.forall(_ == first), s"decodeBody returned divergent presence: $hits")
+                        assert(hits.forall(_ == first), s"bodyTree returned divergent presence: $hits")
                         succeed
             end match
     }
@@ -532,7 +532,7 @@ class DecoderFidelity5Wave2Test extends Test:
             cp.allClasses.find(c => c.body.isDefined) match
                 case None => succeed
                 case Some(sym) =>
-                    cp.decodeBody(sym).map: _ =>
+                    cp.bodyTree(sym).map: _ =>
                         val sizeBefore = cp.bodyMemoSize
                         val cp2        = Tasty.Classpath.copyWithErrors(cp, cp.errors)
                         assert(cp2.bodyMemoSize == 0, s"cp.copy should reset bodyMemo, got size=${cp2.bodyMemoSize}")
@@ -633,7 +633,7 @@ class DecoderFidelity5Wave2Test extends Test:
             cp.allClasses.find(_.body.isDefined) match
                 case None => succeed
                 case Some(sym) =>
-                    cp.decodeBody(sym).map: tree =>
+                    cp.bodyTree(sym).map: tree =>
                         assert(tree.isDefined || !tree.isDefined, "decodeBody must return without panic")
                         succeed
             end match
@@ -655,7 +655,7 @@ class DecoderFidelity5Wave2Test extends Test:
     // R-F-W2-3b: fromPickles with a real TASTy pickle returns a non-empty classpath.
     "R-F-W2-3b: fromPickles with real TASTy bytes decodes at least 1 symbol" in run {
         val pickle =
-            Tasty.Pickle(uuid = "test-uuid-plain-class", version = Tasty.Version(28, 3, 0), bytes = Chunk.from(plainClassTasty.toSeq))
+            Tasty.Pickle(uuid = "test-uuid-plain-class", version = Tasty.Version(28, 3, 0), bytes = Span.from(plainClassTasty))
         Tasty.Classpath.fromPickles(Seq(pickle)).map: cp =>
             assert(cp.symbols.length > 0, s"expected non-empty symbols from fromPickles, got ${cp.symbols.length}")
             succeed

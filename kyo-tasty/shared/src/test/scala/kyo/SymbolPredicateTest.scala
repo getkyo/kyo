@@ -130,7 +130,7 @@ class SymbolPredicateTest extends Test:
         assert(sym.isFieldAccessor, "isFieldAccessor")
         assert(sym.isExported, "isExported")
         assert(sym.isLocal, "isLocal")
-        assert(sym.isHasDefault, "isHasDefault")
+        assert(sym.hasDefault, "hasDefault")
         assert(sym.isInvisible, "isInvisible")
         assert(sym.isInto, "isInto")
         assert(sym.isInlineProxy, "isInlineProxy")
@@ -179,7 +179,7 @@ class SymbolPredicateTest extends Test:
             (Tasty.SymbolKind.Val, _.isVal, "isVal"),
             (Tasty.SymbolKind.Var, _.isVar, "isVar"),
             (Tasty.SymbolKind.TypeAlias, _.isTypeAlias, "isTypeAlias"),
-            (Tasty.SymbolKind.OpaqueType, _.isOpaqueTypeKind, "isOpaqueTypeKind"),
+            (Tasty.SymbolKind.OpaqueType, _.isOpaqueType, "isOpaqueType"),
             (Tasty.SymbolKind.AbstractType, _.isAbstractType, "isAbstractType"),
             (Tasty.SymbolKind.TypeParam, _.isTypeParam, "isTypeParam"),
             (Tasty.SymbolKind.Parameter, _.isParameter, "isParameter"),

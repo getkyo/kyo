@@ -159,7 +159,7 @@ class DecoderFidelity5Phase02JvmTest extends Test:
                         case Result.Panic(t)      => throw t
             // Step 3: Scope has exited. Call decodeBody. Exercises the post-Scope path.
             symAndCp.flatMap: (sym, warmCp) =>
-                Abort.run[TastyError](warmCp.decodeBody(sym)).map: result =>
+                Abort.run[TastyError](warmCp.bodyTree(sym)).map: result =>
                     result match
                         case Result.Failure(TastyError.MalformedSection(_, reason, _)) =>
                             assert(

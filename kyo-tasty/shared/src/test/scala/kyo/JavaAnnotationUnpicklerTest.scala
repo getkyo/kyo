@@ -130,10 +130,11 @@ class JavaAnnotationUnpicklerTest extends Test:
                     case Result.Panic(ex)    => fail(s"readAnnotations panicked: $ex")
                     case Result.Success(anns) =>
                         assert(anns.size == 1, s"Expected 1 annotation, got ${anns.size}")
-                        val ann = anns.head
-                        val key = Tasty.Name("value")
-                        assert(ann.values.contains(key), s"Expected key Name('value') in values map: ${ann.values}")
-                        ann.values(key) match
+                        val ann      = anns.head
+                        val key      = Tasty.Name("value")
+                        val valueOpt = ann.values.find(_._1 == key)
+                        assert(valueOpt.isDefined, s"Expected key Name('value') in values: ${ann.values}")
+                        valueOpt.get._2 match
                             case Tasty.JavaAnnotation.Value.ArrayVal(elems) =>
                                 assert(elems.size == 2, s"Expected 2 array elements, got ${elems.size}")
                                 elems(0) match

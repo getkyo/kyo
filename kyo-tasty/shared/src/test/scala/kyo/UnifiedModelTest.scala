@@ -11,6 +11,7 @@ import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
 import kyo.internal.tasty.reader.TypeUnpickler
 import kyo.internal.tasty.symbol.Interner
+import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 
@@ -243,13 +244,12 @@ class UnifiedModelTest extends Test:
                 components.nonEmpty,
                 s"Expected non-empty recordComponents for ArrayRecord; got empty. classSymbol=${result.classSymbol.name.asString}"
             )
-            val valuesComponent = components.find(_._1.asString == "values")
+            val valuesComponent = components.find(_.name.asString == "values")
             assert(
                 valuesComponent.isDefined,
-                s"Expected component named 'values' in ArrayRecord; components: ${components.map(_._1.asString).mkString(", ")}"
+                s"Expected component named 'values' in ArrayRecord; components: ${components.map(_.name.asString).mkString(", ")}"
             )
-            val (_, tpe) = valuesComponent.get
-            tpe match
+            valuesComponent.get.tpe match
                 case Tasty.Type.Array(_) =>
                     succeed
                 case other =>
@@ -445,10 +445,8 @@ class UnifiedModelTest extends Test:
         ).map:
             case Result.Success(tpe) =>
                 tpe match
-                    case Tasty.Type.ConstantType(Tasty.Constant.ClassConst(Tasty.Type.Named(_))) =>
-                        // plan: phase-05; Named(id) carries SymbolId(-1) for unresolved stubs.
-                        // kind/name checks deferred to Phase 09.
-                        assert(true)
+                    case Tasty.Type.ConstantType(Tasty.Constant.ClassConst(Tasty.Type.Named(stubId))) =>
+                        assert(stubId.value == -1, s"Unresolved stub must carry SymbolId(-1), got ${stubId.value}")
                     case other =>
                         fail(s"Expected ConstantType(ClassConst(Named(Unresolved))), got $other")
             case Result.Failure(e) => fail(s"Unexpected failure: $e")

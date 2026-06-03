@@ -120,7 +120,7 @@ class ClasspathAnnotatedTest extends Test:
             )
 
             // Annotation: annotationType = Type.Named(SymbolId(1)) -> fullName resolves to "scala.deprecated"
-            val ann = Tasty.Annotation(Tasty.Type.Named(SymbolId(1)), Maybe.Absent)
+            val ann = Tasty.Annotation(Tasty.Type.Named(SymbolId(1)), Chunk.empty)
 
             // id 2: method annotated with @deprecated
             val annotatedMethod = makeMethod(2, "m1", ownerId = 4, Chunk(ann))

@@ -30,7 +30,7 @@ class SmallTypeShowTest extends Test:
     // When: pk.show
     // Then: returns "Pickle(uuid-1 v0.0.0 2B)"
     "Leaf 166: Pickle.show returns Pickle(<uuid> v<version> <n>B)" in run {
-        val pk = Tasty.Pickle("uuid-1", Tasty.Version(0, 0, 0), Chunk(1.toByte, 2.toByte))
+        val pk = Tasty.Pickle("uuid-1", Tasty.Version(0, 0, 0), Span.from(Array[Byte](1, 2)))
         assert(pk.show == "Pickle(uuid-1 v0.0.0 2B)", s"Expected 'Pickle(uuid-1 v0.0.0 2B)', got '${pk.show}'")
         succeed
     }

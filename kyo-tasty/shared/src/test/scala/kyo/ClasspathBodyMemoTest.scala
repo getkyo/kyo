@@ -84,7 +84,7 @@ class ClasspathBodyMemoTest extends Test:
                                 assert(cp.hashCode == cp.hashCode, "hashCode must be stable (bodyMemo excluded)")
                                 succeed
                         case Some(sym) =>
-                            cp.decodeBody(sym).map: _ =>
+                            cp.bodyTree(sym).map: _ =>
                                 // After memoization, the classpath must still equal itself.
                                 assert(cp == cp, "Classpath must equal itself after bodyMemo is populated")
                                 assert(cp.hashCode == cp.hashCode, "hashCode must be stable after bodyMemo is populated")
@@ -121,7 +121,7 @@ class ClasspathBodyMemoTest extends Test:
                             // No body symbols; test is inconclusive but not failed.
                             Kyo.lift(succeed)
                         case Some(sym) =>
-                            cp.decodeBody(sym).map: _ =>
+                            cp.bodyTree(sym).map: _ =>
                                 // After one decode, bodyMemo has size >= 1.
                                 val memoSizeBefore = cp.bodyMemoSize
                                 assert(memoSizeBefore >= 1, s"Expected bodyMemo to have at least 1 entry after decode, got $memoSizeBefore")
@@ -141,7 +141,7 @@ class ClasspathBodyMemoTest extends Test:
     // ── Leaf 4: decodeBody memoizes within a single Classpath ─────────────────
 
     // Given: a Symbol sym with a non-empty body in cp.
-    // When: cp.decodeBody(sym) is called twice.
+    // When: cp.bodyTree(sym) is called twice.
     // Then: both calls return the SAME Tree instance (reference equality via bodyMemo).
     //       TreeUnpickler.decodeSync is invoked only once (verified indirectly: if the second call
     //       returned a fresh decode, it would be a DIFFERENT Tree instance since Symbol instances
@@ -163,8 +163,8 @@ class ClasspathBodyMemoTest extends Test:
                             Kyo.lift(succeed)
                         case Some(sym) =>
                             for
-                                result1 <- cp.decodeBody(sym)
-                                result2 <- cp.decodeBody(sym)
+                                result1 <- cp.bodyTree(sym)
+                                result2 <- cp.bodyTree(sym)
                             yield
                                 assert(result1.isDefined, "First decodeBody call must return Present")
                                 assert(result2.isDefined, "Second decodeBody call must return Present")

@@ -34,7 +34,7 @@ class CaseClassConsistencyTest extends Test:
 
     "Pickle is a case class with copy" in {
         val v       = Tasty.Version(28, 8, 0)
-        val bytes   = Chunk[Byte](1, 2, 3)
+        val bytes   = Span.from(Array[Byte](1, 2, 3))
         val p1      = Tasty.Pickle("uuid-1", v, bytes)
         val p2: Any = Tasty.Pickle("uuid-1", v, bytes)
         assert(p1.equals(p2), "Pickle equality failed")
@@ -59,7 +59,7 @@ class CaseClassConsistencyTest extends Test:
         Future.successful(succeed)
     }
 
-    // Leaf id:16 partial -- directSubclassesOf / Constant.show / Annotation.args synchronous Maybe
+    // Leaf id:16 partial -- directSubclassesOf / Constant.show / Annotation.arguments synchronous Chunk
     "Constant.show is pure (no Classpath needed)" in {
         val c = Tasty.Constant.StringConst("test")
         val s = c.show
@@ -67,12 +67,12 @@ class CaseClassConsistencyTest extends Test:
         Future.successful(succeed)
     }
 
-    "Annotation.args is synchronous Maybe[Tree]" in {
-        // Verify the field type is Maybe[Tree] at compile time (test compiles = proof)
-        val tpe                     = Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(-1))
-        val ann                     = Tasty.Annotation(tpe, Maybe.Absent)
-        val args: Maybe[Tasty.Tree] = ann.args
-        assert(args == Maybe.Absent)
+    "Annotation.arguments is a synchronous Chunk[Tree]" in {
+        // Verify the field type is Chunk[Tree] at compile time (test compiles = proof)
+        val tpe                          = Tasty.Type.Named(kyo.internal.tasty.symbol.SymbolId(-1))
+        val ann                          = Tasty.Annotation(tpe, Chunk.empty)
+        val arguments: Chunk[Tasty.Tree] = ann.arguments
+        assert(arguments.isEmpty)
         Future.successful(succeed)
     }
 

@@ -5,7 +5,7 @@ import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 07 (leaves 145-150): declared vs inherited member split.
   *
-  * Covers: declaredMembers, allMembers, findDeclaredMember, findInheritedMember, findAnyMember, findMembers (plural on ClassLike).
+  * Covers: declaredMembers, allMembers, findDeclaredMember, findInheritedMember, findAnyMember, collectMembers (plural on ClassLike).
   *
   * Pins: INV-005.
   */
@@ -203,15 +203,15 @@ class SymbolMemberSearchTest extends Test:
             succeed
     }
 
-    // ── Leaf 150: findMembers-plural ──────────────────────────────────────────
+    // ── Leaf 150: collectMembers-plural ──────────────────────────────────────────
     // Given: class A { def foo(x: Int); def foo(s: String) } (overloaded).
-    // When: a.findMembers("foo").
+    // When: a.collectMembers("foo").
     // Then: returns Chunk[Symbol] of size 2.
     // Pins: INV-005
-    "Leaf 150: findMembers returns all overloaded declarations" in run {
+    "Leaf 150: collectMembers returns all overloaded declarations" in run {
         buildOverloadedFixture.map: cp =>
             val a       = cp.findClass("A").get
-            val members = a.findMembers("foo")(using cp)
+            val members = a.collectMembers("foo")(using cp)
             assert(members.size == 2, s"Expected 2 but got ${members.size}")
             succeed
     }

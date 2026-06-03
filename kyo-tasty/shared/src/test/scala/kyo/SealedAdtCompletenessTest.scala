@@ -93,7 +93,7 @@ class SealedAdtCompletenessTest extends Test:
     // ── ADT-002: Tasty.Type (enum - 27 variants) ─────────────────────────────
 
     // EXPECTED_TYPE_COUNT: update this constant whenever a new Tasty.Type variant is added.
-    private inline val EXPECTED_TYPE_COUNT = 27
+    private inline val EXPECTED_TYPE_COUNT = 30
 
     private inline def checkTypeCount()(using m: Mirror.SumOf[Tasty.Type]): Unit =
         inline val actual = constValue[Tuple.Size[m.MirroredElemTypes]]
@@ -134,11 +134,14 @@ class SealedAdtCompletenessTest extends Test:
         "FlexibleType"    -> "TypeAdtFidelity2Test",
         "MatchCase"       -> "TypeAdtFidelity2Test",
         "TypeRef"         -> "TypeAdtFidelity2Test",
-        "Bounds"          -> "TypeAdtFidelity2Test"
+        "Bounds"          -> "TypeAdtFidelity2Test",
+        "Nothing"         -> "SmallAdtCoexistenceTest",
+        "Any"             -> "SmallAdtCoexistenceTest",
+        "Unknown"         -> "TypeAliasOpaqueTypedAccessorsTest"
     )
 
-    // ADT-002: Tasty.Type - all 27 variants covered by tests.
-    "ADT-002: Tasty.Type - all 27 variants are covered by at least one named test" in {
+    // ADT-002: Tasty.Type - all 30 variants covered by tests.
+    "ADT-002: Tasty.Type - all 30 variants are covered by at least one named test" in {
         val variantNames = enumVariantNames[Tasty.Type]
         assert(
             variantNames.size == EXPECTED_TYPE_COUNT,

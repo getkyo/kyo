@@ -160,7 +160,7 @@ class SteeringTargetUseCaseTest extends Test:
                 sym.isMutable; sym.isErased; sym.isInfix; sym.isOpen; sym.isTransparent
                 sym.isMacro; sym.isSynthetic; sym.isArtifact; sym.isCovariant; sym.isContravariant
                 sym.isExtension; sym.isTracked; sym.isStable; sym.isParamAccessor; sym.isCaseAccessor
-                sym.isFieldAccessor; sym.isExported; sym.isLocal; sym.isHasDefault; sym.isInvisible
+                sym.isFieldAccessor; sym.isExported; sym.isLocal; sym.hasDefault; sym.isInvisible
                 sym.isInto; sym.isInlineProxy; sym.isTailrec; sym.isScala2; sym.isJavaRecord
                 sym.isEnum; sym.isModule; sym.isJava; sym.isInline; sym.isGiven
             succeed

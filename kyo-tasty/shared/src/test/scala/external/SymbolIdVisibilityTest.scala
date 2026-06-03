@@ -14,8 +14,7 @@ class SymbolIdVisibilityTest extends kyo.Test:
     // Then: compilation fails because apply is private[kyo].
     // Pins: INV-001 (private[kyo] smart constructor).
     "SymbolId.apply is inaccessible from outside the kyo package" in {
-        assertDoesNotCompile("kyo.internal.tasty.symbol.SymbolId(0)")
-        succeed
+        typeCheckFailure("kyo.internal.tasty.symbol.SymbolId(0)")("does not take parameters")
     }
 
 end SymbolIdVisibilityTest

@@ -5,7 +5,7 @@ import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 07 (leaves 137-144): Symbol annotation queries.
   *
-  * Covers: hasAnnotation, getAnnotation across symbol subtypes.
+  * Covers: hasAnnotation, findAnnotation across symbol subtypes.
   *
   * Pins: INV-003.
   */
@@ -113,15 +113,15 @@ class SymbolAnnotationQueryTest extends Test:
 
             val scalaDeprecatedAnnot = Tasty.Annotation(
                 Tasty.Type.Named(SymbolId(1)),
-                Maybe.Absent
+                Chunk.empty
             )
             val scalaInlineAnnot = Tasty.Annotation(
                 Tasty.Type.Named(SymbolId(2)),
-                Maybe.Absent
+                Chunk.empty
             )
             val javaDeprecatedAnnot = Tasty.JavaAnnotation(
                 annotationClass = jDeprecated,
-                values = Map.empty
+                values = Chunk.empty
             )
 
             val methodFoo = makeMethod(5, "foo", ownerId = -1, Chunk(scalaDeprecatedAnnot))
@@ -233,15 +233,15 @@ class SymbolAnnotationQueryTest extends Test:
             succeed
     }
 
-    // ── Leaf 142: getAnnotation-scala-present ─────────────────────────────────
+    // ── Leaf 142: findAnnotation-scala-present ─────────────────────────────────
     // Given: Symbol.Method with one @scala.inline annotation.
-    // When: m.getAnnotation("scala.inline").
+    // When: m.findAnnotation("scala.inline").
     // Then: returns Maybe.Present(a) where a.isInstanceOf[Tasty.Annotation].
     // Pins: INV-003
-    "Leaf 142: getAnnotation returns Present Annotation for matching Scala annotation" in run {
+    "Leaf 142: findAnnotation returns Present Annotation for matching Scala annotation" in run {
         buildFixture.map: cp =>
             val m = cp.symbol(SymbolId(10)).asInstanceOf[Tasty.Symbol.Method]
-            m.getAnnotation("scala.inline")(using cp) match
+            m.findAnnotation("scala.inline")(using cp) match
                 case Maybe.Present(a) =>
                     assert(a.isInstanceOf[Tasty.Annotation], s"Expected Annotation but got $a")
                     succeed
@@ -250,15 +250,15 @@ class SymbolAnnotationQueryTest extends Test:
             end match
     }
 
-    // ── Leaf 143: getAnnotation-java-present ──────────────────────────────────
+    // ── Leaf 143: findAnnotation-java-present ──────────────────────────────────
     // Given: Symbol.Field with one @java.lang.Deprecated.
-    // When: f.getAnnotation("java.lang.Deprecated").
+    // When: f.findAnnotation("java.lang.Deprecated").
     // Then: returns Maybe.Present(a) where a.isInstanceOf[Tasty.JavaAnnotation].
     // Pins: INV-003
-    "Leaf 143: getAnnotation returns Present JavaAnnotation for matching Java annotation" in run {
+    "Leaf 143: findAnnotation returns Present JavaAnnotation for matching Java annotation" in run {
         buildFixture.map: cp =>
             val f = cp.symbol(SymbolId(7)).asInstanceOf[Tasty.Symbol.Field]
-            f.getAnnotation("java.lang.Deprecated")(using cp) match
+            f.findAnnotation("java.lang.Deprecated")(using cp) match
                 case Maybe.Present(a) =>
                     assert(a.isInstanceOf[Tasty.JavaAnnotation], s"Expected JavaAnnotation but got $a")
                     succeed
@@ -267,15 +267,15 @@ class SymbolAnnotationQueryTest extends Test:
             end match
     }
 
-    // ── Leaf 144: getAnnotation-absent ────────────────────────────────────────
+    // ── Leaf 144: findAnnotation-absent ────────────────────────────────────────
     // Given: any symbol with no matching annotation.
-    // When: s.getAnnotation("missing.Anno").
+    // When: s.findAnnotation("missing.Anno").
     // Then: returns Maybe.Absent.
     // Pins: INV-003
-    "Leaf 144: getAnnotation returns Absent when annotation not present" in run {
+    "Leaf 144: findAnnotation returns Absent when annotation not present" in run {
         buildFixture.map: cp =>
             val m      = cp.symbol(SymbolId(5)).asInstanceOf[Tasty.Symbol.Method]
-            val result = m.getAnnotation("missing.Anno")(using cp)
+            val result = m.findAnnotation("missing.Anno")(using cp)
             assert(!result.isDefined, s"Expected Absent but got $result")
             succeed
     }

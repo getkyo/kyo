@@ -4,6 +4,7 @@ import kyo.internal.tasty.classfile.ClassfileUnpickler
 import kyo.internal.tasty.scala2.Scala2PickleReader
 import kyo.internal.tasty.scala2.Scala2PickleResult
 import kyo.internal.tasty.symbol.Interner
+import kyo.internal.tasty.symbol.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 
 /** Tests for Phase 10: Scala 2 pickle reader.
@@ -176,8 +177,8 @@ class Scala2PickleTest extends Test:
                 case ta: Tasty.Symbol.TypeAlias => kyo.Maybe(ta.body);
                 case _                          => kyo.Maybe.Absent
             ) match
-                case kyo.Maybe.Present(Tasty.Type.Named(_)) =>
-                    assert(true) // structure is Named; name check deferred to Phase 09
+                case kyo.Maybe.Present(Tasty.Type.Named(namedId)) =>
+                    assert(namedId.value == -1, s"Scala2 type alias body stub must carry SymbolId(-1), got ${namedId.value}")
                 case kyo.Maybe.Present(other) =>
                     fail(s"Expected Type.Named, got $other")
                 case kyo.Maybe.Absent =>

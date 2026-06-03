@@ -68,7 +68,7 @@ object JavaAnnotationUnpickler:
                 pool.utf8(typeIdx).map: typeDescriptor =>
                     val annotationClassSym = descriptorToUnresolvedSymbol(typeDescriptor)
                     Sync.defer(readU2(view)).map: numPairs =>
-                        readElementValuePairs(view, pool, interner, numPairs, 0, Map.empty, depth).map: values =>
+                        readElementValuePairs(view, pool, interner, numPairs, 0, Chunk.empty, depth).map: values =>
                             Tasty.JavaAnnotation(annotationClassSym, values)
 
     private def readElementValuePairs(
@@ -77,16 +77,16 @@ object JavaAnnotationUnpickler:
         interner: Interner,
         total: Int,
         idx: Int,
-        acc: Map[Tasty.Name, Tasty.JavaAnnotation.Value],
+        acc: Chunk[(Tasty.Name, Tasty.JavaAnnotation.Value)],
         depth: Int
-    )(using Frame, AllowUnsafe): Map[Tasty.Name, Tasty.JavaAnnotation.Value] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[(Tasty.Name, Tasty.JavaAnnotation.Value)] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             Sync.defer(readU2(view)).map: nameIdx =>
                 pool.utf8(nameIdx).map: elemName =>
                     val key = Tasty.Name(elemName)
                     readElementValue(view, pool, interner, depth).map: value =>
-                        readElementValuePairs(view, pool, interner, total, idx + 1, acc + (key -> value), depth)
+                        readElementValuePairs(view, pool, interner, total, idx + 1, acc.append((key, value)), depth)
 
     private def readElementValue(
         view: ByteView,

@@ -4,7 +4,6 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.symbol.SymbolId
 import scala.collection.mutable
-import scala.compiletime.testing.typeCheckErrors
 
 /** Plan-mandated tests for Phase 04 (leaves 70-78, 81, 84): Method typed resolution accessors.
   *

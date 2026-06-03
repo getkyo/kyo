@@ -62,7 +62,7 @@ class TastyEffectRowTest extends Test:
     // ── Leaf 6: Symbol.body delegates to cp.decodeBody (reference equality via memoization) ─
 
     // Given: a Symbol sym with a non-empty body in a loaded Classpath cp.
-    // When: sym.body(using cp, frame) and cp.decodeBody(sym) are both evaluated.
+    // When: sym.body(using cp, frame) and cp.bodyTree(sym) are both evaluated.
     // Then: both calls return the SAME Tree instance (reference-equal via bodyMemo memoization).
     //
     // Phase 06 restores the reference-equality assertion deferred in Phase 04 D-02. The bodyMemo
@@ -83,12 +83,11 @@ class TastyEffectRowTest extends Test:
                     )
                     valSym match
                         case None =>
-                            // If no Val with a body is found, the test is inconclusive but not failed.
-                            Kyo.lift(succeed)
+                            Kyo.lift(fail("fixture missing Val with body; test cannot proceed"))
                         case Some(sym) =>
                             for
-                                viaMethod <- cp.decodeBody(sym)
-                                viaDirect <- cp.decodeBody(sym)
+                                viaMethod <- cp.bodyTree(sym)
+                                viaDirect <- cp.bodyTree(sym)
                             yield
                                 assert(viaMethod.isDefined, "cp.decodeBody must return Present")
                                 assert(viaDirect.isDefined, "cp.decodeBody must return Present")

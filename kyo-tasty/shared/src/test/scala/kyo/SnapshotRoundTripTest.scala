@@ -843,7 +843,7 @@ class SnapshotRoundTripTest extends Test:
                     assert(warmCp.bodyMemoSize == 0, s"bodyMemo must be empty before any decodeBody call, got ${warmCp.bodyMemoSize}")
                     // Call decodeBody; snapshot bodies lack the name table so decode may fail,
                     // but the result (success or failure) must be memoized.
-                    Abort.run[TastyError](warmCp.decodeBody(sym)).map: _ =>
+                    Abort.run[TastyError](warmCp.bodyTree(sym)).map: _ =>
                         // After decodeBody: bodyMemoSize must be 1 regardless of decode outcome.
                         val memoSize = warmCp.bodyMemoSize
                         assert(memoSize == 1, s"bodyMemo must have exactly 1 entry after first decodeBody call, got $memoSize")

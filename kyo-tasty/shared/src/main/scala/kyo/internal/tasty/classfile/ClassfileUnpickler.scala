@@ -1393,7 +1393,7 @@ object ClassfileUnpickler:
         enclosingClassIdx: Maybe[Int],
         enclosingMethodIdx: Maybe[Int],
         innerTable: Map[String, (String, String)]
-    )(using Frame, AllowUnsafe): Maybe[(Tasty.Symbol, Tasty.Name)] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Maybe[Tasty.EnclosingMethod] < (Sync & Abort[TastyError]) =
         enclosingClassIdx match
             case Absent => Absent
             case Present(classIdx) =>
@@ -1415,7 +1415,7 @@ object ClassfileUnpickler:
                             Absent
                         case Present(methodIdx) =>
                             pool.nameAndType(methodIdx).map: (methodName, _) =>
-                                Present((enclosingClassSym, Tasty.Name(methodName)))
+                                Present(Tasty.EnclosingMethod(enclosingClassSym, Tasty.Name(methodName)))
                     end match
 
     private def buildRecordComponents(
@@ -1424,7 +1424,7 @@ object ClassfileUnpickler:
         path: String,
         components: Chunk[(Int, Int, Maybe[Int])],
         isRecord: Boolean
-    )(using Frame, AllowUnsafe): Chunk[(Tasty.Name, Tasty.Type)] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.RecordComponent] < (Sync & Abort[TastyError]) =
         if !isRecord || components.isEmpty then Chunk.empty
         else buildRecordComponentList(pool, interner, path, components, 0, Chunk.empty)
 
@@ -1434,8 +1434,8 @@ object ClassfileUnpickler:
         path: String,
         components: Chunk[(Int, Int, Maybe[Int])],
         idx: Int,
-        acc: Chunk[(Tasty.Name, Tasty.Type)]
-    )(using Frame, AllowUnsafe): Chunk[(Tasty.Name, Tasty.Type)] < (Sync & Abort[TastyError]) =
+        acc: Chunk[Tasty.RecordComponent]
+    )(using Frame, AllowUnsafe): Chunk[Tasty.RecordComponent] < (Sync & Abort[TastyError]) =
         if idx >= components.length then acc
         else
             val (nameIdx, descIdx, sigIdx) = components(idx)
@@ -1443,7 +1443,14 @@ object ClassfileUnpickler:
                 pool.utf8(descIdx).map: descriptor =>
                     resolveComponentType(pool, interner, path, descriptor, sigIdx).map: compType =>
                         val name = Tasty.Name(compName)
-                        buildRecordComponentList(pool, interner, path, components, idx + 1, acc.appended((name, compType)))
+                        buildRecordComponentList(
+                            pool,
+                            interner,
+                            path,
+                            components,
+                            idx + 1,
+                            acc.appended(Tasty.RecordComponent(name, compType))
+                        )
 
     private def resolveComponentType(
         pool: ConstantPool,
@@ -1574,11 +1581,11 @@ object ClassfileUnpickler:
                     resolveThrowsTypes(pool, path, info.exceptionIdxs).map: throwsTypes =>
                         decodeAnnotations(pool, interner, info.visibleAnnotationBytes, info.invisibleAnnotationBytes).map:
                             memberAnnotations =>
-                                // Wrap MethodParameters as paramNames entry: (methodName -> paramName chunk)
-                                val paramNamesEntry: Chunk[(Tasty.Name, Chunk[Tasty.Name])] =
+                                // Wrap MethodParameters as paramNames entry: ParamGroup(methodName, paramName chunk)
+                                val paramNamesEntry: Chunk[Tasty.ParamGroup] =
                                     if info.paramNames.isEmpty then Chunk.empty
                                     else
-                                        Chunk((
+                                        Chunk(Tasty.ParamGroup(
                                             Tasty.Name(memberName),
                                             info.paramNames.map(Tasty.Name(_))
                                         ))
