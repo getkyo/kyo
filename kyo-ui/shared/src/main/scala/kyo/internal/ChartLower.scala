@@ -698,16 +698,74 @@ private[kyo] object ChartLower:
 
     // ---- marks region ----
 
-    /** Build the SVG `<g>` containing all lowered marks for static data. */
+    // ---- Phase 07: interaction helpers ----
+
+    /** Build `UI.Ast.Attrs` that wire hover and click handlers for a single data row.
+      *
+      * When `spec.onHover` is `Present`, the hover handler sets the ref to `Present(row)` and the unhover
+      * handler sets it to `Absent`. When `spec.onSelect` is `Present`, the click handler sets it to
+      * `Present(row)`. When an `internalHoverRef` is supplied (tooltip mode), each setter also writes that
+      * ref so the tooltip overlay tracks hover independently of the user's ref.
+      *
+      * Only attaches handlers when the corresponding ref is configured; static charts with no interaction
+      * configured receive no handler fields (keeping the attrs clean).
+      */
+    private def buildInteractionAttrs[A](
+        row: A,
+        spec: ChartSpec[A],
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]]
+    )(using Frame): UI.Ast.Attrs =
+        val hasHover   = spec.onHover.isDefined
+        val hasSelect  = spec.onSelect.isDefined
+        val hasTooltip = internalHoverRef.isDefined
+        if !hasHover && !hasSelect && !hasTooltip then UI.Ast.Attrs()
+        else
+            // Hover action: set user ref + internal tooltip ref (if present), combined sequentially.
+            val hoverAction: Maybe[Any < Async] =
+                if hasHover || hasTooltip then
+                    val actions: Seq[Any < Async] =
+                        spec.onHover.map(_.set(Present(row))).toOption.toSeq ++
+                            internalHoverRef.map(_.set(Present(row))).toOption.toSeq
+                    val combined: Any < Async = actions.foldLeft((): Any < Async)((acc, a) => acc.andThen(a))
+                    Present(combined)
+                else Absent
+            // Unhover action: clear user ref + internal tooltip ref, combined sequentially.
+            val unhoverAction: Maybe[Any < Async] =
+                if hasHover || hasTooltip then
+                    val actions: Seq[Any < Async] =
+                        spec.onHover.map(_.set(Absent)).toOption.toSeq ++
+                            internalHoverRef.map(_.set(Absent)).toOption.toSeq
+                    val combined: Any < Async = actions.foldLeft((): Any < Async)((acc, a) => acc.andThen(a))
+                    Present(combined)
+                else Absent
+            // Click action: set select ref.
+            val clickAction: Maybe[Any < Async] =
+                spec.onSelect.map(_.set(Present(row)))
+            UI.Ast.Attrs(
+                onHover = hoverAction,
+                onUnhover = unhoverAction,
+                onClick = clickAction
+            )
+        end if
+    end buildInteractionAttrs
+
+    /** Build the SVG `<g>` containing all lowered marks for static data.
+      *
+      * When `spec` is `Present`, interaction handlers are attached to each shape-per-row element
+      * (bars, circles) so `spec.onHover`/`spec.onSelect` refs receive the hovered/selected datum.
+      * Reactive rule values are lowered inside a `Svg.G` wrapper whose child is a `Reactive[Svg.Line]`.
+      */
     private[kyo] def marksRegion[A](
         rows: Chunk[A],
         marks: Chunk[Mark[A]],
         layout: Layout,
         xs: Scale,
         ysL: Scale,
-        ysR: Maybe[Scale] = Absent
+        ysR: Maybe[Scale] = Absent,
+        spec: Maybe[ChartSpec[A]] = Absent,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Svg.G =
-        val shapes: Chunk[Svg.SvgElement] = marks.flatMap: mark =>
+        val allShapes: Chunk[UI] = marks.flatMap: mark =>
             val ys = mark match
                 case m: Mark.Bar[A, ?, ?]   => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
                 case m: Mark.Line[A, ?, ?]  => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
@@ -715,19 +773,29 @@ private[kyo] object ChartLower:
                 case m: Mark.Point[A, ?, ?] => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
                 case m: Mark.Rule[A]        => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
             mark match
-                case m: Mark.Bar[A, ?, ?]   => lowerBar(rows, m, layout, xs, ys)
-                case m: Mark.Line[A, ?, ?]  => lowerLine(rows, m, layout, xs, ys)
-                case m: Mark.Area[A, ?, ?]  => lowerArea(rows, m, layout, xs, ys)
-                case m: Mark.Point[A, ?, ?] => lowerPoint(rows, m, layout, xs, ys)
-                case m: Mark.Rule[A]        => lowerRule(m, layout, xs, ys)
+                case m: Mark.Bar[A, ?, ?] =>
+                    spec match
+                        case Present(s) => lowerBar(rows, m, layout, xs, ys, s, internalHoverRef).asInstanceOf[Chunk[UI]]
+                        case Absent     => lowerBar(rows, m, layout, xs, ys).asInstanceOf[Chunk[UI]]
+                case m: Mark.Line[A, ?, ?] =>
+                    spec match
+                        case Present(s) => lowerLine(rows, m, layout, xs, ys, Present(s), internalHoverRef).asInstanceOf[Chunk[UI]]
+                        case Absent     => lowerLine(rows, m, layout, xs, ys).asInstanceOf[Chunk[UI]]
+                case m: Mark.Area[A, ?, ?] => lowerArea(rows, m, layout, xs, ys).asInstanceOf[Chunk[UI]]
+                case m: Mark.Point[A, ?, ?] =>
+                    spec match
+                        case Present(s) => lowerPoint(rows, m, layout, xs, ys, Present(s), internalHoverRef).asInstanceOf[Chunk[UI]]
+                        case Absent     => lowerPoint(rows, m, layout, xs, ys).asInstanceOf[Chunk[UI]]
+                case m: Mark.Rule[A] => lowerRuleChildren(m, layout, xs, ys)
             end match
-        shapes.foldLeft(Svg.g): (g, el) =>
+        allShapes.foldLeft(Svg.g): (g, el) =>
             el match
                 case r: Svg.Rect   => g(r)
                 case p: Svg.Path   => g(p)
                 case c: Svg.Circle => g(c)
                 case l: Svg.Line   => g(l)
-                case other         => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+                case inner: Svg.G  => g(inner)
+                case _             => g
     end marksRegion
 
     // ---- per-mark lowerers ----
@@ -737,23 +805,31 @@ private[kyo] object ChartLower:
       * When the mark has no `color` channel each row produces one rect spanning the full band. When a `color`
       * channel is present the band is subdivided into sub-bands (grouped) or the rects stack vertically
       * (stacked, when `mark.stack.group` is `Present`).
+      *
+      * When `spec` is supplied, hover and click handlers are attached to each rect so `spec.onHover` and
+      * `spec.onSelect` refs track the hovered/selected row. Stacked bars do not carry per-row interaction
+      * because each stacked segment represents a partial view of a group rather than a single row.
       */
     private def lowerBar[A, X, Y](
         rows: Chunk[A],
         mark: Mark.Bar[A, X, Y],
         layout: Layout,
         xs: Scale,
-        ys: Scale
+        ys: Scale,
+        spec: ChartSpec[A] = null.asInstanceOf[ChartSpec[A]],
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
+        val specMaybe: Maybe[ChartSpec[A]] = if spec != null then Present(spec) else Absent
         mark.stack.group match
             case Present(_) =>
                 lowerBarStacked(rows, mark, layout, xs, ys)
             case Absent =>
                 mark.color match
                     case Absent =>
-                        lowerBarSimple(rows, mark, layout, xs, ys)
+                        lowerBarSimple(rows, mark, layout, xs, ys, specMaybe, internalHoverRef)
                     case Present(colorCh) =>
-                        lowerBarGrouped(rows, mark, colorCh.asInstanceOf[Channel[A, Any]], layout, xs, ys)
+                        lowerBarGrouped(rows, mark, colorCh.asInstanceOf[Channel[A, Any]], layout, xs, ys, specMaybe, internalHoverRef)
+        end match
     end lowerBar
 
     private def lowerBarSimple[A, X, Y](
@@ -761,7 +837,9 @@ private[kyo] object ChartLower:
         mark: Mark.Bar[A, X, Y],
         layout: Layout,
         xs: Scale,
-        ys: Scale
+        ys: Scale,
+        spec: Maybe[ChartSpec[A]] = Absent,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         val baseline = layout.plotBaseline
         @scala.annotation.tailrec
@@ -777,15 +855,17 @@ private[kyo] object ChartLower:
                         xDomain match
                             case Absent => acc
                             case Present(xd) =>
-                                val barX = xs.apply(xd)
-                                val barW = xs.bandwidth
-                                val barY = ys.apply(yd)
-                                val barH = baseline - barY
+                                val barX   = xs.apply(xd)
+                                val barW   = xs.bandwidth
+                                val barY   = ys.apply(yd)
+                                val barH   = baseline - barY
+                                val iAttrs = spec.map(s => buildInteractionAttrs(row, s, internalHoverRef)).getOrElse(UI.Ast.Attrs())
                                 val r = Svg.rect
                                     .x(barX)
                                     .y(barY)
                                     .width(barW)
                                     .height(barH)
+                                    .withAttrs(iAttrs)
                                 acc.append(r)
                         end match
                 loop(i + 1, nextAcc)
@@ -798,7 +878,9 @@ private[kyo] object ChartLower:
         colorCh: Channel[A, Any],
         layout: Layout,
         xs: Scale,
-        ys: Scale
+        ys: Scale,
+        spec: Maybe[ChartSpec[A]] = Absent,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         // Collect distinct color keys in enum-ordinal order (N3 carry-over)
         val colorKeys: Chunk[String] = collectColorCategories(rows, colorCh)
@@ -828,7 +910,8 @@ private[kyo] object ChartLower:
                                 val barY      = ys.apply(yd)
                                 val barH      = baseline - barY
                                 val fillColor = if colorIdx >= 0 && colorIdx < palette.size then palette(colorIdx) else DefaultPalette(0)
-                                val r         = Svg.rect.x(barX).y(barY).width(subW).height(barH).fill(Svg.Paint.Color(fillColor))
+                                val iAttrs    = spec.map(s => buildInteractionAttrs(row, s, internalHoverRef)).getOrElse(UI.Ast.Attrs())
+                                val r = Svg.rect.x(barX).y(barY).width(subW).height(barH).fill(Svg.Paint.Color(fillColor)).withAttrs(iAttrs)
                                 acc.append(r)
                         end match
                 loop(i + 1, nextAcc)
@@ -963,13 +1046,19 @@ private[kyo] object ChartLower:
       * Each `Absent` y value (gap) closes the current sub-path and starts a new `MoveTo` segment. The result may
       * contain multiple `MoveTo` commands in a single `PathData` (one for each contiguous run of defined points).
       * When a `color` channel is present each distinct color series produces its own path.
+      *
+      * When `spec` is supplied, hover and click handlers are attached to each path. A line path represents all
+      * rows in a series, so the hover handler publishes `Absent` (line paths cover multiple rows and no single
+      * row is hovered). Per-row interaction is better suited to `point` marks layered over the line.
       */
     private def lowerLine[A, X, Y](
         rows: Chunk[A],
         mark: Mark.Line[A, X, Y],
         layout: Layout,
         xs: Scale,
-        ys: Scale
+        ys: Scale,
+        spec: Maybe[ChartSpec[A]] = Absent,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         mark.color match
             case Absent =>
@@ -1210,13 +1299,18 @@ private[kyo] object ChartLower:
       *
       * Each row with a defined y produces one circle. The radius comes from the `size` channel if present, or the
       * `DefaultRadius` constant otherwise.
+      *
+      * When `spec` is supplied, hover and click handlers are attached to each circle so `spec.onHover` and
+      * `spec.onSelect` refs receive the typed row on pointer events.
       */
     private def lowerPoint[A, X, Y](
         rows: Chunk[A],
         mark: Mark.Point[A, X, Y],
         layout: Layout,
         xs: Scale,
-        ys: Scale
+        ys: Scale,
+        spec: Maybe[ChartSpec[A]] = Absent,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         @scala.annotation.tailrec
         def loop(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
@@ -1235,7 +1329,8 @@ private[kyo] object ChartLower:
                                 val r = mark.size match
                                     case Present(fn) => fn(row)
                                     case Absent      => DefaultRadius
-                                val c = Svg.circle.cx(cx).cy(cy).r(r)
+                                val iAttrs = spec.map(s => buildInteractionAttrs(row, s, internalHoverRef)).getOrElse(UI.Ast.Attrs())
+                                val c      = Svg.circle.cx(cx).cy(cy).r(r).withAttrs(iAttrs)
                                 acc.append(c)
                             case _ => acc
                         end match
@@ -1245,7 +1340,10 @@ private[kyo] object ChartLower:
 
     /** Lower a `Mark.Rule` to an `Svg.Line` spanning the full plot width (horizontal rule) or height (vertical rule).
       *
-      * Only `Const` rule values are handled in Phases 03/04; `Reactive` values are resolved in Phase 07.
+      * `Const` rule values produce a static `Svg.Line` immediately. `Reactive` rule values produce a
+      * `Svg.G` wrapping a `Reactive[Svg.Line]` so the line position tracks the signal. The returned
+      * `Chunk[Svg.SvgElement]` contains only static elements; call `lowerRuleChildren` when reactive
+      * rules must be included as `UI` children (which the marks region uses).
       */
     private def lowerRule[A](
         mark: Mark.Rule[A],
@@ -1253,24 +1351,78 @@ private[kyo] object ChartLower:
         xs: Scale,
         ys: Scale
     )(using Frame): Chunk[Svg.SvgElement] =
-        val xLine: Maybe[Svg.SvgElement] = mark.x match
+        lowerRuleChildren(mark, layout, xs, ys).collect:
+            case el: Svg.SvgElement => el
+
+    /** Lower a `Mark.Rule` to a `Chunk[UI]` that may include `Reactive` nodes.
+      *
+      * `Const` rule values produce a static `Svg.Line`. `Reactive` rule values produce a `Svg.G` whose
+      * single child is a `Reactive[Svg.Line]` that re-renders whenever the signal emits a new value. This
+      * `Svg.G` is itself a `Svg.SvgElement` so it fits into the marks-region fold without type widening.
+      *
+      * N4-guard: no `url(#id)` references are emitted (plain lines only).
+      */
+    private def lowerRuleChildren[A](
+        mark: Mark.Rule[A],
+        layout: Layout,
+        xs: Scale,
+        ys: Scale
+    )(using Frame): Chunk[UI] =
+        val xChildren: Chunk[UI] = mark.x match
             case Present(RuleValue.Const(v, pl)) =>
                 pl.asInstanceOf[Plottable[Any]].toDomain(v) match
                     case Present(d) =>
-                        val px = xs.apply(d)
-                        Present(Svg.line.x1(px).y1(layout.plotY).x2(px).y2(layout.plotBaseline))
-                    case Absent => Absent
-            case _ => Absent
-        val yLine: Maybe[Svg.SvgElement] = mark.y match
+                        // For a category domain, place the vertical rule at the band center so the line
+                        // bisects the bar/data point rather than aligning to the band left wall.
+                        val leftEdge = xs.apply(d)
+                        val px = d match
+                            case Domain.Category(_) => leftEdge + xs.bandwidth / 2.0
+                            case _                  => leftEdge
+                        Chunk(Svg.line.x1(px).y1(layout.plotY).x2(px).y2(layout.plotBaseline))
+                    case Absent => Chunk.empty
+            case Present(RuleValue.Reactive(signal, pl)) =>
+                // Unsafe: signal.asInstanceOf[Signal[Any]] is type-erasure-safe because RuleValue.Reactive
+                // carries the matching Plottable that was paired with the signal at construction time.
+                val reactiveChild: UI.Ast.Reactive[Svg.Line] =
+                    signal.asInstanceOf[Signal[Any]].render: v =>
+                        pl.asInstanceOf[Plottable[Any]].toDomain(v) match
+                            case Present(d) =>
+                                // For a category domain, place the vertical rule at the band center
+                                // (left edge + half bandwidth) rather than the band left edge, so the
+                                // line bisects the bar/data point rather than aligning to its left wall.
+                                val leftEdge = xs.apply(d)
+                                val px = d match
+                                    case Domain.Category(_) => leftEdge + xs.bandwidth / 2.0
+                                    case _                  => leftEdge
+                                Svg.line.x1(px).y1(layout.plotY).x2(px).y2(layout.plotBaseline)
+                            case Absent =>
+                                // Absent value: emit a zero-length invisible line (not emitting nothing
+                                // avoids a type mismatch; the renderer skips zero-length lines).
+                                Svg.line.x1(0.0).y1(0.0).x2(0.0).y2(0.0)
+                val wrapper: Svg.G = Svg.g(reactiveChild)
+                Chunk(wrapper)
+            case _ => Chunk.empty
+        val yChildren: Chunk[UI] = mark.y match
             case Present(RuleValue.Const(v, pl)) =>
                 pl.asInstanceOf[Plottable[Any]].toDomain(v) match
                     case Present(d) =>
                         val py = ys.apply(d)
-                        Present(Svg.line.x1(layout.plotX).y1(py).x2(layout.plotX + layout.plotW).y2(py))
-                    case Absent => Absent
-            case _ => Absent
-        Chunk.from(xLine.toOption.toSeq ++ yLine.toOption.toSeq)
-    end lowerRule
+                        Chunk(Svg.line.x1(layout.plotX).y1(py).x2(layout.plotX + layout.plotW).y2(py))
+                    case Absent => Chunk.empty
+            case Present(RuleValue.Reactive(signal, pl)) =>
+                val reactiveChild: UI.Ast.Reactive[Svg.Line] =
+                    signal.asInstanceOf[Signal[Any]].render: v =>
+                        pl.asInstanceOf[Plottable[Any]].toDomain(v) match
+                            case Present(d) =>
+                                val py = ys.apply(d)
+                                Svg.line.x1(layout.plotX).y1(py).x2(layout.plotX + layout.plotW).y2(py)
+                            case Absent =>
+                                Svg.line.x1(0.0).y1(0.0).x2(0.0).y2(0.0)
+                val wrapper: Svg.G = Svg.g(reactiveChild)
+                Chunk(wrapper)
+            case _ => Chunk.empty
+        xChildren ++ yChildren
+    end lowerRuleChildren
 
     // ---- Phase 06: keyed transitions and animation ----
 
@@ -1550,6 +1702,7 @@ private[kyo] object ChartLower:
                 case p: Svg.Path   => g(p)
                 case c: Svg.Circle => g(c)
                 case l: Svg.Line   => g(l)
+                case inner: Svg.G  => g(inner)
                 case other         => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
     end marksRegionWithTransitions
 
@@ -1622,11 +1775,12 @@ private[kyo] object ChartLower:
         xs: Scale,
         ysL: Scale,
         ysR: Maybe[Scale],
-        stateRef: Maybe[AtomicRef.Unsafe[TransState[A]]]
+        stateRef: Maybe[AtomicRef.Unsafe[TransState[A]]],
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Svg.G =
         val marksG = stateRef match
             case Present(ref) => marksRegionWithTransitions(rows, spec, layout, xs, ysL, ysR, ref)
-            case Absent       => marksRegion(rows, spec.marks, layout, xs, ysL, ysR)
+            case Absent       => marksRegion(rows, spec.marks, layout, xs, ysL, ysR, Present(spec), internalHoverRef)
         val xAxisElems = buildXAxis(layout, xs, spec.xAxisCfg)
         if isYDomainFixed(spec.yScaleOverride) then
             // Fixed y-domain: y-axis is static; only x-axis ticks and marks are reactive.
@@ -1726,6 +1880,14 @@ private[kyo] object ChartLower:
                 import AllowUnsafe.embrace.danger
                 Present(AtomicRef.Unsafe.init(TransState.empty[A]))
             else Absent
+        // Phase 07: create an internal hover ref when a tooltip is configured so shape handlers can drive it.
+        // Unsafe: SignalRef.Unsafe.init bypasses kyo effects; sound because the ref is private to this chart.
+        val internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = spec.tooltip match
+            case Present(_) =>
+                import AllowUnsafe.embrace.danger
+                given CanEqual[Maybe[A], Maybe[A]] = CanEqual.derived
+                Present(Signal.SignalRef.Unsafe.init[Maybe[A]](Absent).safe)
+            case Absent => Absent
         // Reactive region: re-renders on each signal emission.
         val reactiveMarks: UI.Ast.Reactive[Svg.G] = signal.render: rows =>
             // Re-resolve x-scale from the current rows so categorical axes expand when categories are added.
@@ -1734,8 +1896,15 @@ private[kyo] object ChartLower:
             val ysRLive: Maybe[Scale] =
                 if hasRight || spec.yAxisRightCfg.isDefined then Present(resolveYRightScale(rows, spec.marks, layout))
                 else Absent
-            buildReactiveRegion(rows, spec, layout, xsLive, ysLLive, ysRLive, stateRefMaybe)
-        withFrame(reactiveMarks)
+            buildReactiveRegion(rows, spec, layout, xsLive, ysLLive, ysRLive, stateRefMaybe, internalHoverRef)
+        val withMarks = withFrame(reactiveMarks)
+        // Phase 07: append the tooltip overlay as the last child so it renders on top.
+        (spec.tooltip, internalHoverRef) match
+            case (Present(fn), Present(ref)) =>
+                withMarks(buildTooltipOverlay(ref, fn, layout))
+            case _ =>
+                withMarks
+        end match
     end lowerLive
 
     // ---- main entry point ----
@@ -1755,6 +1924,45 @@ private[kyo] object ChartLower:
             case DataSource.Live(signal) => lowerLive(spec, signal)
     end lower
 
+    /** Build a tooltip overlay `Reactive[Svg.G]` driven by the chart's internal hover ref.
+      *
+      * When the hover ref holds `Present(row)`, the overlay renders a translucent rect background and
+      * a text label formatted by `spec.tooltip`. When `Absent`, it renders an empty `Svg.g`. The
+      * overlay is placed in the upper-left of the plot area and drawn last so it appears on top.
+      *
+      * The `internalHoverRef` is created once per chart instance (in `lowerStatic`/`lowerLive`) and
+      * is separate from `spec.onHover` so the tooltip can work without a user-visible hover ref.
+      *
+      * N4-guard: no `url(#id)` references are emitted (plain rect + text).
+      */
+    private def buildTooltipOverlay[A](
+        internalHoverRef: Signal.SignalRef[Maybe[A]],
+        tooltipFn: A => String,
+        layout: Layout
+    )(using Frame): UI.Ast.Reactive[Svg.G] =
+        internalHoverRef.render:
+            case Present(row) =>
+                val label = tooltipFn(row)
+                val tipX  = layout.plotX + 8.0
+                val tipY  = layout.plotY + 8.0
+                Svg.g(
+                    Svg.rect
+                        .x(tipX - 4.0)
+                        .y(tipY - 14.0)
+                        .width((label.length * 7.0 + 8.0) max 40.0)
+                        .height(20.0)
+                        .fill(Svg.Paint.Color(Style.Color.white))
+                        .fillOpacity(0.85),
+                    Svg.text
+                        .x(tipX)
+                        .y(tipY)
+                        .dominantBaseline(Svg.DominantBaseline.Auto)
+                        .apply(label)
+                )
+            case Absent =>
+                Svg.g
+    end buildTooltipOverlay
+
     private def lowerStatic[A](rows: Chunk[A], spec: ChartSpec[A])(using Frame): Svg.Root =
         val layout = buildLayout(spec)
         val xs     = resolveXScale(rows, spec.marks, layout, spec.xScaleOverride)
@@ -1769,9 +1977,17 @@ private[kyo] object ChartLower:
             if hasRight || spec.yAxisRightCfg.isDefined
             then Present(resolveYRightScale(rows, spec.marks, layout))
             else Absent
-        val vb      = Svg.ViewBox(0.0, 0.0, layout.svgW, layout.svgH)
-        val frame   = buildFrame(layout, xs, ysL, ysR, spec, rows)
-        val marksG  = marksRegion(rows, spec.marks, layout, xs, ysL, ysR)
+        val vb    = Svg.ViewBox(0.0, 0.0, layout.svgW, layout.svgH)
+        val frame = buildFrame(layout, xs, ysL, ysR, spec, rows)
+        // Phase 07: create an internal hover ref when a tooltip is configured so shape handlers can drive it.
+        // Unsafe: SignalRef.Unsafe.init bypasses kyo effects; sound because the ref is private to this chart.
+        val internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = spec.tooltip match
+            case Present(_) =>
+                import AllowUnsafe.embrace.danger
+                given CanEqual[Maybe[A], Maybe[A]] = CanEqual.derived
+                Present(Signal.SignalRef.Unsafe.init[Maybe[A]](Absent).safe)
+            case Absent => Absent
+        val marksG  = marksRegion(rows, spec.marks, layout, xs, ysL, ysR, Present(spec), internalHoverRef)
         val baseSvg = Svg.svg.width(layout.svgW).height(layout.svgH).viewBox(vb)
         val withFrame = frame.foldLeft(baseSvg): (acc, el) =>
             el match
@@ -1780,7 +1996,14 @@ private[kyo] object ChartLower:
                 case t: Svg.Text => acc(t)
                 case g: Svg.G    => acc(g)
                 case other       => acc(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
-        withFrame(marksG)
+        val withMarks = withFrame(marksG)
+        // Phase 07: append the tooltip overlay as the last child so it renders on top.
+        (spec.tooltip, internalHoverRef) match
+            case (Present(fn), Present(ref)) =>
+                withMarks(buildTooltipOverlay(ref, fn, layout))
+            case _ =>
+                withMarks
+        end match
     end lowerStatic
 
 end ChartLower
