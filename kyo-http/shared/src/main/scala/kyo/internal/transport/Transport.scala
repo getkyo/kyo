@@ -27,11 +27,18 @@ abstract private[kyo] class Transport[Handle]:
     /** The driver pool powering this transport. */
     def pool: IoDriverPool[Handle]
 
-    /** Connect to a remote host. Returns fiber that completes with open connection. */
-    def connect(host: String, port: Int)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection[Handle], Abort[Closed]]
+    /** Connect to a remote host. Returns fiber that completes with open connection. Failures surface as typed
+      * [[HttpException]] leaves (`HttpConnectException`, `HttpDnsResolutionException`).
+      */
+    def connect(host: String, port: Int)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection[Handle], Abort[HttpException]]
 
-    /** Connect to a remote host with TLS. Returns fiber that completes with open connection. */
-    def connect(host: String, port: Int, tls: HttpTlsConfig)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection[Handle], Abort[Closed]]
+    /** Connect to a remote host with TLS. Returns fiber that completes with open connection. Failures surface as typed
+      * [[HttpException]] leaves (`HttpConnectException`, `HttpDnsResolutionException`).
+      */
+    def connect(host: String, port: Int, tls: HttpTlsConfig)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Connection[Handle], Abort[HttpException]]
 
     /** Listen for incoming connections.
       *
@@ -69,8 +76,10 @@ abstract private[kyo] class Transport[Handle]:
         handler: Connection[Handle] => Unit < Async
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Listener, Abort[Closed]]
 
-    /** Connect to a Unix domain socket. Returns fiber that completes with open connection. */
-    def connectUnix(path: String)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection[Handle], Abort[Closed]]
+    /** Connect to a Unix domain socket. Returns fiber that completes with open connection. Failures surface as typed
+      * [[HttpException]] leaves (`HttpUnixConnectException`).
+      */
+    def connectUnix(path: String)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection[Handle], Abort[HttpException]]
 
     /** Listen on a Unix domain socket.
       *

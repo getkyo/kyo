@@ -55,9 +55,9 @@ final private[kyo] class HttpClientBackend[Handle] private (
             case (_, true)          => transport.connect(url.host, url.port, effectiveTls)
             case _                  => transport.connect(url.host, url.port)
         val resultPromise = Promise.Unsafe.init[HttpConnection[Handle], Abort[HttpException]]()
-        // Cast to IOPromise to get Result[Closed, transport.Connection] directly (no `< S` wrapper).
+        // Cast to IOPromise to get Result[HttpException, transport.Connection] directly (no `< S` wrapper).
         // Fiber.Unsafe is an opaque wrapper over IOPromise - at runtime they are the same object.
-        connectFiber.asInstanceOf[IOPromise[Closed, kyo.internal.transport.Connection[Handle]]].onComplete { result =>
+        connectFiber.asInstanceOf[IOPromise[HttpException, kyo.internal.transport.Connection[Handle]]].onComplete { result =>
             result match
                 case Result.Success(transportConn) =>
                     try
@@ -76,17 +76,15 @@ final private[kyo] class HttpClientBackend[Handle] private (
                         case t: Throwable =>
                             resultPromise.completeDiscard(Result.panic(t))
                     end try
-                case Result.Failure(closed) =>
-                    val (h, p) = hostPort(url)
-                    resultPromise.completeDiscard(
-                        Result.fail(HttpConnectException(h, p, new IOException(closed.getMessage)))
-                    )
+                case Result.Failure(httpException) =>
+                    // Transport already produced a typed HttpException leaf (HttpConnectException,
+                    // HttpDnsResolutionException, HttpUnixConnectException, ...); pass through unchanged.
+                    resultPromise.completeDiscard(Result.fail(httpException))
                 case Result.Panic(t) =>
-                    // Wrap OS-level connect failures (UnknownHostException, ConnectException,
-                    // SocketException, ...) as `HttpConnectException` so callers see a typed
-                    // `HttpException` in `Abort.recover[HttpException]` instead of the raw
-                    // throwable surfacing as an opaque `-32603 Handler panicked` at the
-                    // JSON-RPC boundary.
+                    // Anything escaping the transport as a panic is an unexpected runtime fault
+                    // (caller bug, JDK misconfiguration); wrap it as HttpConnectException so callers
+                    // using `Abort.recover[HttpException]` see a typed error instead of the panic
+                    // surfacing as an opaque `-32603` at the JSON-RPC boundary.
                     val (h, p) = hostPort(url)
                     val cause = t match
                         case io: IOException => io
