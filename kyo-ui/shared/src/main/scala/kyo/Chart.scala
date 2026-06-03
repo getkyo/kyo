@@ -375,12 +375,10 @@ end extension
 
 /** Converts a `ChartSpec[A]` to an `Svg.Root` wherever one is expected.
   *
-  * Phase 02: this is a stub that returns an empty `Svg.svg(...)`. The real
-  * lowering arrives in Phase 03 (`internal/ChartLower.scala`).
+  * Delegates to `ChartLower.lower`. The lowering uses `Frame.internal` for SVG node construction,
+  * so the conversion itself requires no frame synthesis (carry-over N4 from Phase 02 verify).
   */
-given [A]: Conversion[ChartSpec[A], Svg.Root] = spec =>
-    given Frame = Frame.internal
-    Svg.svg
+given [A]: Conversion[ChartSpec[A], Svg.Root] = spec => internal.ChartLower.lower(spec)
 
 // ---- Mark hierarchy ----
 

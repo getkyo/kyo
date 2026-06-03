@@ -163,7 +163,7 @@ class ChartSpecTest extends Test:
         """)
     }
 
-    "positive typeCheck: Chart(chunk) and Chart(signal) both infer" in {
+    "positive typeCheck: Chart(chunk) infers ChartSpec and Chart(signal) infers DataSource.Live at runtime" in {
         typeCheck("""
             import kyo.*
             import kyo.Chart.*
@@ -172,6 +172,8 @@ class ChartSpecTest extends Test:
             val chunk: Chunk[Row] = Chunk.empty
             val specStatic: ChartSpec[Row] = Chart(chunk)(bar(x = _.x, y = _.y))
         """)
+        // Signal inference is covered by the runtime "Chart(signal)(...) produces DataSource.Live" test.
+        succeed
     }
 
     // ---- compile gates: shouldNot typeCheck ----
