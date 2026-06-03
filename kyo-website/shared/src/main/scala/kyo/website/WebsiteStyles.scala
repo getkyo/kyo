@@ -710,11 +710,18 @@ object WebsiteStyles:
             )
             .rule(
                 "nav-item",
+                // A ~150ms ease transition so the hover/active background, color, and left bar fade in
+                // smoothly rather than snapping. The hover is a SUBTLE accent tint (accent-ghost, the
+                // .08 accent wash), NOT the page `surface` white: a white-on-warm-bg block read as an odd
+                // pale slab. The tint sits clearly darker than the warm page bg and lighter than the
+                // active .14 fill, so hover and active read as one accent family, and the label brightens
+                // to full-strength `ink`.
                 Style.row.align(_.center).gap(8.px)
                     .fontSize(13.5.px).lineHeight(1.3).color(_.variable("text-dim"))
-                    .padding(7.px, 10.px).rounded(10.px).cursor(_.pointer)
+                    .padding(7.px, 10.px).rounded(8.px).cursor(_.pointer)
                     .borderLeft(2.px, Color.transparent)
-                    .hover(_.color(_.variable("text")).bg(_.variable("surface")))
+                    .transition(150, Style.Easing.ease)
+                    .hover(_.color(_.variable("ink")).bg(_.variable("accent-ghost")))
             )
             // The active module is a COLUMN (not the base row): it stacks the module link above its
             // expanded in-page section outline (.sidebar-sections), so the sections read as a nested
@@ -728,6 +735,7 @@ object WebsiteStyles:
                 Style.column.align(_.start)
                     .color(_.variable("accent")).bg(Color.rgba(78, 70, 224, 0.14)).fontWeight(_.w600)
                     .borderLeft(3.px, _.variable("accent"))
+                    .transition(150, Style.Easing.ease)
             )
             // the inner anchor fills the row so the whole item is the link target. Scope to the DIRECT
             // anchor child so the nested section links (.sidebar-section, descendants of the same
@@ -745,18 +753,27 @@ object WebsiteStyles:
             // secondary navigation. Full width so the indented links share one left edge.
             .rule(
                 "sidebar-sections",
+                // When a module becomes active this outline appears; it ENTERS with a subtle slide-down
+                // + fade (the `sidebar-sections-in` keyframes registered below): from opacity 0 +
+                // translateY(-6px) to opacity 1 + translateY(0) over 200ms ease-out, `both` fill so it
+                // never flashes the un-animated state. Tasteful and fast, no janky long sweep.
                 Style.column.align(_.start).width(Length.Pct(100))
                     .gap(1.px).margin(6.px, 0.px, 2.px, 8.px)
-                    .borderLeft(1.px, _.variable("line-soft"))
+                    .borderLeft(1.px, _.variable("accent-line"))
+                    .animation("sidebar-sections-in", 200, Style.Easing.easeOut)
             )
-            // A section link: left-aligned, dim, no underline, brightening to ink on hover. The rail is
-            // one level deep (only `## ` sections render), so a single base indent suffices.
+            // A section link: clearly subordinate (smaller, dim, indented under the guide line), left-
+            // aligned, no underline. Same ~150ms ease transition and the SAME subtle accent-ghost tint
+            // on hover as the module rows above, so the whole rail hovers consistently (never a white
+            // block) and the label brightens to ink. The rail is one level deep (only `## ` sections
+            // render), so a single base indent suffices.
             .rule(
                 "sidebar-section",
                 Style.row.align(_.start).width(Length.Pct(100))
                     .fontSize(12.5.px).lineHeight(1.35).color(_.variable("muted"))
                     .padding(4.px, 8.px, 4.px, 12.px).rounded(6.px).textDecoration(_.none)
-                    .hover(_.color(_.variable("ink")))
+                    .transition(150, Style.Easing.ease)
+                    .hover(_.color(_.variable("ink")).bg(_.variable("accent-ghost")))
             )
             // Mobile module-nav toggle (B6): a full-width disclosure button shown by default and
             // hidden on wide viewports by the >=861px media query (where the sidebar is always
@@ -768,7 +785,18 @@ object WebsiteStyles:
                     .width(Length.Pct(100)).margin(0.px, 0.px, 18.px, 0.px).padding(11.px, 16.px)
                     .border(1.px, _.variable("line")).rounded(10.px).bg(_.variable("surface"))
                     .color(_.variable("ink")).fontWeight(_.w600).fontSize(14.px).cursor(_.pointer)
+                    .transition(150, Style.Easing.ease)
                     .hover(_.borderColor(_.variable("faint")))
+            )
+            // Entrance keyframes for the active module's .sidebar-sections outline: a subtle slide-down
+            // + fade. Referenced by name from the .sidebar-sections rule's `animation` prop. Defined
+            // once on the sheet; both the SSG (sheet.render in the page <head>) and the bundle
+            // (UI.runStylesheet) emit the identical @keyframes block, so SSG/hydration CSS stays in
+            // parity.
+            .keyframes(
+                "sidebar-sections-in",
+                Stylesheet.Keyframe.from -> Style.opacity(0.0).translate(0.px, (-6).px),
+                Stylesheet.Keyframe.to   -> Style.opacity(1.0).translate(0.px, 0.px)
             )
     end docsSidebar
 

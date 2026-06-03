@@ -977,6 +977,85 @@ class StyleTest extends Test:
         }
     }
 
+    "transition" - {
+        "single property renders transition css" in {
+            val s = Style.transition(TransitionProperty.backgroundColor, 150, Easing.ease)
+            assert(s.toCss == "transition: background-color 150ms ease;")
+        }
+
+        "all shorthand renders transition: all" in {
+            val s = Style.transition(200, Easing.easeOut)
+            assert(s.toCss == "transition: all 200ms ease-out;")
+        }
+
+        "selector overloads build the same prop as direct" in {
+            val a = Style.transition(_.color, 100, _.easeInOut)
+            val b = Style.transition(TransitionProperty.color, 100, Easing.easeInOut)
+            assert(a.props(0) == b.props(0))
+            assert(a.toCss == "transition: color 100ms ease-in-out;")
+        }
+
+        "negative duration clamps to zero" in {
+            val s = Style.transition(TransitionProperty.opacity, -50, Easing.linear)
+            assert(s.toCss == "transition: opacity 0ms linear;")
+        }
+
+        "every TransitionProperty renders its css name" in {
+            assert(Style.transition(TransitionProperty.all, 1, Easing.ease).toCss == "transition: all 1ms ease;")
+            assert(Style.transition(TransitionProperty.backgroundColor, 1, Easing.ease).toCss == "transition: background-color 1ms ease;")
+            assert(Style.transition(TransitionProperty.color, 1, Easing.ease).toCss == "transition: color 1ms ease;")
+            assert(Style.transition(TransitionProperty.borderColor, 1, Easing.ease).toCss == "transition: border-color 1ms ease;")
+            assert(Style.transition(TransitionProperty.opacity, 1, Easing.ease).toCss == "transition: opacity 1ms ease;")
+            assert(Style.transition(TransitionProperty.transform, 1, Easing.ease).toCss == "transition: transform 1ms ease;")
+            assert(Style.transition(TransitionProperty.Custom("left"), 1, Easing.ease).toCss == "transition: left 1ms ease;")
+        }
+
+        "every Easing renders its css name" in {
+            assert(Style.transition(0, Easing.ease).toCss == "transition: all 0ms ease;")
+            assert(Style.transition(0, Easing.linear).toCss == "transition: all 0ms linear;")
+            assert(Style.transition(0, Easing.easeIn).toCss == "transition: all 0ms ease-in;")
+            assert(Style.transition(0, Easing.easeOut).toCss == "transition: all 0ms ease-out;")
+            assert(Style.transition(0, Easing.easeInOut).toCss == "transition: all 0ms ease-in-out;")
+        }
+
+        "last-write-wins on the transition kind" in {
+            val s = Style.transition(150, Easing.ease).transition(300, Easing.linear)
+            assert(s.props.size == 1)
+            assert(s.toCss == "transition: all 300ms linear;")
+        }
+    }
+
+    "animation" - {
+        "renders animation css with both fill mode" in {
+            val s = Style.animation("fade-in", 200, Easing.easeOut)
+            assert(s.toCss == "animation: fade-in 200ms ease-out both;")
+        }
+
+        "selector easing overload builds the same prop" in {
+            val a = Style.animation("fade-in", 200, (_: Easing.type).easeOut)
+            val b = Style.animation("fade-in", 200, Easing.easeOut)
+            assert(a.props(0) == b.props(0))
+        }
+
+        "negative duration clamps to zero" in {
+            val s = Style.animation("x", -10, Easing.ease)
+            assert(s.toCss == "animation: x 0ms ease both;")
+        }
+
+        "last-write-wins on the animation kind" in {
+            val s = Style.animation("a", 100, Easing.ease).animation("b", 200, Easing.linear)
+            assert(s.props.size == 1)
+            assert(s.toCss == "animation: b 200ms linear both;")
+        }
+
+        "coexists with transition (distinct kinds)" in {
+            val s = Style.transition(150, Easing.ease).animation("slide", 180, Easing.easeOut)
+            assert(s.props.size == 2)
+            assert(s.toCss.contains("transition: all 150ms ease;"))
+            assert(s.toCss.contains("animation: slide 180ms ease-out both;"))
+        }
+    }
+
     "disabled pseudo-state" - {
         "disabled builder" in {
             val s = Style.disabled(Style.bg(Color.hex("#ccc").get).opacity(0.5))
@@ -1078,6 +1157,18 @@ class StyleTest extends Test:
             assert(pa.direction == pb.direction)
             assert(pa.colors.size == pb.colors.size)
             assert(pa.positions.size == pb.positions.size)
+        }
+
+        "transition" in {
+            assert(Style.transition(150, Easing.ease).props(0) == Style.empty.transition(150, Easing.ease).props(0))
+            assert(
+                Style.transition(TransitionProperty.color, 100, Easing.linear).props(0) ==
+                    Style.empty.transition(TransitionProperty.color, 100, Easing.linear).props(0)
+            )
+        }
+
+        "animation" in {
+            assert(Style.animation("x", 200, Easing.easeOut).props(0) == Style.empty.animation("x", 200, Easing.easeOut).props(0))
         }
 
         "disabled" in {

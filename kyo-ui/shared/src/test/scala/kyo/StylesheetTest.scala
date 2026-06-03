@@ -67,6 +67,55 @@ class StylesheetTest extends Test:
         assert(css.contains("font-display: swap"))
     }
 
+    "keyframes renders @keyframes block with from/to frames" in {
+        val css = Stylesheet.keyframes(
+            "fade-in",
+            Stylesheet.Keyframe.from -> Style.opacity(0.0).translate(0.px, (-6).px),
+            Stylesheet.Keyframe.to   -> Style.opacity(1.0).translate(0.px, 0.px)
+        ).render
+        assert(css.contains("@keyframes fade-in {"))
+        assert(css.contains("0% {"))
+        assert(css.contains("100% {"))
+        assert(css.contains("opacity: 0;"))
+        assert(css.contains("opacity: 1;"))
+        assert(css.contains("transform: translate(0, -6px);"))
+        assert(css.contains("transform: translate(0, 0);"))
+        assert(css.trim.endsWith("}"))
+    }
+
+    "Keyframe.at clamps percentage to 0..100 and renders an integer percent" in {
+        val css = Stylesheet.keyframes(
+            "mid",
+            Stylesheet.Keyframe.at(-10) -> Style.opacity(0.0),
+            Stylesheet.Keyframe.at(50)  -> Style.opacity(0.5),
+            Stylesheet.Keyframe.at(150) -> Style.opacity(1.0)
+        ).render
+        assert(css.contains("0% {"))
+        assert(css.contains("50% {"))
+        assert(css.contains("100% {"))
+    }
+
+    "an animation prop references a registered @keyframes block by name" in {
+        val css = (
+            Stylesheet.keyframes("fade-in", Stylesheet.Keyframe.from -> Style.opacity(0.0), Stylesheet.Keyframe.to -> Style.opacity(1.0)) ++
+                Stylesheet.rule("panel", Style.animation("fade-in", 200, Style.Easing.easeOut))
+        ).render
+        assert(css.contains("@keyframes fade-in {"))
+        assert(css.contains(".panel {"))
+        assert(css.contains("animation: fade-in 200ms ease-out both;"))
+    }
+
+    "keyframes drops nested pseudo-states (not valid inside @keyframes)" in {
+        val css = Stylesheet.keyframes(
+            "x",
+            Stylesheet.Keyframe.from -> Style.opacity(0.0).hover(_.opacity(0.9)),
+            Stylesheet.Keyframe.to   -> Style.opacity(1.0)
+        ).render
+        assert(css.contains("@keyframes x {"))
+        assert(!css.contains(":hover"))
+        assert(css.contains("opacity: 0;"))
+    }
+
     "entry order is preserved: rule A before media M before vars V" in {
         val css = (
             Stylesheet.rule("a", Style.row) ++

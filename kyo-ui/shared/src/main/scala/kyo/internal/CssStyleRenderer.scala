@@ -136,6 +136,22 @@ private[kyo] object CssStyleRenderer:
         case Cursor.grab          => "grab"
         case Cursor.grabbing      => "grabbing"
 
+    private def easing(v: Easing): String = v match
+        case Easing.ease      => "ease"
+        case Easing.linear    => "linear"
+        case Easing.easeIn    => "ease-in"
+        case Easing.easeOut   => "ease-out"
+        case Easing.easeInOut => "ease-in-out"
+
+    private def transitionProperty(v: TransitionProperty): String = v match
+        case TransitionProperty.all             => "all"
+        case TransitionProperty.backgroundColor => "background-color"
+        case TransitionProperty.color           => "color"
+        case TransitionProperty.borderColor     => "border-color"
+        case TransitionProperty.opacity         => "opacity"
+        case TransitionProperty.transform       => "transform"
+        case TransitionProperty.Custom(name)    => name
+
     private def renderProp(prop: Prop): String = prop match
         case BgColor(c)          => s"background-color: ${color(c)};"
         case TextColor(c)        => s"color: ${color(c)};"
@@ -232,6 +248,10 @@ private[kyo] object CssStyleRenderer:
         case FlexWrapProp(v) => v match
                 case FlexWrap.wrap   => "flex-wrap: wrap;"
                 case FlexWrap.noWrap => "flex-wrap: nowrap;"
+        case TransitionProp(prop, durationMs, ease) =>
+            s"transition: ${transitionProperty(prop)} ${durationMs}ms ${easing(ease)};"
+        case AnimationProp(name, durationMs, ease) =>
+            s"animation: $name ${durationMs}ms ${easing(ease)} both;"
         case _: HoverProp | _: FocusProp | _: ActiveProp | _: DisabledProp => ""
 
 end CssStyleRenderer

@@ -449,6 +449,35 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
         appendProp(Prop.BgGradientProp(direction, Chunk.from(colors), Chunk.from(positions)))
     end bgGradient
 
+    // Motion
+
+    /** A CSS `transition` on a single property: `transition: <property> <durationMs>ms <easing>;`. The
+      * duration is given in milliseconds and clamped to non-negative. Pass `TransitionProperty.all` (or
+      * the no-property overload) to transition every animatable property at once. Use it so a hover or
+      * active state's color/background change fades in smoothly rather than snapping.
+      */
+    def transition(property: TransitionProperty, durationMs: Int, easing: Easing): Style =
+        appendProp(Prop.TransitionProp(property, math.max(0, durationMs), easing))
+    def transition(property: TransitionProperty.type => TransitionProperty, durationMs: Int, easing: Easing.type => Easing): Style =
+        transition(property(TransitionProperty), durationMs, easing(Easing))
+
+    /** A CSS `transition: all <durationMs>ms <easing>;` shorthand transitioning every animatable
+      * property. Equivalent to `transition(TransitionProperty.all, durationMs, easing)`.
+      */
+    def transition(durationMs: Int, easing: Easing): Style =
+        transition(TransitionProperty.all, durationMs, easing)
+
+    /** A CSS `animation: <name> <durationMs>ms <easing> both;` referencing a `@keyframes` block of the
+      * given `name` (registered on the [[kyo.Stylesheet]] with [[kyo.Stylesheet.keyframes]]). The
+      * `both` fill mode holds the keyframes' first frame before the animation starts and its last frame
+      * after it ends, so an entrance animation does not flash the un-animated state. Duration is in
+      * milliseconds, clamped to non-negative.
+      */
+    def animation(name: String, durationMs: Int, easing: Easing): Style =
+        appendProp(Prop.AnimationProp(name, math.max(0, durationMs), easing))
+    def animation(name: String, durationMs: Int, easing: Easing.type => Easing): Style =
+        animation(name, durationMs, easing(Easing))
+
 end Style
 
 /** Companion of [[kyo.Style]]: the `empty` identity, factory setters, the [[kyo.Style.Color]] model, the value enums, and the
@@ -605,6 +634,14 @@ object Style:
         stop2: (Color, Length.Pct),
         stops: (Color, Length.Pct)*
     ): Style = empty.bgGradient(direction, stop1, stop2, stops*)
+    def transition(property: TransitionProperty, durationMs: Int, easing: Easing): Style =
+        empty.transition(property, durationMs, easing)
+    def transition(property: TransitionProperty.type => TransitionProperty, durationMs: Int, easing: Easing.type => Easing): Style =
+        empty.transition(property, durationMs, easing)
+    def transition(durationMs: Int, easing: Easing): Style              = empty.transition(durationMs, easing)
+    def animation(name: String, durationMs: Int, easing: Easing): Style = empty.animation(name, durationMs, easing)
+    def animation(name: String, durationMs: Int, easing: Easing.type => Easing): Style =
+        empty.animation(name, durationMs, easing)
     def hover(s: Style): Style                  = empty.hover(s)
     def hover(f: Style.type => Style): Style    = empty.hover(f)
     def focus(s: Style): Style                  = empty.focus(s)
@@ -797,6 +834,28 @@ object Style:
     enum GradientDirection derives CanEqual:
         case toRight, toLeft, toTop, toBottom, toTopRight, toTopLeft, toBottomRight, toBottomLeft
 
+    /** A CSS timing function for a `transition` or `animation`.
+      *
+      *   - `ease`: the UA default, a gentle accelerate-then-decelerate curve.
+      *   - `linear`: constant velocity from start to end.
+      *   - `easeIn`: starts slow, accelerates into the end.
+      *   - `easeOut`: starts fast, decelerates into the end (the natural feel for an element settling
+      *     into place, e.g. a panel sliding in).
+      *   - `easeInOut`: slow at both ends, faster in the middle.
+      */
+    enum Easing derives CanEqual:
+        case ease, linear, easeIn, easeOut, easeInOut
+
+    /** The CSS property a `transition` animates. `all` transitions every animatable property at once
+      * (the common shorthand); the named cases target a single property so an element can fade its
+      * background and color without animating layout. `Custom` carries an arbitrary CSS property name
+      * for the rare case the named set does not cover.
+      */
+    enum TransitionProperty derives CanEqual:
+        case all, backgroundColor, color, borderColor, opacity, transform
+        case Custom(name: String)
+    end TransitionProperty
+
     // ---- Prop ADT ----
 
     /** The encoded representation of a single style property that a [[kyo.Style]] stores.
@@ -880,6 +939,9 @@ object Style:
         case BlurProp(value: Length)
         // Background gradient
         case BgGradientProp(direction: GradientDirection, colors: Chunk[Color], positions: Chunk[Double])
+        // Motion
+        case TransitionProp(property: TransitionProperty, durationMs: Int, easing: Easing)
+        case AnimationProp(name: String, durationMs: Int, easing: Easing)
         // Pseudo-states
         case HoverProp(style: Style)
         case FocusProp(style: Style)
