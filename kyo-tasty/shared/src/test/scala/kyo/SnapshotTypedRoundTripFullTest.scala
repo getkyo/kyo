@@ -75,7 +75,13 @@ class SnapshotTypedRoundTripFullTest extends Test:
                         cold.length == warm.length,
                         s"Symbol count mismatch: cold=${cold.length} warm=${warm.length}"
                     )
-                    assert(cold.length > 0, "Round-trip produced empty classpath; fixture loading may have failed")
+                    // Lower bound: TestClasspaths.withClasspath loads 70+ fixture files on JS/Native and
+                    // additionally the JVM stdlib on JVM. A clean round-trip must produce at least one
+                    // symbol per fixture file; values below the bound indicate fixture loading failed.
+                    assert(
+                        cold.length >= 70,
+                        s"Round-trip produced too few symbols (expected >= 70 from fixtures): got ${cold.length}"
+                    )
                     var i = 0
                     while i < cold.length do
                         val c = cold(i)

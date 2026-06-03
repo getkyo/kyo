@@ -229,6 +229,7 @@ class ClassLikeAccessorsTest extends Test:
     // Then: Chunk[ClassLike] size 2
     // Pins: INV-005
     "parents-on-class: c.parents returns Chunk[ClassLike] size 2 for two Type.Named parents" in run {
+        import Tasty.Name.asString
         val anyRefSym = makeClass(id = 0, name = "Object", ownerId = 0)
         val traitT    = makeTrait(id = 1, name = "T", ownerId = 0)
         val classSym = makeClass(id = 2, name = "Foo", ownerId = 0).copy(
@@ -238,8 +239,18 @@ class ClassLikeAccessorsTest extends Test:
             given Tasty.Classpath                      = cp
             val parents: Chunk[Tasty.Symbol.ClassLike] = classSym.parents
             assert(parents.length == 2, s"Expected 2 parents but got ${parents.length}")
-            assert(parents(0).isInstanceOf[Tasty.Symbol.Class], s"First parent should be Class")
-            assert(parents(1).isInstanceOf[Tasty.Symbol.Trait], s"Second parent should be Trait")
+            parents(0) match
+                case c: Tasty.Symbol.Class =>
+                    assert(c.name.asString == "Object", s"Expected first parent name Object but got ${c.name.asString}")
+                case other =>
+                    fail(s"First parent should be Symbol.Class but got ${other.getClass.getSimpleName}")
+            end match
+            parents(1) match
+                case t: Tasty.Symbol.Trait =>
+                    assert(t.name.asString == "T", s"Expected second parent name T but got ${t.name.asString}")
+                case other =>
+                    fail(s"Second parent should be Symbol.Trait but got ${other.getClass.getSimpleName}")
+            end match
             succeed
     }
 
@@ -473,8 +484,12 @@ class ClassLikeAccessorsTest extends Test:
             given Tasty.Classpath                      = cp
             val parents: Chunk[Tasty.Symbol.ClassLike] = traitT.parents
             assert(parents.length == 1, s"Expected 1 parent but got ${parents.length}")
-            assert(parents(0).isInstanceOf[Tasty.Symbol.Trait], s"Expected Symbol.Trait but got ${parents(0).getClass.getSimpleName}")
-            assert(parents(0).name.asString == "U", s"Expected parent named 'U' but got '${parents(0).name.asString}'")
+            parents(0) match
+                case t: Tasty.Symbol.Trait =>
+                    assert(t.name.asString == "U", s"Expected parent named 'U' but got '${t.name.asString}'")
+                case other =>
+                    fail(s"Expected Symbol.Trait but got ${other.getClass.getSimpleName}")
+            end match
             succeed
     }
 

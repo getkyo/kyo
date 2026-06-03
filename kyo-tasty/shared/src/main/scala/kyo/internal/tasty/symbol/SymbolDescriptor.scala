@@ -29,7 +29,7 @@ final private[kyo] class SymbolDescriptor(
     var body: Maybe[SymbolBody],
     var annotations: Chunk[Tasty.Annotation] = Chunk.empty,
     var javaAnnotations: Chunk[Tasty.JavaAnnotation] = Chunk.empty,
-    var paramListIds: Chunk[collection.IndexedSeq[Int]] = Chunk.empty,
+    var paramListIds: Chunk[Chunk[Int]] = Chunk.empty,
     var bounds: Maybe[Tasty.TypeBounds] = Maybe.Absent,
     var defaultArgId: Maybe[Int] = Maybe.Absent
 )

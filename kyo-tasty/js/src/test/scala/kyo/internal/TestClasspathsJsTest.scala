@@ -24,7 +24,16 @@ class TestClasspathsJsTest extends Test:
     // Pins: F-F-001 (JS parity).
     "js-embedded-fixture-loads: allClassLike non-empty from embedded fixtures" in run {
         TestClasspaths.withClasspath().map: cp =>
-            assert(cp.allClassLike.size > 0, s"Expected allClassLike.size > 0 but got ${cp.allClassLike.size}")
+            // The fixture set adds 70+ TASTy files (see TestClasspaths.withClasspath). The exact total
+            // count is fragile against decoder changes, so we assert specific class-likes are findable
+            // by FQN: PlainClass, SomeTrait, BaseClass, and ChildClass must all be present.
+            val classLikes = cp.allClassLike
+            for fqn <- Seq("kyo.fixtures.PlainClass", "kyo.fixtures.SomeTrait", "kyo.fixtures.BaseClass", "kyo.fixtures.ChildClass") do
+                assert(
+                    cp.findClassLike(fqn).isDefined,
+                    s"Expected $fqn to be findable by FQN; total class-likes loaded: ${classLikes.size}"
+                )
+            end for
             succeed
     }
 
@@ -35,7 +44,13 @@ class TestClasspathsJsTest extends Test:
     // Pins: F-F-001 (JS parity, broader symbol check).
     "js-symbols-non-empty: cp.symbols non-empty from embedded fixtures" in run {
         TestClasspaths.withClasspath().map: cp =>
-            assert(cp.symbols.size > 0, s"Expected cp.symbols.size > 0 but got ${cp.symbols.size}")
+            // The fixture set loads 70+ TASTy files, each contributing classes plus their members.
+            // Asserting a strict lower bound (>= 70 symbols, i.e. one per file) is a meaningful
+            // check that decoding produced more than a single root package symbol.
+            assert(
+                cp.symbols.size >= 70,
+                s"Expected cp.symbols.size >= 70 (one per fixture TASTy file) but got ${cp.symbols.size}"
+            )
             succeed
     }
 

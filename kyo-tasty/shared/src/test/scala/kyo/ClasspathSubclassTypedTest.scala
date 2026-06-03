@@ -120,7 +120,10 @@ class ClasspathSubclassTypedTest extends Test:
                             ()
                         case other =>
                             fail(s"Expected Symbol.ClassLike but got $other")
-                    assert(direct.forall(_.name.asString.nonEmpty), "All ClassLike entries must have a non-empty name")
+                    assert(
+                        direct.map(_.name.asString).toSet == Set("B"),
+                        s"Expected exactly Set(B) but got ${direct.map(_.name.asString).toSet}"
+                    )
                 case Maybe.Absent =>
                     fail("Expected to find class A in fixture")
     }
@@ -145,7 +148,10 @@ class ClasspathSubclassTypedTest extends Test:
                     impls.foreach:
                         case _: Tasty.Symbol.Class => ()
                         case other                 => fail(s"Expected Symbol.Class but got $other")
-                    assert(impls.forall(_.name.asString.nonEmpty), "All Class entries must have a non-empty name")
+                    assert(
+                        impls.map(_.name.asString).toSet == Set("B", "C", "CFromA"),
+                        s"Expected exactly Set(B, C, CFromA) but got ${impls.map(_.name.asString).toSet}"
+                    )
                 case Maybe.Absent =>
                     fail("Expected to find trait T in fixture")
     }

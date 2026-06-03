@@ -60,7 +60,7 @@ class TypedSymbolFactoryTest extends Test:
     // Pins: INV-004, INV-002
     "dispatch-on-kind-method-paramlists: paramListIds propagated correctly" in {
         val d = makeDesc(id = 5, kind = Tasty.SymbolKind.Method, name = "foo")
-        d.paramListIds = Chunk(scala.collection.IndexedSeq(10, 11))
+        d.paramListIds = Chunk(Chunk(10, 11))
         val sym = TypedSymbolFactory.from(d)
         sym match
             case m: Tasty.Symbol.Method =>

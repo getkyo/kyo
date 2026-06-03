@@ -660,8 +660,22 @@ class DecoderFidelity5Wave2Test extends Test:
     "R-F-W2-3b: fromPickles with real TASTy bytes decodes at least 1 symbol" in run {
         val pickle =
             Tasty.Pickle(uuid = "test-uuid-plain-class", version = Tasty.Version(28, 3, 0), bytes = Span.from(plainClassTasty))
+        import Tasty.Name.asString
         Tasty.Classpath.fromPickles(Seq(pickle)).map: cp =>
-            assert(cp.symbols.length > 0, s"expected non-empty symbols from fromPickles, got ${cp.symbols.length}")
+            // PlainClass.tasty must produce the PlainClass class-like plus its enclosing scala/kyo packages
+            // and at least one member; assert the class is discoverable by FQN rather than relying on a
+            // raw count check.
+            val plainClass = cp.findClassLike("kyo.fixtures.PlainClass")
+            assert(
+                plainClass.isDefined,
+                s"Expected kyo.fixtures.PlainClass to be findable after fromPickles; got ${cp.symbols.length} symbols"
+            )
+            // Sanity bound: a single TASTy pickle for a non-trivial class yields at least the class plus
+            // its declared members (typically >= 5 symbols including package owner chain).
+            assert(
+                cp.symbols.length >= 5,
+                s"Expected >= 5 symbols from PlainClass pickle but got ${cp.symbols.length}"
+            )
             succeed
     }
 

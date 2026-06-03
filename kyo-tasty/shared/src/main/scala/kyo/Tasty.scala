@@ -3970,7 +3970,7 @@ object Tasty:
       * The dotted form matches what `Classpath.findClass`, `findClassLike`, and `findSymbol` accept; the JVM
       * binary form (`example/Circle$Inner`) is reachable through `Classpath.findClassByBinary` instead.
       */
-    inline def classFqn[A](using t: Tag[A]): String = t.show
+    def classFqn[A](using t: Tag[A]): String = t.show
 
     // ── Snapshot management ─────────────────────────────────────────────────
 

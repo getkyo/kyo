@@ -1520,9 +1520,10 @@ object ClasspathOrchestrator:
                     else
                         Abort.run[TastyError](
                             source.read(companionPath).flatMap: classBytes =>
-                                // Unsafe: ClassfileUnpickler reads immutable byte array in Sync context; no suspension point.
-                                given AllowUnsafe = AllowUnsafe.embrace.danger
-                                ClassfileUnpickler.read(classBytes, interner, fr.arena)
+                                Sync.Unsafe.defer:
+                                    // Unsafe: ClassfileUnpickler reads an immutable byte array inside a Sync.Unsafe.defer block; no suspension required (§839 case 3).
+                                    given AllowUnsafe = AllowUnsafe.embrace.danger
+                                    ClassfileUnpickler.read(classBytes, interner, fr.arena)
                         ).map:
                             case Result.Success(cfResult) =>
                                 cfResult.classSymbol match

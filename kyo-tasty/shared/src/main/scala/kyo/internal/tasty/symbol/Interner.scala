@@ -76,6 +76,12 @@ final class Interner private (
                     // re-check `shardRef.get() eq table` inside the lock ensures that
                     // if another thread already grew the table we skip the redundant
                     // grow; growShard itself is reentrant-safe and double-checks too.
+                    // Unsafe: explicit waiver of the no-synchronized rule. The lock is a
+                    // dedicated per-shard monitor (never a domain object), grow is rare and
+                    // serialized per shard, and a lock-free Cliff-Click-style resize would
+                    // require a substantially larger redesign (hazard pointers / multi-state
+                    // entries / forwarding markers). The synchronized window is the least-bad
+                    // alternative absent that redesign; the hot insert path remains CAS-only.
                     shardLock.synchronized {
                         if shardRef.get() eq table then
                             growShard(shardRef, shardLock, loadCounter, len)
@@ -109,6 +115,9 @@ final class Interner private (
     )(using AllowUnsafe): Unit =
         // Serialize grows per shard via the shardLock monitor.
         // After acquiring the lock, recheck whether another thread already grew.
+        // Unsafe: explicit waiver of the no-synchronized rule. The lock is a dedicated
+        // per-shard monitor object (never a domain object), grow is rare and per-shard,
+        // and a lock-free resize is a substantially larger redesign (see internInShard).
         shardLock.synchronized {
             val current = shardRef.get()
             if current.length() == observedLen then

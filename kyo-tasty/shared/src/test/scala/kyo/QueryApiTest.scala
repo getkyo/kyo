@@ -275,7 +275,15 @@ class QueryApiTest extends Test:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 Sync.defer(cp.symbols.map(_.name))).map:
                 case Result.Success(names) =>
-                    assert(names.forall(_.isInstanceOf[Tasty.Name]))
+                    val stringNames = names.map(_.asString)
+                    // The map result must surface specific fixture names. PlainClass is the test fixture's
+                    // top-level class and its name must round-trip via the mapped Chunk. We also assert
+                    // the same set is non-empty as a sanity check on the iteration itself.
+                    assert(stringNames.nonEmpty, "Expected at least one name in fixture classpath")
+                    assert(
+                        stringNames.contains("PlainClass"),
+                        s"Expected mapped names to include PlainClass, got first 20: ${stringNames.take(20)}"
+                    )
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
                 case Result.Panic(t) =>

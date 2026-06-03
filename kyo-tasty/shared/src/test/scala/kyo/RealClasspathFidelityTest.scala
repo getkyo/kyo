@@ -105,7 +105,15 @@ class RealClasspathFidelityTest extends Test:
                 unknownTagErrors.isEmpty,
                 s"Expected zero unknown-TASTy-tag errors, found ${unknownTagErrors.size}: ${unknownTagErrors.take(3).mkString(", ")}"
             )
-            assert(classpath.symbols.size > 0, "Classpath should contain symbols after clean load")
+            // Lower bound 70: TestClasspaths.withClasspath loads 70+ TASTy fixtures on JS/Native and
+            // additionally indexes the real JVM stdlib on JVM. On any platform a clean load must
+            // produce at least one symbol per fixture file (>= 70); a value < 70 indicates fixtures
+            // were not picked up. We deliberately do not use exact equality because the JVM build
+            // additionally indexes the stdlib.
+            assert(
+                classpath.symbols.size >= 70,
+                s"Expected classpath.symbols.size >= 70 after clean load but got ${classpath.symbols.size}"
+            )
             succeed
     }
 

@@ -37,8 +37,13 @@ class TypePolishTest extends Test:
             val result            = t.symbol
             assert(result.isDefined, "symbol must return Present for Named")
             result match
-                case Maybe.Present(sym) => assert(sym.isInstanceOf[Tasty.Symbol.Class])
-                case Maybe.Absent       => fail("should not be Absent")
+                case Maybe.Present(sym: Tasty.Symbol.Class) =>
+                    assert(sym.name.asString == "Foo", s"Expected name Foo but got ${sym.name.asString}")
+                case Maybe.Present(other) =>
+                    fail(s"Expected Symbol.Class but got ${other.getClass.getSimpleName}")
+                case Maybe.Absent =>
+                    fail("should not be Absent")
+            end match
             succeed
     }
 

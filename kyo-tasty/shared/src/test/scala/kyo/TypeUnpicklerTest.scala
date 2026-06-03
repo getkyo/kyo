@@ -451,7 +451,12 @@ class TypeUnpicklerTest extends Test:
         arena.intern(recThis)
         val canon = TypeArena.canonical()
         arena.merge(canon)
-        assert(canon.values.nonEmpty)
+        // After merging two distinct interned types (Rec and RecThis), the canonical arena must contain
+        // both. We assert presence rather than exact equality because canonical() may carry built-in
+        // pre-interned types (e.g. Any, Nothing) that the merge does not remove.
+        val canonValues = canon.values
+        assert(canonValues.exists(_ == rec), s"Canonical arena must contain the interned Rec; values size=${canonValues.size}")
+        assert(canonValues.exists(_ == recThis), s"Canonical arena must contain the interned RecThis; values size=${canonValues.size}")
     }
 
     // Test 24 (redesigned for Phase 07): TYPEREFin with unknown FQN creates a Named(unresolved).

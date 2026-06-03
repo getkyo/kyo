@@ -80,7 +80,7 @@ object AstUnpickler:
           */
         unresolvedIdToFqn: mutable.HashMap[Int, String],
         /** Errors from eager annotation arg decodes in ANNOTATEDtype. Flows into FileResult.errors via ClasspathOrchestrator. */
-        annotationDecodeErrors: Seq[TastyError],
+        annotationDecodeErrors: Chunk[TastyError],
         /** Per-symbol annotation list decoded from ANNOTATION modifier blocks. Populated by readModifiers and scanForwardAndCollectFlags.
           * F-G-001 fix: flows through FileResult into ClasspathOrchestrator.finalizeMerge where descs(idx).annotations is set.
           */
@@ -202,7 +202,7 @@ object AstUnpickler:
             sectionOffset = sectionOffset,
             names = names,
             unresolvedIdToFqn = typeSession.unresolvedIdToFqn,
-            annotationDecodeErrors = typeSession.annotationDecodeErrors.toSeq,
+            annotationDecodeErrors = Chunk.from(typeSession.annotationDecodeErrors),
             annotationsBySymbol = annotationsBySymbol
         )
     end runPass1

@@ -10,6 +10,25 @@ import kyo.AllowUnsafe
   *
   * All cursor-advancing operations are performed on the concrete Heap instance; there is no effect wrapper here because ByteView is a
   * low-level building block used inside Sync.defer blocks at the call site.
+  *
+  * AllowUnsafe contract.
+  *
+  * Cursor-advancing reads (readByte, readNat, readInt, readLongNat, readEnd, goto, readEndInt, gotoInt) require an AllowUnsafe proof
+  * because they mutate the cursor field and thus depend on visibility of prior writes from the same fiber. Read-only positional accessors
+  * (peekByte, subView, subViewInt, remaining, position, remainingInt, positionInt, allBytes, copyBytes on the Heap variant) intentionally
+  * do not require AllowUnsafe and are treated as referentially transparent by callers.
+  *
+  * For Heap this is straightforward: the underlying Array[Byte] is read-only after construction; bounds are vals; copyBytes returns a
+  * fresh array. Multiple invocations with the same argument observe the same byte.
+  *
+  * For the memory-mapped variant (MappedByteView in jvm/ and native/) the same positional reads observe an immutable region of an mmap'd
+  * file. The implementation may track an internal close flag via an atomic and may consult a shared ByteBuffer / Pointer to materialize
+  * a byte; both are observably idempotent because (a) the close flag transitions exactly once from open to closed, after which every
+  * read throws the same IllegalStateException, and (b) the mapped bytes are read-only for the lifetime of the mapping. We treat these
+  * reads as pure for the purposes of the AllowUnsafe contract: they are deterministic functions of (address, mapping-state), and
+  * mapping-state observably has only two stable outcomes (return-byte vs. throw-closed). Subjecting them to AllowUnsafe would force the
+  * effect proof into every TASTy header inspection, name-pool peek, and address comparison, where the alternative is provably
+  * exception-or-value pure.
   */
 sealed abstract class ByteView:
 

@@ -119,13 +119,14 @@ object SnapshotWriter:
             symbolId(sym) = i
 
         // Intern symbol names and FQNs
-        val symNames = symbolList.map: sym =>
-            internName(nameToStr(sym.name))
+        val symNames = Chunk.from(symbolList.map: sym =>
+            internName(nameToStr(sym.name)))
 
-        val symFqns = symbolList.map: sym =>
+        val symFqns = Chunk.from(symbolList.map: sym =>
             fqnBySymbol.get(sym.id.value) match
                 case Some(fqn) if fqn.nonEmpty => internName(fqn)
                 case _                         => internName(nameToStr(sym.name)) // fallback: simple name for non-indexed symbols
+        )
 
         // Collect body byte slices from Symbol.body: Maybe[SymbolBody].
         val bodyBytesBuffer = new java.io.ByteArrayOutputStream(128 * 1024 * 1024)
@@ -304,7 +305,7 @@ object SnapshotWriter:
         // the pool is complete before serialization. Earlier placement caused FQNIDX__ name IDs to
         // reference entries beyond the serialized pool length, silently dropping 47,256 fqnIndex entries
         // on warm load.
-        val namesBytes = serializeNamePool(namePool.toSeq)
+        val namesBytes = serializeNamePool(Chunk.from(namePool))
 
         val sections = Seq(
             (SnapshotFormat.sectionNAMES, namesBytes),
@@ -389,7 +390,7 @@ object SnapshotWriter:
     end assembleSections
 
     /** Serialize the name pool as: [4-byte count] followed by [4-byte len, UTF-8 bytes] per string. */
-    private def serializeNamePool(names: Seq[String]): Array[Byte] =
+    private def serializeNamePool(names: Chunk[String]): Array[Byte] =
         // Pre-size to 32 MB: profiling showed the name-pool output falls between 16 MB and 32 MB
         // for a 5 949-symbol classpath (unique simple names + FQNs with 4-byte length prefix per
         // entry). 32 MB fits the measured peak with no intermediate copies; default 32-byte
@@ -421,8 +422,8 @@ object SnapshotWriter:
       */
     private def serializeSymbols(
         symbols: Seq[Tasty.Symbol],
-        names: Seq[Int],
-        fqns: Seq[Int],
+        names: Chunk[Int],
+        fqns: Chunk[Int],
         symbolId: mutable.HashMap[Tasty.Symbol, Int],
         bodyStarts: Array[Int],
         bodyEnds: Array[Int]
@@ -597,7 +598,7 @@ object SnapshotWriter:
             // Phase 2.13: for annotations with negative SymbolIds (unresolved external annotation
             // types like scala.deprecated on JS/Native), fall back to unresolvedFqnByNegId.
             // Unknown tycon forms produce an empty FQN and are omitted.
-            val tyconIds: Seq[Int] = annotations.toSeq.flatMap: ann =>
+            val tyconIds: Chunk[Int] = annotations.flatMap: ann =>
                 val fqn = ann.annotationType match
                     case Tasty.Type.Named(sid) if sid.value < -1 =>
                         // Negative ID: annotation type not on classpath. Look up in unresolvedFqnByNegId.

@@ -19,7 +19,12 @@ class AnnotationArgListTest extends Test:
         val ann    = Tasty.Annotation(tpe, Chunk(lit))
         val result = ann.arguments
         assert(result.length == 1, s"Expected 1 arg, got ${result.length}")
-        assert(result(0).isInstanceOf[Tasty.Tree.Literal], s"Expected Literal, got ${result(0).getClass.getSimpleName}")
+        result(0) match
+            case Tasty.Tree.Literal(Tasty.Constant.StringConst(s)) =>
+                assert(s == "hi", s"""Expected "hi" but got "$s"""")
+            case other =>
+                fail(s"Expected Tree.Literal(StringConst(\"hi\")) but got $other")
+        end match
         succeed
     }
 

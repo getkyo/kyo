@@ -49,9 +49,12 @@ class ClasspathTypedSymbolsTest extends Test:
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass")).map:
-                case Result.Success(Maybe.Present(sym)) =>
-                    assert(sym.isInstanceOf[Tasty.Symbol.Class], s"Expected Symbol.Class but got ${sym.getClass.getSimpleName}")
+                case Result.Success(Maybe.Present(sym: Tasty.Symbol.Class)) =>
+                    import Tasty.Name.asString
+                    assert(sym.name.asString == "PlainClass", s"Expected name PlainClass but got ${sym.name.asString}")
                     succeed
+                case Result.Success(Maybe.Present(other)) =>
+                    fail(s"Expected Symbol.Class but got ${other.getClass.getSimpleName}")
                 case Result.Success(Maybe.Absent) =>
                     fail("Expected findClass to return Present but got Absent")
                 case Result.Failure(e) => fail(s"Unexpected failure: $e")
@@ -59,19 +62,26 @@ class ClasspathTypedSymbolsTest extends Test:
     }
 
     // Leaf 26: orchestrator-returns-typed-Trait
-    // Given: fixture trait pkg.T; When: find by name; Then: instance of Symbol.Trait
+    // Given: fixture trait pkg.T; When: find by name (findClassLike); Then: instance of Symbol.Trait.
+    // Note: this leaf used findClass before; findClass narrows to Symbol.Class, so a Trait can only be
+    // surfaced via findClassLike (whose return type Maybe[Symbol.ClassLike] admits Symbol.Trait).
     // Pins: INV-004
-    "orchestrator-returns-typed-Trait: findClass returns Symbol.Trait for trait" in run {
+    "orchestrator-returns-typed-Trait: findClassLike returns Symbol.Trait for trait" in run {
         val src = fixtureWith("SomeTrait.tasty" -> kyo.fixtures.Embedded.someTraitTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
-                cp.findClass("kyo.fixtures.SomeTrait")).map:
-                case Result.Success(Maybe.Present(sym)) =>
-                    assert(sym.isInstanceOf[Tasty.Symbol.Trait], s"Expected Symbol.Trait but got ${sym.getClass.getSimpleName}")
+                cp.findClassLike("kyo.fixtures.SomeTrait")).map:
+                case Result.Success(Maybe.Present(sym: Tasty.Symbol.Trait)) =>
+                    import Tasty.Name.asString
+                    assert(sym.name.asString == "SomeTrait", s"Expected name SomeTrait but got ${sym.name.asString}")
                     succeed
+                case Result.Success(Maybe.Present(other)) =>
+                    fail(s"Expected Symbol.Trait but got ${other.getClass.getSimpleName}")
                 case Result.Success(Maybe.Absent) =>
-                    // SomeTrait may be absent if not indexed; treat as inconclusive
-                    succeed
+                    // T4 fix: the fixture is deterministic (SomeTrait.tasty is loaded explicitly above);
+                    // an Absent result means indexing failed and the test must fail loudly rather than
+                    // silently succeed.
+                    fail("Expected SomeTrait to be indexed by the classpath but findClassLike returned Absent")
                 case Result.Failure(e) => fail(s"Unexpected failure: $e")
                 case Result.Panic(t)   => throw t
     }

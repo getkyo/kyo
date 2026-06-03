@@ -137,7 +137,12 @@ class JavaSignaturesTest extends Test:
         Abort.run(JavaSignatures.parseFieldSignature("Ljava/util/List<Ljava/lang/String;", interner)).map: result =>
             result match
                 case Result.Failure(TastyError.ClassfileFormatError(_, reason, _)) =>
-                    assert(reason.nonEmpty)
+                    // An unclosed `<` must surface in the reason: either an explicit "unclosed" message
+                    // or the offending character itself. Assert the substring rather than mere non-emptiness.
+                    assert(
+                        reason.contains("unclosed") || reason.contains("<") || reason.contains("EOF"),
+                        s"""Expected reason to mention unclosed type-arg list ("unclosed"/"<"/"EOF") but got: "$reason""""
+                    )
                 case other =>
                     fail(s"Expected ClassfileFormatError, got $other")
     }

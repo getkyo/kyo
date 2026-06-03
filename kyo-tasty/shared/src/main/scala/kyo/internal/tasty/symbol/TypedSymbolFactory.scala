@@ -78,7 +78,7 @@ private[kyo] object TypedSymbolFactory:
                     scaladoc = d.scaladoc,
                     sourcePosition = d.sourcePosition,
                     declaredType = d.declaredType,
-                    paramListIds = Chunk.from(d.paramListIds.toSeq.map(inner => Chunk.from(inner.toSeq.map(SymbolId(_))))),
+                    paramListIds = d.paramListIds.map(inner => inner.map(SymbolId(_))),
                     typeParamIds = Chunk.from(d.typeParamIds.toSeq.map(SymbolId(_))),
                     annotations = d.annotations,
                     body = d.body,

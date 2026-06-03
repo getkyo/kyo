@@ -12,7 +12,9 @@ class FlagsTest extends Test:
     // Test 1: Flag.Inline is a single-bit flag (Flags(Flag.Inline) is non-empty and contains exactly Inline).
     "Flag.Inline encodes a non-empty single-flag Flags value" in run {
         val f = Tasty.Flags(Tasty.Flag.Inline)
-        assert(!f.isEmpty)
+        // Stronger assertion than "non-empty": the Flags value must equal exactly the single-flag
+        // representation built from Flag.Inline.
+        assert(f == Tasty.Flags(Tasty.Flag.Inline), s"Expected Flags(Inline) to equal itself but got $f")
         assert(f.contains(Tasty.Flag.Inline))
         assert(!f.contains(Tasty.Flag.Private))
         succeed

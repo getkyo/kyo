@@ -247,11 +247,12 @@ class SymbolAnnotationQueryTest extends Test:
         buildFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(10)).asInstanceOf[Tasty.Symbol.Method]
             m.findAnnotation("scala.inline")(using summon[Frame], cp).map:
-                case Maybe.Present(a) =>
-                    assert(a.isInstanceOf[Tasty.Annotation], s"Expected Annotation but got $a")
+                case Maybe.Present(a: Tasty.Annotation) =>
+                    assert(a.annotationType == Tasty.Type.Named(SymbolId(2)), s"Expected Named(SymbolId(2)) but got ${a.annotationType}")
+                    assert(a.arguments.isEmpty, s"Expected empty arguments but got ${a.arguments}")
                     succeed
-                case _ =>
-                    fail("Expected Present but got Absent")
+                case other =>
+                    fail(s"Expected Present Tasty.Annotation but got $other")
     }
 
     // ── Leaf 143: findAnnotation-java-present ──────────────────────────────────
@@ -263,11 +264,12 @@ class SymbolAnnotationQueryTest extends Test:
         buildFixture.flatMap: cp =>
             val f = cp.symbol(SymbolId(7)).asInstanceOf[Tasty.Symbol.Field]
             f.findAnnotation("java.lang.Deprecated")(using summon[Frame], cp).map:
-                case Maybe.Present(a) =>
-                    assert(a.isInstanceOf[Tasty.JavaAnnotation], s"Expected JavaAnnotation but got $a")
+                case Maybe.Present(a: Tasty.JavaAnnotation) =>
+                    assert(a.annotationClass.id == SymbolId(4), s"Expected annotationClass id SymbolId(4) but got ${a.annotationClass.id}")
+                    assert(a.values.isEmpty, s"Expected empty values but got ${a.values}")
                     succeed
-                case _ =>
-                    fail("Expected Present but got Absent")
+                case other =>
+                    fail(s"Expected Present Tasty.JavaAnnotation but got $other")
     }
 
     // ── Leaf 144: findAnnotation-absent ────────────────────────────────────────
