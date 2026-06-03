@@ -42,8 +42,10 @@ object SiteApp:
       * @param versions
       *   All available documentation versions, populating the header version dropdown (display-only).
       * @param docsHome
-      *   The header Docs/Modules/Get-started target: the first module under the active prefix,
-      *   `/<prefix>/<firstSlug>/`, falling back to `/<prefix>/` when a version has no modules.
+      *   The Docs link and Get-started button target: the first module under the active prefix,
+      *   `/<prefix>/<firstSlug>/`, falling back to `/<prefix>/` when a version has no modules. The
+      *   Modules link targets `/<prefix>/` (the module-list intro route), derived from the first
+      *   path segment of `docsHome`.
       * @param searchIndex
       *   The search index signal. `Signal.initConst(DocsSearch.Index(Chunk.empty))` on the SSG path;
       *   a `SignalRef` filled lazily on the bundle (titles from the boot island, headings from the
@@ -98,6 +100,10 @@ object SiteApp:
         navigate: String => Unit < Async,
         onSearchFocus: => Unit < Async
     )(using Frame): UI =
+        // Derive the module-list intro route from the first path segment of docsHome.
+        // e.g. docsHome = "/latest/kyo-data/" -> modulesHome = "/latest/"
+        val modulesHome: String =
+            "/" + docsHome.split('/').filter(_.nonEmpty).headOption.getOrElse("latest") + "/"
         val versionOptions: Seq[(String, String)] = versions.toSeq.map(v => v.tag -> v.label)
         UI.header.cssClass("site-header").data("section", "header")(
             UI.div.cssClass("site-header-inner")(
@@ -107,7 +113,7 @@ object SiteApp:
                 ),
                 UI.nav.cssClass("links")(
                     UI.a("Docs").href(Href.Path(docsHome)),
-                    UI.a("Modules").href(Href.Path(docsHome)),
+                    UI.a("Modules").href(Href.Path(modulesHome)),
                     UI.a("API")
                         .href(Href.External("https", "//javadoc.io/doc/io.getkyo/kyo-core_3"))
                         .target(Target.Blank),

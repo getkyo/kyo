@@ -82,11 +82,16 @@ class SiteAppTest extends Test:
         }
     }
 
-    "Docs / Modules / Get started target the local docs home (Href.Path)" in run {
+    "Docs and Get started target docsHome; Modules targets the prefix intro route" in run {
         render(versions2, home).map { html =>
-            // All three internal nav targets resolve to docsHome (the header table, D2).
+            // Docs and Get started both target docsHome (the first module).
             val homeRefCount = countOccurrences(html, s"""href="$home"""")
-            assert(homeRefCount >= 3, s"expected Docs + Modules + Get started to target $home, found $homeRefCount: $html")
+            assert(homeRefCount >= 2, s"expected Docs + Get started to target $home, found $homeRefCount: $html")
+            // Modules targets the prefix intro route /latest/, NOT docsHome (D2 fix, C1).
+            val modulesHome = "/latest/"
+            assert(html.contains(s"""href="$modulesHome""""), s"Modules must link to prefix intro $modulesHome: $html")
+            // Docs and Modules must point to different routes.
+            assert(home != modulesHome, "docsHome and modulesHome must differ for the test to be meaningful")
             assert(html.contains("Docs"), s"Docs link text missing: $html")
             assert(html.contains("Modules"), s"Modules link text missing: $html")
             assert(html.contains("Get started"), s"Get started button missing: $html")
