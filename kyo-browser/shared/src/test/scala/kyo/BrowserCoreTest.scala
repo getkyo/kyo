@@ -1917,7 +1917,12 @@ class BrowserCoreTest extends BrowserTest:
             onPage("<html></html>") {
                 evalAssert("1+1", "2").andThen {
                     Abort.run[Throwable](evalAssert("1+1", "3")).map {
-                        case Result.Failure(_: kyo.test.AssertionFailed) => ()
+                        case Result.Failure(af: kyo.test.AssertionFailed) =>
+                            // evalAssert deliberately fails its internal assert here to exercise the mismatch path.
+                            // That assert records itself into the leaf's AssertScope before throwing (so leaked-fiber
+                            // failures are still caught); since this one is expected and handled, un-record it (the
+                            // same thing intercept does) so the detached-fiber leak check does not flip the leaf.
+                            summon[kyo.test.AssertScope].remove(af)
                         case other => fail(s"expected Result.Failure(AssertionFailed) on mismatch, got $other")
                     }
                 }

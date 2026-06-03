@@ -1203,14 +1203,16 @@ class SelectorIntegrationTest extends BrowserTest:
 
     "Selector.<x>.visible without a visible match raises a typed NotActionable" in {
         withBrowser {
-            // The id matches but only as a hidden element. .visible filters it out; should fail like 'no match'.
+            // The id matches but only as a hidden element. .visible filters it out so the selector resolves to no
+            // element, which Actionability reports as NotAttached (a selector that matches nothing is the degenerate
+            // "not actionable" case; see Actionability.scala), not NotVisible (which requires a matched-but-hidden node).
             onPage("""<input id='only-hidden' style='display:none' value='nope'/>""") {
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).take(2))) {
                     Abort.run[BrowserElementException] {
                         Browser.click(Browser.Selector.id("only-hidden").visible)
                     }.map {
                         case Result.Failure(ex: BrowserElementNotActionableException) =>
-                            assert(ex.reason.isInstanceOf[BrowserElementNotActionableException.Reason.NotVisible])
+                            assert(ex.reason == BrowserElementNotActionableException.Reason.NotAttached)
                         case other => fail(s"expected NotActionable but got $other")
                     }
                 }
