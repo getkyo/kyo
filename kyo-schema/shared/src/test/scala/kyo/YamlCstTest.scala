@@ -2024,5 +2024,20 @@ class YamlCstTest extends Test:
                 )
             }
         }
+
+        "builds a structural path from explicit segments" in {
+            val path =
+                Yaml.Cst.Path(Chunk(Yaml.Cst.Path.Segment.Key("services"), Yaml.Cst.Path.Segment.Index(0)))
+
+            assertResult((size = 2, text = "services[0]")) {
+                (size = path.segments.size, text = path.show)
+            }
+        }
+
+        "fails decoding an empty single-document CST stream into a mapping" in {
+            val stream = Yaml.cstAll("").getOrThrow
+
+            assert(Yaml.pipeline.decode[Map[String, String]](stream).isFailure)
+        }
     }
 end YamlCstTest
