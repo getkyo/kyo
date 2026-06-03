@@ -789,36 +789,63 @@ object Tasty:
         def isSubtypeOf(other: Type)(using cp: Classpath): SubtypeVerdict =
             kyo.internal.tasty.type_.Subtyping.isSubtype(this, other, cp, budget = 64)
 
-        /** First-level structural children of this Type. Leaf cases return an empty Chunk. */
-        def children: Chunk[Type] = this match
-            case Applied(base, args)          => base +: args
-            case TypeLambda(_, body)          => Chunk(body)
-            case Function(params, ret, _)     => params :+ ret
-            case ContextFunction(params, ret) => params :+ ret
-            case Tuple(elements)              => elements
-            case ByName(t)                    => Chunk(t)
-            case Repeated(t)                  => Chunk(t)
-            case Array(t)                     => Chunk(t)
-            case Refinement(p, _, i)          => Chunk(p, i)
-            case Rec(p)                       => Chunk(p)
-            case RecThis(rec)                 => Chunk(rec)
-            case AndType(l, r)                => Chunk(l, r)
-            case OrType(l, r)                 => Chunk(l, r)
-            case Annotated(u, _)              => Chunk(u)
-            case SuperType(s, m)              => Chunk(s, m)
-            case Wildcard(lo, hi)             => Chunk(lo, hi)
-            case Skolem(u)                    => Chunk(u)
-            case MatchType(b, sc, cases)      => Chunk(b, sc) ++ cases
-            case FlexibleType(u)              => Chunk(u)
-            case MatchCase(p, r)              => Chunk(p, r)
-            case TypeRef(qual, _)             => Chunk(qual)
-            case Bounds(lo, hi)               => Chunk(lo, hi)
-            case _                            => Chunk.empty
+        /** Visit each direct child of this Type without allocating an intermediate Chunk.
+          *
+          * Used internally by `children` and `foreach` so the hot traversal path does not materialize a
+          * Chunk per node.
+          */
+        def visit(f: Type => Unit): Unit = this match
+            case Applied(base, args) =>
+                f(base); args.foreach(f)
+            case TypeLambda(_, body) => f(body)
+            case Function(params, ret, _) =>
+                params.foreach(f); f(ret)
+            case ContextFunction(params, ret) =>
+                params.foreach(f); f(ret)
+            case Tuple(elements) => elements.foreach(f)
+            case ByName(t)       => f(t)
+            case Repeated(t)     => f(t)
+            case Array(t)        => f(t)
+            case Refinement(p, _, i) =>
+                f(p); f(i)
+            case Rec(p)       => f(p)
+            case RecThis(rec) => f(rec)
+            case AndType(l, r) =>
+                f(l); f(r)
+            case OrType(l, r) =>
+                f(l); f(r)
+            case Annotated(u, _) => f(u)
+            case SuperType(s, m) =>
+                f(s); f(m)
+            case Wildcard(lo, hi) =>
+                f(lo); f(hi)
+            case Skolem(u) => f(u)
+            case MatchType(b, sc, cases) =>
+                f(b); f(sc); cases.foreach(f)
+            case FlexibleType(u) => f(u)
+            case MatchCase(p, r) =>
+                f(p); f(r)
+            case TypeRef(qual, _) => f(qual)
+            case Bounds(lo, hi) =>
+                f(lo); f(hi)
+            case _ => ()
+        end visit
+
+        /** First-level structural children of this Type. Leaf cases return an empty Chunk.
+          *
+          * Materializes a Chunk for callers that need an indexable structure. Internal traversals should
+          * prefer `visit` (non-allocating).
+          */
+        def children: Chunk[Type] =
+            val b = Chunk.newBuilder[Type]
+            visit(b += _)
+            b.result()
+        end children
 
         /** Visit this type and every structural descendant in pre-order (self first). */
         def foreach(f: Type => Unit): Unit =
             f(this)
-            children.foreach(_.foreach(f))
+            visit(_.foreach(f))
         end foreach
 
         /** Resolve the symbol referenced by this Type's nominal head, when present.
@@ -1094,144 +1121,229 @@ object Tasty:
         /** Unknown tag: encountered a tag not covered by this ADT version. */
         case Unknown(tag: Int, length: Int)
 
-        /** Direct structural child trees of this node. Leaf nodes return `Chunk.empty`. */
-        def children: Chunk[Tree] = this match
-            case Tree.Ident(_, _)             => Chunk.empty
-            case Tree.Select(qualifier, _, _) => Chunk(qualifier)
-            case Tree.Apply(fun, args)        => Chunk(fun) ++ args
-            case Tree.TypeApply(fun, _)       => Chunk(fun)
-            case Tree.Block(stats, expr)      => stats :+ expr
-            case Tree.If(cond, thenp, elsep)  => Chunk(cond, thenp, elsep)
-            case Tree.Match(selector, cases)  => Chunk(selector) ++ cases
+        /** Visit each direct child of this Tree without allocating an intermediate Chunk.
+          *
+          * The pattern match dispatches once and calls `f` per child in source order. Used internally by
+          * `children`, `foreach`, `collect`, `find`, `foldLeft`, and `exists` so the hot traversal path does
+          * not materialize a Chunk per node.
+          */
+        def visit(f: Tree => Unit): Unit = this match
+            case Tree.Ident(_, _) => ()
+            case Tree.Select(qualifier, _, _) =>
+                f(qualifier)
+            case Tree.Apply(fun, args) =>
+                f(fun); args.foreach(f)
+            case Tree.TypeApply(fun, _) =>
+                f(fun)
+            case Tree.Block(stats, expr) =>
+                stats.foreach(f); f(expr)
+            case Tree.If(cond, thenp, elsep) =>
+                f(cond); f(thenp); f(elsep)
+            case Tree.Match(selector, cases) =>
+                f(selector); cases.foreach(f)
             case Tree.CaseDef(pattern, guard, body) =>
-                val guardChunk = guard match
-                    case Maybe.Present(t) => Chunk(t)
-                    case Maybe.Absent     => Chunk.empty
-                Chunk(pattern) ++ guardChunk :+ body
-            case Tree.Literal(_)       => Chunk.empty
-            case Tree.New(_)           => Chunk.empty
-            case Tree.Assign(lhs, rhs) => Chunk(lhs, rhs)
+                f(pattern)
+                guard match
+                    case Maybe.Present(t) => f(t)
+                    case Maybe.Absent     => ()
+                f(body)
+            case Tree.Literal(_) => ()
+            case Tree.New(_)     => ()
+            case Tree.Assign(lhs, rhs) =>
+                f(lhs); f(rhs)
             case Tree.Return(expr, _) =>
                 expr match
-                    case Maybe.Present(t) => Chunk(t)
-                    case Maybe.Absent     => Chunk.empty
-            case Tree.Throw(expr)       => Chunk(expr)
-            case Tree.Lambda(method, _) => Chunk(method)
-            case Tree.Typed(expr, _)    => Chunk(expr)
+                    case Maybe.Present(t) => f(t)
+                    case Maybe.Absent     => ()
+            case Tree.Throw(expr) =>
+                f(expr)
+            case Tree.Lambda(method, _) =>
+                f(method)
+            case Tree.Typed(expr, _) =>
+                f(expr)
             case Tree.Inlined(call, bindings, body) =>
-                val callChunk = call match
-                    case Maybe.Present(t) => Chunk(t)
-                    case Maybe.Absent     => Chunk.empty
-                callChunk ++ bindings :+ body
+                call match
+                    case Maybe.Present(t) => f(t)
+                    case Maybe.Absent     => ()
+                bindings.foreach(f)
+                f(body)
             case Tree.Try(expr, cases, finalizer) =>
-                val finChunk = finalizer match
-                    case Maybe.Present(t) => Chunk(t)
-                    case Maybe.Absent     => Chunk.empty
-                Chunk(expr) ++ cases ++ finChunk
-            case Tree.While(cond, body)     => Chunk(cond, body)
-            case Tree.Bind(_, pattern)      => Chunk(pattern)
-            case Tree.Alternative(patterns) => patterns
+                f(expr)
+                cases.foreach(f)
+                finalizer match
+                    case Maybe.Present(t) => f(t)
+                    case Maybe.Absent     => ()
+            case Tree.While(cond, body) =>
+                f(cond); f(body)
+            case Tree.Bind(_, pattern) =>
+                f(pattern)
+            case Tree.Alternative(patterns) =>
+                patterns.foreach(f)
             case Tree.Unapply(fun, implicits, patterns) =>
-                Chunk(fun) ++ implicits ++ patterns
+                f(fun); implicits.foreach(f); patterns.foreach(f)
             case Tree.ValDef(_, _, rhs) =>
                 rhs match
-                    case Maybe.Present(t) => Chunk(t)
-                    case Maybe.Absent     => Chunk.empty
+                    case Maybe.Present(t) => f(t)
+                    case Maybe.Absent     => ()
             case Tree.DefDef(_, paramss, _, rhs) =>
-                val params = paramss.flatMap(identity)
+                paramss.foreach(_.foreach(f))
                 rhs match
-                    case Maybe.Present(t) => params :+ t
-                    case Maybe.Absent     => params
-            case Tree.TypeDef(_, _)         => Chunk.empty
-            case Tree.PackageDef(_, stats)  => stats
-            case Tree.ClassDef(_, template) => Chunk(template)
+                    case Maybe.Present(t) => f(t)
+                    case Maybe.Absent     => ()
+            case Tree.TypeDef(_, _) => ()
+            case Tree.PackageDef(_, stats) =>
+                stats.foreach(f)
+            case Tree.ClassDef(_, template) =>
+                f(template)
             case Tree.Template(parents, _, body) =>
-                parents ++ body
-            case Tree.Super(qual, _)         => Chunk(qual)
-            case Tree.This(_)                => Chunk.empty
-            case Tree.NamedArg(_, value)     => Chunk(value)
-            case Tree.Annotated(expr, annot) => Chunk(expr, annot)
-            case Tree.Shared(_)              => Chunk.empty
-            case Tree.Modifier(_)            => Chunk.empty
-            case Tree.RecType(parent)        => Chunk(parent)
-            case Tree.SuperType(t1, t2)      => Chunk(t1, t2)
+                parents.foreach(f); body.foreach(f)
+            case Tree.Super(qual, _) =>
+                f(qual)
+            case Tree.This(_) => ()
+            case Tree.NamedArg(_, value) =>
+                f(value)
+            case Tree.Annotated(expr, annot) =>
+                f(expr); f(annot)
+            case Tree.Shared(_)       => ()
+            case Tree.Modifier(_)     => ()
+            case Tree.RecType(parent) => f(parent)
+            case Tree.SuperType(t1, t2) =>
+                f(t1); f(t2)
             case Tree.RefinedType(parent, _, info) =>
-                Chunk(parent, info)
-            case Tree.AppliedType(tycon, args) => Chunk(tycon) ++ args
-            case Tree.TypeBounds(lo, hi)       => Chunk(lo, hi)
-            case Tree.AnnotatedType(parent, a) => Chunk(parent, a)
-            case Tree.AndType(l, r)            => Chunk(l, r)
-            case Tree.OrType(l, r)             => Chunk(l, r)
-            case Tree.ByNameType(arg)          => Chunk(arg)
+                f(parent); f(info)
+            case Tree.AppliedType(tycon, args) =>
+                f(tycon); args.foreach(f)
+            case Tree.TypeBounds(lo, hi) =>
+                f(lo); f(hi)
+            case Tree.AnnotatedType(parent, a) =>
+                f(parent); f(a)
+            case Tree.AndType(l, r) =>
+                f(l); f(r)
+            case Tree.OrType(l, r) =>
+                f(l); f(r)
+            case Tree.ByNameType(arg) =>
+                f(arg)
             case Tree.MatchType(bound, scrutinee, cases) =>
-                Chunk(bound, scrutinee) ++ cases
-            case Tree.FlexibleType(arg)        => Chunk(arg)
-            case Tree.IdentTpt(_, _)           => Chunk.empty
-            case Tree.SelectTpt(qual, _)       => Chunk(qual)
-            case Tree.SingletonTpt(tpe)        => Chunk(tpe)
-            case Tree.TermRefPkg(_)            => Chunk.empty
-            case Tree.TypeRefPkg(_)            => Chunk.empty
-            case Tree.TermRefSymbol(_, qual)   => Chunk(qual)
-            case Tree.TypeRefSymbol(_, qual)   => Chunk(qual)
-            case Tree.TermRefDirect(_)         => Chunk.empty
-            case Tree.TypeRefDirect(_)         => Chunk.empty
-            case Tree.SelectIn(qual, _, owner) => Chunk(qual, owner)
-            case Tree.Import(qual, selectors)  => Chunk(qual) ++ selectors
-            case Tree.Export(qual, selectors)  => Chunk(qual) ++ selectors
+                f(bound); f(scrutinee); cases.foreach(f)
+            case Tree.FlexibleType(arg) =>
+                f(arg)
+            case Tree.IdentTpt(_, _) => ()
+            case Tree.SelectTpt(qual, _) =>
+                f(qual)
+            case Tree.SingletonTpt(tpe) =>
+                f(tpe)
+            case Tree.TermRefPkg(_) => ()
+            case Tree.TypeRefPkg(_) => ()
+            case Tree.TermRefSymbol(_, qual) =>
+                f(qual)
+            case Tree.TypeRefSymbol(_, qual) =>
+                f(qual)
+            case Tree.TermRefDirect(_) => ()
+            case Tree.TypeRefDirect(_) => ()
+            case Tree.SelectIn(qual, _, owner) =>
+                f(qual); f(owner)
+            case Tree.Import(qual, selectors) =>
+                f(qual); selectors.foreach(f)
+            case Tree.Export(qual, selectors) =>
+                f(qual); selectors.foreach(f)
             case Tree.AnnotationNode(annotType, arg) =>
-                Chunk(annotType, arg)
-            case Tree.RecThisAddr(_)             => Chunk.empty
-            case Tree.Imported(qual)             => Chunk(qual)
-            case Tree.Renamed(_)                 => Chunk.empty
-            case Tree.ByNameTpt(_)               => Chunk.empty
-            case Tree.Bounded(bound)             => Chunk(bound)
-            case Tree.ExplicitTpt(_)             => Chunk.empty
-            case Tree.Elided(_)                  => Chunk.empty
-            case Tree.TypeRefTree(qual, _)       => Chunk(qual)
-            case Tree.TermRef(prefix, _)         => Chunk(prefix)
-            case Tree.SeqLiteral(elems, _)       => elems
-            case Tree.SelfDef(_, tpe)            => Chunk(tpe)
-            case Tree.SelectOuter(qual, _, _, _) => Chunk(qual)
-            case Tree.Unknown(_, _)              => Chunk.empty
+                f(annotType); f(arg)
+            case Tree.RecThisAddr(_) => ()
+            case Tree.Imported(qual) =>
+                f(qual)
+            case Tree.Renamed(_)   => ()
+            case Tree.ByNameTpt(_) => ()
+            case Tree.Bounded(bound) =>
+                f(bound)
+            case Tree.ExplicitTpt(_) => ()
+            case Tree.Elided(_)      => ()
+            case Tree.TypeRefTree(qual, _) =>
+                f(qual)
+            case Tree.TermRef(prefix, _) =>
+                f(prefix)
+            case Tree.SeqLiteral(elems, _) =>
+                elems.foreach(f)
+            case Tree.SelfDef(_, tpe) =>
+                f(tpe)
+            case Tree.SelectOuter(qual, _, _, _) =>
+                f(qual)
+            case Tree.Unknown(_, _) => ()
+        end visit
+
+        /** Direct structural child trees of this node. Leaf nodes return `Chunk.empty`.
+          *
+          * Materializes a Chunk for callers that need an indexable structure. Internal traversals should
+          * prefer `visit` (non-allocating).
+          */
+        def children: Chunk[Tree] =
+            val b = Chunk.newBuilder[Tree]
+            visit(b += _)
+            b.result()
         end children
 
         /** Pre-order traversal: visits this node then all descendants. */
         def foreach(f: Tree => Unit): Unit =
             f(this)
-            children.foreach(_.foreach(f))
+            visit(_.foreach(f))
         end foreach
 
-        /** Collect all nodes matching `pf` in pre-order. */
-        def collect[A](pf: PartialFunction[Tree, A]): Chunk[A] =
+        /** Collect all nodes matching `pf` in pre-order. Inline entry delegates to the non-inline body loop. */
+        inline def collect[A](inline pf: PartialFunction[Tree, A]): Chunk[A] =
+            collectImpl(pf)
+
+        private def collectImpl[A](pf: PartialFunction[Tree, A]): Chunk[A] =
             val b = Chunk.newBuilder[A]
             foreach: t =>
                 if pf.isDefinedAt(t) then b += pf(t)
             b.result()
-        end collect
+        end collectImpl
 
-        /** Find first node satisfying `p` in pre-order. */
-        def find(p: Tree => Boolean): Maybe[Tree] =
-            val acc = Chunk.newBuilder[Tree]
+        /** Find first node satisfying `p` in pre-order. Inline entry delegates to the non-inline body loop. */
+        inline def find(inline p: Tree => Boolean): Maybe[Tree] =
+            findImpl(p)
+
+        private def findImpl(p: Tree => Boolean): Maybe[Tree] =
+            var found: Maybe[Tree] = Maybe.Absent
             def go(t: Tree): Boolean =
-                if p(t) then
-                    acc += t
+                if found.isDefined then true
+                else if p(t) then
+                    found = Maybe(t)
                     true
-                else t.children.iterator.exists(go)
+                else
+                    var hit = false
+                    t.visit: c =>
+                        if !hit && go(c) then hit = true
+                    hit
+                end if
+            end go
             discard(go(this))
-            val result = acc.result()
-            if result.isEmpty then Maybe.Absent else Maybe(result.head)
-        end find
+            found
+        end findImpl
 
-        /** Left-fold over all nodes in pre-order. */
-        def foldLeft[A](z: A)(f: (A, Tree) => A): A =
+        /** Left-fold over all nodes in pre-order. Inline entry delegates to the non-inline body loop. */
+        inline def foldLeft[A](z: A)(inline f: (A, Tree) => A): A =
+            foldLeftImpl(z)(f)
+
+        private def foldLeftImpl[A](z: A)(f: (A, Tree) => A): A =
             var acc = z
             foreach((t: Tree) => acc = f(acc, t))
             acc
-        end foldLeft
+        end foldLeftImpl
 
-        /** True when any node in the subtree (including this node) satisfies `p`. Pre-order short-circuits on first match. */
-        def exists(p: Tree => Boolean): Boolean =
-            p(this) || children.exists(_.exists(p))
+        /** True when any node in the subtree (including this node) satisfies `p`. Pre-order short-circuits on first match.
+          * Inline entry delegates to the non-inline body loop.
+          */
+        inline def exists(inline p: Tree => Boolean): Boolean =
+            existsImpl(p)
+
+        private def existsImpl(p: Tree => Boolean): Boolean =
+            if p(this) then true
+            else
+                var hit = false
+                visit: c =>
+                    if !hit && c.existsImpl(p) then hit = true
+                hit
+        end existsImpl
 
         /** Human-readable formatting; resolves symbols and types via the Classpath. */
         def show(using cp: Classpath): String =
@@ -1420,6 +1532,12 @@ object Tasty:
       * `false` even when they represent the same named entity after a kind-change, because their `SymbolId` values differ. Use `id` for
       * cross-kind identity checks.
       */
+    // O1 reverted: changing this from `sealed trait` to `sealed abstract class` produces a JVM
+    // VerifyError ("Type Tasty$Symbol$ClassLike is not assignable to Tasty$Symbol") in test-class
+    // flatMap lambda bodies (QueryApiTest is the canonical trigger). The CONTRIBUTING.md
+    // "abstract class over trait" preference is a soft performance rule; here the Symbol
+    // hierarchy mixes sealed traits and case classes in patterns the Scala 3 compiler does not
+    // emit correct coercions for once Symbol is a class.
     sealed trait Symbol derives CanEqual:
         def id: SymbolId
         def name: Name
@@ -1711,16 +1829,61 @@ object Tasty:
         def findDeclaredMember(name: String)(using cp: Classpath): Maybe[Symbol] =
             Maybe(declaredMembers.find(_.simpleName == name).orNull)
 
-        /** Find an inherited (parent-or-deeper) declaration by simple name. Not direct. */
+        /** Find an inherited (parent-or-deeper) declaration by simple name. Not direct.
+          *
+          * Walks the declarations of each parent ClassLike (and their parents, dedup by simple name in the
+          * order `allMembers` would visit them) and returns the first match whose owner is not this symbol.
+          * Short-circuits as soon as a match is found; never builds the full `allMembers` Chunk.
+          */
         def findInheritedMember(name: String)(using cp: Classpath): Maybe[Symbol] = this match
             case c: Symbol.ClassLike =>
-                val directOpt = declaredMembers.find(_.simpleName == name)
-                val allOpt    = allMembers.find(_.simpleName == name)
-                (directOpt, allOpt) match
-                    case (None, Some(m))    => Maybe(m)
-                    case (Some(d), Some(m)) => if d eq m then Maybe.Absent else Maybe(m)
-                    case _                  => Maybe.Absent
-                end match
+                // Skip the direct declarations: `findInheritedMember` is strictly the inherited slice.
+                val seen     = scala.collection.mutable.HashSet.empty[String]
+                val directs  = declaredMembers
+                var i        = 0
+                val directLn = directs.size
+                while i < directLn do
+                    discard(seen.add(directs(i).simpleName))
+                    i += 1
+                var found: Maybe[Symbol] = Maybe.Absent
+                def visit(cl: Symbol.ClassLike): Boolean =
+                    if found.isDefined then true
+                    else
+                        val decls   = cl.declarations
+                        var j       = 0
+                        val declsLn = decls.size
+                        while j < declsLn && found.isEmpty do
+                            val d  = decls(j)
+                            val nm = d.simpleName
+                            if seen.add(nm) && nm == name then found = Maybe(d)
+                            j += 1
+                        end while
+                        if found.isDefined then true
+                        else
+                            val ps   = cl.parents
+                            var k    = 0
+                            val psLn = ps.size
+                            var done = false
+                            while k < psLn && !done do
+                                ps(k) match
+                                    case pcl: Symbol.ClassLike => done = visit(pcl)
+                                    case _                     => ()
+                                k += 1
+                            end while
+                            done
+                        end if
+                end visit
+                val ps    = c.parents
+                var pi    = 0
+                val psLn  = ps.size
+                var done0 = false
+                while pi < psLn && !done0 do
+                    ps(pi) match
+                        case pcl: Symbol.ClassLike => done0 = visit(pcl)
+                        case _                     => ()
+                    pi += 1
+                end while
+                found
             case _ => Maybe.Absent
 
         /** Find any (direct or inherited) member by simple name. */
@@ -2536,6 +2699,38 @@ object Tasty:
             builder.map((k, v) => k -> Chunk.from(v)).toMap
         end nameIndex
 
+        /** Bucketed view of `symbols` keyed by `SymbolKind`. Built once on first access; each `allXxx`
+          * accessor becomes an O(1) map lookup that reuses the cached Chunk for its kind. Empty classpaths
+          * yield an empty map; missing kinds return `Chunk.empty`. The aggregated ClassLike view
+          * (`Class ∪ Trait ∪ Object ∪ EnumCase`) is materialized once in `cachedAllClassLike`.
+          */
+        private lazy val symbolsByKind: Map[SymbolKind, Chunk[Symbol]] =
+            if symbols.isEmpty then Map.empty
+            else
+                val buckets = scala.collection.mutable.HashMap.empty[SymbolKind, scala.collection.mutable.ArrayBuffer[Symbol]]
+                symbols.foreach: s =>
+                    buckets.getOrElseUpdate(s.kind, new scala.collection.mutable.ArrayBuffer()) += s
+                buckets.map((k, v) => k -> Chunk.from(v)).toMap
+            end if
+        end symbolsByKind
+
+        private def symbolsOfKind[A <: Symbol](k: SymbolKind): Chunk[A] =
+            symbolsByKind.getOrElse(k, Chunk.empty).asInstanceOf[Chunk[A]]
+
+        /** Cached ClassLike aggregate: every Class, Trait, Object, and EnumCase symbol. Materialized once
+          * on first access by `allClasses` / `allClassLike`. Empty when no such symbols exist.
+          */
+        private lazy val cachedAllClassLike: Chunk[Symbol.ClassLike] =
+            if symbols.isEmpty then Chunk.empty
+            else
+                val b = Chunk.newBuilder[Symbol.ClassLike]
+                symbols.foreach:
+                    case c: Symbol.ClassLike => b += c
+                    case _                   => ()
+                b.result()
+            end if
+        end cachedAllClassLike
+
         /** O(1) Symbol lookup by SymbolId. Returns the Symbol at index `id.value`. Returns a sentinel Unresolved symbol for out-of-range or
           * unassigned ids.
           *
@@ -2872,64 +3067,52 @@ object Tasty:
           * F-G-006 fix: the prior implementation returned `Chunk[Symbol.Class]`, excluding Trait and Object. Widening to `Symbol.ClassLike`
           * restores the invariant `allClasses.size >= topLevelClasses.size`. The return type widening is additive (ClassLike
           * is a supertype of Class; existing code that pattern-matches on `Symbol.Class` continues to work over the subset).
+          *
+          * O(1) after first call: backed by `cachedAllClassLike`, populated lazily.
           */
-        def allClasses: Chunk[Symbol.ClassLike] =
-            symbols.flatMap { case c: Symbol.ClassLike => Chunk(c); case _ => Chunk.empty }
+        def allClasses: Chunk[Symbol.ClassLike] = cachedAllClassLike
 
-        /** All Trait symbols in the classpath. Linear scan. */
-        def allTraits: Chunk[Symbol.Trait] =
-            symbols.flatMap { case t: Symbol.Trait => Chunk(t); case _ => Chunk.empty }
+        /** All Trait symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        def allTraits: Chunk[Symbol.Trait] = symbolsOfKind(SymbolKind.Trait)
 
-        /** All Object symbols in the classpath. Linear scan. */
-        def allObjects: Chunk[Symbol.Object] =
-            symbols.flatMap { case o: Symbol.Object => Chunk(o); case _ => Chunk.empty }
+        /** All Object symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        def allObjects: Chunk[Symbol.Object] = symbolsOfKind(SymbolKind.Object)
 
-        /** Alias for `allClasses`: all ClassLike symbols (Class, Trait, Object, EnumCase) at any nesting depth. Linear scan. */
-        def allClassLike: Chunk[Symbol.ClassLike] = allClasses
+        /** Alias for `allClasses`: all ClassLike symbols (Class, Trait, Object, EnumCase) at any nesting depth. O(1) cached. */
+        def allClassLike: Chunk[Symbol.ClassLike] = cachedAllClassLike
 
-        /** All Method symbols in the classpath. Linear scan. */
-        def allMethods: Chunk[Symbol.Method] =
-            symbols.flatMap { case m: Symbol.Method => Chunk(m); case _ => Chunk.empty }
+        /** All Method symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        def allMethods: Chunk[Symbol.Method] = symbolsOfKind(SymbolKind.Method)
 
-        /** All Val symbols in the classpath. Linear scan. */
-        def allVals: Chunk[Symbol.Val] =
-            symbols.flatMap { case v: Symbol.Val => Chunk(v); case _ => Chunk.empty }
+        /** All Val symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        def allVals: Chunk[Symbol.Val] = symbolsOfKind(SymbolKind.Val)
 
-        /** All Var symbols in the classpath. Linear scan. */
-        def allVars: Chunk[Symbol.Var] =
-            symbols.flatMap { case v: Symbol.Var => Chunk(v); case _ => Chunk.empty }
+        /** All Var symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        def allVars: Chunk[Symbol.Var] = symbolsOfKind(SymbolKind.Var)
 
-        /** All Field symbols (Java-level) in the classpath. Linear scan. */
-        def allFields: Chunk[Symbol.Field] =
-            symbols.flatMap { case f: Symbol.Field => Chunk(f); case _ => Chunk.empty }
+        /** All Field symbols (Java-level) in the classpath. O(1) lookup via `symbolsByKind`. */
+        def allFields: Chunk[Symbol.Field] = symbolsOfKind(SymbolKind.Field)
 
-        /** All TypeAlias symbols in the classpath. Linear scan. */
-        def allTypeAliases: Chunk[Symbol.TypeAlias] =
-            symbols.flatMap { case t: Symbol.TypeAlias => Chunk(t); case _ => Chunk.empty }
+        /** All TypeAlias symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        def allTypeAliases: Chunk[Symbol.TypeAlias] = symbolsOfKind(SymbolKind.TypeAlias)
 
-        /** All OpaqueType symbols in the classpath. Linear scan. */
-        def allOpaqueTypes: Chunk[Symbol.OpaqueType] =
-            symbols.flatMap { case t: Symbol.OpaqueType => Chunk(t); case _ => Chunk.empty }
+        /** All OpaqueType symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        def allOpaqueTypes: Chunk[Symbol.OpaqueType] = symbolsOfKind(SymbolKind.OpaqueType)
 
-        /** All AbstractType symbols in the classpath. Linear scan. */
-        def allAbstractTypes: Chunk[Symbol.AbstractType] =
-            symbols.flatMap { case t: Symbol.AbstractType => Chunk(t); case _ => Chunk.empty }
+        /** All AbstractType symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        def allAbstractTypes: Chunk[Symbol.AbstractType] = symbolsOfKind(SymbolKind.AbstractType)
 
-        /** All TypeParam symbols in the classpath. Linear scan. */
-        def allTypeParams: Chunk[Symbol.TypeParam] =
-            symbols.flatMap { case t: Symbol.TypeParam => Chunk(t); case _ => Chunk.empty }
+        /** All TypeParam symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        def allTypeParams: Chunk[Symbol.TypeParam] = symbolsOfKind(SymbolKind.TypeParam)
 
-        /** All Parameter symbols in the classpath. Linear scan. */
-        def allParameters: Chunk[Symbol.Parameter] =
-            symbols.flatMap { case p: Symbol.Parameter => Chunk(p); case _ => Chunk.empty }
+        /** All Parameter symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        def allParameters: Chunk[Symbol.Parameter] = symbolsOfKind(SymbolKind.Parameter)
 
-        /** All Package symbols in the classpath. Linear scan. */
-        def allPackages: Chunk[Symbol.Package] =
-            symbols.flatMap { case p: Symbol.Package => Chunk(p); case _ => Chunk.empty }
+        /** All Package symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        def allPackages: Chunk[Symbol.Package] = symbolsOfKind(SymbolKind.Package)
 
-        /** All Unresolved symbols in the classpath. Linear scan. */
-        def allUnresolved: Chunk[Symbol.Unresolved] =
-            symbols.flatMap { case u: Symbol.Unresolved => Chunk(u); case _ => Chunk.empty }
+        /** All Unresolved symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        def allUnresolved: Chunk[Symbol.Unresolved] = symbolsOfKind(SymbolKind.Unresolved)
 
         /** All symbols carrying the Scala or Java annotation whose fully-qualified name is `annotationFqn`.
           *
