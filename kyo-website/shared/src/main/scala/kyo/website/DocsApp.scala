@@ -132,12 +132,12 @@ object DocsApp:
                                 UI.Ast.Reactive(activeSignal.combineLatest(tocSignal).map { case (isActive, toc) =>
                                     if isActive then
                                         UI.li.cssClass("nav-item").cssClass("nav-item-active")(
-                                            UI.a(mod.title).href(Href.Path(href)),
+                                            UI.a(mod.displayName).href(Href.Path(href)),
                                             sidebarSections(toc)
                                         )
                                     else
                                         UI.li.cssClass("nav-item")(
-                                            UI.a(mod.title).href(Href.Path(href))
+                                            UI.a(mod.displayName).href(Href.Path(href))
                                         )
                                 })
                             }*
@@ -235,7 +235,7 @@ object DocsApp:
         if idx < 0 then
             // On the overview itself: no prev; next is the first module (if any).
             val nextLink = modules.headMaybe match
-                case Present(first) => UI.a(s"${first.title} >").href(Href.Path(s"/$prefix/${first.slug}/"))
+                case Present(first) => UI.a(s"${first.displayName} >").href(Href.Path(s"/$prefix/${first.slug}/"))
                 case Absent         => UI.span.cssClass("prev-next-disabled")(">")
             UI.nav.cssClass("prev-next")(
                 UI.span.cssClass("prev-next-disabled")("<"),
@@ -245,10 +245,10 @@ object DocsApp:
             val next: Maybe[WebsiteModule] = if idx < modules.size - 1 then Present(modules(idx + 1)) else Absent
             // At index 0 the prev is the overview; otherwise it is the previous module.
             val prevLink =
-                if idx > 0 then UI.a(s"< ${modules(idx - 1).title}").href(Href.Path(s"/$prefix/${modules(idx - 1).slug}/"))
+                if idx > 0 then UI.a(s"< ${modules(idx - 1).displayName}").href(Href.Path(s"/$prefix/${modules(idx - 1).slug}/"))
                 else UI.a("< Overview").href(Href.Path(overviewRoute))
             val nextLink = next match
-                case Present(m) => UI.a(s"${m.title} >").href(Href.Path(s"/$prefix/${m.slug}/"))
+                case Present(m) => UI.a(s"${m.displayName} >").href(Href.Path(s"/$prefix/${m.slug}/"))
                 case Absent     => UI.span.cssClass("prev-next-disabled")(">")
             UI.nav.cssClass("prev-next")(prevLink, nextLink)
         end if

@@ -9,7 +9,16 @@ final case class WebsiteModule(
     title: String,
     readme: String,
     platforms: WebsiteModule.Platforms
-) derives CanEqual
+) derives CanEqual:
+    /** Friendly nav-rail label derived from the slug: strips a leading `kyo-` prefix then capitalizes
+      * the first letter. `kyo-core` becomes `Core`, `kyo-stm` becomes `Stm`, `kyo-scheduler-cats`
+      * becomes `Scheduler-cats`. Slugs without a `kyo-` prefix are capitalized as-is.
+      */
+    def displayName: String =
+        if slug.startsWith("kyo-") then slug.stripPrefix("kyo-").capitalize
+        else slug.capitalize
+
+end WebsiteModule
 
 object WebsiteModule:
     /** Per-module platform support, mirroring the root README's platform table columns. */
