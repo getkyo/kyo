@@ -384,6 +384,14 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def listStyle(v: ListStyle): Style                   = appendProp(Prop.ListStyleProp(v))
     def listStyle(f: ListStyle.type => ListStyle): Style = listStyle(f(ListStyle))
 
+    // Tables
+
+    /** Sets the CSS `border-collapse` of a table. `collapse` merges adjacent cell borders into single
+      * shared dividers so rows and columns read as one crisp grid; `separate` is the UA default.
+      */
+    def borderCollapse(v: BorderCollapse): Style                        = appendProp(Prop.BorderCollapseProp(v))
+    def borderCollapse(f: BorderCollapse.type => BorderCollapse): Style = borderCollapse(f(BorderCollapse))
+
     // Flex grow/shrink
 
     def flexGrow(v: Double): Style   = appendProp(Prop.FlexGrowProp(math.max(0.0, v)))
@@ -564,6 +572,8 @@ object Style:
     def listItem: Style                                                        = empty.listItem
     def listStyle(v: ListStyle): Style                                         = empty.listStyle(v)
     def listStyle(f: ListStyle.type => ListStyle): Style                       = empty.listStyle(f)
+    def borderCollapse(v: BorderCollapse): Style                               = empty.borderCollapse(v)
+    def borderCollapse(f: BorderCollapse.type => BorderCollapse): Style        = empty.borderCollapse(f)
     def flexGrow(v: Double): Style                                             = empty.flexGrow(v)
     def flexShrink(v: Double): Style                                           = empty.flexShrink(v)
     def flexBasis(v: Length): Style                                            = empty.flexBasis(v)
@@ -765,6 +775,13 @@ object Style:
     enum ListStyle derives CanEqual:
         case disc, decimal, none
 
+    /** Maps to the CSS `border-collapse` property of a table: `collapse` merges adjacent cell borders
+      * into single shared lines (so row and column dividers render as one crisp rule), `separate` is
+      * the UA default where each cell keeps its own border separated by `border-spacing`.
+      */
+    enum BorderCollapse derives CanEqual:
+        case collapse, separate
+
     /** Direction of a background gradient (the `to ...` keyword of a CSS `linear-gradient`). */
     enum GradientDirection derives CanEqual:
         case toRight, toLeft, toTop, toBottom, toTopRight, toTopLeft, toBottomRight, toBottomLeft
@@ -833,6 +850,8 @@ object Style:
         case DisplayProp(value: Display)
         // List marker
         case ListStyleProp(value: ListStyle)
+        // Tables
+        case BorderCollapseProp(value: BorderCollapse)
         // Visibility
         case HiddenProp
         // Flex grow/shrink

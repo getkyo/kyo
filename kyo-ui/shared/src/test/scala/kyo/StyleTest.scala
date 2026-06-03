@@ -773,6 +773,29 @@ class StyleTest extends Test:
         }
     }
 
+    "borderCollapse" - {
+        "collapse" in {
+            val s = Style.borderCollapse(BorderCollapse.collapse)
+            assert(s.props(0) == Style.Prop.BorderCollapseProp(BorderCollapse.collapse))
+            assert(s.toCss == "border-collapse: collapse;")
+        }
+
+        "separate" in {
+            val s = Style.borderCollapse(BorderCollapse.separate)
+            assert(s.props(0) == Style.Prop.BorderCollapseProp(BorderCollapse.separate))
+            assert(s.toCss == "border-collapse: separate;")
+        }
+
+        "selector overload" in {
+            val s = Style.borderCollapse(_.collapse)
+            assert(s.props(0) == Style.Prop.BorderCollapseProp(BorderCollapse.collapse))
+        }
+
+        "enum values" in {
+            assert(BorderCollapse.collapse != BorderCollapse.separate)
+        }
+    }
+
     "flex grow/shrink" - {
         "flexGrow" in {
             val s = Style.flexGrow(2.0)

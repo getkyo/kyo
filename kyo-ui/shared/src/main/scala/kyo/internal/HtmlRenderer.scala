@@ -163,6 +163,9 @@ private[kyo] object HtmlRenderer:
         val tabAttr   = dd.attrs.tabIndex.map(n => s""" tabindex="$n"""").getOrElse("")
         val styleAttr = CssStyleRenderer.render(dd.attrs.uiStyle)
         val styleStr  = if styleAttr.nonEmpty then s""" style="${esc(styleAttr)}"""" else ""
+        // The dropdown wrapper carries its cssClasses (the same `.cssClass(...)` hook every other
+        // element honors) so callers can style the trigger container via a class selector.
+        val clsStr = if dd.attrs.cssClasses.nonEmpty then s""" class="${esc(dd.attrs.cssClasses.mkString(" "))}"""" else ""
         // Determine initial trigger label
         val firstLabel    = dd.options.headOption.map(_._1).getOrElse("")
         val currentLabel  = dd.options.toSeq.find(_._2 == currentVal).map(_._1).getOrElse(firstLabel)
@@ -172,7 +175,10 @@ private[kyo] object HtmlRenderer:
         val triggerDdAttr = if baseId.nonEmpty then s""" data-kyo-dropdown-trigger="${esc(baseId)}"""" else ""
         val optionsDdAttr = if baseId.nonEmpty then s""" data-kyo-dropdown-options="${esc(baseId)}"""" else ""
         // Wrapper div
-        w(sb, s"""<div data-kyo-path="$pathStr"$idAttr$ddAttr data-kyo-ev="click,keydown,change"$hidAttr$disAttr$tabAttr$styleStr>""")
+        w(
+            sb,
+            s"""<div data-kyo-path="$pathStr"$idAttr$clsStr$ddAttr data-kyo-ev="click,keydown,change"$hidAttr$disAttr$tabAttr$styleStr>"""
+        )
         // Trigger button
         w(sb, s"""<button$triggerId type="button"$triggerDdAttr tabindex="0">$triggerLabel</button>""")
         // Options container (hidden by default)

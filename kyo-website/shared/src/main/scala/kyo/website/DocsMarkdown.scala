@@ -86,12 +86,24 @@ object DocsMarkdown:
         while i < lines.length do
             val line = lines(i)
             if line.trim.startsWith("<!--") && line.contains("doctest") then
-                i += 1
-                if i < lines.length && lines(i).trim.startsWith("```") then
+                // A doctest comment block runs from this `<!--` line through the line that closes
+                // the comment with `-->` (which may sit on its own line after a wrapped fenced
+                // block). Consume the whole block, including the closing `-->` line, and preserve
+                // any text that follows `-->` on that same line.
+                if line.contains("-->") then
+                    val after = line.substring(line.indexOf("-->") + 3)
+                    if after.trim.nonEmpty then result += after
                     i += 1
-                    while i < lines.length && !lines(i).trim.startsWith("```") do
+                else
+                    i += 1
+                    while i < lines.length && !lines(i).contains("-->") do
                         i += 1
-                    if i < lines.length then i += 1
+                    if i < lines.length then
+                        val closing = lines(i)
+                        val after   = closing.substring(closing.indexOf("-->") + 3)
+                        if after.trim.nonEmpty then result += after
+                        i += 1
+                    end if
                 end if
             else
                 result += line
@@ -153,10 +165,26 @@ object DocsMarkdown:
         val blocks = new mutable.ArrayBuffer[Block]()
         var i      = 0
 
+        // Advance past an HTML comment that starts at `lines(i)`, consuming every line through and
+        // including the one that closes the comment with `-->`. Returns the index of the first line
+        // after the comment. Any text after `-->` on the closing line is appended to `blocks` as a
+        // paragraph so it is not silently dropped.
+        def skipComment(): Int =
+            // First line that holds the closing `-->`.
+            var j = i
+            while j < lines.length && !lines(j).contains("-->") do j += 1
+            if j < lines.length then
+                val closing = lines(j)
+                val after   = closing.substring(closing.indexOf("-->") + 3)
+                if after.trim.nonEmpty then blocks += Block.Paragraph(after.trim)
+                j + 1
+            else j
+            end if
+        end skipComment
+
         // Skip leading HTML comments (RI-002 trap 5).
         while i < lines.length && lines(i).trim.startsWith("<!--") do
-            while i < lines.length && !lines(i).contains("-->") do i += 1
-            if i < lines.length then i += 1
+            i = skipComment()
         end while
 
         while i < lines.length do
@@ -186,8 +214,7 @@ object DocsMarkdown:
                 end while
                 blocks += Block.Quote(bqLines.mkString("\n"))
             else if trimmed.startsWith("<!--") then
-                while i < lines.length && !lines(i).contains("-->") do i += 1
-                if i < lines.length then i += 1
+                i = skipComment()
             else if trimmed.startsWith("|") then
                 val tableLines = new mutable.ArrayBuffer[String]()
                 while i < lines.length && lines(i).trim.startsWith("|") do
@@ -292,7 +319,11 @@ object DocsMarkdown:
                     case 3 => UI.h3.id(slug)(inlineNodes*)
                     case _ => UI.h4.id(slug)(inlineNodes*)
                 uiBlocks += heading
-                headings += Heading(level, text, slug)
+                // The in-page heading keeps the rich inline render (real <code>, bold, italic); the
+                // outline entry stores the plain-text form so the TOC and search show clean labels
+                // without literal backticks/asterisks (B3). The slug is derived from the raw text so
+                // the heading `id` and the TOC anchor stay byte-identical to the rendered HTML.
+                headings += Heading(level, stripInlineMarkdown(text), slug)
 
             case Block.Fence(info, body) =>
                 uiBlocks += UI.pre(UI.code(highlight(info, body)))
@@ -324,6 +355,50 @@ object DocsMarkdown:
     end parseArticle
 
     // ---- block-level kyo-parse parsers ----
+
+    /** Strip inline Markdown markers from a heading's raw text for plain-text display in the TOC and
+      * search index (B3). Removes inline-code backticks, bold/italic asterisks, and unwraps
+      * `[text](url)` links to their visible `text`. The in-page heading still renders the real inline
+      * markup; only the outline/search label is flattened. Idempotent and total.
+      */
+    private[website] def stripInlineMarkdown(raw: String): String =
+        val sb  = new mutable.StringBuilder()
+        val s   = raw
+        var i   = 0
+        val len = s.length
+        while i < len do
+            val c = s.charAt(i)
+            if c == '`' then
+                // Skip the backtick; the inner text is kept verbatim.
+                i += 1
+            else if c == '*' then
+                // Skip one or two asterisks (italic or bold opener/closer).
+                if i + 1 < len && s.charAt(i + 1) == '*' then i += 2
+                else i += 1
+            else if c == '[' then
+                // `[text](url)` -> keep `text`, drop the bracket and the `(url)` target. If the
+                // construct is not a well-formed link, keep the `[` literally.
+                val closeBracket = s.indexOf(']', i + 1)
+                if closeBracket >= 0 && closeBracket + 1 < len && s.charAt(closeBracket + 1) == '(' then
+                    val closeParen = s.indexOf(')', closeBracket + 2)
+                    if closeParen >= 0 then
+                        sb.append(stripInlineMarkdown(s.substring(i + 1, closeBracket)))
+                        i = closeParen + 1
+                    else
+                        sb.append(c)
+                        i += 1
+                    end if
+                else
+                    sb.append(c)
+                    i += 1
+                end if
+            else
+                sb.append(c)
+                i += 1
+            end if
+        end while
+        sb.toString
+    end stripInlineMarkdown
 
     /** Parse an ATX heading line via a `Parse[Char]` grammar: 1..4 `#`, a space, then the rest of
       * the line as the heading text. Returns the level and the trimmed text.
@@ -483,14 +558,36 @@ object DocsMarkdown:
     // ---- inline kyo-parse grammar ----
 
     /** Convert a raw URL string to a `Href`. Treats `#id` as Fragment, `http(s)://...` as External,
-      * and everything else as Path.
+      * and everything else as Path. Intra-repo Markdown links to a sibling README (e.g.
+      * `../kyo-prelude/README.md`) are rewritten to the directory route they map to under the docs
+      * site so they resolve to a real page instead of 404ing on the raw `.md` file (B2).
       */
     private def toHref(url: String): Href =
         if url.startsWith("#") then Href.Fragment(url.drop(1))
         else if url.startsWith("https://") then Href.External("https", url.drop(6))
         else if url.startsWith("http://") then Href.External("http", url.drop(5))
-        else Href.Path(url)
+        else Href.Path(rewriteReadmePath(url))
     end toHref
+
+    /** Rewrite an intra-repo link that targets a `README.md` file to the directory route it lives in.
+      *
+      *   - `../kyo-prelude/README.md` -> `../kyo-prelude/` (strip the filename, keep the trailing slash)
+      *   - `README.md` -> `./` (the current directory)
+      *   - `README.md#anchor` (or `dir/README.md#anchor`) -> `#anchor` / `dir/#anchor` (keep the fragment)
+      *
+      * Any other path is returned unchanged.
+      */
+    private def rewriteReadmePath(url: String): String =
+        val hashIdx  = url.indexOf('#')
+        val path     = if hashIdx >= 0 then url.substring(0, hashIdx) else url
+        val fragment = if hashIdx >= 0 then url.substring(hashIdx) else ""
+        if path == "README.md" then
+            if fragment.isEmpty then "./" else fragment
+        else if path.endsWith("/README.md") then
+            path.dropRight("README.md".length) + fragment
+        else url
+        end if
+    end rewriteReadmePath
 
     /** Parse inline Markdown to a sequence of UI nodes with a kyo-parse `Parse[Char]` grammar.
       *

@@ -167,6 +167,102 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
+    "doctest:setup block does not leak its closing --> into prose (B1)" in run {
+        // Mirrors the kyo-http README shape: a leading `<!-- doctest:setup ... -->` whose closing
+        // `-->` sits on its own line after the wrapped fenced block. The closing line must be
+        // consumed, not emitted as a `--> ` paragraph above the H1.
+        val source =
+            "<!-- doctest:setup\n" +
+                "```scala\n" +
+                "val x = 1\n" +
+                "```\n" +
+                "-->\n" +
+                "\n" +
+                "# kyo-http\n"
+        for
+            rendered <- transpile(source)
+            html     <- renderHtml(rendered.article)
+        yield
+            assert(!html.contains("--&gt;"), s"--> must not leak into prose: $html")
+            assert(!html.contains("-->"), s"--> must not leak into prose: $html")
+            assert(rendered.headings.headMaybe.map(_.text) == Present("kyo-http"), s"H1 should be first heading: ${rendered.headings}")
+        end for
+    }
+
+    "leading multi-line HTML comment with text after --> keeps that text (B1)" in run {
+        val source =
+            "<!-- a comment\n" +
+                "spanning lines -->Kept text.\n" +
+                "# Title\n"
+        for
+            html <- transpileHtml(source)
+        yield
+            assert(!html.contains("-->"), s"--> must not leak: $html")
+            assert(html.contains("Kept text."), s"text after --> must be preserved: $html")
+        end for
+    }
+
+    // ---- Intra-repo README.md link rewriting (B2) ----
+
+    "[..](dir/README.md) link rewrites to the directory route (B2)" in run {
+        val source = "See [prelude](../kyo-prelude/README.md) for details.\n"
+        for html <- transpileHtml(source)
+        yield
+            assert(html.contains("../kyo-prelude/"), s"href should point at the dir route: $html")
+            assert(!html.contains("README.md"), s"README.md filename should be stripped: $html")
+        end for
+    }
+
+    "[..](README.md) bare link rewrites to ./ (B2)" in run {
+        val source = "Back to [home](README.md).\n"
+        for html <- transpileHtml(source)
+        yield
+            assert(html.contains("\"./\"") || html.contains("href=\"./\""), s"bare README.md should become ./: $html")
+            assert(!html.contains("README.md"), s"README.md should be stripped: $html")
+        end for
+    }
+
+    "[..](README.md#anchor) keeps the fragment (B2)" in run {
+        val source = "Jump to [section](README.md#getting-started).\n"
+        for html <- transpileHtml(source)
+        yield
+            assert(html.contains("#getting-started"), s"fragment should be kept: $html")
+            assert(!html.contains("README.md"), s"README.md should be stripped: $html")
+        end for
+    }
+
+    "external http(s) links are left untouched by README rewriting (B2)" in run {
+        val source = "Visit [site](https://example.com/README.md) now.\n"
+        for html <- transpileHtml(source)
+        yield assert(html.contains("https://example.com/README.md"), s"external link must be untouched: $html")
+    }
+
+    // ---- Heading.text inline-markdown stripping (B3) ----
+
+    "heading with inline code yields plain TOC text but renders real <code> (B3)" in run {
+        val source = "## Working with `Sync`\n"
+        for
+            rendered <- transpile(source)
+            html     <- renderHtml(rendered.article)
+        yield
+            assert(
+                rendered.headings.headMaybe.map(_.text) == Present("Working with Sync"),
+                s"TOC text should be backtick-free: ${rendered.headings}"
+            )
+            assert(rendered.headings.headMaybe.map(_.slug) == Present("working-with-sync"), s"slug should be stable: ${rendered.headings}")
+            assert(html.contains("<code"), s"in-page heading should still render real <code>: $html")
+        end for
+    }
+
+    "heading with bold/italic/link yields plain TOC text (B3)" in run {
+        val source = "### **Bold** and *italic* and [linked](x.md)\n"
+        for rendered <- transpile(source)
+        yield assert(
+            rendered.headings.headMaybe.map(_.text) == Present("Bold and italic and linked"),
+            s"TOC text should be markup-free: ${rendered.headings}"
+        )
+    }
+
     // ---- Doctest info-string suffix stripping ----
 
     "doctest info-string suffix is stripped (leaf 12)" in run {

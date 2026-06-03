@@ -75,6 +75,7 @@ object WebsiteGenerator:
             // to the pure builders so the emitted artifacts are deterministic for a given run.
             lastmod <- Sync.defer(java.time.LocalDate.now().toString)
             _       <- emitLanding(content, versions, outDir)
+            _       <- emit404(content, versions, outDir)
             _       <- Kyo.foreachDiscard(content)(c => emitVersion(c, versions, latestTag, outDir))
             _       <- emitLatest(content, versions, outDir)
             _       <- writeVersionsJson(versions, outDir)
@@ -396,6 +397,48 @@ object WebsiteGenerator:
         yield ()
         end for
     end emitLanding
+
+    /** Emit a styled `404.html` at the site root (B14). GitHub Pages serves this file for any unknown
+      * path, so an off-tree deep-link (AF-4) lands on the unified shell carrying a "page not found"
+      * message and a link home rather than a bare server 404. The page is noindex (it is an error
+      * surface, not content) and is intentionally absent from the sitemap. The header uses the latest
+      * version's docsHome so its nav targets resolve, matching the landing.
+      */
+    private def emit404(
+        content: Chunk[WebsiteContent],
+        versions: Chunk[WebsiteVersion],
+        outDir: Path
+    )(using Frame): Unit < (Async & Abort[WebsiteException]) =
+        val latest = pickLatest(content)
+        val home   = latest.fold("/")(c => docsHome(c, "latest"))
+        // No bundle on the 404: GitHub Pages serves this file for an unknown URL while the browser
+        // address bar keeps that unknown path, so booting the SPA there would classify the path as
+        // off-tree and full-navigate in a loop, blanking the static "page not found" content. Leaving
+        // the bundle off keeps the styled static page as the terminal surface; the "Back to home" link
+        // re-enters the SPA cleanly.
+        val opts = WebsitePage.Options(
+            title = "Page not found | Kyo",
+            description = "The page you are looking for does not exist.",
+            canonical = "",
+            bundleHref = "",
+            noindex = true
+        )
+        val body =
+            UI.div.cssClass("notfound")(
+                UI.div.cssClass("notfound-code")("404"),
+                UI.h1.cssClass("notfound-title")("Page not found"),
+                UI.p.cssClass("notfound-text")(
+                    UI.span("The page you are looking for does not exist or has moved.")
+                ),
+                UI.a.cssClass("btn").cssClass("btn-primary").href(UI.Href.Path("/"))("Back to home")
+            )
+        for
+            view <- siteShell(versions, home, body)
+            html <- wrapFirst(opts, view)
+            _    <- writeRoute(outDir / "404.html", html)
+        yield ()
+        end for
+    end emit404
 
     private def wrapFirst(opts: WebsitePage.Options, view: UI)(using Frame): String < Async =
         WebsitePage.wrap(opts)(view).take(1).run.map(_.headMaybe.getOrElse(""))

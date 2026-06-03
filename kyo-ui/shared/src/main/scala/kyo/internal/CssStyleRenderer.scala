@@ -201,6 +201,9 @@ private[kyo] object CssStyleRenderer:
                 case ListStyle.disc    => "list-style-type: disc;"
                 case ListStyle.decimal => "list-style-type: decimal;"
                 case ListStyle.none    => "list-style-type: none;"
+        case BorderCollapseProp(v) => v match
+                case BorderCollapse.collapse => "border-collapse: collapse;"
+                case BorderCollapse.separate => "border-collapse: separate;"
         case HiddenProp        => "display: none;"
         case FlexGrowProp(v)   => s"flex-grow: ${fmt(v)};"
         case FlexShrinkProp(v) => s"flex-shrink: ${fmt(v)};"

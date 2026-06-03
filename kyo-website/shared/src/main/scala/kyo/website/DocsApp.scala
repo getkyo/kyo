@@ -62,18 +62,27 @@ object DocsApp:
         tocSignal: Signal[Chunk[DocsMarkdown.Heading]],
         article: UI
     )(using Frame): UI < Sync =
-        Sync.defer {
+        for
+            // Mobile sidebar disclosure (B6). Below 860px the sidebar is hidden by default; this ref
+            // drives a reactive open/closed class so the docs-nav-toggle button (mobile-only) can reveal
+            // the module list. On wide viewports the sidebar is always shown and the toggle is hidden, so
+            // the ref is inert there. Closing the disclosure on each navigation keeps the drawer from
+            // covering the freshly-loaded article.
+            navOpenRef <- Signal.initRef(false)
+        yield
             val allModules = content.groups.flatMap(_.modules)
-            // The `docs-shell` is the 3-pane row ONLY: the persistent header is owned by SiteApp and
-            // sits above this body, so the header-out-of-shell layout invariant holds automatically
+            // The `docs-shell` is the 3-pane row: the persistent header is owned by SiteApp and sits
+            // above this body, so the header-out-of-shell layout invariant holds automatically
             // (docs-shell is flex-direction:row; a header sibling here would steal a column and squish
-            // the content). The three panes are the sole children.
+            // the content). The mobile nav toggle is the first child so, when the drawer opens on a
+            // narrow viewport, the revealed sidebar list sits directly below the button; on wide
+            // viewports the toggle is hidden and the three panes lay out side by side (B6).
             UI.div.cssClass("docs-shell")(
-                sidebar(content, route, prefix),
+                navToggle(navOpenRef),
+                sidebar(content, route, prefix, navOpenRef),
                 contentArea(article, allModules, route, prefix),
                 tocPane(tocSignal)
             )
-        }
     end body
 
     // ---- Private helpers ----
@@ -87,9 +96,8 @@ object DocsApp:
         end if
     end versionBanner
 
-    private def sidebar(content: WebsiteContent, route: Signal[String], prefix: String)(using Frame): UI =
-        UI.div.cssClass("docs-sidebar")(
-            versionBanner(content.version),
+    private def sidebar(content: WebsiteContent, route: Signal[String], prefix: String, navOpenRef: Signal[Boolean])(using Frame): UI =
+        val nav =
             UI.nav.cssClass("sidebar-nav")(
                 content.groups.toSeq.map { group =>
                     UI.div.cssClass("sidebar-group")(
@@ -114,8 +122,28 @@ object DocsApp:
                     )
                 }*
             )
-        )
+        // The sidebar carries a reactive `docs-sidebar-open` class on mobile: when the disclosure is
+        // open it overrides the <860px `display:none`, revealing the module list as a drawer. On wide
+        // viewports the base `docs-sidebar` rule already shows it and the class is a no-op (B6).
+        // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
+        UI.Ast.Reactive(navOpenRef.map { open =>
+            val base     = UI.div.cssClass("docs-sidebar")
+            val withOpen = if open then base.cssClass("docs-sidebar-open") else base
+            withOpen(
+                versionBanner(content.version),
+                nav
+            )
+        })
     end sidebar
+
+    // The mobile-only nav toggle reveals/hides the sidebar drawer (B6). It is hidden on wide viewports
+    // by the stylesheet; the label flips between open/closed with the disclosure state.
+    private def navToggle(navOpenRef: SignalRef[Boolean])(using Frame): UI =
+        UI.Ast.Reactive(navOpenRef.map { open =>
+            UI.button
+                .cssClass("docs-nav-toggle")
+                .onClick(navOpenRef.updateAndGet(!_).unit)(if open then "Close modules" else "Browse modules")
+        })
 
     private def contentArea(article: UI, modules: Chunk[WebsiteModule], route: Signal[String], prefix: String)(using Frame): UI =
         UI.main.cssClass("docs-content")(
@@ -151,26 +179,30 @@ object DocsApp:
     end tocNav
 
     private def prevNextNav(modules: Chunk[WebsiteModule], currentRoute: String, prefix: String)(using Frame): UI =
-        val (prev, next) = prevNext(modules, currentRoute)
-        val prevLink = prev match
-            case Present(m) => UI.a(s"< ${m.title}").href(Href.Path(s"/$prefix/${m.slug}/"))
-            case Absent     => UI.span.cssClass("prev-next-disabled")("<")
-        val nextLink = next match
-            case Present(m) => UI.a(s"${m.title} >").href(Href.Path(s"/$prefix/${m.slug}/"))
-            case Absent     => UI.span.cssClass("prev-next-disabled")(">")
-        UI.nav.cssClass("prev-next")(prevLink, nextLink)
-    end prevNextNav
-
-    private def prevNext(modules: Chunk[WebsiteModule], currentRoute: String): (Maybe[WebsiteModule], Maybe[WebsiteModule]) =
-        // Version-agnostic match: any `/<prefix>/<slug>/` route ends with `/<slug>/`, so the same
-        // check locates the current module under `latest/` and any `v<X>/` prefix.
+        // The intro route `/<prefix>/` matches no module, so there is no page to page to. Rendering the
+        // pager there left two empty unlabeled `<`/`>` boxes (B12); on the intro show a brief
+        // docs-home hint pointing at the first module instead.
         val idx = modules.indexWhere(m => currentRoute.endsWith(s"/${m.slug}/"))
-        if idx < 0 then (Absent, Absent)
+        if idx < 0 then
+            modules.headMaybe match
+                case Present(first) =>
+                    UI.div.cssClass("docs-home-hint")(
+                        UI.span("Pick a module from the sidebar to get started, or "),
+                        UI.a(s"open ${first.title}").href(Href.Path(s"/$prefix/${first.slug}/")),
+                        UI.span(".")
+                    )
+                case Absent => UI.empty
         else
-            val prev = if idx > 0 then Present(modules(idx - 1)) else Absent
-            val next = if idx < modules.size - 1 then Present(modules(idx + 1)) else Absent
-            (prev, next)
+            val prev: Maybe[WebsiteModule] = if idx > 0 then Present(modules(idx - 1)) else Absent
+            val next: Maybe[WebsiteModule] = if idx < modules.size - 1 then Present(modules(idx + 1)) else Absent
+            val prevLink = prev match
+                case Present(m) => UI.a(s"< ${m.title}").href(Href.Path(s"/$prefix/${m.slug}/"))
+                case Absent     => UI.span.cssClass("prev-next-disabled")("<")
+            val nextLink = next match
+                case Present(m) => UI.a(s"${m.title} >").href(Href.Path(s"/$prefix/${m.slug}/"))
+                case Absent     => UI.span.cssClass("prev-next-disabled")(">")
+            UI.nav.cssClass("prev-next")(prevLink, nextLink)
         end if
-    end prevNext
+    end prevNextNav
 
 end DocsApp

@@ -65,6 +65,9 @@ object WebsitePage:
             ),
             links = (
                 Seq("canonical" -> opts.canonical) ++
+                    // Favicon (B10): the site ships /kyo.png at the root; without this link every page
+                    // requested /favicon.ico and 404'd. The PNG is widely supported as a favicon.
+                    Seq("icon" -> "/kyo.png") ++
                     fontLinks
             ).filter(_._2.nonEmpty),
             css = UI.stylesheetCss(WebsiteStyles.sheet),

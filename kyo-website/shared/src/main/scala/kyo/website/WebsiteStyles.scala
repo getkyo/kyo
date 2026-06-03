@@ -89,6 +89,7 @@ object WebsiteStyles:
             ++ landingGrids
             ++ landingPlatforms
             ++ landingFooter
+            ++ notFound
             ++ docsShell
             ++ docsSidebar
             ++ docsContent
@@ -166,7 +167,10 @@ object WebsiteStyles:
             )
             .rule(
                 "search-result",
-                Style.column.gap(2.px)
+                // align(_.start): the row is an <a> (a flex row in the baseline reset that inherits
+                // align-items:center); flipping to column does not reset cross-axis alignment, so the
+                // title + sub-label would center within the dropdown. Pin them to the left edge (B8).
+                Style.column.align(_.start).gap(2.px)
                     .padding(8.px, 10.px).rounded(8.px).cursor(_.pointer)
                     .color(_.variable("ink")).textDecoration(_.none)
                     .hover(_.bg(_.variable("accent-ghost")))
@@ -175,6 +179,13 @@ object WebsiteStyles:
             .rule(
                 "search-result-active",
                 Style.bg(_.variable("accent-ghost"))
+            )
+            // The "No results" feedback row (non-empty query, zero hits): non-interactive, muted, no
+            // hover affordance (B9).
+            .rule(
+                "search-no-results",
+                Style.cursor(_.defaultCursor).color(_.variable("dim"))
+                    .hover(_.bg(Color.transparent))
             )
             .rule(
                 "search-result-title",
@@ -253,11 +264,22 @@ object WebsiteStyles:
                     .position(_.flow).overflow(_.hidden)
             )
             .rule(
+                // block (not the reset's flex-column): the headline mixes text, a <br>, and an inline
+                // <span class="accent">, so as a flex column the words "holds" and the trailing "."
+                // each dropped to their own centered line (the "." read as a stray lone dot under the
+                // headline, B13). As a block the inline run flows naturally and the <br> still breaks
+                // "Build with AI." from "Ship something that holds." where intended.
                 Selector.cls("hero").descendant(Selector.tag("h1")),
-                Style.fontFamily(Style.FontFamily.Custom("var(--serif)")).fontWeight(_.w500)
+                Style.block.fontFamily(Style.FontFamily.Custom("var(--serif)")).fontWeight(_.w500)
                     .letterSpacing(Length.Em(-0.018)).fontSize(64.px).lineHeight(1.02)
                     .margin(20.px, Length.Auto, 0.px, Length.Auto).maxWidth(720.px).textAlign(_.center)
                     .color(_.variable("ink"))
+            )
+            // the accent <span> inside the headline must flow inline within the block h1 (the reset
+            // makes every span a flex row, which would push it onto its own line).
+            .rule(
+                Selector.cls("hero").descendant(Selector.tag("h1")).descendant(Selector.tag("span")),
+                Style.inline
             )
             .rule(
                 "lead",
@@ -466,8 +488,12 @@ object WebsiteStyles:
                     .margin(48.px, 0.px, 0.px, 0.px)
             )
             .rule(
+                // 3-up flex grid. A flat width:33.33% plus the 1px gaps overflows the row (3*33.33% +
+                // 2px > 100%), so the third card wrapped and the row painted only 2 cards with a wide
+                // empty strip on the right (B7). flexBasis 30% + flexGrow 1 fits 3 cards per row and
+                // grows them to share the full content width, gaps included.
                 "cell",
-                Style.column.width(Length.Pct(33.33)).bg(_.variable("bg")).padding(30.px, 26.px, 32.px, 26.px)
+                Style.column.flexBasis(Length.Pct(30)).flexGrow(1.0).bg(_.variable("bg")).padding(30.px, 26.px, 32.px, 26.px)
             )
             .rule(
                 Selector.cls("cell").descendant(Selector.tag("h3")),
@@ -496,8 +522,10 @@ object WebsiteStyles:
                     .margin(46.px, 0.px, 0.px, 0.px)
             )
             .rule(
+                // Same 3-up flex fix as `cell` (B7): flexBasis 30% + flexGrow 1 so the six feature
+                // categories pack 3 per row and fill the full content width instead of wrapping to 2.
                 "fcat",
-                Style.column.width(Length.Pct(33.33)).bg(_.variable("bg")).padding(26.px, 24.px, 28.px, 24.px)
+                Style.column.flexBasis(Length.Pct(30)).flexGrow(1.0).bg(_.variable("bg")).padding(26.px, 24.px, 28.px, 24.px)
             )
             .rule(
                 Selector.cls("fcat").descendant(Selector.tag("h4")),
@@ -597,6 +625,31 @@ object WebsiteStyles:
             )
     end landingFooter
 
+    // ---- 404 page (B14) ----
+    private def notFound: Stylesheet =
+        Stylesheet.empty
+            .rule(
+                "notfound",
+                Style.column.align(_.center).justify(_.center).gap(8.px).textAlign(_.center)
+                    .padding(120.px, 28.px, 140.px, 28.px)
+            )
+            .rule(
+                "notfound-code",
+                Style.fontFamily(Style.FontFamily.Custom("var(--mono)")).fontSize(15.px).fontWeight(_.w600)
+                    .letterSpacing(0.18.em).color(_.variable("accent"))
+            )
+            .rule(
+                "notfound-title",
+                Style.fontFamily(Style.FontFamily.Custom("var(--serif)")).fontSize(48.px).fontWeight(_.w500)
+                    .letterSpacing(Length.Em(-0.018)).color(_.variable("ink")).margin(12.px, 0.px, 0.px, 0.px)
+            )
+            .rule(
+                "notfound-text",
+                Style.fontSize(18.px).color(_.variable("dim")).maxWidth(480.px)
+                    .margin(14.px, Length.Auto, 28.px, Length.Auto).lineHeight(1.6)
+            )
+    end notFound
+
     // ---- Docs: 3-pane shell ----
     private def docsShell: Stylesheet =
         Stylesheet.empty
@@ -664,6 +717,18 @@ object WebsiteStyles:
                 Selector.cls("nav-item").descendant(Selector.tag("a")),
                 Style.color(_.variable("text-dim")).width(Length.Pct(100)).textDecoration(_.none)
             )
+            // Mobile module-nav toggle (B6): a full-width disclosure button shown by default and
+            // hidden on wide viewports by the >=861px media query (where the sidebar is always
+            // visible). Clicking it flips the sidebar's `docs-sidebar-open` class, which the <860px
+            // media query honors to override the sidebar's mobile `display:none`.
+            .rule(
+                "docs-nav-toggle",
+                Style.row.align(_.center).justify(_.center).gap(8.px)
+                    .width(Length.Pct(100)).margin(0.px, 0.px, 18.px, 0.px).padding(11.px, 16.px)
+                    .border(1.px, _.variable("line")).rounded(10.px).bg(_.variable("surface"))
+                    .color(_.variable("ink")).fontWeight(_.w600).fontSize(14.px).cursor(_.pointer)
+                    .hover(_.borderColor(_.variable("faint")))
+            )
     end docsSidebar
 
     // ---- Docs: main content column ----
@@ -692,6 +757,19 @@ object WebsiteStyles:
                 Style.flexGrow(1.0).flexBasis(0.px)
                     .border(1.px, _.variable("line-soft")).rounded(16.px).padding(16.px, 18.px)
                     .color(_.variable("faint"))
+            )
+            // The intro route (no module) shows this hint instead of an empty pager (B12).
+            .rule(
+                "docs-home-hint",
+                Style.block.margin(8.px, 0.px, 0.px, 0.px).color(_.variable("dim")).fontSize(16.px).lineHeight(1.7)
+            )
+            .rule(
+                Selector.cls("docs-home-hint").descendant(Selector.tag("a")),
+                Style.inline.color(_.variable("accent")).fontWeight(_.w500).hover(_.underline)
+            )
+            .rule(
+                Selector.cls("docs-home-hint").descendant(Selector.tag("span")),
+                Style.inline
             )
     end docsContent
 
@@ -830,23 +908,32 @@ object WebsiteStyles:
                 Selector.cls("docs-content").descendant(Selector.tag("pre")).descendant(Selector.tag("span")),
                 Style.inline
             )
-            // tables
+            // tables: border-collapse:collapse merges adjacent cell edges so the per-cell borders
+            // below render as single shared row + column dividers (B4). The previous separate-collapse
+            // default left the cell borders invisible, so the table had only an outer frame and a
+            // tinted header. block display opts the <table> out of the flex reset into table layout.
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("table")),
-                Style.margin(20.px, 0.px, 0.px, 0.px)
-                    .border(1.px, _.variable("line-soft")).rounded(12.px).overflow(_.hidden).fontSize(14.px)
+                Style.block.borderCollapse(_.collapse).width(Length.Pct(100)).margin(20.px, 0.px, 0.px, 0.px)
+                    .border(1.px, _.variable("line")).rounded(12.px).overflow(_.hidden).fontSize(14.px)
             )
+            // every cell carries a right + bottom divider; collapse merges them with the neighbor's
+            // left/top edge into one crisp line, giving real row and column separators.
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("th")),
                 Style.textAlign(_.left).padding(10.px, 14.px)
                     .fontFamily(Style.FontFamily.Custom("var(--mono)")).fontSize(11.px)
                     .letterSpacing(0.08.em).textTransform(_.uppercase).color(_.variable("faint"))
-                    .bg(_.variable("bg")).borderBottom(1.px, _.variable("line-soft"))
+                    .bg(_.variable("bg")).borderStyle(_.solid).borderBottom(1.px, _.variable("line"))
+                    .borderRight(1.px, _.variable("line"))
             )
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("td")),
-                Style.padding(10.px, 14.px).color(_.variable("ink-prose"))
-                    .borderTop(1.px, _.variable("line-soft"))
+                // borderStyle:solid is REQUIRED: borderTop/borderRight set width+color only, and CSS
+                // renders a width as 0 unless border-style is non-none, so without this the dividers
+                // were invisible (B4).
+                Style.padding(10.px, 14.px).color(_.variable("ink-prose")).borderStyle(_.solid)
+                    .borderTop(1.px, _.variable("line")).borderRight(1.px, _.variable("line"))
             )
             // callouts: `callout` is the base; `callout-note`/`callout-caution` set the accent edge
             .rule(
@@ -908,21 +995,31 @@ object WebsiteStyles:
                 Stylesheet.empty
                     .rule("site-header-inner", Style.flexWrap(_.wrap).height(Length.Auto).padding(8.px, 16.px).gap(8.px))
                     .rule("links", Style.gap(14.px).margin(0.px))
-                    .rule("right", Style.width(Length.Pct(100)).margin(0.px, 0.px, 8.px, 0.px))
+                    // Second row: search grows to fill, version pill + CTA stay on one line. The search
+                    // input flex-grows (min-width 0 so it can shrink), and the version/CTA controls
+                    // shrink their padding + text so "v1.0.0-RC2" and "Get started" each stay single-line
+                    // instead of wrapping to two cramped rows (B11). textWrap(noWrap) keeps the CTA label
+                    // intact; flexShrink(0) keeps the pill + CTA from being squeezed below their text.
+                    .rule("right", Style.width(Length.Pct(100)).margin(0.px, 0.px, 8.px, 0.px).gap(8.px).align(_.center))
+                    .rule("search-input", Style.flexGrow(1.0).minWidth(0.px).padding(7.px, 10.px))
+                    .rule("ver", Style.flexShrink(0.0).padding(7.px, 8.px).gap(4.px))
+                    .rule("btn", Style.flexShrink(0.0).padding(9.px, 14.px).textWrap(_.noWrap))
                     .rule("btn-ghost", Style.displayNone)
             )
-            // outcome + feature grids collapse: 2-up at 880px, 1-up at 560px
+            // outcome + feature grids collapse: 2-up at 880px, 1-up at 560px. Cards are flex items
+            // sized by flexBasis (B7), so the narrow-viewport overrides set flexBasis too (a width
+            // override would be ignored while flexBasis stays at the 3-up 30%).
             .media(Stylesheet.MediaQuery.maxWidth(880.px))(
                 Stylesheet.empty
-                    .rule("fcat", Style.width(Length.Pct(50)))
+                    .rule("fcat", Style.flexBasis(Length.Pct(45)))
             )
             .media(Stylesheet.MediaQuery.maxWidth(900.px))(
                 Stylesheet.empty
-                    .rule("cell", Style.width(Length.Pct(100)))
+                    .rule("cell", Style.flexBasis(Length.Pct(100)))
             )
             .media(Stylesheet.MediaQuery.maxWidth(560.px))(
                 Stylesheet.empty
-                    .rule("fcat", Style.width(Length.Pct(100)))
+                    .rule("fcat", Style.flexBasis(Length.Pct(100)))
                     .rule("stat", Style.column.align(_.center).textAlign(_.center).gap(14.px))
             )
             // docs 3-pane is side-by-side only on wide viewports; below, collapse the TOC then sidebar
@@ -932,10 +1029,29 @@ object WebsiteStyles:
             .media(Stylesheet.MediaQuery.maxWidth(1100.px))(
                 Stylesheet.empty.rule("docs-toc", Style.displayNone)
             )
+            // Wide viewports show the sidebar inline and have no need for the disclosure button.
+            .media(Stylesheet.MediaQuery.minWidth(861.px))(
+                Stylesheet.empty
+                    .rule("docs-nav-toggle", Style.displayNone)
+            )
+            // Narrow viewports: the sidebar is collapsed by default; the docs-nav-toggle button reveals
+            // it (B6). `docs-sidebar-open` is declared AFTER `docs-sidebar` so, when both classes are
+            // present (open state), its `display:block` wins the equal-specificity cascade and overrides
+            // the closed `display:none`, turning the sidebar into a full-width drawer above the article.
             .media(Stylesheet.MediaQuery.maxWidth(860.px))(
                 Stylesheet.empty
-                    .rule("docs-sidebar", Style.displayNone)
-                    .rule("docs-content", Style.padding(28.px, 22.px, 80.px, 22.px))
+                    // The shell wraps so the full-width toggle + revealed drawer stack ABOVE the content
+                    // instead of sharing the row and squishing the article into a sliver (B6).
+                    .rule("docs-shell", Style.row.flexWrap(_.wrap))
+                    .rule("docs-sidebar", Style.displayNone.width(Length.Pct(100)))
+                    .rule(
+                        "docs-sidebar-open",
+                        Style.block.width(Length.Pct(100)).maxHeight(Length.Px(10000))
+                            .margin(0.px, 0.px, 12.px, 0.px).borderRight(0.px, Color.transparent)
+                            .border(1.px, _.variable("line")).rounded(12.px).padding(16.px, 16.px, 20.px, 16.px)
+                    )
+                    // flex-basis 100% so the content always claims a full row of its own under the toggle.
+                    .rule("docs-content", Style.flexBasis(Length.Pct(100)).padding(28.px, 22.px, 80.px, 22.px))
             )
             // dark-mode palette override
             .media(Stylesheet.MediaQuery.prefersDark)(

@@ -290,7 +290,10 @@ object WebsiteBundleMain:
                                     // After the article re-renders, scroll to the URL hash if present (a
                                     // heading-hit search result navigates to /<prefix>/<slug>/#<heading>;
                                     // the anchor element only exists once this branch renders the article).
-                                    _ <- scrollToHash()
+                                    // With NO hash (sidebar nav, prev/next) reset to the top so the new
+                                    // page starts at its heading instead of inheriting the previous page's
+                                    // scrollY at the bottom (B5).
+                                    _ <- scrollToHashOrTop()
                                 yield ()
                             case RouteKind.Intro =>
                                 // Intro `/<knownPrefix>/`: empty-article docs shell, no content.md fetch.
@@ -367,6 +370,21 @@ object WebsiteBundleMain:
       * The poll is a [[Loop]] over the attempt count (not mutual recursion), so the iteration state is
       * an explicit `Int` carried by the loop and there is no self-referencing closure to leak.
       */
+    /** Module-navigation scroll reset (B5). When the URL carries a fragment, delegate to
+      * [[scrollToHash]] so a heading-hit search result lands on its section. When there is NO
+      * fragment (sidebar nav, prev/next, or a plain module link), scroll the window to the top so the
+      * freshly-rendered article starts at its heading instead of keeping the previous page's scrollY
+      * (which left the reader at the bottom of the new page).
+      */
+    private def scrollToHashOrTop()(using Frame): Unit < Async =
+        // Unsafe: DOM bridge to read the fragment and reset scroll. Plain DOM reads/calls on the
+        // single-threaded JS event loop; no Kyo state involved.
+        Sync.defer(dom.window.location.hash).map { hash =>
+            if hash.length <= 1 then Sync.defer(dom.window.scrollTo(0, 0))
+            else scrollToHash()
+        }
+    end scrollToHashOrTop
+
     private def scrollToHash()(using Frame): Unit < Async =
         // Unsafe: DOM bridge to read the fragment target. Plain DOM reads on the single-threaded JS
         // event loop; no Kyo state involved.

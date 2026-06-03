@@ -200,28 +200,43 @@ object SiteApp:
         // the dropdown updates on each keystroke, when the heading index finishes loading, and when
         // the highlight moves.
         val results = queryRef.combineLatest(searchIndex).combineLatest(activeRef).map {
-            case ((q, idx), active) => resultList(DocsSearch.filter(idx, q), active)
+            case ((q, idx), active) => resultList(q, DocsSearch.filter(idx, q), active)
         }
         // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
         UI.Ast.Reactive(results)
     end searchResults
 
-    private def resultList(hits: Chunk[DocsSearch.Hit], active: Int)(using Frame): UI =
-        // The element stays in the tree on the empty query for SSG<->bundle hydration parity, but an
-        // empty dropdown would otherwise paint a bare card (its bg/border/padding/shadow) as a faint
-        // pill under the header. `hidden` when there are no hits makes the reset's
-        // `[hidden]{display:none!important}` collapse it to nothing; a non-empty query renders the
-        // card as before. Both the SSG and bundle paths call this same function, so parity holds.
-        UI.div.cssClass("search-results").hidden(hits.isEmpty)(
-            hits.toSeq.zipWithIndex.map { case (hit, i) =>
-                val base          = UI.a.cssClass("search-result")
-                val row           = if i == active then base.cssClass("search-result-active") else base
-                val titleSpan: UI = UI.span.cssClass("search-result-title")(hit.title)
-                val subSpan: Seq[UI] =
-                    hit.sub.map(s => Seq[UI](UI.span.cssClass("search-result-sub")(s))).getOrElse(Seq.empty)
-                val children: Seq[UI] = titleSpan +: subSpan
-                row.href(Href.Path(hit.route))(children*)
-            }*
-        )
+    private def resultList(query: String, hits: Chunk[DocsSearch.Hit], active: Int)(using Frame): UI =
+        // The element stays in the tree on the empty query for SSG<->bundle hydration parity. Three
+        // states (B9):
+        //   - empty query: the dropdown is `hidden`, so the reset's `[hidden]{display:none!important}`
+        //     collapses it to nothing (no faint pill under the header). This is also the SSG first
+        //     render, keeping the bundle's hydration tree structurally identical.
+        //   - non-empty query with hits: render one `search-result` row per hit, as before.
+        //   - non-empty query with zero hits: render a single non-interactive "No results" row so the
+        //     user gets feedback instead of a silently-vanishing dropdown.
+        val queryEmpty = query.trim.isEmpty
+        if queryEmpty then
+            UI.div.cssClass("search-results").hidden(true)()
+        else if hits.isEmpty then
+            UI.div.cssClass("search-results")(
+                UI.div.cssClass("search-result").cssClass("search-no-results")(
+                    UI.span.cssClass("search-result-title")("No results")
+                )
+            )
+        else
+            UI.div.cssClass("search-results")(
+                hits.toSeq.zipWithIndex.map { case (hit, i) =>
+                    val base          = UI.a.cssClass("search-result")
+                    val row           = if i == active then base.cssClass("search-result-active") else base
+                    val titleSpan: UI = UI.span.cssClass("search-result-title")(hit.title)
+                    val subSpan: Seq[UI] =
+                        hit.sub.map(s => Seq[UI](UI.span.cssClass("search-result-sub")(s))).getOrElse(Seq.empty)
+                    val children: Seq[UI] = titleSpan +: subSpan
+                    row.href(Href.Path(hit.route))(children*)
+                }*
+            )
+        end if
+    end resultList
 
 end SiteApp

@@ -125,6 +125,12 @@ class WebsitePageTest extends Test:
         }
     }
 
+    "head includes a favicon link so /favicon.ico does not 404 (B10)" in run {
+        renderPage(defaultOpts, UI.div).map { html =>
+            assert(html.contains("""<link rel="icon" href="/kyo.png">"""), s"head must carry the favicon link: $html")
+        }
+    }
+
     "UI.stylesheetCss(WebsiteStyles.sheet) == WebsiteStyles.sheet.render (INV-012)" in {
         assert(UI.stylesheetCss(WebsiteStyles.sheet) == WebsiteStyles.sheet.render)
     }
