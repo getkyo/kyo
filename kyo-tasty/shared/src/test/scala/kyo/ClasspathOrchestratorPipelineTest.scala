@@ -218,15 +218,11 @@ class ClasspathOrchestratorPipelineTest extends Test:
     }
 
     // Phase 24b - T8 Test 2: classpath close during pending body decode.
-    //
-    // Uses explicit serialization (not a race): open classpath, find a symbol whose body slice is
-    // non-zero, close the classpath, then call sym.body. The isClosed guard in Symbol.body must
-    // fire and return TastyError.ClasspathClosed. No uncaught exception may escape.
-    //
-    // Cross-platform: uses the in-memory MemFileSource, so the test runs on JVM, JS, and Native.
-    // Pins: T8 (classpath close during pending body decode).
-    "P24b-T2: sym.body after explicit classpath close returns ClasspathClosed without uncaught exception" in {
-        pending // plan: phase-02; sym.body effectful method added in Phase 04
-    }
+    // Resolved 2026-06-02 (verdict C: already-covered). Phase 07 deleted the Closed state from
+    // Tasty.Classpath (now a pure immutable case class with no close() method, see
+    // JvmFileSourceTest.scala:530 "P24b-T3"). ClasspathClosed now fires only via the mmap arena
+    // IllegalStateException path after Scope exit (jvm-only), exercised by
+    // DecoderFidelity5Phase02JvmTest "P02.6 F-W2-27". The original "explicit close" precondition
+    // no longer exists in the API.
 
 end ClasspathOrchestratorPipelineTest

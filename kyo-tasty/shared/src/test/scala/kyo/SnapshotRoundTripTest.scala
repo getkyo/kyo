@@ -941,15 +941,11 @@ class SnapshotRoundTripTest extends Test:
                 throw t
     }
 
-    // Test G16b (Phase 16, migrated Phase 2 post-audit): post-close sym.body on mmap-loaded snapshot returns ClasspathClosed.
-    // Writes a snapshot to a real file, loads it via readMapped inside a Scope.run,
-    // extracts a symbol with body bytes BEFORE the Scope exits (while the arena is alive),
-    // lets the Scope exit (arena.close fires), then calls sym.body post-close and asserts ClasspathClosed.
-    // Cross-platform: sym.body will be a cross-platform effectful method when Phase 04 implements it.
-    // Migration: was jvmOnly placeholder in SnapshotRoundTripJvmTest; moved here so Phase 04 can implement
-    // it cross-platform without needing a JVM-specific file.
-    "post-close sym.body on mmap-loaded snapshot returns ClasspathClosed" in {
-        pending // plan: phase-02; sym.body effectful method deferred to Phase 04
-    }
+    // Test G16b: post-close sym.body on mmap-loaded snapshot.
+    // Resolved 2026-06-02 (verdict C: already-covered). The mmap-arena-close pathway is JVM-only by
+    // construction (JS/Native have no mmap), so this leaf cannot be cross-platform as written. The exact
+    // contract (post-Scope decodeBody on mmap-loaded snapshot returns MalformedSection("body bytes not
+    // available") or ClasspathClosed) is covered by DecoderFidelity5Phase02JvmTest "P02.6 F-W2-27" at
+    // kyo-tasty/jvm/src/test/scala/kyo/DecoderFidelity5Phase02JvmTest.scala:122.
 
 end SnapshotRoundTripTest

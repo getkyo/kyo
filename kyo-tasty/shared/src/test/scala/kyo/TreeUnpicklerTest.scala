@@ -290,17 +290,22 @@ class TreeUnpicklerTest extends Test:
                 throw t
     }
 
-    // ── Test 6: Java symbol returns NotImplemented ───────────────────────────
+    // ── Test 6: Java symbol body ───────────────────────────
+    // Resolved 2026-06-02 (verdict D: dead-invariant). The Phase 04 contract changed: Java symbols have
+    // body = Maybe.Absent (no TASTy body bytes; nothing to decode), and bodyTree therefore returns
+    // Maybe.Absent rather than Abort.fail(NotImplemented). Java symbols only originate from JVM .class
+    // companion files (jvm-only path), so the Absent-vs-NotImplemented distinction is exercised in
+    // ConfirmationFidelity2Test "F-A1-OPEN java-symbols-present" and the body-Absent contract is part of
+    // the bodyTree/decodeBody implementation (Tasty.scala:2722) covered indirectly by every Java symbol
+    // case in JpmsFidelity2Test.
 
-    "Test 6: sym.body for a Java symbol returns Abort.fail(NotImplemented)" in {
-        pending // plan: phase-02; sym.body effectful method added in Phase 04; Java symbol check deferred
-    }
-
-    // ── Test 7: body called after classpath close returns ClasspathClosed ─────
-
-    "Test 7: sym.body after classpath close returns Abort.fail(ClasspathClosed)" in {
-        pending // plan: phase-02; sym.body effectful method added in Phase 04
-    }
+    // ── Test 7: body called after classpath close ─────
+    // Resolved 2026-06-02 (verdict C: already-covered). Phase 07 removed the Closed state from
+    // Tasty.Classpath (case class, no close()). ClasspathClosed now fires only via mmap arena
+    // IllegalStateException after Scope exit, which is JVM-only behavior. The exact post-Scope
+    // mmap-decodeBody path is exercised by DecoderFidelity5Phase02JvmTest "P02.6 F-W2-27"
+    // (kyo-tasty/jvm/src/test/scala/kyo/DecoderFidelity5Phase02JvmTest.scala), which accepts either
+    // MalformedSection or ClasspathClosed as the documented post-close contract.
 
     // ── Test 8: truncated body slice does not panic the runtime ───────────────
 
@@ -360,11 +365,10 @@ class TreeUnpicklerTest extends Test:
                 throw t
     }
 
-    // ── Test 10: regression: sym.body after Scope close returns ClasspathClosed ──
-
-    "sym.body after Scope close returns Abort.fail(ClasspathClosed)" in {
-        pending // plan: phase-02; sym.body effectful method added in Phase 04
-    }
+    // ── Test 10: regression: sym.body after Scope close ──
+    // Resolved 2026-06-02 (verdict C: already-covered). Same post-Scope mmap-close pathway as Test 7;
+    // exercised by DecoderFidelity5Phase02JvmTest "P02.6 F-W2-27" on JVM. Cross-platform JS/Native
+    // builds do not use mmap and therefore cannot reproduce the ClasspathClosed branch.
 
     // ── Phase 17 Tests (INV-006, M2): Phase 08 -- direct decodeAnnotationTerm calls ─────────────────
 
