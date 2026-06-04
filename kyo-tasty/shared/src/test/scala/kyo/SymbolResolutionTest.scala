@@ -9,7 +9,6 @@ import kyo.internal.tasty.reader.NameUnpickler
 import kyo.internal.tasty.reader.SectionIndex
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
-import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
@@ -160,12 +159,11 @@ class SymbolResolutionTest extends Test:
 
     // Helper: decode a TASTy byte array using AstUnpickler.readPass1 and return Pass1Result.
     private def decodeBytes(bytes: Array[Byte])(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
-        val view     = ByteView(bytes)
-        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
-        val arena    = new TypeArena
+        val view  = ByteView(bytes)
+        val arena = new TypeArena
         for
             _        <- TastyHeader.read(view)
-            names    <- NameUnpickler.read(view, interner)
+            names    <- NameUnpickler.read(view)
             sections <- SectionIndex.read(view, names)
             attrs = FileAttributes.default
             result <- sections.get(TastyFormat.ASTsSection) match
@@ -235,7 +233,7 @@ class SymbolResolutionTest extends Test:
     private def makeClassSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name.Unsafe.init(name),
+            Tasty.Name.fromString(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -252,13 +250,13 @@ class SymbolResolutionTest extends Test:
     end makeClassSym9
 
     private def makePkgSym9(id: Int, name: String): Tasty.Symbol.Package =
-        Tasty.Symbol.Package(SymbolId(id), Tasty.Name.Unsafe.init(name), Tasty.Flags.empty, SymbolId(id), Chunk.empty)
+        Tasty.Symbol.Package(SymbolId(id), Tasty.Name.fromString(name), Tasty.Flags.empty, SymbolId(id), Chunk.empty)
     end makePkgSym9
 
     private def makeMethodSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Method =
         Tasty.Symbol.Method(
             SymbolId(id),
-            Tasty.Name.Unsafe.init(name),
+            Tasty.Name.fromString(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -275,7 +273,7 @@ class SymbolResolutionTest extends Test:
     private def makeValSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Val =
         Tasty.Symbol.Val(
             SymbolId(id),
-            Tasty.Name.Unsafe.init(name),
+            Tasty.Name.fromString(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -289,7 +287,7 @@ class SymbolResolutionTest extends Test:
     private def makeVarSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Var =
         Tasty.Symbol.Var(
             SymbolId(id),
-            Tasty.Name.Unsafe.init(name),
+            Tasty.Name.fromString(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,

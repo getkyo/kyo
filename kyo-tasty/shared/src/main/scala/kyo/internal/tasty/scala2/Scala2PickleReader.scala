@@ -1,7 +1,6 @@
 package kyo.internal.tasty.scala2
 
 import kyo.*
-import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.symbol.Symbol as SymbolFactory
 import kyo.internal.tasty.symbol.SymbolDescriptor
 import kyo.internal.tasty.symbol.TypedSymbolFactory
@@ -60,10 +59,9 @@ object Scala2PickleReader:
       */
     def readRaw(
         pickleBytes: Array[Byte],
-        interner: Interner,
         arena: TypeArena
     )(using Frame, AllowUnsafe): Scala2PickleResult < (Sync & Abort[TastyError]) =
-        parsePickle(pickleBytes, interner, arena)
+        parsePickle(pickleBytes, arena)
 
     /** Read a Scala 2 pickle from a "ScalaSig" attribute value (compact-encoded, no compression).
       *
@@ -72,11 +70,10 @@ object Scala2PickleReader:
       */
     def readScalaSig(
         attrBytes: Array[Byte],
-        interner: Interner,
         arena: TypeArena
     )(using Frame, AllowUnsafe): Scala2PickleResult < (Sync & Abort[TastyError]) =
         Sync.defer(decodeCompact(attrBytes)).map: decoded =>
-            parsePickle(decoded, interner, arena)
+            parsePickle(decoded, arena)
 
     /** Read a Scala 2 pickle from a "Scala" attribute value (ZLIB-compressed).
       *
@@ -85,11 +82,10 @@ object Scala2PickleReader:
       */
     def readScalaAttr(
         attrBytes: Array[Byte],
-        interner: Interner,
         arena: TypeArena
     )(using Frame, AllowUnsafe): Scala2PickleResult < (Sync & Abort[TastyError]) =
         InflateHook.inflate(attrBytes).map: inflated =>
-            parsePickle(inflated, interner, arena)
+            parsePickle(inflated, arena)
 
     // -------------------------------------------------------------------------
     // Compact (ScalaSig) encoding decode
@@ -157,7 +153,6 @@ object Scala2PickleReader:
     /** Parse a Scala 2 pickle from already-decoded bytes. Format: 2-byte version header, NAT entry count, entries. */
     private def parsePickle(
         bytes: Array[Byte],
-        interner: Interner,
         arena: TypeArena
     )(using Frame, AllowUnsafe): Scala2PickleResult < (Sync & Abort[TastyError]) =
         if bytes.length < 2 then
@@ -178,7 +173,7 @@ object Scala2PickleReader:
                 else
                     Sync.defer(cursor.readNat()).map: count =>
                         readEntryList(cursor, count, 0, Chunk.empty).map: entries =>
-                            Sync.defer(buildResult(entries, interner))
+                            Sync.defer(buildResult(entries))
                 end if
             end if
 
@@ -219,8 +214,7 @@ object Scala2PickleReader:
     // -------------------------------------------------------------------------
 
     private def buildResult(
-        entries: Chunk[PickleEntry],
-        interner: Interner
+        entries: Chunk[PickleEntry]
     )(using AllowUnsafe): Scala2PickleResult =
         // Build name table: entry index -> String
         val nameTable = scala.collection.mutable.HashMap.empty[Int, String]
@@ -238,28 +232,28 @@ object Scala2PickleReader:
         entries.iterator.zipWithIndex.foreach { case (entry, i) =>
             entry.tag match
                 case CLASSsym =>
-                    val sym = decodeClassSym(entry.data, i, nameTable, scala2Flags, interner)
+                    val sym = decodeClassSym(entry.data, i, nameTable, scala2Flags)
                     symbols = symbols.appended(sym)
                     if firstClass.isEmpty then
                         firstClass = Present(sym)
                         classParen = Chunk(buildAnyRefParent())
                 case MODULEsym =>
-                    val sym = decodeModuleSym(entry.data, i, nameTable, scala2Flags, interner)
+                    val sym = decodeModuleSym(entry.data, i, nameTable, scala2Flags)
                     symbols = symbols.appended(sym)
                 case VALsym =>
-                    val sym = decodeValSym(entry.data, i, nameTable, scala2Flags, interner)
+                    val sym = decodeValSym(entry.data, i, nameTable, scala2Flags)
                     symbols = symbols.appended(sym)
                 case ALIASsym =>
-                    val sym = decodeAliasSym(entry.data, i, nameTable, scala2Flags, interner)
+                    val sym = decodeAliasSym(entry.data, i, nameTable, scala2Flags)
                     symbols = symbols.appended(sym)
                 case TYPEsym =>
-                    val sym = decodeTypeSym(entry.data, i, nameTable, scala2Flags, interner)
+                    val sym = decodeTypeSym(entry.data, i, nameTable, scala2Flags)
                     symbols = symbols.appended(sym)
                 case EXTref =>
-                    val sym = decodeExtRef(entry.data, i, nameTable, entries, scala2Flags, interner)
+                    val sym = decodeExtRef(entry.data, i, nameTable, entries, scala2Flags)
                     symbols = symbols.appended(sym)
                 case EXTMODCLASSref =>
-                    val sym = decodeExtModClassRef(entry.data, i, nameTable, entries, scala2Flags, interner)
+                    val sym = decodeExtModClassRef(entry.data, i, nameTable, entries, scala2Flags)
                     symbols = symbols.appended(sym)
                 case _ => ()
         }
@@ -279,8 +273,7 @@ object Scala2PickleReader:
         data: Array[Byte],
         idx: Int,
         nameTable: scala.collection.mutable.HashMap[Int, String],
-        baseFlags: Tasty.Flags,
-        interner: Interner
+        baseFlags: Tasty.Flags
     )(using AllowUnsafe): Tasty.Symbol =
         val c       = new PickleCursor(data, 0)
         val nameRef = if c.remaining > 0 then c.readNat() else 0
@@ -288,7 +281,7 @@ object Scala2PickleReader:
         if c.remaining > 0 then c.skipNat() // ownerRef
         val rawFlags = if c.remaining > 0 then c.readLongNat() else 0L
         val flags    = baseFlags.union(pickleFlags2TastyFlags(rawFlags))
-        makePickleSym(Tasty.SymbolKind.Class, flags, symName, interner)
+        makePickleSym(Tasty.SymbolKind.Class, flags, symName)
     end decodeClassSym
 
     /** MODULEsym data layout: nameRef(nat) ownerRef(nat) flags(longNat) infoRef(nat) */
@@ -296,8 +289,7 @@ object Scala2PickleReader:
         data: Array[Byte],
         idx: Int,
         nameTable: scala.collection.mutable.HashMap[Int, String],
-        baseFlags: Tasty.Flags,
-        interner: Interner
+        baseFlags: Tasty.Flags
     )(using AllowUnsafe): Tasty.Symbol =
         val c       = new PickleCursor(data, 0)
         val nameRef = if c.remaining > 0 then c.readNat() else 0
@@ -305,7 +297,7 @@ object Scala2PickleReader:
         if c.remaining > 0 then c.skipNat() // ownerRef
         val rawFlags = if c.remaining > 0 then c.readLongNat() else 0L
         val flags    = baseFlags.union(pickleFlags2TastyFlags(rawFlags)).union(Tasty.Flags(Tasty.Flag.Module))
-        makePickleSym(Tasty.SymbolKind.Object, flags, symName, interner)
+        makePickleSym(Tasty.SymbolKind.Object, flags, symName)
     end decodeModuleSym
 
     /** VALsym data layout: nameRef(nat) ownerRef(nat) flags(longNat) [privateWithinRef(nat)] infoRef(nat)
@@ -320,8 +312,7 @@ object Scala2PickleReader:
         data: Array[Byte],
         idx: Int,
         nameTable: scala.collection.mutable.HashMap[Int, String],
-        baseFlags: Tasty.Flags,
-        interner: Interner
+        baseFlags: Tasty.Flags
     )(using AllowUnsafe): Tasty.Symbol =
         val c       = new PickleCursor(data, 0)
         val nameRef = if c.remaining > 0 then c.readNat() else 0
@@ -337,7 +328,7 @@ object Scala2PickleReader:
             else Tasty.SymbolKind.Field
         // declaredType for method placeholder set via makePickleSymWithType.
         // Self-referential Type.Named(sym) is approximated with Absent.
-        makePickleSym(kind, flags, symName, interner)
+        makePickleSym(kind, flags, symName)
     end decodeValSym
 
     /** ALIASsym data layout: nameRef(nat) ownerRef(nat) flags(longNat) infoRef(nat)
@@ -353,8 +344,7 @@ object Scala2PickleReader:
         data: Array[Byte],
         idx: Int,
         nameTable: scala.collection.mutable.HashMap[Int, String],
-        baseFlags: Tasty.Flags,
-        interner: Interner
+        baseFlags: Tasty.Flags
     )(using AllowUnsafe): Tasty.Symbol =
         val c       = new PickleCursor(data, 0)
         val nameRef = if c.remaining > 0 then c.readNat() else 0
@@ -364,12 +354,11 @@ object Scala2PickleReader:
         val flags    = baseFlags.union(pickleFlags2TastyFlags(rawFlags))
         // declaredType is set at construction time via makePickleSymWithType.
         // Use a placeholder stringSym (declaredType = Absent default).
-        val stringSym = makePickleSym(Tasty.SymbolKind.Class, baseFlags, "String", interner)
+        val stringSym = makePickleSym(Tasty.SymbolKind.Class, baseFlags, "String")
         val sym = makePickleSymWithType(
             Tasty.SymbolKind.TypeAlias,
             flags,
             symName,
-            interner,
             kyo.Maybe(Tasty.Type.Named(stringSym.id))
         )
         sym
@@ -380,8 +369,7 @@ object Scala2PickleReader:
         data: Array[Byte],
         idx: Int,
         nameTable: scala.collection.mutable.HashMap[Int, String],
-        baseFlags: Tasty.Flags,
-        interner: Interner
+        baseFlags: Tasty.Flags
     )(using AllowUnsafe): Tasty.Symbol =
         val c       = new PickleCursor(data, 0)
         val nameRef = if c.remaining > 0 then c.readNat() else 0
@@ -389,7 +377,7 @@ object Scala2PickleReader:
         if c.remaining > 0 then c.skipNat() // ownerRef
         val rawFlags = if c.remaining > 0 then c.readLongNat() else 0L
         val flags    = baseFlags.union(pickleFlags2TastyFlags(rawFlags))
-        makePickleSym(Tasty.SymbolKind.AbstractType, flags, symName, interner)
+        makePickleSym(Tasty.SymbolKind.AbstractType, flags, symName)
     end decodeTypeSym
 
     /** EXTref data layout: nameRef(nat) [ownerRef(nat)]
@@ -403,8 +391,7 @@ object Scala2PickleReader:
         idx: Int,
         nameTable: scala.collection.mutable.HashMap[Int, String],
         entries: Chunk[PickleEntry],
-        baseFlags: Tasty.Flags,
-        interner: Interner
+        baseFlags: Tasty.Flags
     )(using AllowUnsafe): Tasty.Symbol =
         val c           = new PickleCursor(data, 0)
         val nameRef     = if c.remaining > 0 then c.readNat() else 0
@@ -413,7 +400,7 @@ object Scala2PickleReader:
         val ownerFqn    = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries, Set.empty[Int])).filter(_.nonEmpty)
         val fqn         = ownerFqn.fold(symName)(q => q + "." + symName)
         // declaredType=Absent (Named(sym) self-ref approximation).
-        makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn, interner)
+        makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn)
     end decodeExtRef
 
     /** EXTMODCLASSref data layout: nameRef(nat) [ownerRef(nat)]
@@ -426,8 +413,7 @@ object Scala2PickleReader:
         idx: Int,
         nameTable: scala.collection.mutable.HashMap[Int, String],
         entries: Chunk[PickleEntry],
-        baseFlags: Tasty.Flags,
-        interner: Interner
+        baseFlags: Tasty.Flags
     )(using AllowUnsafe): Tasty.Symbol =
         val c               = new PickleCursor(data, 0)
         val nameRef         = if c.remaining > 0 then c.readNat() else 0
@@ -437,7 +423,7 @@ object Scala2PickleReader:
         val ownerFqn        = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries, Set.empty[Int])).filter(_.nonEmpty)
         val fqn             = ownerFqn.fold(moduleClassName)(q => q + "." + moduleClassName)
         // declaredType=Absent (Named(sym) self-ref approximation).
-        makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn, interner)
+        makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn)
     end decodeExtModClassRef
 
     /** Resolve the FQN string for an EXTref or EXTMODCLASSref owner entry index.
@@ -488,7 +474,7 @@ object Scala2PickleReader:
         val anyRefSym = SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Class,
             Tasty.Flags(Tasty.Flag.Scala2, Tasty.Flag.JavaDefined),
-            Tasty.Name.Unsafe.init("AnyRef")
+            Tasty.Name.fromString("AnyRef")
         )
         Tasty.Type.Named(anyRefSym.id)
     end buildAnyRefParent
@@ -496,12 +482,9 @@ object Scala2PickleReader:
     private def makePickleSym(
         kind: Tasty.SymbolKind,
         flags: Tasty.Flags,
-        name: String,
-        interner: Interner
+        name: String
     )(using AllowUnsafe): Tasty.Symbol =
-        val bytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val entry = interner.intern(bytes, 0, bytes.length)
-        SymbolFactory.makeSymbol(kind, flags, Tasty.Name.wrap(entry))
+        SymbolFactory.makeSymbol(kind, flags, Tasty.Name.fromString(name))
     end makePickleSym
 
     /** Variant of makePickleSym with a specified declaredType. */
@@ -509,16 +492,13 @@ object Scala2PickleReader:
         kind: Tasty.SymbolKind,
         flags: Tasty.Flags,
         name: String,
-        interner: Interner,
         declaredType: kyo.Maybe[Tasty.Type]
     )(using AllowUnsafe): Tasty.Symbol =
-        val bytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val entry = interner.intern(bytes, 0, bytes.length)
         val pickleDesc = new SymbolDescriptor(
             id = -1,
             kind = kind,
             flags = flags,
-            name = Tasty.Name.wrap(entry),
+            name = Tasty.Name.fromString(name),
             ownerId = -1,
             declaredType = declaredType,
             scaladoc = kyo.Maybe.Absent,

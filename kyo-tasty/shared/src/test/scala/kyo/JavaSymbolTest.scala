@@ -9,7 +9,6 @@ import kyo.internal.tasty.reader.NameUnpickler
 import kyo.internal.tasty.reader.SectionIndex
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
-import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.type_.TypeArena
 
 /** Phase 5b tests for the unified Java symbol surface.
@@ -24,8 +23,6 @@ import kyo.internal.tasty.type_.TypeArena
 class JavaSymbolTest extends Test:
 
     import AllowUnsafe.embrace.danger
-
-    private val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
 
     private def symWithId(
         sym: Tasty.Symbol,
@@ -62,7 +59,7 @@ class JavaSymbolTest extends Test:
         TestResourceLoader.loadBytes(s"/kyo/fixtures/$name")
 
     private def readClass(bytes: Array[Byte])(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
-        ClassfileUnpickler.read(bytes, interner, new TypeArena)
+        ClassfileUnpickler.read(bytes, new TypeArena)
 
     /** Load raw bytes for a test resource by path. JVM-only. */
     private def loadResourceBytes(resourcePath: String): Array[Byte] =
@@ -77,7 +74,7 @@ class JavaSymbolTest extends Test:
         val arena = new TypeArena
         for
             _        <- TastyHeader.read(view)
-            names    <- NameUnpickler.read(view, interner)
+            names    <- NameUnpickler.read(view)
             sections <- SectionIndex.read(view, names)
             attrs = FileAttributes.default
             result <- sections.get(TastyFormat.ASTsSection) match
@@ -96,10 +93,9 @@ class JavaSymbolTest extends Test:
     // -------------------------------------------------------------------------
     "sym.fullName for ArrayRecord returns a non-empty string" in run {
         import kyo.Tasty.SymbolId
-        val bytes     = kyo.fixtures.Embedded.arrayRecordClass
-        val interner2 = Interner.init(numShards = 32, initialShardCapacity = 16)
+        val bytes = kyo.fixtures.Embedded.arrayRecordClass
         Abort.run[TastyError]:
-            ClassfileUnpickler.read(bytes, interner2, new TypeArena).flatMap: cr =>
+            ClassfileUnpickler.read(bytes, new TypeArena).flatMap: cr =>
                 val sym = symWithId(cr.classSymbol, SymbolId(0), SymbolId(0))
                 Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).flatMap: cp =>
                     given Tasty.Classpath = cp
@@ -118,10 +114,9 @@ class JavaSymbolTest extends Test:
     // -------------------------------------------------------------------------
     "sym.binaryName for ArrayRecord returns a non-empty string" in run {
         import kyo.Tasty.SymbolId
-        val bytes     = kyo.fixtures.Embedded.arrayRecordClass
-        val interner2 = Interner.init(numShards = 32, initialShardCapacity = 16)
+        val bytes = kyo.fixtures.Embedded.arrayRecordClass
         Abort.run[TastyError]:
-            ClassfileUnpickler.read(bytes, interner2, new TypeArena).flatMap: cr =>
+            ClassfileUnpickler.read(bytes, new TypeArena).flatMap: cr =>
                 val sym = symWithId(cr.classSymbol, SymbolId(0), SymbolId(0))
                 Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).map: cp =>
                     given Tasty.Classpath = cp

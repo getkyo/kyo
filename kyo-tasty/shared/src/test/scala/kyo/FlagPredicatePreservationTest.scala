@@ -17,7 +17,7 @@ class FlagPredicatePreservationTest extends Test:
         val flags = Tasty.Flags(Tasty.Flag.Final, Tasty.Flag.Case)
         val sym = Tasty.Symbol.Class(
             SymbolId(1),
-            Tasty.Name.Unsafe.init("Foo"),
+            Tasty.Name.fromString("Foo"),
             flags,
             SymbolId(0),
             Maybe.Absent,
@@ -51,7 +51,7 @@ class FlagPredicatePreservationTest extends Test:
         val flags = Tasty.Flags(Tasty.Flag.Inline, Tasty.Flag.Given)
         val sym = Tasty.Symbol.Method(
             SymbolId(1),
-            Tasty.Name.Unsafe.init("foo"),
+            Tasty.Name.fromString("foo"),
             flags,
             SymbolId(0),
             Maybe.Absent,
@@ -77,7 +77,7 @@ class FlagPredicatePreservationTest extends Test:
     // Given: Symbol.Package fixture; When: invoke all 40 predicates; Then: isPackage true; 39 others false
     // Pins: INV-003
     "40-predicates-on-package: isPackage true; isClass/isMethod/isVal false" in {
-        val sym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name.Unsafe.init("pkg"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val sym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name.fromString("pkg"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         assert(sym.isPackage, "isPackage must be true")
         assert(!sym.isClass, "isClass must be false")
         assert(!sym.isTrait, "isTrait must be false")
@@ -92,7 +92,7 @@ class FlagPredicatePreservationTest extends Test:
     // Given: Classpath.sentinelUnresolved; When: invoke all 40 predicates; Then: isUnresolved true; 39 others false
     // Pins: INV-003
     "40-predicates-on-unresolved: isUnresolved true; all class-like predicates false" in {
-        val sym = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name.Unsafe.init("<unresolved>"), SymbolId(-1))
+        val sym = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name.fromString("<unresolved>"), SymbolId(-1))
         assert(sym.isUnresolved, "isUnresolved must be true")
         assert(!sym.isClass, "isClass must be false")
         assert(!sym.isTrait, "isTrait must be false")

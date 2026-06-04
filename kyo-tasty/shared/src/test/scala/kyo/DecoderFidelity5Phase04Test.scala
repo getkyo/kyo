@@ -61,7 +61,7 @@ class DecoderFidelity5Phase04Test extends Test:
     private def makeClass(id: Int, name: String): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name.Unsafe.init(name),
+            Tasty.Name.fromString(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,

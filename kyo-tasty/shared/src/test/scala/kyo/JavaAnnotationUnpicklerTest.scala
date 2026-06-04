@@ -4,7 +4,6 @@ import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileFormat
 import kyo.internal.tasty.classfile.ConstantPool
 import kyo.internal.tasty.classfile.JavaAnnotationUnpickler
-import kyo.internal.tasty.symbol.Interner
 
 /** Tests for JavaAnnotationUnpickler (Phase 21b T2 coverage).
   *
@@ -13,8 +12,6 @@ import kyo.internal.tasty.symbol.Interner
 class JavaAnnotationUnpicklerTest extends Test:
 
     import AllowUnsafe.embrace.danger
-
-    private val interner = Interner.init(numShards = 4, initialShardCapacity = 8)
 
     /** Build a constant pool byte stream from a sequence of string literals.
       *
@@ -52,7 +49,7 @@ class JavaAnnotationUnpicklerTest extends Test:
     "readAnnotations decodes @Deprecated (no pairs) into JavaAnnotation with name java.lang.Deprecated" in run {
         val poolBytes = buildUtf8OnlyPool("Ljava/lang/Deprecated;")
         val poolView  = ByteView(poolBytes)
-        Abort.run(ConstantPool.read(poolView, interner, "<test>")).map:
+        Abort.run(ConstantPool.read(poolView, "<test>")).map:
             case Result.Failure(err)  => fail(s"Pool read failed: $err")
             case Result.Panic(ex)     => fail(s"Pool read panicked: $ex")
             case Result.Success(pool) =>
@@ -64,7 +61,7 @@ class JavaAnnotationUnpicklerTest extends Test:
                     0x00, 0x00  // num_element_value_pairs = 0
                 )
                 val annView = ByteView(annBytes)
-                Abort.run(JavaAnnotationUnpickler.readAnnotations(annView, pool, interner)).map:
+                Abort.run(JavaAnnotationUnpickler.readAnnotations(annView, pool)).map:
                     case Result.Failure(err) => fail(s"readAnnotations failed: $err")
                     case Result.Panic(ex)    => fail(s"readAnnotations panicked: $ex")
                     case Result.Success(anns) =>
@@ -91,7 +88,7 @@ class JavaAnnotationUnpicklerTest extends Test:
     "readAnnotations decodes @Foo(value={\"a\",\"b\"}) into ArrayVal(StringVal,StringVal)" in run {
         val poolBytes = buildUtf8OnlyPool("LFoo;", "value", "a", "b")
         val poolView  = ByteView(poolBytes)
-        Abort.run(ConstantPool.read(poolView, interner, "<test>")).map:
+        Abort.run(ConstantPool.read(poolView, "<test>")).map:
             case Result.Failure(err)  => fail(s"Pool read failed: $err")
             case Result.Panic(ex)     => fail(s"Pool read panicked: $ex")
             case Result.Success(pool) =>
@@ -125,13 +122,13 @@ class JavaAnnotationUnpicklerTest extends Test:
                     0x04 // element 1: String at #4 ("b")
                 )
                 val annView = ByteView(annBytes)
-                Abort.run(JavaAnnotationUnpickler.readAnnotations(annView, pool, interner)).map:
+                Abort.run(JavaAnnotationUnpickler.readAnnotations(annView, pool)).map:
                     case Result.Failure(err) => fail(s"readAnnotations failed: $err")
                     case Result.Panic(ex)    => fail(s"readAnnotations panicked: $ex")
                     case Result.Success(anns) =>
                         assert(anns.size == 1, s"Expected 1 annotation, got ${anns.size}")
                         val ann      = anns.head
-                        val key      = Tasty.Name.Unsafe.init("value")
+                        val key      = Tasty.Name.fromString("value")
                         val valueOpt = ann.values.find(_._1 == key)
                         assert(valueOpt.isDefined, s"Expected key Name('value') in values: ${ann.values}")
                         valueOpt.get._2 match

@@ -4,7 +4,6 @@ import kyo.fixtures.Embedded
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.reader.NameUnpickler
 import kyo.internal.tasty.reader.TastyHeader
-import kyo.internal.tasty.symbol.Interner
 
 /** Tests for NameUnpickler.read.
   *
@@ -34,12 +33,11 @@ class NameUnpicklerTest extends Test:
 
     // Test 7: loading the fixture TASTy file: the Names section is present and non-empty.
     "loading PlainClass.tasty produces a non-empty name array" in run {
-        val bytes    = loadFixture()
-        val view     = ByteView(bytes)
-        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
+        val bytes = loadFixture()
+        val view  = ByteView(bytes)
         Abort.run[TastyError] {
             skipHeader(view).andThen {
-                NameUnpickler.read(view, interner)
+                NameUnpickler.read(view)
             }
         }.map { result =>
             result match
@@ -57,12 +55,11 @@ class NameUnpicklerTest extends Test:
 
     // Test 8: the name "PlainClass" is in the decoded name array (fixture top-level class name).
     "PlainClass fixture: name 'PlainClass' appears in the decoded name array" in run {
-        val bytes    = loadFixture()
-        val view     = ByteView(bytes)
-        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
+        val bytes = loadFixture()
+        val view  = ByteView(bytes)
         Abort.run[TastyError] {
             skipHeader(view).andThen {
-                NameUnpickler.read(view, interner)
+                NameUnpickler.read(view)
             }
         }.map { result =>
             result match
@@ -77,12 +74,11 @@ class NameUnpicklerTest extends Test:
 
     // Test 9: a QUALIFIED name entry (two simple-name parts joined by ".") decodes to a dotted string.
     "PlainClass fixture: a QUALIFIED name entry decodes to a dotted string" in run {
-        val bytes    = loadFixture()
-        val view     = ByteView(bytes)
-        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
+        val bytes = loadFixture()
+        val view  = ByteView(bytes)
         Abort.run[TastyError] {
             skipHeader(view).andThen {
-                NameUnpickler.read(view, interner)
+                NameUnpickler.read(view)
             }
         }.map { result =>
             result match
@@ -114,10 +110,9 @@ class NameUnpicklerTest extends Test:
             0x68.toByte, // 'h'
             0x65.toByte  // 'e' -- only 2 of 5 bytes provided, then end of array
         )
-        val view     = ByteView(nameTableBytes)
-        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
+        val view = ByteView(nameTableBytes)
         Abort.run[TastyError] {
-            NameUnpickler.read(view, interner)
+            NameUnpickler.read(view)
         }.map { result =>
             result match
                 case Result.Failure(TastyError.MalformedSection("Names", _, _)) =>
@@ -129,30 +124,23 @@ class NameUnpicklerTest extends Test:
 
     // Test 11: all decoded names are interned: same bytes interned twice give reference-equal underlying entries.
     "interning the same byte sequence twice gives reference-equal underlying entries" in run {
-        val bytes    = loadFixture()
-        val view     = ByteView(bytes)
-        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
+        val bytes = loadFixture()
+        val view  = ByteView(bytes)
         Abort.run[TastyError] {
             skipHeader(view).andThen {
-                NameUnpickler.read(view, interner)
+                NameUnpickler.read(view)
             }
         }.map { result =>
             result match
                 case Result.Success(names) =>
-                    // Intern "PlainClass" a second time independently, using the same interner.
+                    // Construct a second Name with the same string value from a different source.
                     val n1 = names.find(_.asString == "PlainClass").get
-                    val n2 = Tasty.Name.wrap(
-                        interner.intern("PlainClass".getBytes(java.nio.charset.StandardCharsets.UTF_8), 0, "PlainClass".length)
-                    )
+                    val n2 = Tasty.Name.fromString("PlainClass")
                     // Both names decode to the same string value.
                     assert(n1.asString == "PlainClass")
                     assert(n2.asString == "PlainClass")
-                    // The cached string object inside n1 is the same reference (OnceCell caches).
-                    assert(n1.asString eq n1.asString)
-                    // Core interning invariant: n1 and n2 are the same underlying Entry (reference identity).
-                    // This verifies that the interner, not just the OnceCell, provides deduplication.
-                    // Name is an opaque type wrapping Interner.Entry; == uses AnyRef.equals which is reference equality.
-                    assert(n1 == n2, "Interning the same bytes via the same Interner must return the same Entry reference")
+                    // Name = String: equality is content-based, not reference identity.
+                    assert(n1 == n2, "Two Names with the same string content must be equal")
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
                 case Result.Panic(t) =>
@@ -181,10 +169,9 @@ class NameUnpicklerTest extends Test:
             0x6f.toByte, // 'o'  <- this is byte 7 (end of name table)
             0xff.toByte  // trailing 0xFF -- must NOT be interpreted as a new entry
         )
-        val view     = ByteView(bytes)
-        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
+        val view = ByteView(bytes)
         Abort.run[TastyError] {
-            NameUnpickler.read(view, interner)
+            NameUnpickler.read(view)
         }.map { result =>
             result match
                 case Result.Success(names) =>
@@ -240,10 +227,9 @@ class NameUnpicklerTest extends Test:
             0xe3.toByte, // prefix NAT = 99 (99 | 0x80)
             0x80.toByte  // selector NAT = 0 (0 | 0x80)
         )
-        val view     = ByteView(nameTableBytes)
-        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
+        val view = ByteView(nameTableBytes)
         Abort.run[TastyError] {
-            NameUnpickler.read(view, interner)
+            NameUnpickler.read(view)
         }.map { result =>
             result match
                 case Result.Failure(TastyError.MalformedSection("Names", reason, _)) =>

@@ -142,8 +142,8 @@ object AstUnpickler:
         val annotationsBySymbol = new mutable.HashMap[Tasty.Symbol, mutable.ArrayBuffer[Tasty.Annotation]]()
 
         // Synthetic root: a Package symbol with empty name; owns itself (self-referential sentinel).
-        val rootName = Tasty.Name.Unsafe.init("")
-        val root     = InternalSymbol.makeSymbol(Tasty.SymbolKind.Package, Tasty.Flags.empty, rootName)
+        val rootName: Tasty.Name = Tasty.Name.fromString("")
+        val root                 = InternalSymbol.makeSymbol(Tasty.SymbolKind.Package, Tasty.Flags.empty, rootName)
         ownerStack.append(root)
         allSymbols += root
 
@@ -1016,7 +1016,7 @@ object AstUnpickler:
     private def extractPackageName(view: ByteView, names: Array[Tasty.Name])(using AllowUnsafe): Tasty.Name =
         val segments = new mutable.ArrayBuffer[String]()
         extractPackagePathSegments(view, names, segments)
-        Tasty.Name.Unsafe.init(segments.mkString("."))
+        Tasty.Name.fromString(segments.mkString("."))
     end extractPackageName
 
     /** Recursively read a package path, prepending each segment to `segments`. */

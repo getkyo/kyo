@@ -14,7 +14,7 @@ class SymbolShowFormatTest extends Test:
     import AllowUnsafe.embrace.danger
 
     private def makePackage(id: Int, name: String): Tasty.Symbol.Package =
-        Tasty.Symbol.Package(SymbolId(id), Tasty.Name.Unsafe.init(name), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
+        Tasty.Symbol.Package(SymbolId(id), Tasty.Name.fromString(name), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
 
     private def makeClass(
         id: Int,
@@ -25,7 +25,7 @@ class SymbolShowFormatTest extends Test:
     ): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name.Unsafe.init(name),
+            Tasty.Name.fromString(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -43,7 +43,7 @@ class SymbolShowFormatTest extends Test:
     private def makeTypeParam(id: Int, name: String, ownerId: Int): Tasty.Symbol.TypeParam =
         Tasty.Symbol.TypeParam(
             SymbolId(id),
-            Tasty.Name.Unsafe.init(name),
+            Tasty.Name.fromString(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -60,7 +60,7 @@ class SymbolShowFormatTest extends Test:
     ): Tasty.Symbol.Method =
         Tasty.Symbol.Method(
             SymbolId(id),
-            Tasty.Name.Unsafe.init(name),
+            Tasty.Name.fromString(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -76,7 +76,7 @@ class SymbolShowFormatTest extends Test:
     private def makeParameter(id: Int, name: String, ownerId: Int, tpe: Tasty.Type): Tasty.Symbol.Parameter =
         Tasty.Symbol.Parameter(
             SymbolId(id),
-            Tasty.Name.Unsafe.init(name),
+            Tasty.Name.fromString(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,

@@ -11,7 +11,6 @@ import kyo.internal.tasty.reader.SectionIndex
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
 import kyo.internal.tasty.reader.TypeUnpickler
-import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 
@@ -27,8 +26,6 @@ import scala.collection.immutable.IntMap
 class UnifiedModelTest extends Test:
 
     import AllowUnsafe.embrace.danger
-
-    private val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
 
     /** Load JDK class bytes by binary path from EmbeddedClassfiles (cross-platform). */
     private def loadJdkClass(binaryPath: String): Array[Byte] =
@@ -50,10 +47,10 @@ class UnifiedModelTest extends Test:
 
     private def readClass(binaryPath: String)(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
         val bytes = loadJdkClass(binaryPath)
-        ClassfileUnpickler.read(bytes, interner, new TypeArena)
+        ClassfileUnpickler.read(bytes, new TypeArena)
 
     private def readClassBytes(bytes: Array[Byte])(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
-        ClassfileUnpickler.read(bytes, interner, new TypeArena)
+        ClassfileUnpickler.read(bytes, new TypeArena)
 
     /** Run TASTy pass 1 on fixture file bytes. Returns symbols from the result. */
     private def tastySymbols(fileName: String)(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
@@ -62,7 +59,7 @@ class UnifiedModelTest extends Test:
         val arena = TypeArena.canonical()
         for
             _        <- TastyHeader.read(view)
-            names    <- NameUnpickler.read(view, interner)
+            names    <- NameUnpickler.read(view)
             sections <- SectionIndex.read(view, names)
             attrs = FileAttributes.default
             result <- sections.get(TastyFormat.ASTsSection) match
@@ -406,7 +403,7 @@ class UnifiedModelTest extends Test:
 
     // Test 19: CLASSconst with a known TYPEREFdirect decodes to ConstantType(ClassConst(Named(sym))).
     "CLASSconst with TYPEREFdirect decodes to ConstantType(ClassConst(Named(stringSym)))" in run {
-        val stringSym  = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init("java.lang.String"))
+        val stringSym  = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("java.lang.String"))
         val stringAddr = 10
         val addrMap    = IntMap(stringAddr -> stringSym)
         // CLASSconst (92) is category 3: tag + sub-type.
@@ -433,7 +430,7 @@ class UnifiedModelTest extends Test:
     // The unresolved symbol carries the class fqn as its name.
     "CLASSconst with unresolved TYPEREFpkg decodes to ConstantType(ClassConst(Named(Unresolved)))" in run {
         val missingFqn = "com.missing.X"
-        val names      = Array(Tasty.Name.Unsafe.init(missingFqn))
+        val names      = Array(Tasty.Name.fromString(missingFqn))
         val nameRef    = 0
         // Sub-type: TYPEREFpkg (65) category 2: tag + Nat(nameRef).
         val subBytes = cat2(TastyFormat.TYPEREFpkg, nameRef)

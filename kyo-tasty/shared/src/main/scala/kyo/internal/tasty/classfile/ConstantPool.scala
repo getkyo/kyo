@@ -2,7 +2,6 @@ package kyo.internal.tasty.classfile
 
 import kyo.*
 import kyo.internal.tasty.binary.ByteView
-import kyo.internal.tasty.symbol.Interner
 
 /** Lazily-decoded JVM constant pool.
   *
@@ -10,7 +9,6 @@ import kyo.internal.tasty.symbol.Interner
   */
 final class ConstantPool(
     private val entries: Array[CpEntry | Null],
-    private val interner: Interner,
     val path: String
 ):
 
@@ -73,9 +71,9 @@ final class ConstantPool(
                 case u: CpEntry.Utf8Lazy =>
                     // Sync.Unsafe.defer provides AllowUnsafe for the AtomicRef decode/cache access.
                     Sync.Unsafe.defer:
-                        u.decode(interner).string
-                case CpEntry.Utf8Decoded(e) =>
-                    e.string
+                        u.decode()
+                case CpEntry.Utf8Decoded(v) =>
+                    v
                 case other =>
                     // no cursor: constant pool accessor errors do not carry a stream position
                     Abort.fail(TastyError.ClassfileFormatError(path, s"Expected Utf8 at pool[$idx], found ${tagName(other)}", 0L))
@@ -219,7 +217,7 @@ object ConstantPool:
       * Expects the cursor to be positioned just after the major/minor version fields. Advances the cursor past all pool entries. The raw
       * classfile bytes are kept alive by the returned ConstantPool for lazy UTF-8 decoding.
       */
-    def read(view: ByteView, interner: Interner, path: String)(using Frame, AllowUnsafe): ConstantPool < (Sync & Abort[TastyError]) =
+    def read(view: ByteView, path: String)(using Frame, AllowUnsafe): ConstantPool < (Sync & Abort[TastyError]) =
         Sync.defer {
             val count   = readU2(view)
             val entries = new Array[CpEntry | Null](count)
@@ -243,7 +241,7 @@ object ConstantPool:
                             discard(view.readByte())
                             i += 1
                         // Copy bytes eagerly (cursor has advanced past them).
-                        // Deferring only String materialization via the Interner.
+                        // Deferring only String materialization via Utf8.decode (cached on first access).
                         view match
                             case h: ByteView.Heap =>
                                 entries(idx) = CpEntry.Utf8Lazy.init(h.copyBytes(off, off + len), 0, len)
@@ -334,7 +332,7 @@ object ConstantPool:
             end while
 
             if errorMsg != null then Left((errorMsg, errorOffset))
-            else Right(new ConstantPool(entries, interner, path))
+            else Right(new ConstantPool(entries, path))
         }.map:
             case Right(pool)         => pool
             case Left((msg, offset)) => Abort.fail(TastyError.ClassfileFormatError(path, msg, offset))

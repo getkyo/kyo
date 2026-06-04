@@ -4,7 +4,6 @@ import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.reader.AttributeUnpickler
 import kyo.internal.tasty.reader.FileAttributes
 import kyo.internal.tasty.reader.TastyFormat
-import kyo.internal.tasty.symbol.Interner
 
 class AttributeUnpicklerTest extends Test:
 
@@ -78,11 +77,8 @@ class AttributeUnpicklerTest extends Test:
     "SOURCEFILEattr decodes to Present(sourceFileName) when present" in run {
         import AllowUnsafe.embrace.danger
         // Build a names array with "Foo.scala" at index 0.
-        val interner                 = Interner.init(numShards = 32, initialShardCapacity = 16)
         val nameStr                  = "Foo.scala"
-        val nameBytes                = nameStr.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val entry                    = interner.intern(nameBytes, 0, nameBytes.length)
-        val names: Array[Tasty.Name] = Array(Tasty.Name.wrap(entry))
+        val names: Array[Tasty.Name] = Array(Tasty.Name.fromString(nameStr))
         // SOURCEFILEattr (0x81=129) + Utf8Ref=0 (encoded as single-byte NAT: 0 | 0x80 = 0x80)
         val attrs = Array[Byte](
             TastyFormat.SOURCEFILEattr.toByte, // 0x81

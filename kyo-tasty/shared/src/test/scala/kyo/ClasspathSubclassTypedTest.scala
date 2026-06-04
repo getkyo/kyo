@@ -27,7 +27,7 @@ class ClasspathSubclassTypedTest extends Test:
     private def makeClass(id: Int, name: String, flags: Tasty.Flags): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name.Unsafe.init(name),
+            Tasty.Name.fromString(name),
             flags,
             SymbolId(-1),
             Maybe.Absent,
@@ -45,7 +45,7 @@ class ClasspathSubclassTypedTest extends Test:
     private def makeTrait(id: Int, name: String): Tasty.Symbol.Trait =
         Tasty.Symbol.Trait(
             SymbolId(id),
-            Tasty.Name.Unsafe.init(name),
+            Tasty.Name.fromString(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,

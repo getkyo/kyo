@@ -8,7 +8,6 @@ import kyo.internal.tasty.query.TastyStat
 import kyo.internal.tasty.snapshot.DigestComputer as SnapshotDigest
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
-import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.type_.TypeArena
 import kyo.stats.Attributes
 import scala.collection.immutable.IntMap
@@ -97,63 +96,27 @@ object Tasty:
 
     // ── Names and flags ─────────────────────────────────────────────────────
 
-    // A module-level interner used by the unsafe-tier Name.Unsafe.init. Initialized lazily at first
-    // access from within a Sync.Unsafe.defer or Name.Unsafe.init boundary, so the AllowUnsafe proof
-    // is always supplied by the caller rather than embraced module-level.
-    private lazy val globalInterner: Interner =
-        // Unsafe: lazy module-level interner; created on first use from an Unsafe boundary. Interner.init
-        // has side effects (shard allocation); the lazy holder ensures it runs exactly once and only from
-        // a caller that already holds an AllowUnsafe proof (§839 case 3).
-        Interner.init(numShards = 32, initialShardCapacity = 512)(using AllowUnsafe.embrace.danger)
-    end globalInterner
-
-    /** An interned name backed by a byte sequence.
+    /** A name backed by a `String`.
       *
-      * The internal representation is `Interner.Entry`, which stores raw UTF-8 bytes and the eagerly-decoded `String` form. Reference
-      * equality on two `Name` values implies byte-level equality because the interner guarantees a unique `Entry` per unique byte sequence.
-      * The `CanEqual` instance delegates to reference equality, which is therefore correct. Decoding eagerly at intern time keeps
-      * `asString` referentially transparent (no `AllowUnsafe` proof required to read).
+      * The opaque alias over `String` keeps `Name` distinct from raw `String` at the type level while
+      * eliminating the per-name allocation and per-classpath intern table that the former `Interner.Entry`
+      * representation required. Equality and ordering are `String` equality. `Schema[Name]` delegates to
+      * `Schema[String]` so serialization round-trips byte-stably.
       */
-    opaque type Name = Interner.Entry
+    opaque type Name = String
     object Name:
-        /** Construct a `Name` from a `String` by encoding to UTF-8 and interning the bytes.
-          *
-          * The safe-tier API: interning mutates a shared interner, so the operation is suspended into
-          * `Sync` rather than executed at the call site. Use `Name.Unsafe.init` when the caller already
-          * holds an `AllowUnsafe` proof.
-          *
-          * Example:
-          * ```scala
-          *   val n: Tasty.Name < Sync = Tasty.Name.init("scala.Predef")
-          * ```
-          */
-        def init(s: String)(using Frame): Name < Sync =
-            Sync.Unsafe.defer(Unsafe.init(s))
-
-        /** Wrap an already-interned `Entry` as a `Name`. For use by kyo-internal unpicklers only. */
-        private[kyo] def wrap(entry: Interner.Entry): Name = entry
-
-        /** Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details.
-          *
-          * Mirrors `Name.init` but runs synchronously without suspending into `Sync`. The interner is
-          * monotone (same input always produces the same interned entry) and thread-safe internally; the
-          * `AllowUnsafe` requirement marks the side effect on the shared intern table (§839 case 3).
-          */
-        object Unsafe:
-            def init(s: String)(using AllowUnsafe): Name =
-                val bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-                globalInterner.intern(bytes, 0, bytes.length)
-        end Unsafe
-
-        /** Reference equality is correct because the interner guarantees unique Entry per unique byte sequence. */
         given CanEqual[Name, Name] = CanEqual.canEqualAny
+        given Schema[Name]         = summon[Schema[String]]
+
+        /** Internal factory: widen a raw `String` to `Name`. For use by kyo-internal unpicklers only. */
+        private[kyo] def fromString(s: String): Name = s
 
         extension (n: Name)
-            /** Decode the interned bytes to a String. Pure: the decoded form is materialized eagerly at intern time. */
-            def asString: String = n.string
+            /** Return the `String` form of this name. */
+            def asString: String = n
 
-            /** True when the decoded string is empty. */
-            def isEmpty: Boolean = n.string.isEmpty
+            /** True when this name is the empty string. */
+            def isEmpty: Boolean = n.isEmpty
         end extension
     end Name
 
@@ -1575,12 +1538,10 @@ object Tasty:
                 namesEqual(names, that.names)
             case _ => false
 
-        // Compare two Span[Name] structurally by decoded string content.
-        // Name is opaque over Interner.Entry which uses reference equality; cross-classpath
-        // comparisons require string-level comparison via Name.asString.
+        // Compare two Span[Name] structurally by string content.
+        // Name is opaque over String; equality is String equality, which is content-based.
         private def namesEqual(a: Span[Name], b: Span[Name]): Boolean =
-            // Pure: Name.asString reads the eagerly-decoded String field on Interner.Entry; no
-            // side effect, no AllowUnsafe proof required.
+            // Pure: Name.asString returns the underlying String; no side effect, no AllowUnsafe proof required.
             import Name.asString
             val len = a.size
             if len != b.size then false
@@ -1595,8 +1556,7 @@ object Tasty:
         end namesEqual
 
         override def hashCode(): Int =
-            // Pure: Name.asString reads an eagerly-decoded String; this hashCode is referentially
-            // transparent and has no side effects.
+            // Pure: Name.asString returns the underlying String; referentially transparent.
             import Name.asString
             var h = 1
             h = 31 * h + bodyStart
@@ -3008,11 +2968,8 @@ object Tasty:
                     case _ => acc
         end cachedUnresolvedTypeReferenceCount
 
-        // F-W2-24: simple-name index for O(1) findClassesByName. Keyed by String (decoded name); built once.
-        // Names in the symbols array are interned via the orchestrator's internal Interner, which is a
-        // DIFFERENT Interner instance from Tasty.globalInterner. Using decoded String keys ensures that
-        // Name("Foo") via globalInterner and cls.name via the orchestrator's interner both map to the
-        // same entry, because String equality is content-based.
+        // F-W2-24: simple-name index for O(1) findClassesByName. Keyed by String content; built once.
+        // Name is opaque over String so equality is content-based across all classpaths.
         // A cp.copy(...) call rebuilds this lazily on the new Classpath.
         private lazy val nameIndex: Map[String, Chunk[Symbol.Class]] =
             import Name.asString
@@ -3524,16 +3481,16 @@ object Tasty:
           * Walks upward collecting non-empty segment names; stops when the symbol owns itself (root sentinel), when ownerId is -1, or when
           * the same symbol appears twice (cycle guard). Depth limit of 64 prevents unbounded loops.
           *
-          * Returns `Name < Sync`: the result is computed inside a `Sync.Unsafe.defer` boundary that marks the name-interning side effect.
+          * Returns `Name < Sync`: the result is computed inside a `Sync.Unsafe.defer` boundary for consistency with other Sync operations.
           */
         def fullName(sym: Symbol)(using Frame): Name < Sync =
             Sync.Unsafe.defer:
                 fullNameUnsafe(sym)
 
-        /** Unsafe-tier kernel for `fullName`. Performs the actual name interning under an `AllowUnsafe` proof. Used by internal Pass C
-          * paths and by the safe-tier `fullName` wrapper above.
+        /** Pure kernel for `fullName`. Walks the owner chain and concatenates segment strings.
+          * Used by internal Pass C paths and by the safe-tier `fullName` wrapper above.
           */
-        private[kyo] def fullNameUnsafe(sym: Symbol)(using AllowUnsafe): Name =
+        private[kyo] def fullNameUnsafe(sym: Symbol): Name =
             import Name.asString
             val visited = new java.util.HashSet[Int]()
             @scala.annotation.tailrec
@@ -3550,7 +3507,7 @@ object Tasty:
                         else go(ownerSym, depth + 1, nextAcc)
                     end if
             val parts = go(sym, 0, Nil)
-            Name.Unsafe.init(parts.mkString("."))
+            (parts.mkString("."): Name)
         end fullNameUnsafe
 
         /** Decode the body bytes of `sym` into a `Tree`, memoizing the result.
@@ -3668,9 +3625,7 @@ object Tasty:
 
         /** Sentinel symbol returned by `Classpath.symbol` for out-of-range or unassigned ids. */
         val sentinelUnresolved: Symbol =
-            // Unsafe: module-level interned sentinel; intern runs exactly once at class load (§839 case 3).
-            import AllowUnsafe.embrace.danger
-            Symbol.Unresolved(SymbolId(-1), Name.Unsafe.init("<unresolved>"), SymbolId(-1))
+            Symbol.Unresolved(SymbolId(-1), ("<unresolved>": Name), SymbolId(-1))
         end sentinelUnresolved
 
         /** Sealed hierarchy for structured build-time observations accumulated in `Classpath.diagnostics`.

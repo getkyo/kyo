@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Tasty.SymbolId
 import kyo.internal.tasty.classfile.JavaSignatures
-import kyo.internal.tasty.symbol.Interner
 
 /** Tests for the JVM generic signature parser (JVMS §4.7.9.1).
   *
@@ -15,13 +14,11 @@ class JavaSignaturesTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val interner = Interner.init(numShards = 8, initialShardCapacity = 16)
-
     // -------------------------------------------------------------------------
     // Test 13: parameterized type
     // -------------------------------------------------------------------------
     "parseFieldSignature of List<String> produces Applied(Named, Chunk(Named))" in run {
-        JavaSignatures.parseFieldSignature("Ljava/util/List<Ljava/lang/String;>;", interner).map: tpe =>
+        JavaSignatures.parseFieldSignature("Ljava/util/List<Ljava/lang/String;>;").map: tpe =>
             tpe match
                 case Tasty.Type.Applied(Tasty.Type.Named(_), args) =>
                     // plan: phase-05; name check deferred to Phase 09.
@@ -40,7 +37,7 @@ class JavaSignaturesTest extends Test:
     // Test 14: primitive array
     // -------------------------------------------------------------------------
     "parseFieldSignature of [I produces Array(Named(intSym))" in run {
-        JavaSignatures.parseFieldSignature("[I", interner).map: tpe =>
+        JavaSignatures.parseFieldSignature("[I").map: tpe =>
             tpe match
                 case Tasty.Type.Array(Tasty.Type.Named(elemId)) =>
                     assert(elemId.value == -1, s"Primitive int stub must carry SymbolId(-1), got ${elemId.value}")
@@ -52,7 +49,7 @@ class JavaSignaturesTest extends Test:
     // Test 15: nested array of String
     // -------------------------------------------------------------------------
     "parseFieldSignature of [[Ljava/lang/String; produces Array(Array(Named))" in run {
-        JavaSignatures.parseFieldSignature("[[Ljava/lang/String;", interner).map: tpe =>
+        JavaSignatures.parseFieldSignature("[[Ljava/lang/String;").map: tpe =>
             tpe match
                 case Tasty.Type.Array(Tasty.Type.Array(Tasty.Type.Named(elemId))) =>
                     assert(elemId.value == -1, s"String stub must carry SymbolId(-1), got ${elemId.value}")
@@ -64,7 +61,7 @@ class JavaSignaturesTest extends Test:
     // Test 16: covariant upper-bounded wildcard
     // -------------------------------------------------------------------------
     "parseFieldSignature of List<+Number> produces Applied with Wildcard(Nothing, Named(Number))" in run {
-        JavaSignatures.parseFieldSignature("Ljava/util/List<+Ljava/lang/Number;>;", interner).map: tpe =>
+        JavaSignatures.parseFieldSignature("Ljava/util/List<+Ljava/lang/Number;>;").map: tpe =>
             tpe match
                 case Tasty.Type.Applied(_, args) if args.length == 1 =>
                     args(0) match
@@ -81,7 +78,7 @@ class JavaSignaturesTest extends Test:
     // Test 17: contravariant lower-bounded wildcard
     // -------------------------------------------------------------------------
     "parseFieldSignature of List<-Number> produces Applied with Wildcard(Named(Number), Object)" in run {
-        JavaSignatures.parseFieldSignature("Ljava/util/List<-Ljava/lang/Number;>;", interner).map: tpe =>
+        JavaSignatures.parseFieldSignature("Ljava/util/List<-Ljava/lang/Number;>;").map: tpe =>
             tpe match
                 case Tasty.Type.Applied(_, args) if args.length == 1 =>
                     args(0) match
@@ -98,7 +95,7 @@ class JavaSignaturesTest extends Test:
     // Test 18: raw type (no angle brackets => Named, not Applied)
     // -------------------------------------------------------------------------
     "parseFieldSignature of raw Ljava/util/List; produces Named (not Applied)" in run {
-        JavaSignatures.parseFieldSignature("Ljava/util/List;", interner).map: tpe =>
+        JavaSignatures.parseFieldSignature("Ljava/util/List;").map: tpe =>
             tpe match
                 case Tasty.Type.Named(rawId) =>
                     assert(rawId.value == -1, s"Raw type stub must carry SymbolId(-1), got ${rawId.value}")
@@ -111,8 +108,7 @@ class JavaSignaturesTest extends Test:
     // -------------------------------------------------------------------------
     "parseMethodSignature with type param T produces Function with TypeParam for T" in run {
         JavaSignatures.parseMethodSignature(
-            "<T:Ljava/lang/Object;>(Ljava/util/List<TT;>;)TT;",
-            interner
+            "<T:Ljava/lang/Object;>(Ljava/util/List<TT;>;)TT;"
         ).map: fnTpe =>
             // Result is Function. Check there is one param of type Applied(List, Chunk(Named(typeParam))).
             // plan: phase-05; name and kind checks deferred to Phase 09 (Named carries SymbolId, not Symbol).
@@ -134,7 +130,7 @@ class JavaSignaturesTest extends Test:
     // Test 20: corrupt signature => ClassfileFormatError
     // -------------------------------------------------------------------------
     "parseFieldSignature with unclosed < produces ClassfileFormatError" in run {
-        Abort.run(JavaSignatures.parseFieldSignature("Ljava/util/List<Ljava/lang/String;", interner)).map: result =>
+        Abort.run(JavaSignatures.parseFieldSignature("Ljava/util/List<Ljava/lang/String;")).map: result =>
             result match
                 case Result.Failure(TastyError.ClassfileFormatError(_, reason, _)) =>
                     // An unclosed `<` must surface in the reason: either an explicit "unclosed" message

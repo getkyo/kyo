@@ -24,7 +24,7 @@ class TypeArenaTest extends Test:
     private def makeSym(name: String): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             freshId(),
-            Tasty.Name.Unsafe.init(name),
+            Tasty.Name.fromString(name),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,

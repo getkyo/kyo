@@ -2,7 +2,6 @@ package kyo
 
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.reader.SectionIndex
-import kyo.internal.tasty.symbol.Interner
 
 /** Tests for SectionIndex.read bounds checks (Phase 03a, findings C4 and INV-010). */
 class SectionIndexTest extends Test:
@@ -11,11 +10,10 @@ class SectionIndexTest extends Test:
 
     /** Build a names array with `n` entries, each named "name0", "name1", etc. */
     private def makeNames(n: Int): Array[Tasty.Name] =
-        val interner = Interner.init(numShards = 4, initialShardCapacity = 8)
         Array.tabulate(n) { i =>
             val s     = s"name$i"
             val bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-            Tasty.Name.wrap(interner.intern(bytes, 0, bytes.length))
+            Tasty.Name.fromString(kyo.internal.tasty.binary.Utf8.decode(bytes, 0, bytes.length))
         }
     end makeNames
 
@@ -74,7 +72,7 @@ class SectionIndexTest extends Test:
     // Test (Phase 21d T2): two-section encoding -- lookup of second section returns correct offset and length
     "two-section encoding: get(ASTs) returns Present with correct offset and length" in run {
         // Build a names array: names(0) = Name("NAMES"), names(1) = Name("ASTs").
-        val names = Array(Tasty.Name.Unsafe.init("NAMES"), Tasty.Name.Unsafe.init("ASTs"))
+        val names = Array(Tasty.Name.fromString("NAMES"), Tasty.Name.fromString("ASTs"))
         // Encode section table:
         //   Section 1: nameRef=0 (1 byte), len=10 (1 byte), 10 zero payload bytes. Header at offset 0.
         //              Payload starts at offset 2.

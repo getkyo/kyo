@@ -19,7 +19,7 @@ class SymbolFieldPreservationTest extends Test:
         val syms: Seq[(Int, Tasty.Symbol)] = Seq(
             1 -> Tasty.Symbol.Class(
                 SymbolId(1),
-                Tasty.Name.Unsafe.init("C"),
+                Tasty.Name.fromString("C"),
                 Tasty.Flags.empty,
                 SymbolId(0),
                 Maybe.Absent,
@@ -35,7 +35,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             2 -> Tasty.Symbol.Trait(
                 SymbolId(2),
-                Tasty.Name.Unsafe.init("T"),
+                Tasty.Name.fromString("T"),
                 Tasty.Flags.empty,
                 SymbolId(0),
                 Maybe.Absent,
@@ -51,7 +51,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             3 -> Tasty.Symbol.Object(
                 SymbolId(3),
-                Tasty.Name.Unsafe.init("O"),
+                Tasty.Name.fromString("O"),
                 Tasty.Flags.empty,
                 SymbolId(0),
                 Maybe.Absent,
@@ -66,7 +66,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             4 -> Tasty.Symbol.Method(
                 SymbolId(4),
-                Tasty.Name.Unsafe.init("m"),
+                Tasty.Name.fromString("m"),
                 Tasty.Flags.empty,
                 SymbolId(0),
                 Maybe.Absent,
@@ -80,7 +80,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             5 -> Tasty.Symbol.Val(
                 SymbolId(5),
-                Tasty.Name.Unsafe.init("v"),
+                Tasty.Name.fromString("v"),
                 Tasty.Flags.empty,
                 SymbolId(0),
                 Maybe.Absent,
@@ -91,7 +91,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             6 -> Tasty.Symbol.Var(
                 SymbolId(6),
-                Tasty.Name.Unsafe.init("vr"),
+                Tasty.Name.fromString("vr"),
                 Tasty.Flags.empty,
                 SymbolId(0),
                 Maybe.Absent,
@@ -102,7 +102,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             7 -> Tasty.Symbol.Field(
                 SymbolId(7),
-                Tasty.Name.Unsafe.init("f"),
+                Tasty.Name.fromString("f"),
                 Tasty.Flags.empty,
                 SymbolId(0),
                 Maybe.Absent,
@@ -113,7 +113,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             8 -> Tasty.Symbol.TypeAlias(
                 SymbolId(8),
-                Tasty.Name.Unsafe.init("ta"),
+                Tasty.Name.fromString("ta"),
                 Tasty.Flags.empty,
                 SymbolId(0),
                 Maybe.Absent,
@@ -124,7 +124,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             9 -> Tasty.Symbol.OpaqueType(
                 SymbolId(9),
-                Tasty.Name.Unsafe.init("ot"),
+                Tasty.Name.fromString("ot"),
                 Tasty.Flags.empty,
                 SymbolId(0),
                 Maybe.Absent,
@@ -136,7 +136,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             10 -> Tasty.Symbol.AbstractType(
                 SymbolId(10),
-                Tasty.Name.Unsafe.init("at"),
+                Tasty.Name.fromString("at"),
                 Tasty.Flags.empty,
                 SymbolId(0),
                 Maybe.Absent,
@@ -146,7 +146,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             11 -> Tasty.Symbol.TypeParam(
                 SymbolId(11),
-                Tasty.Name.Unsafe.init("tp"),
+                Tasty.Name.fromString("tp"),
                 Tasty.Flags.empty,
                 SymbolId(0),
                 Maybe.Absent,
@@ -155,7 +155,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             12 -> Tasty.Symbol.Parameter(
                 SymbolId(12),
-                Tasty.Name.Unsafe.init("p"),
+                Tasty.Name.fromString("p"),
                 Tasty.Flags.empty,
                 SymbolId(0),
                 Maybe.Absent,
@@ -165,12 +165,12 @@ class SymbolFieldPreservationTest extends Test:
             ),
             13 -> Tasty.Symbol.Package(
                 SymbolId(13),
-                Tasty.Name.Unsafe.init("pkg"),
+                Tasty.Name.fromString("pkg"),
                 Tasty.Flags.empty,
                 SymbolId(0),
                 Chunk.empty
             ),
-            14 -> Tasty.Symbol.Unresolved(SymbolId(14), Tasty.Name.Unsafe.init("u"), SymbolId(0))
+            14 -> Tasty.Symbol.Unresolved(SymbolId(14), Tasty.Name.fromString("u"), SymbolId(0))
         )
         for (expectedId, sym) <- syms do
             assert(sym.id == SymbolId(expectedId), s"Expected id=${expectedId} for ${sym.getClass.getSimpleName} but got ${sym.id.value}")
@@ -189,7 +189,7 @@ class SymbolFieldPreservationTest extends Test:
         val syms: Seq[Tasty.Symbol] = Seq(
             Tasty.Symbol.Class(
                 SymbolId(1),
-                Tasty.Name.Unsafe.init("C"),
+                Tasty.Name.fromString("C"),
                 sf,
                 SymbolId(0),
                 Maybe.Absent,
@@ -205,7 +205,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             Tasty.Symbol.Trait(
                 SymbolId(2),
-                Tasty.Name.Unsafe.init("T"),
+                Tasty.Name.fromString("T"),
                 sf,
                 SymbolId(0),
                 Maybe.Absent,
@@ -221,7 +221,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             Tasty.Symbol.Object(
                 SymbolId(3),
-                Tasty.Name.Unsafe.init("O"),
+                Tasty.Name.fromString("O"),
                 sf,
                 SymbolId(0),
                 Maybe.Absent,
@@ -236,7 +236,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             Tasty.Symbol.Method(
                 SymbolId(4),
-                Tasty.Name.Unsafe.init("m"),
+                Tasty.Name.fromString("m"),
                 sf,
                 SymbolId(0),
                 Maybe.Absent,
@@ -250,7 +250,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             Tasty.Symbol.Val(
                 SymbolId(5),
-                Tasty.Name.Unsafe.init("v"),
+                Tasty.Name.fromString("v"),
                 sf,
                 SymbolId(0),
                 Maybe.Absent,
@@ -261,7 +261,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             Tasty.Symbol.Var(
                 SymbolId(6),
-                Tasty.Name.Unsafe.init("vr"),
+                Tasty.Name.fromString("vr"),
                 sf,
                 SymbolId(0),
                 Maybe.Absent,
@@ -272,7 +272,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             Tasty.Symbol.Field(
                 SymbolId(7),
-                Tasty.Name.Unsafe.init("f"),
+                Tasty.Name.fromString("f"),
                 sf,
                 SymbolId(0),
                 Maybe.Absent,
@@ -283,7 +283,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             Tasty.Symbol.TypeAlias(
                 SymbolId(8),
-                Tasty.Name.Unsafe.init("ta"),
+                Tasty.Name.fromString("ta"),
                 sf,
                 SymbolId(0),
                 Maybe.Absent,
@@ -294,7 +294,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             Tasty.Symbol.OpaqueType(
                 SymbolId(9),
-                Tasty.Name.Unsafe.init("ot"),
+                Tasty.Name.fromString("ot"),
                 sf,
                 SymbolId(0),
                 Maybe.Absent,
@@ -306,7 +306,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             Tasty.Symbol.AbstractType(
                 SymbolId(10),
-                Tasty.Name.Unsafe.init("at"),
+                Tasty.Name.fromString("at"),
                 sf,
                 SymbolId(0),
                 Maybe.Absent,
@@ -316,7 +316,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             Tasty.Symbol.TypeParam(
                 SymbolId(11),
-                Tasty.Name.Unsafe.init("tp"),
+                Tasty.Name.fromString("tp"),
                 sf,
                 SymbolId(0),
                 Maybe.Absent,
@@ -325,7 +325,7 @@ class SymbolFieldPreservationTest extends Test:
             ),
             Tasty.Symbol.Parameter(
                 SymbolId(12),
-                Tasty.Name.Unsafe.init("p"),
+                Tasty.Name.fromString("p"),
                 sf,
                 SymbolId(0),
                 Maybe.Absent,
@@ -333,8 +333,8 @@ class SymbolFieldPreservationTest extends Test:
                 Maybe.Absent,
                 Chunk.empty
             ),
-            Tasty.Symbol.Package(SymbolId(13), Tasty.Name.Unsafe.init("pkg"), sf, SymbolId(0), Chunk.empty),
-            Tasty.Symbol.Unresolved(SymbolId(14), Tasty.Name.Unsafe.init("u"), SymbolId(0))
+            Tasty.Symbol.Package(SymbolId(13), Tasty.Name.fromString("pkg"), sf, SymbolId(0), Chunk.empty),
+            Tasty.Symbol.Unresolved(SymbolId(14), Tasty.Name.fromString("u"), SymbolId(0))
         )
         // Note: Unresolved ignores constructor flags and returns Flags.empty (by design).
         val subtypesWithFlags = syms.dropRight(1)
@@ -359,7 +359,7 @@ class SymbolFieldPreservationTest extends Test:
         val namedType = Tasty.Type.Named(SymbolId(1))
         val method = Tasty.Symbol.Method(
             SymbolId(20),
-            Tasty.Name.Unsafe.init("m"),
+            Tasty.Name.fromString("m"),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,
@@ -373,7 +373,7 @@ class SymbolFieldPreservationTest extends Test:
         )
         val vl = Tasty.Symbol.Val(
             SymbolId(21),
-            Tasty.Name.Unsafe.init("v"),
+            Tasty.Name.fromString("v"),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,
@@ -384,7 +384,7 @@ class SymbolFieldPreservationTest extends Test:
         )
         val vr = Tasty.Symbol.Var(
             SymbolId(22),
-            Tasty.Name.Unsafe.init("vr"),
+            Tasty.Name.fromString("vr"),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,
@@ -395,7 +395,7 @@ class SymbolFieldPreservationTest extends Test:
         )
         val field = Tasty.Symbol.Field(
             SymbolId(23),
-            Tasty.Name.Unsafe.init("f"),
+            Tasty.Name.fromString("f"),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,
@@ -406,7 +406,7 @@ class SymbolFieldPreservationTest extends Test:
         )
         val param = Tasty.Symbol.Parameter(
             SymbolId(24),
-            Tasty.Name.Unsafe.init("p"),
+            Tasty.Name.fromString("p"),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,
@@ -433,7 +433,7 @@ class SymbolFieldPreservationTest extends Test:
         val pt = Chunk(Tasty.Type.Named(SymbolId(2)))
         val cls = Tasty.Symbol.Class(
             SymbolId(30),
-            Tasty.Name.Unsafe.init("C"),
+            Tasty.Name.fromString("C"),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,
@@ -449,7 +449,7 @@ class SymbolFieldPreservationTest extends Test:
         )
         val trt = Tasty.Symbol.Trait(
             SymbolId(31),
-            Tasty.Name.Unsafe.init("T"),
+            Tasty.Name.fromString("T"),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,
@@ -465,7 +465,7 @@ class SymbolFieldPreservationTest extends Test:
         )
         val obj = Tasty.Symbol.Object(
             SymbolId(32),
-            Tasty.Name.Unsafe.init("O"),
+            Tasty.Name.fromString("O"),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,
@@ -495,7 +495,7 @@ class SymbolFieldPreservationTest extends Test:
         val psi = Maybe(Chunk(SymbolId(3)))
         val cls = Tasty.Symbol.Class(
             SymbolId(40),
-            Tasty.Name.Unsafe.init("C"),
+            Tasty.Name.fromString("C"),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,
@@ -511,7 +511,7 @@ class SymbolFieldPreservationTest extends Test:
         )
         val trt = Tasty.Symbol.Trait(
             SymbolId(41),
-            Tasty.Name.Unsafe.init("T"),
+            Tasty.Name.fromString("T"),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,

@@ -27,7 +27,7 @@ class SubtypeTest extends Test:
         val leafName = fqn.split("\\.").last
         Tasty.Symbol.Class(
             id = freshId(),
-            name = Tasty.Name.Unsafe.init(leafName),
+            name = Tasty.Name.fromString(leafName),
             flags = Tasty.Flags.empty,
             ownerId = SymbolId(-1),
             scaladoc = Maybe.Absent,
@@ -46,7 +46,7 @@ class SubtypeTest extends Test:
     private def makeCovParam(name: String): Tasty.Symbol.TypeParam =
         Tasty.Symbol.TypeParam(
             id = freshId(),
-            name = Tasty.Name.Unsafe.init(name),
+            name = Tasty.Name.fromString(name),
             flags = Tasty.Flags(Tasty.Flag.CoVariant),
             ownerId = SymbolId(-1),
             sourcePosition = Maybe.Absent,
@@ -71,7 +71,7 @@ class SubtypeTest extends Test:
         val maxId = syms.foldLeft(-1)((m, s) => math.max(m, s.id.value))
         val arr   = new Array[Tasty.Symbol](maxId + 1)
         // Fill with sentinel first
-        val sentinel = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name.Unsafe.init("<sentinel>"))
+        val sentinel = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name.fromString("<sentinel>"))
         var fi       = 0
         while fi <= maxId do
             arr(fi) = sentinel

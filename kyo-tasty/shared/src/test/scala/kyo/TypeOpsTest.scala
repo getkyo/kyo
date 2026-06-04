@@ -17,7 +17,7 @@ class TypeOpsTest extends Test:
     private def makeNamedSym(fqn: String): Tasty.Type.Named =
         // plan: phase-05; Symbol.make returns id = SymbolId(-1); Named(id) is a structural value.
         val leafName = fqn.split("\\.").last
-        val sym      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init(leafName))
+        val sym      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString(leafName))
         Tasty.Type.Named(sym.id)
     end makeNamedSym
 

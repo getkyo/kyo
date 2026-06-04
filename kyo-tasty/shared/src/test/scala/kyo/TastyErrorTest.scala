@@ -3,7 +3,6 @@ package kyo
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ConstantPool
 import kyo.internal.tasty.reader.SectionIndex
-import kyo.internal.tasty.symbol.Interner
 
 /** Tests verifying INV-006: every TastyError.MalformedSection, ClassfileFormatError, and SnapshotFormatError carries a byteOffset field
   * (Phase 14a).
@@ -13,9 +12,8 @@ class TastyErrorTest extends Test:
     import AllowUnsafe.embrace.danger
 
     private def makeName(s: String): Tasty.Name =
-        val interner = Interner.init(numShards = 4, initialShardCapacity = 8)
-        val bytes    = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        Tasty.Name.wrap(interner.intern(bytes, 0, bytes.length))
+        val bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        Tasty.Name.fromString(kyo.internal.tasty.binary.Utf8.decode(bytes, 0, bytes.length))
     end makeName
 
     private def encodeNat(n: Int): Array[Byte] =
@@ -57,14 +55,13 @@ class TastyErrorTest extends Test:
     //        Exact offset 3L documented in phase-14a-decisions.md.
     // Pins:  INV-006.
     "ClassfileFormatError captures constant-pool decode position" in run {
-        val interner = Interner.init(numShards = 4, initialShardCapacity = 8)
         val bytes: Array[Byte] = Array(
             0x00.toByte,
             0x02.toByte, // cp_count = 2 (one entry at index 1)
             0xff.toByte  // unknown CP tag -> errorOffset = view.position after reading = 3L
         )
         val view = ByteView(bytes)
-        Abort.run[TastyError](ConstantPool.read(view, interner, "<test>")).map: result =>
+        Abort.run[TastyError](ConstantPool.read(view, "<test>")).map: result =>
             result match
                 case Result.Failure(TastyError.ClassfileFormatError(_, _, 3L)) =>
                     succeed

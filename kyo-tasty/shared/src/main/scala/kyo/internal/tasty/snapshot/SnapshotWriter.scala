@@ -806,7 +806,7 @@ object SnapshotWriter:
         baos.toByteArray
     end serializeCompanionIndex
 
-    /** Convert a Name (opaque Interner.Entry) to a String. */
+    /** Convert a Name (opaque String alias) to a String. */
     private def nameToStr(n: Tasty.Name): String =
         import Tasty.Name.asString
         n.asString

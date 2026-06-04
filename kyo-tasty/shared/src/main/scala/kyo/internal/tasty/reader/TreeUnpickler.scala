@@ -825,7 +825,7 @@ object TreeUnpickler:
                 // PARAMtype: cat-5 (tag + Length + binder_addr + paramNum). Param reference type.
                 val end = view.readEnd()
                 view.goto(end)
-                Tasty.Tree.Ident(Tasty.Name.Unsafe.init("param"), Tasty.Type.Named(makeUnresolvedSym("param").id))
+                Tasty.Tree.Ident(Tasty.Name.fromString("param"), Tasty.Type.Named(makeUnresolvedSym("param").id))
 
             // Explicit Unknown arms for macro/quote tags (legitimate but rare).
             case TastyFormat.QUOTE =>
@@ -1222,7 +1222,7 @@ object TreeUnpickler:
                 name
             case other =>
                 skipTreeBody(other, view)
-                Tasty.Name.Unsafe.init("")
+                Tasty.Name.fromString("")
         end match
     end extractPackageName
 
@@ -1310,16 +1310,16 @@ object TreeUnpickler:
 
     // ── Name helper ───────────────────────────────────────────────────────────
 
-    private def nameFromRef(nameRef: Int, ctx: DecodeCtx)(using AllowUnsafe): Tasty.Name =
+    private def nameFromRef(nameRef: Int, ctx: DecodeCtx): Tasty.Name =
         if nameRef >= 0 && nameRef < ctx.names.length then ctx.names(nameRef)
-        else Tasty.Name.Unsafe.init(s"name@$nameRef")
+        else Tasty.Name.fromString(s"name@$nameRef")
     end nameFromRef
 
     private def makeUnresolvedSym(name: String)(using AllowUnsafe): Tasty.Symbol =
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name.Unsafe.init(name)
+            Tasty.Name.fromString(name)
         )
     end makeUnresolvedSym
 

@@ -24,7 +24,7 @@ class SteeringTargetUseCaseTest extends Test:
         Sync.defer:
             val clsB = Tasty.Symbol.Class(
                 SymbolId(0),
-                Tasty.Name.Unsafe.init("B"),
+                Tasty.Name.fromString("B"),
                 Tasty.Flags.empty,
                 SymbolId(4),
                 Maybe.Absent,
@@ -40,7 +40,7 @@ class SteeringTargetUseCaseTest extends Test:
             )
             val clsA = Tasty.Symbol.Class(
                 SymbolId(1),
-                Tasty.Name.Unsafe.init("A"),
+                Tasty.Name.fromString("A"),
                 Tasty.Flags.empty,
                 SymbolId(4),
                 Maybe.Absent,
@@ -56,7 +56,7 @@ class SteeringTargetUseCaseTest extends Test:
             )
             val mFoo = Tasty.Symbol.Method(
                 SymbolId(2),
-                Tasty.Name.Unsafe.init("foo"),
+                Tasty.Name.fromString("foo"),
                 Tasty.Flags.empty,
                 SymbolId(1),
                 Maybe.Absent,
@@ -70,7 +70,7 @@ class SteeringTargetUseCaseTest extends Test:
             )
             val vX = Tasty.Symbol.Val(
                 SymbolId(3),
-                Tasty.Name.Unsafe.init("x"),
+                Tasty.Name.fromString("x"),
                 Tasty.Flags.empty,
                 SymbolId(1),
                 Maybe.Absent,
@@ -81,7 +81,7 @@ class SteeringTargetUseCaseTest extends Test:
             )
             val pkg = Tasty.Symbol.Package(
                 SymbolId(4),
-                Tasty.Name.Unsafe.init("pkg"),
+                Tasty.Name.fromString("pkg"),
                 Tasty.Flags.empty,
                 SymbolId(-1),
                 memberIds = Chunk(SymbolId(0), SymbolId(1))

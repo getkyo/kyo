@@ -265,7 +265,7 @@ class TastyErrorMaybeTest extends Test:
         val sym = Tasty.Symbol.makePlaceholder(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name.Unsafe.init("testSym")
+            Tasty.Name.fromString("testSym")
         )
         val body = Tasty.SymbolBody(
             bodyStart = 0,

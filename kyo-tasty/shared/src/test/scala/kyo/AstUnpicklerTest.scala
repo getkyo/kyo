@@ -8,7 +8,6 @@ import kyo.internal.tasty.reader.NameUnpickler
 import kyo.internal.tasty.reader.SectionIndex
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
-import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 import scala.collection.mutable
@@ -33,12 +32,11 @@ class AstUnpicklerTest extends Test:
 
     /** Parse a TASTy file and run pass 1. Returns the Pass1Result. */
     private def runPass1(bytes: Array[Byte])(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
-        val view     = ByteView(bytes)
-        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
-        val arena    = TypeArena.canonical()
+        val view  = ByteView(bytes)
+        val arena = TypeArena.canonical()
         for
             _        <- TastyHeader.read(view)
-            names    <- NameUnpickler.read(view, interner)
+            names    <- NameUnpickler.read(view)
             sections <- SectionIndex.read(view, names)
             attrs = FileAttributes.default
             result <- sections.get(TastyFormat.ASTsSection) match
@@ -56,11 +54,10 @@ class AstUnpicklerTest extends Test:
         Frame
     )
         : AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
-        val view     = ByteView(bytes)
-        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
+        val view = ByteView(bytes)
         for
             _        <- TastyHeader.read(view)
-            names    <- NameUnpickler.read(view, interner)
+            names    <- NameUnpickler.read(view)
             sections <- SectionIndex.read(view, names)
             attrs = FileAttributes.default
             result <- sections.get(TastyFormat.ASTsSection) match

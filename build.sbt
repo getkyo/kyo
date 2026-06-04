@@ -620,7 +620,6 @@ def kyoTastyEmbeddedTextGenerator(platform: String): Def.Initialize[Task[Seq[Fil
         "readme"      -> ("README.md",                                                         IO.read(base / "README.md")),
         "tasty"       -> ("kyo/Tasty.scala",                                                   IO.read(srcBase / "kyo" / "Tasty.scala")),
         "clsUnpickle" -> ("kyo/internal/tasty/classfile/ClassfileUnpickler.scala",             IO.read(srcBase / "kyo" / "internal" / "tasty" / "classfile" / "ClassfileUnpickler.scala")),
-        "onceCell"    -> ("kyo/internal/tasty/symbol/OnceCell.scala",                          IO.read(srcBase / "kyo" / "internal" / "tasty" / "symbol" / "OnceCell.scala")),
         "constant"    -> ("kyo/internal/tasty/symbol/Constant.scala",                          IO.read(srcBase / "kyo" / "internal" / "tasty" / "symbol" / "Constant.scala"))
     )
     val fields = filesToEmbed.map { case (varName, (_, content)) =>
@@ -650,7 +649,7 @@ lazy val `kyo-tasty` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-tasty"))
-        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-core`, `kyo-schema`)
         .settings(
             `kyo-settings`,
             doctestPredef := Seq("import kyo.*", "import kyo.Tasty.*"),
@@ -664,7 +663,6 @@ lazy val `kyo-tasty` =
                     (base / "README.md")                                                                -> "README.md",
                     (srcBase / "kyo" / "Tasty.scala")                                                   -> "kyo/Tasty.scala",
                     (srcBase / "kyo" / "internal" / "tasty" / "classfile" / "ClassfileUnpickler.scala") -> "kyo/internal/tasty/classfile/ClassfileUnpickler.scala",
-                    (srcBase / "kyo" / "internal" / "tasty" / "symbol" / "OnceCell.scala")              -> "kyo/internal/tasty/symbol/OnceCell.scala",
                     (srcBase / "kyo" / "internal" / "tasty" / "symbol" / "Constant.scala")              -> "kyo/internal/tasty/symbol/Constant.scala"
                 )
                 filesToCopy.map { case (src, resourcePath) =>

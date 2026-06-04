@@ -4,7 +4,6 @@ import kyo.Tasty.SymbolId
 import kyo.internal.tasty.classfile.ClassfileUnpickler
 import kyo.internal.tasty.scala2.Scala2PickleReader
 import kyo.internal.tasty.scala2.Scala2PickleResult
-import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.type_.TypeArena
 
 /** Tests for Phase 10: Scala 2 pickle reader.
@@ -30,8 +29,6 @@ import kyo.internal.tasty.type_.TypeArena
 class Scala2PickleTest extends Test:
 
     import AllowUnsafe.embrace.danger
-
-    private val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
 
     // -------------------------------------------------------------------------
     // Pickle builder helpers
@@ -90,7 +87,7 @@ class Scala2PickleTest extends Test:
       * Scala2PickleReader invocation (since we can't inject a custom attribute into a JDK classfile at test time).
       */
     private def readPickleDirect(pickleBytes: Array[Byte])(using Frame): Scala2PickleResult < (Sync & Abort[TastyError]) =
-        Scala2PickleReader.readRaw(pickleBytes, interner, new TypeArena)
+        Scala2PickleReader.readRaw(pickleBytes, new TypeArena)
 
     // -------------------------------------------------------------------------
     // Test 1: ScalaSig attribute -> Flag.Scala2 on all symbols
@@ -193,7 +190,7 @@ class Scala2PickleTest extends Test:
     // Cross-platform (Phase 2 post-audit): uses Embedded.throwsFixtureClass instead of JDK Object.class.
     // Any Java classfile without ScalaSig works; the shape assertion (no Scala2 flag) is fixture-independent.
     "Test 5: Java-only classfile (no ScalaSig attribute) -> Flag.Scala2 is absent" in run {
-        val result = ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, interner, new TypeArena)
+        val result = ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena)
         result.map: r =>
             val sym = r.classSymbol
             assert(!sym.flags.contains(Tasty.Flag.Scala2), s"Expected no Flag.Scala2 on Java classfile; got flags=${sym.flags.bits}")

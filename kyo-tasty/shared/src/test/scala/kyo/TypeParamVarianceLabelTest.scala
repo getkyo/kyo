@@ -15,7 +15,7 @@ class TypeParamVarianceLabelTest extends Test:
     private def makeTypeParam(id: Int, v: Tasty.Variance): Tasty.Symbol.TypeParam =
         Tasty.Symbol.TypeParam(
             SymbolId(id),
-            Tasty.Name.Unsafe.init("T"),
+            Tasty.Name.fromString("T"),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,

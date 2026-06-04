@@ -4,7 +4,6 @@ import kyo.Tasty.SymbolId
 import kyo.internal.tasty.classfile.ClassfileUnpickler
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
-import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
@@ -620,10 +619,9 @@ class QueryApiTest extends Test:
     // we read the pre-merge ClassfileResult fields (cr.parents, cr.typeParams, cr.symbols) directly.
     // Phase 09 adds sym.parents/typeParams/declarations as member methods accessible post-finalizeMerge.
     "Phase 3: Java classfile symbol parents, typeParams, declarations are accessible" in run {
-        val bytes    = kyo.fixtures.Embedded.arrayRecordClass
-        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
+        val bytes = kyo.fixtures.Embedded.arrayRecordClass
         Abort.run[TastyError]:
-            ClassfileUnpickler.read(bytes, interner, new TypeArena).flatMap: cr =>
+            ClassfileUnpickler.read(bytes, new TypeArena).flatMap: cr =>
                 Tasty.Classpath.fromPickles(Seq.empty).map: miniCp =>
                     cr
         .flatMap:
@@ -846,10 +844,9 @@ class QueryApiTest extends Test:
     // expected type. ArrayRecord.class has a single int[] component 'values'; its member symbol's
     // declaredType should be Type.Array(Type.Named(intSym)).
     "Phase 5: Java classfile field declaredType returns Array type for int[] values" in run {
-        val bytes    = kyo.fixtures.Embedded.arrayRecordClass
-        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
+        val bytes = kyo.fixtures.Embedded.arrayRecordClass
         Abort.run[TastyError]:
-            ClassfileUnpickler.read(bytes, interner, new TypeArena).flatMap: cr =>
+            ClassfileUnpickler.read(bytes, new TypeArena).flatMap: cr =>
                 Tasty.Classpath.fromPickles(Seq.empty).map: miniCp =>
                     cr
         .flatMap:

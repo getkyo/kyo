@@ -14,7 +14,7 @@ class DeclarationTableTest extends Test:
         Tasty.Symbol.makePlaceholder(
             Tasty.SymbolKind.Val,
             Tasty.Flags.empty,
-            Tasty.Name.Unsafe.init(nameStr)
+            Tasty.Name.fromString(nameStr)
         )
     end makeSymbol
 
@@ -22,7 +22,7 @@ class DeclarationTableTest extends Test:
     // Verifies that small tables (size <= 8) use the flat-array internal representation.
     "class with 4 members uses flat-array Dict path: all members retrievable" in run {
         import AllowUnsafe.embrace.danger
-        val members = (1 to 4).map(i => Tasty.Name.Unsafe.init(s"member$i") -> makeSymbol(s"member$i"))
+        val members = (1 to 4).map(i => Tasty.Name.fromString(s"member$i") -> makeSymbol(s"member$i"))
         val table   = DeclarationTable.build(members)
         assert(
             table.storageKind == "flat-array",
@@ -41,7 +41,7 @@ class DeclarationTableTest extends Test:
     // Verifies that larger tables (size > 8) use the HashMap internal representation.
     "class with 9 members (above threshold) uses HashMap path: all members retrievable" in run {
         import AllowUnsafe.embrace.danger
-        val members = (1 to 9).map(i => Tasty.Name.Unsafe.init(s"field$i") -> makeSymbol(s"field$i"))
+        val members = (1 to 9).map(i => Tasty.Name.fromString(s"field$i") -> makeSymbol(s"field$i"))
         val table   = DeclarationTable.build(members)
         assert(
             table.storageKind == "hash-map",
@@ -64,7 +64,7 @@ class DeclarationTableTest extends Test:
         import AllowUnsafe.embrace.danger
         Async.timeout(1.second) {
             val table   = DeclarationTable.init()
-            val members = (1 to 4).map(i => Tasty.Name.Unsafe.init(s"m$i") -> makeSymbol(s"m$i"))
+            val members = (1 to 4).map(i => Tasty.Name.fromString(s"m$i") -> makeSymbol(s"m$i"))
             for
                 latch <- Latch.init(1)
                 readerFiber <- Fiber.initUnscoped(

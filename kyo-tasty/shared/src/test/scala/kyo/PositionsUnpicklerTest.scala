@@ -3,7 +3,6 @@ package kyo
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileUnpickler
 import kyo.internal.tasty.reader.PositionsUnpickler
-import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 
@@ -55,7 +54,7 @@ class PositionsUnpicklerTest extends Test:
         Tasty.Symbol.makePlaceholder(
             Tasty.SymbolKind.Class,
             Tasty.Flags.empty,
-            Tasty.Name.Unsafe.init(nameStr)
+            Tasty.Name.fromString(nameStr)
         )
     end makeTestSymbol
 
@@ -144,10 +143,9 @@ class PositionsUnpicklerTest extends Test:
     // classfiles have no TASTy Positions section; ClassfileUnpickler sets _position to Absent.
     "PositionsUnpickler: Java classfile symbol always has position == Absent" in run {
         val classBytes = kyo.fixtures.Embedded.arrayRecordClass
-        val interner   = Interner.init(numShards = 32, initialShardCapacity = 16)
         val arena      = new TypeArena
         Abort.run[TastyError]:
-            ClassfileUnpickler.read(classBytes, interner, arena).flatMap: result =>
+            ClassfileUnpickler.read(classBytes, arena).flatMap: result =>
                 Tasty.Classpath.fromPickles(Seq.empty).map: miniCp =>
                     result
         .map:

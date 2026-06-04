@@ -24,14 +24,14 @@ class ClasspathAnnotatedJavaTest extends Test:
             // Owner chain for "java.lang.Deprecated": pkg "java"(0) -> pkg "lang"(1) -> cls "Deprecated"(2)
             // Symbol 0: Package "java" (root owner)
             val pkgJava =
-                Tasty.Symbol.Package(SymbolId(0), Tasty.Name.Unsafe.init("java"), Tasty.Flags.empty, SymbolId(-1), Chunk(SymbolId(1)))
+                Tasty.Symbol.Package(SymbolId(0), Tasty.Name.fromString("java"), Tasty.Flags.empty, SymbolId(-1), Chunk(SymbolId(1)))
             // Symbol 1: Package "lang" (owner = java)
             val pkgLang =
-                Tasty.Symbol.Package(SymbolId(1), Tasty.Name.Unsafe.init("lang"), Tasty.Flags.empty, SymbolId(0), Chunk(SymbolId(2)))
+                Tasty.Symbol.Package(SymbolId(1), Tasty.Name.fromString("lang"), Tasty.Flags.empty, SymbolId(0), Chunk(SymbolId(2)))
             // Symbol 2: Class "Deprecated" (owner = lang); fullName = "java.lang.Deprecated"
             val annotCls = Tasty.Symbol.Class(
                 SymbolId(2),
-                Tasty.Name.Unsafe.init("Deprecated"),
+                Tasty.Name.fromString("Deprecated"),
                 Tasty.Flags.empty,
                 SymbolId(1),
                 Maybe.Absent,
@@ -49,7 +49,7 @@ class ClasspathAnnotatedJavaTest extends Test:
             val javaAnnot = Tasty.JavaAnnotation(annotCls, Chunk.empty)
             val clsA = Tasty.Symbol.Class(
                 SymbolId(3),
-                Tasty.Name.Unsafe.init("A"),
+                Tasty.Name.fromString("A"),
                 Tasty.Flags.empty,
                 SymbolId(-1),
                 Maybe.Absent,
@@ -66,7 +66,7 @@ class ClasspathAnnotatedJavaTest extends Test:
             // Symbol 4: class "B" with no Java annotation
             val clsB = Tasty.Symbol.Class(
                 SymbolId(4),
-                Tasty.Name.Unsafe.init("B"),
+                Tasty.Name.fromString("B"),
                 Tasty.Flags.empty,
                 SymbolId(-1),
                 Maybe.Absent,

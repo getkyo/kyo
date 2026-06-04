@@ -10,7 +10,6 @@ import kyo.internal.tasty.reader.SectionIndex
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
 import kyo.internal.tasty.reader.TreeUnpickler
-import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
@@ -74,15 +73,14 @@ class TreeUnpicklerTest extends Test:
 
     /** Dummy symbolLookup for Phase 02 tree decode (addrMap is empty; this is never called). */
     private val dummyLookup: Int => Tasty.Symbol =
-        _ => Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name.Unsafe.init("unresolved"))
+        _ => Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name.fromString("unresolved"))
 
     private def runPass1(bytes: Array[Byte])(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
-        val view     = ByteView(bytes)
-        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
-        val arena    = TypeArena.canonical()
+        val view  = ByteView(bytes)
+        val arena = TypeArena.canonical()
         for
             _        <- TastyHeader.read(view)
-            names    <- NameUnpickler.read(view, interner)
+            names    <- NameUnpickler.read(view)
             sections <- SectionIndex.read(view, names)
             attrs = FileAttributes.default
             result <- sections.get(TastyFormat.ASTsSection) match
@@ -390,8 +388,8 @@ class TreeUnpicklerTest extends Test:
     "Phase17-A: UNITconst pickle decodes to Literal(UnitConst)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val sym     = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init("Int"))
-        val names   = Array(Tasty.Name.Unsafe.init("scala"))
+        val sym     = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("Int"))
+        val names   = Array(Tasty.Name.fromString("scala"))
         val addrMap = IntMap(1 -> sym)
         val pickle  = Array(TastyFormat.UNITconst.toByte)
         decodeAnnPickle(pickle, names, addrMap) match
@@ -405,7 +403,7 @@ class TreeUnpicklerTest extends Test:
     // Test B (INV-006): Annotation with an empty arguments chunk (empty pickle case) holds Chunk.empty.
     // Phase 08: empty annotation pickle path produces an empty chunk directly in ANNOTATEDtype.
     "Phase17-B: Annotation with an empty arguments chunk holds Chunk.empty" in {
-        val sym = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init("Foo"))
+        val sym = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("Foo"))
         val ann = Tasty.Annotation(Tasty.Type.Named(sym.id), Chunk.empty)
         assert(ann.arguments.isEmpty, s"Expected empty arguments but got ${ann.arguments}")
         succeed
@@ -417,7 +415,7 @@ class TreeUnpicklerTest extends Test:
     "Phase18a-1: PRIVATE byte decodes to Tree.Modifier(Flag.Private)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val names   = Array(Tasty.Name.Unsafe.init("dummy"))
+        val names   = Array(Tasty.Name.fromString("dummy"))
         val addrMap = IntMap.empty[Tasty.Symbol]
         val pickle  = Array(TastyFormat.PRIVATE.toByte)
         decodeAnnPickle(pickle, names, addrMap) match
@@ -431,7 +429,7 @@ class TreeUnpicklerTest extends Test:
     // Test 18a-2 (M1 category 1 negative): unknown category-1 tag throws DecodeException.
     "Phase18a-2: unrecognised category-1 byte yields Failure(MalformedSection)" in run {
         import scala.collection.immutable.IntMap
-        val names      = Array(Tasty.Name.Unsafe.init("dummy"))
+        val names      = Array(Tasty.Name.fromString("dummy"))
         val addrMap    = IntMap.empty[Tasty.Symbol]
         val unknownTag = Array(50.toByte)
         decodeAnnPickle(unknownTag, names, addrMap) match
@@ -450,7 +448,7 @@ class TreeUnpicklerTest extends Test:
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
         val pickle = Array(TastyFormat.OBJECT.toByte)
-        decodeAnnPickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), IntMap.empty) match
+        decodeAnnPickle(pickle, Array(Tasty.Name.fromString("dummy")), IntMap.empty) match
             case Result.Success(Tasty.Tree.Modifier(flag)) if flag == Tasty.Flag.Module => succeed
             case other                                                                  => fail(s"Expected Modifier(Module), got: $other")
     }
@@ -459,7 +457,7 @@ class TreeUnpicklerTest extends Test:
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
         val pickle = Array(TastyFormat.TRAIT.toByte)
-        decodeAnnPickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), IntMap.empty) match
+        decodeAnnPickle(pickle, Array(Tasty.Name.fromString("dummy")), IntMap.empty) match
             case Result.Success(Tasty.Tree.Modifier(flag)) if flag == Tasty.Flag.Trait => succeed
             case other                                                                 => fail(s"Expected Modifier(Trait), got: $other")
     }
@@ -468,7 +466,7 @@ class TreeUnpicklerTest extends Test:
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
         val pickle = Array(TastyFormat.ENUM.toByte)
-        decodeAnnPickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), IntMap.empty) match
+        decodeAnnPickle(pickle, Array(Tasty.Name.fromString("dummy")), IntMap.empty) match
             case Result.Success(Tasty.Tree.Modifier(flag)) if flag == Tasty.Flag.Enum => succeed
             case other                                                                => fail(s"Expected Modifier(Enum), got: $other")
     }
@@ -479,7 +477,7 @@ class TreeUnpicklerTest extends Test:
     "Phase18b-1: SHAREDtype + nat(42) decodes to Tree.Shared(42)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val names   = Array(Tasty.Name.Unsafe.init("dummy"))
+        val names   = Array(Tasty.Name.fromString("dummy"))
         val addrMap = IntMap.empty[Tasty.Symbol]
         // SHAREDtype = 61; nat(42): single-byte encoding with stop-bit set = 42 | 0x80 = 0xAA.
         val pickle = Array(TastyFormat.SHAREDtype.toByte, (42 | 0x80).toByte)
@@ -495,7 +493,7 @@ class TreeUnpicklerTest extends Test:
     "Phase18b-2: INTconst + int(7) decodes to Tree.Literal(Constant.IntConst(7))" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val names   = Array(Tasty.Name.Unsafe.init("dummy"))
+        val names   = Array(Tasty.Name.fromString("dummy"))
         val addrMap = IntMap.empty[Tasty.Symbol]
         // INTconst = 70; int(7): signed readInt encoding, single byte with stop-bit set = 7 | 0x80 = 0x87.
         val pickle = Array(TastyFormat.INTconst.toByte, (7 | 0x80).toByte)
@@ -519,9 +517,9 @@ class TreeUnpicklerTest extends Test:
     "Phase18c-1: APPLIEDtype decodes tycon + one arg into Tree.AppliedType" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val listSym = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init("List"))
-        val intSym  = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init("Int"))
-        val names   = Array(Tasty.Name.Unsafe.init("scala"))
+        val listSym = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("List"))
+        val intSym  = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("Int"))
+        val names   = Array(Tasty.Name.fromString("scala"))
         val addrMap = IntMap(1 -> listSym, 2 -> intSym)
         // APPLIEDtype(161=0xA1) Length(4=0x84) TERMREFdirect(62=0x3E) nat(1)=0x81 TERMREFdirect(62=0x3E) nat(2)=0x82
         val pickle = Array[Byte](
@@ -553,12 +551,12 @@ class TreeUnpicklerTest extends Test:
     "Phase18c-2: MATCHtype with 2 case nodes decodes into Tree.MatchType with cases.length==2" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        def makeSym(n: String) = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init(n))
+        def makeSym(n: String) = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString(n))
         val boundSym           = makeSym("Bound")
         val scrutSym           = makeSym("Scrut")
         val case1Sym           = makeSym("Case1")
         val case2Sym           = makeSym("Case2")
-        val names              = Array(Tasty.Name.Unsafe.init("scala"))
+        val names              = Array(Tasty.Name.fromString("scala"))
         val addrMap            = IntMap(1 -> boundSym, 2 -> scrutSym, 3 -> case1Sym, 4 -> case2Sym)
         val pickle = Array[Byte](
             TastyFormat.MATCHtype.toByte,
@@ -588,12 +586,12 @@ class TreeUnpicklerTest extends Test:
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
         val names = Array(
-            Tasty.Name.Unsafe.init("a"),
-            Tasty.Name.Unsafe.init("b"),
-            Tasty.Name.Unsafe.init("c"),
-            Tasty.Name.Unsafe.init("d"),
-            Tasty.Name.Unsafe.init("e"),
-            Tasty.Name.Unsafe.init("scala")
+            Tasty.Name.fromString("a"),
+            Tasty.Name.fromString("b"),
+            Tasty.Name.fromString("c"),
+            Tasty.Name.fromString("d"),
+            Tasty.Name.fromString("e"),
+            Tasty.Name.fromString("scala")
         )
         val addrMap = IntMap.empty[Tasty.Symbol]
         val pickle  = Array(TastyFormat.TERMREFpkg.toByte, (5 | 0x80).toByte)
@@ -609,9 +607,9 @@ class TreeUnpicklerTest extends Test:
     "Phase18d-2: SELECTin with nameRef + qual + owner decodes to Tree.SelectIn" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val listSym  = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init("List"))
-        val scalaSym = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init("scala"))
-        val names    = Array(Tasty.Name.Unsafe.init("map"))
+        val listSym  = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("List"))
+        val scalaSym = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("scala"))
+        val names    = Array(Tasty.Name.fromString("map"))
         val addrMap  = IntMap(1 -> listSym, 2 -> scalaSym)
         val pickle = Array[Byte](
             TastyFormat.SELECTin.toByte,
@@ -681,11 +679,11 @@ class TreeUnpicklerTest extends Test:
     "Phase18e-2: APPLY with fun + 2 args decodes to Tree.Apply with fun and 2-element args chunk" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        def makeSym(n: String) = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Method, Tasty.Flags.empty, Tasty.Name.Unsafe.init(n))
+        def makeSym(n: String) = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Method, Tasty.Flags.empty, Tasty.Name.fromString(n))
         val fnSym              = makeSym("fn")
         val arg1Sym            = makeSym("arg1")
         val arg2Sym            = makeSym("arg2")
-        val names              = Array(Tasty.Name.Unsafe.init("test"))
+        val names              = Array(Tasty.Name.fromString("test"))
         val addrMap            = IntMap(1 -> fnSym, 2 -> arg1Sym, 3 -> arg2Sym)
         val pickle = Array[Byte](
             TastyFormat.APPLY.toByte,

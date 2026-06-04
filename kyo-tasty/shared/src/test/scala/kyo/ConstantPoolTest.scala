@@ -3,7 +3,6 @@ package kyo
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileFormat
 import kyo.internal.tasty.classfile.ConstantPool
-import kyo.internal.tasty.symbol.Interner
 
 /** Tests for ConstantPool constant pool entry validation (Phase 05c C3, Phase 09 B5).
   *
@@ -13,8 +12,6 @@ import kyo.internal.tasty.symbol.Interner
 class ConstantPoolTest extends Test:
 
     import AllowUnsafe.embrace.danger
-
-    private val interner = Interner.init(numShards = 4, initialShardCapacity = 8)
 
     /** Minimal in-memory ByteView.Mapped stub backed by an Array[Byte].
       *
@@ -127,7 +124,7 @@ class ConstantPoolTest extends Test:
         // Pins: C3.
         val bytes = buildUtf8PoolBytes("foo")
         val view  = new HeapMappedStub(bytes)
-        Abort.run(ConstantPool.read(view, interner, "<test>")).map: result =>
+        Abort.run(ConstantPool.read(view, "<test>")).map: result =>
             result match
                 case Result.Failure(err) =>
                     fail(s"Expected success but got failure: $err")
@@ -150,7 +147,7 @@ class ConstantPoolTest extends Test:
         // Pins: C3.
         val bytes = buildUtf8PoolBytes("bar")
         val view  = new HeapMappedStub(bytes)
-        Abort.run(ConstantPool.read(view, interner, "<test>")).map: result =>
+        Abort.run(ConstantPool.read(view, "<test>")).map: result =>
             result match
                 case Result.Failure(err) =>
                     fail(s"Expected success but got failure: $err")
@@ -176,7 +173,7 @@ class ConstantPoolTest extends Test:
         // Pins: B5.
         val bytes = buildClassRefThenUtf8Bytes("scala/Int")
         val view  = ByteView(bytes)
-        Abort.run(ConstantPool.read(view, interner, "<test>")).map:
+        Abort.run(ConstantPool.read(view, "<test>")).map:
             case Result.Failure(err) => fail(s"Read failed: $err")
             case Result.Panic(ex)    => fail(s"Read panicked: $ex")
             case Result.Success(pool) =>
@@ -200,7 +197,7 @@ class ConstantPoolTest extends Test:
         // Pins: B5.
         val bytes = buildClassRefThenUtf8Bytes("scala/Int")
         val view  = ByteView(bytes)
-        Abort.run(ConstantPool.read(view, interner, "<test>")).map:
+        Abort.run(ConstantPool.read(view, "<test>")).map:
             case Result.Failure(err) => fail(s"Read failed: $err")
             case Result.Panic(ex)    => fail(s"Read panicked: $ex")
             case Result.Success(pool) =>
@@ -219,7 +216,7 @@ class ConstantPoolTest extends Test:
         // Pins: B5.
         val bytes = buildClassRefThenUtf8Bytes("scala/Int")
         val view  = ByteView(bytes)
-        Abort.run(ConstantPool.read(view, interner, "<test>")).map:
+        Abort.run(ConstantPool.read(view, "<test>")).map:
             case Result.Failure(err) => fail(s"Read failed: $err")
             case Result.Panic(ex)    => fail(s"Read panicked: $ex")
             case Result.Success(pool) =>
@@ -259,7 +256,7 @@ class ConstantPoolTest extends Test:
                 i += 1
             pos += 1 + 2 + bs.length
         val view = ByteView(buf)
-        Abort.run(ConstantPool.read(view, interner, "<test>")).map:
+        Abort.run(ConstantPool.read(view, "<test>")).map:
             case Result.Failure(err) => fail(s"Read failed: $err")
             case Result.Panic(ex)    => fail(s"Read panicked: $ex")
             case Result.Success(pool) =>
@@ -319,7 +316,7 @@ class ConstantPoolTest extends Test:
             buf(pos + 3 + i) = tgtBuf(i)
             i += 1
         val view = ByteView(buf)
-        Abort.run(ConstantPool.read(view, interner, "<test>")).map:
+        Abort.run(ConstantPool.read(view, "<test>")).map:
             case Result.Failure(err) => fail(s"Read failed: $err")
             case Result.Panic(ex)    => fail(s"Read panicked: $ex")
             case Result.Success(pool) =>
@@ -338,7 +335,7 @@ class ConstantPoolTest extends Test:
         // Pins: B5.
         val bytes = buildLongPoolBytes(42L)
         val view  = ByteView(bytes)
-        Abort.run(ConstantPool.read(view, interner, "<test>")).map:
+        Abort.run(ConstantPool.read(view, "<test>")).map:
             case Result.Failure(err) => fail(s"Read failed: $err")
             case Result.Panic(ex)    => fail(s"Read panicked: $ex")
             case Result.Success(pool) =>

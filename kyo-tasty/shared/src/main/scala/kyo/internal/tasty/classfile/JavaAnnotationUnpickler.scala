@@ -2,7 +2,6 @@ package kyo.internal.tasty.classfile
 
 import kyo.*
 import kyo.internal.tasty.binary.ByteView
-import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.symbol.Symbol as SymbolFactory
 
 /** Decodes RuntimeVisibleAnnotations and RuntimeInvisibleAnnotations attribute bodies into Tasty.JavaAnnotation values.
@@ -31,16 +30,14 @@ object JavaAnnotationUnpickler:
       */
     def readAnnotations(
         view: ByteView,
-        pool: ConstantPool,
-        interner: Interner
+        pool: ConstantPool
     )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
         Sync.defer(readU2(view)).map: numAnnotations =>
-            readAnnotationList(view, pool, interner, numAnnotations, 0, Chunk.empty, depth = 0)
+            readAnnotationList(view, pool, numAnnotations, 0, Chunk.empty, depth = 0)
 
     private def readAnnotationList(
         view: ByteView,
         pool: ConstantPool,
-        interner: Interner,
         total: Int,
         idx: Int,
         acc: Chunk[Tasty.JavaAnnotation],
@@ -48,13 +45,12 @@ object JavaAnnotationUnpickler:
     )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
-            readOneAnnotation(view, pool, interner, depth).map: ann =>
-                readAnnotationList(view, pool, interner, total, idx + 1, acc.appended(ann), depth)
+            readOneAnnotation(view, pool, depth).map: ann =>
+                readAnnotationList(view, pool, total, idx + 1, acc.appended(ann), depth)
 
     private[classfile] def readOneAnnotation(
         view: ByteView,
         pool: ConstantPool,
-        interner: Interner,
         depth: Int
     )(using Frame, AllowUnsafe): Tasty.JavaAnnotation < (Sync & Abort[TastyError]) =
         if depth > MaxAnnotationDepth then
@@ -68,13 +64,12 @@ object JavaAnnotationUnpickler:
                 pool.utf8(typeIdx).map: typeDescriptor =>
                     val annotationClassSym = descriptorToUnresolvedSymbol(typeDescriptor)
                     Sync.defer(readU2(view)).map: numPairs =>
-                        readElementValuePairs(view, pool, interner, numPairs, 0, Chunk.empty, depth).map: values =>
+                        readElementValuePairs(view, pool, numPairs, 0, Chunk.empty, depth).map: values =>
                             Tasty.JavaAnnotation(annotationClassSym, values)
 
     private def readElementValuePairs(
         view: ByteView,
         pool: ConstantPool,
-        interner: Interner,
         total: Int,
         idx: Int,
         acc: Chunk[(Tasty.Name, Tasty.JavaAnnotation.Value)],
@@ -84,14 +79,13 @@ object JavaAnnotationUnpickler:
         else
             Sync.defer(readU2(view)).map: nameIdx =>
                 pool.utf8(nameIdx).map: elemName =>
-                    val key = Tasty.Name.Unsafe.init(elemName)
-                    readElementValue(view, pool, interner, depth).map: value =>
-                        readElementValuePairs(view, pool, interner, total, idx + 1, acc.append((key, value)), depth)
+                    val key = Tasty.Name.fromString(elemName)
+                    readElementValue(view, pool, depth).map: value =>
+                        readElementValuePairs(view, pool, total, idx + 1, acc.append((key, value)), depth)
 
     private def readElementValue(
         view: ByteView,
         pool: ConstantPool,
-        interner: Interner,
         depth: Int
     )(using Frame, AllowUnsafe): Tasty.JavaAnnotation.Value < (Sync & Abort[TastyError]) =
         Sync.defer(readU1(view)).map: tag =>
@@ -151,7 +145,7 @@ object JavaAnnotationUnpickler:
                         pool.utf8(typeNameIdx).map: typeDescriptor =>
                             pool.utf8(constNameIdx).map: constName =>
                                 val enumTypeSym = descriptorToUnresolvedSymbol(typeDescriptor)
-                                Tasty.JavaAnnotation.Value.EnumVal(enumTypeSym, Tasty.Name.Unsafe.init(constName))
+                                Tasty.JavaAnnotation.Value.EnumVal(enumTypeSym, Tasty.Name.fromString(constName))
 
                 case 'c' =>
                     // Class literal: cp -> Utf8 class descriptor e.g. "Ljava/lang/String;"
@@ -162,13 +156,13 @@ object JavaAnnotationUnpickler:
 
                 case '@' =>
                     // Nested annotation
-                    readOneAnnotation(view, pool, interner, depth + 1).map: nested =>
+                    readOneAnnotation(view, pool, depth + 1).map: nested =>
                         Tasty.JavaAnnotation.Value.AnnotationVal(nested)
 
                 case '[' =>
                     // Array of element_values
                     Sync.defer(readU2(view)).map: numValues =>
-                        readElementValueArray(view, pool, interner, numValues, 0, Chunk.empty, depth).map: elems =>
+                        readElementValueArray(view, pool, numValues, 0, Chunk.empty, depth).map: elems =>
                             Tasty.JavaAnnotation.Value.ArrayVal(elems)
 
                 case unknown =>
@@ -182,7 +176,6 @@ object JavaAnnotationUnpickler:
     private def readElementValueArray(
         view: ByteView,
         pool: ConstantPool,
-        interner: Interner,
         total: Int,
         idx: Int,
         acc: Chunk[Tasty.JavaAnnotation.Value],
@@ -190,8 +183,8 @@ object JavaAnnotationUnpickler:
     )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation.Value] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
-            readElementValue(view, pool, interner, depth).map: v =>
-                readElementValueArray(view, pool, interner, total, idx + 1, acc.appended(v), depth)
+            readElementValue(view, pool, depth).map: v =>
+                readElementValueArray(view, pool, total, idx + 1, acc.appended(v), depth)
 
     /** Convert a field descriptor like "Ljava/lang/Deprecated;" to an Unresolved symbol. */
     private def descriptorToUnresolvedSymbol(descriptor: String)(using AllowUnsafe): Tasty.Symbol =
@@ -199,7 +192,7 @@ object JavaAnnotationUnpickler:
         SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name.Unsafe.init(fqn)
+            Tasty.Name.fromString(fqn)
         )
     end descriptorToUnresolvedSymbol
 

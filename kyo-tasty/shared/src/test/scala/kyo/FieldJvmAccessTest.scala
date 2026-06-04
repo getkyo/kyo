@@ -32,7 +32,7 @@ class FieldJvmAccessTest extends Test:
         )
         Tasty.Symbol.Field(
             SymbolId(id),
-            Tasty.Name.Unsafe.init(name),
+            Tasty.Name.fromString(name),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,
@@ -46,7 +46,7 @@ class FieldJvmAccessTest extends Test:
     private def makeFieldNoMeta(id: Int, name: String): Tasty.Symbol.Field =
         Tasty.Symbol.Field(
             SymbolId(id),
-            Tasty.Name.Unsafe.init(name),
+            Tasty.Name.fromString(name),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,

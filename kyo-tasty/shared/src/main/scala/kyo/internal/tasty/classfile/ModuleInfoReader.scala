@@ -2,7 +2,6 @@ package kyo.internal.tasty.classfile
 
 import kyo.*
 import kyo.internal.tasty.binary.ByteView
-import kyo.internal.tasty.symbol.Interner
 
 /** Reads a JVM 9+ module-info.class file and produces a Tasty.ModuleDescriptor.
   *
@@ -29,29 +28,24 @@ object ModuleInfoReader:
       * Returns a Tasty.ModuleDescriptor on success. Fails with TastyError.ClassfileFormatError if: - The magic number is not 0xCAFEBABE. -
       * The major version is less than 53 (Java 9). - The Module attribute is missing or malformed. - Any required constant pool index is
       * out of range.
-      *
-      * The `interner` is used to intern module name strings from the constant pool for efficient deduplication. Callers may pass a fresh
-      * `Interner` or share one across multiple reads.
       */
     def read(bytes: Array[Byte])(using Frame): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
         val view = ByteView(bytes)
         val path = "<module-info.class>"
-        // Sync.Unsafe.defer provides AllowUnsafe for Interner.init and for readFrom, which calls
+        // Sync.Unsafe.defer provides AllowUnsafe for readFrom, which calls
         // ConstantPool.read (allocating AtomicRef.Unsafe slots per Utf8Lazy entry).
         // §839 case 3; module-load init boundary; the entire constant-pool scan is one allocation phase.
         Sync.Unsafe.defer:
-            val interner = Interner.init(numShards = 16, initialShardCapacity = 16)
-            readFrom(view, interner, path)
+            readFrom(view, path)
     end read
 
-    /** Read from an existing ByteView with a given interner and path label. For internal use by tests and ClasspathOrchestrator. */
+    /** Read from an existing ByteView with a path label. For internal use by tests and ClasspathOrchestrator. */
     private[classfile] def readFrom(
         view: ByteView,
-        interner: Interner,
         path: String
     )(using Frame, AllowUnsafe): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
         checkHeader(view, path).flatMap: _ =>
-            ConstantPool.read(view, interner, path).flatMap: pool =>
+            ConstantPool.read(view, path).flatMap: pool =>
                 skipClassStructure(view)
                 val attrCount = readU2(view)
                 readModuleAttribute(view, pool, path, attrCount)

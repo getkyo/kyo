@@ -54,12 +54,12 @@ object TypeUnpickler:
     private[kyo] val PHASE_B_ADDR_OFFSET: Int = 1 << 28
 
     val MatchCaseSentinel: Tasty.Symbol =
-        // Unsafe: module-level interned sentinel; intern runs exactly once at class load (§839 case 3).
+        // Unsafe: module-level sentinel; InternalSymbol.makeSymbol requires AllowUnsafe (§839 case 3).
         import AllowUnsafe.embrace.danger
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name.Unsafe.init("$$MatchCase")
+            Tasty.Name.fromString("$$MatchCase")
         )
     end MatchCaseSentinel
 
@@ -71,12 +71,12 @@ object TypeUnpickler:
       * and THIS-unknown through this sentinel.
       */
     private[kyo] val sentinelUnresolved: Tasty.Symbol =
-        // Unsafe: module-level interned sentinel; intern runs exactly once at class load (§839 case 3).
+        // Unsafe: module-level sentinel; InternalSymbol.makeSymbol requires AllowUnsafe (§839 case 3).
         import AllowUnsafe.embrace.danger
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name.Unsafe.init("<unresolved>")
+            Tasty.Name.fromString("<unresolved>")
         )
     end sentinelUnresolved
 
@@ -89,12 +89,12 @@ object TypeUnpickler:
       * discards the placeholder from inProgressRec once decoding completes.
       */
     private[kyo] val sentinelRecPlaceholder: Tasty.Symbol =
-        // Unsafe: module-level interned sentinel; intern runs exactly once at class load (§839 case 3).
+        // Unsafe: module-level sentinel; InternalSymbol.makeSymbol requires AllowUnsafe (§839 case 3).
         import AllowUnsafe.embrace.danger
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name.Unsafe.init("<rec-placeholder>")
+            Tasty.Name.fromString("<rec-placeholder>")
         )
     end sentinelRecPlaceholder
 
@@ -355,7 +355,7 @@ object TypeUnpickler:
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name.Unsafe.init(fqn)
+            Tasty.Name.fromString(fqn)
         )
 
     /** Make a unique negative SymbolId for a cross-file FQN reference and record it in `fqns`.

@@ -8,7 +8,6 @@ import kyo.internal.tasty.reader.SectionIndex
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
 import kyo.internal.tasty.reader.TreeUnpickler
-import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.type_.TypeArena
 
 /** Verifies that the 28 previously-uncovered Tree ADT variants are reachable via TASTy decode.
@@ -32,12 +31,11 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── Pass-1 helper ─────────────────────────────────────────────────────────
 
     private def runPass1(bytes: Array[Byte])(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
-        val view     = ByteView(bytes)
-        val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
-        val arena    = TypeArena.canonical()
+        val view  = ByteView(bytes)
+        val arena = TypeArena.canonical()
         for
             _        <- TastyHeader.read(view)
-            names    <- NameUnpickler.read(view, interner)
+            names    <- NameUnpickler.read(view)
             sections <- SectionIndex.read(view, names)
             attrs = FileAttributes.default
             result <- sections.get(TastyFormat.ASTsSection) match
@@ -64,7 +62,7 @@ class TreeAdtVariantCoverageTest extends Test:
             case None => Maybe.Absent
 
     private val dummyLookup: Int => Tasty.Symbol =
-        _ => Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name.Unsafe.init("unresolved"))
+        _ => Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name.fromString("unresolved"))
 
     // ── Byte-pickle decode helper ─────────────────────────────────────────────
 
@@ -85,8 +83,8 @@ class TreeAdtVariantCoverageTest extends Test:
         scala.collection.immutable.IntMap.empty[Tasty.Symbol]
 
     private def sym1(name: String): (Array[Tasty.Name], scala.collection.immutable.IntMap[Tasty.Symbol]) =
-        val s = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init(name))
-        (Array(Tasty.Name.Unsafe.init(name)), scala.collection.immutable.IntMap(1 -> s))
+        val s = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString(name))
+        (Array(Tasty.Name.fromString(name)), scala.collection.immutable.IntMap(1 -> s))
 
     // ── Approach 1: body-sweep sees TypeDef, Template, TypeRefTree ────────────
 
@@ -149,7 +147,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // Decoded as: name = nameFromRef(readNat), tpe = readTree -> Tree.SelfDef(name, tpe).
     // Pickle: SELFDEF(118=0x76) nameRef(0=0x80) UNITconst(2).
     "SelfDef: SELFDEF tag decodes to Tree.SelfDef" in run {
-        val names  = Array(Tasty.Name.Unsafe.init("self"))
+        val names  = Array(Tasty.Name.fromString("self"))
         val pickle = Array[Byte](118.toByte, (0 | 0x80).toByte, TastyFormat.UNITconst.toByte)
         decodePickle(pickle, names, noSym) match
             case Result.Success(t @ Tasty.Tree.SelfDef(name, _)) =>
@@ -183,8 +181,8 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── SuperType (cat-5: SUPERtype=158 + length + thistpe + supertpe) ─────────
     // SUPERtype 158 is cat-5. Pickle: SUPERtype(158=0x9E) length(4=0x84) TERMREFdirect(62) addr(1) TERMREFdirect(62) addr(2).
     "SuperType: SUPERtype tag decodes to Tree.SuperType" in run {
-        val s1      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init("This"))
-        val s2      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init("Super"))
+        val s1      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("This"))
+        val s2      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("Super"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
         val pickle = Array[Byte](
             TastyFormat.SUPERtype.toByte,
@@ -194,7 +192,7 @@ class TreeAdtVariantCoverageTest extends Test:
             TastyFormat.TERMREFdirect.toByte,
             (2 | 0x80).toByte
         )
-        decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), addrMap) match
+        decodePickle(pickle, Array(Tasty.Name.fromString("dummy")), addrMap) match
             case Result.Success(Tasty.Tree.SuperType(thistpe, supertpe)) =>
                 assert(thistpe != null && supertpe != null, "SuperType must have both thistpe and supertpe")
             case Result.Success(other) => fail(s"Expected Tree.SuperType but got $other")
@@ -229,8 +227,8 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── AndType (cat-5: ANDtype=165 + length + left + right) ───────────────────
     // Pickle: ANDtype(165=0xA5) length(4=0x84) TERMREFdirect(62) addr(1) TERMREFdirect(62) addr(2).
     "AndType: ANDtype tag decodes to Tree.AndType" in run {
-        val s1      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Trait, Tasty.Flags.empty, Tasty.Name.Unsafe.init("A"))
-        val s2      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Trait, Tasty.Flags.empty, Tasty.Name.Unsafe.init("B"))
+        val s1      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Trait, Tasty.Flags.empty, Tasty.Name.fromString("A"))
+        val s2      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Trait, Tasty.Flags.empty, Tasty.Name.fromString("B"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
         val pickle = Array[Byte](
             TastyFormat.ANDtype.toByte,
@@ -240,7 +238,7 @@ class TreeAdtVariantCoverageTest extends Test:
             TastyFormat.TERMREFdirect.toByte,
             (2 | 0x80).toByte
         )
-        decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), addrMap) match
+        decodePickle(pickle, Array(Tasty.Name.fromString("dummy")), addrMap) match
             case Result.Success(Tasty.Tree.AndType(left, right)) =>
                 assert(left != null && right != null, "AndType must have both left and right")
             case Result.Success(other) => fail(s"Expected Tree.AndType but got $other")
@@ -252,8 +250,8 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── OrType (cat-5: ORtype=167 + length + left + right) ─────────────────────
     // Pickle: ORtype(167=0xA7) length(4=0x84) TERMREFdirect(62) addr(1) TERMREFdirect(62) addr(2).
     "OrType: ORtype tag decodes to Tree.OrType" in run {
-        val s1      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init("A"))
-        val s2      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init("B"))
+        val s1      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("A"))
+        val s2      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("B"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
         val pickle = Array[Byte](
             TastyFormat.ORtype.toByte,
@@ -263,7 +261,7 @@ class TreeAdtVariantCoverageTest extends Test:
             TastyFormat.TERMREFdirect.toByte,
             (2 | 0x80).toByte
         )
-        decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), addrMap) match
+        decodePickle(pickle, Array(Tasty.Name.fromString("dummy")), addrMap) match
             case Result.Success(Tasty.Tree.OrType(left, right)) =>
                 assert(left != null && right != null, "OrType must have both left and right")
             case Result.Success(other) => fail(s"Expected Tree.OrType but got $other")
@@ -281,7 +279,7 @@ class TreeAdtVariantCoverageTest extends Test:
             TastyFormat.UNITconst.toByte,
             TastyFormat.UNITconst.toByte
         )
-        decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), noSym) match
+        decodePickle(pickle, Array(Tasty.Name.fromString("dummy")), noSym) match
             case Result.Success(Tasty.Tree.AnnotatedType(parent, annot)) =>
                 assert(parent != null && annot != null, "AnnotatedType must have both parent and annot")
             case Result.Success(other) => fail(s"Expected Tree.AnnotatedType but got $other")
@@ -295,7 +293,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // Pickle: RECtype(100=0x64) UNITconst(2).
     "RecType: RECtype tag decodes to Tree.RecType" in run {
         val pickle = Array[Byte](TastyFormat.RECtype.toByte, TastyFormat.UNITconst.toByte)
-        decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), noSym) match
+        decodePickle(pickle, Array(Tasty.Name.fromString("dummy")), noSym) match
             case Result.Success(Tasty.Tree.RecType(parent)) =>
                 assert(parent != null, "RecType must have parent")
             case Result.Success(other) => fail(s"Expected Tree.RecType but got $other")
@@ -308,7 +306,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // RECthis 66 is cat-2: tag + Nat. Decoded as: addr=readNat -> Tree.RecThisAddr(addr).
     "RecThisAddr: RECthis byte + addr decodes to Tree.RecThisAddr" in run {
         val pickle = Array[Byte](TastyFormat.RECthis.toByte, (3 | 0x80).toByte)
-        decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), noSym) match
+        decodePickle(pickle, Array(Tasty.Name.fromString("dummy")), noSym) match
             case Result.Success(Tasty.Tree.RecThisAddr(addr)) =>
                 assert(addr == 3, s"Expected RecThisAddr addr=3 but got addr=$addr")
             case Result.Success(other) => fail(s"Expected Tree.RecThisAddr(3) but got $other")
@@ -423,7 +421,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // TYPEREFpkg 65 is cat-2: tag + Nat. Decoded as: nameRef=readNat -> Tree.TypeRefPkg(name).
     // Pickle: TYPEREFpkg(65=0x41) nameRef(0=0x80).
     "TypeRefPkg: TYPEREFpkg tag decodes to Tree.TypeRefPkg" in run {
-        val names  = Array(Tasty.Name.Unsafe.init("java"))
+        val names  = Array(Tasty.Name.fromString("java"))
         val pickle = Array[Byte](TastyFormat.TYPEREFpkg.toByte, (0 | 0x80).toByte)
         decodePickle(pickle, names, noSym) match
             case Result.Success(Tasty.Tree.TypeRefPkg(n)) =>
@@ -438,7 +436,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // TYPEREFdirect 63 is cat-2: tag + Nat. Decoded as: addr=readNat -> Tree.TypeRefDirect(addr).
     "TypeRefDirect: TYPEREFdirect tag decodes to Tree.TypeRefDirect" in run {
         val pickle = Array[Byte](TastyFormat.TYPEREFdirect.toByte, (5 | 0x80).toByte)
-        decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), noSym) match
+        decodePickle(pickle, Array(Tasty.Name.fromString("dummy")), noSym) match
             case Result.Success(Tasty.Tree.TypeRefDirect(addr)) =>
                 assert(addr == 5, s"Expected TypeRefDirect addr=5 but got addr=$addr")
             case Result.Success(other) => fail(s"Expected Tree.TypeRefDirect(5) but got $other")
@@ -452,8 +450,8 @@ class TreeAdtVariantCoverageTest extends Test:
     // Decoded as: addr=readNat, qual=readTree -> Tree.TypeRefSymbol(addr, qual).
     // Pickle: TYPEREFsymbol(116=0x74) addr(1=0x81) TERMREFdirect(62) addr(2=0x82).
     "TypeRefSymbol: TYPEREFsymbol tag decodes to Tree.TypeRefSymbol" in run {
-        val s1      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init("A"))
-        val s2      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init("B"))
+        val s1      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("A"))
+        val s2      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("B"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
         val pickle = Array[Byte](
             TastyFormat.TYPEREFsymbol.toByte,
@@ -461,7 +459,7 @@ class TreeAdtVariantCoverageTest extends Test:
             TastyFormat.TERMREFdirect.toByte,
             (2 | 0x80).toByte
         )
-        decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), addrMap) match
+        decodePickle(pickle, Array(Tasty.Name.fromString("dummy")), addrMap) match
             case Result.Success(Tasty.Tree.TypeRefSymbol(addr, _)) =>
                 assert(addr == 1, s"Expected TypeRefSymbol addr=1 but got addr=$addr")
             case Result.Success(other) => fail(s"Expected Tree.TypeRefSymbol but got $other")
@@ -475,8 +473,8 @@ class TreeAdtVariantCoverageTest extends Test:
     // Decoded as: addr=readNat, qual=readTree -> Tree.TermRefSymbol(addr, qual).
     // Pickle: TERMREFsymbol(114=0x72) addr(1=0x81) TERMREFdirect(62) addr(2=0x82).
     "TermRefSymbol: TERMREFsymbol tag decodes to Tree.TermRefSymbol" in run {
-        val s1      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Val, Tasty.Flags.empty, Tasty.Name.Unsafe.init("x"))
-        val s2      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init("Owner"))
+        val s1      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Val, Tasty.Flags.empty, Tasty.Name.fromString("x"))
+        val s2      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("Owner"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
         val pickle = Array[Byte](
             TastyFormat.TERMREFsymbol.toByte,
@@ -484,7 +482,7 @@ class TreeAdtVariantCoverageTest extends Test:
             TastyFormat.TERMREFdirect.toByte,
             (2 | 0x80).toByte
         )
-        decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), addrMap) match
+        decodePickle(pickle, Array(Tasty.Name.fromString("dummy")), addrMap) match
             case Result.Success(Tasty.Tree.TermRefSymbol(addr, _)) =>
                 assert(addr == 1, s"Expected TermRefSymbol addr=1 but got addr=$addr")
             case Result.Success(other) => fail(s"Expected Tree.TermRefSymbol but got $other")
@@ -496,7 +494,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── Imported (cat-2: IMPORTED=75 + nameRef_Nat) ─────────────────────────────
     // IMPORTED 75 is cat-2: tag + Nat. Decoded as: nameRef=readNat, name=nameFromRef -> Tree.Imported(Ident(name, _)).
     "Imported: IMPORTED tag decodes to Tree.Imported" in run {
-        val names  = Array(Tasty.Name.Unsafe.init("List"))
+        val names  = Array(Tasty.Name.fromString("List"))
         val pickle = Array[Byte](TastyFormat.IMPORTED.toByte, (0 | 0x80).toByte)
         decodePickle(pickle, names, noSym) match
             case Result.Success(Tasty.Tree.Imported(qual)) =>
@@ -510,7 +508,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── Renamed (cat-2: RENAMED=76 + nameRef_Nat) ────────────────────────────────
     // RENAMED 76 is cat-2: tag + Nat. Decoded as: nameRef=readNat -> Tree.Renamed(name).
     "Renamed: RENAMED tag decodes to Tree.Renamed" in run {
-        val names  = Array(Tasty.Name.Unsafe.init("AB"))
+        val names  = Array(Tasty.Name.fromString("AB"))
         val pickle = Array[Byte](TastyFormat.RENAMED.toByte, (0 | 0x80).toByte)
         decodePickle(pickle, names, noSym) match
             case Result.Success(Tasty.Tree.Renamed(n)) =>
@@ -544,7 +542,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // BOUNDED 102 is cat-3: tag + sub-AST. Decoded as: bound=readTree -> Tree.Bounded(bound).
     "Bounded: BOUNDED tag decodes to Tree.Bounded" in run {
         val pickle = Array[Byte](TastyFormat.BOUNDED.toByte, TastyFormat.UNITconst.toByte)
-        decodePickle(pickle, Array(Tasty.Name.Unsafe.init("dummy")), noSym) match
+        decodePickle(pickle, Array(Tasty.Name.fromString("dummy")), noSym) match
             case Result.Success(Tasty.Tree.Bounded(bound)) =>
                 assert(bound != null, "Bounded must have bound")
             case Result.Success(other) => fail(s"Expected Tree.Bounded but got $other")
@@ -557,10 +555,10 @@ class TreeAdtVariantCoverageTest extends Test:
     // SELECTouter 148 is cat-5. Decoded as: end=readEnd, levels=readNat, nm=nameFromRef(readNat), qual=readTree, tpe=readType.
     // Pickle: SELECTouter(148=0x94) length(6=0x86) levels(1=0x81) nameRef(0=0x80) qual=TERMREFdirect(62) addr(1=0x81) tpe=TERMREFdirect(62) addr(2=0x82).
     "SelectOuter: SELECTouter tag decodes to Tree.SelectOuter" in run {
-        val s1      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init("Outer"))
-        val s2      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.Unsafe.init("Inner"))
+        val s1      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("Outer"))
+        val s2      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("Inner"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
-        val names   = Array(Tasty.Name.Unsafe.init("outerVal"))
+        val names   = Array(Tasty.Name.fromString("outerVal"))
         val pickle = Array[Byte](
             TastyFormat.SELECTouter.toByte,
             (6 | 0x80).toByte,

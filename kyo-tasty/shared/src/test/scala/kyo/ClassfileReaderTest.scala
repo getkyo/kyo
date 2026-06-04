@@ -10,7 +10,6 @@ import kyo.internal.tasty.reader.NameUnpickler
 import kyo.internal.tasty.reader.SectionIndex
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
-import kyo.internal.tasty.symbol.Interner
 import kyo.internal.tasty.type_.TypeArena
 
 /** Tests for ClassfileUnpickler using JDK classfiles.
@@ -29,8 +28,6 @@ class ClassfileReaderTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val interner = Interner.init(numShards = 32, initialShardCapacity = 16)
-
     private def symJavaMetadata(sym: Tasty.Symbol): Maybe[Tasty.JavaMetadata] = sym match
         case c: Tasty.Symbol.ClassLike => c.javaMetadata
         case f: Tasty.Symbol.Field     => f.javaMetadata
@@ -48,7 +45,7 @@ class ClassfileReaderTest extends Test:
 
     private def readClass(binaryPath: String)(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
         val bytes = loadClassBytes(binaryPath)
-        ClassfileUnpickler.read(bytes, interner, new TypeArena)
+        ClassfileUnpickler.read(bytes, new TypeArena)
 
     /** Load raw bytes for a test resource by path. Works on JVM only. */
     private def loadResourceBytes(resourcePath: String): Array[Byte] =
@@ -60,7 +57,7 @@ class ClassfileReaderTest extends Test:
         val arena = new TypeArena
         for
             _        <- TastyHeader.read(view)
-            names    <- NameUnpickler.read(view, interner)
+            names    <- NameUnpickler.read(view)
             sections <- SectionIndex.read(view, names)
             attrs = FileAttributes.default
             result <- sections.get(TastyFormat.ASTsSection) match
@@ -79,7 +76,7 @@ class ClassfileReaderTest extends Test:
     // Cross-platform (Phase 2 post-audit): uses Embedded.throwsFixtureClass instead of JDK Object.class.
     // The shape assertion (kind=Class, JavaDefined) holds for any Java class.
     "reading a Java classfile produces kind=Class and flags.contains(JavaDefined)" in run {
-        ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, interner, new TypeArena).map: result =>
+        ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena).map: result =>
             val sym = result.classSymbol
             assert(sym.kind == Tasty.SymbolKind.Class, s"Expected Class kind, got ${sym.kind}")
             assert(sym.name.asString.nonEmpty, s"Expected non-empty class name, got empty string")
@@ -92,7 +89,7 @@ class ClassfileReaderTest extends Test:
     // Cross-platform (Phase 2 post-audit): uses Embedded.throwsFixtureClass instead of JDK String.class.
     // ThrowsFixture declares throwsMethod and normalMethod; the shape assertion (method symbols present) is equivalent.
     "reading a Java classfile: declarations contain Method symbols" in run {
-        ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, interner, new TypeArena).map: result =>
+        ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena).map: result =>
             val methods = result.symbols.filter(s => s.kind == Tasty.SymbolKind.Method)
             assert(methods.nonEmpty, s"Expected at least one Method symbol in ThrowsFixture; got none")
             val methodNames = methods.map(_.name.asString).toSeq
@@ -108,7 +105,7 @@ class ClassfileReaderTest extends Test:
     // Cross-platform (Phase 2 post-audit): uses Embedded.throwsFixtureClass instead of JDK String.class.
     // ThrowsFixture extends java.lang.Object, which is encoded as a Type.Named parent.
     "reading a Java classfile: parents contains a Type.Named (superclass reference)" in run {
-        ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, interner, new TypeArena).map: result =>
+        ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena).map: result =>
             val parents = result.parents
             assert(parents.nonEmpty, "ThrowsFixture should have at least one parent (java.lang.Object)")
             val hasNamed = parents.exists:
@@ -169,7 +166,7 @@ class ClassfileReaderTest extends Test:
         writeShort(2); writeShort(4)                                 // this=#2, super=#4
         writeShort(0); writeShort(0); writeShort(0); writeShort(0)   // 0 ifaces, fields, methods, attrs
         val bytes = buf.toByteArray
-        ClassfileUnpickler.read(bytes, interner, new TypeArena).map: result =>
+        ClassfileUnpickler.read(bytes, new TypeArena).map: result =>
             val sym = result.classSymbol
             assert(sym.kind == Tasty.SymbolKind.Trait, s"Expected Trait for interface classfile, got ${sym.kind}")
     }
@@ -198,7 +195,7 @@ class ClassfileReaderTest extends Test:
         writeShort(0x4031); writeShort(2); writeShort(4)
         writeShort(0); writeShort(0); writeShort(0); writeShort(0)
         val bytes = buf.toByteArray
-        ClassfileUnpickler.read(bytes, interner, new TypeArena).map: result =>
+        ClassfileUnpickler.read(bytes, new TypeArena).map: result =>
             val sym = result.classSymbol
             assert(sym.flags.contains(Tasty.Flag.Enum), s"Expected Enum flag for synthetic enum classfile, got flags=${sym.flags.bits}")
     }
@@ -243,7 +240,7 @@ class ClassfileReaderTest extends Test:
         writeShort(0x0019); writeShort(5); writeShort(6); writeShort(0) // flags, name, desc, 0 attrs
         writeShort(0); writeShort(0)                                    // 0 methods, 0 attrs
         val bytes = buf.toByteArray
-        ClassfileUnpickler.read(bytes, interner, new TypeArena).map: result =>
+        ClassfileUnpickler.read(bytes, new TypeArena).map: result =>
             val staticFields = result.symbols.filter: s =>
                 s.kind == Tasty.SymbolKind.Field && s.flags.contains(Tasty.Flag.JavaDefined)
             assert(
@@ -260,7 +257,7 @@ class ClassfileReaderTest extends Test:
     // Cross-platform (Phase 2 post-audit): uses Embedded.pointRecordClass.
     // Java record component fields are private final, which decodes as Val.
     "a final non-static field produces kind=Val" in run {
-        ClassfileUnpickler.read(kyo.fixtures.Embedded.pointRecordClass, interner, new TypeArena).map: result =>
+        ClassfileUnpickler.read(kyo.fixtures.Embedded.pointRecordClass, new TypeArena).map: result =>
             val valFields = result.symbols.filter(_.kind == Tasty.SymbolKind.Val)
             assert(
                 valFields.nonEmpty,
@@ -304,7 +301,7 @@ class ClassfileReaderTest extends Test:
         writeShort(0x0001); writeShort(5); writeShort(6); writeShort(0) // ACC_PUBLIC (no FINAL), name, desc, 0 attrs
         writeShort(0); writeShort(0)                                    // 0 methods, 0 class attrs
         val bytes = buf.toByteArray
-        ClassfileUnpickler.read(bytes, interner, new TypeArena).map: result =>
+        ClassfileUnpickler.read(bytes, new TypeArena).map: result =>
             val varFields = result.symbols.filter(_.kind == Tasty.SymbolKind.Var)
             assert(
                 varFields.nonEmpty,
@@ -326,7 +323,7 @@ class ClassfileReaderTest extends Test:
             0x00.toByte,
             0x3d.toByte // major = 61 (Java 17)
         )
-        Abort.run(ClassfileUnpickler.read(badBytes, interner, new TypeArena)).map: result =>
+        Abort.run(ClassfileUnpickler.read(badBytes, new TypeArena)).map: result =>
             result match
                 case Result.Failure(TastyError.ClassfileFormatError(_, reason, _)) =>
                     assert(reason.contains("magic") || reason.contains("0xdeadbeef"), s"Unexpected reason: $reason")
@@ -340,7 +337,7 @@ class ClassfileReaderTest extends Test:
     // Cross-platform (Phase 2 post-audit): uses Embedded.throwsFixtureClass instead of JDK Object.class.
     // The shape assertion (javaMetadata Present for Java, Absent for TASTy) is fixture-independent.
     "classfile symbol has javaMetadata Present; TASTy symbol has javaMetadata Absent" in run {
-        ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, interner, new TypeArena).map: javaResult =>
+        ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena).map: javaResult =>
             val javaSym = javaResult.classSymbol
             assert(symJavaMetadata(javaSym).isDefined, "Java-sourced symbol should have javaMetadata Present")
             val tastyBytes = kyo.fixtures.Embedded.plainClassTasty
@@ -559,7 +556,7 @@ class ClassfileReaderTest extends Test:
         writeInt(typeAnnBody.length)
         buf.write(typeAnnBody)
         val bytes = buf.toByteArray
-        ClassfileUnpickler.read(bytes, interner, new TypeArena).map: result =>
+        ClassfileUnpickler.read(bytes, new TypeArena).map: result =>
             val md = symJavaMetadata(result.classSymbol).getOrElse(fail("Expected javaMetadata Present"))
             assert(
                 md.runtimeTypeAnnotations.nonEmpty,
