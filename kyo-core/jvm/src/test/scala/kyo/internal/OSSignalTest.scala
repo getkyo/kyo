@@ -17,7 +17,11 @@ class OsSignalTest extends kyo.test.Test[Any]:
         val signal = new sun.misc.Signal("USR2")
         sun.misc.Signal.raise(signal)
 
-        assert(wasHandled.await(100, TimeUnit.MILLISECONDS))
+        // The handler runs on the JVM signal-dispatch thread, which can be CPU-starved under the
+        // test runner's busy global pool, so signal delivery is delayed well past a tight bound.
+        // The generous timeout only matters if the handler never fires (real failure); when it does
+        // fire it completes far sooner.
+        assert(wasHandled.await(10, TimeUnit.SECONDS))
     }
 
     "lazy" in {

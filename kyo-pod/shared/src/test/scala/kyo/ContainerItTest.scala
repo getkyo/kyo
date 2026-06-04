@@ -1135,7 +1135,7 @@ class ContainerItTest extends BasePodTest:
     "execInteractive" - {
         "write sends data to stdin, read receives response" - runRuntimes { runtime =>
             if ContainerRuntime.findSocket(runtime).isEmpty then
-                ()
+                succeed(s"no $runtime socket available; precondition not met")
             else
                 val socketPath = ContainerRuntime.findSocket(runtime).get
                 Container.withBackendConfig(_.UnixSocket(Path(socketPath))) {
@@ -1160,7 +1160,7 @@ class ContainerItTest extends BasePodTest:
     "attach" - {
         "bidirectional — write then read response" - runRuntimes { runtime =>
             if ContainerRuntime.findSocket(runtime).isEmpty then
-                ()
+                succeed(s"no $runtime socket available; precondition not met")
             else
                 val socketPath = ContainerRuntime.findSocket(runtime).get
                 Container.withBackendConfig(_.UnixSocket(Path(socketPath))) {
@@ -1807,7 +1807,7 @@ class ContainerItTest extends BasePodTest:
                     val isNetworkError = msg.contains("ssl") || msg.contains("tls") ||
                         msg.contains("network") || msg.contains("timeout") || msg.contains("connect")
                     if isNetworkError then
-                        ()
+                        succeed(s"registry unreachable (network error: $msg); auth classification not exercised")
                     else
                         // With auth supplied the backend must NOT silently classify as ImageMissing
                         // (that is the auth.isEmpty 404 branch). It must surface an auth/operation error.
