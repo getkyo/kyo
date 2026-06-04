@@ -98,21 +98,18 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     }
 
     // Leaf 13: annotation-processor-output-resolves (F-A3-OPEN-AP)
-    // Given: the standard classpath (Java symbols from companion .class files alongside .tasty)
+    // Given: the standard classpath (Java symbols from JavaSimpleFixture.class embedded in EmbeddedJavaFixtures)
     // When: counting Java-defined symbols
     // Then: count > 0
-    // Pins: F-A3-OPEN-AP
-    // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): isJava is true for symbols
-    //   originating from Java-source .class files (Flag.JavaDefined). The embedded fixture set has no Java sources;
-    //   a Java fixture would require adding .java sources to kyo-tasty-fixtures and emitting their classfile bytes.
-    //   F-G-002 covers the companion-.class merge cross-platform via PlainClass.class; this leaf specifically pins
-    //   Java-defined (not Scala-companion) classfile decode coverage.
-    "F-A3-OPEN-AP leaf 13 (Phase 2.09): Java classfile decoding path active in standard classpath (AP structural guard)" taggedAs jvmOnly in run {
+    // Pins: F-A3-OPEN-AP; closed by Phase 08 embedding EmbeddedJavaFixtures cross-platform.
+    // Java-defined (Flag.JavaDefined) classfile decode coverage now available on JS and Native via
+    // EmbeddedJavaFixtures.javaSimpleFixtureClassfile registered as a standalone root in TestClasspaths.
+    "F-A3-OPEN-AP leaf 13 (Phase 2.09): Java classfile decoding path active in standard classpath (AP structural guard)" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val javaCount = cp.symbols.count(_.isJava)
             assert(
                 javaCount > 0,
-                s"Expected > 0 Java-decoded symbols (from companion .class files alongside .tasty) in standard classpath; found $javaCount"
+                s"Expected > 0 Java-decoded symbols (from JavaSimpleFixture.class embedded in EmbeddedJavaFixtures) in standard classpath; found $javaCount"
             )
             succeed
     }

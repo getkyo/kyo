@@ -234,22 +234,42 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     }
 
     // Leaf 9: java-symbols-present-in-standard-classpath (F-A1-OPEN: Java symbols confirmation)
-    // Given: the standard classpath loaded via TestClasspaths.withClasspath
+    // Given: the standard classpath loaded via TestClasspaths.withClasspath (includes EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
     // When: counting cp.symbols.count(_.isJava)
-    // Then: count > 0 (Java symbols from companion .class files)
-    // Pins: F-A1-OPEN (Java interop guard)
-    // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): isJava is true for symbols
-    //   originating from Java-source .class files (Flag.JavaDefined set by scalac). The embedded fixture set has
-    //   no Java sources (only Scala-compiled classes); a Java fixture would require adding .java sources to
-    //   kyo-tasty-fixtures and a separate build step to emit Java classfile bytes for the embedded set.
-    "F-A1-OPEN leaf 9 (Phase 2.09): Java-defined symbols present in standard classpath (java interop guard)" taggedAs jvmOnly in run {
+    // Then: count > 0 (Java symbols from JavaSimpleFixture.class embedded cross-platform)
+    // Pins: F-A1-OPEN (Java interop guard); closed by Phase 08 embedding EmbeddedJavaFixtures.
+    "F-A1-OPEN leaf 9 (Phase 2.09): Java-defined symbols present in standard classpath (java interop guard)" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val javaCount = cp.symbols.count(_.isJava)
             assert(
                 javaCount > 0,
-                s"Expected > 0 Java-defined symbols in standard classpath (from companion .class files alongside .tasty); found $javaCount"
+                s"Expected > 0 Java-defined symbols in standard classpath (from JavaSimpleFixture.class embedded in EmbeddedJavaFixtures); found $javaCount"
             )
             succeed
+    }
+
+    // Leaf 10 (Phase 08): round-trip findClass on embedded Java fixture via MemoryFileSource
+    // Given: a MemoryFileSource with JavaSimpleFixture.class registered as a standalone root
+    // When: Tasty.findClass("kyo.fixtures.JavaSimpleFixture")
+    // Then: Maybe.Present(c) where c.isJava == true
+    // Pins: item 3 leaf 5 / F-A1-OPEN round-trip loadability; cross-platform (uses MemoryFileSource)
+    "Phase 08 leaf 5: findClass(kyo.fixtures.JavaSimpleFixture) returns Present with isJava via MemoryFileSource" in run {
+        import kyo.internal.MemoryFileSource
+        import kyo.internal.tasty.query.Binding
+        import kyo.internal.tasty.query.ClasspathOrchestrator
+        import kyo.internal.tasty.query.DecodeContext
+        val src = MemoryFileSource()
+        src.add("kyo/fixtures/JavaSimpleFixture.class", kyo.fixtures.EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
+        Scope.run:
+            ClasspathOrchestrator.init(Seq("kyo/fixtures/JavaSimpleFixture.class"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
+                val binding = Binding(cp, Maybe.Present(DecodeContext.fresh()))
+                Tasty.bindingLocal.let(Maybe.Present(binding)):
+                    Tasty.findClass("kyo.fixtures.JavaSimpleFixture").map:
+                        case Maybe.Present(c) =>
+                            assert(c.isJava, "JavaSimpleFixture must have isJava (Flag.JavaDefined set by ClassfileUnpickler)")
+                            succeed
+                        case Maybe.Absent =>
+                            fail("kyo.fixtures.JavaSimpleFixture not found; standalone .class root was not discovered")
     }
 
 end ConfirmationFidelity2Test

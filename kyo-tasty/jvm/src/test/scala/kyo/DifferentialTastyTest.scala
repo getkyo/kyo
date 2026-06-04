@@ -107,7 +107,15 @@ class DifferentialTastyTest extends Test:
                 // Companion objects like SomeCaseClass$ appear in kyo-tasty fqnIndex but
                 // tasty-query suppresses them from top-level. Filter out companion "$" entries.
                 val kyoNonCompanion = onlyInKyo.filterNot(_.endsWith("$"))
-                val tqNonCompanion  = onlyInTq.filterNot(_.endsWith("$"))
+                // Java-only classfiles (no .tasty companion) are not discovered by kyo-tasty's directory scanner,
+                // which filters to ".tasty" + "module-info.class". JavaSimpleFixture.java is compiled into the
+                // fixture directory but is intentionally loaded via the standalone-root mechanism (see Phase 08
+                // EmbeddedJavaFixtures and TestClasspaths.withClasspath on JS/Native). The DIFF-001 comparison
+                // uses the directory-scan path, so JavaSimpleFixture is visible to tasty-query but not kyo-tasty
+                // in this context. This is the expected behavior: kyo-tasty reads Java classfiles via the standalone
+                // root mechanism, not via directory scanning.
+                val javaOnlyFqns   = Set("kyo.fixtures.JavaSimpleFixture")
+                val tqNonCompanion = (onlyInTq.filterNot(_.endsWith("$"))) -- javaOnlyFqns
 
                 assert(
                     kyoNonCompanion.isEmpty,

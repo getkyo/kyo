@@ -124,8 +124,12 @@ private[kyo] object TestClasspaths:
         src.add("root/PortedBug80UsesRawAware.tasty", kyo.fixtures.Embedded.portedBug80UsesRawAwareTasty)
         src.add("root/PortedBugFixture$package.tasty", kyo.fixtures.Embedded.portedBugFixturePackageTasty)
         src.add("root/portedBug71Outer/portedBug71Inner/Marker.tasty", kyo.fixtures.Embedded.portedBug71InnerMarkerTasty)
+        // Java fixture: registered as a standalone root so walkRoot's ".class" branch discovers it.
+        // Path "kyo/fixtures/JavaSimpleFixture.class" yields FQN "kyo.fixtures.JavaSimpleFixture" via
+        // classfilePathToFqn. See ClasspathOrchestrator.walkRoot:338 and F-A1-OPEN / F-A3-OPEN-AP.
+        src.add("kyo/fixtures/JavaSimpleFixture.class", kyo.fixtures.EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
         Scope.run:
-            ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
+            ClasspathOrchestrator.init(Seq("root", "kyo/fixtures/JavaSimpleFixture.class"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
                 val binding = Binding(cp, Maybe.Present(DecodeContext.fresh()))
                 Tasty.bindingLocal.let(Maybe.Present(binding))(f)
     end withClasspath
