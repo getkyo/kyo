@@ -387,6 +387,50 @@ class ChartLowerTest extends Test:
         assertClose(xs(2), 88.0 + 2 * expectedSubW, "third sub-band x")
     }
 
+    // ---- Test 8b (ISSUE): grouped bar with numeric color channel honors a Sequential color scale ----
+    // A non-stacked bar whose color channel is NUMERIC plus `.legend(_.colorScaleSequential(low, high))`
+    // must paint each bar with the interpolated gradient color for its value, the same way lowerPoint and
+    // lowerArea do via resolvePalette. Before the fix, lowerBarGrouped colored bars from the categorical
+    // theme/DefaultPalette (blue/orange/...), ignoring the Sequential scale entirely.
+
+    "grouped bar with numeric color channel honors a Sequential color scale (gradient, not categorical)" in {
+        // Three rows, same x="Jan", numeric color values 0.0/50.0/100.0 over domain extent [0, 100].
+        // Sequential(black=#000000, white=#ffffff): value 0 => rgb(0,0,0), 50 => rgb(128,128,128),
+        // 100 => rgb(255,255,255). These are Style.Color.Rgb, NOT the categorical blue/orange Hex fills.
+        case class Heat(month: String, revenue: Double, level: Double)
+        given CanEqual[Heat, Heat] = CanEqual.derived
+        val rows = Chunk(
+            Heat("Jan", 1000.0, 0.0),
+            Heat("Jan", 2000.0, 50.0),
+            Heat("Jan", 1500.0, 100.0)
+        )
+        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue, color = _.level))
+            .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
+        val root  = summon[Conversion[ChartSpec[Heat], Svg.Root]](spec)
+        val rects = rectsIn(root)
+        assert(rects.size == 3, s"Expected 3 bar rects but got ${rects.size}")
+
+        // The grouped bars are positioned left-to-right by color-category index (encounter order:
+        // level 0.0, 50.0, 100.0). Order rects by x to recover that mapping.
+        val byX = rects.toSeq.sortBy(r => numOf(r.svgAttrs.x))
+        def fillOf(r: Svg.Rect): Style.Color =
+            r.svgAttrs.fill match
+                case Present(Svg.Paint.Color(c)) => c
+                case other                       => fail(s"Expected a color fill but got $other")
+        val fills = byX.map(fillOf)
+
+        // Interpolated sequential fills, NOT the categorical palette.
+        assert(fills(0) == Style.Color.rgb(0, 0, 0), s"lowest-value bar must be the low color; got ${fills(0)}")
+        assert(fills(1) == Style.Color.rgb(128, 128, 128), s"mid-value bar must be midpoint gradient; got ${fills(1)}")
+        assert(fills(2) == Style.Color.rgb(255, 255, 255), s"highest-value bar must be the high color; got ${fills(2)}")
+
+        // Must NOT be the categorical DefaultPalette/theme colors.
+        assert(
+            fills.forall(c => c != Style.Color.blue && c != Style.Color.orange),
+            s"bar fills must not be categorical palette colors (#3b82f6/#f97316); got $fills"
+        )
+    }
+
     // ---- Test 9: line path has fill=None, stroke present, strokeWidth present ----
     // Regression test for the bug where lowerLineSeries produced a filled black polygon instead of a stroked line.
     // The old code did `Svg.path.d(pathData)` with no paint, so the browser filled the path with black (default fill).

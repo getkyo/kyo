@@ -1810,17 +1810,30 @@ private[kyo] object ChartLower:
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
         highlight: Maybe[Highlight[A]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
-        // Collect distinct color keys in enum-ordinal order (N3 carry-over)
-        val colorKeys: Chunk[String] = collectColorCategories(rows, colorEnc)
-        val numColors                = colorKeys.size
+        // Collect distinct color categories (label + raw value) in enum-ordinal order (N3 carry-over).
+        // The raw values feed the same Sequential-aware palette resolution lowerPoint/lowerArea use, so a
+        // numeric color channel under a Sequential `colorScale` paints each bar with its gradient color.
+        val colorCats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, colorEnc)
+        val colorKeys: Chunk[String]        = colorCats.map(_._1)
+        val numColors                       = colorKeys.size
         // Precompute colorKey -> index once (O(colors)); replaces a per-row indexOf scan.
         val colorIdxByKey: Map[String, Int] =
             colorKeys.zipWithIndex.foldLeft(Map.empty[String, Int])((m, ki) => m.updated(ki._1, ki._2))
         val basePalette: Chunk[Style.Color] = spec match
             case Present(s) => themePalette(s.theme)
             case Absent     => DefaultPalette
-        val palette: Chunk[Style.Color] = colorKeys.zipWithIndex.map: (_, i) =>
-            basePalette.toSeq.apply(i % basePalette.size)
+        // A Sequential color scale routes through resolvePalette (interpolated per raw value); Categorical
+        // and Absent keep the existing categorical themePalette/DefaultPalette assignment byte-for-byte.
+        val palette: Chunk[Style.Color] = spec match
+            case Present(s) =>
+                s.legendCfg.colorScale match
+                    case Present(_: LegendConfig.ColorScale.Sequential) => resolvePalette(s, colorCats)
+                    case _ =>
+                        colorKeys.zipWithIndex.map: (_, i) =>
+                            basePalette.toSeq.apply(i % basePalette.size)
+            case Absent =>
+                colorKeys.zipWithIndex.map: (_, i) =>
+                    basePalette.toSeq.apply(i % basePalette.size)
         val baseline = layout.plotBaseline
 
         @scala.annotation.tailrec
