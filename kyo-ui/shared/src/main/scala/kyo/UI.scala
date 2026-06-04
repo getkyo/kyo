@@ -2227,7 +2227,7 @@ object UI:
           * Fields: `data` is either `DataSource.Static` (a `Chunk`) or `DataSource.Live`
           * (a `Signal`). `marks` is the ordered list of mark layers. The `*Cfg` fields
           * hold the configuration built by the builder lambdas. `key` / `onHover` /
-          * `onSelect` / `tooltip` drive reactivity and interaction (Phases 05-07).
+          * `onSelect` / `tooltip` drive reactivity and interaction.
           */
         final case class ChartSpec[A](
             data: DataSource[A],
@@ -2448,7 +2448,7 @@ object UI:
         /** Converts a `ChartSpec[A]` to an `Svg.Root` wherever one is expected.
           *
           * Delegates to `ChartLower.lower`. The lowering uses `Frame.internal` for SVG node construction,
-          * so the conversion itself requires no frame synthesis (carry-over N4 from Phase 02 verify).
+          * so the conversion itself requires no frame synthesis at the call site.
           */
         given [A]: Conversion[ChartSpec[A], Svg.Root] = spec => kyo.internal.ChartLower.lower(spec)
 
@@ -2471,8 +2471,8 @@ object UI:
             showGrid: Boolean,
             tickCount: Int,
             tickFormat: Maybe[Double => String],
-            tickRotation: Double = 0.0,                 // D17 (rendered Phase 6)
-            tickAnchor: TextAnchor = TextAnchor.Middle, // D17 (rendered Phase 6)
+            tickRotation: Double = 0.0,                 // D17
+            tickAnchor: TextAnchor = TextAnchor.Middle, // D17
             reversed: Boolean = false,                  // D20
             padding: Double = 0.0,                      // D21
             labelAllBands: Boolean = true               // D18
