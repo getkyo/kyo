@@ -53,6 +53,7 @@ object LinkedSelection extends KyoApp:
             val totalsChart: Svg.Root =
                 UI.chart(cats)(bar(x = _.name, y = _.total))
                     .onSelect(selected)
+                    .interaction(_.highlightSelect)
                     .yScale(_.withNice(true))
                     .yAxis(_.left.grid.ticks(4))
                     .theme(_.dark)
@@ -79,7 +80,7 @@ object LinkedSelection extends KyoApp:
             val detailChart: Svg.Root =
                 UI.chart(detailData)(line(x = _.month, y = _.value))
                     .xScale(_.linear(1.0, 12.0))
-                    .yScale(_.linear(0.0, 130.0))
+                    .yScale(_.linear(0.0, 150.0))
                     .xAxis(_.bottom)
                     .yAxis(_.left.grid.ticks(4))
                     .theme(_.dark)
