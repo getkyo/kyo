@@ -162,6 +162,13 @@ private[kyo] object ChartLower:
       */
     private val LegendReservedH = 20.0
 
+    /** Reserved width (pixels) for a left- or right-positioned legend column.
+      *
+      * When the legend sits beside the plot (`LegendPosition.Left` / `Right`), the plot rectangle narrows by
+      * this amount so the vertically-stacked swatches and labels do not overlap the data.
+      */
+    private val LegendColumnW = 80.0
+
     /** Immutable layout: the outer SVG dimensions and the inner plot rectangle. */
     final private[kyo] case class Layout(
         svgW: Double,
@@ -192,14 +199,20 @@ private[kyo] object ChartLower:
             case _: Mark.Rule[?]           => false
             case _: Mark.Text[?, ?, ?]     => false
             case _: Mark.ErrorBar[?, ?, ?] => false
-        val legendPad = if hasLegend then LegendReservedH else 0.0
+        // Reserve margin for the legend on the side it is positioned: Top shifts the plot down (default),
+        // Bottom shrinks plot height, Left/Right reserve a column beside the plot.
+        val pos       = if hasLegend then spec.legendCfg.position.getOrElse(LegendPosition.Top) else LegendPosition.Top
+        val topPad    = if hasLegend && pos == LegendPosition.Top then LegendReservedH else 0.0
+        val bottomPad = if hasLegend && pos == LegendPosition.Bottom then LegendReservedH else 0.0
+        val leftPad   = if hasLegend && pos == LegendPosition.Left then LegendColumnW else 0.0
+        val rightPad  = if hasLegend && pos == LegendPosition.Right then LegendColumnW else 0.0
         Layout(
             svgW = w.toDouble,
             svgH = h.toDouble,
-            plotX = MarginLeft,
-            plotY = MarginTop + legendPad,
-            plotW = w.toDouble - MarginLeft - marginRight,
-            plotH = h.toDouble - MarginTop - legendPad - MarginBottom
+            plotX = MarginLeft + leftPad,
+            plotY = MarginTop + topPad,
+            plotW = w.toDouble - MarginLeft - marginRight - leftPad - rightPad,
+            plotH = h.toDouble - MarginTop - topPad - bottomPad - MarginBottom
         )
     end buildLayout
 
@@ -631,7 +644,8 @@ private[kyo] object ChartLower:
         ysL: Scale,
         ysR: Maybe[Scale],
         spec: ChartSpec[A],
-        rows: Chunk[A]
+        rows: Chunk[A],
+        gradPrefix: String
     )(using Frame): Chunk[Svg.SvgElement] =
         // Per-axis chrome color: when exactly one mark binds to an axis, its chrome matches that mark's
         // palette color so a reader can tell which axis a series uses; otherwise the neutral theme color.
@@ -654,7 +668,7 @@ private[kyo] object ChartLower:
                 )
             case Absent => Chunk.empty
         val xAxisElems  = buildXAxis(layout, xs, spec.xAxisCfg, spec.theme)
-        val legendElems = buildLegend(layout, spec, rows)
+        val legendElems = buildLegend(layout, spec, rows, gradPrefix)
         background ++ axisLines ++ leftAxis ++ rightAxis ++ xAxisElems ++ legendElems
     end buildFrame
 
@@ -879,7 +893,8 @@ private[kyo] object ChartLower:
     private def buildLegend[A](
         layout: Layout,
         spec: ChartSpec[A],
-        rows: Chunk[A]
+        rows: Chunk[A],
+        gradPrefix: String
     )(using Frame): Chunk[Svg.SvgElement] =
         if spec.legendCfg.isHidden then Chunk.empty
         else
@@ -891,8 +906,13 @@ private[kyo] object ChartLower:
                     val categories = collectColorCategoriesWithRaw(rows, colorCh)
                     if categories.isEmpty then Chunk.empty
                     else
-                        val palette = resolvePalette(spec, categories)
-                        buildLegendItems(layout, categories, palette, spec.legendCfg, axisChromeColor(spec.theme))
+                        spec.legendCfg.colorScale match
+                            case Present(LegendConfig.ColorScale.Sequential(lo, hi, _)) =>
+                                // Sequential legend: a single continuous gradient swatch under a doc-unique def id.
+                                buildSequentialLegend(layout, spec, lo, hi, gradPrefix)
+                            case _ =>
+                                val palette = resolvePalette(spec, categories)
+                                buildLegendItems(layout, categories, palette, spec.legendCfg, spec.marks, axisChromeColor(spec.theme))
                     end if
 
             // Size legend: emitted when any Point mark has a size channel (INV-015, test 8).
@@ -907,6 +927,44 @@ private[kyo] object ChartLower:
             colorItems ++ sizeItems
         end if
     end buildLegend
+
+    /** Build a continuous gradient swatch for a sequential color scale (INV-028).
+      *
+      * Emits an `Svg.defs` carrying one `linearGradient` (low at offset 0, high at offset 1) under a
+      * document-unique def id, plus a swatch `Svg.rect` filled with that gradient via `url(#id)`. The id comes
+      * from `gradPrefix` (allocated once per chart instance), so two charts on one page never alias the same
+      * gradient even when their specs are structurally identical: the def id and the swatch's `url(#id)` always
+      * match within one chart, and differ across charts.
+      */
+    private def buildSequentialLegend[A](
+        layout: Layout,
+        spec: ChartSpec[A],
+        lo: Style.Color,
+        hi: Style.Color,
+        gradPrefix: String
+    )(using Frame): Chunk[Svg.SvgElement] =
+        val gradId = s"$gradPrefix-grad-0"
+        val gradient = Svg.linearGradient
+            .withSvg(Svg.linearGradient.svgAttrs.copy(defId = Present(gradId)))
+            .x1(0).y1(0).x2(1).y2(0)
+            .apply(
+                Svg.stop.offset(0.0).stopColor(lo),
+                Svg.stop.offset(1.0).stopColor(hi)
+            )
+        val (legendX, legendY) = spec.legendCfg.position.getOrElse(LegendPosition.Top) match
+            case LegendPosition.Top    => (layout.plotX, MarginTop + (LegendReservedH - SwatchSize) / 2.0)
+            case LegendPosition.Bottom => (layout.plotX, layout.plotBaseline + (LegendReservedH - SwatchSize) / 2.0)
+            case LegendPosition.Left   => (MarginLeft / 2.0 - SwatchSize, layout.plotY)
+            case LegendPosition.Right  => (layout.plotX + layout.plotW + 8.0, layout.plotY)
+        val swatch: Svg.SvgElement =
+            Svg.rect
+                .x(legendX)
+                .y(legendY)
+                .width(SwatchSize * 4.0)
+                .height(SwatchSize)
+                .fill(gradient.paint)
+        Chunk(Svg.defs(gradient), swatch)
+    end buildSequentialLegend
 
     /** Build representative size-bubble legend items for a point mark with a size channel.
       *
@@ -1046,15 +1104,21 @@ private[kyo] object ChartLower:
     private def collectColorCategories[A](rows: Chunk[A], colorCh: Channel[A, ?]): Chunk[String] =
         collectColorCategoriesWithRaw(rows, colorCh).map(_._1)
 
-    /** Resolve the palette: explicit `colorScaleFn` first (applied to raw values), then `theme.palette`,
+    /** Resolve the palette: explicit `colorScale` first (applied to raw values), then `theme.palette`,
       * then `DefaultPalette`.
+      *
+      * A `Categorical` scale applies its total function to each category's RAW color-channel value (e.g. the
+      * actual enum case), not the label string, so typed pairs/functions work without a label-to-K roundtrip.
+      * A `Sequential` scale derives the numeric domain extent from the categories (or its `domain` override)
+      * and interpolates each raw value's color between `low` and `high`.
       */
     private def resolvePalette[A](spec: ChartSpec[A], categories: Chunk[(String, Any)]): Chunk[Style.Color] =
-        spec.legendCfg.colorScaleFn match
-            case Present(fn) =>
-                // N3: apply the function to the RAW color-channel value (e.g. the actual enum case),
-                // not the label string, so typed enum functions work without a label-to-K roundtrip.
+        spec.legendCfg.colorScale match
+            case Present(LegendConfig.ColorScale.Categorical(fn)) =>
                 categories.map { case (_, raw) => fn(raw) }
+            case Present(LegendConfig.ColorScale.Sequential(lo, hi, domOv)) =>
+                val (domLo, domHi) = domainExtentOf(categories, domOv)
+                categories.map { case (_, raw) => sequentialColor(raw, lo, hi, domLo, domHi) }
             case Absent =>
                 spec.theme.palette match
                     case Present(p) => categories.zipWithIndex.map: (_, i) =>
@@ -1063,58 +1127,190 @@ private[kyo] object ChartLower:
                             DefaultPalette.toSeq.apply(i % DefaultPalette.size)
     end resolvePalette
 
-    /** Build the legend swatch+label elements positioned in the reserved space above the plot area.
+    /** Numeric extent over the raw category values, used to normalize a sequential color scale.
       *
-      * `categories` is `Chunk[(label, rawValue)]` in enum-ordinal order. `palette` is the resolved
-      * color per category. Each entry produces one swatch `Svg.rect` and one `Svg.text` label.
-      *
-      * The legend is placed in the band between the SVG top and the plot top (the `LegendReservedH`
-      * strip reserved by `buildLayout`). This ensures legend swatches never overlap the data marks.
-      *
-      * `labelColor` is the theme chrome color (the same `axisChromeColor` the axis tick labels use):
-      * light on dark, dark on light, so the labels stay readable against the panel background. The swatch
-      * fills keep the category/colorScale colors.
+      * When `domainOv` is `Present`, it is used directly. Otherwise the extent folds the numeric raw values
+      * (Double/Int/Long/Float); non-numeric values are skipped. When no value is numeric the fallback `(0, 1)`
+      * keeps the scale well-defined.
       */
-    private def buildLegendItems(
+    private def domainExtentOf(categories: Chunk[(String, Any)], domainOv: Maybe[(Double, Double)]) =
+        domainOv match
+            case Present(d) => d
+            case Absent =>
+                @scala.annotation.tailrec
+                def fold(i: Int, lo: Double, hi: Double): (Double, Double) =
+                    if i >= categories.size then (lo, hi)
+                    else
+                        val raw = categories(i)._2
+                        val v = raw match
+                            case n: Double => n
+                            case n: Int    => n.toDouble
+                            case n: Long   => n.toDouble
+                            case n: Float  => n.toDouble
+                            case _         => Double.NaN
+                        if java.lang.Double.isFinite(v) then fold(i + 1, math.min(lo, v), math.max(hi, v))
+                        else fold(i + 1, lo, hi)
+                fold(0, Double.MaxValue, Double.MinValue) match
+                    case (lo, _) if lo == Double.MaxValue => (0.0, 1.0)
+                    case result                           => result
+    end domainExtentOf
+
+    /** Interpolate `lo`..`hi` at the parameter derived from `raw`'s position in the domain `[domLo, domHi]`.
+      *
+      * The parameter is clamped to `[0, 1]`; a degenerate domain (`domHi <= domLo`) yields the `lo` color
+      * (parameter 0) with no division by zero. A non-numeric raw value maps to `domLo` (parameter 0).
+      */
+    private def sequentialColor(raw: Any, lo: Style.Color, hi: Style.Color, domLo: Double, domHi: Double) =
+        val v: Double = raw match
+            case n: Double => n
+            case n: Int    => n.toDouble
+            case n: Long   => n.toDouble
+            case n: Float  => n.toDouble
+            case _         => domLo
+        val t = if domHi <= domLo then 0.0 else math.max(0.0, math.min(1.0, (v - domLo) / (domHi - domLo)))
+        lerpColor(lo, hi, t)
+    end sequentialColor
+
+    /** Linear per-channel RGB interpolation between two colors at parameter `t` in `[0, 1]`.
+      *
+      * RGB components are extracted from the color ADT directly (hex strings of 3/4/6/8 digits, rgb, rgba), so
+      * named constants and `Style.Color.hex(...)` inputs all interpolate correctly. The result is an rgb color.
+      */
+    private def lerpColor(lo: Style.Color, hi: Style.Color, t: Double) =
+        val (r0, g0, b0) = colorComponents(lo)
+        val (r1, g1, b1) = colorComponents(hi)
+        val r            = math.round(r0 + (r1 - r0) * t).toInt
+        val g            = math.round(g0 + (g1 - g0) * t).toInt
+        val b            = math.round(b0 + (b1 - b0) * t).toInt
+        Style.Color.rgb(r, g, b)
+    end lerpColor
+
+    /** Extract the 8-bit R/G/B components of a color, normalizing hex (3/4/6/8 digit) and rgb/rgba forms.
+      *
+      * Falls back to mid-gray for `transparent` or an unparseable hex; in practice every named constant and
+      * `Style.Color.hex`/`rgb` input parses, so the fallback is a safety net, not a normal path.
+      */
+    private def colorComponents(c: Style.Color) =
+        def parseHex(value: String): (Int, Int, Int) =
+            val body = if value.startsWith("#") then value.substring(1) else value
+            // Expand 3/4-digit shorthand (#rgb / #rgba) to 6 digits by doubling each nibble.
+            val rgb =
+                if body.length == 3 || body.length == 4 then
+                    val r = body.charAt(0); val g = body.charAt(1); val b = body.charAt(2)
+                    s"$r$r$g$g$b$b"
+                else body.substring(0, math.min(6, body.length))
+            if rgb.length == 6 then
+                (
+                    Integer.parseInt(rgb.substring(0, 2), 16),
+                    Integer.parseInt(rgb.substring(2, 4), 16),
+                    Integer.parseInt(rgb.substring(4, 6), 16)
+                )
+            else (128, 128, 128)
+            end if
+        end parseHex
+        c match
+            case Style.Color.Hex(value)       => parseHex(value)
+            case Style.Color.Rgb(r, g, b)     => (r, g, b)
+            case Style.Color.Rgba(r, g, b, _) => (r, g, b)
+            case Style.Color.Transparent      => (128, 128, 128)
+        end match
+    end colorComponents
+
+    /** True when the legend-driving mark (the one that carries the color channel) is a line or area mark.
+      *
+      * Line and area series get a short line-stroke swatch in the legend (matching how the data reads as a
+      * stroke); bar and point series get the filled-rect swatch. When no color-bearing mark is found the
+      * default is the rect swatch.
+      */
+    private def legendUsesLineSwatch[A](marks: Chunk[Mark[A]]): Boolean =
+        @scala.annotation.tailrec
+        def loop(i: Int): Boolean =
+            if i >= marks.size then false
+            else
+                marks(i) match
+                    case m: Mark.Line[A, ?, ?] => m.color.isDefined || loop(i + 1)
+                    case m: Mark.Area[A, ?, ?] => m.color.isDefined || loop(i + 1)
+                    case _                     => loop(i + 1)
+        loop(0)
+    end legendUsesLineSwatch
+
+    /** Build the legend swatch+label elements, positioned per `cfg.position`.
+      *
+      * `categories` is `Chunk[(label, rawValue)]` in enum-ordinal order; `palette` the resolved color per
+      * category. Top and Bottom lay the entries horizontally; Left and Right stack them vertically. Line/area
+      * series get a short line-stroke swatch, bar/point series a filled rect swatch. When `cfg.isInteractive`,
+      * each swatch+label pair carries an `onClick` that toggles its label in `cfg.hiddenSeries`.
+      *
+      * `labelColor` is the theme chrome color (the same `axisChromeColor` the axis tick labels use) so labels
+      * stay readable against the panel background; the swatch fills keep the category/colorScale colors.
+      */
+    private def buildLegendItems[A](
         layout: Layout,
         categories: Chunk[(String, Any)],
         palette: Chunk[Style.Color],
         cfg: LegendConfig,
+        marks: Chunk[Mark[A]],
         labelColor: Style.Color
     )(using Frame): Chunk[Svg.SvgElement] =
-        // Place the legend inside the reserved band above the plot (y in [MarginTop, plotY - 2]).
-        // The band height equals LegendReservedH; center vertically within it.
-        val legendX = layout.plotX
-        val legendY = MarginTop + (LegendReservedH - SwatchSize) / 2.0
+        // Origin and flow direction per legend position. `vertical` stacks items down a column (Left/Right);
+        // otherwise items flow horizontally across the reserved band (Top/Bottom).
+        val (legendX, legendY, vertical) = cfg.position.getOrElse(LegendPosition.Top) match
+            case LegendPosition.Top    => (layout.plotX, MarginTop + (LegendReservedH - SwatchSize) / 2.0, false)
+            case LegendPosition.Bottom => (layout.plotX, layout.plotBaseline + (LegendReservedH - SwatchSize) / 2.0, false)
+            case LegendPosition.Left   => (MarginLeft / 2.0 - SwatchSize, layout.plotY, true)
+            case LegendPosition.Right  => (layout.plotX + layout.plotW + 8.0, layout.plotY, true)
 
-        // Lay items horizontally, each entry occupying (SwatchSize + SwatchLabelGap + labelWidth + itemGap).
-        // Approximate label pixel width at roughly 7px per character.
-        val itemGap = 16.0
+        val useLineSwatch = legendUsesLineSwatch(marks)
+        val itemGap       = 16.0
+
+        // Click action toggling one series label in the user's hiddenSeries ref (INV-026).
+        def toggleAction(label: String): Maybe[Any < Async] =
+            if cfg.isInteractive then
+                cfg.hiddenSeries.map(ref => ref.updateAndGet(s => if s.contains(label) then s - label else s + label))
+            else Absent
 
         @scala.annotation.tailrec
-        def loop(i: Int, curX: Double, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
+        def loop(i: Int, curX: Double, curY: Double, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
             if i >= categories.size then acc
             else
                 val (cat, _) = categories(i)
                 val color    = if i < palette.size then palette(i) else DefaultPalette.toSeq.apply(i % DefaultPalette.size)
+                val clickAttrs = toggleAction(cat) match
+                    case Present(a) => UI.Ast.Attrs(onClick = Present(a))
+                    case Absent     => UI.Ast.Attrs()
                 val swatch: Svg.SvgElement =
-                    Svg.rect
-                        .x(curX)
-                        .y(legendY)
-                        .width(SwatchSize)
-                        .height(SwatchSize)
-                        .fill(Svg.Paint.Color(color))
+                    if useLineSwatch then
+                        // Short horizontal stroke at the swatch's vertical centre.
+                        Svg.line
+                            .x1(curX)
+                            .y1(curY + SwatchSize / 2.0)
+                            .x2(curX + SwatchSize)
+                            .y2(curY + SwatchSize / 2.0)
+                            .stroke(Svg.Paint.Color(color))
+                            .strokeWidth(2.0)
+                            .withAttrs(clickAttrs)
+                    else
+                        Svg.rect
+                            .x(curX)
+                            .y(curY)
+                            .width(SwatchSize)
+                            .height(SwatchSize)
+                            .fill(Svg.Paint.Color(color))
+                            .withAttrs(clickAttrs)
                 val label: Svg.SvgElement =
                     Svg.text
                         .x(curX + SwatchSize + SwatchLabelGap)
-                        .y(legendY + SwatchSize / 2.0)
+                        .y(curY + SwatchSize / 2.0)
                         .dominantBaseline(Svg.DominantBaseline.Middle)
                         .fill(Svg.Paint.Color(labelColor))
+                        .withAttrs(clickAttrs)
                         .apply(cat)
                 val approxLabelW = cat.length.toDouble * 7.0
-                val nextX        = curX + SwatchSize + SwatchLabelGap + approxLabelW + itemGap
-                loop(i + 1, nextX, acc.append(swatch).append(label))
-        loop(0, legendX, Chunk.empty)
+                val (nextX, nextY) =
+                    if vertical then (curX, curY + LegendRowH)
+                    else (curX + SwatchSize + SwatchLabelGap + approxLabelW + itemGap, curY)
+                loop(i + 1, nextX, nextY, acc.append(swatch).append(label))
+        loop(0, legendX, legendY, Chunk.empty)
     end buildLegendItems
 
     // ---- marks region ----
@@ -3063,9 +3259,10 @@ private[kyo] object ChartLower:
 
     /** Build the domain-independent portion of the static frame for a live chart.
       *
-      * Includes: background rect, axis lines, legend chrome. If the y-domain is fixed (by a `ScaleOverride`),
+      * Includes: background rect and axis lines. If the y-domain is fixed (by a `ScaleOverride`),
       * also includes the full y-axis (ticks, labels, gridlines); otherwise the y-axis is omitted here and
-      * included inside the reactive region where it can update with the data.
+      * included inside the reactive region where it can update with the data. The legend is data-dependent and
+      * lives inside the reactive region, not here.
       *
       * The x-axis ticks and labels are NOT included in the static frame: they depend on the live x-scale
       * (which tracks the current category set) and are therefore placed inside the reactive region by
@@ -3079,18 +3276,16 @@ private[kyo] object ChartLower:
         ysL: Scale,
         ysR: Maybe[Scale],
         spec: ChartSpec[A],
-        initialRows: Chunk[A],
-        legendRows: Chunk[A]
+        initialRows: Chunk[A]
     )(using Frame): Chunk[Svg.SvgElement] =
         val leftChrome  = axisChromeColorFor(spec.theme, spec.marks, Axis.Left)
         val rightChrome = axisChromeColorFor(spec.theme, spec.marks, Axis.Right)
         val gridColor   = gridlineColor(spec.theme)
         val background  = buildBackground(layout, spec.theme)
         val axisLines   = buildAxisLines(layout, ysR, spec.theme, leftChrome, rightChrome)
-        // Derive the legend from a sample of the live signal's current value, not from the empty `initialRows`
-        // used for the (data-independent) frame chrome. An empty chunk yields zero categories, which would
-        // suppress the legend entirely.
-        val legendElems = buildLegend(layout, spec, legendRows)
+        // The legend is NOT built here: it is data-dependent and lives inside the reactive region, where it
+        // reflects each emission's live category set. Building it from a one-shot sample would freeze it to the
+        // first emission's categories.
         val yAxisElems: Chunk[Svg.SvgElement] =
             if isYDomainFixed(spec.yScaleOverride) then
                 val leftAxis = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false, spec.theme, leftChrome, gridColor)
@@ -3108,7 +3303,7 @@ private[kyo] object ChartLower:
                     case Absent => Chunk.empty
                 leftAxis ++ rightAxis
             else Chunk.empty
-        background ++ axisLines ++ yAxisElems ++ legendElems
+        background ++ axisLines ++ yAxisElems
     end buildStaticFrameLive
 
     /** Build the reactive region `Svg.G` for one emission of the live signal.
@@ -3132,22 +3327,28 @@ private[kyo] object ChartLower:
         ysL: Scale,
         ysR: Maybe[Scale],
         stateRef: Maybe[AtomicRef.Unsafe[TransState[A]]],
+        gradPrefix: String,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Svg.G =
+        // Interactive hidden-series filter (INV-026): the marks drop rows whose color label is hidden; the
+        // legend keeps every category (built from the full emission rows) so a hidden series can be toggled on.
+        val visibleRows = visibleRowsFor(rows, spec)
         val marksG = stateRef match
-            case Present(ref) => marksRegionWithTransitions(rows, spec, layout, xs, ysL, ysR, ref)
-            case Absent       => marksRegion(rows, spec.marks, layout, xs, ysL, ysR, Present(spec), internalHoverRef)
-        val xAxisElems = buildXAxis(layout, xs, spec.xAxisCfg, spec.theme)
+            case Present(ref) => marksRegionWithTransitions(visibleRows, spec, layout, xs, ysL, ysR, ref)
+            case Absent       => marksRegion(visibleRows, spec.marks, layout, xs, ysL, ysR, Present(spec), internalHoverRef)
+        // Live legend (INV-029): built per emission from the full rows so it reflects the current category set.
+        val legendElems = buildLegend(layout, spec, rows, gradPrefix)
+        val xAxisElems  = buildXAxis(layout, xs, spec.xAxisCfg, spec.theme)
         if isYDomainFixed(spec.yScaleOverride) then
-            // Fixed y-domain: y-axis is static; only x-axis ticks and marks are reactive.
-            val xAxisG = xAxisElems.foldLeft(Svg.g): (g, el) =>
+            // Fixed y-domain: y-axis is static; only x-axis ticks, legend, and marks are reactive.
+            val xAxisG = (xAxisElems ++ legendElems).foldLeft(Svg.g): (g, el) =>
                 el match
                     case l: Svg.Line => g(l)
                     case t: Svg.Text => g(t)
                     case other       => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
             Svg.g(xAxisG)(marksG)
         else
-            // Inferred domain: include y-axis ticks AND x-axis ticks inside the reactive region.
+            // Inferred domain: include y-axis ticks, x-axis ticks, and the legend inside the reactive region.
             val leftChrome    = axisChromeColorFor(spec.theme, spec.marks, Axis.Left)
             val rightChrome   = axisChromeColorFor(spec.theme, spec.marks, Axis.Right)
             val gridColor     = gridlineColor(spec.theme)
@@ -3164,7 +3365,7 @@ private[kyo] object ChartLower:
                         gridColor
                     )
                 case Absent => Chunk.empty
-            val allElems: Chunk[Svg.SvgElement] = leftAxisElems ++ rightAxisElems ++ xAxisElems
+            val allElems: Chunk[Svg.SvgElement] = leftAxisElems ++ rightAxisElems ++ xAxisElems ++ legendElems
             val axisG = allElems.foldLeft(Svg.g): (g, el) =>
                 el match
                     case l: Svg.Line => g(l)
@@ -3174,11 +3375,34 @@ private[kyo] object ChartLower:
         end if
     end buildReactiveRegion
 
+    /** Drop rows whose color-channel label is in the interactive legend's hidden set (INV-026).
+      *
+      * When the legend is not interactive (or no `hiddenSeries` ref is attached), all rows are returned. The
+      * hidden labels are read synchronously from the user's ref; the label derivation mirrors the legend's
+      * (`accessor(row).toString`), so toggling a swatch hides exactly the rows that swatch represents.
+      */
+    private def visibleRowsFor[A](rows: Chunk[A], spec: ChartSpec[A]): Chunk[A] =
+        spec.legendCfg.hiddenSeries match
+            case Absent       => rows
+            case Present(ref) =>
+                // Unsafe: a synchronous read of the user's SignalRef. Sound because this runs inside the pure
+                // reactive projection (buildReactiveRegion) / synchronous static lowering; the ref is read, not
+                // written, and the filter is a pure function of its current value.
+                import AllowUnsafe.embrace.danger
+                val hidden = ref.unsafe.get()
+                if hidden.isEmpty then rows
+                else
+                    legendChannel(spec.marks) match
+                        case Present(ch) => rows.filter(r => !hidden.contains(ch.accessor(r).toString))
+                        case Absent      => rows
+                end if
+    end visibleRowsFor
+
     /** Lower a `ChartSpec[A]` with a `DataSource.Live` signal to an `Svg.Root`.
       *
-      * The static frame (background, axis lines, x-axis, legend, and the y-axis when the domain is fixed) is
-      * drawn once. The marks region (and the y-axis ticks when the domain is inferred) is wrapped in
-      * `signal.render` so it re-renders on each emission.
+      * The static frame (background, axis lines, and the y-axis when the domain is fixed) is drawn once. The
+      * marks region, the legend, the x-axis, and (when the domain is inferred) the y-axis ticks are wrapped in
+      * `signal.render` so they re-render on each emission. The legend reflects each emission's live category set.
       *
       * Partition logic:
       *   - Fixed domain (`yScale(_.linear(lo,hi))` or `yScale(_.log)`): the y-scale is computed once from the
@@ -3205,7 +3429,7 @@ private[kyo] object ChartLower:
       * pure render function. The ref is private to this chart instance and writes occur only on genuine row
       * changes, so the bypass is sound.
       */
-    private[kyo] def lowerLive[A](spec: ChartSpec[A], signal: Signal[Chunk[A]], legendRows: Chunk[A])(using Frame): Svg.Root =
+    private[kyo] def lowerLive[A](spec: ChartSpec[A], signal: Signal[Chunk[A]], gradPrefix: String)(using Frame): Svg.Root =
         val layout = buildLayout(spec)
         // Use a fixed initial row set for the layout/x-scale/ysR-presence check.
         // For Phase 05 the x-scale is computed from the signal's current value via initConst or the first
@@ -3239,7 +3463,7 @@ private[kyo] object ChartLower:
             if isYDomainFixed(spec.yScaleOverride) then Present(ysLInitial) else Absent
         // Static frame: drawn once, never changes.
         val ysLForFrame = ysLFixed.getOrElse(ysLInitial)
-        val staticFrame = buildStaticFrameLive(layout, xs, ysLForFrame, ysRFixed, spec, initialRows, legendRows)
+        val staticFrame = buildStaticFrameLive(layout, xs, ysLForFrame, ysRFixed, spec, initialRows)
         val vb          = Svg.ViewBox(0.0, 0.0, layout.svgW, layout.svgH)
         val baseSvg     = Svg.svg.width(layout.svgW).height(layout.svgH).viewBox(vb)
         val withFrame = staticFrame.foldLeft(baseSvg): (acc, el) =>
@@ -3280,7 +3504,7 @@ private[kyo] object ChartLower:
                     spec.yAxisCfg
                 )
             val ysLLive = ysLFixed.getOrElse(ysLLiveResolved)
-            buildReactiveRegion(rows, spec, layout, xsLive, ysLLive, ysRLive, stateRefMaybe, internalHoverRef)
+            buildReactiveRegion(rows, spec, layout, xsLive, ysLLive, ysRLive, stateRefMaybe, gradPrefix, internalHoverRef)
         val withMarks = withFrame(reactiveMarks)
         // Phase 07: append the tooltip overlay as the last child so it renders on top.
         (spec.tooltip, internalHoverRef) match
@@ -3297,24 +3521,18 @@ private[kyo] object ChartLower:
       *
       * Dispatches to `lowerStatic` for `DataSource.Static` and `lowerLive` for `DataSource.Live`.
       *
-      * N4-guard: no `url(#id)` references are emitted by the frame or marks (plain rects/lines/text only),
-      * so `Frame.internal` is safe here. When gradient/clip/marker refs are added in a later phase, the
-      * construction `Frame` must be threaded through `ChartSpec` to avoid cross-chart id collisions.
+      * A document-unique id prefix is allocated once per `lower` call (`nextChartInstancePrefix`) so a
+      * sequential-color gradient def gets an id that is unique per chart INSTANCE, even when two charts on one
+      * page have identical structural hashes. Within one chart the gradient def id and its `url(#id)` reference
+      * always match (the def carries the prefix-derived `defId`, the swatch fill references the same id), and
+      * two charts in one document never collide.
       */
     private[kyo] def lower[A](spec: ChartSpec[A]): Svg.Root =
-        given Frame = Frame.internal
+        given Frame    = Frame.internal
+        val gradPrefix = ChartFoundations.nextChartInstancePrefix()
         spec.data match
-            case DataSource.Static(rows) => lowerStatic(rows, spec)
-            case DataSource.Live(signal) =>
-                // Sample the signal's current value so the (static) legend can derive its categories from real
-                // rows. The legend lives in the static frame, so without a sample it would be built from an
-                // empty chunk and never emit any swatches/labels. The category set (e.g. 2xx/4xx/5xx, p50/p99)
-                // is fixed for a live chart, so one sample at lowering time is sufficient; the reactive marks
-                // region still redraws per emission. Unsafe: a synchronous read of the signal's current value
-                // is sound here because lowering is itself a pure, synchronous projection.
-                import AllowUnsafe.embrace.danger
-                val legendRows = Sync.Unsafe.evalOrThrow(signal.current)
-                lowerLive(spec, signal, legendRows)
+            case DataSource.Static(rows) => lowerStatic(rows, spec, gradPrefix)
+            case DataSource.Live(signal) => lowerLive(spec, signal, gradPrefix)
         end match
     end lower
 
@@ -3357,7 +3575,7 @@ private[kyo] object ChartLower:
                 Svg.g
     end buildTooltipOverlay
 
-    private def lowerStatic[A](rows: Chunk[A], spec: ChartSpec[A])(using Frame): Svg.Root =
+    private def lowerStatic[A](rows: Chunk[A], spec: ChartSpec[A], gradPrefix: String)(using Frame): Svg.Root =
         val layout = buildLayout(spec)
         val hasRight = spec.marks.exists:
             case m: Mark.Bar[A, ?, ?]      => m.axis == Axis.Right
@@ -3370,8 +3588,11 @@ private[kyo] object ChartLower:
         val computeRight = hasRight || spec.yAxisRightCfg.isDefined
         val ResolvedScales(xs, ysL, ysR) =
             resolveAllScales(rows, spec.marks, layout, spec.xScaleOverride, spec.yScaleOverride, computeRight, spec.xAxisCfg, spec.yAxisCfg)
-        val vb    = Svg.ViewBox(0.0, 0.0, layout.svgW, layout.svgH)
-        val frame = buildFrame(layout, xs, ysL, ysR, spec, rows)
+        val vb = Svg.ViewBox(0.0, 0.0, layout.svgW, layout.svgH)
+        // Interactive hidden-series filter (INV-026): the marks drop hidden rows; the legend keeps every
+        // category (built from the full rows) so the user can still toggle a hidden series back on.
+        val visibleRows = visibleRowsFor(rows, spec)
+        val frame       = buildFrame(layout, xs, ysL, ysR, spec, rows, gradPrefix)
         // Phase 07: create an internal hover ref when a tooltip is configured so shape handlers can drive it.
         // Unsafe: SignalRef.Unsafe.init bypasses kyo effects; sound because the ref is private to this chart.
         val internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = spec.tooltip match
@@ -3380,7 +3601,7 @@ private[kyo] object ChartLower:
                 given CanEqual[Maybe[A], Maybe[A]] = CanEqual.derived
                 Present(Signal.SignalRef.Unsafe.init[Maybe[A]](Absent).safe)
             case Absent => Absent
-        val marksG  = marksRegion(rows, spec.marks, layout, xs, ysL, ysR, Present(spec), internalHoverRef)
+        val marksG  = marksRegion(visibleRows, spec.marks, layout, xs, ysL, ysR, Present(spec), internalHoverRef)
         val baseSvg = Svg.svg.width(layout.svgW).height(layout.svgH).viewBox(vb)
         val withFrame = frame.foldLeft(baseSvg): (acc, el) =>
             el match

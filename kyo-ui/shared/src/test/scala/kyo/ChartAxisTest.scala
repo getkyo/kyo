@@ -224,10 +224,11 @@ class ChartAxisTest extends Test:
         )
         val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
             .legend(
-                _.colorScale[Region]:
-                    case Region.NA   => Style.Color.blue
-                    case Region.EU   => Style.Color.green
-                    case Region.APAC => Style.Color.orange
+                _.colorScale[Region](
+                    Region.NA   -> Style.Color.blue,
+                    Region.EU   -> Style.Color.green,
+                    Region.APAC -> Style.Color.orange
+                )
             )
         val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
 

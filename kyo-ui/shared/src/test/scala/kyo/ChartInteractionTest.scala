@@ -508,4 +508,135 @@ class ChartInteractionTest extends Test:
         )
     }
 
+    // ---- Phase 05 interactive-legend tests (INV-026) ----
+
+    case class CatRow(x: String, y: Double, cat: String) derives CanEqual
+
+    given CanEqual[Set[String], Set[String]] = CanEqual.derived
+
+    /** Coord -> Double helper. */
+    private def coordNum(c: Maybe[Svg.Coord]): Maybe[Double] = c match
+        case Present(Svg.Coord.Num(v)) => Present(v)
+        case _                         => Absent
+
+    /** Collect the legend swatch rects (the 12x12 frame-level rects, direct children of root). */
+    private def legendSwatches(root: Svg.Root): Chunk[Svg.Rect] =
+        root.children.collect:
+            case r: Svg.Rect if coordNum(r.svgAttrs.width).contains(12.0) && coordNum(r.svgAttrs.height).contains(12.0) => r
+
+    // ---- Leaf 5 (INV-026): clicking a swatch toggles its label in the hiddenSeries ref ----
+
+    "clicking a legend swatch toggles its label in the user hiddenSeries ref (INV-026)" in run {
+        val rows = Chunk(CatRow("p", 1.0, "catA"), CatRow("q", 2.0, "catB"))
+        for
+            hidden <- Signal.initRef(Set.empty[String])
+            spec = UI.chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
+                .legend(_.interactive(hidden))
+            root = summon[Conversion[ChartSpec[CatRow], Svg.Root]](spec)
+            // The first swatch corresponds to catA (enum/encounter order). Its onClick toggles "catA".
+            swatches = legendSwatches(root)
+            _        = assert(swatches.size == 2, s"Expected 2 legend swatches but got ${swatches.size}")
+            click    = swatches(0).attrs.onClick
+            _        = assert(click.isDefined, "Expected Present onClick on the interactive swatch")
+            _      <- runAction(click.get)
+            after1 <- hidden.get
+            _      <- runAction(click.get)
+            after2 <- hidden.get
+        yield
+            assert(after1 == Set("catA"), s"First click should hide catA but ref was $after1")
+            assert(after2 == Set.empty[String], s"Second click should show catA again but ref was $after2")
+        end for
+    }
+
+    // ---- Leaf 6 (INV-026): the hidden filter drops the specified series from the marks ----
+
+    "with hiddenSeries={catA}, the catA bar is dropped from the marks while catB remains (INV-026)" in run {
+        // catA at x-band "p", catB at x-band "q". Hiding catA must drop catA's bar (the one at band "p")
+        // while keeping catB's bar. The bar count drops from 2 to 1, and the remaining bar is NOT at band "p".
+        val rowsFull = Chunk(CatRow("p", 1.0, "catA"), CatRow("q", 2.0, "catB"))
+        def markBars(root: Svg.Root): Chunk[Svg.Rect] =
+            rectsIn(root).filter(r => !(coordNum(r.svgAttrs.width).contains(12.0) && coordNum(r.svgAttrs.height).contains(12.0)))
+        for
+            none   <- Signal.initRef(Set.empty[String])
+            hidden <- Signal.initRef(Set("catA"))
+            specFull = UI.chart(rowsFull)(bar(x = _.x, y = _.y, color = _.cat)).legend(_.interactive(none))
+            specHid  = UI.chart(rowsFull)(bar(x = _.x, y = _.y, color = _.cat)).legend(_.interactive(hidden))
+            rootFull = summon[Conversion[ChartSpec[CatRow], Svg.Root]](specFull)
+            rootHid  = summon[Conversion[ChartSpec[CatRow], Svg.Root]](specHid)
+            html <- HtmlRenderer.render(rootHid, Seq.empty)
+        yield
+            val fullBars = markBars(rootFull)
+            val hidBars  = markBars(rootHid)
+            assert(fullBars.size == 2, s"Expected 2 bars with nothing hidden but got ${fullBars.size}")
+            assert(hidBars.size == 1, s"Expected exactly 1 bar after hiding catA but got ${hidBars.size}")
+            // The surviving bar is catB's: its x-band differs from catA's band-"p" position.
+            val catAbandX = fullBars.map(b => coordNum(b.svgAttrs.x).getOrElse(-1.0)).min
+            val survivorX = coordNum(hidBars.head.svgAttrs.x).getOrElse(-1.0)
+            assert(survivorX != catAbandX, s"The surviving bar must be catB's (different band) but was at catA's band x=$catAbandX")
+            // The legend still shows BOTH category labels (so the user can toggle catA back on).
+            assert(html.contains(">catA<"), s"Legend must still show the hidden category label catA:\n$html")
+            assert(html.contains(">catB<"), s"Legend must show catB:\n$html")
+        end for
+    }
+
+    // ---- Leaf 7 (INV-026): the hidden filter applies before color-splitting ----
+
+    "with 3 series and catB hidden, mark colors index over the visible set {catA, catC} only (INV-026)" in run {
+        val rows = Chunk(
+            CatRow("p", 1.0, "catA"),
+            CatRow("q", 2.0, "catB"),
+            CatRow("r", 3.0, "catC")
+        )
+        for
+            hidden <- Signal.initRef(Set("catB"))
+            spec = UI.chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
+                .legend(_.interactive(hidden))
+            root = summon[Conversion[ChartSpec[CatRow], Svg.Root]](spec)
+        yield
+            // Visible marks are catA and catC. With catB filtered BEFORE color-splitting, the visible set is
+            // {catA, catC}: catA -> palette(0)=blue, catC -> palette(1)=orange. (Not catC -> palette(2)=green,
+            // which is what would happen if the filter ran AFTER color-splitting over all three.)
+            val markFills = rectsIn(root).filter(r =>
+                !(coordNum(r.svgAttrs.width).contains(12.0) && coordNum(r.svgAttrs.height).contains(12.0))
+            ).map(r => r.svgAttrs.fill).toSeq
+            assert(
+                markFills.contains(Present(Svg.Paint.Color(Style.Color.blue))),
+                s"catA mark should be palette(0) blue but mark fills were: $markFills"
+            )
+            assert(
+                markFills.contains(Present(Svg.Paint.Color(Style.Color.orange))),
+                s"catC mark should index to palette(1) orange (visible set), not palette(2); fills were: $markFills"
+            )
+            assert(
+                !markFills.contains(Present(Svg.Paint.Color(Style.Color.green))),
+                s"No mark should use palette(2) green: the hidden filter ran before color-splitting; fills were: $markFills"
+            )
+        end for
+    }
+
+    // ---- Leaf 8 (INV-026): hiding all series leaves the legend visible but the marks empty ----
+
+    "hiding all series leaves the legend swatches visible but the marks region empty (INV-026)" in run {
+        val rows = Chunk(CatRow("p", 1.0, "catA"), CatRow("q", 2.0, "catB"))
+        for
+            hidden <- Signal.initRef(Set("catA", "catB"))
+            spec = UI.chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
+                .legend(_.interactive(hidden))
+            root = summon[Conversion[ChartSpec[CatRow], Svg.Root]](spec)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // No mark rects (all series hidden): only the 12x12 legend swatches remain among rects.
+            val markFills = rectsIn(root).filter(r =>
+                !(coordNum(r.svgAttrs.width).contains(12.0) && coordNum(r.svgAttrs.height).contains(12.0))
+            )
+            assert(markFills.isEmpty, s"All series hidden: expected no mark rects but found ${markFills.size}")
+            // The legend swatches and labels are still present (the user can toggle a series back on).
+            assert(legendSwatches(root).size == 2, s"Expected 2 legend swatches to remain visible but got ${legendSwatches(root).size}")
+            assert(
+                html.contains(">catA<") && html.contains(">catB<"),
+                s"Legend labels must remain visible when all series are hidden:\n$html"
+            )
+        end for
+    }
+
 end ChartInteractionTest

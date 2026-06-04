@@ -73,4 +73,24 @@ private[kyo] object ChartFoundations:
     def chartIdPrefix(spec: ChartSpec[?]): String =
         "kyo-chart-" + Integer.toHexString(spec.##)
 
+    /** Monotonic counter assigning each lowered chart a document-unique instance id.
+      *
+      * `spec.##` is a STRUCTURAL hash: two charts built from identical specs (same size, same marks, same
+      * color scale) share it, so two such charts on one page would emit duplicate gradient def ids and the
+      * browser would bind every `url(#id)` to the first one. This counter is incremented once per `lower`
+      * call so each chart instance gets a distinct id regardless of its structural hash. The literal value is
+      * opaque plumbing (not stable across runs); what matters is that within one chart the gradient def id and
+      * its `url(#id)` reference match, and two charts in one document get different ids.
+      */
+    // Unsafe: a module-private atomic counter, the standard document-unique id scheme (D3/vega use the same).
+    // Incremented from the synchronous, pure `lower` projection, so a kyo Atomic primitive is the right tool.
+    private val instanceCounter: AtomicInt.Unsafe =
+        import AllowUnsafe.embrace.danger
+        AtomicInt.Unsafe.init(0)
+
+    /** Allocate a fresh document-unique id prefix for one lowered chart instance. */
+    def nextChartInstancePrefix(): String =
+        import AllowUnsafe.embrace.danger
+        "kyo-chart-" + Integer.toHexString(instanceCounter.incrementAndGet())
+
 end ChartFoundations

@@ -220,13 +220,11 @@ class ChartReactiveTest extends Test:
         end for
     }
 
-    // ---- Test 6: live legend with explicit colorScale emits swatches+labels in the reserved band ----
+    // ---- Test 6: live legend with explicit colorScale emits swatches+labels in the rendered emission ----
 
-    "live chart .legend(_.top.colorScale{...}) emits a legend g (swatches + labels) at in-bounds y" in run {
-        // Regression: the live (signal-backed) lowering built the static legend from an empty initial chunk,
-        // which yields zero categories and suppresses the whole legend. The dashboard's status/latency charts
-        // are live, so no legend rendered at all. The fix samples the signal's current value so the legend
-        // derives its categories (here the stack groups 2xx/4xx/5xx) from real rows.
+    "live chart .legend(_.top.colorScale{...}) emits a legend (swatches + labels) in the rendered HTML" in run {
+        // The live legend is built inside the reactive region (INV-029), so its swatches and labels appear in
+        // the rendered HTML of each emission. The category set (2xx/4xx/5xx) comes from the live stack groups.
         val rows = Chunk(
             StatusRow("/login", "2xx", 90.0),
             StatusRow("/login", "4xx", 8.0),
@@ -258,32 +256,79 @@ class ChartReactiveTest extends Test:
             assert(html.contains(">4xx<"), s"Expected legend label '4xx' but it was absent:\n$html")
             assert(html.contains(">5xx<"), s"Expected legend label '5xx' but it was absent:\n$html")
 
-            // The legend lives in the static frame: the swatch rects and label texts are DIRECT children of
-            // root (not nested in the reactive marks g). Collect them and assert exactly three of each.
-            def coordNum(c: Maybe[Svg.Coord]): Maybe[Double] = c match
-                case Present(Svg.Coord.Num(v)) => Present(v)
-                case _                         => Absent
-            val swatchFills = root.children.collect:
-                case r: Svg.Rect if coordNum(r.svgAttrs.width).contains(12.0) && coordNum(r.svgAttrs.height).contains(12.0) =>
-                    r.svgAttrs.fill
-            assert(swatchFills.size == 3, s"Expected 3 legend swatches (12x12 rects) but found ${swatchFills.size}")
-            // Swatch fills carry the colorScale colors (green/amber/red), not the theme chrome color.
-            val greenPaint: Maybe[Svg.Paint] = Present(Svg.Paint.Color(scGreen))
-            val amberPaint: Maybe[Svg.Paint] = Present(Svg.Paint.Color(scAmber))
-            val redPaint: Maybe[Svg.Paint]   = Present(Svg.Paint.Color(scRed))
-            assert(swatchFills.contains(greenPaint), s"Expected a green (2xx) swatch fill but fills were: $swatchFills")
-            assert(swatchFills.contains(amberPaint), s"Expected an amber (4xx) swatch fill but fills were: $swatchFills")
-            assert(swatchFills.contains(redPaint), s"Expected a red (5xx) swatch fill but fills were: $swatchFills")
+            // The legend swatches carry the colorScale colors (green/amber/red) as fills in the HTML.
+            assert(html.contains("rgb(34, 197, 94)"), s"Expected a green (2xx) swatch fill in HTML:\n$html")
+            assert(html.contains("rgb(245, 158, 11)"), s"Expected an amber (4xx) swatch fill in HTML:\n$html")
+            assert(html.contains("rgb(239, 68, 68)"), s"Expected a red (5xx) swatch fill in HTML:\n$html")
 
-            // Legend label texts are static root children; assert there are 3 and each y is in-bounds (0..240)
-            // and inside the reserved band (the top 20px strip, y <= 36 covers the swatch+label centre).
-            val labelYs: Chunk[Double] = root.children.collect:
-                case t: Svg.Text if coordNum(t.svgAttrs.y).exists(_ <= 36.0) => coordNum(t.svgAttrs.y).getOrElse(-1.0)
-            assert(labelYs.size == 3, s"Expected 3 legend labels in the top band but found ${labelYs.size}: $labelYs")
-            assert(
-                labelYs.forall(y => y >= 0.0 && y <= 240.0),
-                s"Every legend label y must be inside the viewBox 0..240 but were: $labelYs"
-            )
+            // Three 12x12 swatch rects are emitted (one per category).
+            val swatchCount = """width="12"""".r.findAllMatchIn(html).size
+            assert(swatchCount >= 3, s"Expected at least 3 legend swatches (12-wide rects) but found $swatchCount:\n$html")
+        end for
+    }
+
+    // ---- Leaf 18 (INV-029): a late color category gets a swatch on the emission that introduces it ----
+
+    "a live chart legend gains a swatch for a category that appears after the first emission (INV-029)" in run {
+        given CanEqual[Chunk[StatusRow], Chunk[StatusRow]] = CanEqual.derived
+        for
+            ref <- Signal.initRef(Chunk(StatusRow("/x", "a", 5.0)))
+            spec = UI.chart(ref: Signal[Chunk[StatusRow]])(bar(x = _.name, y = _.count, color = _.code))
+            root = summon[Conversion[ChartSpec[StatusRow], Svg.Root]](spec)
+            htmlBefore <- HtmlRenderer.render(root, Seq.empty)
+            _          <- ref.set(Chunk(StatusRow("/x", "a", 5.0), StatusRow("/y", "b", 7.0)))
+            htmlAfter  <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // First emission: only category "a" has a swatch+label. Category "b" is absent.
+            assert(htmlBefore.contains(">a<"), s"Expected category label 'a' in the first emission:\n$htmlBefore")
+            assert(!htmlBefore.contains(">b<"), s"Category 'b' must NOT appear before it is introduced:\n$htmlBefore")
+            // Second emission: the new category "b" gains its own swatch+label.
+            assert(htmlAfter.contains(">a<"), s"Category 'a' must still appear after the second emission:\n$htmlAfter")
+            assert(htmlAfter.contains(">b<"), s"New category 'b' swatch+label must appear on the emission that introduces it:\n$htmlAfter")
+        end for
+    }
+
+    // ---- Leaf 19 (INV-029): a fixed-category live legend is unchanged across emissions ----
+
+    "a live chart legend with a fixed category set is unchanged across emissions (INV-029)" in run {
+        given CanEqual[Chunk[StatusRow], Chunk[StatusRow]] = CanEqual.derived
+        for
+            ref <- Signal.initRef(Chunk(StatusRow("/x", "a", 5.0), StatusRow("/y", "b", 7.0)))
+            spec = UI.chart(ref: Signal[Chunk[StatusRow]])(bar(x = _.name, y = _.count, color = _.code))
+            root = summon[Conversion[ChartSpec[StatusRow], Svg.Root]](spec)
+            html0 <- HtmlRenderer.render(root, Seq.empty)
+            // New values, same two categories {a, b}.
+            _     <- ref.set(Chunk(StatusRow("/x", "a", 50.0), StatusRow("/y", "b", 70.0)))
+            html1 <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // Both categories present in both emissions; the count of swatch labels is stable.
+            def labelCount(h: String, label: String): Int = s">$label<".r.findAllMatchIn(h).size
+            assert(labelCount(html0, "a") == labelCount(html1, "a"), "Category 'a' label count must be stable across emissions")
+            assert(labelCount(html0, "b") == labelCount(html1, "b"), "Category 'b' label count must be stable across emissions")
+            assert(html0.contains(">a<") && html0.contains(">b<"), "Both categories must appear in the first emission")
+            assert(html1.contains(">a<") && html1.contains(">b<"), "Both categories must appear in the second emission")
+        end for
+    }
+
+    // ---- Leaf 20 (INV-029): the legend is reactive, built from emitted rows, not a one-shot sample ----
+
+    "live chart legend is built from reactive rows: an empty first emission yields no swatch, a later one does (INV-029)" in run {
+        // If the lowering still sampled signal.current once (the removed one-shot), the FIRST render would show
+        // swatches sampled from the ref's current value. Because the legend is now built per emission from the
+        // emitted rows, an empty first emission yields NO swatch, and a later non-empty emission yields one.
+        given CanEqual[Chunk[StatusRow], Chunk[StatusRow]] = CanEqual.derived
+        for
+            ref <- Signal.initRef(Chunk.empty[StatusRow])
+            spec = UI.chart(ref: Signal[Chunk[StatusRow]])(bar(x = _.name, y = _.count, color = _.code))
+            root = summon[Conversion[ChartSpec[StatusRow], Svg.Root]](spec)
+            htmlEmpty <- HtmlRenderer.render(root, Seq.empty)
+            _         <- ref.set(Chunk(StatusRow("/x", "a", 5.0)))
+            htmlFull  <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // Empty first emission: no category 'a' label.
+            assert(!htmlEmpty.contains(">a<"), s"Empty first emission must produce no legend swatch:\n$htmlEmpty")
+            // After the non-empty emission: the legend has the 'a' swatch+label.
+            assert(htmlFull.contains(">a<"), s"After a non-empty emission the legend must show the 'a' swatch:\n$htmlFull")
         end for
     }
 

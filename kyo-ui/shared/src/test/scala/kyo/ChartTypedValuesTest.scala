@@ -16,8 +16,8 @@ import scala.language.implicitConversions
   * Covers:
   *   1. Opaque `Usd <: Double` with `Plottable.numeric`: bar selects a Linear y-scale; a row at `Usd(2500)` with
   *      `.yScale(_.linear(0, 5000))` lowers to the expected pixel.
-  *   2. `colorScaleMap` Map+fallback: an unmapped `Region` case receives the fallback color.
-  *   3. `colorScale[K]` exhaustive total-function: a match missing one enum case does not compile.
+  *   2. `colorScale[K]` value-equality pairs: each `Region` case maps to its color; an unmapped case falls back.
+  *   3. `colorScale[K]` pairs keep two colliding-`toString` cases distinct with no ClassCastException.
   *   4. Raw-literal `Conversion[Double, Usd]`: `rule(y = 1000.0)` builds a `RuleValue.Const`.
   *   5. `Maybe[Usd]` gap channel: a line with `y = _.value` where some values are `Absent` splits into two sub-paths.
   *
@@ -120,81 +120,106 @@ class ChartTypedValuesTest extends Test:
         assertClose(numOf(r.svgAttrs.height), 210.0, "barH for Usd(2500) on [0,5000] scale")
     }
 
-    // ---- Test 2: colorScaleMap Map+fallback assigns fallback to unmapped case ----
+    // ---- Leaf 9 (INV-027): colorScale[K] pairs form resolves by value equality ----
 
-    "colorScaleMap with partial Map assigns fallback color to unmapped Region case" in {
-        // Map: NA -> blue, EU -> green; APAC is NOT in the map -> should get fallback gray
+    "colorScale[K] pairs form assigns the mapped color to each Region by value equality (INV-027)" in {
+        // Pairs NA -> blue, EU -> green, APAC -> orange; each category is matched by `==`, not by toString.
         val rows = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
             Sale("Feb", Usd(1200), Region.EU),
             Sale("Mar", Usd(900), Region.APAC)
         )
-        val fallback = Style.Color.gray
         val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
-            .legend(_.colorScaleMap[Region](
-                Map(Region.NA -> Style.Color.blue, Region.EU -> Style.Color.green),
-                fallback
+            .legend(_.colorScale[Region](
+                Region.NA   -> Style.Color.blue,
+                Region.EU   -> Style.Color.green,
+                Region.APAC -> Style.Color.orange
             ))
         val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
 
-        // Legend swatches: frame-level rects after the background rect.
-        // Frame rects: [0]=background, [1..]=legend swatches in enum-ordinal order (NA, EU, APAC).
+        // Legend swatches: frame-level rects after the background rect, in enum-ordinal order (NA, EU, APAC).
         val fRects   = frameRects(root)
         val swatches = fRects.drop(1)
         assert(swatches.size == 3, s"Expected 3 legend swatches but got ${swatches.size}")
-
-        // NA (ordinal 0) = blue
+        assert(colorOf(swatches(0).svgAttrs.fill) == Style.Color.blue, s"NA swatch should be blue but got ${swatches(0).svgAttrs.fill}")
+        assert(colorOf(swatches(1).svgAttrs.fill) == Style.Color.green, s"EU swatch should be green but got ${swatches(1).svgAttrs.fill}")
         assert(
-            colorOf(swatches(0).svgAttrs.fill) == Style.Color.blue,
-            s"NA swatch should be blue but got ${swatches(0).svgAttrs.fill}"
-        )
-        // EU (ordinal 1) = green
-        assert(
-            colorOf(swatches(1).svgAttrs.fill) == Style.Color.green,
-            s"EU swatch should be green but got ${swatches(1).svgAttrs.fill}"
-        )
-        // APAC (ordinal 2) = fallback gray (unmapped)
-        assert(
-            colorOf(swatches(2).svgAttrs.fill) == fallback,
-            s"APAC swatch should be fallback gray but got ${swatches(2).svgAttrs.fill}"
+            colorOf(swatches(2).svgAttrs.fill) == Style.Color.orange,
+            s"APAC swatch should be orange but got ${swatches(2).svgAttrs.fill}"
         )
     }
 
-    // ---- Test 3: colorScale[K] total function non-exhaustiveness gate ----
-    //
-    // Feasibility note: The `colorScale[K](f: K => Style.Color)` overload accepts an ordinary
-    // function, not a `PartialFunction`. In Scala 3, a non-exhaustive match in a function
-    // literal body is a WARNING, not a compile ERROR. The project does not enable
-    // `-Xfatal-warnings`, so the warning does not become a compilation failure. A
-    // `typeCheckFailure` assertion therefore cannot be used here; it would false-fail because
-    // the code compiles (with a warning) and only throws a `MatchError` at runtime on the
-    // unmapped case.
-    //
-    // The Map+fallback form (`colorScaleMap`) is the safe alternative when exhaustiveness is
-    // not required at compile time. The runtime consequence of omitting a case from the total-
-    // function form is a `MatchError` at the call site, which is a sufficient deterrent for
-    // production use (the user sees a clear error rather than a silent wrong color).
-    //
-    // We assert here that:
-    //   (a) the total-function form COMPILES when exhaustive (positive gate), and
-    //   (b) the Map+fallback form correctly handles unmapped cases at runtime (already covered
-    //       by Test 2), so the user always has a safe escape hatch.
+    // ---- Leaf 10 (INV-027): an unmatched value falls back to the default color, no crash ----
 
-    "colorScale[K] exhaustive form compiles and assigns the correct colors (positive gate)" in {
-        // All three Region cases are covered: this must compile and produce correct swatches.
+    "colorScale[K] with a partial pairs list assigns the fallback (blue) to the unmapped Region case (INV-027)" in {
+        // Pairs only NA -> green, EU -> orange; APAC has no pair, so it falls back to Style.Color.blue
+        // (the first default-palette color). The render must not crash on the unmapped case.
         val rows = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
             Sale("Feb", Usd(1200), Region.EU),
             Sale("Mar", Usd(900), Region.APAC)
         )
         val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
-            .legend(_.colorScale[Region]:
-                case Region.NA   => Style.Color.blue
-                case Region.EU   => Style.Color.green
-                case Region.APAC => Style.Color.orange)
+            .legend(_.colorScale[Region](
+                Region.NA -> Style.Color.green,
+                Region.EU -> Style.Color.orange
+            ))
         val root     = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
-        val fRects   = frameRects(root)
-        val swatches = fRects.drop(1)
+        val swatches = frameRects(root).drop(1)
+        assert(swatches.size == 3, s"Expected 3 legend swatches but got ${swatches.size}")
+        assert(colorOf(swatches(0).svgAttrs.fill) == Style.Color.green, "NA swatch should be green")
+        assert(colorOf(swatches(1).svgAttrs.fill) == Style.Color.orange, "EU swatch should be orange")
+        // APAC (ordinal 2) is unmapped -> fallback Style.Color.blue.
+        assert(
+            colorOf(swatches(2).svgAttrs.fill) == Style.Color.blue,
+            s"APAC swatch should fall back to blue but got ${swatches(2).svgAttrs.fill}"
+        )
+    }
+
+    // ---- Leaf 11 (INV-027): no ClassCastException is reachable (the cast-based path is gone) ----
+
+    "colorScale[K] pairs form keeps two enum cases distinct under a colliding toString, no CCE (INV-027)" in {
+        // Two cases whose toString collide must still map to two distinct colors: value-equality keys them,
+        // so the legend has two swatches with the two mapped colors. No ClassCastException is reachable
+        // because the pairs form matches by `==`, never by an unchecked element-type cast.
+        enum Tier derives CanEqual:
+            case Gold, Silver
+            override def toString: String = "T"
+        case class Item(name: String, value: Double, tier: Tier)
+        given CanEqual[Item, Item] = CanEqual.derived
+        val rows = Chunk(
+            Item("a", 10.0, Tier.Gold),
+            Item("b", 20.0, Tier.Silver)
+        )
+        val spec = UI.chart(rows)(bar(x = _.name, y = _.value, color = _.tier))
+            .legend(_.colorScale[Tier](
+                Tier.Gold   -> Style.Color.red,
+                Tier.Silver -> Style.Color.blue
+            ))
+        val root     = summon[Conversion[ChartSpec[Item], Svg.Root]](spec)
+        val swatches = frameRects(root).drop(1)
+        assert(swatches.size == 2, s"Expected 2 distinct swatches despite colliding toString but got ${swatches.size}")
+        val fills = swatches.map(s => colorOf(s.svgAttrs.fill)).toSeq
+        assert(fills.contains(Style.Color.red), s"Expected a red (Gold) swatch but fills were: $fills")
+        assert(fills.contains(Style.Color.blue), s"Expected a blue (Silver) swatch but fills were: $fills")
+    }
+
+    // ---- Leaf 12 (INV-027): the canonical colorScale(String => Color) form still works ----
+
+    "colorScale(String => Color) label form assigns colors by label string (INV-027)" in {
+        val rows = Chunk(
+            Sale("Jan", Usd(1000), Region.NA),
+            Sale("Feb", Usd(1200), Region.EU),
+            Sale("Mar", Usd(900), Region.APAC)
+        )
+        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
+            .legend(_.colorScale {
+                case "NA" => Style.Color.blue
+                case "EU" => Style.Color.green
+                case _    => Style.Color.orange
+            })
+        val root     = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val swatches = frameRects(root).drop(1)
         assert(swatches.size == 3, s"Expected 3 legend swatches but got ${swatches.size}")
         assert(colorOf(swatches(0).svgAttrs.fill) == Style.Color.blue, "NA swatch should be blue")
         assert(colorOf(swatches(1).svgAttrs.fill) == Style.Color.green, "EU swatch should be green")

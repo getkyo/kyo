@@ -1161,4 +1161,315 @@ class ChartLowerTest extends Test:
         assert(ts.nonEmpty, "text mark must emit Svg.Text elements (extent fold required for scale)")
     }
 
+    // ================= Phase 05: legend position, color scales, interactivity =================
+
+    private def coordNum(c: Maybe[Coord]): Maybe[Double] = c match
+        case Present(Coord.Num(v)) => Present(v)
+        case _                     => Absent
+
+    /** Legend swatch rects (12x12), direct children of root (the static frame). */
+    private def legendSwatchRects(root: Svg.Root): Chunk[Svg.Rect] =
+        root.children.collect:
+            case r: Svg.Rect if coordNum(r.svgAttrs.width).contains(12.0) && coordNum(r.svgAttrs.height).contains(12.0) => r
+
+    /** Legend swatch lines (line-stroke swatches), direct children of root. */
+    private def frameLines(root: Svg.Root): Chunk[Svg.Line] =
+        root.children.collect:
+            case l: Svg.Line => l
+
+    /** Legend label texts: direct-child texts with a Middle dominant-baseline (legend label convention). */
+    private def legendLabelTexts(root: Svg.Root): Chunk[Svg.Text] =
+        root.children.collect:
+            case t: Svg.Text if t.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Middle) => t
+
+    private def fillColorOf(fill: Maybe[Svg.Paint]): Style.Color = fill match
+        case Present(Svg.Paint.Color(c)) => c
+        case other                       => fail(s"Expected Svg.Paint.Color but got $other")
+
+    private def colorComponents(c: Style.Color): (Int, Int, Int) = c match
+        case Style.Color.Rgb(r, g, b)     => (r, g, b)
+        case Style.Color.Rgba(r, g, b, _) => (r, g, b)
+        case Style.Color.Hex(v) =>
+            val body = if v.startsWith("#") then v.substring(1) else v
+            (
+                Integer.parseInt(body.substring(0, 2), 16),
+                Integer.parseInt(body.substring(2, 4), 16),
+                Integer.parseInt(body.substring(4, 6), 16)
+            )
+        case Style.Color.Transparent => (128, 128, 128)
+
+    private val blueHi = Style.Color.hex("#0000ff").getOrElse(Style.Color.blue)
+    private val redHi  = Style.Color.hex("#ff0000").getOrElse(Style.Color.red)
+
+    case class CatRow(x: String, y: Double, cat: String) derives CanEqual
+    case class VRow(v: Double) derives CanEqual
+
+    // ---- Leaf 1 (INV-025): legend.right places swatches in the right margin ----
+
+    "legend.right places the legend swatches in the right margin (INV-025)" in {
+        val rows = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"), CatRow("r", 3.0, "c"))
+        val spec = UI.chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
+            .legend(_.right)
+            .size(640, 480)
+        val root     = summon[Conversion[ChartSpec[CatRow], Svg.Root]](spec)
+        val swatches = legendSwatchRects(root)
+        assert(swatches.size == 3, s"Expected 3 swatches but got ${swatches.size}")
+        // The right-legend column sits at plotX + plotW + 8. With LegendColumnW reserved on the right, plotW is
+        // narrowed, so all swatches have x well to the right of the default plot area (x > 500).
+        val xs = swatches.map(s => coordNum(s.svgAttrs.x).getOrElse(-1.0))
+        assert(xs.forall(_ > 500.0), s"Expected all right-legend swatches in the right margin (x>500) but xs were: $xs")
+    }
+
+    // ---- Leaf 2 (INV-025): legend.bottom places swatches below the plot baseline ----
+
+    "legend.bottom places the legend swatches below the plot baseline (INV-025)" in {
+        val rows = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"))
+        val spec = UI.chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
+            .legend(_.bottom)
+            .size(640, 480)
+        val root     = summon[Conversion[ChartSpec[CatRow], Svg.Root]](spec)
+        val swatches = legendSwatchRects(root)
+        assert(swatches.size == 2, s"Expected 2 swatches but got ${swatches.size}")
+        // Bottom legend reserves LegendReservedH below the baseline; with a bottom legend the baseline is
+        // PlotY + (svgH - MarginTop - MarginBottom - LegendReservedH). Each swatch y is below the plot area.
+        val ys = swatches.map(s => coordNum(s.svgAttrs.y).getOrElse(-1.0))
+        // svgH=480, MarginTop=20, MarginBottom=40, LegendReservedH=20 -> plotH=400, baseline=420.
+        assert(ys.forall(_ >= 420.0), s"Expected all bottom-legend swatch y >= baseline 420 but ys were: $ys")
+    }
+
+    // ---- Leaf 3 (INV-025): legend.left reserves the left column and stacks items vertically ----
+
+    "legend.left reserves the left margin and stacks swatches vertically (INV-025)" in {
+        val rows = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"), CatRow("r", 3.0, "c"))
+        val spec = UI.chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
+            .legend(_.left)
+            .size(640, 480)
+        val root     = summon[Conversion[ChartSpec[CatRow], Svg.Root]](spec)
+        val swatches = legendSwatchRects(root)
+        assert(swatches.size == 3, s"Expected 3 swatches but got ${swatches.size}")
+        // Vertical layout: swatch y-coordinates strictly increasing (stacked down a column).
+        val ys = swatches.map(s => coordNum(s.svgAttrs.y).getOrElse(-1.0)).toSeq
+        assert(
+            ys.sliding(2).forall { case Seq(a, b) => b > a },
+            s"Expected strictly increasing swatch ys (vertical stack) but ys were: $ys"
+        )
+        // The marks now start to the right of the reserved left column: the leftmost bar x exceeds the default
+        // MarginLeft (60) by the reserved LegendColumnW (80), so the plot starts at x >= 140.
+        val barXs = rectsIn(root).map(r => coordNum(r.svgAttrs.x).getOrElse(0.0))
+        assert(barXs.forall(_ >= 140.0), s"Expected bars to start right of the reserved left column (x>=140) but xs were: $barXs")
+    }
+
+    // ---- Leaf 4 (INV-025): line series gets a line-stroke swatch; bar series gets a rect swatch ----
+
+    "a line series with a color channel gets a line-stroke legend swatch, not a rect (INV-025)" in {
+        case class LRow(x: Double, y: Double, series: String) derives CanEqual
+        val rows = Chunk(LRow(0.0, 1.0, "s1"), LRow(1.0, 2.0, "s1"), LRow(0.0, 3.0, "s2"), LRow(1.0, 4.0, "s2"))
+        val spec = UI.chart(rows)(line(x = _.x, y = _.y, color = _.series))
+        val root = summon[Conversion[ChartSpec[LRow], Svg.Root]](spec)
+        // Line-series legend uses line-stroke swatches: short horizontal Svg.Line (x1 != x2, y1 == y2) in the
+        // frame, and NO 12x12 rect swatches.
+        assert(legendSwatchRects(root).isEmpty, "line-series legend must not use rect swatches")
+        val swatchLines = frameLines(root).filter(l =>
+            l.svgAttrs.x1 != l.svgAttrs.x2 && l.svgAttrs.y1 == l.svgAttrs.y2 && l.svgAttrs.stroke.isDefined &&
+                coordNum(l.svgAttrs.x2.map(Coord.Num(_))).isDefined
+        )
+        // Two series -> two stroke swatches.
+        val shortStrokes = frameLines(root).filter(l =>
+            (coordNum(l.svgAttrs.x2.map(Coord.Num(_))).getOrElse(0.0) - coordNum(l.svgAttrs.x1.map(Coord.Num(_))).getOrElse(0.0)) == 12.0
+        )
+        assert(shortStrokes.size == 2, s"Expected 2 line-stroke swatches (12px wide) for 2 series but got ${shortStrokes.size}")
+    }
+
+    "a bar series with a color channel gets a 12x12 rect legend swatch (INV-025)" in {
+        val rows     = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"))
+        val spec     = UI.chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
+        val root     = summon[Conversion[ChartSpec[CatRow], Svg.Root]](spec)
+        val swatches = legendSwatchRects(root)
+        assert(swatches.size == 2, s"Expected 2 rect swatches (12x12) for the bar series but got ${swatches.size}")
+        assert(
+            swatches.forall(s => coordNum(s.svgAttrs.width).contains(12.0) && coordNum(s.svgAttrs.height).contains(12.0)),
+            "every bar-series swatch must be a 12x12 rect"
+        )
+    }
+
+    // ---- Leaf 13 (INV-028): sequential color maps low/high to interpolated colors ----
+
+    "colorScaleSequential maps a low-magnitude row blue-ish and a high-magnitude row red-ish (INV-028)" in {
+        val rows = Chunk(VRow(0.1), VRow(0.9))
+        val spec = UI.chart(rows)(point(x = _ => 0.0, y = _.v, color = _.v))
+            .legend(_.colorScaleSequential(blueHi, redHi))
+        val root    = summon[Conversion[ChartSpec[VRow], Svg.Root]](spec)
+        val circles = circlesIn(root)
+        assert(circles.size == 2, s"Expected 2 circles but got ${circles.size}")
+        val fills = circles.map(c => colorComponents(fillColorOf(c.svgAttrs.fill)))
+        // The low value (0.1) is near blue (R low); the high value (0.9) is near red (R high). Categories are
+        // sorted by encounter index, so circle order may differ from value order: compare the min/max R.
+        val rComponents = fills.map(_._1).toSeq
+        assert(rComponents.min < rComponents.max, s"Expected differing R components for low vs high (blue->red) but got: $rComponents")
+        // The high-R fill must be substantially redder than the low-R fill.
+        assert(rComponents.max - rComponents.min > 100, s"Expected a wide R-component spread blue->red but got: $rComponents")
+    }
+
+    // ---- Leaf 14 (INV-028): degenerate domain (all-equal) yields a single color, no crash ----
+
+    "colorScaleSequential with all-equal values produces a single color and does not crash (INV-028)" in {
+        val rows = Chunk(VRow(5.0), VRow(5.0))
+        val spec = UI.chart(rows)(point(x = _ => 0.0, y = _.v, color = _.v))
+            .legend(_.colorScaleSequential(blueHi, redHi))
+        val root    = summon[Conversion[ChartSpec[VRow], Svg.Root]](spec)
+        val circles = circlesIn(root)
+        assert(circles.nonEmpty, "expected at least one circle for the point mark")
+        // domLo == domHi -> parameter 0 -> the `low` color for every point. With both rows equal there is one
+        // distinct category, so one fill color, equal to blue (the low end).
+        val fills = circles.map(c => fillColorOf(c.svgAttrs.fill)).toSeq.distinct
+        assert(fills.size == 1, s"Expected a single fill color for all-equal values but got: $fills")
+        assert(
+            colorComponents(fills.head) == colorComponents(blueHi),
+            s"Expected the low (blue) color for a degenerate domain but got ${fills.head}"
+        )
+    }
+
+    // ---- Leaf 15 (INV-028): sequential MARK fills are concrete colors, not url(#...) ----
+
+    "sequential mark fills are concrete colors, never url(#...) references (INV-028)" in run {
+        val rows = Chunk(VRow(0.1), VRow(0.5), VRow(0.9))
+        val spec = UI.chart(rows)(point(x = _ => 0.0, y = _.v, color = _.v))
+            .legend(_.hidden.colorScaleSequential(blueHi, redHi))
+        val root = summon[Conversion[ChartSpec[VRow], Svg.Root]](spec)
+        for html <- HtmlRenderer.render(root, Seq.empty)
+        yield assert(!html.contains("url(#"), s"sequential mark fills must be concrete colors, not url(#...):\n$html")
+    }
+
+    // ---- Leaf 16 (INV-028, INV-003): sequential legend emits exactly one gradient under a per-chart id ----
+
+    "sequential legend emits exactly one linearGradient def with a kyo-chart- id (INV-028, INV-003)" in run {
+        val rows = Chunk(VRow(0.1), VRow(0.9))
+        val spec = UI.chart(rows)(point(x = _ => 0.0, y = _.v, color = _.v))
+            .legend(_.colorScaleSequential(blueHi, redHi))
+        val root = summon[Conversion[ChartSpec[VRow], Svg.Root]](spec)
+        for html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            assert(html.contains("<linearGradient"), s"expected a linearGradient element:\n$html")
+            val idMatch = """id="(kyo-chart-[0-9a-f]+-grad-0)"""".r.findFirstMatchIn(html)
+            assert(idMatch.isDefined, s"gradient id not found or wrong format:\n$html")
+            val gradId = idMatch.get.group(1)
+            // The swatch fill references the same id via url(#id) (invariant (a): def id matches reference).
+            assert(html.contains(s"url(#$gradId)"), s"swatch fill must reference the gradient def id $gradId:\n$html")
+            val gradCount = "<linearGradient".r.findAllMatchIn(html).size
+            assert(gradCount == 1, s"expected exactly one linearGradient but found $gradCount:\n$html")
+        end for
+    }
+
+    // ---- Leaf 17 / WARN-1 same-hash: two STRUCTURALLY-IDENTICAL charts get distinct gradient ids ----
+
+    "two structurally-identical sequential charts in one fragment get distinct gradient ids (INV-028, INV-003, WARN-1)" in run {
+        // The two charts are lowered from the SAME spec, so spec1.## == spec2.## by construction (it is the
+        // identical spec value): the structural-hash collision is forced, not dodged. The per-instance counter
+        // must still give each lowered chart a distinct gradient def id, and within each chart the swatch fill
+        // url(#id) must resolve to that chart's own def id.
+        val rows = Chunk(VRow(0.1), VRow(0.9))
+        val spec = UI.chart(rows)(point(x = _ => 0.0, y = _.v, color = _.v))
+            .legend(_.colorScaleSequential(blueHi, redHi))
+            .size(640, 480)
+        val spec1 = spec
+        val spec2 = spec
+        // The structural hashes are equal (it is one spec value lowered twice): the collision IS under test.
+        assert(spec1.## == spec2.##, s"precondition: the two specs must share a structural hash (## ${spec1.##} vs ${spec2.##})")
+        val root1 = summon[Conversion[ChartSpec[VRow], Svg.Root]](spec1)
+        val root2 = summon[Conversion[ChartSpec[VRow], Svg.Root]](spec2)
+        for
+            html1 <- HtmlRenderer.render(root1, Seq.empty)
+            html2 <- HtmlRenderer.render(root2, Seq.empty)
+        yield
+            val idRe = """id="(kyo-chart-[0-9a-f]+-grad-0)"""".r
+            val id1  = idRe.findFirstMatchIn(html1).map(_.group(1))
+            val id2  = idRe.findFirstMatchIn(html2).map(_.group(1))
+            assert(id1.isDefined && id2.isDefined, s"both charts must emit a gradient id: id1=$id1 id2=$id2")
+            // (b) two charts in one document get DIFFERENT ids despite identical structural hashes.
+            assert(id1 != id2, s"two structurally-identical charts must get distinct gradient ids but both were $id1")
+            // (a) each chart's swatch fill resolves to that SAME chart's def id.
+            assert(html1.contains(s"url(#${id1.get})"), s"chart 1 fill must reference its own def id ${id1.get}")
+            assert(html2.contains(s"url(#${id2.get})"), s"chart 2 fill must reference its own def id ${id2.get}")
+            // chart 1 must NOT reference chart 2's id and vice versa (no cross-chart aliasing).
+            assert(!html1.contains(s"url(#${id2.get})"), "chart 1 must not reference chart 2's gradient id")
+            assert(!html2.contains(s"url(#${id1.get})"), "chart 2 must not reference chart 1's gradient id")
+        end for
+    }
+
+    // ---- Leaf 21 (INV-013, INV-025): point fills agree with their legend swatch colors ----
+
+    "point fills match their categorical legend swatch colors (INV-013, INV-025)" in {
+        val rows        = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"), CatRow("r", 3.0, "c"))
+        val spec        = UI.chart(rows)(point(x = _ => 0.0, y = _.y, color = _.cat))
+        val root        = summon[Conversion[ChartSpec[CatRow], Svg.Root]](spec)
+        val swatchFills = legendSwatchRects(root).map(s => fillColorOf(s.svgAttrs.fill)).toSeq
+        val circleFills = circlesIn(root).map(c => fillColorOf(c.svgAttrs.fill)).toSeq
+        assert(swatchFills.size == 3, s"Expected 3 swatch colors but got $swatchFills")
+        // Every circle fill is one of the swatch colors, and each swatch color is used by at least one circle.
+        assert(
+            circleFills.forall(swatchFills.contains),
+            s"Every point fill must match a legend swatch color. circles=$circleFills swatches=$swatchFills"
+        )
+        assert(
+            swatchFills.forall(circleFills.contains),
+            s"Every swatch color must appear among the point fills. circles=$circleFills swatches=$swatchFills"
+        )
+    }
+
+    // ---- Leaf 22 (INV-002, INV-025): toString-colliding enum cases produce two distinct swatches ----
+
+    "two enum cases with an identical toString produce two distinct swatches (INV-002, INV-025)" in {
+        enum Tier derives CanEqual, Plottable:
+            case Gold, Silver
+            override def toString: String = "T"
+        case class IRow(name: String, value: Double, tier: Tier)
+        given CanEqual[IRow, IRow] = CanEqual.derived
+        val rows                   = Chunk(IRow("a", 1.0, Tier.Gold), IRow("b", 2.0, Tier.Silver))
+        val spec                   = UI.chart(rows)(point(x = _ => 0.0, y = _.value, color = _.tier))
+        val root                   = summon[Conversion[ChartSpec[IRow], Svg.Root]](spec)
+        val swatches               = legendSwatchRects(root)
+        // Despite the colliding toString, CatKey keeps the two enum cases distinct -> two swatches.
+        assert(swatches.size == 2, s"Expected 2 distinct swatches despite colliding toString but got ${swatches.size}")
+        val fills = swatches.map(s => fillColorOf(s.svgAttrs.fill)).toSeq.distinct
+        assert(fills.size == 2, s"Expected 2 distinct swatch colors but got $fills")
+    }
+
+    // ---- Leaf 23 (INV-003, INV-028): a plain bar chart emits no defs / linearGradient ----
+
+    "a plain bar chart with no sequential color scale emits no defs or linearGradient (INV-003, INV-028)" in run {
+        val rows = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"))
+        val spec = UI.chart(rows)(bar(x = _.x, y = _.y))
+        val root = summon[Conversion[ChartSpec[CatRow], Svg.Root]](spec)
+        for html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            assert(!html.contains("<defs"), s"a plain bar chart must emit no defs block:\n$html")
+            assert(!html.contains("<linearGradient"), s"a plain bar chart must emit no gradient:\n$html")
+        end for
+    }
+
+    // ---- Leaf 24 (INV-025): legend(_.hidden) suppresses the whole legend region ----
+
+    "legend(_.hidden) suppresses the legend swatches and labels (INV-025)" in {
+        val rows      = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"))
+        val shownSpec = UI.chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
+        val hiddenSpec = UI.chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
+            .legend(_.hidden)
+        val shownRoot  = summon[Conversion[ChartSpec[CatRow], Svg.Root]](shownSpec)
+        val hiddenRoot = summon[Conversion[ChartSpec[CatRow], Svg.Root]](hiddenSpec)
+        // The shown chart has 2 swatch rects; the hidden chart has none.
+        assert(
+            legendSwatchRects(shownRoot).size == 2,
+            s"sanity: shown chart should have 2 swatches but got ${legendSwatchRects(shownRoot).size}"
+        )
+        assert(legendSwatchRects(hiddenRoot).isEmpty, "legend(_.hidden) must emit no 12x12 swatch rects")
+        // The hidden chart has strictly fewer Middle-baseline texts than the shown one (the 2 legend labels are
+        // gone); axis tick labels share that baseline, so we assert the DIFFERENCE equals the 2 legend labels.
+        val shownLabels  = legendLabelTexts(shownRoot).size
+        val hiddenLabels = legendLabelTexts(hiddenRoot).size
+        assert(
+            shownLabels - hiddenLabels == 2,
+            s"legend(_.hidden) must drop exactly the 2 legend labels (shown=$shownLabels hidden=$hiddenLabels)"
+        )
+    }
+
 end ChartLowerTest

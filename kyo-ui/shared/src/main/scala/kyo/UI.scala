@@ -2402,28 +2402,74 @@ object UI:
         object AxisConfig:
             val default: AxisConfig = AxisConfig(Absent, Absent, false, 5, Absent)
 
-        /** Configures legend appearance and position.
+        /** Configures legend appearance, position, color scale, and interactivity.
           *
           * Builder methods return a copy with one field changed. Used as the argument to
           * `.legend(f)`: write `_.top` or `_.hidden`. The `colorScale` methods attach an
           * explicit color mapping for the mark's color channel.
           *
           * `position` selects where the legend box is placed relative to the plot area.
-          * `isHidden` hides the legend entirely. `colorScaleFn` is an optional function
-          * from the raw color-channel value (as `Any`) to `Style.Color`; if `Absent` the
-          * default palette is used. Using `Any` rather than `String` allows typed enum
-          * functions to be stored directly, avoiding a label-to-enum roundtrip.
+          * `isHidden` hides the legend entirely. `colorScale` is an optional
+          * [[kyo.UI.Ast.LegendConfig.ColorScale]]: either a `Categorical` mapping (built from
+          * value-equality pairs or a label function) or a `Sequential` low-to-high gradient over a
+          * numeric domain; if `Absent` the default palette is used.
+          *
+          * `isInteractive` and `hiddenSeries` enable click-to-toggle series visibility: when a
+          * `hiddenSeries` ref is attached via `interactive`, clicking a legend swatch toggles that
+          * series label in the ref, and the marks lowering filters out the hidden series.
           */
         final case class LegendConfig(
             position: Maybe[LegendPosition],
             isHidden: Boolean,
-            colorScaleFn: Maybe[Any => Style.Color]
+            colorScale: Maybe[LegendConfig.ColorScale],
+            isInteractive: Boolean = false,
+            hiddenSeries: Maybe[Signal.SignalRef[Set[String]]] = Absent
         ):
             def top: LegendConfig    = copy(position = Present(LegendPosition.Top))
             def bottom: LegendConfig = copy(position = Present(LegendPosition.Bottom))
             def left: LegendConfig   = copy(position = Present(LegendPosition.Left))
             def right: LegendConfig  = copy(position = Present(LegendPosition.Right))
             def hidden: LegendConfig = copy(isHidden = true)
+
+            /** Enables click-to-toggle series visibility, driven by the supplied `ref`.
+              *
+              * Clicking a legend swatch toggles that series' label in `ref`: a label not in the set is added
+              * (the series is hidden), a label already present is removed (the series is shown again). The marks
+              * lowering reads `ref` and drops rows whose color-channel label is in the hidden set, applying the
+              * filter before color-splitting so the visible categories keep their stable palette order.
+              */
+            def interactive(ref: Signal.SignalRef[Set[String]]): LegendConfig =
+                copy(isInteractive = true, hiddenSeries = Present(ref))
+
+            /** Attaches a color scale built from value-equality pairs over a typed key `K`.
+              *
+              * Each pair maps a key value to a color; categories are matched by `==` (value equality), so two
+              * enum cases that share a `toString` stay distinct. A category with no matching pair falls back to
+              * `Style.Color.blue` (the first default-palette color).
+              *
+              * The Scala call name is `colorScale[K]`. The JVM bytecode symbol is `colorScaleTyped` (set via
+              * `@targetName`) to avoid an erasure conflict with the `String => Style.Color` overload.
+              *
+              * Example:
+              * {{{
+              * .legend(_.colorScale[Region](
+              *   Region.NA -> Style.Color.blue,
+              *   Region.EU -> Style.Color.green
+              * ))
+              * }}}
+              */
+            @scala.annotation.targetName("colorScaleTyped")
+            def colorScale[K](pairs: (K, Style.Color)*)(using CanEqual[K, K]): LegendConfig =
+                val chunk = Chunk.from(pairs)
+                copy(colorScale =
+                    Present(LegendConfig.ColorScale.Categorical(v =>
+                        // Match the raw category value against each pair by value equality. The closure scans a small
+                        // pairs collection (typically 2-10 entries) once per category, not a hot membership scan.
+                        // Style.Color.blue is the unmatched fallback (the first default-palette color); never null.
+                        chunk.collectFirst { case (k, c) if k == v.asInstanceOf[K] => c }.getOrElse(Style.Color.blue)
+                    ))
+                )
+            end colorScale
 
             /** Attaches a total color-scale function keyed on the category label string.
               *
@@ -2432,48 +2478,38 @@ object UI:
               * case names (e.g. `"NA"`, `"EU"`, `"APAC"`).
               */
             def colorScale(f: String => Style.Color): LegendConfig =
-                copy(colorScaleFn = Present(v => f(v.toString)))
+                copy(colorScale = Present(LegendConfig.ColorScale.Categorical(v => f(v.toString))))
 
-            /** Attaches a total typed color-scale function. The compiler checks exhaustiveness when `f` is a match
-              * expression over a sealed enum type `K`, so a missing case is flagged at compile time.
+            /** Attaches a sequential low-to-high color gradient over the numeric color-channel domain.
               *
-              * The Scala call name is `colorScale[K]`. The JVM bytecode symbol is `colorScaleTyped` (set via
-              * `@targetName`) to avoid an erasure conflict with the `String => Style.Color` overload.
-              *
-              * Example:
-              * {{{
-              * .legend(_.colorScale[Region] {
-              *   case Region.NA   => Style.Color.blue
-              *   case Region.EU   => Style.Color.green
-              *   case Region.APAC => Style.Color.orange
-              * })
-              * }}}
-              *
-              * At runtime `f` is applied directly to the raw color-channel value (which is a `K`), so no
-              * label-to-K roundtrip is needed. Exhaustiveness is checked by the compiler at the call site.
+              * Each row's numeric color value is normalized into `[0, 1]` over the data extent and interpolated
+              * between `low` (domain minimum) and `high` (domain maximum). The legend shows a continuous gradient
+              * swatch; the mark fills are concrete interpolated colors, never `url(#...)` references.
               */
-            @scala.annotation.targetName("colorScaleTyped")
-            def colorScale[K](f: K => Style.Color): LegendConfig =
-                // Unsafe: the cast Any => K is safe because the color channel accessor returns K values
-                // and the legend builder passes those raw values to this function. The Plottable.string
-                // stand-in means K = String in the channel, but for enum channels the raw value is the
-                // actual enum case. The cast is safe as long as the caller's K matches the channel's
-                // accessor return type, which the named-parameter API enforces.
-                copy(colorScaleFn = Present(v => f(v.asInstanceOf[K])))
+            def colorScaleSequential(low: Style.Color, high: Style.Color): LegendConfig =
+                copy(colorScale = Present(LegendConfig.ColorScale.Sequential(low, high, Absent)))
 
-            /** Attaches a `Map[K, Style.Color]` color scale with a `fallback` color for unmapped categories.
-              *
-              * Useful when you want to map only some categories to specific colors and leave the rest to the
-              * fallback. Does not provide compile-time exhaustiveness checking; use the typed `colorScale[K]`
-              * overload for that.
-              */
-            def colorScaleMap[K](map: Map[K, Style.Color], fallback: Style.Color = Style.Color.gray): LegendConfig =
-                copy(colorScaleFn = Present(v => map.getOrElse(v.asInstanceOf[K], fallback)))
+            /** Attaches an explicit sequential color scale, allowing a fixed domain override. */
+            def colorScaleSequential(scale: LegendConfig.ColorScale.Sequential): LegendConfig =
+                copy(colorScale = Present(scale))
 
         end LegendConfig
 
         object LegendConfig:
             val default: LegendConfig = LegendConfig(Absent, false, Absent)
+
+            /** A legend color scale: how raw color-channel values map to swatch and mark colors.
+              *
+              * `Categorical` carries a total function from a raw value to a color (built from value-equality pairs
+              * or a label function); each distinct category gets its own swatch. `Sequential` carries a low-to-high
+              * gradient over a numeric domain: values are normalized into `[0, 1]` over the data extent (or the
+              * `domain` override when present) and interpolated between `low` and `high`.
+              */
+            enum ColorScale:
+                case Categorical(fn: Any => Style.Color)
+                case Sequential(low: Style.Color, high: Style.Color, domain: Maybe[(Double, Double)])
+            end ColorScale
+        end LegendConfig
 
         /** Configures chart theme.
           *
