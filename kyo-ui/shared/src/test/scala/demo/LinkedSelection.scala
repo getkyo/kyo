@@ -3,6 +3,7 @@ package demo
 import kyo.*
 import kyo.Style.*
 import kyo.UI.*
+import kyo.UI.mark.*
 import scala.language.implicitConversions
 
 /** Linked views: clicking a bar in one chart drives a second chart, with no glue beyond a shared `SignalRef`.
@@ -50,7 +51,7 @@ object LinkedSelection extends KyoApp:
         yield
             // LEFT (write side): bar of totals. `.onSelect(selected)` publishes the clicked `Cat` into the ref.
             val totalsChart: Svg.Root =
-                Chart(cats)(bar(x = _.name, y = _.total))
+                UI.chart(cats)(bar(x = _.name, y = _.total))
                     .onSelect(selected)
                     .yAxis(_.left.grid.ticks(4))
                     .theme(_.dark)
@@ -75,7 +76,7 @@ object LinkedSelection extends KyoApp:
             val detailData = selected.map(sel => sel.fold(Chunk.empty[Pt])(c => seriesFor(c.name)))
 
             val detailChart: Svg.Root =
-                Chart(detailData)(line(x = _.month, y = _.value))
+                UI.chart(detailData)(line(x = _.month, y = _.value))
                     .xScale(_.linear(1.0, 12.0))
                     .yScale(_.linear(0.0, 130.0))
                     .xAxis(_.bottom)

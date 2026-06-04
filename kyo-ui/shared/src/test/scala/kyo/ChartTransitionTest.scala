@@ -1,6 +1,9 @@
 package kyo
 
+import kyo.UI.*
+import kyo.UI.Ast.*
 import kyo.UI.Ast.Reactive
+import kyo.UI.mark.*
 import kyo.internal.ChartLower
 import kyo.internal.HtmlRenderer
 import scala.language.implicitConversions
@@ -111,7 +114,7 @@ class ChartTransitionTest extends Test:
         val updated = Chunk(Sale("Jan", Rev(2000.0)))
         for
             ref <- Signal.initRef(initial)
-            spec = Chart(ref: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+            spec = UI.chart(ref: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
             // First render: records initial geometry (Jan -> barH=105, barY=335).
@@ -162,7 +165,7 @@ class ChartTransitionTest extends Test:
         val updated = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         for
             ref <- Signal.initRef(initial)
-            spec = Chart(ref: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+            spec = UI.chart(ref: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
             // First render: only Jan (barH=105). Records Jan geometry.
@@ -191,7 +194,7 @@ class ChartTransitionTest extends Test:
         val updated = Chunk(Sale("Jan", Rev(2000.0)))
         for
             ref <- Signal.initRef(initial)
-            spec = Chart(ref: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+            spec = UI.chart(ref: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.none)
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
@@ -226,7 +229,7 @@ class ChartTransitionTest extends Test:
         val updated = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
         for
             ref <- Signal.initRef(initial)
-            spec = Chart(ref: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
+            spec = UI.chart(ref: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
@@ -272,7 +275,7 @@ class ChartTransitionTest extends Test:
         val r2 = Chunk(Sale("Jan", Rev(2000.0)))
         for
             ref <- Signal.initRef(r1)
-            spec = Chart(ref: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+            spec = UI.chart(ref: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
             // First render (R1, pull 1): records initial geometry.
@@ -333,7 +336,7 @@ class ChartTransitionTest extends Test:
         for
             // Chart 1: default key (x channel = month). "Jan" -> "Feb" = different key = ENTER for "Feb".
             ref1 <- Signal.initRef(initial)
-            spec1 = Chart(ref1: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+            spec1 = UI.chart(ref1: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
             root1 = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec1)
             html1a <- HtmlRenderer.render(root1, Seq.empty)
@@ -341,7 +344,7 @@ class ChartTransitionTest extends Test:
             html1b <- HtmlRenderer.render(root1, Seq.empty)
             // Chart 2: key override (region). Both rows have region="A" -> UPDATE.
             ref2 <- Signal.initRef(initial)
-            spec2 = Chart(ref2: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+            spec2 = UI.chart(ref2: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .key(_.region)
             root2 = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec2)

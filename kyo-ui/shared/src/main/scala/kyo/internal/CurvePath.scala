@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import kyo.UI.Curve
 
 /** Builds an SVG path through a point sequence under a `Curve` interpolation
   * (catalog #13/D3). Emits `lineTo`/`hLineTo`/`vLineTo`/`cubicTo` only (no new

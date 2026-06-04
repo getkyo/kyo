@@ -1,9 +1,11 @@
 package kyo
 
-import kyo.Chart.*
 import kyo.Svg.Coord
 import kyo.Svg.PathCommand
 import kyo.Svg.PathData
+import kyo.UI.*
+import kyo.UI.Ast.*
+import kyo.UI.mark.*
 import kyo.internal.ChartLower
 import kyo.internal.Domain
 import kyo.internal.Scale
@@ -108,7 +110,7 @@ class ChartTypedValuesTest extends Test:
         //   apply(2500) = 440 + (2500/5000) * (20 - 440) = 440 - 210 = 230.0
         //   barH = baseline - barY = 440 - 230 = 210.0
         val rows = Chunk(Sale("Jan", Usd(2500)))
-        val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
+        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
             .yScale(_.linear(0.0, 5000.0))
         val root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
         val rects = marksRects(root)
@@ -128,7 +130,7 @@ class ChartTypedValuesTest extends Test:
             Sale("Mar", Usd(900), Region.APAC)
         )
         val fallback = Style.Color.gray
-        val spec = Chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
+        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
             .legend(_.colorScaleMap[Region](
                 Map(Region.NA -> Style.Color.blue, Region.EU -> Style.Color.green),
                 fallback
@@ -185,7 +187,7 @@ class ChartTypedValuesTest extends Test:
             Sale("Feb", Usd(1200), Region.EU),
             Sale("Mar", Usd(900), Region.APAC)
         )
-        val spec = Chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
+        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
             .legend(_.colorScale[Region]:
                 case Region.NA   => Style.Color.blue
                 case Region.EU   => Style.Color.green
@@ -217,7 +219,7 @@ class ChartTypedValuesTest extends Test:
     "rule(y = Usd(1000)) lowers to an Svg.Line spanning the plot at the correct pixel" in {
         // Scale fixed at [0, 5000]: apply(1000) = 440 + (1000/5000)*(20-440) = 440-84 = 356.0
         val rows = Chunk(Sale("Jan", Usd(3000)))
-        val spec = Chart(rows)(
+        val spec = UI.chart(rows)(
             bar(x = _.month, y = _.revenue),
             rule[Sale, Usd](y = RuleValue.Const(Usd(1000.0), summon[Plottable[Usd]]))
         )
@@ -249,7 +251,7 @@ class ChartTypedValuesTest extends Test:
             MaybeSale("Feb", Absent),
             MaybeSale("Mar", Present(Usd(1500.0)))
         )
-        val spec  = Chart(rows)(line(x = _.month, y = _.value))
+        val spec  = UI.chart(rows)(line(x = _.month, y = _.value))
         val root  = summon[Conversion[ChartSpec[MaybeSale], Svg.Root]](spec)
         val paths = marksPaths(root)
         assert(paths.nonEmpty, "Expected at least one path for the line mark")
@@ -281,7 +283,7 @@ class ChartTypedValuesTest extends Test:
             MaybeSale("Mar", Absent),
             MaybeSale("Apr", Present(Usd(1500.0)))
         )
-        val spec     = Chart(rows)(line(x = _.month, y = _.value))
+        val spec     = UI.chart(rows)(line(x = _.month, y = _.value))
         val root     = summon[Conversion[ChartSpec[MaybeSale], Svg.Root]](spec)
         val paths    = marksPaths(root)
         val commands = Svg.PathData.commands(paths(0).svgAttrs.d.getOrElse(Svg.PathData.empty))

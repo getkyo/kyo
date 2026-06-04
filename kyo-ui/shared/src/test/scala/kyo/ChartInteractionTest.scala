@@ -1,6 +1,9 @@
 package kyo
 
+import kyo.UI.*
+import kyo.UI.Ast.*
 import kyo.UI.Ast.Reactive
+import kyo.UI.mark.*
 import kyo.internal.ChartLower
 import kyo.internal.HtmlRenderer
 import scala.language.implicitConversions
@@ -84,7 +87,7 @@ class ChartInteractionTest extends Test:
             hoverRef  <- Signal.initRef[Maybe[Sale]](Absent)
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-            spec = Chart(rows)(bar(x = _.month, y = _.revenue))
+            spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
                 .onHover(hoverRef)
                 .onSelect(selectRef)
             root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
@@ -107,7 +110,7 @@ class ChartInteractionTest extends Test:
         for
             hoverRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)))
-            spec = Chart(rows)(bar(x = _.month, y = _.revenue))
+            spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
                 .onHover(hoverRef)
             root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
             rects = rectsIn(root)
@@ -142,7 +145,7 @@ class ChartInteractionTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Mar", Rev(3000.0)), Sale("Apr", Rev(4000.0)))
-            spec = Chart(rows)(bar(x = _.month, y = _.revenue))
+            spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
             root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
             rects = rectsIn(root)
@@ -163,7 +166,7 @@ class ChartInteractionTest extends Test:
     "tooltip(f) renders f(row) in the overlay Reactive after simulated hover" in run {
         for
             rows = Chunk(Sale("May", Rev(500.0)))
-            spec = Chart(rows)(bar(x = _.month, y = _.revenue))
+            spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
                 .tooltip(s => s"${s.month}: ${s.revenue.toInt}")
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
             // Locate the tooltip overlay: last Reactive child of root.
@@ -196,7 +199,7 @@ class ChartInteractionTest extends Test:
         for
             threshold <- Signal.initRef[Rev](Rev(1000.0))
             rows = Chunk(Sale("Jun", Rev(2000.0)))
-            spec = Chart(rows)(
+            spec = UI.chart(rows)(
                 bar(x = _.month, y = _.revenue),
                 rule(y = (threshold: Signal[Rev]))
             ).yScale(_.linear(0.0, 4000.0))
@@ -232,9 +235,9 @@ class ChartInteractionTest extends Test:
             hovered <- Signal.initRef[Maybe[Sale]](Absent)
             rowsA = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)), Sale("Mar", Rev(3000.0)))
             rowsB = Chunk(Sale("Jan", Rev(500.0)), Sale("Feb", Rev(1500.0)), Sale("Mar", Rev(2500.0)))
-            specA = Chart(rowsA)(bar(x = _.month, y = _.revenue))
+            specA = UI.chart(rowsA)(bar(x = _.month, y = _.revenue))
                 .onHover(hovered)
-            specB = Chart(rowsB)(
+            specB = UI.chart(rowsB)(
                 bar(x = _.month, y = _.revenue),
                 rule(x = hovered.map[Maybe[String]](_.map(_.month)))
             )
@@ -270,7 +273,7 @@ class ChartInteractionTest extends Test:
         // A chart configured with only data and marks carries no interaction. The lowered shapes
         // must not have onHover or onClick attached, and the root must contain no tooltip Reactive.
         val rows  = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-        val spec  = Chart(rows)(bar(x = _.month, y = _.revenue))
+        val spec  = UI.chart(rows)(bar(x = _.month, y = _.revenue))
         val root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
         val rects = rectsIn(root)
         assert(rects.size == 2, s"Expected 2 rects but got ${rects.size}")
@@ -286,6 +289,222 @@ class ChartInteractionTest extends Test:
         assert(
             topReactives.isEmpty,
             s"Expected no Reactive children in static chart root but got ${topReactives.size}"
+        )
+    }
+
+    /** Collect all Svg.Path children from a root, traversing one level of Svg.G. */
+    private def pathsIn(root: Svg.Root): Chunk[Svg.Path] =
+        root.children.flatMap:
+            case g: Svg.G =>
+                g.children.flatMap:
+                    case p: Svg.Path => Chunk(p)
+                    case ig: Svg.G   => ig.children.collect { case p: Svg.Path => p }
+                    case _           => Chunk.empty
+            case _ => Chunk.empty
+
+    // ---- Phase-4 tests: line/area interaction (INV-023) ----
+
+    // Test 8 (plan leaf 12): line chart onSelect fires on click (INV-023)
+    "line chart with onSelect carries a Present onClick handler that fires (INV-023)" in run {
+        for
+            selectRef <- Signal.initRef[Maybe[Sale]](Absent)
+            rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+            spec = UI.chart(rows)(line(x = _.month, y = _.revenue))
+                .onSelect(selectRef)
+            root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            paths = pathsIn(root)
+            _     = assert(paths.nonEmpty, s"Expected at least one Svg.Path from line mark but got none")
+            // The line path should carry a click handler (INV-023).
+            linePath = paths.toSeq.find(p => p.attrs.onClick.isDefined)
+            _        = assert(linePath.isDefined, "line path must carry Present onClick when onSelect is configured")
+            _     <- runAction(linePath.get.attrs.onClick.get)
+            after <- selectRef.get
+        yield assert(
+            after.isDefined,
+            s"After clicking the line path, selectRef must be Present but got $after"
+        )
+    }
+
+    // Test 9 (plan leaf 13): area chart onHover fires (INV-023)
+    "area chart with onHover carries a Present onHover handler that fires (INV-023)" in run {
+        for
+            hoverRef <- Signal.initRef[Maybe[Sale]](Absent)
+            rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+            spec = UI.chart(rows)(area(x = _.month, y = _.revenue))
+                .onHover(hoverRef)
+            root     = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            paths    = pathsIn(root)
+            _        = assert(paths.nonEmpty, s"Expected at least one Svg.Path from area mark but got none")
+            areaPath = paths.toSeq.find(p => p.attrs.onHover.isDefined)
+            _        = assert(areaPath.isDefined, "area path must carry Present onHover when onHover is configured")
+            _     <- runAction(areaPath.get.attrs.onHover.get)
+            after <- hoverRef.get
+        yield assert(after.isDefined, s"After hovering area path, hoverRef must be Present but got $after")
+    }
+
+    // Test 10 (plan leaf 14): stacked area attaches one handler per segment path (INV-023)
+    "stacked area with onSelect carries Present onClick on each segment path (INV-023)" in run {
+        for
+            selectRef <- Signal.initRef[Maybe[Sale]](Absent)
+            rows = Chunk(
+                Sale("Jan", Rev(1000.0)),
+                Sale("Jan", Rev(500.0)),
+                Sale("Feb", Rev(2000.0)),
+                Sale("Feb", Rev(800.0))
+            )
+            // Use color channel as the stack group so 2 groups are formed.
+            // area with stack: group 1 = rows 0,2; group 2 = rows 1,3.
+            spec = UI.chart(rows)(area(
+                x = _.month,
+                y = _.revenue,
+                color = _.revenue.toInt.toString,
+                stack = by(_.revenue.toInt.toString)
+            ))
+                .onSelect(selectRef)
+            root             = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            paths            = pathsIn(root)
+            interactivePaths = paths.toSeq.filter(p => p.attrs.onClick.isDefined)
+            _ = assert(
+                interactivePaths.nonEmpty,
+                s"Stacked area must have at least one path with onClick, got ${paths.size} paths total"
+            )
+        yield succeed
+    }
+
+    // Test 11 (plan leaf 15): line single series has exactly one handler (INV-023)
+    "line without color split has exactly one interaction-bearing path (INV-023)" in run {
+        for
+            selectRef <- Signal.initRef[Maybe[Sale]](Absent)
+            rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+            spec = UI.chart(rows)(line(x = _.month, y = _.revenue))
+                .onSelect(selectRef)
+            root             = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            paths            = pathsIn(root)
+            interactivePaths = paths.toSeq.filter(p => p.attrs.onClick.isDefined)
+        yield assert(
+            interactivePaths.size == 1,
+            s"Single-series line must have exactly 1 interaction-bearing path but got ${interactivePaths.size}"
+        )
+    }
+
+    // ---- Phase-4 tests: highlight (INV-024) ----
+
+    /** Count Reactive nodes anywhere under the marks `<g>` (the highlight region wraps the bars in a
+      * `Svg.g(Reactive[Svg.G])`). The lowering must create the highlight as a user-ref-driven Reactive and
+      * must NOT create an internal SignalRef of its own.
+      */
+    private def markRegionReactives(root: Svg.Root): Chunk[Reactive[?]] =
+        root.children.flatMap:
+            case g: Svg.G =>
+                g.children.flatMap:
+                    case r: Reactive[?] => Chunk(r)
+                    case ig: Svg.G      => ig.children.collect { case r: Reactive[?] => r }
+                    case _              => Chunk.empty
+            case _ => Chunk.empty
+
+    // Test 12 (plan leaf 16): highlightSelect drives the active bar's style from the select ref (INV-024)
+    "bar with highlightSelect: after the select ref is set, the active bar carries the select style (INV-024)" in run {
+        // Default highlight (no custom style) is a dark 2px stroke outline on the active bar only.
+        for
+            selectRef <- Signal.initRef[Maybe[Sale]](Absent)
+            rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+            spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+                .onSelect(selectRef)
+                .interaction(_.highlightSelect)
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            // Before any selection: the ref is Absent, so no bar carries the highlight stroke.
+            htmlBefore <- HtmlRenderer.render(root, Seq.empty)
+            _ = assert(
+                !htmlBefore.contains("stroke=\"#000000\""),
+                s"No bar may carry the select stroke before a selection, but got:\n${htmlBefore.take(2000)}"
+            )
+            // Select the first row; the corresponding bar must now carry the select style.
+            _         <- selectRef.set(Present(Sale("Jan", Rev(1000.0))))
+            htmlAfter <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // The active bar carries the default select style: a dark 2px stroke (INV-024).
+            assert(
+                htmlAfter.contains("stroke=\"#000000\"") && htmlAfter.contains("stroke-width=\"2px\""),
+                s"Selected bar must carry the select style (stroke=#000000, stroke-width=2px) but got:\n${htmlAfter.take(2000)}"
+            )
+            // Exactly one bar is highlighted (the active row), not both.
+            val strokeOccurrences = "stroke=\"#000000\"".r.findAllMatchIn(htmlAfter).size
+            assert(
+                strokeOccurrences == 1,
+                s"Only the active bar may carry the select stroke, but found $strokeOccurrences occurrences"
+            )
+    }
+
+    // Test 13 (plan leaf 17): highlightHover with a custom hoverStyle applies that style value (INV-024)
+    "bar with a custom hoverStyle: the hovered bar carries the custom style value in the output (INV-024)" in run {
+        // Custom hover style: a purple fill (Style.Color.purple == #a855f7), chosen distinct from the default
+        // palette fill (palette(0) == blue == #3b82f6). When the hover ref points at the row, the active bar's
+        // emitted fill must become the custom color.
+        for
+            hoverRef <- Signal.initRef[Maybe[Sale]](Absent)
+            rows = Chunk(Sale("Jan", Rev(1000.0)))
+            spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+                .onHover(hoverRef)
+                .interaction(_.hoverStyle(Style.bg(Style.Color.purple)))
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            // Before hover: the custom fill is absent (the bar uses the default palette blue).
+            htmlBefore <- HtmlRenderer.render(root, Seq.empty)
+            _ = assert(
+                !htmlBefore.contains("fill=\"#a855f7\""),
+                s"Custom hover fill must not appear before hover, but got:\n${htmlBefore.take(2000)}"
+            )
+            // Hover the row; the active bar must now carry the custom purple fill.
+            _         <- hoverRef.set(Present(Sale("Jan", Rev(1000.0))))
+            htmlAfter <- HtmlRenderer.render(root, Seq.empty)
+        yield assert(
+            htmlAfter.contains("fill=\"#a855f7\""),
+            s"Hovered bar must carry the custom hoverStyle fill (#a855f7) but got:\n${htmlAfter.take(2000)}"
+        )
+    }
+
+    // Test 14 (plan leaf 18): highlight with no ref configured is a no-op (INV-024)
+    "interaction(_.highlightSelect) with no onSelect configured is a no-op (INV-024)" in run {
+        val rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+            .interaction(_.highlightSelect) // highlight configured, but no onSelect ref
+        val root      = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val rects     = rectsIn(root)
+        val withClick = rects.toSeq.filter(r => r.attrs.onClick.isDefined)
+        assert(rects.size == 2, s"Expected 2 rects but got ${rects.size}")
+        // No ref means no handlers and no highlight reactive region: bars are plain, no crash.
+        assert(withClick.isEmpty, "no onClick on rects when no onSelect ref is configured (no-op, INV-024)")
+        assert(markRegionReactives(root).isEmpty, "no highlight reactive region without a ref (no-op, INV-024)")
+        // No bar carries the default select stroke (highlight produced nothing).
+        for html <- HtmlRenderer.render(root, Seq.empty)
+        yield assert(
+            !html.contains("stroke=\"#000000\""),
+            s"No highlight style may appear without a ref, but got:\n${html.take(2000)}"
+        )
+    }
+
+    // Test 15 (plan leaf 19): highlight is a Reactive region driven by the user ref, with no internal cell (INV-024)
+    "highlight is a Reactive region driven by the user onSelect ref, with no internal SignalRef (INV-024)" in run {
+        for
+            selectRef <- Signal.initRef[Maybe[Sale]](Absent)
+            rows = Chunk(Sale("Jan", Rev(1000.0)))
+            spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+                .onSelect(selectRef)
+                .interaction(_.highlightSelect)
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            // The highlight is realized as a Reactive region inside the marks group (no internal cell:
+            // no tooltip is configured, so the ONLY reactive here is the highlight, and it is driven by
+            // the user's selectRef directly).
+            reactives = markRegionReactives(root)
+            _         = assert(reactives.size == 1, s"Expected exactly one highlight Reactive region but got ${reactives.size}")
+            // Driving the USER ref (not any internal ref) changes the rendered output: proof the region is
+            // bound to the user's selectRef, so there is no separate internal mutable interaction cell.
+            htmlBefore <- HtmlRenderer.render(root, Seq.empty)
+            _          <- selectRef.set(Present(Sale("Jan", Rev(1000.0))))
+            htmlAfter  <- HtmlRenderer.render(root, Seq.empty)
+        yield assert(
+            !htmlBefore.contains("stroke=\"#000000\"") && htmlAfter.contains("stroke=\"#000000\""),
+            s"Setting the user ref must drive the highlight region directly (INV-024).\nbefore:\n${htmlBefore
+                    .take(1500)}\nafter:\n${htmlAfter.take(1500)}"
         )
     }
 

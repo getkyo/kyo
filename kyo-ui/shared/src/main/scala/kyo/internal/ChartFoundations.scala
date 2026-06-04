@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import kyo.UI.Ast.*
 
 /** Cross-cutting foundation helpers for the charts lowering.
   *

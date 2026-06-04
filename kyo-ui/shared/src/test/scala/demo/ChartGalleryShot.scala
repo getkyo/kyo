@@ -2,6 +2,8 @@ package demo
 
 import kyo.*
 import kyo.Style.*
+import kyo.UI.*
+import kyo.UI.mark.*
 
 /** Renders a gallery of six representative static charts and writes a PNG screenshot.
   *
@@ -72,7 +74,7 @@ object ChartGalleryShot extends KyoApp:
 
     // 1. Grouped/colored bar with axes + legend
     val chart1: Svg.Root =
-        Chart(saleData)(
+        UI.chart(saleData)(
             bar(x = _.month, y = _.units, color = _.region)
         )
             .yAxis(_.left.grid.ticks(4))
@@ -83,7 +85,7 @@ object ChartGalleryShot extends KyoApp:
 
     // 2. Line chart with left y-axis grid
     val chart2: Svg.Root =
-        Chart(trendData)(
+        UI.chart(trendData)(
             line(x = _.month, y = _.value)
         )
             .yAxis(_.left.grid)
@@ -93,7 +95,7 @@ object ChartGalleryShot extends KyoApp:
 
     // 3. Stacked bar
     val chart3: Svg.Root =
-        Chart(saleData)(
+        UI.chart(saleData)(
             bar(x = _.month, y = _.units, stack = by(_.region))
         )
             .yAxis(_.left.grid.ticks(4))
@@ -104,7 +106,7 @@ object ChartGalleryShot extends KyoApp:
 
     // 4. Dual-axis combo: bar (left) + line (right)
     val chart4: Svg.Root =
-        Chart(comboData)(
+        UI.chart(comboData)(
             bar(x = _.month, y = _.revenue),
             line(x = _.month, y = _.growthPct, axis = Axis.Right)
         )
@@ -116,7 +118,7 @@ object ChartGalleryShot extends KyoApp:
 
     // 5. Scatter (point) with optional size channel
     val chart5: Svg.Root =
-        Chart(scatterData)(
+        UI.chart(scatterData)(
             point(x = _.a, y = _.b, size = _.w)
         )
             .yAxis(_.left.grid)
@@ -126,7 +128,7 @@ object ChartGalleryShot extends KyoApp:
 
     // 6. Dark-theme bar
     val chart6: Svg.Root =
-        Chart(trendData)(
+        UI.chart(trendData)(
             bar(x = _.month, y = _.value)
         )
             .yAxis(_.left.grid.ticks(4))
