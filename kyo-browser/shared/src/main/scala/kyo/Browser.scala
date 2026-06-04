@@ -1611,6 +1611,187 @@ object Browser:
         }
     end boundingBox
 
+    /** Returns the settled bounding rectangle of the first element matching `selector`. Re-samples until the geometry stabilizes, then
+      * performs an authoritative `DOM.getBoxModel` CDP read for the final value. Returns `Absent` when the selector matches nothing or the
+      * element has no box model (`display:none`). Coordinates are CSS pixels in the page's top-level viewport coordinate system.
+      *
+      * Uses `SettleRead.settle` (twin: `boundingBox`) to wait for layout stability before the CDP box-model read.
+      */
+    def boundingRect(selector: Selector)(using Frame): Maybe[Browser.Bounds] < (Browser & Abort[BrowserReadException]) =
+        val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
+        val valueExpr =
+            s"""(() => { const el = $jsExpr; if (!el) return '{"present":false}'; const r = el.getBoundingClientRect(); return JSON.stringify({present:true, x:r.x, y:r.y, w:r.width, h:r.height}); })()"""
+        SettleRead.settle("boundingRect", valueExpr) { raw =>
+            Json.decode[PresentFlagWire](raw) match
+                case Result.Success(w) if !w.present => Maybe.empty[Browser.Bounds]
+                case Result.Success(_) =>
+                    Resolver.resolveOne(selector).map {
+                        case Absent => Maybe.empty[Browser.Bounds]
+                        case Present(ref) =>
+                            Env.use[BrowserTab] { tab =>
+                                Abort.recover[BrowserProtocolErrorException] { _ => Maybe.empty[Browser.Bounds] } {
+                                    CdpBackend.getBoxModel(tab.session, GetBoxModelParams(backendNodeId = ref.backendNodeId)).map { bm =>
+                                        val c = bm.model.content
+                                        if c.size < 8 then Maybe.empty[Browser.Bounds]
+                                        else
+                                            val xs = Chunk(c(0), c(2), c(4), c(6))
+                                            val ys = Chunk(c(1), c(3), c(5), c(7))
+                                            val x  = xs.min
+                                            val y  = ys.min
+                                            Present(Browser.Bounds(x, y, xs.max - x, ys.max - y))
+                                        end if
+                                    }
+                                }
+                            }
+                    }
+                case _ => Abort.fail(BrowserProtocolErrorException.decodeFailure("boundingRect", raw))
+        }
+    end boundingRect
+
+    /** Returns the settled computed CSS values for the named `properties` on the element matching `selector`. Re-samples until the values
+      * stabilize. Aborts `BrowserElementNotFoundException` when no element matches (twin: `attribute`).
+      */
+    def computedStyles(selector: Selector, properties: Span[String])(using
+        Frame
+    ): Map[String, String] < (Browser & Abort[BrowserReadException]) =
+        val jsExpr    = SelectorJs.resolveElementJs(Selector.toNode(selector))
+        val propsJson = properties.map(p => "\"" + p.replace("\\", "\\\\").replace("\"", "\\\"") + "\"").mkString("[", ",", "]")
+        val valueExpr =
+            s"""(() => { const el = $jsExpr; if (!el) return '{"present":false}'; const cs = window.getComputedStyle(el); const vals = {}; const props = $propsJson; for (const p of props) vals[p] = cs.getPropertyValue(p); return JSON.stringify({present:true, vals}); })()"""
+        SettleRead.settle("computedStyles", valueExpr) { raw =>
+            Json.decode[ComputedStylesWire](raw) match
+                case Result.Success(w) if !w.present =>
+                    Abort.fail(BrowserElementNotFoundException(selectorNodeDescription(Selector.toNode(selector))))
+                case Result.Success(w) =>
+                    w.vals.getOrElse(Map.empty)
+                case _ => Abort.fail(BrowserProtocolErrorException.decodeFailure("computedStyles", raw))
+        }
+    end computedStyles
+
+    /** Returns the settled computed CSS value for `property` on the element matching `selector`. Delegates to `computedStyles`. Aborts
+      * `BrowserElementNotFoundException` when no element matches.
+      */
+    def computedStyle(selector: Selector, property: String)(using Frame): String < (Browser & Abort[BrowserReadException]) =
+        computedStyles(selector, Span(property)).map(_(property))
+
+    /** Returns whether the element matching `selector` is currently in the visible viewport. Settled read: re-samples until the result
+      * stabilizes. Aborts `BrowserElementNotFoundException` when no element matches (twin: `isVisible`).
+      */
+    def inViewport(selector: Selector)(using Frame): Boolean < (Browser & Abort[BrowserReadException]) =
+        val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
+        val valueExpr =
+            s"""(() => { const el = $jsExpr; if (!el) return '{"present":false}'; const r = el.getBoundingClientRect(); const iv = r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight; return JSON.stringify({present:true, value:iv}); })()"""
+        SettleRead.settle("inViewport", valueExpr) { raw =>
+            Json.decode[PresentBoolWire](raw) match
+                case Result.Success(w) if !w.present =>
+                    Abort.fail(BrowserElementNotFoundException(selectorNodeDescription(Selector.toNode(selector))))
+                case Result.Success(w) =>
+                    w.value.getOrElse(false)
+                case _ => Abort.fail(BrowserProtocolErrorException.decodeFailure("inViewport", raw))
+        }
+    end inViewport
+
+    /** Returns the current page scroll position (`window.scrollX` / `scrollY`, rounded to integers). Settled read: re-samples until the
+      * offset stabilizes (useful after scroll-snap or smooth-scroll finishes). Total read: no element needed, never aborts on absent.
+      */
+    def scrollPosition(using Frame): Browser.ScrollPosition < (Browser & Abort[BrowserReadException]) =
+        val valueExpr = "JSON.stringify({x: Math.round(window.scrollX), y: Math.round(window.scrollY)})"
+        SettleRead.settle("scrollPosition", valueExpr) { raw =>
+            Json.decode[Browser.ScrollPosition](raw) match
+                case Result.Success(sp) => sp
+                case _                  => Abort.fail(BrowserProtocolErrorException.decodeFailure("scrollPosition", raw))
+        }
+    end scrollPosition
+
+    /** Waits until the page DOM stops mutating for the configured quiescence window, then returns. Aborts `BrowserAssertionTimedOutException`
+      * when the DOM has not quiesced within `timeout`. Delegates to the strict `MutationSettlement.waitForStable` entry; the entire wait runs
+      * inside a single `awaitPromise=true` eval.
+      */
+    def waitForStable(timeout: Duration)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        MutationSettlement.waitForStable(timeout)
+
+    /** Returns the full DISCOVER snapshot for the element at page-document pixel `(x, y)` via `document.elementFromPoint`. Settled read:
+      * re-samples until stable. Returns `Absent` when no element occupies that point. Aborts `BrowserInvalidArgumentException` before any
+      * page eval when `x` or `y` is negative.
+      */
+    def elementAt(x: Int, y: Int)(using Frame): Maybe[Browser.ElementInfo] < (Browser & Abort[BrowserReadException]) =
+        if x < 0 || y < 0 then Abort.fail(BrowserInvalidArgumentException("elementAt", "coordinates must be non-negative"))
+        else
+            installDiscover.andThen {
+                val valueExpr =
+                    s"""(() => { const el = document.elementFromPoint($x, $y); if (!el || el === document.documentElement || el === document.body) return '{"present":false}'; return JSON.stringify({present:true, info:window.__kyoDiscoverProbe(el)}); })()"""
+                SettleRead.settle("elementAt", valueExpr)(decodeElementInfoMaybe("elementAt"))
+            }
+    end elementAt
+
+    /** Returns the full DISCOVER snapshot for the first element matching `selector`. Settled read: re-samples until stable. Returns `Absent`
+      * when no element matches (twin: `boundingBox`).
+      */
+    def element(selector: Selector)(using Frame): Maybe[Browser.ElementInfo] < (Browser & Abort[BrowserReadException]) =
+        installDiscover.andThen {
+            val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
+            val valueExpr =
+                s"""(() => { const el = $jsExpr; if (!el) return '{"present":false}'; return JSON.stringify({present:true, info:window.__kyoDiscoverProbe(el)}); })()"""
+            SettleRead.settle("element", valueExpr)(decodeElementInfoMaybe("element"))
+        }
+    end element
+
+    /** Returns DISCOVER snapshots for all elements matching `selector` in document order. Empty fast-path: when `BrowserEval.locateCount`
+      * returns 0, returns `Chunk.empty` immediately without waiting for stability (twin: `textAll`). When elements are found, performs a
+      * settled read of the full array.
+      */
+    def elements(selector: Selector = Selector.all)(using Frame): Chunk[Browser.ElementInfo] < (Browser & Abort[BrowserReadException]) =
+        BrowserEval.locateCount(selector).map { n =>
+            if n == 0 then Chunk.empty
+            else
+                installDiscover.andThen {
+                    val jsExpr    = SelectorJs.resolveAllElementsJs(Selector.toNode(selector))
+                    val valueExpr = s"JSON.stringify(($jsExpr).map(el => window.__kyoDiscoverProbe(el)))"
+                    SettleRead.settle("elements", valueExpr) { raw =>
+                        Json.decode[Seq[DiscoverJs.ElementInfoWire]](raw) match
+                            case Result.Success(ws) => Chunk.from(ws).map(toElementInfo)
+                            case _                  => Abort.fail(BrowserProtocolErrorException.decodeFailure("elements", raw))
+                    }
+                }
+        }
+    end elements
+
+    /** Installs the in-page DISCOVER helper (`window.__kyoDiscoverProbe` / `window.__kyoUniqueSelector`) idempotently. The helper is gated by
+      * `window.__kyoDiscoverInstalled` so repeated calls are cheap.
+      */
+    private def installDiscover(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        BrowserEval.evalJs(DiscoverJs.installJs).unit
+
+    /** Converts the JSON wire record for one element into the public `Browser.ElementInfo`. */
+    private def toElementInfo(w: DiscoverJs.ElementInfoWire): Browser.ElementInfo =
+        Browser.ElementInfo(
+            selector = w.selector,
+            tag = w.tag,
+            id = w.id,
+            classes = w.classes,
+            text = w.text,
+            bounds = Browser.Bounds(w.x, w.y, w.width, w.height),
+            visible = w.visible,
+            inViewport = w.inViewport,
+            topmost = w.topmost,
+            interactive = w.interactive,
+            role = w.role
+        )
+
+    /** Curried decoder for a settled element-info read. Returns `Absent` when the JS side returns `present:false`; decodes the wire object
+      * and converts to `Browser.ElementInfo` on the present path.
+      */
+    private def decodeElementInfoMaybe(
+        callee: String
+    )(raw: String)(using Frame): Maybe[Browser.ElementInfo] < (Browser & Abort[BrowserReadException]) =
+        Json.decode[ElementInfoEnvelope](raw) match
+            case Result.Success(env) if !env.present => Maybe.empty[Browser.ElementInfo]
+            case Result.Success(env) =>
+                env.info match
+                    case Present(w) => Present(toElementInfo(w))
+                    case Absent     => Abort.fail(BrowserProtocolErrorException.decodeFailure(callee, raw))
+            case _ => Abort.fail(BrowserProtocolErrorException.decodeFailure(callee, raw))
+
     /** Returns the flat accessibility node list for the current page. Each entry captures the role, name, and properties for a node Chrome
       * considers exposed to assistive tech. The iframe context honoured is whatever [[withIFrame]] last set; absent that, the top-level
       * document.
@@ -2984,6 +3165,49 @@ object Browser:
         height: Double
     ) derives Schema, CanEqual
 
+    /** Geometry artifact returned by [[boundingRect]]. Fields are CSS pixels relative to the page document. `right`, `bottom`, and `area`
+      * are derived accessors (pure, total, no `Frame`).
+      */
+    final case class Bounds(x: Double, y: Double, width: Double, height: Double) derives Schema, CanEqual:
+        def right: Double  = x + width
+        def bottom: Double = y + height
+        def area: Double   = width * height
+    end Bounds
+
+    /** Page scroll offset (`window.scrollX` / `scrollY`, rounded to integers). Returned by [[scrollPosition]] and carried by
+      * `ScreenshotFrame`.
+      */
+    final case class ScrollPosition(x: Int, y: Int) derives Schema, CanEqual
+
+    /** DISCOVER artifact: a resolved element snapshot. Optional fields (`id` / `text` / `role`) are `Maybe`, never null; `classes` is a
+      * `Chunk`; `selector` is the generated stable unique CSS path. The companion holds the pure `leaves` filter. `area` delegates to
+      * `bounds.area`.
+      */
+    final case class ElementInfo(
+        selector: String,
+        tag: String,
+        id: Maybe[String],
+        classes: Chunk[String],
+        text: Maybe[String],
+        bounds: Browser.Bounds,
+        visible: Boolean,
+        inViewport: Boolean,
+        topmost: Boolean,
+        interactive: Boolean,
+        role: Maybe[String]
+    ) derives Schema, CanEqual:
+        def area: Double = bounds.area
+    end ElementInfo
+
+    object ElementInfo:
+        /** Pure leaf filter: keeps elements that are NOT an ancestor of any other element in `elems`. Ancestry is determined from the unique
+          * `selector` path: A is an ancestor of B when B's `selector` starts with A's `selector + " > "`. Total function; no `Frame`, no
+          * effect row.
+          */
+        def leaves(elems: Chunk[Browser.ElementInfo]): Chunk[Browser.ElementInfo] =
+            elems.filter(a => !elems.exists(b => b.selector != a.selector && b.selector.startsWith(a.selector + " > ")))
+    end ElementInfo
+
     /** Accessibility-tree node: what a screen reader sees. Returned by [[accessibilityNodes]] and probed by [[role]] / [[accessibleName]] /
       * [[assertRole]] / [[assertAccessibleName]].
       *
@@ -3527,3 +3751,17 @@ end Browser
   * Scala side decodes a `Seq[ConsoleMessageWire]` and maps to `Chunk[Browser.ConsoleMessage]`, parsing `level` via a small `match`.
   */
 final private[kyo] case class ConsoleMessageWire(level: String, message: String, timestamp: Long) derives Schema
+
+/** Wire record for reads whose JS probe returns `{present: Boolean, x?, y?, w?, h?}`. Used by `boundingRect` to detect a settled-absent
+  * element (when `present` is false) before the authoritative `DOM.getBoxModel` CDP read.
+  */
+final private[kyo] case class PresentFlagWire(present: Boolean, x: Double = 0, y: Double = 0, w: Double = 0, h: Double = 0) derives Schema
+
+/** Wire record for `computedStyles`: `{present: Boolean, vals?: {prop: value, ...}}`. `vals` is `Absent` on the absent-element path. */
+final private[kyo] case class ComputedStylesWire(present: Boolean, vals: Maybe[Map[String, String]] = Absent) derives Schema
+
+/** Wire record for `inViewport`: `{present: Boolean, value?: Boolean}`. `value` carries the boolean result on the present path. */
+final private[kyo] case class PresentBoolWire(present: Boolean, value: Maybe[Boolean] = Absent) derives Schema
+
+/** Wire envelope for a single-element DISCOVER read (`element` / `elementAt`): `{present: Boolean, info?: ElementInfoWire}`. */
+final private[kyo] case class ElementInfoEnvelope(present: Boolean, info: Maybe[DiscoverJs.ElementInfoWire] = Absent) derives Schema
