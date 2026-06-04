@@ -1711,6 +1711,9 @@ private[kyo] object ChartLower:
         // Collect distinct color keys in enum-ordinal order (N3 carry-over)
         val colorKeys: Chunk[String] = collectColorCategories(rows, colorCh)
         val numColors                = colorKeys.size
+        // Precompute colorKey -> index once (O(colors)); replaces a per-row indexOf scan.
+        val colorIdxByKey: Map[String, Int] =
+            colorKeys.zipWithIndex.foldLeft(Map.empty[String, Int])((m, ki) => m.updated(ki._1, ki._2))
         val basePalette: Chunk[Style.Color] = spec match
             case Present(s) => themePalette(s.theme)
             case Absent     => DefaultPalette
@@ -1735,7 +1738,7 @@ private[kyo] object ChartLower:
                                 val bandW     = xs.bandwidth
                                 val subW      = bandW / numColors.toDouble
                                 val colorKey  = colorCh.accessor(row).toString
-                                val colorIdx  = colorKeys.toSeq.indexOf(colorKey)
+                                val colorIdx  = colorIdxByKey.getOrElse(colorKey, -1)
                                 val barX      = bandX + colorIdx.toDouble * subW
                                 val barY      = ys.apply(yd)
                                 val barH      = baseline - barY
@@ -1772,13 +1775,13 @@ private[kyo] object ChartLower:
         val baseline = layout.plotBaseline
         val plotTop  = layout.plotY
 
-        // 1. Collect all distinct x keys in encounter order
-        val xKeys: Chunk[String] = rows.foldLeft(Chunk.empty[String]): (acc, row) =>
+        // 1. Collect all distinct x keys in encounter order (O(rows), Set-backed via distinctKeyed).
+        val presentXKeys: Chunk[String] = rows.foldLeft(Chunk.empty[String]): (acc, row) =>
             mark.x.plottable.toDomain(mark.x.accessor(row)) match
-                case Present(d) =>
-                    val k = domainKey(d)
-                    if acc.toSeq.contains(k) then acc else acc.append(k)
-                case Absent => acc
+                case Present(d) => acc.append(domainKey(d))
+                case Absent     => acc
+        val xKeys: Chunk[String] =
+            ChartFoundations.distinctKeyed(presentXKeys, k => ChartFoundations.categoryKey(k)).map(_._2)
 
         // 2. Collect all distinct group keys (with their raw values) in enum-ordinal order.
         // The raw values feed the same palette resolution the legend uses, so each stacked segment is
@@ -1790,26 +1793,50 @@ private[kyo] object ChartLower:
             case Present(s) => resolvePalette(s, groupCats)
             case Absent     => resolvePaletteFromCfg(groupKeys)
 
-        // 3. Build xKey -> groupKey -> yValue map
+        // 3. Build, in one pass: xKey -> groupKey -> yValue (dataMap), xKey -> first-seen x Domain
+        // (xDomainByKey, for band positioning), and (xKey, groupKey) -> first-seen row (rowBySlot, for
+        // per-datum channels). The latter two replace the per-x-key and per-rect linear `rows.find` scans.
+        final case class StackMaps(
+            data: Map[String, Map[String, Double]],
+            xDomainByKey: Map[String, Domain],
+            rowBySlot: Map[(String, String), A]
+        )
         @scala.annotation.tailrec
-        def buildMap(i: Int, m: Map[String, Map[String, Double]]): Map[String, Map[String, Double]] =
+        def buildMap(i: Int, m: StackMaps): StackMaps =
             if i >= rows.size then m
             else
-                val row = rows(i)
-                val xKeyOpt = mark.x.plottable.toDomain(mark.x.accessor(row)) match
+                val row        = rows(i)
+                val xDomainOpt = mark.x.plottable.toDomain(mark.x.accessor(row))
+                val xKeyOpt = xDomainOpt match
                     case Present(d) => Present(domainKey(d))
                     case Absent     => Absent
                 val yValOpt = mark.y.plottable.toDomain(mark.y.accessor(row)) match
                     case Present(Domain.Continuous(v)) => Present(v)
                     case _                             => Absent
+                val groupKey = groupFn(row).toString
+                val withDomain = (xKeyOpt, xDomainOpt) match
+                    case (Present(xk), Present(d)) if !m.xDomainByKey.contains(xk) =>
+                        m.copy(xDomainByKey = m.xDomainByKey.updated(xk, d))
+                    case _ => m
+                // rowBySlot records the first row per (xKey, groupKey) regardless of y, mirroring the
+                // original `rows.find` (which matched on x+group only). A slot's row is only consulted
+                // when its summed y is non-zero, but first-seen-by-x+group is the original semantics.
+                val withSlot = xKeyOpt match
+                    case Present(xk) =>
+                        val slotKey = (xk, groupKey)
+                        if withDomain.rowBySlot.contains(slotKey) then withDomain
+                        else withDomain.copy(rowBySlot = withDomain.rowBySlot.updated(slotKey, row))
+                    case Absent => withDomain
                 val next = (xKeyOpt, yValOpt) match
                     case (Present(xk), Present(yv)) =>
-                        val groupKey = groupFn(row).toString
-                        val inner    = m.getOrElse(xk, Map.empty)
-                        m.updated(xk, inner.updated(groupKey, yv))
-                    case _ => m
+                        val inner = withSlot.data.getOrElse(xk, Map.empty)
+                        withSlot.copy(data = withSlot.data.updated(xk, inner.updated(groupKey, yv)))
+                    case _ => withSlot
                 buildMap(i + 1, next)
-        val dataMap = buildMap(0, Map.empty)
+        val stackMaps    = buildMap(0, StackMaps(Map.empty, Map.empty, Map.empty))
+        val dataMap      = stackMaps.data
+        val xDomainByKey = stackMaps.xDomainByKey
+        val rowBySlot    = stackMaps.rowBySlot
 
         // 4. For each x key, emit stacked rects
         @scala.annotation.tailrec
@@ -1817,16 +1844,10 @@ private[kyo] object ChartLower:
             if xi >= xKeys.size then acc
             else
                 val xKey = xKeys(xi)
-                val xDomain = mark.x.plottable.toDomain(mark.x.accessor(
-                    rows.toSeq.find(r =>
-                        mark.x.plottable.toDomain(mark.x.accessor(r)) match
-                            case Present(d) => domainKey(d) == xKey
-                            case Absent     => false
-                    ).getOrElse(rows(0))
-                ))
-                val bandX = xDomain match
-                    case Present(d) => xs.apply(d)
-                    case Absent     => xs.apply(Domain.Category(xKey))
+                // O(1) lookup of the first-seen x Domain for this key (precomputed in buildMap).
+                val bandX = xDomainByKey.get(xKey) match
+                    case Some(d) => xs.apply(d)
+                    case None    => xs.apply(Domain.Category(xKey))
                 val bandW    = xs.bandwidth
                 val groupMap = dataMap.getOrElse(xKey, Map.empty)
                 val totalY   = groupKeys.foldLeft(0.0)((s, gk) => s + groupMap.getOrElse(gk, 0.0))
@@ -1879,15 +1900,10 @@ private[kyo] object ChartLower:
                                     .height(rectH)
                                     .fill(Svg.Paint.Color(fillColor))
                                 // Look up the row for this x+group combination to apply per-datum channels.
-                                // (There is at most one row per x+group; take the first match.)
-                                val rowForSlot: Maybe[A] = rows.toSeq
-                                    .find: r =>
-                                        val xMatch = mark.x.plottable.toDomain(mark.x.accessor(r)) match
-                                            case Present(d) => domainKey(d) == xKey
-                                            case Absent     => false
-                                        val gMatch = groupFn(r).toString == gk
-                                        xMatch && gMatch
-                                    .fold[Maybe[A]](Absent)(Present(_))
+                                // (There is at most one row per x+group; rowBySlot holds the first match.)
+                                val rowForSlot: Maybe[A] = rowBySlot.get((xKey, gk)) match
+                                    case Some(r) => Present(r)
+                                    case None    => Absent
                                 val withChannels: Chunk[Svg.SvgElement] = rowForSlot match
                                     case Absent => Chunk(baseRect)
                                     case Present(r) =>
@@ -1951,9 +1967,9 @@ private[kyo] object ChartLower:
                 // INV-023: pass spec/internalHoverRef so click/hover handlers are attached to the path.
                 Chunk(lowerLineSeries(rows, mark, layout, xs, ys, defaultColor, spec, internalHoverRef))
             case Present(colorCh) =>
-                val colorKeys: Chunk[String] = rows.foldLeft(Chunk.empty[String]): (acc, row) =>
-                    val key = colorCh.accessor(row.asInstanceOf[A]).toString
-                    if acc.toSeq.contains(key) then acc else acc.append(key)
+                val keys: Chunk[String] = rows.map(row => colorCh.accessor(row.asInstanceOf[A]).toString)
+                val colorKeys: Chunk[String] =
+                    ChartFoundations.distinctKeyed(keys, k => ChartFoundations.categoryKey(k)).map(_._2)
                 val palette: Chunk[Style.Color] = spec match
                     case Present(s) => themePalette(s.theme)
                     case Absent     => DefaultPalette
@@ -2098,6 +2114,10 @@ private[kyo] object ChartLower:
             else
                 colorCatsWithRaw.zipWithIndex.map: (_, i) =>
                     basePaletteText.toSeq.apply(i % basePaletteText.size)
+        // Precompute catKey -> index once (first-seen wins, matching indexWhere); replaces per-row scan.
+        val catIdxText: Map[String, Int] =
+            colorCatsWithRaw.zipWithIndex.foldLeft(Map.empty[String, Int]): (m, ci) =>
+                if m.contains(ci._1._1) then m else m.updated(ci._1._1, ci._2)
         @scala.annotation.tailrec
         def loop(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
             if i >= rows.size then acc
@@ -2117,7 +2137,7 @@ private[kyo] object ChartLower:
                                     case Absent => defaultColor
                                     case Present(ch) =>
                                         val catKey = ch.accessor(row.asInstanceOf[A]).toString
-                                        val idx    = colorCatsWithRaw.toSeq.indexWhere(_._1 == catKey)
+                                        val idx    = catIdxText.getOrElse(catKey, -1)
                                         if idx >= 0 && idx < palette.size then palette(idx) else defaultColor
                                 val baseText = Svg.text
                                     .x(px)
@@ -2159,6 +2179,10 @@ private[kyo] object ChartLower:
             else
                 colorCatsWithRaw.zipWithIndex.map: (_, i) =>
                     basePaletteErr.toSeq.apply(i % basePaletteErr.size)
+        // Precompute catKey -> index once (first-seen wins, matching indexWhere); replaces per-row scan.
+        val catIdxErr: Map[String, Int] =
+            colorCatsWithRaw.zipWithIndex.foldLeft(Map.empty[String, Int]): (m, ci) =>
+                if m.contains(ci._1._1) then m else m.updated(ci._1._1, ci._2)
         val halfCap = mark.capWidth / 2.0
         @scala.annotation.tailrec
         def loop(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
@@ -2179,7 +2203,7 @@ private[kyo] object ChartLower:
                             case Absent => -1
                             case Present(ch) =>
                                 val catKey = ch.accessor(row.asInstanceOf[A]).toString
-                                colorCatsWithRaw.toSeq.indexWhere(_._1 == catKey)
+                                catIdxErr.getOrElse(catKey, -1)
                         val color: Style.Color =
                             if colorIdx >= 0 && colorIdx < palette.size then palette(colorIdx) else defaultColor
                         val stroke = Svg.Paint.Color(color)
@@ -2382,17 +2406,36 @@ private[kyo] object ChartLower:
         val baseline = layout.plotBaseline
         val plotTop  = layout.plotY
 
-        // Collect all distinct x keys in encounter order
-        val xKeys: Chunk[String] = rows.foldLeft(Chunk.empty[String]): (acc, row) =>
+        // Collect all distinct x keys in encounter order (O(rows), Set-backed via distinctKeyed).
+        val presentXKeys: Chunk[String] = rows.foldLeft(Chunk.empty[String]): (acc, row) =>
             mark.x.plottable.toDomain(mark.x.accessor(row)) match
-                case Present(d) =>
-                    val k = domainKey(d)
-                    if acc.toSeq.contains(k) then acc else acc.append(k)
-                case Absent => acc
+                case Present(d) => acc.append(domainKey(d))
+                case Absent     => acc
+        val xKeys: Chunk[String] =
+            ChartFoundations.distinctKeyed(presentXKeys, k => ChartFoundations.categoryKey(k)).map(_._2)
 
         // Collect all distinct group keys in encounter order
         val groupCh: Channel[A, Any] = Channel(groupFn, Plottable.string.asInstanceOf[Plottable[Any]])
         val groupKeys: Chunk[String] = collectColorCategories(rows, groupCh)
+        // Per-group palette, resolved the SAME way the stacked-bar path does so each band gets a
+        // distinct fill color (honoring a custom theme.palette; DefaultPalette under the default theme).
+        val groupCats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, groupCh)
+        val groupPalette: Chunk[Style.Color] = spec match
+            case Present(s) => resolvePalette(s, groupCats)
+            case Absent     => resolvePaletteFromCfg(groupKeys)
+
+        // Precompute, in single passes: xKey -> first-seen x Domain (for band positioning) and
+        // groupKey -> first-seen row (for per-group interaction attrs). These replace the per-(group, x)
+        // and per-group linear `rows.find` scans inside loopGroups.
+        val xDomainByKey: Map[String, Domain] = rows.foldLeft(Map.empty[String, Domain]): (m, row) =>
+            mark.x.plottable.toDomain(mark.x.accessor(row)) match
+                case Present(d) =>
+                    val k = domainKey(d)
+                    if m.contains(k) then m else m.updated(k, d)
+                case Absent => m
+        val rowByGroup: Map[String, A] = rows.foldLeft(Map.empty[String, A]): (m, row) =>
+            val gk = groupFn(row).toString
+            if m.contains(gk) then m else m.updated(gk, row)
 
         // Build xKey -> groupKey -> yValue map
         @scala.annotation.tailrec
@@ -2440,17 +2483,9 @@ private[kyo] object ChartLower:
                     val rawY     = groupMap.getOrElse(gk, 0.0)
                     val accY     = accByX.getOrElse(xk, 0.0)
                     val total    = xTotals.getOrElse(xk, 0.0)
-                    val xDomain = mark.x.plottable.toDomain(mark.x.accessor(
-                        rows.toSeq
-                            .find: r =>
-                                mark.x.plottable.toDomain(mark.x.accessor(r)) match
-                                    case Present(d) => domainKey(d) == xk
-                                    case Absent     => false
-                            .getOrElse(rows(0))
-                    ))
-                    val px = xDomain match
-                        case Present(d) => xs.apply(d)
-                        case Absent     => xs.apply(Domain.Category(xk))
+                    val px = xDomainByKey.get(xk) match
+                        case Some(d) => xs.apply(d)
+                        case None    => xs.apply(Domain.Category(xk))
                     val (py0, py1) =
                         if mark.stack.normalize then
                             val f0 = if total > 0.0 then accY / total else 0.0
@@ -2476,14 +2511,16 @@ private[kyo] object ChartLower:
                             pd.lineTo(b._1, b._3)
                         val fullPath = bands.toSeq.reverse.foldLeft(topEdge): (pd, b) =>
                             pd.lineTo(b._1, b._2)
-                        val basePath = Svg.path.d(fullPath.close)
+                        // Fill each band in its group's palette color (mirrors the non-stacked area
+                        // convention: a color fill at 0.7 opacity), so stacked bands are not colorless.
+                        val groupColor = if gi < groupPalette.size then groupPalette(gi) else DefaultPalette(gi % DefaultPalette.size)
+                        val basePath   = Svg.path.d(fullPath.close).fill(Svg.Paint.Color(groupColor)).fillOpacity(0.7)
                         // INV-023: attach interaction attrs to each group path.
-                        // The representative row is the first row in this group.
+                        // The representative row is the first row in this group (precomputed in rowByGroup).
                         val withInteraction = spec match
                             case Absent => basePath
                             case Present(s) =>
-                                val groupFn = mark.stack.group.getOrElse((_: A) => "")
-                                rows.toSeq.find(r => groupFn(r).toString == gk) match
+                                rowByGroup.get(gk) match
                                     case None    => basePath
                                     case Some(r) => basePath.withAttrs(buildInteractionAttrs(r, s, internalHoverRef))
                         acc.append(withInteraction)

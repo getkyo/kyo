@@ -1705,6 +1705,70 @@ class ChartLowerTest extends Test:
         end for
     }
 
+    // Leaf 19 (fill fix): stacked-area bands carry a per-group palette fill, not colorless paths.
+    // Each group's band must be filled with its palette color (custom theme.palette here),
+    // mirroring the non-stacked area's color fill. Before the fix the band paths had no fill.
+    "stacked area bands carry per-group theme.palette fills (custom theme)" in run {
+        // Two color groups via region channel: NA (idx=0) and EU (idx=1).
+        // Custom palette: first color #cc00cc (purple), second color #00cccc (teal).
+        // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
+        val purple = Style.Color.hex("#cc00cc").getOrElse(fail("bad hex"))
+        val teal   = Style.Color.hex("#00cccc").getOrElse(fail("bad hex"))
+        val rows = Chunk(
+            Sale("Jan", Usd(1000), Region.NA),
+            Sale("Feb", Usd(1500), Region.NA),
+            Sale("Jan", Usd(2000), Region.EU),
+            Sale("Feb", Usd(2500), Region.EU)
+        )
+        val spec = UI.chart(rows)(area(x = _.month, y = _.revenue, stack = by(_.region)))
+            .yScale(_.linear(0.0, 6000.0))
+            .theme(_.palette(Chunk(purple, teal)))
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        for html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            assert(
+                html.contains("fill=\"#cc00cc\""),
+                s"leaf 19: expected first-group band fill #cc00cc (purple):\n$html"
+            )
+            assert(
+                html.contains("fill=\"#00cccc\""),
+                s"leaf 19: expected second-group band fill #00cccc (teal):\n$html"
+            )
+            assert(
+                !html.contains("fill=\"#3b82f6\""),
+                s"leaf 19: DefaultPalette blue must not appear under a custom palette:\n$html"
+            )
+            assert(
+                !html.contains("fill=\"#f97316\""),
+                s"leaf 19: DefaultPalette orange must not appear under a custom palette:\n$html"
+            )
+        end for
+    }
+
+    // Leaf 20 (fill fix): under the default theme, stacked-area bands use DefaultPalette colors.
+    "stacked area bands use DefaultPalette fills (default theme)" in run {
+        val rows = Chunk(
+            Sale("Jan", Usd(1000), Region.NA),
+            Sale("Feb", Usd(1500), Region.NA),
+            Sale("Jan", Usd(2000), Region.EU),
+            Sale("Feb", Usd(2500), Region.EU)
+        )
+        val spec = UI.chart(rows)(area(x = _.month, y = _.revenue, stack = by(_.region)))
+            .yScale(_.linear(0.0, 6000.0))
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        for html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            assert(
+                html.contains("fill=\"#3b82f6\""),
+                s"leaf 20: default-theme stacked area must use DefaultPalette blue (#3b82f6):\n$html"
+            )
+            assert(
+                html.contains("fill=\"#f97316\""),
+                s"leaf 20: default-theme stacked area must use DefaultPalette orange (#f97316):\n$html"
+            )
+        end for
+    }
+
     // ---- INV-005: every Mark variant lowers to its expected element kind (behavioral exhaustiveness) ----
 
     "INV-005: every Mark variant lowers to its signature element kind in the marks region" in {
