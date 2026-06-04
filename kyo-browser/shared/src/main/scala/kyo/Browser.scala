@@ -3127,6 +3127,152 @@ object Browser:
             case _ => Absent
     end parseDownloadEvent
 
+    // --- Screencast ---
+
+    /** Records a screencast of the page WHILE `body` runs. Drive an animation or transition inside `body` and get back the frames
+      * Chrome rendered while it ran, paired with the body's result: events-first `(Chunk[ScreenshotFrame], A)`, the canonical `record*`
+      * shape (twin [[recordDownloads]]). This method does NOT settle: it records the page exactly as it changes, so the caller is
+      * responsible for driving the visual change to record.
+      *
+      * Each frame carries its `Image`, an `offsetMs` relative to the cast start (from the screencast metadata `timestamp` when present,
+      * else a wall-clock fallback), and the page scroll offset at capture. Frames arrive in delivery order, so `offsetMs` is
+      * non-decreasing.
+      *
+      * Two bounds protect against an unbounded recording, checked frame-count-first: when the recorded frame count exceeds `maxFrames`,
+      * or the elapsed wall-clock time exceeds `maxDurationMs`, the cast is poisoned and the call aborts
+      * [[BrowserCaptureLimitExceededException]] after `body` returns. `Webp` has no screencast codec, so it maps to the `jpeg` codec
+      * (CDP screencast supports `jpeg` and `png` only); the call still succeeds.
+      *
+      * Implementation: a per-session dispatcher is registered on `screencastEventDispatchers` BEFORE the cast starts. The dispatcher
+      * decodes each `Page.screencastFrame`, issues the per-frame `Page.screencastFrameAck` from inside the handler (a detached fiber so
+      * the CDP reader stays `Sync`-only and Chrome keeps delivering), appends the frame, and sets the poison flag on a cap. The dispatcher
+      * restore and `Page.stopScreencast` are bound to an inner `Scope.run`, so teardown fires on success, failure, OR interruption; the
+      * caller's effect row does NOT carry `Scope`. The body's effect row `S` is isolated from the dispatcher's `Sync`-only value type via
+      * `Isolate[S, Sync, S]`, exactly as [[recordDownloads]].
+      */
+    def screenshotFrames[A, S](
+        maxDurationMs: Long = 8000L,
+        maxFrames: Int = 240,
+        format: Browser.ScreenshotFormat = Browser.ScreenshotFormat.Jpeg,
+        quality: Int = 80
+    )(body: A < (Browser & Async & Abort[BrowserReadException] & S))(using
+        Frame,
+        Isolate[S, Sync, S]
+    ): (Chunk[Browser.ScreenshotFrame], A) < (Browser & Async & Abort[BrowserReadException] & S) =
+        Env.use[BrowserTab] { tab =>
+            val client  = tab.client
+            val session = tab.session
+            val sidKey  = tab.sessionId.value
+            val wireFormat = format match
+                case Browser.ScreenshotFormat.Png  => "png"
+                case Browser.ScreenshotFormat.Jpeg => "jpeg"
+                case Browser.ScreenshotFormat.Webp => "jpeg"
+            Clock.now.map { t0 =>
+                AtomicRef.init(Chunk.empty[Browser.ScreenshotFrame]).map { collected =>
+                    AtomicRef.init(false).map { poisoned =>
+                        // The dispatcher decodes each frame, acks it from a detached fiber so the reader fiber stays < Sync (the ack
+                        // carries Async; Chrome keeps delivering once it sees the ack), appends to `collected`, then checks the caps
+                        // frame-count-first: `cur.size > maxFrames` poisons on the frame bound, otherwise the elapsed-time check
+                        // poisons on the duration bound.
+                        val handler: CdpEvent.Generic => Unit < Sync = ev =>
+                            parseScreencastFrame(ev, t0).map {
+                                case Present((frame, sessionId)) =>
+                                    Fiber.initUnscoped(using Isolate.derive[Any, Sync, Any])(
+                                        Abort.run[BrowserReadException](
+                                            CdpBackend.screencastFrameAck(session, ScreencastFrameAckParams(sessionId))
+                                        ).unit
+                                    ).andThen(collected.updateAndGet(_.append(frame))).map { cur =>
+                                        if cur.size > maxFrames then poisoned.set(true)
+                                        else
+                                            Clock.now.map { now =>
+                                                if now.toJava.toEpochMilli - t0.toJava.toEpochMilli > maxDurationMs then
+                                                    poisoned.set(true)
+                                                else Kyo.unit
+                                            }
+                                    }
+                                case Absent => Kyo.unit
+                            }
+                        client.screencastEventDispatchers.getAndUpdate(_.update(sidKey, handler)).map { previousMap =>
+                            val restore = client.screencastEventDispatchers.getAndUpdate { m =>
+                                previousMap.get(sidKey) match
+                                    case Present(prev) => m.update(sidKey, prev)
+                                    case Absent        => m.remove(sidKey)
+                            }.unit
+                            // Best-effort stop on teardown: await the send so the cast is actually ended on normal completion,
+                            // but swallow any read failure so a connection already tearing down (interruption) does not re-raise
+                            // into the finalizer. The send's own request timeout bounds a silent Chrome, so this never hangs.
+                            val stop = Abort.run[BrowserReadException](CdpBackend.stopScreencast(session)).unit
+                            Scope.run {
+                                Scope.ensure(restore).andThen(Scope.ensure(stop)).andThen {
+                                    CdpBackend.startScreencast(
+                                        session,
+                                        StartScreencastParams(Present(wireFormat), screenshotQuality(format, quality))
+                                    ).andThen {
+                                        body.map { result =>
+                                            poisoned.get.map { p =>
+                                                collected.get.map { frames =>
+                                                    if p then
+                                                        val limit =
+                                                            if frames.size > maxFrames then maxFrames
+                                                            else maxDurationMs.toInt
+                                                        Abort.fail(BrowserCaptureLimitExceededException(
+                                                            "screenshotFrames",
+                                                            limit,
+                                                            frames.size
+                                                        ))
+                                                    else (frames, result)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    end screenshotFrames
+
+    /** Decodes a `Page.screencastFrame` event into a `(ScreenshotFrame, sessionId)` pair. Returns `Absent` on a wrong-method event or any
+      * decode failure (never aborts). `offsetMs` is `round(timestamp * 1000) - t0` when the metadata carries a `timestamp`, else the
+      * wall-clock fallback `now - t0`. Distinct from the routing-layer `CdpClient.parseScreencastFrame`, which decodes only the wire
+      * record; this variant materialises the `Image` and the public `ScreenshotFrame`.
+      */
+    private def parseScreencastFrame(ev: CdpEvent.Generic, t0: Instant)(using
+        Frame
+    )
+        : Maybe[(Browser.ScreenshotFrame, Int)] < Sync =
+        ev.method match
+            case "Page.screencastFrame" =>
+                Json.decode[CdpEventParams[ScreencastFrameWire]](ev.paramsJson) match
+                    case Result.Success(env) =>
+                        val w = env.params
+                        Abort.run(CdpBase64Decode.decodeScreenshotImage("Page.screencastFrame", w.data)).map {
+                            case Result.Success(img) =>
+                                val t0Ms = t0.toJava.toEpochMilli
+                                Clock.now.map { now =>
+                                    val offsetMs = w.metadata.timestamp match
+                                        case Present(ts) => math.round(ts * 1000) - t0Ms
+                                        case Absent      => now.toJava.toEpochMilli - t0Ms
+                                    Present((
+                                        Browser.ScreenshotFrame(
+                                            img,
+                                            offsetMs,
+                                            Browser.ScrollPosition(
+                                                math.round(w.metadata.scrollOffsetX).toInt,
+                                                math.round(w.metadata.scrollOffsetY).toInt
+                                            )
+                                        ),
+                                        w.sessionId
+                                    ))
+                                }
+                            case _ => (Absent: Maybe[(Browser.ScreenshotFrame, Int)])
+                        }
+                    case _ => Absent
+            case _ => Absent
+    end parseScreencastFrame
+
     // --- Cookies ---
 
     /** Returns all cookies for the current page.
@@ -3522,6 +3668,12 @@ object Browser:
       * `ScreenshotFrame`.
       */
     final case class ScrollPosition(x: Int, y: Int) derives Schema, CanEqual
+
+    /** One frame recorded by [[screenshotFrames]]. `image` is the captured frame; `offsetMs` is `round(timestamp * 1000) - t0` from the
+      * screencast metadata (with a wall-clock fallback), relative to the cast start; `scrollOffset` is the page scroll at capture. Carries
+      * an `Image`, so derives only `CanEqual`.
+      */
+    final case class ScreenshotFrame(image: Image, offsetMs: Long, scrollOffset: Browser.ScrollPosition) derives CanEqual
 
     /** Emulated `prefers-color-scheme` value for [[withEmulation]].
       *
