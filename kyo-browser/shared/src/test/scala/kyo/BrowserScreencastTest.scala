@@ -334,15 +334,21 @@ class BrowserScreencastTest extends BrowserTest:
     // Test 12: teardown on interruption deregisters the dispatcher; a later cast works
     // -------------------------------------------------------------------------
 
-    // The Browser effect carries Env[BrowserTab] and the module provides no same-tab isolate, so the
-    // interrupted cast runs inside a self-contained Browser.run (the established interruption pattern in
-    // BrowserViewportTest / BrowserEmulationTest). The tab is captured via a Promise so its dispatcher map
-    // can be read after the timeout: the recorder's Scope.ensure(restore) fires on interruption and removes
-    // the session entry. The tab object outlives its CDP teardown, so the AtomicRef read is valid. A second,
-    // independent cast then records frames, proving the recorder is reusable and stopScreencast left Chrome in
-    // a clean state.
+    // The Browser effect carries Env[BrowserTab] and the module provides no same-tab isolate, so the interrupted cast runs
+    // inside a self-contained Browser.run (the established interruption pattern in BrowserViewportTest /
+    // BrowserEmulationTest). The scenario is driven by an explicit fiber plus two Promises so it is deterministic across the
+    // JVM and the single-threaded Scala.js / Scala Native runtimes:
+    //   - the cast runs in its own fiber (Fiber.initUnscoped), not under Async.timeout, so the test owns the interruption.
+    //   - readyLatch is completed AFTER the cast is registered, so the test interrupts only once the body is provably inside
+    //     the recorder scope, never before startScreencast ran.
+    //   - tabRef captures the tab so its dispatcher map can be read.
+    // After readyLatch resolves the test interrupts the fiber and awaits its Result. The recorder's Scope.ensure(restore)
+    // removes the session entry then does an async stopScreencast send; on JS / Native the interrupted fiber's Result can
+    // resolve before that finalizer chain has removed the entry (the ordering only holds on the JVM). So the dispatcher map
+    // is read by polling until the entry is gone, bounded by a fixed schedule, then asserted concretely. The poll re-reads
+    // the AtomicRef directly; the tab object outlives its CDP teardown. A second, independent cast then records frames,
+    // proving the recorder is reusable and stopScreencast left Chrome in a clean state.
     "screenshotFrames tears down the dispatcher on interruption and a later cast still works" in run {
-        type E = BrowserReadException | Timeout
         // A static page carrying only the CSS animation: Chrome keeps re-rendering it (so the cast records frames)
         // while the DOM stays still, so `goto` settles promptly and the interruption window is deterministic.
         val animOnlyPage =
@@ -352,41 +358,67 @@ class BrowserScreencastTest extends BrowserTest:
               |</style></head><body><div id="box"></div></body></html>""".stripMargin
         kyo.internal.SharedChrome.init.map { wsUrl =>
             Promise.init[BrowserTab, Any].map { tabRef =>
-                val interruptedCast: Unit < (Async & Abort[E]) =
-                    Async.timeout(3.seconds) {
+                Promise.init[Unit, Any].map { readyLatch =>
+                    val cast: Unit < (Async & Abort[BrowserReadException]) =
                         Browser.run(wsUrl) {
                             Browser.goto(page(animOnlyPage)).andThen {
                                 Browser.use { tab =>
                                     tabRef.completeDiscard(Result.succeed(tab)).andThen {
                                         Browser.screenshotFrames[Unit, Any](maxDurationMs = 60000L, maxFrames = 10000) {
-                                            // Block interruptibly so the outer Async.timeout cancels the body mid-wait while the
-                                            // cast is active; the recorder's Scope.ensure(restore) then fires on interruption.
-                                            Async.sleep(30.seconds)
+                                            // Signal the cast is registered, then block interruptibly until the test
+                                            // interrupts the fiber while the cast is active.
+                                            readyLatch.completeDiscard(Result.succeed(())).andThen {
+                                                Async.sleep(30.seconds)
+                                            }
                                         }.unit
                                     }
                                 }
                             }
                         }
-                    }
-                Abort.run[E](interruptedCast).map { result =>
-                    assert(result.isFailure, s"expected the timeout to interrupt the cast but got $result")
-                    tabRef.get.map { tab =>
-                        val sidKey = tab.sessionId.value
-                        // The recorder's Scope.ensure(restore) removed the dispatcher entry for the session on interruption.
-                        tab.client.screencastEventDispatchers.get.map { map =>
-                            assert(
-                                map.get(sidKey) == Absent,
-                                s"expected the screencast dispatcher for $sidKey to be removed on interruption but it is still present"
-                            )
-                        }
-                    }.andThen {
-                        // A fresh, independent cast records frames: the recorder is reusable and Chrome is in a clean state.
-                        Browser.run(wsUrl) {
-                            Browser.goto(page(animOnlyPage)).andThen {
-                                Browser.screenshotFrames[Unit, Any](maxDurationMs = 1500L, maxFrames = 60) {
-                                    spinFor(300.millis)
-                                }.map { case (frames, _) =>
-                                    assert(frames.nonEmpty, "expected the later cast to record frames after teardown")
+                    Fiber.initUnscoped(cast).map { fiber =>
+                        // Wait until the cast is registered, then interrupt and await the interrupted Result so the fiber has
+                        // finished unwinding before the dispatcher map is inspected.
+                        readyLatch.get.andThen {
+                            fiber.interrupt.andThen {
+                                fiber.getResult.map { result =>
+                                    assert(result.isPanic, s"expected the interrupt to abort the cast but got $result")
+                                    tabRef.get.map { tab =>
+                                        val sidKey = tab.sessionId.value
+                                        // Poll the dispatcher map until the recorder's Scope.ensure(restore) removed the entry.
+                                        Retry[BrowserReadException](Schedule.fixed(20.millis).take(150)) {
+                                            tab.client.screencastEventDispatchers.get.map { map =>
+                                                if map.get(sidKey) == Absent then ()
+                                                else
+                                                    Abort.fail(
+                                                        BrowserAssertionTimedOutException(
+                                                            "screencast interrupt teardown",
+                                                            "Absent",
+                                                            "present"
+                                                        )
+                                                    )
+                                            }
+                                        }.andThen {
+                                            // The recorder's Scope.ensure(restore) removed the dispatcher entry on interruption.
+                                            tab.client.screencastEventDispatchers.get.map { map =>
+                                                assert(
+                                                    map.get(sidKey) == Absent,
+                                                    s"expected the screencast dispatcher for $sidKey to be removed on interruption but it is still present"
+                                                )
+                                            }
+                                        }
+                                    }.andThen {
+                                        // A fresh, independent cast records frames: the recorder is reusable and Chrome is in
+                                        // a clean state.
+                                        Browser.run(wsUrl) {
+                                            Browser.goto(page(animOnlyPage)).andThen {
+                                                Browser.screenshotFrames[Unit, Any](maxDurationMs = 1500L, maxFrames = 60) {
+                                                    spinFor(300.millis)
+                                                }.map { case (frames, _) =>
+                                                    assert(frames.nonEmpty, "expected the later cast to record frames after teardown")
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

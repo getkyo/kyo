@@ -213,25 +213,35 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- assertUrl stability ----
 
+    // history.pushState is blocked on a `data:` page (origin `null` raises SecurityError), so the URL would never flicker
+    // and the assertion would hang to the suite timeout. Serving the page from a real http origin lets pushState land, so
+    // the URL genuinely flickers between the target and other paths and the stability gate observes the change mid-window
+    // and aborts. assertUrl matches the full window.location.href, so the expected value is the absolute target URL.
     "assertUrl with default stabilityWindow=100ms - Aborts when URL flickers via history.pushState" in run {
-        withBrowser {
-            onPage(
-                "<div>page</div>" +
-                    "<script>" +
-                    "var phase = true;" +
-                    "setInterval(function(){" +
-                    "  history.pushState({}, '', phase ? '/kyo-flicker-target' : '/kyo-flicker-other');" +
-                    "  phase = !phase;" +
-                    "}, 5);" +
-                    "</script>"
-            ) {
-                tight {
-                    Abort.run[BrowserAssertionException] {
-                        Browser.assertUrl("/kyo-flicker-target")
+        val flickerHtml =
+            "<div>page</div>" +
+                "<script>" +
+                "var phase = true;" +
+                "setInterval(function(){" +
+                "  history.pushState({}, '', phase ? '/kyo-flicker-target' : '/kyo-flicker-other');" +
+                "  phase = !phase;" +
+                "}, 5);" +
+                "</script>"
+        val flickerBytes = Span.fromUnsafe(flickerHtml.getBytes("UTF-8"))
+        val handler = HttpRoute.getRaw("/flicker").response(_.bodyBinary).handler { _ =>
+            HttpResponse.ok(flickerBytes).addHeader("Content-Type", "text/html; charset=utf-8")
+        }
+        withLocalhostServer(handler) { (host, port) =>
+            withBrowser {
+                Browser.goto(s"http://$host:$port/flicker").andThen {
+                    tight {
+                        Abort.run[BrowserAssertionException] {
+                            Browser.assertUrl(s"http://$host:$port/kyo-flicker-target")
+                        }
+                    }.map {
+                        case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                        case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                     }
-                }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
-                    case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
         }

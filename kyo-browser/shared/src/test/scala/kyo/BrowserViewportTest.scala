@@ -116,19 +116,27 @@ class BrowserViewportTest extends BrowserTest:
         }
     }
 
-    // withViewport restores the prior override on interruption. The Browser effect
-    // carries Env[BrowserTab] and the module deliberately provides no same-tab isolate, so the interrupted body is a
-    // self-contained Browser.run (the established interruption pattern in BrowserIsolateTest). The inner tab is captured via
-    // a Promise so its viewportOverride cache (a plain AtomicRef, readable under Sync) can be inspected after the timeout:
-    // the Scope.acquireRelease release fires on interruption and sets the cache back to the prior override. The override is
-    // applied before the body's interruptible Async.sleep runs, so the timeout always cancels with the override active.
+    // withViewport restores the prior override on interruption. The Browser effect carries Env[BrowserTab] and the module
+    // deliberately provides no same-tab isolate, so the interrupted body is a self-contained Browser.run (the established
+    // interruption pattern in BrowserIsolateTest). The scenario is driven by an explicit fiber plus two Promises so it is
+    // deterministic across the JVM and the single-threaded Scala.js / Scala Native runtimes:
+    //   - the body runs in its own fiber (Fiber.initUnscoped), not under Async.timeout, so the test owns the interruption.
+    //   - readyLatch is completed AFTER withViewport's override is applied, so the test interrupts only once the body is
+    //     provably inside the scope with the override active, never before the acquire ran.
+    //   - tabRef captures the tab so its viewportOverride cache (a plain AtomicRef, readable under Sync) can be inspected.
+    // After readyLatch resolves the test interrupts the fiber and awaits its Result. The withViewport release does
+    // `tab.viewportOverride.set(prior)` then an async CDP send; on interruption the inner Browser.run's Scope.run awaits its
+    // finalizers, but on JS / Native the interrupted fiber's Result can resolve before that finalizer chain has run its
+    // `.set(prior)` (the ordering only holds on the JVM). So the cache is read by polling until the restore lands, bounded by
+    // a fixed schedule, then asserted concretely. The poll re-reads the AtomicRef directly; the tab object outlives its CDP
+    // teardown.
     "withViewport restores on interruption" in run {
-        type E = BrowserReadException | Timeout
-        val p = page("<html><body>with-viewport-interrupt</body></html>")
+        val priorOverride = BrowserTab.ViewportOverride(800, 600, 2.0)
+        val p             = page("<html><body>with-viewport-interrupt</body></html>")
         kyo.internal.SharedChrome.init.map { wsUrl =>
             Promise.init[BrowserTab, Any].map { tabRef =>
-                val timedOutWork: Unit < (Async & Abort[E]) =
-                    Async.timeout(3.seconds) {
+                Promise.init[Unit, Any].map { readyLatch =>
+                    val body: Unit < (Async & Abort[BrowserReadException]) =
                         Browser.run(wsUrl) {
                             Browser.goto(p).andThen {
                                 // Establish a prior override (800, 600, dpr 2.0) that the restore must re-apply.
@@ -136,27 +144,51 @@ class BrowserViewportTest extends BrowserTest:
                                     Browser.use { tab =>
                                         tabRef.completeDiscard(Result.succeed(tab)).andThen {
                                             Browser.withViewport(390, 844, deviceScaleFactor = 3.0) {
-                                                // Block interruptibly so the outer Async.timeout cancels the body mid-sleep.
-                                                Async.sleep(30.seconds)
+                                                // Signal the override is applied, then block interruptibly until the test
+                                                // interrupts the fiber with the override active.
+                                                readyLatch.completeDiscard(Result.succeed(())).andThen {
+                                                    Async.sleep(30.seconds)
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
-                // Abort.run returns only after the timeout's interruption teardown completes, which includes the inner
-                // Browser.run's Scope finalizers, so withViewport's release has already run by the time it resolves.
-                Abort.run[E](timedOutWork).map { result =>
-                    assert(result.isFailure, s"expected the timeout to interrupt the body but got $result")
-                    tabRef.get.map { tab =>
-                        // The release re-applied the prior override (800, 600, dpr 2.0), not the body's (390, 844, 3.0)
-                        // and not Absent. Read the AtomicRef cache directly; the tab object outlives its CDP teardown.
-                        tab.viewportOverride.get.map { restored =>
-                            assert(
-                                restored == Present(BrowserTab.ViewportOverride(800, 600, 2.0)),
-                                s"withViewport did not restore the prior override on interruption: got $restored"
-                            )
+                    Fiber.initUnscoped(body).map { fiber =>
+                        // Wait until the body is fully inside withViewport (override applied), then interrupt and await the
+                        // interrupted Result so the fiber has finished unwinding before the cache is inspected.
+                        readyLatch.get.andThen {
+                            fiber.interrupt.andThen {
+                                fiber.getResult.map { result =>
+                                    assert(result.isPanic, s"expected the interrupt to abort the body but got $result")
+                                    tabRef.get.map { tab =>
+                                        // Poll the AtomicRef cache until the release re-applied the prior override.
+                                        Retry[BrowserReadException](Schedule.fixed(20.millis).take(150)) {
+                                            tab.viewportOverride.get.map { current =>
+                                                if current == Present(priorOverride) then ()
+                                                else
+                                                    Abort.fail(
+                                                        BrowserAssertionTimedOutException(
+                                                            "withViewport interrupt restore",
+                                                            s"Present($priorOverride)",
+                                                            current.toString
+                                                        )
+                                                    )
+                                            }
+                                        }.andThen {
+                                            // The release re-applied the prior override (800, 600, dpr 2.0), not the body's
+                                            // (390, 844, 3.0) and not Absent.
+                                            tab.viewportOverride.get.map { restored =>
+                                                assert(
+                                                    restored == Present(priorOverride),
+                                                    s"withViewport did not restore the prior override on interruption: got $restored"
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

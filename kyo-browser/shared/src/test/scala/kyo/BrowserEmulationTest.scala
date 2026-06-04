@@ -73,44 +73,74 @@ class BrowserEmulationTest extends BrowserTest:
         }
     }
 
-    // withEmulation restores the prior state on interruption. The Browser effect carries
-    // Env[BrowserTab] with no same-tab isolate, so the interrupted body is a self-contained Browser.run (the established
-    // interruption pattern in BrowserViewportTest / BrowserIsolateTest). The inner tab is captured via a Promise so its
-    // emulationOverride cache (a plain AtomicRef readable under Sync) can be inspected after the timeout: the
-    // Scope.acquireRelease release fires on interruption and clears the override back to Absent (no prior override existed).
+    // withEmulation restores the prior state on interruption. The Browser effect carries Env[BrowserTab] with no same-tab
+    // isolate, so the interrupted body is a self-contained Browser.run (the established interruption pattern in
+    // BrowserViewportTest / BrowserIsolateTest). The scenario is driven by an explicit fiber plus two Promises so it is
+    // deterministic across the JVM and the single-threaded Scala.js / Scala Native runtimes:
+    //   - the body runs in its own fiber (Fiber.initUnscoped), not under Async.timeout, so the test owns the interruption.
+    //   - readyLatch is completed AFTER withEmulation's override is applied, so the test interrupts only once the body is
+    //     provably inside the scope with the Dark override active, never before the acquire ran.
+    //   - tabRef captures the tab so its emulationOverride cache (a plain AtomicRef readable under Sync) can be inspected.
+    // After readyLatch resolves the test interrupts the fiber and awaits its Result. The withEmulation release clears the
+    // override back to Absent (no prior override existed at entry) then does an async CDP send; on JS / Native the
+    // interrupted fiber's Result can resolve before that finalizer chain has run its `.set(Absent)` (the ordering only holds
+    // on the JVM). So the cache is read by polling until the clear lands, bounded by a fixed schedule, then asserted
+    // concretely. The poll re-reads the AtomicRef directly; the tab object outlives its CDP teardown.
     "withEmulation restores on interruption" in run {
-        type E = BrowserReadException | Timeout
         val p = page("<html><body>emulation-interrupt</body></html>")
         kyo.internal.SharedChrome.init.map { wsUrl =>
             Promise.init[BrowserTab, Any].map { tabRef =>
-                val timedOutWork: Unit < (Async & Abort[E]) =
-                    Async.timeout(3.seconds) {
+                Promise.init[Unit, Any].map { readyLatch =>
+                    val body: Unit < (Async & Abort[BrowserReadException]) =
                         Browser.run(wsUrl) {
                             Browser.goto(p).andThen {
                                 Browser.use { tab =>
                                     tabRef.completeDiscard(Result.succeed(tab)).andThen {
                                         Browser.withEmulation(colorScheme = Present(Browser.ColorScheme.Dark)) {
-                                            // Block interruptibly so the outer Async.timeout cancels the body mid-sleep,
-                                            // while the Dark override is active.
-                                            Async.sleep(30.seconds)
+                                            // Signal the override is applied, then block interruptibly until the test
+                                            // interrupts the fiber with the Dark override active.
+                                            readyLatch.completeDiscard(Result.succeed(())).andThen {
+                                                Async.sleep(30.seconds)
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
-                // Abort.run returns only after the timeout's interruption teardown completes, which includes the inner
-                // Browser.run's Scope finalizers, so withEmulation's release has already run by the time it resolves.
-                Abort.run[E](timedOutWork).map { result =>
-                    assert(result.isFailure, s"expected the timeout to interrupt the body but got $result")
-                    tabRef.get.map { tab =>
-                        // The release cleared the override back to Absent (no prior override existed at entry). Read the
-                        // AtomicRef cache directly; the tab object outlives its CDP teardown.
-                        tab.emulationOverride.get.map { restored =>
-                            assert(
-                                restored == Absent,
-                                s"withEmulation did not clear the override on interruption: got $restored"
-                            )
+                    Fiber.initUnscoped(body).map { fiber =>
+                        // Wait until the body is fully inside withEmulation (override applied), then interrupt and await the
+                        // interrupted Result so the fiber has finished unwinding before the cache is inspected.
+                        readyLatch.get.andThen {
+                            fiber.interrupt.andThen {
+                                fiber.getResult.map { result =>
+                                    assert(result.isPanic, s"expected the interrupt to abort the body but got $result")
+                                    tabRef.get.map { tab =>
+                                        // Poll the AtomicRef cache until the release cleared the override back to Absent.
+                                        Retry[BrowserReadException](Schedule.fixed(20.millis).take(150)) {
+                                            tab.emulationOverride.get.map { current =>
+                                                if current == Absent then ()
+                                                else
+                                                    Abort.fail(
+                                                        BrowserAssertionTimedOutException(
+                                                            "withEmulation interrupt clear",
+                                                            "Absent",
+                                                            current.toString
+                                                        )
+                                                    )
+                                            }
+                                        }.andThen {
+                                            // The release cleared the override back to Absent (no prior override existed at
+                                            // entry), not the body's Dark override.
+                                            tab.emulationOverride.get.map { restored =>
+                                                assert(
+                                                    restored == Absent,
+                                                    s"withEmulation did not clear the override on interruption: got $restored"
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
