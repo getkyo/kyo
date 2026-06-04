@@ -3053,8 +3053,9 @@ private[kyo] object ChartLower:
       *     pure `Svg.Root` lowering does not provide. `AnimateConfig.morphSteps` is reserved for a
       *     future effectful chart mount API.
       *
-      * The current `PathData` is always recorded in `newGeom` under `"line-{index}"` keys so the next
-      * emission can use it as the `from` path.
+      * The current `PathData` is always recorded in `newGeom` under `"line-$markIdx-$seriesIdx"` keys so
+      * the next emission can use it as the `from` path. The key is stable per (mark, series) identity:
+      * a prior mark's geometry-count change does NOT shift a later mark's key (INV-036).
       *
       * N4-guard: no `url(#id)` refs.
       */
@@ -3067,29 +3068,37 @@ private[kyo] object ChartLower:
         defaultColor: Style.Color,
         spec: ChartSpec[A],
         fromGeom: Map[String, MarkGeom],
-        newGeom: Map[String, MarkGeom]
+        newGeom: Map[String, MarkGeom],
+        markIdx: Int
     )(using Frame): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
-        val animOk = spec.animateCfg.enabled
-        val durStr = formatDur(spec.animateCfg.duration)
-        // Compute the raw paths first (same as non-transition path but we need the PathData for morph).
-        val rawPaths: Chunk[Svg.Path] = mark.color match
+        val animOk  = spec.animateCfg.enabled
+        val durStr  = formatDur(spec.animateCfg.duration)
+        val palette = themePalette(spec.theme)
+        // rawPathsWithIdx is enumerated by CatKey-stable seriesIdx so pathKey is stable per (mark, series).
+        // The color-split uses distinctKeyed (CatKey identity, INV-002) instead of toString.
+        val rawPathsWithIdx: Chunk[(Svg.Path, Int)] = mark.color match
             case Absent =>
-                Chunk(lowerLineSeries(rows, mark, layout, xs, ys, defaultColor))
+                Chunk((lowerLineSeries(rows, mark, layout, xs, ys, defaultColor), 0))
             case Present(colorCh) =>
-                val colorKeys: Chunk[String] = rows.foldLeft(Chunk.empty[String]): (acc, row) =>
-                    val key = colorCh.accessor(row.asInstanceOf[A]).toString
-                    if acc.toSeq.contains(key) then acc else acc.append(key)
-                colorKeys.zipWithIndex.map: (key, idx) =>
-                    val seriesRows  = rows.filter(r => colorCh.accessor(r).toString == key)
-                    val strokeColor = DefaultPalette.toSeq.apply(idx % DefaultPalette.size)
-                    lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor)
-        // Build the base geom key offset to avoid collision with earlier-pass keys.
-        val keyOffset = newGeom.size
+                val distinct = ChartFoundations.distinctKeyed(
+                    rows,
+                    r => ChartFoundations.categoryKey(colorCh.accessor(r.asInstanceOf[A]))
+                )
+                distinct.zipWithIndex.map:
+                    case ((catKey, rep), seriesIdx) =>
+                        val seriesRows = rows.filter(r =>
+                            ChartFoundations.categoryKey(colorCh.accessor(r.asInstanceOf[A])) == catKey
+                        )
+                        val strokeColor =
+                            if palette.isEmpty then DefaultPalette.toSeq.apply(seriesIdx % DefaultPalette.size)
+                            else palette.toSeq.apply(seriesIdx                           % palette.size)
+                        (lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor), seriesIdx)
         // For each raw path: optionally attach a SMIL animate on `d`, then record the new PathData.
-        val (elems, updatedGeom) = rawPaths.foldLeft((Chunk.empty[Svg.SvgElement], newGeom)):
-            case ((accElems, accGeom), rawPath) =>
-                val idx      = accElems.size
-                val pathKey  = "line-" + (keyOffset + idx).toString
+        // pathKey = "line-$markIdx-$seriesIdx" is stable per (mark identity, series identity), so a prior
+        // mark's geometry-count change does NOT shift this mark's key (INV-036).
+        val (elems, updatedGeom) = rawPathsWithIdx.foldLeft((Chunk.empty[Svg.SvgElement], newGeom)):
+            case ((accElems, accGeom), (rawPath, seriesIdx)) =>
+                val pathKey  = s"line-$markIdx-$seriesIdx"
                 val newPd    = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
                 val newGeom2 = accGeom.updated(pathKey, MarkGeom.LinePath(newPd))
                 val emittedPath: Svg.SvgElement =
@@ -3138,7 +3147,8 @@ private[kyo] object ChartLower:
         defaultColor: Style.Color,
         spec: ChartSpec[A],
         fromGeom: Map[String, MarkGeom],
-        newGeom: Map[String, MarkGeom]
+        newGeom: Map[String, MarkGeom],
+        markIdx: Int
     )(using Frame): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
         // Stacked area: fall through to plain lowerArea (no per-group path tracking yet).
         val isStacked = mark.y.isDefined && mark.stack.group.isDefined
@@ -3150,11 +3160,12 @@ private[kyo] object ChartLower:
             val durStr = formatDur(spec.animateCfg.duration)
             val rawPaths: Chunk[Svg.Path] = lowerArea(rows, mark, layout, xs, ys, defaultColor).collect:
                 case p: Svg.Path => p
-            val keyOffset = newGeom.size
-            val (elems, updatedGeom) = rawPaths.foldLeft((Chunk.empty[Svg.SvgElement], newGeom)):
-                case ((accElems, accGeom), rawPath) =>
-                    val idx      = accElems.size
-                    val pathKey  = "area-" + (keyOffset + idx).toString
+            // pathKey = "area-$markIdx-$seriesIdx" is stable per (mark identity, series position),
+            // so a prior mark's geometry-count change does NOT shift this mark's key (INV-036).
+            // Simple area always produces at most one path; seriesIdx is always 0 here.
+            val (elems, updatedGeom) = rawPaths.zipWithIndex.foldLeft((Chunk.empty[Svg.SvgElement], newGeom)):
+                case ((accElems, accGeom), (rawPath, seriesIdx)) =>
+                    val pathKey  = s"area-$markIdx-$seriesIdx"
                     val newPd    = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
                     val newGeom2 = accGeom.updated(pathKey, MarkGeom.LinePath(newPd))
                     val emittedPath: Svg.SvgElement =
@@ -3235,11 +3246,11 @@ private[kyo] object ChartLower:
                     case m: Mark.Line[A, ?, ?] if animOk =>
                         // Line path: declarative SMIL `d` morph when command counts match; snaps otherwise.
                         // fromGeom carries the previous PathData for the `from` side of the SMIL animate.
-                        val (elems, geom) = lowerLineWithTransitions(rows, m, layout, xs, ys, markColor, spec, fromGeom, accGeom)
+                        val (elems, geom) = lowerLineWithTransitions(rows, m, layout, xs, ys, markColor, spec, fromGeom, accGeom, markIdx)
                         (accElems ++ elems, geom)
                     case m: Mark.Area[A, ?, ?] if animOk =>
                         // Area path: same declarative SMIL `d` morph discipline as line.
-                        val (elems, geom) = lowerAreaWithTransitions(rows, m, layout, xs, ys, markColor, spec, fromGeom, accGeom)
+                        val (elems, geom) = lowerAreaWithTransitions(rows, m, layout, xs, ys, markColor, spec, fromGeom, accGeom, markIdx)
                         (accElems ++ elems, geom)
                     case m: Mark.Bar[A, ?, ?]  => (accElems ++ lowerBar(rows, m, layout, xs, ys, markColor, spec), accGeom)
                     case m: Mark.Line[A, ?, ?] => (accElems ++ lowerLine(rows, m, layout, xs, ys, markColor), accGeom)

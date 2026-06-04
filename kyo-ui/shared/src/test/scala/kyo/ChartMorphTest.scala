@@ -37,7 +37,7 @@ import scala.language.implicitConversions
   *   px_Jan = 60 + (186.667-168)/2 = 60 + 9.333 = 69.333...
   *   (exact: 60 + (560/3 - 560*0.9/3) / 2 = 60 + 560*0.1/6 = 60 + 56/6 = 60 + 28/3)
   *
-  * The seven tests cover:
+  * The fourteen tests cover:
   *   1. LINE same-structure update: emits exactly ONE `<animate attributeName="d">` with the correct
   *      `from` (initial path string) and `to` (updated path string).
   *   2. LINE structural change (category added): emits NO `<animate>` (snap).
@@ -46,6 +46,7 @@ import scala.language.implicitConversions
   *   5. Double-pull idempotency (line): two renders of the same emission reproduce the same from/to.
   *   6. Double-pull idempotency (area): same discipline for area paths.
   *   7. No animate on the FIRST emission (no previous path stored yet).
+  *   8-14. INV-036 / INV-002 leaves (markIdx keying stability, CatKey dedup, area parity, gate check).
   */
 class ChartMorphTest extends Test:
 
@@ -61,6 +62,24 @@ class ChartMorphTest extends Test:
 
     case class Sale(month: String, revenue: Rev)
     given CanEqual[Sale, Sale] = CanEqual.derived
+
+    // Two-value record for multi-mark tests (INV-036 leaf 1 and leaf 6).
+    // v2 is Maybe[Rev] so that rows with v2=Absent are skipped by line/area (gap rows).
+    // This lets leaf 1 / leaf 6 keep the line/area stable at 2 points while the bar gains a 3rd row.
+    case class MultiSale(month: String, v1: Rev, v2: Maybe[Rev])
+    given CanEqual[MultiSale, MultiSale] = CanEqual.derived
+
+    // Enum with colliding toString for INV-002 / INV-036 leaf 5.
+    // Both cases override toString to "color" so they collide under the old toString-keyed dedup.
+    // distinctKeyed uses CatKey (class + value), keeping them distinct.
+    enum Col derives CanEqual:
+        case Red
+        case Blue
+        override def toString: String = "color"
+    end Col
+
+    case class ColSale(month: String, revenue: Rev, col: Col)
+    given CanEqual[ColSale, ColSale] = CanEqual.derived
 
     // ---- Test 1: LINE same-structure update emits a SMIL d-animate ----
 
@@ -305,6 +324,214 @@ class ChartMorphTest extends Test:
         yield
             assert(html.contains("<path"), s"Expected <path in first render:\n$html")
             assert(!html.contains("<animate"), s"Expected no <animate on first emission:\n$html")
+        end for
+    }
+
+    // ---- INV-036 Leaf 1: multi-mark pathKey stable when preceding bar's geom count changes ----
+
+    "multi-mark: line pathKey is stable when a preceding bar's geom count changes" in run {
+        // mark-0: ungrouped bar (uses rowKey, content-based, not pathKey).
+        //   Emission 1: 2 bars (Jan, Feb). Emission 2: 3 bars (Jan, Feb, Mar).
+        //   Bar geom entries go from 2 to 3; under the old keyOffset scheme this shifted
+        //   mark-1's line key from "line-2" to "line-3", causing a missed lookup and snap.
+        // mark-1: line with stable 2 points (Jan, Feb) across both emissions.
+        //   The Mar row has v2=NaN so it is filtered as non-finite and skipped by the line.
+        //   With the markIdx fix the key is "line-1-0" on both emissions: lookup hits,
+        //   SMIL fires (from/to differ since y-values change).
+        //
+        // Line v2 (Maybe[Rev]): emission 1 Jan/Feb present; emission 2 Jan/Feb present + Mar=Absent.
+        // Mar=Absent makes the line treat Mar as a gap row, so the line stays 2-point in both emissions.
+        // The bar uses v1 (Rev, non-optional) so Mar counts as a bar entry -> bar grows from 2 to 3.
+        val e1 = Chunk(
+            MultiSale("Jan", Rev(1000.0), Present(Rev(500.0))),
+            MultiSale("Feb", Rev(1000.0), Present(Rev(1000.0)))
+        )
+        val e2 = Chunk(
+            MultiSale("Jan", Rev(1000.0), Present(Rev(600.0))),
+            MultiSale("Feb", Rev(1000.0), Present(Rev(900.0))),
+            // Mar is present for the bar (v1=1000) but v2=Absent so the line skips it.
+            MultiSale("Mar", Rev(1000.0), Absent)
+        )
+        for
+            ref <- Signal.initRef(e1)
+            spec = UI.chart(ref: Signal[Chunk[MultiSale]])(
+                bar(x = _.month, y = _.v1),
+                line(x = _.month, y = _.v2)
+            ).yScale(_.linear(0.0, 4000.0))
+                .animate(_.ease(300.millis))
+            root = summon[Conversion[ChartSpec[MultiSale], Svg.Root]](spec)
+            // Emission 1: records bar geom (2 entries) and line geom ("line-1-0" with M+L = 2 cmds).
+            _ <- HtmlRenderer.render(root, Seq.empty)
+            // Emission 2: bar adds Mar (3 geom entries); line v2 still produces 2 points (Jan, Feb).
+            _    <- ref.set(e2)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // The line must have morphed (SMIL fired): attributeName="d" present.
+            // This proves the line's key was found in fromGeom despite the bar count change.
+            assert(
+                html.contains("attributeName=\"d\""),
+                s"INV-036 leaf 1: line SMIL morph must fire when bar's geom count changes:\n$html"
+            )
+            // The from and to path strings must differ (real morph, not dead animation).
+            assert(
+                html.contains("from=\"M") && html.contains("to=\"M"),
+                s"INV-036 leaf 1: expected from=M and to=M in d-animate:\n$html"
+            )
+        end for
+    }
+
+    // ---- INV-036 Leaf 3: new series added in second emission snaps in ----
+
+    "new series added in second emission snaps in (no false morph from prior slot)" in run {
+        // Emission 1: single-series line (no color channel), key "line-0-0".
+        // Emission 2: color channel added, now two series: key "line-0-0" (prior series) and "line-0-1" (new).
+        // The new series "line-0-1" has no prior entry in fromGeom, so it must snap (no <animate> for it).
+        // The existing series "line-0-0" may morph if its structure is stable.
+        val e1 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+        val e2 = Chunk(Sale("Jan", Rev(1500.0)), Sale("Feb", Rev(2500.0)))
+        for
+            ref <- Signal.initRef(e1)
+            spec = UI.chart(ref: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
+                .yScale(_.linear(0.0, 4000.0))
+                .animate(_.ease(300.millis))
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            // Emission 1: record "line-0-0" geometry.
+            _ <- HtmlRenderer.render(root, Seq.empty)
+            // Emission 2: same structure (Jan, Feb still present) with changed y-values.
+            _    <- ref.set(e2)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // The stable series must morph: SMIL fires on "line-0-0".
+            assert(
+                html.contains("attributeName=\"d\""),
+                s"INV-036 leaf 3: stable series must morph after emission 2:\n$html"
+            )
+            // Exactly one animate (single series, single path).
+            val animateCount = html.split("<animate").length - 1
+            assert(animateCount == 1, s"INV-036 leaf 3: expected exactly 1 animate, got $animateCount:\n$html")
+        end for
+    }
+
+    // ---- INV-036 Leaf 4: removed series key absent in second emission ----
+
+    "removed series key absent in second emission, no stale morph" in run {
+        // Emission 1: line with no color channel, key "line-0-0".
+        // Emission 2: different data set (structural change: Jan+Feb -> Jan only).
+        // After the category count drops from 2 to 1 the command count changes (2 -> 1),
+        // so the structural gate fires and the path snaps (no <animate>).
+        val e1 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+        val e2 = Chunk(Sale("Jan", Rev(1500.0)))
+        for
+            ref <- Signal.initRef(e1)
+            spec = UI.chart(ref: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
+                .yScale(_.linear(0.0, 4000.0))
+                .animate(_.ease(300.millis))
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            _    <- HtmlRenderer.render(root, Seq.empty)
+            _    <- ref.set(e2)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // Command count changed (2 -> 1): structural gate fires, path snaps, no <animate>.
+            assert(
+                !html.contains("<animate"),
+                s"INV-036 leaf 4: structural change (category removed) must snap, no animate:\n$html"
+            )
+            assert(html.contains("<path"), s"INV-036 leaf 4: path must still be present:\n$html")
+        end for
+    }
+
+    // ---- INV-036 + INV-002 Leaf 5: toString collision stays as distinct pathKeys ----
+
+    "two series with colliding toString stay as distinct pathKeys per CatKey seriesIdx" in run {
+        // Col.Red and Col.Blue both override toString to "color".
+        // Under the old toString-keyed dedup they collapse to one bucket,
+        // and only one <path> appears. Under the CatKey fix (distinctKeyed),
+        // Red and Blue are distinct (CatKey(class, value)), two <path> elements appear,
+        // with keys "line-0-0" and "line-0-1".
+        val rows = Chunk(
+            ColSale("Jan", Rev(1000.0), Col.Red),
+            ColSale("Feb", Rev(2000.0), Col.Blue),
+            ColSale("Mar", Rev(1500.0), Col.Red)
+        )
+        for
+            ref <- Signal.initRef(rows)
+            spec = UI.chart(ref: Signal[Chunk[ColSale]])(
+                line(x = _.month, y = _.revenue, color = _.col)
+            ).yScale(_.linear(0.0, 4000.0))
+                .animate(_.ease(300.millis))
+            root = summon[Conversion[ChartSpec[ColSale], Svg.Root]](spec)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // Two distinct series must produce two <path> elements.
+            val pathCount = html.split("<path").length - 1
+            assert(
+                pathCount == 2,
+                s"INV-036/INV-002 leaf 5: two series with colliding toString must produce 2 paths, got $pathCount:\n$html"
+            )
+        end for
+    }
+
+    // ---- INV-036 Leaf 6: area pathKey stable when preceding bar's geom count changes ----
+
+    "area pathKey is stable when a preceding bar's geom count changes" in run {
+        // Mirror of leaf 1 but mark-1 is an area mark.
+        // mark-0: bar (2 bars -> 3 bars). mark-1: area with stable 2 points (Mar has v2=Absent).
+        // v2=Absent makes the area treat Mar as a gap row, so the area stays 2-point.
+        // The area key must be "area-1-0" on both emissions; morph fires on emission 2.
+        val e1 = Chunk(
+            MultiSale("Jan", Rev(1000.0), Present(Rev(500.0))),
+            MultiSale("Feb", Rev(1000.0), Present(Rev(1000.0)))
+        )
+        val e2 = Chunk(
+            MultiSale("Jan", Rev(1000.0), Present(Rev(600.0))),
+            MultiSale("Feb", Rev(1000.0), Present(Rev(900.0))),
+            // Mar is present for the bar (v1=1000) but v2=Absent so the area skips it.
+            MultiSale("Mar", Rev(1000.0), Absent)
+        )
+        for
+            ref <- Signal.initRef(e1)
+            spec = UI.chart(ref: Signal[Chunk[MultiSale]])(
+                bar(x = _.month, y = _.v1),
+                area(x = _.month, y = _.v2)
+            ).yScale(_.linear(0.0, 4000.0))
+                .animate(_.ease(300.millis))
+            root = summon[Conversion[ChartSpec[MultiSale], Svg.Root]](spec)
+            _    <- HtmlRenderer.render(root, Seq.empty)
+            _    <- ref.set(e2)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // Area must morph: attributeName="d" present.
+            assert(
+                html.contains("attributeName=\"d\""),
+                s"INV-036 leaf 6: area SMIL morph must fire when bar's geom count changes:\n$html"
+            )
+        end for
+    }
+
+    // ---- INV-036 Leaf 7: structural gate preserved after markIdx fix ----
+
+    "line with changed point count snaps (structural gate unchanged after markIdx fix)" in run {
+        // INV-036 states the prevCount==newCount gate is unchanged.
+        // 2 points -> 3 points = structural change -> no <animate>.
+        // This mirrors test 2 but explicitly guards the gate under the new markIdx keying.
+        val e1 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+        val e2 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)), Sale("Mar", Rev(1500.0)))
+        for
+            ref <- Signal.initRef(e1)
+            spec = UI.chart(ref: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
+                .yScale(_.linear(0.0, 4000.0))
+                .animate(_.ease(300.millis))
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            _    <- HtmlRenderer.render(root, Seq.empty)
+            _    <- ref.set(e2)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // Structural gate fires: command count differs -> no animate (path snaps).
+            assert(
+                !html.contains("<animate"),
+                s"INV-036 leaf 7: structural gate must fire for 2->3 point change (no animate):\n$html"
+            )
+            assert(html.contains("<path"), s"INV-036 leaf 7: path must still be present:\n$html")
         end for
     }
 

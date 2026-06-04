@@ -367,4 +367,59 @@ class ChartTransitionTest extends Test:
         end for
     }
 
+    // ---- Leaf 8 (INV-036 + INV-016): curved-path morph with Curve.monotone ----
+
+    "curved line (Curve.monotone) morphs via SMIL when point count is stable" in run {
+        // INV-016: curve=Curve.monotone produces cubic Bezier commands (C).
+        // INV-036: with stable point count the SMIL morph fires.
+        //
+        // Band scale (Jan, Feb, Mar), plotX=60, plotW=560, n=3, padding=0.1:
+        //   slot = 560/3 = 186.667
+        //   bandW = 560*0.9/3 = 168
+        //   center_Jan = 60 + 186.667*0 + 186.667/2 = 153.333...
+        //   center_Feb = 60 + 186.667*1 + 186.667/2 = 340
+        //   center_Mar = 60 + 186.667*2 + 186.667/2 = 526.667...
+        // Y scale linear(0, 4000): pixel(v) = 440 - v*0.105
+        //   Emission 1: rev=1000->335, 2000->230, 3000->125
+        //   Emission 2: rev=500->387.5, 1500->282.5, 2500->177.5
+        //
+        // The monotone interpolation emits C commands between the 3 points,
+        // so the command count is stable across the two emissions (same 3 points).
+        val e1 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)), Sale("Mar", Rev(3000.0)))
+        val e2 = Chunk(Sale("Jan", Rev(500.0)), Sale("Feb", Rev(1500.0)), Sale("Mar", Rev(2500.0)))
+        for
+            ref <- Signal.initRef(e1)
+            spec = UI.chart(ref: Signal[Chunk[Sale]])(
+                line(x = _.month, y = _.revenue, curve = Curve.monotone)
+            ).yScale(_.linear(0.0, 4000.0))
+                .animate(_.ease(300.millis))
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            // Emission 1: record monotone path geometry.
+            html0 <- HtmlRenderer.render(root, Seq.empty)
+            // Emission 2: different y-values, same x-categories (stable command count).
+            _     <- ref.set(e2)
+            html1 <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // Both renders must produce a path with cubic (C) commands from monotone interpolation.
+            assert(html0.contains("C"), s"INV-016 leaf 8: emission 1 path must contain C (cubic) commands:\n$html0")
+            assert(html1.contains("C"), s"INV-016 leaf 8: emission 2 path must contain C (cubic) commands:\n$html1")
+            // First emission has no previous path: no animate.
+            assert(!html0.contains("<animate"), s"INV-036 leaf 8: no animate on first emission:\n$html0")
+            // Second emission: SMIL morph must fire (stable command count, different y-values).
+            assert(
+                html1.contains("attributeName=\"d\""),
+                s"INV-036/INV-016 leaf 8: curved line must morph via SMIL on stable-category update:\n$html1"
+            )
+            // from and to both contain C (cubic path in both emissions).
+            assert(
+                html1.contains("from=\"M") && html1.contains("C"),
+                s"INV-036 leaf 8: from path must start with M and contain C:\n$html1"
+            )
+            assert(
+                html1.contains("to=\"M"),
+                s"INV-036 leaf 8: to path must start with M:\n$html1"
+            )
+        end for
+    }
+
 end ChartTransitionTest
