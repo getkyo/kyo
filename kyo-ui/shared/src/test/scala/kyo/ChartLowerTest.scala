@@ -1526,6 +1526,139 @@ class ChartLowerTest extends Test:
         end for
     }
 
+    // ---- Phase-8 theme-palette consistency tests ----
+
+    // Leaf 15: grouped bar under a custom theme.palette uses theme colors, not DefaultPalette
+    "grouped bar uses theme.palette colors, not DefaultPalette, under a custom theme" in run {
+        // Two color groups via region channel: NA (idx=0) and EU (idx=1).
+        // Custom palette: first color #cc00cc (purple-ish), second color #00cccc (teal).
+        // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
+        val purple = Style.Color.hex("#cc00cc").getOrElse(fail("bad hex"))
+        val teal   = Style.Color.hex("#00cccc").getOrElse(fail("bad hex"))
+        val rows = Chunk(
+            Sale("Jan", Usd(1000), Region.NA),
+            Sale("Jan", Usd(2000), Region.EU)
+        )
+        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
+            .yScale(_.linear(0.0, 4000.0))
+            .theme(_.palette(Chunk(purple, teal)))
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        for html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            assert(
+                html.contains("fill=\"#cc00cc\""),
+                s"leaf 15: expected custom first-group fill #cc00cc (purple):\n$html"
+            )
+            assert(
+                html.contains("fill=\"#00cccc\""),
+                s"leaf 15: expected custom second-group fill #00cccc (teal):\n$html"
+            )
+            assert(
+                !html.contains("fill=\"#3b82f6\""),
+                s"leaf 15: DefaultPalette blue must not appear under a custom palette:\n$html"
+            )
+            assert(
+                !html.contains("fill=\"#f97316\""),
+                s"leaf 15: DefaultPalette orange must not appear under a custom palette:\n$html"
+            )
+        end for
+    }
+
+    // Leaf 16: grouped bar with default theme uses DefaultPalette colors (byte-identical gate)
+    "grouped bar with default theme uses DefaultPalette blue and orange (default-theme unchanged)" in run {
+        val rows = Chunk(
+            Sale("Jan", Usd(1000), Region.NA),
+            Sale("Jan", Usd(2000), Region.EU)
+        )
+        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
+            .yScale(_.linear(0.0, 4000.0))
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        for html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            assert(
+                html.contains("fill=\"#3b82f6\""),
+                s"leaf 16: default-theme grouped bar must use DefaultPalette blue (#3b82f6):\n$html"
+            )
+            assert(
+                html.contains("fill=\"#f97316\""),
+                s"leaf 16: default-theme grouped bar must use DefaultPalette orange (#f97316):\n$html"
+            )
+        end for
+    }
+
+    // Leaf 17: text mark under a custom theme.palette uses theme colors, not DefaultPalette
+    "text mark uses theme.palette colors, not DefaultPalette, under a custom theme" in run {
+        // Two color groups via region channel: NA (idx=0) and EU (idx=1).
+        // Custom palette: first color #cc00cc, second color #00cccc.
+        // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
+        val purple = Style.Color.hex("#cc00cc").getOrElse(fail("bad hex"))
+        val teal   = Style.Color.hex("#00cccc").getOrElse(fail("bad hex"))
+        val rows = Chunk(
+            Sale("Jan", Usd(1000), Region.NA),
+            Sale("Feb", Usd(2000), Region.EU)
+        )
+        val spec = UI.chart(rows)(text(x = _.month, y = _.revenue, label = _.month, color = _.region))
+            .yScale(_.linear(0.0, 4000.0))
+            .theme(_.palette(Chunk(purple, teal)))
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        for html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            assert(
+                html.contains("fill=\"#cc00cc\""),
+                s"leaf 17: expected custom first-group fill #cc00cc (purple) for text:\n$html"
+            )
+            assert(
+                html.contains("fill=\"#00cccc\""),
+                s"leaf 17: expected custom second-group fill #00cccc (teal) for text:\n$html"
+            )
+            assert(
+                !html.contains("fill=\"#3b82f6\""),
+                s"leaf 17: DefaultPalette blue must not appear under a custom palette for text:\n$html"
+            )
+            assert(
+                !html.contains("fill=\"#f97316\""),
+                s"leaf 17: DefaultPalette orange must not appear under a custom palette for text:\n$html"
+            )
+        end for
+    }
+
+    // Leaf 18: errorBar mark under a custom theme.palette uses theme colors, not DefaultPalette
+    "errorBar mark uses theme.palette colors, not DefaultPalette, under a custom theme" in run {
+        // Two color groups via region channel: NA (idx=0) and EU (idx=1).
+        // Custom palette: first color #cc00cc, second color #00cccc.
+        // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
+        case class EbSale(x: String, mean: Double, lo: Double, hi: Double, region: Region)
+        val purple = Style.Color.hex("#cc00cc").getOrElse(fail("bad hex"))
+        val teal   = Style.Color.hex("#00cccc").getOrElse(fail("bad hex"))
+        val rows = Chunk(
+            EbSale("a", 6.0, 4.0, 8.0, Region.NA),
+            EbSale("b", 3.0, 1.0, 5.0, Region.EU)
+        )
+        val spec = UI.chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi, color = _.region))
+            .yScale(_.linear(0.0, 10.0))
+            .theme(_.palette(Chunk(purple, teal)))
+        val root = summon[Conversion[ChartSpec[EbSale], Svg.Root]](spec)
+        for html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            assert(
+                html.contains("stroke=\"#cc00cc\""),
+                s"leaf 18: expected custom first-group stroke #cc00cc (purple) for errorBar:\n$html"
+            )
+            assert(
+                html.contains("stroke=\"#00cccc\""),
+                s"leaf 18: expected custom second-group stroke #00cccc (teal) for errorBar:\n$html"
+            )
+            assert(
+                !html.contains("stroke=\"#3b82f6\""),
+                s"leaf 18: DefaultPalette blue must not appear under a custom palette for errorBar:\n$html"
+            )
+            assert(
+                !html.contains("stroke=\"#f97316\""),
+                s"leaf 18: DefaultPalette orange must not appear under a custom palette for errorBar:\n$html"
+            )
+        end for
+    }
+
     // Leaf 14 (WARN-2): static colored line respects theme.palette
     "static multi-series line uses theme.palette colors, not DefaultPalette, under a custom theme" in run {
         // Two series via region channel: NA (idx=0) and EU (idx=1).

@@ -1707,8 +1707,12 @@ private[kyo] object ChartLower:
         // Collect distinct color keys in enum-ordinal order (N3 carry-over)
         val colorKeys: Chunk[String] = collectColorCategories(rows, colorCh)
         val numColors                = colorKeys.size
-        val palette                  = resolvePaletteFromCfg(colorKeys)
-        val baseline                 = layout.plotBaseline
+        val basePalette: Chunk[Style.Color] = spec match
+            case Present(s) => themePalette(s.theme)
+            case Absent     => DefaultPalette
+        val palette: Chunk[Style.Color] = colorKeys.zipWithIndex.map: (_, i) =>
+            basePalette.toSeq.apply(i % basePalette.size)
+        val baseline = layout.plotBaseline
 
         @scala.annotation.tailrec
         def loop(i: Int, acc: Chunk[(A, Svg.SvgElement)]): Chunk[(A, Svg.SvgElement)] =
@@ -1731,7 +1735,7 @@ private[kyo] object ChartLower:
                                 val barX      = bandX + colorIdx.toDouble * subW
                                 val barY      = ys.apply(yd)
                                 val barH      = baseline - barY
-                                val fillColor = if colorIdx >= 0 && colorIdx < palette.size then palette(colorIdx) else DefaultPalette(0)
+                                val fillColor = if colorIdx >= 0 && colorIdx < palette.size then palette(colorIdx) else basePalette(0)
                                 val iAttrs    = spec.map(s => buildInteractionAttrs(row, s, internalHoverRef)).getOrElse(UI.Ast.Attrs())
                                 val r = Svg.rect.x(barX).y(barY).width(subW).height(barH).fill(Svg.Paint.Color(fillColor)).withAttrs(iAttrs)
                                 acc.append((row, r))
@@ -1912,7 +1916,7 @@ private[kyo] object ChartLower:
         loopX(0, Chunk.empty)
     end lowerBarStacked
 
-    /** Convenience: resolve a palette from DefaultPalette for grouped bar (no spec available here). */
+    /** Convenience: resolve a palette from DefaultPalette for the stacked-bar Absent-spec fallback. */
     private def resolvePaletteFromCfg(categories: Chunk[String]): Chunk[Style.Color] =
         categories.zipWithIndex.map: (_, i) =>
             DefaultPalette.toSeq.apply(i % DefaultPalette.size)
@@ -2084,11 +2088,12 @@ private[kyo] object ChartLower:
         val colorCatsWithRaw: Chunk[(String, Any)] = mark.color match
             case Present(ch) => collectColorCategoriesWithRaw(rows, ch.asInstanceOf[Channel[A, Any]])
             case Absent      => Chunk.empty
+        val basePaletteText: Chunk[Style.Color] = themePalette(theme)
         val palette: Chunk[Style.Color] =
             if colorCatsWithRaw.isEmpty then Chunk.empty
             else
                 colorCatsWithRaw.zipWithIndex.map: (_, i) =>
-                    DefaultPalette.toSeq.apply(i % DefaultPalette.size)
+                    basePaletteText.toSeq.apply(i % basePaletteText.size)
         @scala.annotation.tailrec
         def loop(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
             if i >= rows.size then acc
@@ -2144,11 +2149,12 @@ private[kyo] object ChartLower:
         val colorCatsWithRaw: Chunk[(String, Any)] = mark.color match
             case Present(ch) => collectColorCategoriesWithRaw(rows, ch.asInstanceOf[Channel[A, Any]])
             case Absent      => Chunk.empty
+        val basePaletteErr: Chunk[Style.Color] = themePalette(theme)
         val palette: Chunk[Style.Color] =
             if colorCatsWithRaw.isEmpty then Chunk.empty
             else
                 colorCatsWithRaw.zipWithIndex.map: (_, i) =>
-                    DefaultPalette.toSeq.apply(i % DefaultPalette.size)
+                    basePaletteErr.toSeq.apply(i % basePaletteErr.size)
         val halfCap = mark.capWidth / 2.0
         @scala.annotation.tailrec
         def loop(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
