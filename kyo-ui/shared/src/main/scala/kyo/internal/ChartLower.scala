@@ -882,7 +882,7 @@ private[kyo] object ChartLower:
     /** Build the legend `Svg.g` elements for any color channel present in the marks.
       *
       * Categories are collected in enum-ordinal order when the color values are enums (N3 carry-over:
-      * real `Plottable` ordering, not encounter order). The palette comes from `legendCfg.colorScaleFn`
+      * real `Plottable` ordering, not encounter order). The palette comes from `legendCfg.colorScale`
       * when set; otherwise from `theme.palette` or the `DefaultPalette`.
       *
       * When no mark has a `color` channel but a Bar or Area mark carries a `stack` grouping, the legend is
@@ -1080,7 +1080,7 @@ private[kyo] object ChartLower:
       * satisfies the N3 carry-over: "order via the real color accessor's Plottable, not the string stand-in".
       *
       * Returns `Chunk[(label, rawValue)]` where `rawValue` is the first encountered raw color-channel value
-      * for that label. The raw value is passed to `colorScaleFn` so typed enum functions can be applied
+      * for that label. The raw value is passed to `colorScale` so typed enum functions can be applied
       * directly (no label-to-K roundtrip).
       */
     private def collectColorCategoriesWithRaw[A](rows: Chunk[A], colorCh: Channel[A, ?]): Chunk[(String, Any)] =
