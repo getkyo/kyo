@@ -3,9 +3,9 @@ package kyo.internal
 import kyo.*
 import kyo.UI.*
 import kyo.UI.Ast.*
-// Explicit named import so the bare `Channel` resolves to the chart channel carrier
-// (kyo.UI.Ast.Channel) rather than kyo-core's `kyo.Channel`, which `import kyo.*` also brings.
-import kyo.UI.Ast.Channel
+// Explicit named import so the bare `Encoding` resolves to the chart data-encoding carrier
+// (kyo.UI.Ast.Encoding). This is distinct from kyo-core's concurrency `kyo.Channel`.
+import kyo.UI.Ast.Encoding
 
 /** Lowers a `ChartSpec[A]` to an `Svg.Root` for static data.
   *
@@ -268,13 +268,13 @@ private[kyo] object ChartLower:
         loop(0, Absent)
     end foldExtent
 
-    // Unsafe (row/channel erasure invariant, covers all ~50 asInstanceOf[A] and Channel[A, Any] casts
+    // Unsafe (row/channel erasure invariant, covers all ~50 asInstanceOf[A] and Encoding[A, Any] casts
     // in this file): `DataSource[A]` and each `Mark.*[A, ...]` are constructed from the same concrete
     // row type `A` as `rows: Chunk[A]`.  The GADT match arms (e.g. `m: Mark.Bar[A, ?, ?]`) prove
     // the mark carries the same `A`, so `r.asInstanceOf[A]` simply re-narrows a type that was erased
     // to `Any` at the typed-mark boundary and is `A` by construction; it cannot fail at runtime.
-    // Likewise, `colorCh.asInstanceOf[Channel[A, Any]]` recovers the concrete element type from a
-    // `Channel[?, ?]` that was widened during pattern-match erasure; the cast is total.
+    // Likewise, `colorEnc.asInstanceOf[Encoding[A, Any]]` recovers the concrete element type from a
+    // `Encoding[?, ?]` that was widened during pattern-match erasure; the cast is total.
 
     /** Collect x-extent across all marks' x channels for the given rows. */
     private def xExtent[A](rows: Chunk[A], marks: Chunk[Mark[A]]): Maybe[Extent] =
@@ -404,7 +404,7 @@ private[kyo] object ChartLower:
                         )
                     case m: Mark.ErrorBar[A, ?, ?] if m.axis == Axis.Left =>
                         // INV-022: low/high/y for log scale; drop non-positive.
-                        def posExtent(ch: Channel[A, ?]) = foldExtent(
+                        def posExtent(ch: Encoding[A, ?]) = foldExtent(
                             rows,
                             r =>
                                 ch.plottable.toDomain(ch.accessor(r.asInstanceOf[A])).flatMap:
@@ -412,8 +412,8 @@ private[kyo] object ChartLower:
                                     case _                             => Absent
                         )
                         mergeExtents(
-                            mergeExtents(posExtent(m.y.asInstanceOf[Channel[A, ?]]), posExtent(m.low.asInstanceOf[Channel[A, ?]])),
-                            posExtent(m.high.asInstanceOf[Channel[A, ?]])
+                            mergeExtents(posExtent(m.y.asInstanceOf[Encoding[A, ?]]), posExtent(m.low.asInstanceOf[Encoding[A, ?]])),
+                            posExtent(m.high.asInstanceOf[Encoding[A, ?]])
                         )
                     case _ => Absent
                 val merged = mergeExtents(acc, markExtent)
@@ -491,7 +491,7 @@ private[kyo] object ChartLower:
       * For each distinct x value, sums the y contributions of all stack groups and returns the maximum sum as
       * the extent upper bound (lower bound is zero after `ensureZero`). Mirrors `stackedYExtent` for bars.
       */
-    private def stackedAreaYExtent[A, X, Y](rows: Chunk[A], mark: Mark.Area[A, X, Y], yCh: ChannelMaybe[A, Y]): Maybe[Extent] =
+    private def stackedAreaYExtent[A, X, Y](rows: Chunk[A], mark: Mark.Area[A, X, Y], yEnc: EncodingMaybe[A, Y]): Maybe[Extent] =
         @scala.annotation.tailrec
         def loop(i: Int, totals: Map[String, Double]): Map[String, Double] =
             if i >= rows.size then totals
@@ -500,8 +500,8 @@ private[kyo] object ChartLower:
                 val xKey = mark.x.plottable.toDomain(mark.x.accessor(row)) match
                     case Present(d) => domainKey(d)
                     case Absent     => ""
-                val yVal = yCh.accessor(row) match
-                    case Present(yv) => yCh.plottable.toDomain(yv) match
+                val yVal = yEnc.accessor(row) match
+                    case Present(yv) => yEnc.plottable.toDomain(yv) match
                             case Present(Domain.Continuous(v)) => v
                             case _                             => 0.0
                     case Absent => 0.0
@@ -951,10 +951,10 @@ private[kyo] object ChartLower:
         else
             // Prefer a color channel; fall back to the stack grouping that colors the stacked segments.
             val colorItems: Chunk[Svg.SvgElement] = legendChannel(spec.marks) match
-                case Absent           => Chunk.empty
-                case Present(colorCh) =>
+                case Absent            => Chunk.empty
+                case Present(colorEnc) =>
                     // categories: Chunk[(label, rawValue)] sorted by enum ordinal when applicable
-                    val categories = collectColorCategoriesWithRaw(rows, colorCh)
+                    val categories = collectColorCategoriesWithRaw(rows, colorEnc)
                     if categories.isEmpty then Chunk.empty
                     else
                         spec.legendCfg.colorScale match
@@ -1083,13 +1083,13 @@ private[kyo] object ChartLower:
     /** The channel that drives the legend: the first `color` channel, or, when none is present, the first
       * Bar/Area `stack` grouping (which colors the stacked segments).
       */
-    private def legendChannel[A](marks: Chunk[Mark[A]]): Maybe[Channel[A, ?]] =
+    private def legendChannel[A](marks: Chunk[Mark[A]]): Maybe[Encoding[A, ?]] =
         findColorChannel(marks).orElse(findStackGroup(marks))
 
     /** Find the first color channel across all marks. */
-    private def findColorChannel[A](marks: Chunk[Mark[A]]): Maybe[Channel[A, ?]] =
+    private def findColorChannel[A](marks: Chunk[Mark[A]]): Maybe[Encoding[A, ?]] =
         @scala.annotation.tailrec
-        def loop(i: Int): Maybe[Channel[A, ?]] =
+        def loop(i: Int): Maybe[Encoding[A, ?]] =
             if i >= marks.size then Absent
             else
                 marks(i) match
@@ -1103,15 +1103,15 @@ private[kyo] object ChartLower:
         loop(0)
     end findColorChannel
 
-    /** Find the first Bar/Area `stack` grouping accessor, wrapped as a string-keyed `Channel`.
+    /** Find the first Bar/Area `stack` grouping accessor, wrapped as a string-keyed `Encoding`.
       *
       * The wrapped channel mirrors how `lowerBarStacked` colors stacked segments: the grouping accessor
       * keyed as a string category. Deriving the legend from this channel produces one swatch per stack
       * category in the same colors the segments use.
       */
-    private def findStackGroup[A](marks: Chunk[Mark[A]]): Maybe[Channel[A, ?]] =
+    private def findStackGroup[A](marks: Chunk[Mark[A]]): Maybe[Encoding[A, ?]] =
         @scala.annotation.tailrec
-        def loop(i: Int): Maybe[Channel[A, ?]] =
+        def loop(i: Int): Maybe[Encoding[A, ?]] =
             if i >= marks.size then Absent
             else
                 val groupMaybe = marks(i) match
@@ -1119,8 +1119,10 @@ private[kyo] object ChartLower:
                     case m: Mark.Area[A, ?, ?] => m.stack.group
                     case _                     => Absent
                 groupMaybe match
-                    case Present(g) => Present(Channel[A, Any](g, Plottable.string.asInstanceOf[Plottable[Any]]))
-                    case Absent     => loop(i + 1)
+                    case Present(g) =>
+                        Present(Encoding[A, Any](g, Plottable.string.asInstanceOf[Plottable[Any]], summon[ConcreteTag[Any]]))
+                    case Absent => loop(i + 1)
+                end match
         loop(0)
     end findStackGroup
 
@@ -1134,13 +1136,16 @@ private[kyo] object ChartLower:
       * for that label. The raw value is passed to `colorScale` so typed enum functions can be applied
       * directly (no label-to-K roundtrip).
       */
-    private def collectColorCategoriesWithRaw[A](rows: Chunk[A], colorCh: Channel[A, ?]): Chunk[(String, Any)] =
+    private def collectColorCategoriesWithRaw[A](rows: Chunk[A], colorEnc: Encoding[A, ?]): Chunk[(String, Any)] =
         // Dedup by CatKey (INV-002, WARN-2): delegate to ChartFoundations.distinctKeyed (O(n), Set-backed)
         // instead of inlining a fresh HashSet. distinctKeyed returns first-seen (CatKey, row) in encounter
         // order; derive (label, rawValue, ordinal) from each representative row.
-        val distinct = ChartFoundations.distinctKeyed(rows, r => ChartFoundations.categoryKey(colorCh.accessor(r)))
+        val distinct = ChartFoundations.distinctKeyed(
+            rows,
+            r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r))
+        )
         val triples = distinct.zipWithIndex.map: (pair, encounterIdx) =>
-            val raw   = colorCh.accessor(pair._2)
+            val raw   = colorEnc.accessor(pair._2)
             val label = raw.toString
             val ordinal = raw match
                 case e: scala.reflect.Enum => e.ordinal
@@ -1152,8 +1157,8 @@ private[kyo] object ChartLower:
     end collectColorCategoriesWithRaw
 
     /** Collect category labels (without raw values) for use in stacked-bar lowering. */
-    private def collectColorCategories[A](rows: Chunk[A], colorCh: Channel[A, ?]): Chunk[String] =
-        collectColorCategoriesWithRaw(rows, colorCh).map(_._1)
+    private def collectColorCategories[A](rows: Chunk[A], colorEnc: Encoding[A, ?]): Chunk[String] =
+        collectColorCategoriesWithRaw(rows, colorEnc).map(_._1)
 
     /** Resolve the palette: explicit `colorScale` first (applied to raw values), then `theme.palette`,
       * then `DefaultPalette`.
@@ -1614,11 +1619,11 @@ private[kyo] object ChartLower:
                 mark.color match
                     case Absent =>
                         lowerBarSimple(rows, mark, layout, xs, ys, defaultColor, spec, internalHoverRef, highlight)
-                    case Present(colorCh) =>
+                    case Present(colorEnc) =>
                         lowerBarGrouped(
                             rows,
                             mark,
-                            colorCh.asInstanceOf[Channel[A, Any]],
+                            colorEnc.asInstanceOf[Encoding[A, Any]],
                             layout,
                             xs,
                             ys,
@@ -1708,7 +1713,7 @@ private[kyo] object ChartLower:
     private def lowerBarGrouped[A, X, Y](
         rows: Chunk[A],
         mark: Mark.Bar[A, X, Y],
-        colorCh: Channel[A, Any],
+        colorEnc: Encoding[A, Any],
         layout: Layout,
         xs: Scale,
         ys: Scale,
@@ -1717,7 +1722,7 @@ private[kyo] object ChartLower:
         highlight: Maybe[Highlight[A]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         // Collect distinct color keys in enum-ordinal order (N3 carry-over)
-        val colorKeys: Chunk[String] = collectColorCategories(rows, colorCh)
+        val colorKeys: Chunk[String] = collectColorCategories(rows, colorEnc)
         val numColors                = colorKeys.size
         // Precompute colorKey -> index once (O(colors)); replaces a per-row indexOf scan.
         val colorIdxByKey: Map[String, Int] =
@@ -1745,7 +1750,7 @@ private[kyo] object ChartLower:
                                 val bandX     = xs.apply(xd)
                                 val bandW     = xs.bandwidth
                                 val subW      = bandW / numColors.toDouble
-                                val colorKey  = colorCh.accessor(row).toString
+                                val colorKey  = colorEnc.accessor(row).toString
                                 val colorIdx  = colorIdxByKey.getOrElse(colorKey, -1)
                                 val barX      = bandX + colorIdx.toDouble * subW
                                 val barY      = ys.apply(yd)
@@ -1794,8 +1799,9 @@ private[kyo] object ChartLower:
         // 2. Collect all distinct group keys (with their raw values) in enum-ordinal order.
         // The raw values feed the same palette resolution the legend uses, so each stacked segment is
         // painted in exactly the color its legend swatch shows (honoring an explicit `colorScale`).
-        val groupCh: Channel[A, Any]        = Channel(groupFn, Plottable.string.asInstanceOf[Plottable[Any]])
-        val groupCats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, groupCh)
+        val groupEnc: Encoding[A, Any] =
+            Encoding(groupFn, Plottable.string.asInstanceOf[Plottable[Any]], summon[ConcreteTag[Any]])
+        val groupCats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, groupEnc)
         val groupKeys: Chunk[String]        = groupCats.map(_._1)
         val groupPalette: Chunk[Style.Color] = spec match
             case Present(s) => resolvePalette(s, groupCats)
@@ -1974,15 +1980,15 @@ private[kyo] object ChartLower:
                 // No color channel: single series whose stroke is the per-mark default color (palette by mark index).
                 // INV-023: pass spec/internalHoverRef so click/hover handlers are attached to the path.
                 Chunk(lowerLineSeries(rows, mark, layout, xs, ys, defaultColor, spec, internalHoverRef))
-            case Present(colorCh) =>
-                val keys: Chunk[String] = rows.map(row => colorCh.accessor(row.asInstanceOf[A]).toString)
+            case Present(colorEnc) =>
+                val keys: Chunk[String] = rows.map(row => colorEnc.accessor(row.asInstanceOf[A]).toString)
                 val colorKeys: Chunk[String] =
                     ChartFoundations.distinctKeyed(keys, k => ChartFoundations.categoryKey(k)).map(_._2)
                 val palette: Chunk[Style.Color] = spec match
                     case Present(s) => themePalette(s.theme)
                     case Absent     => DefaultPalette
                 colorKeys.zipWithIndex.map: (key, idx) =>
-                    val seriesRows  = rows.filter(r => colorCh.accessor(r).toString == key)
+                    val seriesRows  = rows.filter(r => colorEnc.accessor(r).toString == key)
                     val strokeColor = palette.toSeq.apply(idx % palette.size)
                     // INV-023: thread interaction into each per-series path.
                     lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor, spec, internalHoverRef)
@@ -2093,7 +2099,7 @@ private[kyo] object ChartLower:
 
     /** Lower a `Mark.Text` to one `Svg.text` per row at `(x, y)` (INV-021).
       *
-      * Gap rows (where the `y` ChannelMaybe returns `Absent`) produce no text element. The
+      * Gap rows (where the `y` EncodingMaybe returns `Absent`) produce no text element. The
       * `anchor` is mapped from `kyo.TextAnchor` to `Svg.TextAnchor`; both enums have the same
       * case names but live in different packages and must not be cast. When `mark.color` is
       * `Present`, each row receives its category palette color; otherwise `defaultColor` is used.
@@ -2114,7 +2120,7 @@ private[kyo] object ChartLower:
             case TextAnchor.End    => Svg.TextAnchor.End
         // Resolve per-category palette when mark.color is Present.
         val colorCatsWithRaw: Chunk[(String, Any)] = mark.color match
-            case Present(ch) => collectColorCategoriesWithRaw(rows, ch.asInstanceOf[Channel[A, Any]])
+            case Present(ch) => collectColorCategoriesWithRaw(rows, ch.asInstanceOf[Encoding[A, Any]])
             case Absent      => Chunk.empty
         val basePaletteText: Chunk[Style.Color] = themePalette(theme)
         val palette: Chunk[Style.Color] =
@@ -2179,7 +2185,7 @@ private[kyo] object ChartLower:
         theme: Theme
     )(using Frame): Chunk[Svg.SvgElement] =
         val colorCatsWithRaw: Chunk[(String, Any)] = mark.color match
-            case Present(ch) => collectColorCategoriesWithRaw(rows, ch.asInstanceOf[Channel[A, Any]])
+            case Present(ch) => collectColorCategoriesWithRaw(rows, ch.asInstanceOf[Encoding[A, Any]])
             case Absent      => Chunk.empty
         val basePaletteErr: Chunk[Style.Color] = themePalette(theme)
         val palette: Chunk[Style.Color] =
@@ -2263,19 +2269,19 @@ private[kyo] object ChartLower:
     )(using Frame): Chunk[Svg.SvgElement] =
         val baseline = layout.plotBaseline
         mark.y match
-            case Present(yCh) =>
+            case Present(yEnc) =>
                 mark.stack.group match
                     case Present(_) =>
                         // INV-023: thread spec/internalHoverRef into stacked area so interaction fires per group.
-                        lowerAreaStacked(rows, mark, yCh, layout, xs, ys, spec, internalHoverRef)
+                        lowerAreaStacked(rows, mark, yEnc, layout, xs, ys, spec, internalHoverRef)
                     case Absent =>
                         // Collect (px, py) pairs, skipping non-finite gaps (WARN-2 from phase-1 audit).
                         val points: Chunk[(Double, Double)] = rows.flatMap: row =>
-                            yCh.accessor(row) match
+                            yEnc.accessor(row) match
                                 case Absent => Chunk.empty
                                 case Present(yv) =>
                                     val xd = mark.x.plottable.toDomain(mark.x.accessor(row))
-                                    val yd = yCh.plottable.toDomain(yv)
+                                    val yd = yEnc.plottable.toDomain(yv)
                                     (xd, yd) match
                                         case (Present(x), Present(y)) =>
                                             val px = xs.apply(x)
@@ -2403,7 +2409,7 @@ private[kyo] object ChartLower:
     private def lowerAreaStacked[A, X, Y](
         rows: Chunk[A],
         mark: Mark.Area[A, X, Y],
-        yCh: ChannelMaybe[A, Y],
+        yEnc: EncodingMaybe[A, Y],
         layout: Layout,
         xs: Scale,
         ys: Scale,
@@ -2423,11 +2429,12 @@ private[kyo] object ChartLower:
             ChartFoundations.distinctKeyed(presentXKeys, k => ChartFoundations.categoryKey(k)).map(_._2)
 
         // Collect all distinct group keys in encounter order
-        val groupCh: Channel[A, Any] = Channel(groupFn, Plottable.string.asInstanceOf[Plottable[Any]])
-        val groupKeys: Chunk[String] = collectColorCategories(rows, groupCh)
+        val groupEnc: Encoding[A, Any] =
+            Encoding(groupFn, Plottable.string.asInstanceOf[Plottable[Any]], summon[ConcreteTag[Any]])
+        val groupKeys: Chunk[String] = collectColorCategories(rows, groupEnc)
         // Per-group palette, resolved the SAME way the stacked-bar path does so each band gets a
         // distinct fill color (honoring a custom theme.palette; DefaultPalette under the default theme).
-        val groupCats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, groupCh)
+        val groupCats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, groupEnc)
         val groupPalette: Chunk[Style.Color] = spec match
             case Present(s) => resolvePalette(s, groupCats)
             case Absent     => resolvePaletteFromCfg(groupKeys)
@@ -2454,8 +2461,8 @@ private[kyo] object ChartLower:
                 val xKeyOpt = mark.x.plottable.toDomain(mark.x.accessor(row)) match
                     case Present(d) => Present(domainKey(d))
                     case Absent     => Absent
-                val yValOpt = yCh.accessor(row) match
-                    case Present(yv) => yCh.plottable.toDomain(yv) match
+                val yValOpt = yEnc.accessor(row) match
+                    case Present(yv) => yEnc.plottable.toDomain(yv) match
                             case Present(Domain.Continuous(v)) => Present(v)
                             case _                             => Absent
                     case Absent => Absent
@@ -2594,23 +2601,25 @@ private[kyo] object ChartLower:
             case Absent => Absent
 
         // Resolve color categories when a color channel is present (INV-013, G6 from prep.md).
-        val colorResolved: Maybe[(Chunk[(String, Any)], Chunk[Style.Color])] = mark.color match
-            case Present(colorCh) =>
-                val cats = collectColorCategoriesWithRaw(rows, colorCh)
+        // Carry the channel's ConcreteTag so the colorByKey lookup keys raw values under the same
+        // stable, cross-platform type identity the per-row lookup uses below.
+        val colorResolved: Maybe[(Chunk[(String, Any)], Chunk[Style.Color], ConcreteTag[Any])] = mark.color match
+            case Present(colorEnc) =>
+                val cats = collectColorCategoriesWithRaw(rows, colorEnc)
                 val palette = spec match
                     case Present(s) => resolvePalette(s, cats)
                     case Absent     => cats.zipWithIndex.map((_, i) => DefaultPalette.toSeq.apply(i % DefaultPalette.size))
-                Present((cats, palette))
+                Present((cats, palette, colorEnc.tag.asInstanceOf[ConcreteTag[Any]]))
             case Absent => Absent
 
         // Build per-row color lookup: CatKey -> Style.Color.
         val colorByKey: scala.collection.immutable.Map[ChartFoundations.CatKey, Style.Color] =
             colorResolved match
                 case Absent => scala.collection.immutable.Map.empty
-                case Present((cats, palette)) =>
+                case Present((cats, palette, tag)) =>
                     cats.zipWithIndex.foldLeft(scala.collection.immutable.Map.empty[ChartFoundations.CatKey, Style.Color]): (m, pair) =>
                         val ((label, raw), idx) = pair
-                        val key                 = ChartFoundations.categoryKey(raw)
+                        val key                 = ChartFoundations.categoryKey(tag, raw)
                         val color = if idx < palette.size then palette(idx) else DefaultPalette.toSeq.apply(idx % DefaultPalette.size)
                         m.updated(key, color)
 
@@ -2648,8 +2657,8 @@ private[kyo] object ChartLower:
                                     // Resolve fill color.
                                     val fillColor = mark.color match
                                         case Absent => defaultColor
-                                        case Present(colorCh) =>
-                                            val key = ChartFoundations.categoryKey(colorCh.accessor(row))
+                                        case Present(colorEnc) =>
+                                            val key = ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(row))
                                             colorByKey.getOrElse(key, defaultColor)
 
                                     val iAttrs = spec.map(s => buildInteractionAttrs(row, s, internalHoverRef)).getOrElse(UI.Ast.Attrs())
@@ -3137,15 +3146,15 @@ private[kyo] object ChartLower:
         val rawPathsWithIdx: Chunk[(Svg.Path, Int)] = mark.color match
             case Absent =>
                 Chunk((lowerLineSeries(rows, mark, layout, xs, ys, defaultColor), 0))
-            case Present(colorCh) =>
+            case Present(colorEnc) =>
                 val distinct = ChartFoundations.distinctKeyed(
                     rows,
-                    r => ChartFoundations.categoryKey(colorCh.accessor(r.asInstanceOf[A]))
+                    r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r.asInstanceOf[A]))
                 )
                 distinct.zipWithIndex.map:
                     case ((catKey, rep), seriesIdx) =>
                         val seriesRows = rows.filter(r =>
-                            ChartFoundations.categoryKey(colorCh.accessor(r.asInstanceOf[A])) == catKey
+                            ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r.asInstanceOf[A])) == catKey
                         )
                         val strokeColor =
                             if palette.isEmpty then DefaultPalette.toSeq.apply(seriesIdx % DefaultPalette.size)

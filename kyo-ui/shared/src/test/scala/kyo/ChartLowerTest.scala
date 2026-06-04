@@ -5,7 +5,7 @@ import kyo.Svg.PathCommand
 import kyo.Svg.PathData
 import kyo.UI.*
 import kyo.UI.Ast.*
-import kyo.UI.Ast.Channel
+import kyo.UI.Ast.Encoding
 import kyo.UI.mark.*
 import kyo.internal.ChartLower
 import kyo.internal.HtmlRenderer
@@ -1034,10 +1034,10 @@ class ChartLowerTest extends Test:
     "text with gap y emits no Svg.Text for the gap row (INV-021)" in {
         case class Pt(x: Int, y: Maybe[Double])
         val rows = Chunk(Pt(1, Present(5.0)), Pt(2, Absent))
-        // ChannelMaybe from gap accessor
-        val gapCh = ChannelMaybe.fromMaybe[Pt, Double](_.y, summon[Plottable[Double]])
+        // EncodingMaybe from gap accessor
+        val gapCh = EncodingMaybe.fromMaybe[Pt, Double](_.y, summon[Plottable[Double]], summon[ConcreteTag[Double]])
         val m = Mark.Text(
-            Channel[Pt, Int](_.x, summon[Plottable[Int]]),
+            Encoding[Pt, Int](_.x, summon[Plottable[Int]], summon[ConcreteTag[Int]]),
             gapCh,
             _.x.toString,
             Absent,

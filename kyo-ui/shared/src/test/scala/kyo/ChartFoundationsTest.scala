@@ -12,24 +12,61 @@ import scala.language.implicitConversions
 
 class ChartFoundationsTest extends Test:
 
-    // ---- INV-002: CatKey identity by class+value, not toString ----
+    // Two enum cases that override toString to the same label: they collide under toString-keyed
+    // dedup but stay distinct under CatKey (keyed by tag + value, the case being its own value).
+    enum Col derives CanEqual:
+        case Red
+        case Blue
+        override def toString: String = "color"
+    end Col
+
+    // ---- INV-002: CatKey identity by stable type tag + value, not toString, cross-platform ----
 
     "catKey distinguishes Int 1 from String 1 despite equal toString" in {
         val k1 = ChartFoundations.categoryKey(1)
         val k2 = ChartFoundations.categoryKey("1")
-        assert(k1 != k2, "Int 1 and String \"1\" must have distinct keys (INV-002)")
-        assert(k1 == CatKey(classOf[java.lang.Integer], 1))
-        assert(k2 == CatKey(classOf[java.lang.String], "1"))
+        assert(k1 != k2, "Int 1 and String \"1\" must have distinct keys despite equal toString (INV-002)")
         succeed
     }
 
-    // ---- INV-002: null raw folds to one stable bucket ----
+    "catKey is stable: the same value keys to an equal CatKey" in {
+        assert(ChartFoundations.categoryKey(1) == ChartFoundations.categoryKey(1), "Int 1 must key stably (INV-002)")
+        assert(ChartFoundations.categoryKey("a") == ChartFoundations.categoryKey("a"), "String a must key stably (INV-002)")
+        succeed
+    }
 
-    "catKey buckets null without NPE and produces a stable key" in {
-        val k1 = ChartFoundations.categoryKey(null)
-        val k2 = ChartFoundations.categoryKey(null)
-        assert(k1 == k2, "Two null inputs must produce equal keys (INV-002)")
-        assert(k1 == CatKey(null, null))
+    "catKey distinguishes distinct values of the same type" in {
+        assert(ChartFoundations.categoryKey(1) != ChartFoundations.categoryKey(2), "Int 1 and 2 must differ (INV-002)")
+        succeed
+    }
+
+    // ---- INV-002: enum cases with colliding toString stay distinct (keyed by tag + value) ----
+
+    "catKey distinguishes enum cases that share a toString" in {
+        // Col.Red and Col.Blue both override toString to "color"; CatKey keys by tag + value
+        // (the enum case is its own value), so they stay distinct despite the toString collision.
+        val red  = ChartFoundations.categoryKey(Col.Red)
+        val blue = ChartFoundations.categoryKey(Col.Blue)
+        assert(red != blue, "Col.Red and Col.Blue must have distinct keys despite equal toString (INV-002)")
+        assert(red == ChartFoundations.categoryKey(Col.Red), "Col.Red must key stably (INV-002)")
+        succeed
+    }
+
+    // ---- INV-002: a typed null VALUE flowing through the explicit-tag form is null-safe ----
+
+    "catKey keys a typed null value via the explicit-tag form without NPE" in {
+        // A typed encoding accessor (e.g. Encoding[A, String]) can yield a null reference. That flows
+        // through categoryKey(tag, value) where value: Any may be null. The key must be stable and
+        // distinct from a non-null value under the same tag, and must never throw.
+        val t = summon[ConcreteTag[String]]
+        assert(
+            ChartFoundations.categoryKey(t, null) == ChartFoundations.categoryKey(t, null),
+            "Two null values under the same tag must key equal (INV-002)"
+        )
+        assert(
+            ChartFoundations.categoryKey(t, "x") != ChartFoundations.categoryKey(t, null),
+            "A null value must key distinctly from a non-null value under the same tag (INV-002)"
+        )
         succeed
     }
 

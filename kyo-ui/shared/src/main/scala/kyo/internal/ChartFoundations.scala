@@ -1,7 +1,9 @@
 package kyo.internal
 
 import kyo.*
+import kyo.ConcreteTag
 import kyo.UI.Ast.*
+import scala.annotation.targetName
 
 /** Cross-cutting foundation helpers for the charts lowering.
   *
@@ -15,20 +17,38 @@ private[kyo] object ChartFoundations:
 
     /** Identity key for a category / series / group / x-key value.
       *
-      * Pairs the raw value with its runtime class so `1: Int` and `"1": String`
-      * stay distinct (their `toString` collides) and two enum cases renamed to
-      * the same display label stay distinct (keyed by class + value, the enum case
-      * is its own value). Compares by case-class structural equality. A `null` raw
-      * folds to `CatKey(null, null)`, a single stable bucket, never an NPE.
+      * Pairs the raw value with the compile-time-derived `ConcreteTag` of its static
+      * type so `1: Int` and `"1": String` stay distinct (their `toString` collides)
+      * and two enum cases renamed to the same display label stay distinct (keyed by
+      * tag + value, the enum case is its own value). The tag is a stable, platform-
+      * independent type identity (`ConcreteTag[Int]` is `IntTag` on every platform),
+      * unlike a boxed runtime class which diverges between the JVM and Scala.js.
+      * Compares by case-class structural equality. A `null` value is keyed by its
+      * tag with a `null` value (`CatKey(tag, null)`), never an NPE: two nulls under
+      * the same tag compare equal.
       */
-    final case class CatKey(cls: Class[?], value: Any) derives CanEqual
+    final case class CatKey(tag: ConcreteTag[Any], value: Any) derives CanEqual
 
-    /** Builds the identity key for a raw category value. */
-    def categoryKey(raw: Any): CatKey =
-        // Unsafe: total widening of the erased `Any` to `AnyRef` solely for a reference-identity
-        // null check (`eq null`); the cast never fails and the value is never dereferenced as AnyRef.
-        if raw.asInstanceOf[AnyRef] eq null then CatKey(null, null)
-        else CatKey(raw.getClass, raw)
+    /** Builds the identity key for a statically-typed category value.
+      *
+      * The `ConcreteTag[C]` is derived by the compiler at the call site, so the key's
+      * type identity comes from the static type `C`, not the value's runtime class.
+      */
+    def categoryKey[C](value: C)(using tag: ConcreteTag[C]): CatKey =
+        categoryKey(tag, value)
+
+    /** Builds the identity key for an erased category value carrying an explicit tag.
+      *
+      * Used at the lowering sites that read a value off an `Encoding[A, ?]` whose
+      * element type is erased: the encoding carries the tag captured from its static
+      * construction type.
+      */
+    @targetName("categoryKeyTagged")
+    def categoryKey[C](tag: ConcreteTag[C], value: Any): CatKey =
+        // `value` may be `null` when a typed encoding accessor yields a null reference. `CatKey` keys it
+        // by `(tag, null)`: case-class structural equality treats two nulls under the same tag as equal,
+        // and the value is never dereferenced here, so there is no NPE.
+        CatKey(tag.asInstanceOf[ConcreteTag[Any]], value)
 
     /** True when `v` is a finite double (not NaN, not +/-Infinity). */
     inline def isFiniteDouble(v: Double): Boolean = java.lang.Double.isFinite(v)

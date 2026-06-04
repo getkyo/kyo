@@ -385,7 +385,7 @@ class ChartSpecTest extends Test:
             case Mark.ErrorBar(xCh, yCh, lowCh, highCh, color, cap, Axis.Left) =>
                 assert(cap == 10.0, s"capWidth must be 10.0, got $cap")
                 assert(color == Absent, "color must be Absent")
-                // Channel accessors return the erased type Y; cast safe because Usd <: Double.
+                // Encoding accessors return the erased type Y; cast safe because Usd <: Double.
                 assert(yCh.accessor(eb).asInstanceOf[Double] == 6.0, s"y accessor must return 6.0")
                 assert(lowCh.accessor(eb).asInstanceOf[Double] == 4.0, s"low accessor must return 4.0")
                 assert(highCh.accessor(eb).asInstanceOf[Double] == 8.0, s"high accessor must return 8.0")

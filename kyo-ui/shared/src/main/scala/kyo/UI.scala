@@ -538,9 +538,9 @@ object UI:
           * that default to `Absent` when not supplied by the factory.
           */
         final case class Bar[A, X, Y](
-            x: Channel[A, X],
-            y: Channel[A, Y],
-            color: Maybe[Channel[A, ?]],
+            x: Encoding[A, X],
+            y: Encoding[A, Y],
+            color: Maybe[Encoding[A, ?]],
             stack: Grouping[A],
             opacity: Maybe[A => Double] = Absent, // D4
             label: Maybe[A => String] = Absent,   // D5
@@ -550,15 +550,15 @@ object UI:
 
         /** A line mark with optional gap support.
           *
-          * `y` is a `ChannelMaybe` to support `Maybe[Y]` accessors (gaps). `color`
+          * `y` is a `EncodingMaybe` to support `Maybe[Y]` accessors (gaps). `color`
           * splits into one line per series. `defined` overrides gap detection. The
           * additive fields `opacity`, `label`, and `tooltip` are optional per-datum
           * accessors that default to `Absent` when not supplied by the factory.
           */
         final case class Line[A, X, Y](
-            x: Channel[A, X],
-            y: ChannelMaybe[A, Y],
-            color: Maybe[Channel[A, ?]],
+            x: Encoding[A, X],
+            y: EncodingMaybe[A, Y],
+            color: Maybe[Encoding[A, ?]],
             curve: Curve,
             defined: Maybe[A => Boolean],
             opacity: Maybe[A => Double] = Absent, // D4
@@ -575,11 +575,11 @@ object UI:
           * accessors that default to `Absent` when not supplied by the factory.
           */
         final case class Area[A, X, Y](
-            x: Channel[A, X],
-            y: Maybe[ChannelMaybe[A, Y]],
-            y0: Maybe[Channel[A, Y]],
-            y1: Maybe[Channel[A, Y]],
-            color: Maybe[Channel[A, ?]],
+            x: Encoding[A, X],
+            y: Maybe[EncodingMaybe[A, Y]],
+            y0: Maybe[Encoding[A, Y]],
+            y1: Maybe[Encoding[A, Y]],
+            color: Maybe[Encoding[A, ?]],
             stack: Grouping[A],
             curve: Curve,
             opacity: Maybe[A => Double] = Absent, // D4
@@ -590,16 +590,16 @@ object UI:
 
         /** A point (scatter/bubble) mark.
           *
-          * `y` is a `ChannelMaybe` so `Maybe[Y]` accessors render gaps as absent dots.
+          * `y` is a `EncodingMaybe` so `Maybe[Y]` accessors render gaps as absent dots.
           * `size` controls the dot radius as a sqrt-area magnitude; `sizePx` is the
           * raw-pixel-radius escape hatch; `symbol` selects the glyph. The additive
           * fields `opacity`, `label`, and `tooltip` are optional per-datum accessors
           * that default to `Absent` when not supplied by the factory.
           */
         final case class Point[A, X, Y](
-            x: Channel[A, X],
-            y: ChannelMaybe[A, Y],
-            color: Maybe[Channel[A, ?]],
+            x: Encoding[A, X],
+            y: EncodingMaybe[A, Y],
+            color: Maybe[Encoding[A, ?]],
             size: Maybe[A => Double],
             sizePx: Maybe[A => Double] = Absent, // D7 escape hatch: raw pixel radius
             symbol: Maybe[A => Symbol],
@@ -624,15 +624,15 @@ object UI:
         /** A text annotation mark.
           *
           * Renders one `Svg.text` per row at `(x, y)` with the string produced by
-          * `label`. `y` is a `ChannelMaybe` so gap rows produce no text. `color`
+          * `label`. `y` is a `EncodingMaybe` so gap rows produce no text. `color`
           * optionally groups by category; `anchor` controls horizontal alignment;
           * `opacity` controls per-datum transparency.
           */
         final case class Text[A, X, Y](
-            x: Channel[A, X],
-            y: ChannelMaybe[A, Y],
+            x: Encoding[A, X],
+            y: EncodingMaybe[A, Y],
             label: A => String,
-            color: Maybe[Channel[A, ?]],
+            color: Maybe[Encoding[A, ?]],
             anchor: TextAnchor,
             opacity: Maybe[A => Double],
             axis: Axis
@@ -645,11 +645,11 @@ object UI:
           * fold into the y-extent. `color` optionally groups by category.
           */
         final case class ErrorBar[A, X, Y](
-            x: Channel[A, X],
-            y: Channel[A, Y],
-            low: Channel[A, Y],
-            high: Channel[A, Y],
-            color: Maybe[Channel[A, ?]],
+            x: Encoding[A, X],
+            y: Encoding[A, Y],
+            low: Encoding[A, Y],
+            high: Encoding[A, Y],
+            color: Maybe[Encoding[A, ?]],
             capWidth: Double,
             axis: Axis
         ) extends Mark[A]
@@ -672,6 +672,18 @@ object UI:
     @scala.annotation.targetName("markFactory")
     object mark:
 
+        /** Tag for a positional (x/y/low/high) channel value.
+          *
+          * Positional channel values feed numeric or ordinal scales and are never
+          * category-keyed, so their `ConcreteTag` is not used for identity. A positional
+          * `Y` may also be a `Maybe[..]` gap type, which `ConcreteTag` cannot derive.
+          * This returns the widest tag so the field is populated without constraining the
+          * value type. Category keying (`CatKey`) only ever reads the color/group channel
+          * tag, which is always derived from a concrete type.
+          */
+        private[kyo] def positionalTag[C]: ConcreteTag[C] =
+            summon[ConcreteTag[Any]].asInstanceOf[ConcreteTag[C]]
+
         /** Creates a bar/column mark.
           *
           * `x` and `y` are required positional channels; `color` groups the bars and
@@ -691,10 +703,11 @@ object UI:
             tooltip: A => String = Unset.of[A, String],
             axis: Axis = Axis.Left
         )(using Frame): Mark[A] =
-            val xCh = Channel[A, X](x, summon[Plottable[X]])
-            val yCh = Channel[A, Y](y, summon[Plottable[Y]])
-            val colorMaybe: Maybe[Channel[A, ?]] =
-                if Unset.supplied(color) then Present(Channel[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]]))
+            val xCh = Encoding[A, X](x, summon[Plottable[X]], positionalTag[X])
+            val yCh = Encoding[A, Y](y, summon[Plottable[Y]], positionalTag[Y])
+            val colorMaybe: Maybe[Encoding[A, ?]] =
+                if Unset.supplied(color) then
+                    Present(Encoding[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]], summon[ConcreteTag[Any]]))
                 else Absent
             val opacityMaybe: Maybe[A => Double] = if Unset.supplied(opacity) then Present(opacity) else Absent
             val labelMaybe: Maybe[A => String]   = if Unset.supplied(label) then Present(label) else Absent
@@ -721,10 +734,11 @@ object UI:
             tooltip: A => String = Unset.of[A, String],
             axis: Axis = Axis.Left
         )(using Frame): Mark[A] =
-            val xCh = Channel[A, X](x, summon[Plottable[X]])
-            val yCh = ChannelMaybe.fromTotal[A, Y](y, summon[Plottable[Y]])
-            val colorMaybe: Maybe[Channel[A, ?]] =
-                if Unset.supplied(color) then Present(Channel[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]]))
+            val xCh = Encoding[A, X](x, summon[Plottable[X]], positionalTag[X])
+            val yCh = EncodingMaybe.fromTotal[A, Y](y, summon[Plottable[Y]], positionalTag[Y])
+            val colorMaybe: Maybe[Encoding[A, ?]] =
+                if Unset.supplied(color) then
+                    Present(Encoding[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]], summon[ConcreteTag[Any]]))
                 else Absent
             val definedMaybe: Maybe[A => Boolean] =
                 if Unset.supplied(defined) then Present(defined) else Absent
@@ -756,13 +770,15 @@ object UI:
             tooltip: A => String = Unset.of[A, String],
             axis: Axis = Axis.Left
         )(using Frame): Mark[A] =
-            val xCh                           = Channel[A, X](x, summon[Plottable[X]])
-            val plY                           = summon[Plottable[Y]]
-            val yMaybe                        = if Unset.supplied(y) then Present(ChannelMaybe.fromTotal[A, Y](y, plY)) else Absent
-            val y0Maybe: Maybe[Channel[A, Y]] = if Unset.supplied(y0) then Present(Channel[A, Y](y0, plY)) else Absent
-            val y1Maybe: Maybe[Channel[A, Y]] = if Unset.supplied(y1) then Present(Channel[A, Y](y1, plY)) else Absent
-            val colorMaybe: Maybe[Channel[A, ?]] =
-                if Unset.supplied(color) then Present(Channel[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]]))
+            val xCh                            = Encoding[A, X](x, summon[Plottable[X]], positionalTag[X])
+            val plY                            = summon[Plottable[Y]]
+            val tagY                           = positionalTag[Y]
+            val yMaybe                         = if Unset.supplied(y) then Present(EncodingMaybe.fromTotal[A, Y](y, plY, tagY)) else Absent
+            val y0Maybe: Maybe[Encoding[A, Y]] = if Unset.supplied(y0) then Present(Encoding[A, Y](y0, plY, tagY)) else Absent
+            val y1Maybe: Maybe[Encoding[A, Y]] = if Unset.supplied(y1) then Present(Encoding[A, Y](y1, plY, tagY)) else Absent
+            val colorMaybe: Maybe[Encoding[A, ?]] =
+                if Unset.supplied(color) then
+                    Present(Encoding[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]], summon[ConcreteTag[Any]]))
                 else Absent
             val opacityMaybe: Maybe[A => Double] = if Unset.supplied(opacity) then Present(opacity) else Absent
             val labelMaybe: Maybe[A => String]   = if Unset.supplied(label) then Present(label) else Absent
@@ -789,10 +805,11 @@ object UI:
             tooltip: A => String = Unset.of[A, String], // D6
             axis: Axis = Axis.Left
         )(using Frame): Mark[A] =
-            val xCh = Channel[A, X](x, summon[Plottable[X]])
-            val yCh = ChannelMaybe.fromTotal[A, Y](y, summon[Plottable[Y]])
-            val colorMaybe: Maybe[Channel[A, ?]] =
-                if Unset.supplied(color) then Present(Channel[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]]))
+            val xCh = Encoding[A, X](x, summon[Plottable[X]], positionalTag[X])
+            val yCh = EncodingMaybe.fromTotal[A, Y](y, summon[Plottable[Y]], positionalTag[Y])
+            val colorMaybe: Maybe[Encoding[A, ?]] =
+                if Unset.supplied(color) then
+                    Present(Encoding[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]], summon[ConcreteTag[Any]]))
                 else Absent
             val sizeSup   = Unset.supplied(size)
             val sizePxSup = Unset.supplied(sizePx)
@@ -831,7 +848,7 @@ object UI:
         /** Creates a text annotation mark.
           *
           * Renders one `Svg.text` per row at `(x, y)` with the string from `label`. `y` is treated
-          * as a `ChannelMaybe` internally so gap rows (where the accessor would yield no value) skip
+          * as a `EncodingMaybe` internally so gap rows (where the accessor would yield no value) skip
           * the text element. `anchor` controls horizontal alignment. `color` optionally groups rows
           * by category so each group can carry a distinct fill color.
           */
@@ -844,10 +861,11 @@ object UI:
             opacity: A => Double = Unset.of[A, Double],
             axis: Axis = Axis.Left
         )(using Frame): Mark[A] =
-            val xCh = Channel[A, X](x, summon[Plottable[X]])
-            val yCh = ChannelMaybe.fromTotal[A, Y](y, summon[Plottable[Y]])
-            val colorMaybe: Maybe[Channel[A, ?]] =
-                if Unset.supplied(color) then Present(Channel[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]]))
+            val xCh = Encoding[A, X](x, summon[Plottable[X]], positionalTag[X])
+            val yCh = EncodingMaybe.fromTotal[A, Y](y, summon[Plottable[Y]], positionalTag[Y])
+            val colorMaybe: Maybe[Encoding[A, ?]] =
+                if Unset.supplied(color) then
+                    Present(Encoding[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]], summon[ConcreteTag[Any]]))
                 else Absent
             val opacityMaybe: Maybe[A => Double] = if Unset.supplied(opacity) then Present(opacity) else Absent
             Mark.Text(xCh, yCh, label, colorMaybe, anchor, opacityMaybe, axis)
@@ -871,15 +889,17 @@ object UI:
             capWidth: Double = 6.0,
             axis: Axis = Axis.Left
         )(using Frame): Mark[A] =
-            val plY = summon[Plottable[Y]]
-            val colorMaybe: Maybe[Channel[A, ?]] =
-                if Unset.supplied(color) then Present(Channel[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]]))
+            val plY  = summon[Plottable[Y]]
+            val tagY = positionalTag[Y]
+            val colorMaybe: Maybe[Encoding[A, ?]] =
+                if Unset.supplied(color) then
+                    Present(Encoding[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]], summon[ConcreteTag[Any]]))
                 else Absent
             Mark.ErrorBar(
-                Channel(x, summon[Plottable[X]]),
-                Channel(y, plY),
-                Channel(low, plY),
-                Channel(high, plY),
+                Encoding(x, summon[Plottable[X]], positionalTag[X]),
+                Encoding(y, plY, tagY),
+                Encoding(low, plY, tagY),
+                Encoding(high, plY, tagY),
                 colorMaybe,
                 capWidth,
                 axis
@@ -2175,30 +2195,36 @@ object UI:
 
         /** Bundles a row accessor with the `Plottable` evidence for its value type.
           *
-          * Captures the scale evidence at the factory call site so the lowering phase
-          * does not need to re-derive it. `A` is the row type; `C` is the channel value
-          * type. Both positional and non-positional channels use this carrier.
+          * Captures the scale evidence and the `ConcreteTag` of the channel value type
+          * at the factory call site so the lowering phase does not need to re-derive
+          * either. The `tag` is a stable, platform-independent type identity captured
+          * from the static type `C`, used to key category values so the keying matches
+          * across the JVM, Scala.js, and Native (a boxed runtime class would diverge).
+          * `A` is the row type; `C` is the channel value type. Both positional and
+          * non-positional channels use this carrier.
           */
-        final case class Channel[A, C](accessor: A => C, plottable: Plottable[C])
+        final case class Encoding[A, C](accessor: A => C, plottable: Plottable[C], tag: ConcreteTag[C])
 
         /** A channel whose accessor may return `Maybe[C]`, supporting gap semantics.
           *
-          * A `ChannelMaybe[A, C]` is built from an `A => C` total accessor (via
-          * `ChannelMaybe.fromTotal`) or an `A => Maybe[C]` gap accessor (via
-          * `ChannelMaybe.fromMaybe`). The lowering phase calls `accessor` and treats
+          * A `EncodingMaybe[A, C]` is built from an `A => C` total accessor (via
+          * `EncodingMaybe.fromTotal`) or an `A => Maybe[C]` gap accessor (via
+          * `EncodingMaybe.fromMaybe`). The lowering phase calls `accessor` and treats
           * `Absent` as a gap (breaks a line, drops a bar or point).
           *
           * `plottable` is the evidence for `C`, not for `Maybe[C]`, so the scale
-          * resolution in lowering uses the inner type directly.
+          * resolution in lowering uses the inner type directly. `tag` is the stable
+          * `ConcreteTag` of the inner type `C`, captured from the static type at
+          * construction for cross-platform category keying.
           */
-        final case class ChannelMaybe[A, C](accessor: A => Maybe[C], plottable: Plottable[C])
+        final case class EncodingMaybe[A, C](accessor: A => Maybe[C], plottable: Plottable[C], tag: ConcreteTag[C])
 
-        object ChannelMaybe:
-            def fromTotal[A, C](f: A => C, pl: Plottable[C]): ChannelMaybe[A, C] =
-                ChannelMaybe(a => Present(f(a)), pl)
-            def fromMaybe[A, C](f: A => Maybe[C], pl: Plottable[C]): ChannelMaybe[A, C] =
-                ChannelMaybe(f, pl)
-        end ChannelMaybe
+        object EncodingMaybe:
+            def fromTotal[A, C](f: A => C, pl: Plottable[C], tag: ConcreteTag[C]): EncodingMaybe[A, C] =
+                EncodingMaybe(a => Present(f(a)), pl, tag)
+            def fromMaybe[A, C](f: A => Maybe[C], pl: Plottable[C], tag: ConcreteTag[C]): EncodingMaybe[A, C] =
+                EncodingMaybe(f, pl, tag)
+        end EncodingMaybe
 
         // ---- Charts: data source carrier ----
 
