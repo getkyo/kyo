@@ -2,6 +2,8 @@
 
 This file helps AI coding agents work effectively on the Kyo codebase. Read [CONTRIBUTING.md](CONTRIBUTING.md) first: it is the comprehensive reference for all conventions, patterns, and design decisions.
 
+Many modules also carry their own `<module>/CONTRIBUTING.md` (for example, `kyo-browser/CONTRIBUTING.md` documents the transparent-settlement model). It records the module-specific invariants, mechanisms, conventions, and extension recipes that the root guide does not. Before working in a module, read its `CONTRIBUTING.md` when present; its invariants are binding, and a change that alters them must update that file. Generate or review one with the `/contributing <module>` skill.
+
 ## Core Rules
 
 ### Working Mindset
