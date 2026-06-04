@@ -5,7 +5,7 @@ import kyo.Tasty.SymbolId
 import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.query.ClasspathOrchestrator
 
-/** Phase 03 plan leaves 11-14: Tasty.owner, fullName, show, signature, parents; Tag[Symbol.X].
+/** Phase 03 plan leaves 11-14: Tasty.owner(Tasty), fullName, show, signature, parents; Tag[Symbol.X].
   *
   * Pins: item 29 parents migration; item 29 / Q-014 Tag-based subtype discrimination.
   */
@@ -20,17 +20,18 @@ class QueryTraversalTest extends Test:
     end openFixtureClasspath
 
     // Leaf 11: Tasty.owner(sym) returns Absent for the root package
-    "Leaf 11: Tasty.owner returns Absent for root package" in run {
+    "Leaf 11: Tasty.owner(Tasty) returns Absent for root package" in run {
         Scope.run:
-            Abort.run[TastyError](openFixtureClasspath.map: cp =>
-                given Tasty.Classpath = cp
-                val rootPkg           = cp.symbol(cp.rootSymbolId)
-                val ownerResult       = Tasty.owner(rootPkg)
-                // The root package (ownerId == -1 or ownerId == self) returns Absent
-                assert(
-                    !ownerResult.isDefined || ownerResult.get.id == rootPkg.id,
-                    "owner of root package must be Absent or self"
-                )).map:
+            Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
+                Tasty.withClasspath(cp):
+                    val rootPkg = cp.symbol(cp.rootSymbolId)
+                    Tasty.owner(rootPkg).map: ownerResult =>
+                        // The root package (ownerId == -1 or ownerId == self) returns Absent
+                        assert(
+                            !ownerResult.isDefined || ownerResult.get.id == rootPkg.id,
+                            "owner of root package must be Absent or self"
+                        )
+                        succeed).map:
                 case Result.Success(_) => succeed
                 case Result.Failure(e) => fail(s"Unexpected failure: $e")
                 case Result.Panic(t)   => throw t
@@ -66,13 +67,13 @@ class QueryTraversalTest extends Test:
     // Tasty.parents works correctly for ClassLike
     "Tasty.parents delegates to parentTypes for ClassLike" in run {
         Scope.run:
-            Abort.run[TastyError](openFixtureClasspath.map: cp =>
-                given Tasty.Classpath = cp
-                val classSym          = cp.findClass("kyo.fixtures.PlainClass").get
-                // PlainClass parents should include at least AnyRef
-                val parentResult = Tasty.parents(classSym)
-                // Just verify it's a Chunk (may be empty if PlainClass has no explicit parents)
-                assert(parentResult.size >= 0, "parents must not throw")).map:
+            Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
+                Tasty.withClasspath(cp):
+                    val classSym = cp.findClass("kyo.fixtures.PlainClass").get
+                    Tasty.parents(classSym).map: parentResult =>
+                        // Just verify it's a Chunk (may be empty if PlainClass has no explicit parents)
+                        assert(parentResult.size >= 0, "parents must not throw")
+                        succeed).map:
                 case Result.Success(_) => succeed
                 case Result.Failure(e) => fail(s"Unexpected failure: $e")
                 case Result.Panic(t)   => throw t

@@ -230,10 +230,10 @@ class MethodTypedAccessorsTest extends Test:
 
     // ── Leaf 77: bodyTree-effect-row ──────────────────────────────────────────
     // Given: a loaded SomeObject classpath that has a Method with a body
-    // When: Sync.run(Abort.run(m.bodyTree))
+    // When: Sync.run(Abort.run(Tasty.bodyTree(m)))
     // Then: result is a Success; static type is Maybe[Tree] < (Sync & Abort[TastyError])
     // Pins: INV-007, INV-010
-    "Leaf 77: bodyTree-effect-row: Method.bodyTree runs successfully with (Sync & Abort) effect row" in run {
+    "Leaf 77: bodyTree-effect-row: Tasty.bodyTree(Method) runs successfully with (Sync & Abort) effect row" in run {
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectBinding.flatMap: binding =>
@@ -251,7 +251,7 @@ class MethodTypedAccessorsTest extends Test:
                             val m = sym.asInstanceOf[Tasty.Symbol.Method]
                             Tasty.bindingLocal.let(Maybe.Present(binding)):
                                 // Static type check: bodyTree must return Maybe[Tree] < (Sync & Abort[TastyError])
-                                val effect: Maybe[Tasty.Tree] < (Sync & Abort[TastyError]) = m.bodyTree
+                                val effect: Maybe[Tasty.Tree] < (Sync & Abort[TastyError]) = Tasty.bodyTree(m)
                                 effect.map: result =>
                                     assert(result.isDefined, "bodyTree must return Present for a Method with a body")
                                     succeed
@@ -264,7 +264,7 @@ class MethodTypedAccessorsTest extends Test:
 
     // ── Leaf 78: bodyTree-absent-when-no-body ─────────────────────────────────
     // Given: Method body=Maybe.Absent; binding with a fresh DecodeContext installed
-    // When: run m.bodyTree inside bindingLocal.let(Present(Binding(cp, Present(ctx))))
+    // When: run Tasty.bodyTree(m) inside bindingLocal.let(Present(Binding(cp, Present(ctx))))
     // Then: Success(Maybe.Absent) -- bodyTree exits early because body field is Absent
     // Pins: INV-007
     "Leaf 78: bodyTree-absent-when-no-body: returns Absent for Method with no body" in run {
@@ -275,7 +275,7 @@ class MethodTypedAccessorsTest extends Test:
             // not via the binding-empty short-circuit.
             val binding = Binding(cp, Maybe.Present(DecodeContext.fresh()))
             Tasty.bindingLocal.let(Maybe.Present(binding)):
-                Abort.run[TastyError](method.bodyTree).map:
+                Abort.run[TastyError](Tasty.bodyTree(method)).map:
                     case Result.Success(result) =>
                         assert(!result.isDefined, "bodyTree must return Absent when method body field is Absent")
                         succeed
@@ -286,7 +286,7 @@ class MethodTypedAccessorsTest extends Test:
     }
 
     // ── Leaf 81: bodyTree-effect-row-is-only-Sync-Abort ──────────────────────
-    // Given: val e: Maybe[Tree] < (Sync & Abort[TastyError]) = m.bodyTree
+    // Given: val e: Maybe[Tree] < (Sync & Abort[TastyError]) = Tasty.bodyTree(m)
     // When: compile inside bindingLocal.let(Present(Binding(cp, Present(ctx))))
     // Then: compiles; no other effect in the row; runtime result is Success
     // Pins: INV-010
@@ -298,7 +298,7 @@ class MethodTypedAccessorsTest extends Test:
             val binding = Binding(cp, Maybe.Present(DecodeContext.fresh()))
             Tasty.bindingLocal.let(Maybe.Present(binding)):
                 // The binding below must compile with the exact effect row.
-                val e: Maybe[Tasty.Tree] < (Sync & Abort[TastyError]) = method.bodyTree
+                val e: Maybe[Tasty.Tree] < (Sync & Abort[TastyError]) = Tasty.bodyTree(method)
                 Abort.run[TastyError](e).map:
                     case Result.Success(_) => succeed
                     case Result.Failure(e) => fail(s"Unexpected error: $e")

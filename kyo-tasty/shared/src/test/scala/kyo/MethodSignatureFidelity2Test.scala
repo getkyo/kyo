@@ -21,19 +21,18 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
     import AllowUnsafe.embrace.danger
 
     // Leaf 7 (Phase 2.01): tuple-splitAt-no-sentinel
-    // Given: cp.findSymbol("scala.Tuple").get.findDeclaredMember("splitAt").get.asInstanceOf[Symbol.Method].declaredType
+    // Given: cp.findSymbol("scala.Tuple").Maybe.fromOption(get.declarationIds.map(cp.symbol).find(_.simpleName == "splitAt")).get.asInstanceOf[Symbol.Method].declaredType
     // When: traversing every Named inside the type recursively
     // Then: post-fix no Named(sym).symbolId.value == -1 is found; before fix second Applied arg was Named(-1)
     // On JS/Native: scala.Tuple is not in the embedded fixture set; the leaf produces succeed (Absent branch).
     // Pins: INV-005 (strengthened); F-A2-002
     "F-A2-002 (Phase 2.01): scala.Tuple.splitAt declaredType contains no Named(-1)" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findSymbol("scala.Tuple") match
                 case Absent =>
                     succeed
-                case Present(tupleSym) =>
-                    tupleSym.findDeclaredMember("splitAt") match
+                case Present(tupleSym: Tasty.Symbol.ClassLike) =>
+                    Maybe.fromOption(tupleSym.declarationIds.map(cp.symbol).find(_.simpleName == "splitAt")) match
                         case Absent =>
                             succeed
                         case Present(splitAt) =>
@@ -63,12 +62,11 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
     // Pins: INV-005 (strengthened); F-A2-002
     "F-A2-002 (Phase 2.01): scala.Tuple.++ declaredType contains no Named(-1)" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findSymbol("scala.Tuple") match
                 case Absent =>
                     succeed
-                case Present(tupleSym) =>
-                    tupleSym.findDeclaredMember("++") match
+                case Present(tupleSym: Tasty.Symbol.ClassLike) =>
+                    Maybe.fromOption(tupleSym.declarationIds.map(cp.symbol).find(_.simpleName == "++")) match
                         case Absent =>
                             succeed
                         case Present(plusPlus) =>
@@ -127,20 +125,17 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
     //   this leaf verifies the show function works without panicking and produces a deterministic non-empty result.
     // Pins: HARD RULE 11 cross-platform ADT fidelity; Phase 2.10 leaf 3
     "Phase-2.10 (HARD RULE 11): cp.allMethods.headOption.declaredType.show is non-empty on all platforms" in run {
-        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
-            cp.allMethods.headOption match
-                case None =>
-                    fail("Expected at least one method in the embedded fixture classpath; got 0. " +
-                        "Embedded fixtures should contain methods from PlainClass, VarargFixture, etc.")
-                case Some(m) =>
-                    var hasEmptyShow = false
-                    m.declaredType.foreach: dt =>
-                        val shown = Tasty.typeShow(dt)
-                        if shown.isEmpty then hasEmptyShow = true
-                    assert(!hasEmptyShow, s"Expected non-empty show string for all declaredType variants of method ${m.name}")
-                    succeed
-            end match
+        TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                cp.allMethods.headOption match
+                    case None =>
+                        fail("Expected at least one method in the embedded fixture classpath; got 0. " +
+                            "Embedded fixtures should contain methods from PlainClass, VarargFixture, etc.")
+                    case Some(m) =>
+                        Kyo.foreachDiscard(Chunk.from(m.declaredType.toList)): dt =>
+                            Tasty.typeShow(dt).map: shown =>
+                                assert(shown.nonEmpty, s"Expected non-empty show string for declaredType variant of method ${m.name}")
+                        .andThen(succeed)
     }
 
     // ─────────────────────────────────────────────────────────────────────────

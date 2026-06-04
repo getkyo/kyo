@@ -59,18 +59,23 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     // Pins: INV-105-DF2 producer; F-A2-010
     "INV-105-DF2 (Phase 2.06): every enum class has at least one EnumCase child" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
-            given Tasty.Classpath = cp
 
             val enums = cp.allClassLike.filter(e => e.isEnum && !e.isInstanceOf[Tasty.Symbol.EnumCase]).toList
             assert(enums.nonEmpty, "Expected at least one enum class in the classpath (embedded: Color, Shape)")
 
             def hasEnumCase(e: Tasty.Symbol.ClassLike): Boolean =
-                if e.permittedSubclasses.exists(_.isInstanceOf[Tasty.Symbol.EnumCase]) then true
+                if (e match
+                        case c: Tasty.Symbol.Class => c.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty);
+                        case t: Tasty.Symbol.Trait => t.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty);
+                        case _                     => Chunk.empty
+                    ).exists(_.isInstanceOf[Tasty.Symbol.EnumCase])
+                then
+                    true
                 else
-                    e.declarations.exists: decl =>
+                    e.declarationIds.map(cp.symbol).exists: decl =>
                         decl match
                             case companion: Tasty.Symbol.Object =>
-                                companion.declarations.exists(_.isInstanceOf[Tasty.Symbol.EnumCase])
+                                companion.declarationIds.map(cp.symbol).exists(_.isInstanceOf[Tasty.Symbol.EnumCase])
                             case _ => false
                 end if
             end hasEnumCase
@@ -114,7 +119,6 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     // Pins: F-A2-010
     "F-A2-010 (Phase 2.06): Color value-form EnumCase owner is the companion Object" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
 
             // Look for value-form enum cases from known enums:
             // - kyo.Tasty.SymbolKind (on JVM real classpath from kyo-tasty jar)
@@ -155,25 +159,24 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     // Pins: F-A2-010 (HARD RULE 4 layered preservation)
     "F-A2-010 (Phase 2.06): class-form EnumCase still correctly classified (Shape or TastyError)" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
-            given Tasty.Classpath = cp
 
             // Try kyo.TastyError first (JVM), fall back to kyo.fixtures.Shape (JS/Native)
             val target = cp.findClass("kyo.TastyError").orElse(cp.findClass("kyo.fixtures.Shape"))
             target match
                 case Maybe.Present(enumClass) =>
-                    val permSubEnumCases = enumClass.permittedSubclasses.collect:
+                    val permSubEnumCases = enumClass.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty).collect:
                         case e: Tasty.Symbol.EnumCase => e
                     cp.fullName(enumClass).map: name =>
                         assert(
                             permSubEnumCases.nonEmpty,
                             s"${name.asString} has no EnumCase permitted subclasses after Phase 2.06 " +
-                                s"(regression: permittedSubclasses = ${enumClass.permittedSubclasses})"
+                                s"(regression: permittedSubclasses = ${enumClass.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty)})"
                         )
                         succeed
                 case Maybe.Absent =>
                     // Fall back: search for any class-form enum case (at least Shape cases in embedded set)
                     val classFormCases = cp.symbols.collect:
-                        case e: Tasty.Symbol.EnumCase if e.declarations.nonEmpty => e
+                        case e: Tasty.Symbol.EnumCase if e.declarationIds.nonEmpty => e
                     assert(
                         classFormCases.nonEmpty,
                         "Expected at least one class-form EnumCase in the classpath (Shape.Circle/Square/Rectangle)"
@@ -203,16 +206,16 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     // Pins: F-A2-010 (Java enum interop); requires java.base on the classpath via Phase 2.03 infra
     "F-A2-010 (Phase 2.06): Java enum constants (RetentionPolicy) are Symbol.EnumCase" taggedAs jvmOnly in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
-            given Tasty.Classpath = cp
 
             cp.findClass("java.lang.annotation.RetentionPolicy") match
                 case Maybe.Present(rp) =>
-                    val enumCaseDecls = rp.declarations.collect:
+                    val allDecls = rp.declarationIds.map(cp.symbol)
+                    val enumCaseDecls = allDecls.collect:
                         case e: Tasty.Symbol.EnumCase => e
                     assert(
                         enumCaseDecls.nonEmpty,
                         s"java.lang.annotation.RetentionPolicy has no EnumCase declarations. " +
-                            s"All declarations: ${rp.declarations.toList.take(5).map(d =>
+                            s"All declarations: ${allDecls.toList.take(5).map(d =>
                                     d.name.asString + ":" + d.getClass.getSimpleName
                                 ).mkString(", ")}"
                     )

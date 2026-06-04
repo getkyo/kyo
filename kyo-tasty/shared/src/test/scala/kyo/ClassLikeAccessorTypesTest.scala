@@ -4,10 +4,8 @@ import kyo.Tasty.SymbolId
 
 /** Plan-mandated tests for Phase 03 (leaves 66-68): compile-time type-shape verification for ClassLike typed accessors.
   *
-  * Leaf 66: five typed bindings all compile with the narrowed return type. Leaf 67: the corrected positive assertion -- val ms:
-  * Chunk[Method] = c.methods compiles cleanly (Chunk covariance means Chunk[Method] <: Chunk[Symbol]; assigning to Chunk[Method] directly
-  * works because that IS the declared return type). Leaf 67b: layered preservation -- a flat Symbol caller still gets Chunk[Symbol] from
-  * the base-Symbol accessor. Leaf 68: val ds: Chunk[Symbol] = c.declarations compiles (declarations returns Chunk[Symbol]).
+  * After Phase 06 the Symbol methods (methods, vals, typeParams, declarations) are removed.
+  * The equivalents are on object Tasty.*: Tasty.declarations(sym), Tasty.typeParams(sym), etc.
   *
   * Pins: INV-005.
   */
@@ -65,7 +63,7 @@ class ClassLikeAccessorTypesTest extends Test:
 
     // Leaf 66: typed-return-types-compile
     // Given: Symbol.Class c with some declarations
-    // When: 5 typed bindings on c (methods, vals, typeParams, nestedTypes, typeAliases)
+    // When: 5 bindings on c using Tasty.* free functions
     // Then: every binding compiles cleanly
     // Pins: INV-005
     "typed-return-types-compile: five typed bindings on ClassLike all compile" in run {
@@ -73,73 +71,77 @@ class ClassLikeAccessorTypesTest extends Test:
         val method1   = makeMethod(id = 1, name = "foo")
         val valSym    = makeVal(id = 2, name = "x")
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2)))
-        Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1, valSym)).map: cp =>
-            given Tasty.Classpath = cp
-            val ms                = withDecls.methods.asInstanceOf[Chunk[Tasty.Symbol.Method]]
-            val vs                = withDecls.vals.asInstanceOf[Chunk[Tasty.Symbol.Val]]
-            val ps                = withDecls.typeParams.asInstanceOf[Chunk[Tasty.Symbol.TypeParam]]
-            val nt                = withDecls.nestedTypes.asInstanceOf[Chunk[Tasty.Symbol.ClassLike]]
-            val ta                = withDecls.declarations.collect { case t: Tasty.Symbol.TypeAlias => t }
-            // all bindings compiled; verify shapes
-            assert(ms.length == 1, s"Expected 1 method but got ${ms.length}")
-            assert(vs.length == 1, s"Expected 1 val but got ${vs.length}")
-            assert(ps.isEmpty, "Expected no type params")
-            assert(nt.isEmpty, "Expected no nested types")
-            assert(ta.isEmpty, "Expected no type aliases")
-            succeed
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1, valSym)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                for
+                    decls  <- Tasty.declarations(withDecls)
+                    typePs <- Tasty.typeParams(withDecls)
+                    ms = decls.filter(_.isInstanceOf[Tasty.Symbol.Method])
+                    vs = decls.filter(_.isInstanceOf[Tasty.Symbol.Val])
+                    nt = decls.filter(s =>
+                        s.isInstanceOf[Tasty.Symbol.Class] || s.isInstanceOf[Tasty.Symbol.Trait] || s.isInstanceOf[Tasty.Symbol.Object]
+                    )
+                    ta = decls.collect { case t: Tasty.Symbol.TypeAlias => t }
+                yield
+                    assert(ms.length == 1, s"Expected 1 method but got ${ms.length}")
+                    assert(vs.length == 1, s"Expected 1 val but got ${vs.length}")
+                    assert(typePs.isEmpty, "Expected no type params")
+                    assert(nt.isEmpty, "Expected no nested types")
+                    assert(ta.isEmpty, "Expected no type aliases")
+                    succeed
     }
 
     // Leaf 67: typed-return-preserves-method-specific-access
-    // Plan bug corrected: the plan claimed val ms: Chunk[Symbol] = c.methods would be a type error.
-    // Chunk[+A] is covariant, so Chunk[Method] <: Chunk[Symbol] and that assignment COMPILES.
-    // The corrected positive assertion: val ms: Chunk[Method] = c.methods compiles (the return type IS Chunk[Method]).
+    // Given: Symbol.Class c with method declaration
+    // When: get methods via Tasty.declarations + filter
+    // Then: returns the method correctly
     // Pins: INV-005
-    "typed-return-preserves-method-specific-access: val ms: Chunk[Method] = c.methods compiles cleanly" in run {
+    "typed-return-preserves-method-specific-access: methods via Tasty.declarations filter compiles cleanly" in run {
         val classSym  = makeClass(id = 0, name = "Foo")
         val method1   = makeMethod(id = 1, name = "foo")
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1)))
-        Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1)).map: cp =>
-            given Tasty.Classpath = cp
-            // This binding uses the exact return type of ClassLike.methods; must compile without cast.
-            val ms = withDecls.methods.asInstanceOf[Chunk[Tasty.Symbol.Method]]
-            assert(ms.length == 1, s"Expected 1 method but got ${ms.length}")
-            assert(ms(0).name.asString == "foo", s"Expected method name 'foo'")
-            succeed
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                Tasty.declarations(withDecls).map: decls =>
+                    val ms = decls.collect { case m: Tasty.Symbol.Method => m }
+                    assert(ms.length == 1, s"Expected 1 method but got ${ms.length}")
+                    assert(ms(0).name.asString == "foo", s"Expected method name 'foo'")
+                    succeed
     }
 
     // Leaf 67b: layered-preservation-base-symbol-caller
     // Given: sym: Tasty.Symbol (upcast of Symbol.Class)
-    // When: val ms: Chunk[Symbol] = sym.methods
-    // Then: compiles via base-Symbol accessor returning Chunk[Symbol] (Chunk covariance + base accessor preserved)
+    // When: val decls: Chunk[Symbol] < Sync = Tasty.declarations(sym)
+    // Then: compiles
     // Pins: INV-005 layered/no-restrict rule from steering.md
-    "layered-preservation-base-symbol-caller: Chunk[Symbol] = (sym: Symbol).methods compiles via base accessor" in run {
+    "layered-preservation-base-symbol-caller: Tasty.declarations(sym) compiles from flat-Symbol caller" in run {
         val classSym  = makeClass(id = 0, name = "Foo")
         val method1   = makeMethod(id = 1, name = "foo")
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1)))
-        Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1)).map: cp =>
-            given Tasty.Classpath = cp
-            // Upcast to flat Symbol; base-Symbol.methods still returns Chunk[Symbol]
-            val sym: Tasty.Symbol       = withDecls
-            val ms: Chunk[Tasty.Symbol] = sym.methods
-            assert(ms.length == 1, s"Expected 1 method from flat-Symbol accessor but got ${ms.length}")
-            succeed
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                val sym: Tasty.Symbol = withDecls
+                Tasty.declarations(sym).map: decls =>
+                    assert(decls.length == 1, s"Expected 1 declaration from flat-Symbol accessor but got ${decls.length}")
+                    succeed
     }
 
     // Leaf 68: declarations-returns-untyped-symbol
     // Given: Symbol.Class c with declarations
-    // When: val ds: Chunk[Symbol] = c.declarations
-    // Then: compiles (declarations return type is Chunk[Symbol])
+    // When: val ds: Chunk[Symbol] < Sync = Tasty.declarations(c)
+    // Then: compiles (declarations return type is Chunk[Symbol] < Sync)
     // Pins: INV-005
-    "declarations-returns-untyped-symbol: val ds: Chunk[Symbol] = c.declarations compiles" in run {
+    "declarations-returns-untyped-symbol: Tasty.declarations(c) returns Chunk[Symbol]" in run {
         val classSym  = makeClass(id = 0, name = "Foo")
         val method1   = makeMethod(id = 1, name = "foo")
         val valSym    = makeVal(id = 2, name = "x")
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2)))
-        Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1, valSym)).map: cp =>
-            given Tasty.Classpath       = cp
-            val ds: Chunk[Tasty.Symbol] = withDecls.declarations
-            assert(ds.length == 2, s"Expected 2 declarations but got ${ds.length}")
-            succeed
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1, valSym)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                val ds: Chunk[Tasty.Symbol] < Sync = Tasty.declarations(withDecls)
+                ds.map: syms =>
+                    assert(syms.length == 2, s"Expected 2 declarations but got ${syms.length}")
+                    succeed
     }
 
 end ClassLikeAccessorTypesTest

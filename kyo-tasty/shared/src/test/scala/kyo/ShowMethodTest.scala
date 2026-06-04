@@ -44,34 +44,36 @@ class ShowMethodTest extends Test with TastyTestSupport:
         }
     end makeClasspath
 
-    // Leaf id:7 -- Symbol.show, Type.show, Tree.show, Constant.show emit non-empty strings
-    "Symbol.show returns non-empty string" in run {
+    // Leaf id:7 -- Tasty.show(Symbol), Tasty.show(Type), Tasty.show(Tree), Tasty.show(Constant) emit non-empty strings
+    "Tasty.show(Symbol) returns non-empty string" in run {
         makeClasspath.flatMap: cp =>
-            given Tasty.Classpath = cp
-            val sym               = cp.findClass("p.Foo").get
-            sym.show.map: s =>
-                assert(s.nonEmpty, s"Symbol.show was empty for $sym")
-                succeed
+            Tasty.withClasspath(cp):
+                val sym = cp.findClass("p.Foo").get
+                Tasty.show(sym).map: s =>
+                    assert(s.nonEmpty, s"Tasty.show(Symbol) was empty for $sym")
+                    succeed
     }
 
-    "Type.show returns non-empty string" in run {
-        makeClasspath.map: cp =>
-            import kyo.Tasty.SymbolId
-            val tpe = Tasty.Type.Named(SymbolId(1))
-            val s   = Tasty.typeShow(tpe)(using cp)
-            assert(s.nonEmpty, s"Type.show was empty for $tpe")
-            succeed
+    "Tasty.show(Type) returns non-empty string" in run {
+        makeClasspath.flatMap: cp =>
+            Tasty.withClasspath(cp):
+                import kyo.Tasty.SymbolId
+                val tpe = Tasty.Type.Named(SymbolId(1))
+                Tasty.typeShow(tpe).map: s =>
+                    assert(s.nonEmpty, s"Tasty.show(Type) was empty for $tpe")
+                    succeed
     }
 
-    "Tree.show returns non-empty string" in run {
-        makeClasspath.map: cp =>
-            val tree: Tasty.Tree = Tasty.Tree.Literal(Tasty.Constant.IntConst(42))
-            val s                = Tasty.treeShow(tree)(using cp)
-            assert(s.nonEmpty, s"Tree.show was empty for $tree")
-            succeed
+    "Tasty.show(Tree) returns non-empty string" in run {
+        makeClasspath.flatMap: cp =>
+            Tasty.withClasspath(cp):
+                val tree: Tasty.Tree = Tasty.Tree.Literal(Tasty.Constant.IntConst(42))
+                Tasty.treeShow(tree).map: s =>
+                    assert(s.nonEmpty, s"Tasty.show(Tree) was empty for $tree")
+                    succeed
     }
 
-    "Constant.show returns expected format" in {
+    "Tasty.show(Constant) returns expected format" in {
         assert(Tasty.Constant.IntConst(42).show == "42")
         assert(Tasty.Constant.StringConst("hi").show == "\"hi\"")
         assert(Tasty.Constant.LongConst(7L).show == "7L")

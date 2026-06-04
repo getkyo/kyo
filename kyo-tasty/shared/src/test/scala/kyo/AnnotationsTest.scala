@@ -76,28 +76,31 @@ class AnnotationsTest extends Test:
     // Leaf 20: Tasty.hasAnnotation returns true for annotated symbol
     "Leaf 20: Tasty.hasAnnotation returns true for @deprecated method" in run {
         buildAnnotatedClasspath.flatMap: cp =>
-            given Tasty.Classpath = cp
-            val m1                = cp.symbols(2) // annotated method (sym[2])
-            Tasty.hasAnnotation(m1, "scala.deprecated").map: has =>
-                assert(has, "hasAnnotation must return true for m1 annotated with @deprecated")
+            val m1 = cp.symbols(2) // annotated method (sym[2])
+            Tasty.withClasspath(cp):
+                Tasty.hasAnnotation(m1, "scala.deprecated").map: has =>
+                    assert(has, "hasAnnotation must return true for m1 annotated with @deprecated")
+                    succeed
     }
 
     // Leaf 20b: Tasty.hasAnnotation returns false for non-annotated symbol
     "Leaf 20b: Tasty.hasAnnotation returns false for non-annotated method" in run {
         buildAnnotatedClasspath.flatMap: cp =>
-            given Tasty.Classpath = cp
-            val m2                = cp.symbols(3) // not annotated (sym[3])
-            Tasty.hasAnnotation(m2, "scala.deprecated").map: has =>
-                assert(!has, "hasAnnotation must return false for m2 not annotated")
+            val m2 = cp.symbols(3) // not annotated (sym[3])
+            Tasty.withClasspath(cp):
+                Tasty.hasAnnotation(m2, "scala.deprecated").map: has =>
+                    assert(!has, "hasAnnotation must return false for m2 not annotated")
+                    succeed
     }
 
     // Leaf 21: Tasty.symbolsAnnotatedWith returns exactly the annotated symbols
     "Leaf 21: Tasty.symbolsAnnotatedWith returns only annotated symbols" in run {
         buildAnnotatedClasspath.flatMap: cp =>
-            given Tasty.Classpath = cp
-            Tasty.symbolsAnnotatedWith("scala.deprecated").map: annotated =>
-                assert(annotated.size == 1, s"Expected exactly 1 @deprecated symbol, got ${annotated.size}")
-                assert(annotated.head.simpleName == "m1", s"Expected m1, got ${annotated.head.simpleName}")
+            Tasty.withClasspath(cp):
+                Tasty.symbolsAnnotatedWith("scala.deprecated").map: annotated =>
+                    assert(annotated.size == 1, s"Expected exactly 1 @deprecated symbol, got ${annotated.size}")
+                    assert(annotated.head.simpleName == "m1", s"Expected m1, got ${annotated.head.simpleName}")
+                    succeed
     }
 
 end AnnotationsTest

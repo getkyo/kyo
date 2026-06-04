@@ -75,10 +75,9 @@ class ClasspathOrchestratorPipelineTest extends Test:
     // kyo.fixtures.PlainClass, kyo.fixtures, and related symbols must be present.
     "T1: pipeline produces correct symbol set for fixture classpath" in run {
         Scope.run:
-            Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                given Tasty.Classpath = cp
+            Abort.run[TastyError](openFixtureClasspath(fixtureSource()).map: cp =>
                 import Tasty.Name.asString
-                Kyo.foreach(cp.symbols)(_.fullName.map(_.asString)).map(_.toSet)).map:
+                cp.symbols.map(s => cp.fullNameUnsafe(s).asString).toSet).map:
                 case Result.Success(names) =>
                     assert(names.exists(_.contains("PlainClass")), s"Expected PlainClass in symbol names, got: $names")
                 case Result.Failure(e) =>
@@ -184,11 +183,10 @@ class ClasspathOrchestratorPipelineTest extends Test:
                 openFixtureClasspath(fixtureSource()).flatMap: cp1 =>
                     openFixtureClasspath(fixtureSource()).flatMap: cp2 =>
                         import Tasty.Name.asString
-                        for
-                            names1 <- Kyo.foreach(cp1.symbols)(_.fullName(using summon[Frame], cp1).map(_.asString)).map(_.toSet)
-                            names2 <- Kyo.foreach(cp2.symbols)(_.fullName(using summon[Frame], cp2).map(_.asString)).map(_.toSet)
-                        yield (names1, names2)
-                        end for
+                        import Tasty.Name.asString
+                        val names1: Set[String] = cp1.symbols.map(s => cp1.fullNameUnsafe(s).asString).toSet
+                        val names2: Set[String] = cp2.symbols.map(s => cp2.fullNameUnsafe(s).asString).toSet
+                        (names1, names2)
             ).map:
                 case Result.Success((names1, names2)) =>
                     assert(names1 == names2, s"T7: FQN sets differ between runs: diff=${names1.diff(names2).take(5)}")

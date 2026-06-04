@@ -16,19 +16,25 @@ class SealedFidelityTest extends Test:
 
     // F-I-003 / INV-007 leaf 1 (Phase 07): animal-permitted-subclasses
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
-    // When: calling cp.findClass("kyo.fixtures.Animal").get.permittedSubclasses(using cp) and resolving FQNs
+    // When: calling cp.findClass("kyo.fixtures.Animal").get.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty) and resolving FQNs
     // Then: post-fix the FQN set contains "kyo.fixtures.Dog" and "kyo.fixtures.Cat"
     // Pins: INV-007 producer (F-I-003)
     // Cross-platform: kyo.fixtures.Animal is in the embedded fixture set on all platforms.
-    "F-I-003 / INV-007 (Phase 07): kyo.fixtures.Animal.permittedSubclasses contains Dog and Cat" in run {
+    "F-I-003 / INV-007 (Phase 07): kyo.fixtures.Animal.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty) contains Dog and Cat" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             cp.findClassLike("kyo.fixtures.Animal") match
                 case Present(animalSym) =>
-                    val children = animalSym.permittedSubclasses(using cp)
+                    val children = (animalSym match
+                        case c: Tasty.Symbol.Class => c.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty);
+                        case t: Tasty.Symbol.Trait => t.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty);
+                        case _                     => Chunk.empty
+                    )
                     if children.isEmpty then
-                        fail("kyo.fixtures.Animal.permittedSubclasses was empty; expected Chunk(Dog, Cat)")
+                        fail(
+                            "kyo.fixtures.Animal.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty) was empty; expected Chunk(Dog, Cat)"
+                        )
                     else
-                        Kyo.foreach(children)(c => c.fullNameString(using summon[Frame], cp)).map: fqnList =>
+                        Kyo.foreach(children)(c => Sync.defer(cp.fullNameUnsafe(c).asString)).map: fqnList =>
                             val fqns = fqnList.toSet
                             assert(
                                 fqns.exists(f => f.endsWith("Dog") || f.endsWith(".Dog")),
@@ -50,15 +56,21 @@ class SealedFidelityTest extends Test:
     // Then: post-fix the FQN set contains names ending with "Car" and "Bike"
     // Pins: INV-007 (F-I-003)
     // Cross-platform: kyo.fixtures.Vehicle is in the embedded fixture set on all platforms.
-    "F-I-003 / INV-007 (Phase 07): kyo.fixtures.Vehicle.permittedSubclasses contains Car and Bike" in run {
+    "F-I-003 / INV-007 (Phase 07): kyo.fixtures.Vehicle.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty) contains Car and Bike" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             cp.findClassLike("kyo.fixtures.Vehicle") match
                 case Present(sym) =>
-                    val children = sym.permittedSubclasses(using cp)
+                    val children = (sym match
+                        case c: Tasty.Symbol.Class => c.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty);
+                        case t: Tasty.Symbol.Trait => t.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty);
+                        case _                     => Chunk.empty
+                    )
                     if children.isEmpty then
-                        fail("kyo.fixtures.Vehicle.permittedSubclasses was empty; expected Chunk(Car, Bike)")
+                        fail(
+                            "kyo.fixtures.Vehicle.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty) was empty; expected Chunk(Car, Bike)"
+                        )
                     else
-                        Kyo.foreach(children)(c => c.fullNameString(using summon[Frame], cp)).map: fqnList =>
+                        Kyo.foreach(children)(c => Sync.defer(cp.fullNameUnsafe(c).asString)).map: fqnList =>
                             val fqns = fqnList.toSet
                             assert(
                                 fqns.exists(f => f.endsWith("Car") || f.endsWith(".Car")),
@@ -85,8 +97,13 @@ class SealedFidelityTest extends Test:
             val sealedClasses = cp.allClassLike.filter(_.isSealed)
             val total         = sealedClasses.size
             assert(total > 0, s"No sealed classes found on classpath; fixtures must include at least Animal, Vehicle, SealedBase")
-            val withPermits = sealedClasses.count(_.permittedSubclasses(using cp).nonEmpty)
-            val pct         = withPermits.toDouble / total.toDouble * 100.0
+            val withPermits = sealedClasses.count(sc =>
+                sc match
+                    case c: Tasty.Symbol.Class => c.permittedSubclassIds.exists(_.nonEmpty);
+                    case t: Tasty.Symbol.Trait => t.permittedSubclassIds.exists(_.nonEmpty);
+                    case _                     => false
+            )
+            val pct = withPermits.toDouble / total.toDouble * 100.0
             assert(
                 pct >= 50.0,
                 s"Only ${withPermits}/${total} (${pct.toInt}%) of sealed classes have permittedSubclasses populated; expected >= 50%"
@@ -108,11 +125,11 @@ class SealedFidelityTest extends Test:
                         !s.isSealed,
                         s"Expected kyo.fixtures.NonSealedMarker to be non-sealed but got isSealed=${s.isSealed}"
                     )
-                    val children = s.permittedSubclasses(using cp)
-                    Kyo.foreach(children)(c => c.fullNameString(using summon[Frame], cp)).map: childFqns =>
+                    val children = s.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty)
+                    Kyo.foreach(children)(c => Sync.defer(cp.fullNameUnsafe(c).asString)).map: childFqns =>
                         assert(
                             children.isEmpty,
-                            s"Expected empty Chunk for non-sealed kyo.fixtures.NonSealedMarker.permittedSubclasses; " +
+                            s"Expected empty Chunk for non-sealed kyo.fixtures.NonSealedMarker.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty); " +
                                 s"got ${children.size} children: " +
                                 childFqns.mkString(", ")
                         )

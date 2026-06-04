@@ -48,7 +48,7 @@ class SnapshotFidelityTest extends Test:
                         case cold: Tasty.Symbol.Class =>
                             cold.permittedSubclassIds match
                                 case Present(coldIds) =>
-                                    cold.fullNameString(using summon[Frame], coldCp).map: fqn =>
+                                    Sync.defer(coldCp.fullNameUnsafe(cold).asString).map: fqn =>
                                         warmCp.findClass(fqn) match
                                             case Present(warm: Tasty.Symbol.Class) =>
                                                 warm.permittedSubclassIds match
@@ -83,7 +83,7 @@ class SnapshotFidelityTest extends Test:
                 case cold: Tasty.Symbol.Class =>
                     cold.permittedSubclassIds match
                         case Present(coldIds) =>
-                            cold.fullNameString(using summon[Frame], coldCp).map: fqn =>
+                            Sync.defer(coldCp.fullNameUnsafe(cold).asString).map: fqn =>
                                 warmCp.findClass(fqn) match
                                     case Present(warm: Tasty.Symbol.Class) =>
                                         warm.permittedSubclassIds match
@@ -139,7 +139,7 @@ class SnapshotFidelityTest extends Test:
                 case _                                                     => Chunk.empty
             .headOption match
                 case Some(coldSym) =>
-                    coldSym.fullNameString(using summon[Frame], coldCp).map: fqn =>
+                    Sync.defer(coldCp.fullNameUnsafe(coldSym).asString).map: fqn =>
                         warmCp.findSymbol(fqn) match
                             case Present(warmSym: Tasty.Symbol.ClassLike) =>
                                 assert(

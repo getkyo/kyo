@@ -112,7 +112,6 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
     // Pins: F-A3-001 parent wiring in finalizeMerge
     "F-A3-001d (Phase 2.03): JDK class parentTypes wired (HashMap parents include AbstractMap or Object)" in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
-            given Tasty.Classpath = cp
             cp.findClass("java.util.HashMap") match
                 case Absent =>
                     fail("cp.findClass('java.util.HashMap') returned Absent; prerequisite for parent check failed")
@@ -158,14 +157,13 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
     // Leaf 7 (Phase 2.03): Java sealed class permittedSubclasses populated (JDK 17+)
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules; JDK >= 17 for PermittedSubclasses attribute
     // When: calling cp.findClassLike("java.lang.constant.ConstantDesc")
-    // Then: Present(sym) with sym.isSealed == true and sym.permittedSubclasses returns Present with >= 1 entry
+    // Then: Present(sym) with sym.isSealed == true and sym.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty) returns Present with >= 1 entry
     // JDK version: ConstantDesc is sealed since JDK 12. Note: java.lang.constant.Constable was sealed in
     // JDK 17-21 but became non-sealed in JDK 22+; ConstantDesc remains sealed through JDK 25.
     // Pins: F-A3-003 (Java sealed)
     "F-A3-003 (Phase 2.03): java.lang.constant.ConstantDesc permittedSubclasses populated (JDK 12+)" in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
-            given Tasty.Classpath = cp
-            val jdkVersion        = java.lang.Runtime.version().feature()
+            val jdkVersion = java.lang.Runtime.version().feature()
             cp.findClassLike("java.lang.constant.ConstantDesc") match
                 case Absent =>
                     fail(
@@ -179,10 +177,13 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
                             s"java.lang.constant.ConstantDesc.isSealed is false on JDK $jdkVersion; " +
                                 s"expected true (PermittedSubclasses attribute decoded); flags=${sym.flags}"
                         )
-                        val subs = sym.permittedSubclasses
+                        val subs = sym match
+                            case c: Tasty.Symbol.Class => c.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty)
+                            case t: Tasty.Symbol.Trait => t.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty)
+                            case _                     => Chunk.empty
                         assert(
                             subs.nonEmpty,
-                            s"java.lang.constant.ConstantDesc.permittedSubclasses is empty on JDK $jdkVersion; " +
+                            s"java.lang.constant.ConstantDesc.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty) is empty on JDK $jdkVersion; " +
                                 "expected at least one permitted subclass (e.g. Double, Integer, String); " +
                                 "ClassfileUnpickler did not decode PermittedSubclasses attribute"
                         )
@@ -195,13 +196,12 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
 
     // Leaf 8 (Phase 2.03): Java interface default methods detectable
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules; java.util.Iterator found
-    // When: enumerating java.util.Iterator.declarations and filtering for non-abstract methods
+    // When: enumerating java.util.Iterator.declarationIds.map(cp.symbol) and filtering for non-abstract methods
     // Then: at least one non-abstract method exists (the default method forEachRemaining added in Java 8)
     // Java interface default methods are NOT marked Abstract (ACC_ABSTRACT is clear); abstract interface methods ARE Abstract.
     // Pins: F-A3-004 (Java interface default methods)
     "F-A3-004 (Phase 2.03): java.util.Iterator has non-abstract method declarations (default methods)" in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
-            given Tasty.Classpath = cp
             cp.findClassLike("java.util.Iterator") match
                 case Absent =>
                     fail(
@@ -209,10 +209,10 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
                             "jrt:/ walker did not enumerate java/util/Iterator.class"
                     )
                 case Present(sym) =>
-                    val allMethods = sym.methods
+                    val allMethods = sym.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method])
                     assert(
                         allMethods.nonEmpty,
-                        "java.util.Iterator.methods is empty; expected at least hasNext, next, remove, forEachRemaining"
+                        "java.util.Iterator.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method]) is empty; expected at least hasNext, next, remove, forEachRemaining"
                     )
                     // Non-abstract methods in an interface are default methods.
                     // ACC_ABSTRACT (0x0400) is clear for default methods; set for abstract interface methods.

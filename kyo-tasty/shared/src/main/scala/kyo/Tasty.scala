@@ -1707,175 +1707,6 @@ object Tasty:
             else if flags.contains(Flag.Open) then OpenLevel.Open
             else OpenLevel.Default
 
-        // Resolution accessors still needed by some internal callers for backward compat
-        def owner(using cp: Classpath): Maybe[Symbol] =
-            if ownerId.value == -1 then Maybe.Absent
-            else Maybe(cp.symbol(ownerId))
-
-        def companion(using cp: Classpath): Maybe[Symbol] = cp.companion(this)
-
-        def fullName(using frame: Frame, cp: Classpath): Name < Sync = cp.fullName(this)
-
-        def binaryName(using cp: Classpath): String =
-            kyo.internal.tasty.symbol.BinaryName.compute(this, cp)
-
-        def show(using frame: Frame, cp: Classpath): String < Sync = kyo.internal.tasty.symbol.SymbolShow.show(this, cp)
-
-        def fullNameString(using frame: Frame, cp: Classpath): String < Sync =
-            import Name.asString
-            fullName.map(_.asString)
-
-        def ownersChain(using cp: Classpath): Chunk[Symbol] =
-            val out     = Chunk.newBuilder[Symbol]
-            val visited = new java.util.HashSet[Int]()
-            @scala.annotation.tailrec
-            def go(cur: Symbol, depth: Int): Unit =
-                if depth >= 64 || !visited.add(cur.id.value) then ()
-                else
-                    out += cur
-                    val ownerSym = cp.symbol(cur.ownerId)
-                    if ownerSym.id == cur.id || ownerSym.id.value == -1 then ()
-                    else go(ownerSym, depth + 1)
-            go(this, 0)
-            out.result()
-        end ownersChain
-
-        def signature(using frame: Frame, cp: Classpath): String < Sync =
-            kyo.internal.tasty.symbol.SymbolSignature.compute(this, cp)
-
-        def show(format: ShowFormat)(using frame: Frame, cp: Classpath): String < Sync = format match
-            case ShowFormat.FullyQualified => fullNameString
-            case ShowFormat.Simple         => Sync.defer(simpleName)
-            case ShowFormat.Code           => signature
-
-        def declaredMembers(using cp: Classpath): Chunk[Symbol] = this match
-            case c: Symbol.ClassLike => c.declarations
-            case _                   => Chunk.empty
-
-        def allMembers(using cp: Classpath): Chunk[Symbol] = this match
-            case c: Symbol.ClassLike =>
-                val seen = scala.collection.mutable.HashSet.empty[String]
-                val out  = Chunk.newBuilder[Symbol]
-                def visit(cl: Symbol.ClassLike): Unit =
-                    cl.declarations.foreach: d =>
-                        val nm = d.simpleName
-                        if seen.add(nm) then out += d
-                    cl.parents.foreach:
-                        case pcl: Symbol.ClassLike => visit(pcl)
-                        case _                     => ()
-                end visit
-                visit(c)
-                out.result()
-            case _ => Chunk.empty
-
-        def findDeclaredMember(name: String)(using cp: Classpath): Maybe[Symbol] =
-            Maybe.fromOption(declaredMembers.find(_.simpleName == name))
-
-        def findInheritedMember(name: String)(using cp: Classpath): Maybe[Symbol] = this match
-            case c: Symbol.ClassLike =>
-                val seen     = scala.collection.mutable.HashSet.empty[String]
-                val directs  = declaredMembers
-                var i        = 0
-                val directLn = directs.size
-                while i < directLn do
-                    discard(seen.add(directs(i).simpleName))
-                    i += 1
-                var found: Maybe[Symbol] = Maybe.Absent
-                def visit(cl: Symbol.ClassLike): Boolean =
-                    if found.isDefined then true
-                    else
-                        val decls   = cl.declarations
-                        var j       = 0
-                        val declsLn = decls.size
-                        while j < declsLn && found.isEmpty do
-                            val d  = decls(j)
-                            val nm = d.simpleName
-                            if seen.add(nm) && nm == name then found = Maybe(d)
-                            j += 1
-                        end while
-                        if found.isDefined then true
-                        else
-                            val ps   = cl.parents
-                            var k    = 0
-                            val psLn = ps.size
-                            var done = false
-                            while k < psLn && !done do
-                                ps(k) match
-                                    case pcl: Symbol.ClassLike => done = visit(pcl)
-                                    case _                     => ()
-                                k += 1
-                            end while
-                            done
-                        end if
-                end visit
-                val ps    = c.parents
-                var pi    = 0
-                val psLn  = ps.size
-                var done0 = false
-                while pi < psLn && !done0 do
-                    ps(pi) match
-                        case pcl: Symbol.ClassLike => done0 = visit(pcl)
-                        case _                     => ()
-                    pi += 1
-                end while
-                found
-            case _ => Maybe.Absent
-
-        def findAnyMember(name: String)(using cp: Classpath): Maybe[Symbol] =
-            Maybe.fromOption(allMembers.find(_.simpleName == name))
-
-        def parents(using cp: Classpath): Chunk[Symbol] =
-            (this match
-                case c: Symbol.ClassLike => c.parentTypes
-                case _                   => Chunk.empty
-            ).collect { case Type.Named(pid) => cp.symbol(pid) }
-
-        def typeParams(using cp: Classpath): Chunk[Symbol] =
-            (this match
-                case c: Symbol.ClassLike   => c.typeParamIds
-                case m: Symbol.Method      => m.typeParamIds
-                case ta: Symbol.TypeAlias  => ta.typeParamIds
-                case ot: Symbol.OpaqueType => ot.typeParamIds
-                case _                     => Chunk.empty
-            ).map(cp.symbol)
-
-        def declarations(using cp: Classpath): Chunk[Symbol] =
-            (this match
-                case c: Symbol.ClassLike => c.declarationIds
-                case p: Symbol.Package   => p.memberIds
-                case _                   => Chunk.empty
-            ).map(cp.symbol)
-
-        def permittedSubclasses(using cp: Classpath): Chunk[Symbol] =
-            (this match
-                case c: Symbol.Class => c.permittedSubclassIds
-                case t: Symbol.Trait => t.permittedSubclassIds
-                case _               => Maybe.Absent
-            ).map(_.map(cp.symbol)).getOrElse(Chunk.empty)
-
-        def methods(using cp: Classpath): Chunk[Symbol] =
-            declarations.filter(_.isInstanceOf[Symbol.Method])
-
-        def vals(using cp: Classpath): Chunk[Symbol] =
-            declarations.filter(_.isInstanceOf[Symbol.Val])
-
-        def vars(using cp: Classpath): Chunk[Symbol] =
-            declarations.filter(_.isInstanceOf[Symbol.Var])
-
-        def fields(using cp: Classpath): Chunk[Symbol] =
-            declarations.filter(_.isInstanceOf[Symbol.Field])
-
-        def nestedTypes(using cp: Classpath): Chunk[Symbol] =
-            declarations.filter(s =>
-                s.isInstanceOf[Symbol.Class] || s.isInstanceOf[Symbol.Trait] || s.isInstanceOf[Symbol.Object]
-            )
-
-        def membersByKind(k: SymbolKind)(using cp: Classpath): Chunk[Symbol] =
-            declarations.filter(_.kind == k)
-
-        def bodyTree(using frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
-            Tasty.bodyTree(this)
-
     end Symbol
 
     /** Companion of `Symbol`; carries the intermediate sealed traits, the 14 final case classes, and internal factories used by the loader. */
@@ -1899,16 +1730,6 @@ object Tasty:
             def annotations: Chunk[Annotation]
             def javaAnnotations: Chunk[JavaAnnotation]
             def body: Maybe[SymbolBody]
-
-            // Override declarations/parents/etc. for ClassLike-typed callers (narrowing)
-            override def declarations(using cp: Classpath): Chunk[Symbol] =
-                if declarationIds.isEmpty then Chunk.empty
-                else declarationIds.map(cp.symbol)
-
-            override def parents(using cp: Classpath): Chunk[Symbol] =
-                parentTypes.collect { case Type.Named(pid) => cp.symbol(pid) }
-
-            override def companion(using cp: Classpath): Maybe[Symbol] = cp.companion(this)
 
         end ClassLike
 
@@ -2344,13 +2165,14 @@ object Tasty:
       */
     private[kyo] val bindingLocal: Local[Maybe[Binding]] = Local.init(Maybe.Absent)
 
-    /** Phase 05 stub: empty binding used when no withClasspath scope is active.
+    /** Module-level lazy fallback binding.
       *
-      * Phase 06 replaces this with PlatformFallback.initFallback (JVM: java.class.path cold-load;
-      * JS/Native: Binding.empty). The lazy val ensures the empty binding is allocated at most once
-      * and that lazy init occurs inside an effect boundary via Sync.defer in the classpath accessor.
+      * INV-009 site-2: on JVM, cold-loads java.class.path exactly once per process.
+      * On JS and Native, returns Binding.empty (no classpath enumeration available).
+      * The lazy val ensures initialization runs at most once. The AllowUnsafe boundary
+      * is confined to PlatformFallback.initFallback on each platform.
       */
-    private lazy val current: Binding = Binding.empty
+    private[kyo] lazy val current: Binding = kyo.internal.tasty.query.PlatformFallback.initFallback
 
     /** Get the current Classpath from the active binding, falling back to the module-level stub.
       *
@@ -3362,153 +3184,224 @@ object Tasty:
     end Snapshot
 
     // ── Tasty.* query operations ────────────────────────────────────────────
-    // These operations wrap the corresponding Classpath.* methods and accept
-    // an explicit (using cp: Classpath) context. Phase 06 will switch them to
-    // read from a Local-bound binding via bindingLocal.use.
+    // All query operations read the active binding from bindingLocal. They carry
+    // < Sync in their effect row because the lazy fallback Tasty.current may trigger
+    // initialization on the first call (INV-009 site-2).
 
     /** Look up a class symbol by FQN. Returns Absent when not found. */
-    def findClass(fqn: String)(using cp: Classpath): Maybe[Symbol.Class] =
-        cp.findClass(fqn)
+    def findClass(fqn: String)(using Frame): Maybe[Symbol.Class] < Sync =
+        classpath.map(_.findClass(fqn))
 
     /** Look up a class-like symbol (Class, Trait, Object, EnumCase) by FQN. */
-    def findClassLike(fqn: String)(using cp: Classpath): Maybe[Symbol.ClassLike] =
-        cp.findClassLike(fqn)
+    def findClassLike(fqn: String)(using Frame): Maybe[Symbol.ClassLike] < Sync =
+        classpath.map(_.findClassLike(fqn))
 
     /** Look up an object symbol by FQN (accepts source form or $-suffix binary form). */
-    def findObject(fqn: String)(using cp: Classpath): Maybe[Symbol.Object] =
-        cp.findObject(fqn)
+    def findObject(fqn: String)(using Frame): Maybe[Symbol.Object] < Sync =
+        classpath.map(_.findObject(fqn))
 
     /** Look up any symbol by FQN. */
-    def findSymbol(fqn: String)(using cp: Classpath): Maybe[Symbol] =
-        cp.findSymbol(fqn)
+    def findSymbol(fqn: String)(using Frame): Maybe[Symbol] < Sync =
+        classpath.map(_.findSymbol(fqn))
 
     /** Look up a package symbol by FQN. */
-    def findPackage(fqn: String)(using cp: Classpath): Maybe[Symbol.Package] =
-        cp.findPackage(fqn)
+    def findPackage(fqn: String)(using Frame): Maybe[Symbol.Package] < Sync =
+        classpath.map(_.findPackage(fqn))
 
     /** Look up a JPMS module descriptor by module name. */
-    def findModule(name: String)(using cp: Classpath): Maybe[ModuleDescriptor] =
-        cp.findModule(name)
+    def findModule(name: String)(using Frame): Maybe[ModuleDescriptor] < Sync =
+        classpath.map(_.findModule(name))
 
     /** Look up a concrete (non-abstract) class by FQN. Returns Absent for abstract classes. */
-    def findConcreteClass(fqn: String)(using cp: Classpath): Maybe[Symbol.Class] =
-        cp.findConcreteClass(fqn)
+    def findConcreteClass(fqn: String)(using Frame): Maybe[Symbol.Class] < Sync =
+        classpath.map(_.findConcreteClass(fqn))
 
     /** Find all Symbol.Class instances whose simple name equals simpleName. */
-    def findClassesByName(simpleName: String)(using cp: Classpath): Chunk[Symbol.Class] =
-        cp.findClassesByName(simpleName)
+    def findClassesByName(simpleName: String)(using Frame): Chunk[Symbol.Class] < Sync =
+        classpath.map(_.findClassesByName(simpleName))
 
     /** Find a method symbol by owner FQN and simple name. Returns the first matching Method. */
-    def findMethod(ownerFqn: String, methodName: String)(using cp: Classpath): Maybe[Symbol.Method] =
-        findSymbol(ownerFqn).flatMap:
-            case cl: Symbol.ClassLike =>
-                import Name.asString
-                Maybe.fromOption(cl.declarationIds.flatMap: id =>
-                    cp.symbol(id) match
-                        case m: Symbol.Method if m.name.asString == methodName => Chunk(m)
-                        case _                                                 => Chunk.empty
-                .headOption)
-            case _ => Maybe.Absent
+    def findMethod(ownerFqn: String, methodName: String)(using Frame): Maybe[Symbol.Method] < Sync =
+        classpath.map: cp =>
+            cp.findSymbol(ownerFqn).flatMap:
+                case cl: Symbol.ClassLike =>
+                    import Name.asString
+                    Maybe.fromOption(cl.declarationIds.flatMap: id =>
+                        cp.symbol(id) match
+                            case m: Symbol.Method if m.name.asString == methodName => Chunk(m)
+                            case _                                                 => Chunk.empty
+                    .headOption)
+                case _ => Maybe.Absent
 
-    /** Require a class by FQN; aborts with TastyError.SymbolNotFound when absent. */
-    def requireClass(fqn: String)(using frame: Frame, cp: Classpath): Symbol.Class < Abort[TastyError] =
-        findClass(fqn) match
+    /** Require a class by FQN; aborts with TastyError.NotFound when absent. */
+    def requireClass(fqn: String)(using Frame): Symbol.Class < (Sync & Abort[TastyError]) =
+        findClass(fqn).map:
             case Maybe.Present(c) => c
             case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
 
     /** Require a class-like by FQN; aborts with TastyError.NotFound when absent. */
-    def requireClassLike(fqn: String)(using frame: Frame, cp: Classpath): Symbol.ClassLike < Abort[TastyError] =
-        findClassLike(fqn) match
+    def requireClassLike(fqn: String)(using Frame): Symbol.ClassLike < (Sync & Abort[TastyError]) =
+        findClassLike(fqn).map:
             case Maybe.Present(c) => c
             case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
 
     /** Require an object by FQN; aborts with TastyError.NotFound when absent. */
-    def requireObject(fqn: String)(using frame: Frame, cp: Classpath): Symbol.Object < Abort[TastyError] =
-        findObject(fqn) match
+    def requireObject(fqn: String)(using Frame): Symbol.Object < (Sync & Abort[TastyError]) =
+        findObject(fqn).map:
             case Maybe.Present(o) => o
             case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
 
     /** Require any symbol by FQN; aborts with TastyError.NotFound when absent. */
-    def requireSymbol(fqn: String)(using frame: Frame, cp: Classpath): Symbol < Abort[TastyError] =
-        findSymbol(fqn) match
+    def requireSymbol(fqn: String)(using Frame): Symbol < (Sync & Abort[TastyError]) =
+        findSymbol(fqn).map:
             case Maybe.Present(s) => s
             case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
 
     /** Require a package by FQN; aborts with TastyError.NotFound when absent. */
-    def requirePackage(fqn: String)(using frame: Frame, cp: Classpath): Symbol.Package < Abort[TastyError] =
-        findPackage(fqn) match
+    def requirePackage(fqn: String)(using Frame): Symbol.Package < (Sync & Abort[TastyError]) =
+        findPackage(fqn).map:
             case Maybe.Present(p) => p
             case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
 
     /** Require a method by owner FQN and simple name; aborts with TastyError.NotFound when absent. */
-    def requireMethod(ownerFqn: String, methodName: String)(using frame: Frame, cp: Classpath): Symbol.Method < Abort[TastyError] =
-        findMethod(ownerFqn, methodName) match
+    def requireMethod(ownerFqn: String, methodName: String)(using Frame): Symbol.Method < (Sync & Abort[TastyError]) =
+        findMethod(ownerFqn, methodName).map:
             case Maybe.Present(m) => m
             case Maybe.Absent     => Abort.fail(TastyError.NotFound(s"$ownerFqn.$methodName"))
 
     /** All ClassLike symbols (Class, Trait, Object, EnumCase). */
-    def allClassLike(using cp: Classpath): Chunk[Symbol.ClassLike] =
-        cp.allClassLike
+    def allClassLike(using Frame): Chunk[Symbol.ClassLike] < Sync =
+        classpath.map(_.allClassLike)
 
     /** All Class symbols. */
-    def allClasses(using cp: Classpath): Chunk[Symbol.Class] =
-        cp.symbols.flatMap:
-            case c: Symbol.Class => Chunk(c)
-            case _               => Chunk.empty
+    def allClasses(using Frame): Chunk[Symbol.Class] < Sync =
+        classpath.map(cp =>
+            cp.symbols.flatMap:
+                case c: Symbol.Class => Chunk(c)
+                case _               => Chunk.empty
+        )
 
     /** All Object symbols. */
-    def allObjects(using cp: Classpath): Chunk[Symbol.Object] =
-        cp.allObjects
+    def allObjects(using Frame): Chunk[Symbol.Object] < Sync =
+        classpath.map(_.allObjects)
 
     /** All Trait symbols. */
-    def allTraits(using cp: Classpath): Chunk[Symbol.Trait] =
-        cp.allTraits
+    def allTraits(using Frame): Chunk[Symbol.Trait] < Sync =
+        classpath.map(_.allTraits)
 
     /** All Method symbols. */
-    def allMethods(using cp: Classpath): Chunk[Symbol.Method] =
-        cp.allMethods
+    def allMethods(using Frame): Chunk[Symbol.Method] < Sync =
+        classpath.map(_.allMethods)
 
     /** All Val symbols. */
-    def allVals(using cp: Classpath): Chunk[Symbol.Val] =
-        cp.allVals
+    def allVals(using Frame): Chunk[Symbol.Val] < Sync =
+        classpath.map(_.allVals)
 
     /** All Var symbols. */
-    def allVars(using cp: Classpath): Chunk[Symbol.Var] =
-        cp.allVars
+    def allVars(using Frame): Chunk[Symbol.Var] < Sync =
+        classpath.map(_.allVars)
 
     /** All Field symbols. */
-    def allFields(using cp: Classpath): Chunk[Symbol.Field] =
-        cp.allFields
+    def allFields(using Frame): Chunk[Symbol.Field] < Sync =
+        classpath.map(_.allFields)
 
     /** All type declaration symbols (TypeAlias, OpaqueType, AbstractType; TypeParam excluded). */
-    def allTypes(using cp: Classpath): Chunk[Symbol] =
-        (cp.allTypeAliases.asInstanceOf[Chunk[Symbol]] ++
-            cp.allOpaqueTypes.asInstanceOf[Chunk[Symbol]] ++
-            cp.allAbstractTypes.asInstanceOf[Chunk[Symbol]])
+    def allTypes(using Frame): Chunk[Symbol] < Sync =
+        classpath.map(cp =>
+            cp.allTypeAliases.asInstanceOf[Chunk[Symbol]] ++
+                cp.allOpaqueTypes.asInstanceOf[Chunk[Symbol]] ++
+                cp.allAbstractTypes.asInstanceOf[Chunk[Symbol]]
+        )
 
     /** All Package symbols. */
-    def allPackages(using cp: Classpath): Chunk[Symbol.Package] =
-        cp.allPackages
+    def allPackages(using Frame): Chunk[Symbol.Package] < Sync =
+        classpath.map(_.allPackages)
 
     /** Return the lexically enclosing symbol. Absent for root symbols (ownerId == -1). */
-    def owner(sym: Symbol)(using cp: Classpath): Maybe[Symbol] =
-        sym.owner
+    def owner(sym: Symbol)(using Frame): Maybe[Symbol] < Sync =
+        classpath.map: cp =>
+            if sym.ownerId.value == -1 then Maybe.Absent
+            else Maybe(cp.symbol(sym.ownerId))
 
     /** Compute the dotted fully-qualified name of sym. */
-    def fullName(sym: Symbol)(using frame: Frame, cp: Classpath): Name < Sync =
-        cp.fullName(sym)
+    def fullName(sym: Symbol)(using Frame): Name < Sync =
+        classpath.flatMap(cp => cp.fullName(sym))
 
     /** Human-readable rendering of sym (format-selectable). */
-    def show(sym: Symbol, format: ShowFormat = ShowFormat.Code)(using frame: Frame, cp: Classpath): String < Sync =
-        sym.show(format)
+    def show(sym: Symbol, format: ShowFormat = ShowFormat.Code)(using Frame): String < Sync =
+        classpath.flatMap: cp =>
+            format match
+                case ShowFormat.FullyQualified =>
+                    import Name.asString
+                    cp.fullName(sym).map(_.asString)
+                case ShowFormat.Simple => Sync.defer(sym.simpleName)
+                case ShowFormat.Code   => kyo.internal.tasty.symbol.SymbolSignature.compute(sym, cp)
 
     /** Human-readable signature of a method symbol. */
-    def signature(method: Symbol.Method)(using frame: Frame, cp: Classpath): String < Sync =
-        method.signature
+    def signature(method: Symbol.Method)(using Frame): String < Sync =
+        classpath.flatMap(cp => kyo.internal.tasty.symbol.SymbolSignature.compute(method, cp))
+
+    /** Compute the owners chain of sym (sym itself, its owner, owner's owner, ...). */
+    def ownersChain(sym: Symbol)(using Frame): Chunk[Symbol] < Sync =
+        classpath.map: cp =>
+            val out     = Chunk.newBuilder[Symbol]
+            val visited = new java.util.HashSet[Int]()
+            @scala.annotation.tailrec
+            def go(cur: Symbol, depth: Int): Unit =
+                if depth >= 64 || !visited.add(cur.id.value) then ()
+                else
+                    out += cur
+                    val ownerSym = cp.symbol(cur.ownerId)
+                    if ownerSym.id == cur.id || ownerSym.id.value == -1 then ()
+                    else go(ownerSym, depth + 1)
+            go(sym, 0)
+            out.result()
+
+    /** Compute the JVM binary name for sym. */
+    def binaryName(sym: Symbol)(using Frame): String < Sync =
+        classpath.map(cp => kyo.internal.tasty.symbol.BinaryName.compute(sym, cp))
+
+    /** Return the companion object or companion class of sym, if any. */
+    def companion(sym: Symbol)(using Frame): Maybe[Symbol] < Sync =
+        classpath.map(_.companion(sym))
+
+    /** Return the type parameters of sym (ClassLike, Method, TypeAlias, OpaqueType). */
+    def typeParams(sym: Symbol)(using Frame): Chunk[Symbol] < Sync =
+        classpath.map: cp =>
+            (sym match
+                case c: Symbol.ClassLike   => c.typeParamIds
+                case m: Symbol.Method      => m.typeParamIds
+                case ta: Symbol.TypeAlias  => ta.typeParamIds
+                case ot: Symbol.OpaqueType => ot.typeParamIds
+                case _                     => Chunk.empty
+            ).map(cp.symbol)
+
+    /** Return the declared members of sym (ClassLike: declarationIds; Package: memberIds; else empty). */
+    def declarations(sym: Symbol)(using Frame): Chunk[Symbol] < Sync =
+        classpath.map: cp =>
+            (sym match
+                case c: Symbol.ClassLike => c.declarationIds
+                case p: Symbol.Package   => p.memberIds
+                case _                   => Chunk.empty
+            ).map(cp.symbol)
+
+    /** Return the permitted subclasses of a sealed Class or Trait. Returns empty for non-sealed. */
+    def permittedSubclasses(sym: Symbol)(using Frame): Chunk[Symbol] < Sync =
+        classpath.map: cp =>
+            (sym match
+                case c: Symbol.Class => c.permittedSubclassIds
+                case t: Symbol.Trait => t.permittedSubclassIds
+                case _               => Maybe.Absent
+            ).map(_.map(cp.symbol)).getOrElse(Chunk.empty)
+
+    /** Return declared members of sym matching the given SymbolKind. */
+    def membersByKind(sym: Symbol, kind: SymbolKind)(using Frame): Chunk[Symbol] < Sync =
+        declarations(sym).map(_.filter(_.kind == kind))
 
     /** Direct parent ClassLike symbols of a ClassLike. */
-    def parents(cl: Symbol.ClassLike)(using cp: Classpath): Chunk[Symbol] =
-        cl.parents
+    def parents(cl: Symbol.ClassLike)(using Frame): Chunk[Symbol] < Sync =
+        classpath.map: cp =>
+            cl.parentTypes.collect { case Type.Named(pid) => cp.symbol(pid) }
 
     /** Members of sym filtered by scope.
       *
@@ -3516,66 +3409,81 @@ object Tasty:
       * MemberScope.Inherited returns only symbols inherited from parents (not declared on sym).
       * MemberScope.All returns declared and inherited, deduplicated by simple name (most-specific wins).
       */
-    def members(sym: Symbol, scope: MemberScope = MemberScope.Declared)(using cp: Classpath): Chunk[Symbol] =
-        scope match
-            case MemberScope.Declared => sym.declaredMembers
-            case MemberScope.Inherited =>
-                val directs     = sym.declaredMembers
-                val directNames = scala.collection.mutable.HashSet.empty[String]
-                directs.foreach(d => discard(directNames.add(d.simpleName)))
-                sym.allMembers.filter(s => !directNames.contains(s.simpleName))
-            case MemberScope.All => sym.allMembers
+    def members(sym: Symbol, scope: MemberScope = MemberScope.Declared)(using Frame): Chunk[Symbol] < Sync =
+        classpath.map: cp =>
+            scope match
+                case MemberScope.Declared =>
+                    (sym match
+                        case c: Symbol.ClassLike => c.declarationIds
+                        case p: Symbol.Package   => p.memberIds
+                        case _                   => Chunk.empty
+                    ).map(cp.symbol)
+                case MemberScope.Inherited =>
+                    val declIds = sym match
+                        case c: Symbol.ClassLike => c.declarationIds
+                        case p: Symbol.Package   => p.memberIds
+                        case _                   => Chunk.empty
+                    val directNames = scala.collection.mutable.HashSet.empty[String]
+                    declIds.foreach(id => discard(directNames.add(cp.symbol(id).simpleName)))
+                    allMembersOf(sym, cp).filter(s => !directNames.contains(s.simpleName))
+                case MemberScope.All => allMembersOf(sym, cp)
 
     /** Find a member of sym by simple name within the given scope. */
-    def findMember(sym: Symbol, name: String, scope: MemberScope = MemberScope.Declared)(using cp: Classpath): Maybe[Symbol] =
-        Maybe.fromOption(members(sym, scope).find(_.simpleName == name))
+    def findMember(sym: Symbol, name: String, scope: MemberScope = MemberScope.Declared)(using Frame): Maybe[Symbol] < Sync =
+        members(sym, scope).map(ms => Maybe.fromOption(ms.find(_.simpleName == name)))
+
+    /** Find a declared member of sym by simple name. */
+    def findDeclaredMember(sym: Symbol, name: String)(using Frame): Maybe[Symbol] < Sync =
+        findMember(sym, name, MemberScope.Declared)
 
     /** True when sym carries the Scala or Java annotation with the given FQN. */
-    def hasAnnotation(sym: Symbol, fqn: String)(using frame: Frame, cp: Classpath): Boolean < Sync =
-        Sync.Unsafe.defer:
-            def matchScala(a: Annotation): Boolean =
-                cp.typeFqnStringUnsafe(a.annotationType) == fqn
-            def matchJava(a: JavaAnnotation): Boolean =
-                import Name.asString
-                cp.fullNameUnsafe(a.annotationClass).asString == fqn
-            sym match
-                case c: Symbol.ClassLike    => c.annotations.exists(matchScala) || c.javaAnnotations.exists(matchJava)
-                case m: Symbol.Method       => m.annotations.exists(matchScala)
-                case v: Symbol.Val          => v.annotations.exists(matchScala)
-                case w: Symbol.Var          => w.annotations.exists(matchScala)
-                case f: Symbol.Field        => f.javaAnnotations.exists(matchJava)
-                case t: Symbol.TypeAlias    => t.annotations.exists(matchScala)
-                case t: Symbol.OpaqueType   => t.annotations.exists(matchScala)
-                case t: Symbol.AbstractType => t.annotations.exists(matchScala)
-                case p: Symbol.Parameter    => p.annotations.exists(matchScala)
-                case _                      => false
-            end match
+    def hasAnnotation(sym: Symbol, fqn: String)(using Frame): Boolean < Sync =
+        classpath.flatMap: cp =>
+            Sync.Unsafe.defer:
+                def matchScala(a: Annotation): Boolean =
+                    cp.typeFqnStringUnsafe(a.annotationType) == fqn
+                def matchJava(a: JavaAnnotation): Boolean =
+                    import Name.asString
+                    cp.fullNameUnsafe(a.annotationClass).asString == fqn
+                sym match
+                    case c: Symbol.ClassLike    => c.annotations.exists(matchScala) || c.javaAnnotations.exists(matchJava)
+                    case m: Symbol.Method       => m.annotations.exists(matchScala)
+                    case v: Symbol.Val          => v.annotations.exists(matchScala)
+                    case w: Symbol.Var          => w.annotations.exists(matchScala)
+                    case f: Symbol.Field        => f.javaAnnotations.exists(matchJava)
+                    case t: Symbol.TypeAlias    => t.annotations.exists(matchScala)
+                    case t: Symbol.OpaqueType   => t.annotations.exists(matchScala)
+                    case t: Symbol.AbstractType => t.annotations.exists(matchScala)
+                    case p: Symbol.Parameter    => p.annotations.exists(matchScala)
+                    case _                      => false
+                end match
 
     /** Find the first Scala or Java annotation matching the given FQN on sym. */
-    def findAnnotation(sym: Symbol, fqn: String)(using frame: Frame, cp: Classpath): Maybe[Annotation | JavaAnnotation] < Sync =
-        Sync.Unsafe.defer:
-            def matchScala(a: Annotation): Boolean =
-                cp.typeFqnStringUnsafe(a.annotationType) == fqn
-            def matchJava(a: JavaAnnotation): Boolean =
-                import Name.asString
-                cp.fullNameUnsafe(a.annotationClass).asString == fqn
-            sym match
-                case c: Symbol.ClassLike =>
-                    Maybe.fromOption(c.annotations.find(matchScala).orElse(c.javaAnnotations.find(matchJava)))
-                case m: Symbol.Method       => Maybe.fromOption(m.annotations.find(matchScala))
-                case v: Symbol.Val          => Maybe.fromOption(v.annotations.find(matchScala))
-                case w: Symbol.Var          => Maybe.fromOption(w.annotations.find(matchScala))
-                case f: Symbol.Field        => Maybe.fromOption(f.javaAnnotations.find(matchJava))
-                case t: Symbol.TypeAlias    => Maybe.fromOption(t.annotations.find(matchScala))
-                case t: Symbol.OpaqueType   => Maybe.fromOption(t.annotations.find(matchScala))
-                case t: Symbol.AbstractType => Maybe.fromOption(t.annotations.find(matchScala))
-                case p: Symbol.Parameter    => Maybe.fromOption(p.annotations.find(matchScala))
-                case _                      => Maybe.Absent
-            end match
+    def findAnnotation(sym: Symbol, fqn: String)(using Frame): Maybe[Annotation | JavaAnnotation] < Sync =
+        classpath.flatMap: cp =>
+            Sync.Unsafe.defer:
+                def matchScala(a: Annotation): Boolean =
+                    cp.typeFqnStringUnsafe(a.annotationType) == fqn
+                def matchJava(a: JavaAnnotation): Boolean =
+                    import Name.asString
+                    cp.fullNameUnsafe(a.annotationClass).asString == fqn
+                sym match
+                    case c: Symbol.ClassLike =>
+                        Maybe.fromOption(c.annotations.find(matchScala).orElse(c.javaAnnotations.find(matchJava)))
+                    case m: Symbol.Method       => Maybe.fromOption(m.annotations.find(matchScala))
+                    case v: Symbol.Val          => Maybe.fromOption(v.annotations.find(matchScala))
+                    case w: Symbol.Var          => Maybe.fromOption(w.annotations.find(matchScala))
+                    case f: Symbol.Field        => Maybe.fromOption(f.javaAnnotations.find(matchJava))
+                    case t: Symbol.TypeAlias    => Maybe.fromOption(t.annotations.find(matchScala))
+                    case t: Symbol.OpaqueType   => Maybe.fromOption(t.annotations.find(matchScala))
+                    case t: Symbol.AbstractType => Maybe.fromOption(t.annotations.find(matchScala))
+                    case p: Symbol.Parameter    => Maybe.fromOption(p.annotations.find(matchScala))
+                    case _                      => Maybe.Absent
+                end match
 
     /** All symbols in the classpath carrying the annotation with the given FQN. */
-    def symbolsAnnotatedWith(fqn: String)(using frame: Frame, cp: Classpath): Chunk[Symbol] < Sync =
-        cp.symbolsAnnotatedWith(fqn)
+    def symbolsAnnotatedWith(fqn: String)(using Frame): Chunk[Symbol] < Sync =
+        classpath.flatMap(_.symbolsAnnotatedWith(fqn))
 
     /** Decode the body tree of sym, memoizing the result in the active DecodeContext.
       *
@@ -3645,33 +3553,56 @@ object Tasty:
     end bodyTree
 
     /** Resolve the symbol referenced by a Type.Named. Returns Absent for other Type shapes. */
-    def typeSymbol(tpe: Type)(using cp: Classpath): Maybe[Symbol] = tpe match
-        case Type.Named(id) => Maybe(cp.symbol(id))
-        case _              => Maybe.Absent
+    def typeSymbol(tpe: Type)(using Frame): Maybe[Symbol] < Sync =
+        classpath.map: cp =>
+            tpe match
+                case Type.Named(id) => Maybe(cp.symbol(id))
+                case _              => Maybe.Absent
 
     /** Structural subtype check. Returns Sub, NotSub, or Unknown. */
-    def isSubtypeOf(tpe: Type, other: Type)(using cp: Classpath): SubtypeVerdict =
-        kyo.internal.tasty.type_.Subtyping.isSubtype(tpe, other, cp, budget = 64)
+    def isSubtypeOf(tpe: Type, other: Type)(using Frame): SubtypeVerdict < Sync =
+        classpath.map(cp => kyo.internal.tasty.type_.Subtyping.isSubtype(tpe, other, cp, budget = 64))
 
     /** Human-readable rendering of a Type. Resolves Named ids to symbol names via the Classpath. */
-    def typeShow(tpe: Type)(using cp: Classpath): String =
-        import Name.asString
-        tpe match
-            case Type.Named(id)              => cp.symbol(id).name.asString
-            case Type.Applied(base, args)    => s"${typeShow(base)}[${args.map(typeShow).mkString(", ")}]"
-            case Type.Array(elem)            => s"${typeShow(elem)}[]"
-            case Type.Function(ps, r, isCtx) => s"(${ps.map(typeShow).mkString(", ")}) ${if isCtx then "?=>" else "=>"} ${typeShow(r)}"
-            case Type.ContextFunction(ps, r) => s"(${ps.map(typeShow).mkString(", ")}) ?=> ${typeShow(r)}"
-            case Type.Tuple(es)              => s"(${es.map(typeShow).mkString(", ")})"
-            case Type.Nothing                => "Nothing"
-            case Type.Any                    => "Any"
-            case Type.Unknown                => "<unknown>"
-            case other                       => other.toString
-        end match
-    end typeShow
+    def typeShow(tpe: Type)(using Frame): String < Sync =
+        classpath.map: cp =>
+            import Name.asString
+            def renderType(t: Type): String = t match
+                case Type.Named(id)           => cp.symbol(id).name.asString
+                case Type.Applied(base, args) => s"${renderType(base)}[${args.map(renderType).mkString(", ")}]"
+                case Type.Array(elem)         => s"${renderType(elem)}[]"
+                case Type.Function(ps, r, isCtx) =>
+                    s"(${ps.map(renderType).mkString(", ")}) ${if isCtx then "?=>" else "=>"} ${renderType(r)}"
+                case Type.ContextFunction(ps, r) => s"(${ps.map(renderType).mkString(", ")}) ?=> ${renderType(r)}"
+                case Type.Tuple(es)              => s"(${es.map(renderType).mkString(", ")})"
+                case Type.Nothing                => "Nothing"
+                case Type.Any                    => "Any"
+                case Type.Unknown                => "<unknown>"
+                case other                       => other.toString
+            renderType(tpe)
 
     /** Human-readable rendering of a Tree (resolves symbols and types via the Classpath). */
-    def treeShow(tree: Tree)(using cp: Classpath): String =
-        kyo.internal.tasty.reader.TreeShow.show(tree, cp)
+    def treeShow(tree: Tree)(using Frame): String < Sync =
+        classpath.map(cp => kyo.internal.tasty.reader.TreeShow.show(tree, cp))
+
+    // ── Private helpers ─────────────────────────────────────────────────────
+
+    private def allMembersOf(sym: Symbol, cp: Classpath): Chunk[Symbol] =
+        sym match
+            case c: Symbol.ClassLike =>
+                val seen = scala.collection.mutable.HashSet.empty[String]
+                val out  = Chunk.newBuilder[Symbol]
+                def visit(cl: Symbol.ClassLike): Unit =
+                    cl.declarationIds.foreach: id =>
+                        val d  = cp.symbol(id)
+                        val nm = d.simpleName
+                        if seen.add(nm) then out += d
+                    cl.parentTypes.collect { case Type.Named(pid) => cp.symbol(pid) }.foreach:
+                        case pcl: Symbol.ClassLike => visit(pcl)
+                        case _                     => ()
+                end visit
+                visit(c)
+                out.result()
+            case _ => Chunk.empty
 
 end Tasty

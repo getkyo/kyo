@@ -75,9 +75,9 @@ class SymbolConvenienceTest extends Test:
                 moduleIndex = Map.empty,
                 errors = Chunk.empty
             )
-            cls.fullNameString(using summon[Frame], cp)
+            cp.fullNameUnsafe(cls)
         }.map: fqn =>
-            assert(fqn == "scala.collection.List", s"Expected scala.collection.List but got $fqn")
+            assert(fqn.asString == "scala.collection.List", s"Expected scala.collection.List but got ${fqn.asString}")
             succeed
     }
 
@@ -98,28 +98,27 @@ class SymbolConvenienceTest extends Test:
     // Then: returns Chunk("D", "C", "B", "A", "pkg").
     // Pins: INV-002
     "Leaf 133: ownersChain returns self-first chain" in run {
-        Sync.defer {
-            val pkg  = makePackage(0, "pkg", ownerId = -1, Chunk(SymbolId(1)))
-            val clsA = makeClass(1, "A", ownerId = 0, Chunk(SymbolId(2)))
-            val clsB = makeClass(2, "B", ownerId = 1, Chunk(SymbolId(3)))
-            val clsC = makeClass(3, "C", ownerId = 2, Chunk(SymbolId(4)))
-            val clsD = makeClass(4, "D", ownerId = 3)
-            val cp = Tasty.Classpath.make(
-                symbols = Chunk(pkg, clsA, clsB, clsC, clsD),
-                rootSymbolId = SymbolId(-1),
-                topLevelClassIds = Chunk(SymbolId(1)),
-                packageIds = Chunk(SymbolId(0)),
-                fqnIndex = Map.empty,
-                packageIndex = Map("pkg" -> SymbolId(0)),
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
-                errors = Chunk.empty
-            )
-            val chain = clsD.ownersChain(using cp).map(_.simpleName)
-            assert(chain == Chunk("D", "C", "B", "A", "pkg"), s"Unexpected chain: $chain")
-            succeed
-        }
+        val pkg  = makePackage(0, "pkg", ownerId = -1, Chunk(SymbolId(1)))
+        val clsA = makeClass(1, "A", ownerId = 0, Chunk(SymbolId(2)))
+        val clsB = makeClass(2, "B", ownerId = 1, Chunk(SymbolId(3)))
+        val clsC = makeClass(3, "C", ownerId = 2, Chunk(SymbolId(4)))
+        val clsD = makeClass(4, "D", ownerId = 3)
+        val cp = Tasty.Classpath.make(
+            symbols = Chunk(pkg, clsA, clsB, clsC, clsD),
+            rootSymbolId = SymbolId(-1),
+            topLevelClassIds = Chunk(SymbolId(1)),
+            packageIds = Chunk(SymbolId(0)),
+            fqnIndex = Map.empty,
+            packageIndex = Map("pkg" -> SymbolId(0)),
+            subclassIndex = Map.empty,
+            companionIndex = Map.empty,
+            moduleIndex = Map.empty,
+            errors = Chunk.empty
+        )
+        Tasty.withClasspath(cp):
+            Tasty.ownersChain(clsD).map: chain =>
+                assert(chain.map(_.simpleName) == Chunk("D", "C", "B", "A", "pkg"), s"Unexpected chain: ${chain.map(_.simpleName)}")
+                succeed
     }
 
     // ── Leaf 134: ownersChain-self-cycle-stops ────────────────────────────────
@@ -128,29 +127,28 @@ class SymbolConvenienceTest extends Test:
     // Then: returns 1 (the cycle guard stops the walk).
     // Pins: INV-002
     "Leaf 134: ownersChain stops on self-loop" in run {
-        Sync.defer {
-            val pkg = makePackage(5, "root", ownerId = 5, Chunk.empty)
-            val cp = Tasty.Classpath.make(
-                symbols = Chunk(pkg),
-                rootSymbolId = SymbolId(5),
-                topLevelClassIds = Chunk.empty,
-                packageIds = Chunk(SymbolId(5)),
-                fqnIndex = Map.empty,
-                packageIndex = Map("root" -> SymbolId(5)),
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
-                errors = Chunk.empty
-            )
-            val size = pkg.ownersChain(using cp).size
-            assert(size == 1, s"Expected size 1 for self-loop but got $size")
-            succeed
-        }
+        val pkg = makePackage(5, "root", ownerId = 5, Chunk.empty)
+        val cp = Tasty.Classpath.make(
+            symbols = Chunk(pkg),
+            rootSymbolId = SymbolId(5),
+            topLevelClassIds = Chunk.empty,
+            packageIds = Chunk(SymbolId(5)),
+            fqnIndex = Map.empty,
+            packageIndex = Map("root" -> SymbolId(5)),
+            subclassIndex = Map.empty,
+            companionIndex = Map.empty,
+            moduleIndex = Map.empty,
+            errors = Chunk.empty
+        )
+        Tasty.withClasspath(cp):
+            Tasty.ownersChain(pkg).map: chain =>
+                assert(chain.size == 1, s"Expected size 1 for self-loop but got ${chain.size}")
+                succeed
     }
 
     // ── Leaf 135: owner-present ───────────────────────────────────────────────
     // Given: Symbol.Method declared in Symbol.Class A.
-    // When: m.owner.
+    // When: Tasty.owner(m).
     // Then: returns Maybe.Present(a) where a.simpleName == "A".
     // Pins: INV-002
     "Leaf 135: owner returns Present for method with owner" in run {
@@ -169,7 +167,7 @@ class SymbolConvenienceTest extends Test:
                 moduleIndex = Map.empty,
                 errors = Chunk.empty
             )
-            m.owner(using cp) match
+            (if m.ownerId.value == -1 then Maybe.Absent else Maybe(cp.symbol(m.ownerId))) match
                 case Maybe.Present(a) =>
                     assert(a.simpleName == "A", s"Expected A but got ${a.simpleName}")
                     succeed
@@ -181,7 +179,7 @@ class SymbolConvenienceTest extends Test:
 
     // ── Leaf 136: owner-root-is-absent ────────────────────────────────────────
     // Given: a symbol with ownerId == SymbolId(-1).
-    // When: s.owner.
+    // When: Tasty.owner(s).
     // Then: returns Maybe.Absent.
     // Pins: INV-002
     "Leaf 136: owner returns Absent for root symbol" in {
@@ -199,7 +197,7 @@ class SymbolConvenienceTest extends Test:
             moduleIndex = Map.empty,
             errors = Chunk.empty
         )
-        assert(sym.owner(using cp) == Maybe.Absent)
+        assert((if sym.ownerId.value == -1 then Maybe.Absent else Maybe(cp.symbol(sym.ownerId))) == Maybe.Absent)
         succeed
     }
 

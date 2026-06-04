@@ -36,7 +36,6 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // Pins: F-A2-005 + INV-105-DF2
     "F-A2-005 (Phase 2.05): classpath symbols have at least one ContextFunction in their types" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
 
             def walkType(t: Tasty.Type): Int =
                 var n = 0
@@ -191,21 +190,21 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // Cross-platform: uses pure ADT construction + show; works on JS/Native.
     // Pins: show-format consistency
     "show (Phase 2.05): Type.ContextFunction.show uses ?=> arrow" in run {
-        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
-            val paramType         = Tasty.Type.Named(SymbolId(0))
-            val resultType        = Tasty.Type.Named(SymbolId(0))
-            val cfType            = Tasty.Type.ContextFunction(Chunk(paramType), resultType)
-            val s                 = Tasty.typeShow(cfType)
-            assert(
-                s.contains("?=>"),
-                s"Type.ContextFunction.show should contain '?=>' but got: $s"
-            )
-            assert(
-                !s.contains(" => "),
-                s"Type.ContextFunction.show should not contain plain '=>' but got: $s"
-            )
-            succeed
+        TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                val paramType  = Tasty.Type.Named(SymbolId(0))
+                val resultType = Tasty.Type.Named(SymbolId(0))
+                val cfType     = Tasty.Type.ContextFunction(Chunk(paramType), resultType)
+                Tasty.typeShow(cfType).map: s =>
+                    assert(
+                        s.contains("?=>"),
+                        s"Type.ContextFunction.show should contain '?=>' but got: $s"
+                    )
+                    assert(
+                        !s.contains(" => "),
+                        s"Type.ContextFunction.show should not contain plain '=>' but got: $s"
+                    )
+                    succeed
     }
 
 end ContextFunctionFidelity2Test

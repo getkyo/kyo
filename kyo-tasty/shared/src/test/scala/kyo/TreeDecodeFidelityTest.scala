@@ -50,7 +50,7 @@ class TreeDecodeFidelityTest extends Test:
             classpath.findClassLike("kyo.fixtures.SomeCaseClass") match
                 case Maybe.Absent => fail("kyo.fixtures.SomeCaseClass not found in classpath; fixture must be present")
                 case Maybe.Present(cls) =>
-                    val methods = cls.methods(using classpath)
+                    val methods = cls.declarationIds.map(classpath.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method])
                     assert(methods.nonEmpty, "kyo.fixtures.SomeCaseClass should have methods (copy, hashCode, equals)")
                     succeed
             end match

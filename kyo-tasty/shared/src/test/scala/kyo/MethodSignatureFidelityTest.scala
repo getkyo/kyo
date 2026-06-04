@@ -180,7 +180,8 @@ class MethodSignatureFidelityTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val caseClassMaybe = classpath.findSymbol("kyo.fixtures.SomeCaseClass")
             assert(caseClassMaybe.isDefined, "kyo.fixtures.SomeCaseClass not found in classpath")
-            val methods = caseClassMaybe.get.declarations(using classpath)
+            val caseClass = caseClassMaybe.get.asInstanceOf[Tasty.Symbol.ClassLike]
+            val methods = caseClass.declarationIds.map(classpath.symbol)
                 .collect { case m: Tasty.Symbol.Method => m }
                 .filter(!_.isJava)
             val resolvedTypes = methods.flatMap(_.declaredType.toList).filter {
@@ -207,7 +208,9 @@ class MethodSignatureFidelityTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val traitMaybe = classpath.findSymbol("kyo.fixtures.SomeTrait")
             assert(traitMaybe.isDefined, "kyo.fixtures.SomeTrait not found in classpath")
-            val computeMaybe = traitMaybe.get.findDeclaredMember("compute")(using classpath)
+            val traitSym = traitMaybe.get.asInstanceOf[Tasty.Symbol.ClassLike]
+            val computeMaybe =
+                Maybe.fromOption(traitSym.declarationIds.map(classpath.symbol).find(_.simpleName == "compute"))
             assert(computeMaybe.isDefined, "kyo.fixtures.SomeTrait.compute not found in SomeTrait")
             val method = computeMaybe.get.asInstanceOf[Tasty.Symbol.Method]
             val dt     = method.declaredType

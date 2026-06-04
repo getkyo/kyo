@@ -303,14 +303,15 @@ class SymbolResolutionTest extends Test:
     "Phase09: owner resolves to the correct Symbol" in run {
         val pkgSym = makePkgSym9(id = 0, name = "p")
         val fooSym = makeClassSym9(id = 1, name = "Foo", ownerId = 0)
-        Tasty.Classpath.fromPicklesWithSymbols(Chunk(pkgSym, fooSym)).map: cp =>
-            given Tasty.Classpath          = cp
-            val owner: Maybe[Tasty.Symbol] = fooSym.owner
-            assert(owner.isDefined, "Expected owner to be Present")
-            assert(
-                owner.get.id == pkgSym.id,
-                s"Expected owner id ${pkgSym.id.value} but got ${owner.get.id.value}"
-            )
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(pkgSym, fooSym)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                Tasty.owner(fooSym).map: owner =>
+                    assert(owner.isDefined, "Expected owner to be Present")
+                    assert(
+                        owner.get.id == pkgSym.id,
+                        s"Expected owner id ${pkgSym.id.value} but got ${owner.get.id.value}"
+                    )
+                    succeed
     }
 
     // Phase 09 Leaf 2: parents extracts only Type.Named entries.
@@ -328,8 +329,7 @@ class SymbolResolutionTest extends Test:
             )
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(symA, symB, symC)).map: cp =>
-            given Tasty.Classpath = cp
-            val parents           = symC.parents
+            val parents = symC.parentTypes.collect { case Tasty.Type.Named(pid) => cp.symbol(pid) }
             assert(
                 parents.length == 1,
                 s"Expected 1 parent (Named only) but got ${parents.length}"
@@ -350,8 +350,7 @@ class SymbolResolutionTest extends Test:
         val varSym    = makeVarSym9(id = 4, name = "y", ownerId = 0)
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2), SymbolId(3), SymbolId(4)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1, method2, valSym, varSym)).map: cp =>
-            given Tasty.Classpath = cp
-            val methods           = withDecls.methods
+            val methods = withDecls.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method])
             assert(methods.length == 2, s"Expected 2 methods but got ${methods.length}")
             val methodNames = methods.map(_.name.asString).toSet
             assert(methodNames == Set("foo", "bar"), s"Expected {foo, bar} but got $methodNames")
@@ -364,56 +363,56 @@ class SymbolResolutionTest extends Test:
         val memberSym = makeMethodSym9(id = 1, name = "existingMethod", ownerId = 0)
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, memberSym)).map: cp =>
-            given Tasty.Classpath = cp
-            val absent            = withDecls.findDeclaredMember("nope")
-            val present           = withDecls.findDeclaredMember("existingMethod")
+            val absent  = Maybe.fromOption(withDecls.declarationIds.map(cp.symbol).find(_.simpleName == "nope"))
+            val present = Maybe.fromOption(withDecls.declarationIds.map(cp.symbol).find(_.simpleName == "existingMethod"))
             assert(absent == Maybe.Absent, s"Expected Absent for 'nope' but got $absent")
             assert(present.isDefined, s"Expected Present for 'existingMethod' but got $present")
     }
 
-    // Phase 09 Leaf 5: sym.parents, sym.owner, sym.methods are direct member calls.
+    // Phase 09 Leaf 5: sym.parents, Tasty.owner(sym), sym.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method]) are direct member calls.
     // Pins: API discipline rule
-    "Phase09: sym.parents, sym.owner, sym.methods compile as direct member calls" in run {
+    "Phase09: sym.parents, Tasty.owner(sym), sym.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method]) compile as direct member calls" in run {
         val pkgSym = makePkgSym9(id = 0, name = "pkg")
         val fooSym = makeClassSym9(id = 1, name = "Foo", ownerId = 0)
-        Tasty.Classpath.fromPicklesWithSymbols(Chunk(pkgSym, fooSym)).map: cp =>
-            given Tasty.Classpath               = cp
-            val ownerSym: Maybe[Tasty.Symbol]   = fooSym.owner
-            val parentList: Chunk[Tasty.Symbol] = fooSym.parents
-            val methodList: Chunk[Tasty.Symbol] = fooSym.methods
-            assert(ownerSym.isDefined && ownerSym.get.id == pkgSym.id, "owner id mismatch")
-            assert(parentList.isEmpty, s"Expected empty parents got ${parentList.length}")
-            assert(methodList.isEmpty, s"Expected empty methods got ${methodList.length}")
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(pkgSym, fooSym)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                Tasty.owner(fooSym).map: ownerSym =>
+                    val parentList: Chunk[Tasty.Symbol] = fooSym.parentTypes.collect { case Tasty.Type.Named(pid) => cp.symbol(pid) }
+                    val methodList: Chunk[Tasty.Symbol] = fooSym.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method])
+                    assert(ownerSym.isDefined && ownerSym.get.id == pkgSym.id, "owner id mismatch")
+                    assert(parentList.isEmpty, s"Expected empty parents got ${parentList.length}")
+                    assert(methodList.isEmpty, s"Expected empty methods got ${methodList.length}")
+                    succeed
     }
 
     // Phase 09 Leaf 6: no AllowUnsafe on resolution accessors.
     // Pins: INV-010
     "Phase09: resolution accessors require only Classpath, no AllowUnsafe" in run {
         val sym = makeClassSym9(id = 0, name = "X", ownerId = 0)
-        Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).map: cp =>
-            locally:
-                given Tasty.Classpath                = cp
-                val _owner: Maybe[Tasty.Symbol]      = sym.owner
-                val _parents: Chunk[Tasty.Symbol]    = sym.parents
-                val _typeParams: Chunk[Tasty.Symbol] = sym.typeParams
-                val _decls: Chunk[Tasty.Symbol]      = sym.declarations
-                val _methods: Chunk[Tasty.Symbol]    = sym.methods
-                val _vals: Chunk[Tasty.Symbol]       = sym.vals
-                val _vars: Chunk[Tasty.Symbol]       = sym.vars
-                val _fields: Chunk[Tasty.Symbol]     = sym.fields
-                val _nested: Chunk[Tasty.Symbol]     = sym.nestedTypes
-                val _typeM: Chunk[Tasty.Symbol] =
-                    sym.declarations.filter(s =>
-                        s.isInstanceOf[Tasty.Symbol.TypeAlias] ||
-                            s.isInstanceOf[Tasty.Symbol.OpaqueType] ||
-                            s.isInstanceOf[Tasty.Symbol.AbstractType]
-                    )
-                val _find: Maybe[Tasty.Symbol]    = sym.findDeclaredMember("anything")
-                val _findInh: Maybe[Tasty.Symbol] = sym.findInheritedMember("anything")
-                val _findAny: Maybe[Tasty.Symbol] = sym.findAnyMember("anything")
-                val _byKind: Chunk[Tasty.Symbol]  = sym.membersByKind(Tasty.SymbolKind.Method)
-                val _showEff: String < Sync       = sym.show
-            succeed
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                // All resolution accessors via Tasty.* free functions (Phase 06 API)
+                val _typeParams: Chunk[Tasty.Symbol] = sym.typeParamIds.map(cp.symbol)
+                val _decls: Chunk[Tasty.Symbol]      = sym.declarationIds.map(cp.symbol)
+                val _methods: Chunk[Tasty.Symbol]    = sym.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method])
+                val _vals: Chunk[Tasty.Symbol]       = sym.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Val])
+                val _vars: Chunk[Tasty.Symbol]       = sym.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Var])
+                val _fields: Chunk[Tasty.Symbol]     = sym.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Field])
+                val _nested: Chunk[Tasty.Symbol] = sym.declarationIds.map(cp.symbol).filter(s =>
+                    s.isInstanceOf[Tasty.Symbol.Class] || s.isInstanceOf[Tasty.Symbol.Trait] || s.isInstanceOf[Tasty.Symbol.Object]
+                )
+                val _typeM: Chunk[Tasty.Symbol] = sym.declarationIds.map(cp.symbol).filter(s =>
+                    s.isInstanceOf[Tasty.Symbol.TypeAlias] ||
+                        s.isInstanceOf[Tasty.Symbol.OpaqueType] ||
+                        s.isInstanceOf[Tasty.Symbol.AbstractType]
+                )
+                val _find: Maybe[Tasty.Symbol] = Maybe.fromOption(sym.declarationIds.map(cp.symbol).find(_.simpleName == "anything"))
+                val _showEff: String < Sync    = Tasty.show(sym)
+                for
+                    _owner   <- Tasty.owner(sym)
+                    _parents <- Tasty.parents(sym.asInstanceOf[Tasty.Symbol.ClassLike])
+                yield succeed
+                end for
     }
 
 end SymbolResolutionTest

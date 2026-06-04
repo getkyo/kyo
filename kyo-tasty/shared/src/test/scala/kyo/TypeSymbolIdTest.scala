@@ -77,20 +77,22 @@ class TypeSymbolIdTest extends Test:
       * both calls compile and resolve to the enum member. Pins: INV-009 (member methods on owned types).
       */
     "isSubtypeOf and show are member methods, not extensions" in run {
-        Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
+        Tasty.withPickles(Chunk.empty):
             val t: Tasty.Type     = Tasty.Type.Named(SymbolId(0))
             val other: Tasty.Type = Tasty.Type.Named(SymbolId(1))
-            // Both calls must compile as member method calls (no import of any extension namespace).
-            val verdict: Tasty.SubtypeVerdict = Tasty.isSubtypeOf(t, other)
-            val showResult: String            = Tasty.typeShow(t)
-            assert(
-                verdict == Tasty.SubtypeVerdict.Sub ||
-                    verdict == Tasty.SubtypeVerdict.NotSub ||
-                    verdict == Tasty.SubtypeVerdict.Unknown,
-                s"isSubtypeOf returned an unexpected verdict: $verdict"
-            )
-            assert(showResult.nonEmpty, s"show returned empty string")
+            for
+                verdict    <- Tasty.isSubtypeOf(t, other)
+                showResult <- Tasty.typeShow(t)
+            yield
+                assert(
+                    verdict == Tasty.SubtypeVerdict.Sub ||
+                        verdict == Tasty.SubtypeVerdict.NotSub ||
+                        verdict == Tasty.SubtypeVerdict.Unknown,
+                    s"isSubtypeOf returned an unexpected verdict: $verdict"
+                )
+                assert(showResult.nonEmpty, s"show returned empty string")
+                succeed
+            end for
     }
 
 end TypeSymbolIdTest

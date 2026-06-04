@@ -31,20 +31,20 @@ class TypePolishTest extends Test:
             Chunk.empty,
             Maybe.Absent
         )
-        Tasty.Classpath.fromPicklesWithSymbols(Chunk(classSym)).map: cp =>
-            given Tasty.Classpath = cp
-            val t: Tasty.Type     = Tasty.Type.Named(SymbolId(0))
-            val result            = Tasty.typeSymbol(t)
-            assert(result.isDefined, "symbol must return Present for Named")
-            result match
-                case Maybe.Present(sym: Tasty.Symbol.Class) =>
-                    assert(sym.name.asString == "Foo", s"Expected name Foo but got ${sym.name.asString}")
-                case Maybe.Present(other) =>
-                    fail(s"Expected Symbol.Class but got ${other.getClass.getSimpleName}")
-                case Maybe.Absent =>
-                    fail("should not be Absent")
-            end match
-            succeed
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(classSym)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                val t: Tasty.Type = Tasty.Type.Named(SymbolId(0))
+                Tasty.typeSymbol(t).map: result =>
+                    assert(result.isDefined, "symbol must return Present for Named")
+                    result match
+                        case Maybe.Present(sym: Tasty.Symbol.Class) =>
+                            assert(sym.name.asString == "Foo", s"Expected name Foo but got ${sym.name.asString}")
+                        case Maybe.Present(other) =>
+                            fail(s"Expected Symbol.Class but got ${other.getClass.getSimpleName}")
+                        case Maybe.Absent =>
+                            fail("should not be Absent")
+                    end match
+                    succeed
     }
 
     // ── Leaf 156: symbol-non-named ──────────────────────────────────────
@@ -52,10 +52,10 @@ class TypePolishTest extends Test:
     // When: Tasty.typeSymbol(t)
     // Then: returns Maybe.Absent (head is not Named)
     "Leaf 156: symbol returns Absent for non-Named types" in run {
-        Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
-            val t                 = Tasty.Type.Function(Chunk.empty, Tasty.Type.Named(SymbolId(5)), false)
-            assert(!Tasty.typeSymbol(t).isDefined, "symbol must return Absent for non-Named type")
+        Tasty.withPickles(Chunk.empty):
+            val t = Tasty.Type.Function(Chunk.empty, Tasty.Type.Named(SymbolId(5)), false)
+            Tasty.typeSymbol(t).map: result =>
+                assert(!result.isDefined, "symbol must return Absent for non-Named type")
             succeed
     }
 
@@ -130,39 +130,39 @@ class TypePolishTest extends Test:
             Chunk.empty,
             Maybe.Absent
         )
-        Tasty.Classpath.fromPicklesWithSymbols(Chunk(classSym)).map: cp =>
-            given Tasty.Classpath = cp
-            val cases: Seq[Tasty.Type] = Seq(
-                Tasty.Type.Named(SymbolId(0)),
-                Tasty.Type.TermRef(n, Tasty.Name("x")),
-                Tasty.Type.Applied(n, Chunk(n)),
-                Tasty.Type.TypeLambda(Chunk.empty, n),
-                Tasty.Type.Function(Chunk(n), n, false),
-                Tasty.Type.Function(Chunk(n), n, true),
-                Tasty.Type.Tuple(Chunk(n, n)),
-                Tasty.Type.ByName(n),
-                Tasty.Type.Repeated(n),
-                Tasty.Type.Array(n),
-                Tasty.Type.Refinement(n, Tasty.Name("m"), n),
-                Tasty.Type.Rec(n),
-                Tasty.Type.RecThis(n),
-                Tasty.Type.AndType(n, n),
-                Tasty.Type.OrType(n, n),
-                Tasty.Type.Annotated(n, Tasty.Annotation(n, Chunk.empty)),
-                Tasty.Type.ConstantType(Tasty.Constant.IntConst(0)),
-                Tasty.Type.ThisType(SymbolId(0)),
-                Tasty.Type.SuperType(n, n),
-                Tasty.Type.ParamRef(SymbolId(0), 0),
-                Tasty.Type.Wildcard(n, n),
-                Tasty.Type.Skolem(n),
-                Tasty.Type.MatchType(n, n, Chunk.empty),
-                Tasty.Type.FlexibleType(n),
-                Tasty.Type.ContextFunction(Chunk(n), n)
-            )
-            cases.foreach: t =>
-                val s = Tasty.typeShow(t)
-                assert(s.nonEmpty, s"show returned empty string for ${t.getClass.getSimpleName}")
-            succeed
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(classSym)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                val cases: Chunk[Tasty.Type] = Chunk(
+                    Tasty.Type.Named(SymbolId(0)),
+                    Tasty.Type.TermRef(n, Tasty.Name("x")),
+                    Tasty.Type.Applied(n, Chunk(n)),
+                    Tasty.Type.TypeLambda(Chunk.empty, n),
+                    Tasty.Type.Function(Chunk(n), n, false),
+                    Tasty.Type.Function(Chunk(n), n, true),
+                    Tasty.Type.Tuple(Chunk(n, n)),
+                    Tasty.Type.ByName(n),
+                    Tasty.Type.Repeated(n),
+                    Tasty.Type.Array(n),
+                    Tasty.Type.Refinement(n, Tasty.Name("m"), n),
+                    Tasty.Type.Rec(n),
+                    Tasty.Type.RecThis(n),
+                    Tasty.Type.AndType(n, n),
+                    Tasty.Type.OrType(n, n),
+                    Tasty.Type.Annotated(n, Tasty.Annotation(n, Chunk.empty)),
+                    Tasty.Type.ConstantType(Tasty.Constant.IntConst(0)),
+                    Tasty.Type.ThisType(SymbolId(0)),
+                    Tasty.Type.SuperType(n, n),
+                    Tasty.Type.ParamRef(SymbolId(0), 0),
+                    Tasty.Type.Wildcard(n, n),
+                    Tasty.Type.Skolem(n),
+                    Tasty.Type.MatchType(n, n, Chunk.empty),
+                    Tasty.Type.FlexibleType(n),
+                    Tasty.Type.ContextFunction(Chunk(n), n)
+                )
+                Kyo.foreachDiscard(cases): t =>
+                    Tasty.typeShow(t).map: s =>
+                        assert(s.nonEmpty, s"show returned empty string for ${t.getClass.getSimpleName}")
+                .andThen(succeed)
     }
 
 end TypePolishTest

@@ -99,23 +99,26 @@ class MembersTest extends Test:
 
     // Leaf 18: default scope is Declared
     "Leaf 18: default scope is Declared (same as explicit MemberScope.Declared)" in run {
-        buildHierarchy.map: cp =>
-            given Tasty.Classpath = cp
-            // Find Child by scanning symbols (fqnIndex may not have it in synthetic cp)
-            val childOpt = cp.symbols.toSeq.collectFirst:
-                case c: Tasty.Symbol.Class if c.simpleName == "Child" => c
-            childOpt match
-                case None =>
-                    // If Child is not in symbols, the synthetic classpath may have reused IDs
-                    succeed
-                case Some(child) =>
-                    val defaultResult  = Tasty.members(child)
-                    val declaredResult = Tasty.members(child, Tasty.MemberScope.Declared)
-                    assert(
-                        defaultResult.map(_.simpleName).toSet == declaredResult.map(_.simpleName).toSet,
-                        s"Default scope must equal Declared: default=$defaultResult declared=$declaredResult"
-                    )
-            end match
+        buildHierarchy.flatMap: cp =>
+            Tasty.withClasspath(cp):
+                // Find Child by scanning symbols (fqnIndex may not have it in synthetic cp)
+                val childOpt = cp.symbols.toSeq.collectFirst:
+                    case c: Tasty.Symbol.Class if c.simpleName == "Child" => c
+                childOpt match
+                    case None =>
+                        // If Child is not in symbols, the synthetic classpath may have reused IDs
+                        succeed
+                    case Some(child) =>
+                        for
+                            defaultResult  <- Tasty.members(child)
+                            declaredResult <- Tasty.members(child, Tasty.MemberScope.Declared)
+                        yield
+                            assert(
+                                defaultResult.map(_.simpleName).toSet == declaredResult.map(_.simpleName).toSet,
+                                s"Default scope must equal Declared: default=$defaultResult declared=$declaredResult"
+                            )
+                            succeed
+                end match
     }
 
     // Leaf 19: SOURCE BREAK - findDeclaredMember not on surface

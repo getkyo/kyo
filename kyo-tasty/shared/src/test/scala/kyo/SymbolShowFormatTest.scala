@@ -133,9 +133,10 @@ class SymbolShowFormatTest extends Test:
     "Leaf 151: show(FullyQualified) returns dotted FQN" in run {
         buildFixture.flatMap: cp =>
             val c = cp.findClass("scala.collection.List").get
-            c.show(Tasty.ShowFormat.FullyQualified)(using summon[Frame], cp).map: out =>
-                assert(out == "scala.collection.List", s"Unexpected: $out")
-                succeed
+            Tasty.withClasspath(cp):
+                Tasty.show(c, Tasty.ShowFormat.FullyQualified).map: out =>
+                    assert(out == "scala.collection.List", s"Unexpected: $out")
+                    succeed
     }
 
     // ── Leaf 152: show-Simple ─────────────────────────────────────────────────
@@ -146,9 +147,10 @@ class SymbolShowFormatTest extends Test:
     "Leaf 152: show(Simple) returns simple name" in run {
         buildFixture.flatMap: cp =>
             val c = cp.findClass("scala.collection.List").get
-            c.show(Tasty.ShowFormat.Simple)(using summon[Frame], cp).map: out =>
-                assert(out == "List", s"Unexpected: $out")
-                succeed
+            Tasty.withClasspath(cp):
+                Tasty.show(c, Tasty.ShowFormat.Simple).map: out =>
+                    assert(out == "List", s"Unexpected: $out")
+                    succeed
     }
 
     // ── Leaf 153: show-Code-method ────────────────────────────────────────────
@@ -159,10 +161,11 @@ class SymbolShowFormatTest extends Test:
     "Leaf 153: show(Code) for method starts with def name and has params" in run {
         buildFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(4)).asInstanceOf[Tasty.Symbol.Method]
-            m.show(Tasty.ShowFormat.Code)(using summon[Frame], cp).map: out =>
-                assert(out.startsWith("def foo"), s"Expected 'def foo...' but got: $out")
-                assert(out.contains("(x: "), s"Expected '(x: ' in: $out")
-                succeed
+            Tasty.withClasspath(cp):
+                Tasty.show(m, Tasty.ShowFormat.Code).map: out =>
+                    assert(out.startsWith("def foo"), s"Expected 'def foo...' but got: $out")
+                    assert(out.contains("(x: "), s"Expected '(x: ' in: $out")
+                    succeed
     }
 
     // ── Leaf 154: show-Code-classlike ─────────────────────────────────────────
@@ -173,12 +176,13 @@ class SymbolShowFormatTest extends Test:
     "Leaf 154: show(Code) for class contains kind, name, type params, and extends clause" in run {
         buildFixture.flatMap: cp =>
             val c = cp.findClass("scala.collection.List").get
-            c.show(Tasty.ShowFormat.Code)(using summon[Frame], cp).map: out =>
-                assert(out.contains("class List"), s"Expected 'class List' in: $out")
-                assert(out.contains("[A]"), s"Expected '[A]' in: $out")
-                assert(out.contains("extends"), s"Expected 'extends' in: $out")
-                assert(out.contains("D"), s"Expected 'D' in: $out")
-                succeed
+            Tasty.withClasspath(cp):
+                Tasty.show(c, Tasty.ShowFormat.Code).map: out =>
+                    assert(out.contains("class List"), s"Expected 'class List' in: $out")
+                    assert(out.contains("[A]"), s"Expected '[A]' in: $out")
+                    assert(out.contains("extends"), s"Expected 'extends' in: $out")
+                    assert(out.contains("D"), s"Expected 'D' in: $out")
+                    succeed
     }
 
 end SymbolShowFormatTest

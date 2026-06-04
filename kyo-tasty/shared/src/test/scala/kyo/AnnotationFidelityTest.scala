@@ -83,7 +83,7 @@ class AnnotationFidelityTest extends Test:
                 classpath.symbolsAnnotatedWith("scala.deprecated").flatMap: annotated =>
                     assert(annotated.nonEmpty, "Expected at least one @deprecated symbol (embedded AnnotatedFixture has 2)")
                     val sym = annotated.head
-                    Tasty.hasAnnotation(sym, "scala.deprecated")(using summon[Frame], classpath).map: has =>
+                    Tasty.hasAnnotation(sym, "scala.deprecated").map: has =>
                         assert(
                             has,
                             s"Symbol ${sym.name.asString} should report hasAnnotation(scala.deprecated)"

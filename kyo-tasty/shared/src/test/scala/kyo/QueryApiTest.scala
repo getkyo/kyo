@@ -536,7 +536,7 @@ class QueryApiTest extends Test:
     }
 
     // Phase 3 Test 2 (G22): sym.typeParamIds for GenericBox[A] returns a Chunk of length 1.
-    // plan: phase-02 update; sym.typeParams (Chunk[Symbol]) becomes sym.typeParamIds (Chunk[SymbolId]).
+    // plan: phase-02 update; sym.typeParamIds.map(cp.symbol) (Chunk[Symbol]) becomes sym.typeParamIds (Chunk[SymbolId]).
     // Resolve SymbolId to Symbol via allSymbols for name check.
     "Phase 3: sym.typeParamIds for GenericBox[A] returns length 1 (phase-02 inline)" in run {
         val src = MemoryFileSource()
@@ -592,7 +592,7 @@ class QueryApiTest extends Test:
 
     // Phase 3 Test 4 (G21 post-close): sym.parents after classpath close returns the pre-populated Chunk.
     // After Phase 7, parents are stored as plain Chunk fields in the case class, so they remain valid after close.
-    "Phase 3: sym.parents after classpath close returns the pre-populated Chunk (no failure)" in run {
+    "Phase 3: sym.parents after classpath close returns the pre-populated parentTypes Chunk (no failure)" in run {
         // Capture the symbol from inside the scope, then check parents after scope exits.
         // Scope.run returns Result[TastyError, Symbol] after running finalizers (closing classpath).
         val captureResult: Result[TastyError, Tasty.Symbol] < Async =
@@ -618,10 +618,10 @@ class QueryApiTest extends Test:
     }
 
     // Phase 3 Test 5 (G21/G22/G23 classfile): for ArrayRecord.class (Java record), sym.parents includes
-    // java.lang.Record; sym.typeParams is empty (non-generic); sym.declarations is non-empty.
+    // java.lang.Record; sym.typeParamIds.map(cp.symbol) is empty (non-generic); sym.declarationIds.map(cp.symbol) is non-empty.
     // Note: this test uses ClassfileUnpickler directly (pre-finalizeMerge). The relational fields
     // (parentTypes/typeParamIds/declarationIds) on the partial classSymbol are empty at this stage;
-    // we read the pre-merge ClassfileResult fields (cr.parents, cr.typeParams, cr.symbols) directly.
+    // we read the pre-merge ClassfileResult fields (cr.parents, cr.typeParamIds.map(cp.symbol), cr.symbols) directly.
     // Phase 09 adds sym.parents/typeParams/declarations as member methods accessible post-finalizeMerge.
     "Phase 3: Java classfile symbol parents, typeParams, declarations are accessible" in run {
         val bytes = kyo.fixtures.Embedded.arrayRecordClass
@@ -642,8 +642,8 @@ class QueryApiTest extends Test:
                             case Tasty.Type.Applied(_, _) => true
                             case _                        => false
                         assert(hasNamedOrApplied, s"Expected at least one Named/Applied parent")
-                        assert(typeParams.isEmpty, s"Expected no typeParamIds for ArrayRecord but got ${typeParams.length}")
-                        assert(decls.nonEmpty, s"Expected non-empty declarationIds for ArrayRecord but got empty")
+                        assert(typeParams.isEmpty, s"Expected no typeParams for ArrayRecord but got ${typeParams.length}")
+                        assert(decls.nonEmpty, s"Expected non-empty symbols for ArrayRecord but got empty")
                     case Result.Failure(e) =>
                         fail(s"Unexpected failure calling cr.parents/typeParams/symbols: $e")
                     case Result.Panic(t) =>
@@ -670,8 +670,7 @@ class QueryApiTest extends Test:
                 // Find the Class-kind symbol for SomeCaseClass (fqnIndex key: "kyo.fixtures.SomeCaseClass").
                 cp.findClass("kyo.fixtures.SomeCaseClass") match
                     case Present(classSym) =>
-                        given Tasty.Classpath = cp
-                        Kyo.lift(classSym.companion)
+                        Kyo.lift(cp.companion(classSym))
                     case Absent =>
                         Abort.fail(TastyError.NotImplemented("SomeCaseClass not found"))).map:
                 case Result.Success(Present(compSym)) =>
@@ -694,15 +693,13 @@ class QueryApiTest extends Test:
                 // Companion object is registered with "$" suffix in fqnIndex.
                 cp.findClass("kyo.fixtures.SomeCaseClass$") match
                     case Present(objSym) =>
-                        given Tasty.Classpath = cp
-                        Kyo.lift(objSym.companion)
+                        Kyo.lift(cp.companion(objSym))
                     case Absent =>
                         // Some TASTy encodings register the object without "$"; try topLevelClasses.
                         val objSym = cp.topLevelClasses.find(_.kind == Tasty.SymbolKind.Object)
                         objSym match
                             case Some(s) =>
-                                given Tasty.Classpath = cp
-                                Kyo.lift(s.companion)
+                                Kyo.lift(cp.companion(s))
                             case None =>
                                 Abort.fail(TastyError.NotImplemented("SomeCaseClass$ not found in fqnIndex"))).map:
                 case Result.Success(Present(compSym)) =>
@@ -724,8 +721,7 @@ class QueryApiTest extends Test:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
                     case Present(sym) =>
-                        given Tasty.Classpath = cp
-                        Kyo.lift(sym.companion)
+                        Kyo.lift(cp.companion(sym))
                     case Absent =>
                         Abort.fail(TastyError.NotImplemented("PlainClass not found"))).map:
                 case Result.Success(Absent) =>
@@ -753,8 +749,7 @@ class QueryApiTest extends Test:
             case Result.Panic(t)   => throw t
             case Result.Success(sym) =>
                 Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
-                    given Tasty.Classpath = cp
-                    val companion         = sym.companion
+                    val companion = cp.companion(sym)
                     assert(companion == Maybe.Absent, s"Expected Absent companion on empty classpath but got $companion")
     }
 

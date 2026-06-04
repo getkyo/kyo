@@ -35,10 +35,9 @@ class PortedTastyBugTest extends Test:
     // `findObject` resolves it.
     "tasty-query#74: object FQN exposes only the Object symbol, not a Class" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
-            val fqn               = s"$FixturePkg.PortedBug74Object"
-            val asClass           = cp.findClass(fqn)
-            val asObject          = cp.findObject(fqn)
+            val fqn      = s"$FixturePkg.PortedBug74Object"
+            val asClass  = cp.findClass(fqn)
+            val asObject = cp.findObject(fqn)
             assert(asObject.isDefined, s"findObject($fqn) must resolve to the Object symbol")
             assert(asClass.isEmpty, s"findClass($fqn) must be Absent (no class artifact at TASTy level), got $asClass")
             succeed
@@ -53,11 +52,10 @@ class PortedTastyBugTest extends Test:
     // both reachable by FQN.
     "tasty-query#71/#72: nested package member and inner object both resolve by FQN" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
-            val pkgFqn            = s"$FixturePkg.portedBug71Outer.portedBug71Inner"
-            val markerFqn         = s"$pkgFqn.Marker"
-            val pkg               = cp.findPackage(pkgFqn)
-            val marker            = cp.findObject(markerFqn)
+            val pkgFqn    = s"$FixturePkg.portedBug71Outer.portedBug71Inner"
+            val markerFqn = s"$pkgFqn.Marker"
+            val pkg       = cp.findPackage(pkgFqn)
+            val marker    = cp.findObject(markerFqn)
             assert(pkg.isDefined, s"findPackage($pkgFqn) must resolve the nested package")
             assert(marker.isDefined, s"findObject($markerFqn) must resolve the object inside the nested package")
             succeed
@@ -70,21 +68,21 @@ class PortedTastyBugTest extends Test:
     // Post-fix behavior: a subtype query on a `outer.Inner` reference terminates
     // and returns a definitive verdict.
     "tasty-query#193: subtype query on path-dependent inner class terminates" in run {
-        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
-            val outer             = cp.findClass(s"$FixturePkg.PortedBug193Outer")
-            val sup               = cp.findClass(s"$FixturePkg.PortedBug193SuperClass")
-            (outer, sup) match
-                case (kyo.Maybe.Present(o), kyo.Maybe.Present(s)) =>
-                    val outerTpe = Tasty.Type.Named(o.id)
-                    val supTpe   = Tasty.Type.Named(s.id)
-                    // Outer is unrelated to SuperClass: must return NotSub or Unknown, never loop.
-                    val verdict = Tasty.isSubtypeOf(outerTpe, supTpe)
-                    assert(verdict != null, "subtype query must return a verdict, not loop")
-                    succeed
-                case _ =>
-                    fail(s"Expected fixtures PortedBug193Outer and PortedBug193SuperClass on classpath")
-            end match
+        TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                val outer = cp.findClass(s"$FixturePkg.PortedBug193Outer")
+                val sup   = cp.findClass(s"$FixturePkg.PortedBug193SuperClass")
+                (outer, sup) match
+                    case (kyo.Maybe.Present(o), kyo.Maybe.Present(s)) =>
+                        val outerTpe = Tasty.Type.Named(o.id)
+                        val supTpe   = Tasty.Type.Named(s.id)
+                        // Outer is unrelated to SuperClass: must return NotSub or Unknown, never loop.
+                        Tasty.isSubtypeOf(outerTpe, supTpe).map: verdict =>
+                            assert(verdict != null, "subtype query must return a verdict, not loop")
+                            succeed
+                    case _ =>
+                        fail(s"Expected fixtures PortedBug193Outer and PortedBug193SuperClass on classpath")
+                end match
     }
 
     // ── tasty-query#195 ───────────────────────────────────────────────────────
@@ -96,12 +94,11 @@ class PortedTastyBugTest extends Test:
     // val (which is fine for findMember; the bug was in qualifier resolution).
     "tasty-query#195: parent val survives findMember even when child has private ctor param of same name" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             val parent = cp.findClass(s"$FixturePkg.PortedBug195$$.Parent")
                 .orElse(cp.findClass(s"$FixturePkg.PortedBug195$$Parent"))
             parent match
                 case kyo.Maybe.Present(p) =>
-                    val yMember = p.findDeclaredMember("y")
+                    val yMember = Maybe.fromOption(p.declarationIds.map(cp.symbol).find(_.simpleName == "y"))
                     assert(yMember.isDefined, s"Parent.y must be findable; got $yMember")
                     succeed
                 case kyo.Maybe.Absent =>
@@ -118,8 +115,7 @@ class PortedTastyBugTest extends Test:
     // the synthetic package object are reachable.
     "tasty-query#263: class and top-level defs in same file produce both class and package-object" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
-            val cls               = cp.findClass(s"$FixturePkg.PortedBug263ClassAndPackageObjectSameName")
+            val cls = cp.findClass(s"$FixturePkg.PortedBug263ClassAndPackageObjectSameName")
             assert(cls.isDefined, "user class must be findable")
             // The synthetic top-level method lives in the per-file package object;
             // we just assert it is callable through the classpath-wide method scan.
@@ -135,11 +131,10 @@ class PortedTastyBugTest extends Test:
     // Post-fix behavior: decoding the enum's body or methods does not raise.
     "tasty-query#380: enum extending java.lang.Enum[Self] decodes without raising" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findClassLike(s"$FixturePkg.PortedBug380Foo") match
                 case kyo.Maybe.Present(sym) =>
                     // Touching declarations forces decode of constructor / parent.
-                    val decls = sym.declarations
+                    val decls = sym.declarationIds.map(cp.symbol)
                     assert(decls != null, "decoded declarations chunk must not be null")
                     succeed
                 case kyo.Maybe.Absent =>
@@ -155,10 +150,9 @@ class PortedTastyBugTest extends Test:
     // without raising; the refining anonymous-class type member is reachable.
     "tasty-query#415: refinement-introduced anonymous type member does not raise on decode" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug415Holder") match
                 case kyo.Maybe.Present(holder) =>
-                    val methods = holder.declarations.filter(_.isInstanceOf[Tasty.Symbol.Method])
+                    val methods = holder.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method])
                     assert(
                         methods.exists(_.name.asString == "makeF"),
                         s"makeF must be visible; got ${methods.map(_.name.asString)}"
@@ -175,10 +169,9 @@ class PortedTastyBugTest extends Test:
     // Post-fix behavior: AnyVal subclass's user-defined method is findable.
     "tasty-query#428: value class user method is findable as a declared member" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findClass(s"$FixturePkg.PortedBug428ValueClass") match
                 case kyo.Maybe.Present(cls) =>
-                    val doubled = cls.findDeclaredMember("doubled")
+                    val doubled = Maybe.fromOption(cls.declarationIds.map(cp.symbol).find(_.simpleName == "doubled"))
                     assert(doubled.isDefined, "value class method 'doubled' must be findable")
                     succeed
                 case kyo.Maybe.Absent =>
@@ -194,10 +187,9 @@ class PortedTastyBugTest extends Test:
     // attributable to this fixture.
     "tasty-query#134: match-type declared type decodes without raising" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug134") match
                 case kyo.Maybe.Present(holder) =>
-                    val v = holder.findDeclaredMember("v")
+                    val v = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "v"))
                     assert(v.isDefined, "val v must be visible inside PortedBug134")
                     succeed
                 case kyo.Maybe.Absent =>
@@ -213,13 +205,12 @@ class PortedTastyBugTest extends Test:
     // findMember returns at least one match.
     "tasty-query#187: both overloads of foo are visible in declarations" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findClass(s"$FixturePkg.PortedBug187OverloadedApply") match
                 case kyo.Maybe.Present(cls) =>
-                    val foos = cls.declarations.filter(_.name.asString == "foo")
+                    val foos = cls.declarationIds.map(cp.symbol).filter(_.name.asString == "foo")
                     assert(
                         foos.length >= 2,
-                        s"expected at least 2 overloads of foo, found ${foos.length}: ${foos.map(_.signature)}"
+                        s"expected at least 2 overloads of foo, found ${foos.length}: ${foos.map(_.simpleName)}"
                     )
                     succeed
                 case kyo.Maybe.Absent =>
@@ -235,10 +226,9 @@ class PortedTastyBugTest extends Test:
     // qualifier).
     "tasty-query#125: ContextFunction reference resolves to Type.ContextFunction" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug125") match
                 case kyo.Maybe.Present(holder) =>
-                    val v = holder.declarations.find(_.name.asString == "asContextFn")
+                    val v = holder.declarationIds.map(cp.symbol).find(_.name.asString == "asContextFn")
                     assert(v.isDefined, "asContextFn must be a declared member")
                     succeed
                 case kyo.Maybe.Absent =>
@@ -252,7 +242,6 @@ class PortedTastyBugTest extends Test:
     // Post-fix behavior: identity[A](42) decodes; the holder object loads.
     "tasty-query#192: generic identity call decodes without raising" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug192").isDefined match
                 case true  => succeed
                 case false => fail("PortedBug192 missing from classpath")
@@ -266,10 +255,9 @@ class PortedTastyBugTest extends Test:
     // and the method is reachable.
     "tasty-query#224: super-select inside override decodes without raising" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findClass(s"$FixturePkg.PortedBug224C") match
                 case kyo.Maybe.Present(cls) =>
-                    val m = cls.findDeclaredMember("m")
+                    val m = Maybe.fromOption(cls.declarationIds.map(cp.symbol).find(_.simpleName == "m"))
                     assert(m.isDefined, "C.m must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug224C missing")
@@ -284,10 +272,9 @@ class PortedTastyBugTest extends Test:
     // the holder's classify method is visible.
     "tasty-query#357: qualified TypeTest patterns decode without raising" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug357") match
                 case kyo.Maybe.Present(holder) =>
-                    val classify = holder.findDeclaredMember("classify")
+                    val classify = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "classify"))
                     assert(classify.isDefined, "classify method must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug357 missing")
@@ -302,8 +289,7 @@ class PortedTastyBugTest extends Test:
     // classpath errors are empty for our fixtures (regardless of stdlib).
     "tasty-query#412: top-level def is reachable; fixture decode is consistent" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
-            val methods           = cp.allMethods.filter(_.name.asString == "portedBug412topLevel")
+            val methods = cp.allMethods.filter(_.name.asString == "portedBug412topLevel")
             assert(methods.nonEmpty, "portedBug412topLevel must be reachable via allMethods")
             succeed
     }
@@ -315,10 +301,9 @@ class PortedTastyBugTest extends Test:
     // surrounding `parsed` val is visible.
     "tasty-query#414: enum.valueOf call decodes without raising" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug414") match
                 case kyo.Maybe.Present(holder) =>
-                    val parsed = holder.findDeclaredMember("parsed")
+                    val parsed = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "parsed"))
                     assert(parsed.isDefined, "val parsed (calls Color.valueOf) must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug414 missing")
@@ -332,10 +317,9 @@ class PortedTastyBugTest extends Test:
     // decodes; the wrapper object is reachable.
     "tasty-query#424: inline def returning path-dependent type decodes" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug424") match
                 case kyo.Maybe.Present(holder) =>
-                    val proxy = holder.findDeclaredMember("proxy")
+                    val proxy = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "proxy"))
                     assert(proxy.isDefined, "inline def proxy must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug424 missing")
@@ -351,10 +335,9 @@ class PortedTastyBugTest extends Test:
     // reachable.
     "tasty-query#464: scala.collection.immutable.Map reference decodes without raising" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug464") match
                 case kyo.Maybe.Present(holder) =>
-                    val m = holder.findDeclaredMember("m")
+                    val m = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "m"))
                     assert(m.isDefined, "val m typed as Map[String, Int] must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug464 missing")
@@ -369,10 +352,9 @@ class PortedTastyBugTest extends Test:
     // without timing out; the val is visible.
     "tasty-query#401: recursive match type holder loads without looping" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug401") match
                 case kyo.Maybe.Present(holder) =>
-                    val x = holder.findDeclaredMember("x")
+                    val x = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "x"))
                     assert(x.isDefined, "val x typed as Flatten[Int] must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug401 missing")
@@ -386,10 +368,9 @@ class PortedTastyBugTest extends Test:
     // Post-fix behavior: a polymorphic method with `<: Any` bound decodes.
     "tasty-query#108: polymorphic method with <: Any bound decodes" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findClass(s"$FixturePkg.PortedBug108") match
                 case kyo.Maybe.Present(cls) =>
-                    val poly = cls.findDeclaredMember("poly")
+                    val poly = Maybe.fromOption(cls.declarationIds.map(cp.symbol).find(_.simpleName == "poly"))
                     assert(poly.isDefined, "poly method must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug108 missing")
@@ -404,10 +385,9 @@ class PortedTastyBugTest extends Test:
     // an instantiation loads and the type alias is visible.
     "tasty-query#7: type lambda parameter references decode" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug7") match
                 case kyo.Maybe.Present(holder) =>
-                    val inst = holder.declarations.find(_.name.asString == "Inst")
+                    val inst = holder.declarationIds.map(cp.symbol).find(_.name.asString == "Inst")
                     assert(inst.isDefined, "type Inst must be a declared member")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug7 missing")
@@ -422,10 +402,9 @@ class PortedTastyBugTest extends Test:
     // alias and val are both visible.
     "tasty-query#213: refinement type alias decodes" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug213") match
                 case kyo.Maybe.Present(holder) =>
-                    val r = holder.findDeclaredMember("r")
+                    val r = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "r"))
                     assert(r.isDefined, "val r (refined type) must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug213 missing")
@@ -439,10 +418,9 @@ class PortedTastyBugTest extends Test:
     // visible.
     "tasty-query#172: Outer#Inner method signature decodes" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findClass(s"$FixturePkg.PortedBug172Outer") match
                 case kyo.Maybe.Present(cls) =>
-                    val make = cls.findDeclaredMember("make")
+                    val make = Maybe.fromOption(cls.declarationIds.map(cp.symbol).find(_.simpleName == "make"))
                     assert(make.isDefined, "method make returning Outer#Inner must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug172Outer missing")
@@ -456,10 +434,9 @@ class PortedTastyBugTest extends Test:
     // decodes; wrap is visible.
     "tasty-query#403: path-dependent opaque type alias decodes" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findClass(s"$FixturePkg.PortedBug403Container") match
                 case kyo.Maybe.Present(cls) =>
-                    val wrap = cls.findDeclaredMember("wrap")
+                    val wrap = Maybe.fromOption(cls.declarationIds.map(cp.symbol).find(_.simpleName == "wrap"))
                     assert(wrap.isDefined, "wrap method must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug403Container missing")
@@ -473,10 +450,9 @@ class PortedTastyBugTest extends Test:
     // method is visible.
     "tasty-query#116: IArray[String] method signature decodes" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findTrait(s"$FixturePkg.PortedBug116IArraySig") match
                 case kyo.Maybe.Present(trt) =>
-                    val from = trt.findDeclaredMember("from")
+                    val from = Maybe.fromOption(trt.declarationIds.map(cp.symbol).find(_.simpleName == "from"))
                     assert(from.isDefined, "from method must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug116IArraySig missing")
@@ -491,11 +467,12 @@ class PortedTastyBugTest extends Test:
     // and raw field are reachable.
     "tasty-query#405: parametric value class decodes with raw field visible" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findClass(s"$FixturePkg.PortedBug405ParamValueClass") match
                 case kyo.Maybe.Present(cls) =>
                     val ctors =
-                        cls.declarations.filter(s => s.isInstanceOf[Tasty.Symbol.Method] && s.simpleName == "<init>").asInstanceOf[Chunk[
+                        cls.declarationIds.map(cp.symbol).filter(s =>
+                            s.isInstanceOf[Tasty.Symbol.Method] && s.simpleName == "<init>"
+                        ).asInstanceOf[Chunk[
                             Tasty.Symbol.Method
                         ]]
                     assert(ctors.nonEmpty, "constructor must be visible")
@@ -511,10 +488,9 @@ class PortedTastyBugTest extends Test:
     // is visible.
     "tasty-query#178: java.util.Map.Entry reference decodes" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug178") match
                 case kyo.Maybe.Present(holder) =>
-                    val getEntry = holder.findDeclaredMember("getEntry")
+                    val getEntry = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "getEntry"))
                     assert(getEntry.isDefined, "getEntry method must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug178 missing")
@@ -528,11 +504,12 @@ class PortedTastyBugTest extends Test:
     // without classpath errors attributable to the fixture.
     "tasty-query#80: java.util.List[String] field does not trigger transitive forcing crash" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findClass(s"$FixturePkg.PortedBug80UsesRawAware") match
                 case kyo.Maybe.Present(cls) =>
                     val ctors =
-                        cls.declarations.filter(s => s.isInstanceOf[Tasty.Symbol.Method] && s.simpleName == "<init>").asInstanceOf[Chunk[
+                        cls.declarationIds.map(cp.symbol).filter(s =>
+                            s.isInstanceOf[Tasty.Symbol.Method] && s.simpleName == "<init>"
+                        ).asInstanceOf[Chunk[
                             Tasty.Symbol.Method
                         ]]
                     assert(ctors.nonEmpty, "constructor must be visible")
@@ -549,13 +526,12 @@ class PortedTastyBugTest extends Test:
     // concrete inline defs are visible.
     "scala3#11075: abstract+concrete inline def pair decodes" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
-            val abs               = cp.findTrait(s"$FixturePkg.PortedBug11075A")
-            val con               = cp.findClass(s"$FixturePkg.PortedBug11075B")
+            val abs = cp.findTrait(s"$FixturePkg.PortedBug11075A")
+            val con = cp.findClass(s"$FixturePkg.PortedBug11075B")
             (abs, con) match
                 case (kyo.Maybe.Present(a), kyo.Maybe.Present(c)) =>
-                    val aMethod = a.findDeclaredMember("a")
-                    val cMethod = c.findDeclaredMember("a")
+                    val aMethod = Maybe.fromOption(a.declarationIds.map(cp.symbol).find(_.simpleName == "a"))
+                    val cMethod = Maybe.fromOption(c.declarationIds.map(cp.symbol).find(_.simpleName == "a"))
                     assert(aMethod.isDefined, "abstract inline a must be visible")
                     assert(cMethod.isDefined, "concrete inline a must be visible")
                     succeed
@@ -570,10 +546,9 @@ class PortedTastyBugTest extends Test:
     // the bug fix made bind+typed patterns round-trip safely.
     "scala3#16843: typed-pattern bind in match decodes" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug16843") match
                 case kyo.Maybe.Present(holder) =>
-                    val go = holder.findDeclaredMember("go")
+                    val go = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "go"))
                     assert(go.isDefined, "method go must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug16843 missing")
@@ -588,10 +563,9 @@ class PortedTastyBugTest extends Test:
     // the subclass.
     "scala3#7022: overloaded foo retains both alternatives after decode" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findClass(s"$FixturePkg.PortedBug7022C") match
                 case kyo.Maybe.Present(c) =>
-                    val foos = c.declarations.filter(_.name.asString == "foo")
+                    val foos = c.declarationIds.map(cp.symbol).filter(_.name.asString == "foo")
                     assert(foos.nonEmpty, "C must declare at least one foo")
                     // Inherited generic foo[T] is in P[Int]; the override in C is mono.
                     succeed
@@ -606,17 +580,16 @@ class PortedTastyBugTest extends Test:
     // synthetic apply$default$N method is visible on the companion (Scala 3 side).
     "scala3#12704: case class with default param value decodes and exposes the default-arg method" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
-            val obj               = cp.findObject(s"$FixturePkg.PortedBug12704CaseClass")
-            val cls               = cp.findClass(s"$FixturePkg.PortedBug12704CaseClass")
+            val obj = cp.findObject(s"$FixturePkg.PortedBug12704CaseClass")
+            val cls = cp.findClass(s"$FixturePkg.PortedBug12704CaseClass")
             assert(cls.isDefined, "PortedBug12704CaseClass must be visible")
             obj match
                 case kyo.Maybe.Present(o) =>
                     // The Scala 3 companion exposes apply$default$1 for the default value.
-                    val defaultMethod = o.declarations.find(_.name.asString.contains("default"))
+                    val defaultMethod = o.declarationIds.map(cp.symbol).find(_.name.asString.contains("default"))
                     assert(
                         defaultMethod.isDefined,
-                        s"default-arg method must be visible on companion; got ${o.declarations.map(_.name.asString)}"
+                        s"default-arg method must be visible on companion; got ${o.declarationIds.map(cp.symbol).map(_.name.asString)}"
                     )
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug12704CaseClass companion missing")
@@ -631,11 +604,10 @@ class PortedTastyBugTest extends Test:
     // member decodes; both the outer object and the trait are visible.
     "scala3#25801: refinement with higher-kinded type member decodes" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug25801") match
                 case kyo.Maybe.Present(holder) =>
-                    val aux       = holder.declarations.find(_.name.asString == "Aux")
-                    val mapResTrt = holder.declarations.find(_.name.asString == "MapRes")
+                    val aux       = holder.declarationIds.map(cp.symbol).find(_.name.asString == "Aux")
+                    val mapResTrt = holder.declarationIds.map(cp.symbol).find(_.name.asString == "MapRes")
                     assert(aux.isDefined, "type Aux must be visible")
                     assert(mapResTrt.isDefined, "trait MapRes must be visible")
                     succeed
@@ -650,10 +622,9 @@ class PortedTastyBugTest extends Test:
     // decodes; the surrounding object loads.
     "tasty-query#284: bounded type alias with refined usage decodes" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug284") match
                 case kyo.Maybe.Present(holder) =>
-                    val v = holder.findDeclaredMember("v")
+                    val v = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "v"))
                     assert(v.isDefined, "val v (Bounded[String]) must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug284 missing")

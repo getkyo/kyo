@@ -98,10 +98,8 @@ class JavaSymbolTest extends Test:
             ClassfileUnpickler.read(bytes, new TypeArena).flatMap: cr =>
                 val sym = symWithId(cr.classSymbol, SymbolId(0), SymbolId(0))
                 Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).flatMap: cp =>
-                    given Tasty.Classpath = cp
-                    val s                 = cp.symbols(0)
-                    s.fullName.map: name =>
-                        val fqn = name.asString
+                    val s = cp.symbols(0)
+                    Sync.defer(cp.fullNameUnsafe(s).asString).map: fqn =>
                         assert(fqn.nonEmpty || s.name.asString.nonEmpty, s"Expected non-empty name for ArrayRecord symbol")
         .map:
             case Result.Success(_) => succeed
@@ -110,18 +108,17 @@ class JavaSymbolTest extends Test:
     }
 
     // -------------------------------------------------------------------------
-    // Test 2: binaryName - Phase 09 restores sym.binaryName.
+    // Test 2: binaryName - Phase 09 restores kyo.internal.tasty.symbol.BinaryName.compute(sym, cp).
     // -------------------------------------------------------------------------
-    "sym.binaryName for ArrayRecord returns a non-empty string" in run {
+    "kyo.internal.tasty.symbol.BinaryName.compute(sym, cp) for ArrayRecord returns a non-empty string" in run {
         import kyo.Tasty.SymbolId
         val bytes = kyo.fixtures.Embedded.arrayRecordClass
         Abort.run[TastyError]:
             ClassfileUnpickler.read(bytes, new TypeArena).flatMap: cr =>
                 val sym = symWithId(cr.classSymbol, SymbolId(0), SymbolId(0))
                 Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).map: cp =>
-                    given Tasty.Classpath = cp
-                    val s                 = cp.symbols(0)
-                    val bn                = s.binaryName
+                    val s  = cp.symbols(0)
+                    val bn = kyo.internal.tasty.symbol.BinaryName.compute(s, cp)
                     assert(bn.nonEmpty || s.name.asString.nonEmpty, s"Expected non-empty binaryName for ArrayRecord symbol")
         .map:
             case Result.Success(_) => succeed
@@ -235,9 +232,8 @@ class JavaSymbolTest extends Test:
             readClass(fooBarClassBytes).flatMap: cr =>
                 val sym = symWithId(cr.classSymbol, SymbolId(0), SymbolId(0))
                 Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).map: cp =>
-                    given Tasty.Classpath = cp
-                    val s                 = cp.symbols(0)
-                    val bn                = s.binaryName
+                    val s  = cp.symbols(0)
+                    val bn = kyo.internal.tasty.symbol.BinaryName.compute(s, cp)
                     assert(bn.nonEmpty || s.name.asString.nonEmpty, s"Expected non-empty name for Foo$$Bar class")
         .map:
             case Result.Success(_) => succeed

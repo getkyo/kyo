@@ -32,19 +32,20 @@ class TastyAnnotationTest extends Test with TastyTestSupport:
             Chunk.empty,
             Maybe.Absent
         )
-        Tasty.Classpath.fromPicklesWithSymbols(Chunk(deprecatedSym)).map: cp =>
-            given Tasty.Classpath = cp
-            val deprecatedType    = Tasty.Type.Named(SymbolId(0))
-            val a                 = Tasty.Annotation(deprecatedType, Chunk.empty)
-            val showStr           = Tasty.typeShow(a.annotationType)
-            assert(
-                showStr == "deprecated",
-                s"Expected 'deprecated' but got '$showStr'"
-            )
-            assert(
-                a.arguments.isEmpty,
-                s"Expected empty arguments but got ${a.arguments}"
-            )
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(deprecatedSym)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                val deprecatedType = Tasty.Type.Named(SymbolId(0))
+                val a              = Tasty.Annotation(deprecatedType, Chunk.empty)
+                Tasty.typeShow(a.annotationType).map: showStr =>
+                    assert(
+                        showStr == "deprecated",
+                        s"Expected 'deprecated' but got '$showStr'"
+                    )
+                    assert(
+                        a.arguments.isEmpty,
+                        s"Expected empty arguments but got ${a.arguments}"
+                    )
+                    succeed
     }
 
     // Phase 08 Test 2: case-class unapply matches (annotationType, arguments).

@@ -240,7 +240,13 @@ object Subtyping:
         budget: Int
     ): SubtypeVerdict =
         val typeParamsOpt: Maybe[Chunk[Tasty.Symbol]] = baseSymOpt.flatMap: baseSym =>
-            val tps = baseSym.typeParams(using cp)
+            val tps = (baseSym match
+                case c: Tasty.Symbol.ClassLike   => c.typeParamIds
+                case m: Tasty.Symbol.Method      => m.typeParamIds
+                case ta: Tasty.Symbol.TypeAlias  => ta.typeParamIds
+                case ot: Tasty.Symbol.OpaqueType => ot.typeParamIds
+                case _                           => Chunk.empty
+            ).map(cp.symbol)
             if tps.nonEmpty then Maybe(tps) else Maybe.Absent
         checkArgPairs(subArgs, supArgs, typeParamsOpt, 0, cp, budget)
     end checkAppliedArgs
