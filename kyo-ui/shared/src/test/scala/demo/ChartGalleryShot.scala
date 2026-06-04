@@ -77,6 +77,7 @@ object ChartGalleryShot extends KyoApp:
         UI.chart(saleData)(
             bar(x = _.month, y = _.units, color = _.region)
         )
+            .yScale(_.withNice(true))
             .yAxis(_.left.grid.ticks(4))
             .xAxis(_.bottom.label("Month"))
             .legend(_.top)
@@ -88,6 +89,7 @@ object ChartGalleryShot extends KyoApp:
         UI.chart(trendData)(
             line(x = _.month, y = _.value)
         )
+            .yScale(_.withNice(true))
             .yAxis(_.left.grid)
             .xAxis(_.bottom)
             .size(360, 240)
@@ -98,6 +100,7 @@ object ChartGalleryShot extends KyoApp:
         UI.chart(saleData)(
             bar(x = _.month, y = _.units, stack = by(_.region))
         )
+            .yScale(_.withNice(true))
             .yAxis(_.left.grid.ticks(4))
             .xAxis(_.bottom)
             .legend(_.top)
@@ -110,6 +113,7 @@ object ChartGalleryShot extends KyoApp:
             bar(x = _.month, y = _.revenue),
             line(x = _.month, y = _.growthPct, axis = Axis.Right)
         )
+            .yScale(_.withNice(true))
             .yAxis(_.left.label("Revenue"))
             .yAxisRight(_.right.label("Growth %"))
             .xAxis(_.bottom)
@@ -121,6 +125,7 @@ object ChartGalleryShot extends KyoApp:
         UI.chart(scatterData)(
             point(x = _.a, y = _.b, size = _.w)
         )
+            .yScale(_.withNice(true))
             .yAxis(_.left.grid)
             .xAxis(_.bottom)
             .size(360, 240)
@@ -131,6 +136,7 @@ object ChartGalleryShot extends KyoApp:
         UI.chart(trendData)(
             bar(x = _.month, y = _.value)
         )
+            .yScale(_.withNice(true))
             .yAxis(_.left.grid.ticks(4))
             .xAxis(_.bottom)
             .theme(_.dark)

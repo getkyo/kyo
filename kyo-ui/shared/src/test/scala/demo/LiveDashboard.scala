@@ -332,6 +332,7 @@ object LiveDashboard extends KyoApp:
 
             // Status stacked bar grouped by code, colored by monitoring convention: 2xx green, 4xx amber, 5xx red.
             statusChart = UI.chart(status)(bar(x = _.name, y = _.count, stack = by(_.code)))
+                .yScale(_.withNice(true))
                 .yAxis(_.left.grid.ticks(4))
                 .xAxis(_.bottom)
                 .legend(
