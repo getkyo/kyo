@@ -228,7 +228,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // ─────────────────────────────────────────────────────────────────────────
 
     // Leaf 10: scala-reflect-manifest-fqnindex-has-canonical-key
-    // Given: cp.fqnIndex
+    // Given: cp.indices.byFqn
     // When: checking for the canonical source form "scala.reflect.Manifest" (without $)
     // Then: the canonical key exists in fqnIndex if the $ form is present (FqnNormalizer strips trailing $)
     // Note: on JS/Native the embedded fixtures do not include scala-library, so scala.reflect.Manifest$ will not be present.
@@ -236,10 +236,10 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // Pins: F-A2-011 + INV-013
     "F-A2-011 leaf 10 (Phase 2.09): scala.reflect.Manifest canonical key present in fqnIndex" in run {
         TestClasspaths.withClasspath().map: cp =>
-            val dollarKey = cp.fqnIndex.get("scala.reflect.Manifest$")
+            val dollarKey = cp.indices.byFqn.get("scala.reflect.Manifest$")
             dollarKey match
                 case Some(_) =>
-                    val cleanKey = cp.fqnIndex.get("scala.reflect.Manifest")
+                    val cleanKey = cp.indices.byFqn.get("scala.reflect.Manifest")
                     assert(
                         cleanKey.isDefined,
                         "scala.reflect.Manifest$ is in fqnIndex but canonical form scala.reflect.Manifest is absent; FqnNormalizer dual-index should add both"

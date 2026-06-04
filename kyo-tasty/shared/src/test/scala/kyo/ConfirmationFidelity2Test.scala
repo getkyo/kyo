@@ -218,14 +218,14 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
 
     // Leaf 8: jpms-modules-count-69 (F-A3-005 confirmation)
     // Given: the platform-modules classpath (jrt:/)
-    // When: counting cp.moduleIndex.size
+    // When: counting cp.indices.modulesIndex.size
     // Then: count == 69 (probe-001.log baseline)
     // Pins: F-A3-005
     // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): jrt:/ JPMS module filesystem
     //   is a JVM-only loader scheme; JS/Native have no equivalent module system to enumerate.
     "F-A3-005 leaf 8 (Phase 2.09): JPMS module count == 69 on platform-modules classpath" taggedAs jvmOnly in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
-            val count = cp.moduleIndex.size
+            val count = cp.indices.modulesIndex.size
             assert(
                 count == 69,
                 s"Expected exactly 69 JPMS modules (probe-001.log baseline); got $count"

@@ -38,8 +38,8 @@ private[kyo] object SnapshotEquivalence:
     /** Compare cold and warm on checked axes. Returns EquivResult.Equal if all match. */
     private[kyo] def warmColdEquivalent(cold: Tasty.Classpath, warm: Tasty.Classpath): EquivResult =
         check("symbols.size", cold.symbols.size, warm.symbols.size)
-            .orElse(check("fqnIndex.size", cold.fqnIndex.size, warm.fqnIndex.size))
-            .orElse(check("packageIds.size", cold.packageIds.size, warm.packageIds.size))
+            .orElse(check("fqnIndex.size", cold.indices.byFqn.size, warm.indices.byFqn.size))
+            .orElse(check("packageIds.size", cold.indices.packageIds.size, warm.indices.packageIds.size))
             .orElse:
                 val coldUnresolved = countUnresolvedRefs(cold)
                 val warmUnresolved = countUnresolvedRefs(warm)

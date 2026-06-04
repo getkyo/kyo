@@ -39,8 +39,7 @@ class ShowMethodTest extends Test with TastyTestSupport:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
         }
     end makeClasspath

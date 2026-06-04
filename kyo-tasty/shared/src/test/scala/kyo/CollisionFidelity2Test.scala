@@ -189,18 +189,18 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
 
     // Leaf 6 (OQ-006, INV-104-DF2 + INV-106-DF2): softfail-accumulates-fqncollision-via-errors-field-bridge
     // Given: collision setup with SoftFail
-    // When: counting cp.diagnostics.collect{case _:FqnCollision => 1}.size
+    // When: counting cp.indices.diagnostics.collect{case _:FqnCollision => 1}.size
     // Then: >= 1; cp.errors does NOT contain a stringified collision message
     // Pins: INV-104-DF2 + INV-106-DF2 (diagnostics channel separate from errors channel)
-    "INV-106-DF2 leaf 6 (Phase 2.08): SoftFail collisions appear in cp.diagnostics not cp.errors" in run {
+    "INV-106-DF2 leaf 6 (Phase 2.08): SoftFail collisions appear in cp.indices.diagnostics not cp.errors" in run {
         withCollisionClasspath.map: cp =>
-            val collisionDiagCount = cp.diagnostics.collect:
+            val collisionDiagCount = cp.indices.diagnostics.collect:
                 case c: Tasty.Classpath.FqnCollision => c
             .size
             assert(
                 collisionDiagCount > 0,
-                s"Expected cp.diagnostics to contain FqnCollision entries under SoftFail collision; got 0. " +
-                    "cp.diagnostics must accumulate FqnCollision items (OQ-006)."
+                s"Expected cp.indices.diagnostics to contain FqnCollision entries under SoftFail collision; got 0. " +
+                    "cp.indices.diagnostics must accumulate FqnCollision items (OQ-006)."
             )
             val errorsContainCollisionString = cp.errors.exists:
                 case TastyError.MalformedSection(_, reason, _) =>
@@ -209,7 +209,7 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
             assert(
                 !errorsContainCollisionString,
                 "cp.errors should not contain a stringified collision message. " +
-                    "Collisions belong in cp.diagnostics (as FqnCollision), not in cp.errors."
+                    "Collisions belong in cp.indices.diagnostics (as FqnCollision), not in cp.errors."
             )
             succeed
     }
@@ -249,7 +249,7 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
     // Pins: public API shape correctness
     "Phase 2.08 leaf 8: diagnostics and collisionReport types are correct on clean classpath" in run {
         withCleanClasspath.map: cp =>
-            val diags: Chunk[Tasty.Classpath.Diagnostic]  = cp.diagnostics
+            val diags: Chunk[Tasty.Classpath.Diagnostic]  = cp.indices.diagnostics
             val cols: Chunk[Tasty.Classpath.FqnCollision] = cp.collisionReport
             assert(diags.isEmpty && cols.isEmpty, "Both diagnostics and collisionReport should be empty on a clean classpath.")
             succeed

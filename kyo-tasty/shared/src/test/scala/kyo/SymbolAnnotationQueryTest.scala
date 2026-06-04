@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Tasty.SymbolId
-import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 07 (leaves 137-144): Symbol annotation queries.
   *
@@ -169,8 +168,7 @@ class SymbolAnnotationQueryTest extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
 
     // ── Leaf 137: hasAnnotation-scala-on-method ────────────────────────────────

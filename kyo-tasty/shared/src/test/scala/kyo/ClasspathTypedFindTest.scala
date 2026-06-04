@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Tasty.SymbolId
-import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 06 (leaves 101-109): typed Classpath find* lookups.
   *
@@ -96,8 +95,7 @@ class ClasspathTypedFindTest extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
 
     // ── Leaf 101: findClass-class-fqn ─────────────────────────────────────────

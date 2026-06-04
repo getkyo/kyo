@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Tasty.SymbolId
-import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 06 (leaves 118-127): typed Classpath all* aggregation accessors.
   *
@@ -211,8 +210,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
 
     // ── Leaf 118: allClassLike-typed ──────────────────────────────────────────

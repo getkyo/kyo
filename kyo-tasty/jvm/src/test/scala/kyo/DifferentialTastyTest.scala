@@ -73,10 +73,10 @@ class DifferentialTastyTest extends Test:
             // For Object kind, prefer the $-ending binary FQN (equivalent to tasty-query's ObjectClassTypeName).
             // For other kinds, any fqnIndex entry is fine (non-Object FQNs don't end with $).
             val isObject = sym.isInstanceOf[Tasty.Symbol.Object]
-            val preferred = cp.fqnIndex.collectFirst {
+            val preferred = cp.indices.byFqn.collectFirst {
                 case (fqn, id) if id == sym.id && (if isObject then fqn.endsWith("$") else true) => fqn
             }
-            preferred.orElse(cp.fqnIndex.collectFirst { case (fqn, id) if id == sym.id => fqn })
+            preferred.orElse(cp.indices.byFqn.collectFirst { case (fqn, id) if id == sym.id => fqn })
         .toSet
     end kyoFqnSet
 

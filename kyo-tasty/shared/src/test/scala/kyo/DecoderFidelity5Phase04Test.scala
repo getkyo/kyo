@@ -8,7 +8,6 @@ import kyo.internal.tasty.snapshot.SnapshotFormat
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import kyo.internal.tasty.symbol.FqnNormalizer
-import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
 /** Decoder-fidelity-5 Phase 5.04: API surface gaps (16 findings).
@@ -91,8 +90,7 @@ class DecoderFidelity5Phase04Test extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
         .flatMap: cp =>
             val src    = MemSrc()
@@ -338,8 +336,7 @@ class DecoderFidelity5Phase04Test extends Test:
                     subclassIndex = Map.empty,
                     companionIndex = Map.empty,
                     moduleIndex = Map.empty,
-                    errors = Chunk.empty,
-                    canonical = TypeArena.canonical()
+                    errors = Chunk.empty
                 )
             .flatMap: cp =>
                 // Write with digest=99 bytes but name the file with a different hex

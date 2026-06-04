@@ -91,7 +91,7 @@ object SnapshotWriter:
         // their object identities differ from the cold-load symbols used to populate the map.
         val fqnBySymbol: mutable.HashMap[Int, String] =
             val rev = mutable.HashMap.empty[Int, String]
-            cp.fqnIndex.toSeq.sortBy(_._1).foreach { case (fqn, id) =>
+            cp.indices.byFqn.toSeq.sortBy(_._1).foreach { case (fqn, id) =>
                 val canonical = FqnNormalizer.canonicalSourceFqn(fqn)
                 rev(id.value) = canonical
             }
@@ -259,7 +259,7 @@ object SnapshotWriter:
         // Non-Named annotation tycons are omitted (skipped during collection).
         // Phase 2.13: pass unresolvedFqnByNegId so that annotations with negative SymbolIds (unresolved
         // external annotation types like scala.deprecated on JS/Native) are serialized by FQN string.
-        val annotsBytes = serializeAnnotations(symbolList, internName, symbolById, fqnBySymbol, cp.unresolvedFqnByNegId)
+        val annotsBytes = serializeAnnotations(symbolList, internName, symbolById, fqnBySymbol, cp.indices.unresolvedFqnByNegId)
 
         // JAVAMETA section: accessFlags per symbol with javaMetadata present.
         // Layout: [4-byte count] then entries [4-byte symIdx][4-byte accessFlags].
@@ -274,13 +274,13 @@ object SnapshotWriter:
         // decode FQNIDX__ name IDs. Moving serializeFqnIndex after serializeNamePool causes the reader
         // to skip entries whose name IDs exceed the stored pool length (the root cause of the cold/warm
         // fqnIndex.size gap fixed by this phase).
-        val fqnIdxBytes = serializeFqnIndex(cp.fqnIndex, symbolList, internName)
+        val fqnIdxBytes = serializeFqnIndex(cp.indices.byFqn, symbolList, internName)
 
         // FQNMAP__ section: unresolvedFqnByNegId map (negId -> FQN string for external annotation types).
         // Per Phase 2.13: name pool must be populated (internName calls for FQN strings) BEFORE
         // serializeNamePool is called, so fqnMapBytes must call internName here, and namesBytes is
         // built after this call.
-        val fqnMapBytes = serializeFqnMap(cp.unresolvedFqnByNegId, internName)
+        val fqnMapBytes = serializeFqnMap(cp.indices.unresolvedFqnByNegId, internName)
 
         // SUBCIDX_ section: subclassIndex map (parent SymbolId -> Chunk of child SymbolIds).
         // F-W2-30: serialize so warm loads can answer directSubclassesOf/subclassesOf/implementationsOf.
@@ -289,11 +289,11 @@ object SnapshotWriter:
         for (sym, idx) <- symbolList.zipWithIndex do
             symIdToIdxForIdx(sym.id.value) = idx
         end for
-        val subcIdxBytes = serializeSubclassIndex(cp.subclassIndex, symIdToIdxForIdx)
+        val subcIdxBytes = serializeSubclassIndex(cp.indices.subclassIndex, symIdToIdxForIdx)
 
         // COMPIDX_ section: companionIndex map (SymbolId -> companion SymbolId).
         // F-W2-31: serialize so warm loads can answer cp.companion(sym) without fqnIndex rescan.
-        val compIdxBytes = serializeCompanionIndex(cp.companionIndex, symIdToIdxForIdx)
+        val compIdxBytes = serializeCompanionIndex(cp.indices.companionIndex, symIdToIdxForIdx)
 
         // NAMES section: length-prefixed UTF-8 strings.
         // Built AFTER all internName calls (symNames, symFqns, annotsBytes, fqnIdxBytes, fqnMapBytes) so
@@ -566,7 +566,7 @@ object SnapshotWriter:
         internFqn: String => Int,
         symbolById: scala.collection.mutable.HashMap[Int, Tasty.Symbol],
         fqnBySymbol: mutable.HashMap[Int, String],
-        unresolvedFqnByNegId: Map[Int, String]
+        unresolvedFqnByNegId: Map[Tasty.SymbolId, String]
     ): Array[Byte] =
         import Tasty.Name.asString
         val baos = new java.io.ByteArrayOutputStream(4 * 1024)
@@ -594,7 +594,7 @@ object SnapshotWriter:
                 val fqn = ann.annotationType match
                     case Tasty.Type.Named(sid) if sid.value < -1 =>
                         // Negative ID: annotation type not on classpath. Look up in unresolvedFqnByNegId.
-                        unresolvedFqnByNegId.getOrElse(sid.value, "")
+                        unresolvedFqnByNegId.getOrElse(sid, "")
                     case other =>
                         tyconFqn(other, symbolById, fqnBySymbol, unresolvedFqnByNegId)
                 if fqn.nonEmpty then Some(internFqn(fqn)) else None
@@ -712,17 +712,18 @@ object SnapshotWriter:
       * Entries are sorted by negId for determinism (F-A4-005 pattern).
       */
     private def serializeFqnMap(
-        unresolvedFqnByNegId: Map[Int, String],
+        unresolvedFqnByNegId: Map[kyo.Tasty.SymbolId, String],
         internName: String => Int
     ): Array[Byte] =
+        import kyo.Tasty.SymbolId
         val baos = new java.io.ByteArrayOutputStream(4 * 1024)
         val tmp  = new Array[Byte](4)
-        // Sort by negId for deterministic output.
-        val entries = unresolvedFqnByNegId.toSeq.sortBy(_._1).filter { case (_, fqn) => fqn.nonEmpty }
+        // Sort by negId value for deterministic output.
+        val entries = unresolvedFqnByNegId.toSeq.sortBy(_._1.value).filter { case (_, fqn) => fqn.nonEmpty }
         SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
         baos.write(tmp)
         for (negId, fqn) <- entries do
-            SnapshotFormat.writeInt32LE(tmp, 0, negId)
+            SnapshotFormat.writeInt32LE(tmp, 0, negId.value)
             baos.write(tmp)
             SnapshotFormat.writeInt32LE(tmp, 0, internName(fqn))
             baos.write(tmp)
@@ -818,7 +819,7 @@ object SnapshotWriter:
         t: Tasty.Type,
         symbolById: scala.collection.mutable.HashMap[Int, Tasty.Symbol],
         fqnBySymbol: mutable.HashMap[Int, String],
-        unresolvedFqnByNegId: Map[Int, String]
+        unresolvedFqnByNegId: Map[Tasty.SymbolId, String]
     ): String =
         import Tasty.Name.asString
         t match
@@ -828,7 +829,7 @@ object SnapshotWriter:
                     case _ =>
                         if annSymId.value < -1 then
                             // Negative id: look up via unresolvedFqnByNegId (cross-file external reference).
-                            unresolvedFqnByNegId.getOrElse(annSymId.value, "")
+                            unresolvedFqnByNegId.getOrElse(annSymId, "")
                         else
                             val annSym = symbolById.getOrElse(annSymId.value, null)
                             if annSym != null then nameToStr(annSym.name) else ""

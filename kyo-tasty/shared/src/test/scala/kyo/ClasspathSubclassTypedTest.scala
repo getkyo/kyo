@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Tasty.SymbolId
-import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 06 (leaves 129-130): typed Classpath subclass queries.
   *
@@ -74,8 +73,7 @@ class ClasspathSubclassTypedTest extends Test:
                 subclassIndex = Map(SymbolId(0) -> Chunk(SymbolId(1))),
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
 
     private def implementationsFixture(using Frame): Tasty.Classpath < Sync =
@@ -98,8 +96,7 @@ class ClasspathSubclassTypedTest extends Test:
                 ),
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
 
     // ── Leaf 129: directSubclassesOf-typed ───────────────────────────────────

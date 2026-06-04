@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Tasty.SymbolId
-import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 06 (leaves 110-117): typed Classpath require* throwing variants.
   *
@@ -85,8 +84,7 @@ class ClasspathTypedRequireTest extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
 
     // ── Leaf 110: requireClass-success ───────────────────────────────────────

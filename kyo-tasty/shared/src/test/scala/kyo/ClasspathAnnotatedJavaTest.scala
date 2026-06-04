@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Tasty.SymbolId
-import kyo.internal.tasty.type_.TypeArena
 
 /** Phase 08 followup for W-06-02: exercises the Java-annotation path (`javaAnnotations`) of `Classpath.symbolsAnnotatedWith`.
   *
@@ -90,8 +89,7 @@ class ClasspathAnnotatedJavaTest extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
 
     // Given: fixture with class A carrying JavaAnnotation(Deprecated, _) and class B with no annotation

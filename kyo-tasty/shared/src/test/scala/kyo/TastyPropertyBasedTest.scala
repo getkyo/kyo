@@ -145,7 +145,7 @@ class TastyPropertyBasedTest extends Test:
             val src = MemFileSource()
             src.files("root/PlainClass.tasty") = kyo.fixtures.Embedded.plainClassTasty
             ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
-                (cp.symbols.size, cp.fqnIndex.size)
+                (cp.symbols.size, cp.indices.byFqn.size)
         end loadOnce
         def go(n: Int, acc: List[(Int, Int)]): List[(Int, Int)] < (Async & Scope & Abort[TastyError]) =
             if n == 0 then acc

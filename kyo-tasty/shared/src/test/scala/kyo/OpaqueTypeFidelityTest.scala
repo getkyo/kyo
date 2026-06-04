@@ -34,13 +34,13 @@ class OpaqueTypeFidelityTest extends Test:
                     )
                     succeed
                 case Present(other) =>
-                    val relatedKeys = cp.fqnIndex.keys.filter(k => k.contains("Micros")).toSeq.sorted.take(5)
+                    val relatedKeys = cp.indices.byFqn.keys.filter(k => k.contains("Micros")).toSeq.sorted.take(5)
                     fail(
                         s"cp.findSymbol(kyo.fixtures.Micros) returned Present but wrong kind: ${other.getClass.getSimpleName}. " +
                             s"Related fqnIndex keys: ${relatedKeys.mkString(", ")}"
                     )
                 case Absent =>
-                    val relatedKeys = cp.fqnIndex.keys.filter(k => k.contains("Micros")).toSeq.sorted.take(5)
+                    val relatedKeys = cp.indices.byFqn.keys.filter(k => k.contains("Micros")).toSeq.sorted.take(5)
                     fail(
                         s"cp.findSymbol(kyo.fixtures.Micros) returned Absent. " +
                             s"Related fqnIndex keys: ${relatedKeys.mkString(", ")}. " +
@@ -59,8 +59,8 @@ class OpaqueTypeFidelityTest extends Test:
         TestClasspaths.withClasspath().map: cp =>
             val microsSym  = cp.findSymbol("kyo.fixtures.Micros")
             val millisSym  = cp.findSymbol("kyo.fixtures.Millis")
-            val microsKeys = cp.fqnIndex.keys.filter(k => k.contains("Micros")).toSeq.sorted.take(5)
-            val millisKeys = cp.fqnIndex.keys.filter(k => k.contains("Millis")).toSeq.sorted.take(5)
+            val microsKeys = cp.indices.byFqn.keys.filter(k => k.contains("Micros")).toSeq.sorted.take(5)
+            val millisKeys = cp.indices.byFqn.keys.filter(k => k.contains("Millis")).toSeq.sorted.take(5)
             assert(
                 microsSym.exists(_.isInstanceOf[Tasty.Symbol.OpaqueType]),
                 s"cp.findSymbol(kyo.fixtures.Micros) expected Present(OpaqueType), got $microsSym. " +
@@ -87,7 +87,7 @@ class OpaqueTypeFidelityTest extends Test:
             assert(
                 sourceResult.exists(_.isInstanceOf[Tasty.Symbol.OpaqueType]),
                 s"cp.findSymbol(kyo.fixtures.Micros) must return OpaqueType. " +
-                    s"Related fqnIndex keys: ${cp.fqnIndex.keys.filter(_.contains("Micros")).toSeq.sorted.take(5).mkString(", ")}"
+                    s"Related fqnIndex keys: ${cp.indices.byFqn.keys.filter(_.contains("Micros")).toSeq.sorted.take(5).mkString(", ")}"
             )
             // The binary FQN must also be indexable; the dual-index registers both.
             val binaryResult = cp.findSymbol("kyo.fixtures.OpaqueFixture$package$.Micros")
@@ -95,7 +95,7 @@ class OpaqueTypeFidelityTest extends Test:
                 binaryResult.isDefined,
                 s"cp.findSymbol(kyo.fixtures.OpaqueFixture$$package$$.Micros) returned Absent. " +
                     s"Dual-index must register binary FQN for package-level opaque types. " +
-                    s"Related fqnIndex keys: ${cp.fqnIndex.keys.filter(_.contains("Micros")).toSeq.sorted.take(5).mkString(", ")}"
+                    s"Related fqnIndex keys: ${cp.indices.byFqn.keys.filter(_.contains("Micros")).toSeq.sorted.take(5).mkString(", ")}"
             )
             succeed
     }
@@ -114,7 +114,7 @@ class OpaqueTypeFidelityTest extends Test:
             assert(
                 microsSym.exists(_.isInstanceOf[Tasty.Symbol.OpaqueType]),
                 s"cp.findSymbol(kyo.fixtures.Micros) must return OpaqueType, got: $microsSym. " +
-                    s"Related fqnIndex keys: ${cp.fqnIndex.keys.filter(_.contains("Micros")).toSeq.sorted.take(5).mkString(", ")}"
+                    s"Related fqnIndex keys: ${cp.indices.byFqn.keys.filter(_.contains("Micros")).toSeq.sorted.take(5).mkString(", ")}"
             )
             val allOpaqueNames = cp.allOpaqueTypes.map(_.name.asString).toSet
             assert(

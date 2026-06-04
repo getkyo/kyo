@@ -8,7 +8,6 @@ import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 import kyo.internal.tasty.symbol.SymbolDescriptor
 import kyo.internal.tasty.symbol.TypedSymbolFactory
-import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
 /** Reads a KRFL snapshot file and builds a `Tasty.Classpath` from it.
@@ -440,7 +439,7 @@ object SnapshotReader:
 
         // FQNMAP__ section (Phase 2.13 unresolvedFqnByNegId persistence): if present, reconstruct the
         // negId -> FQN string map so warm-loaded classpaths resolve annotation FQNs on JS/Native.
-        val unresolvedFqnByNegId: Map[Int, String] = sectionMap.get(SnapshotFormat.sectionFQNMAP) match
+        val unresolvedFqnByNegId: Map[SymbolId, String] = sectionMap.get(SnapshotFormat.sectionFQNMAP) match
             case Some((off, len)) if len > 0 =>
                 deserializeFqnMap(bytes, off, len, namePool)
             case _ =>
@@ -462,7 +461,6 @@ object SnapshotReader:
                 case _ =>
                     Map.empty
 
-        val canonical = TypeArena.canonical()
         val symsChunk = Chunk.from(finalSymbols)
         val pkgIdIdx  = finalPackageIndex.map { case (k, v) => k -> v.id }.toMap
         val topIds    = finalTopLevelCls.map(_.id)
@@ -479,7 +477,6 @@ object SnapshotReader:
             companionIndex = warmCompanionIndex,
             moduleIndex = Map.empty,
             errors = errors,
-            canonical = canonical,
             diagnostics = Chunk.empty,
             unresolvedFqnByNegId = unresolvedFqnByNegId
         )
@@ -889,7 +886,7 @@ object SnapshotReader:
                 newFqnIndex.map { case (k, v) => k -> v.id }.toMap
 
         // FQNMAP__ section (Phase 2.13): reconstruct unresolvedFqnByNegId for warm loads.
-        val unresolvedFqnByNegId2: Map[Int, String] = sectionMap.get(SnapshotFormat.sectionFQNMAP) match
+        val unresolvedFqnByNegId2: Map[SymbolId, String] = sectionMap.get(SnapshotFormat.sectionFQNMAP) match
             case Some((off, len)) if len > 0 =>
                 val secBytes = copyViewRange(view, off, off + len)
                 deserializeFqnMap(secBytes, 0, len, namePool)
@@ -914,7 +911,6 @@ object SnapshotReader:
                 case _ =>
                     Map.empty
 
-        val canonical  = TypeArena.canonical()
         val symsChunk2 = Chunk.from(finalSymbols)
         val pkgIdIdx2  = newPackageIndex.map { case (k, v) => k -> v.id }.toMap
         val topIds2    = newTopLevelCls.map(_.id)
@@ -931,7 +927,6 @@ object SnapshotReader:
             companionIndex = warmCompanionIndex2,
             moduleIndex = Map.empty,
             errors = errors,
-            canonical = canonical,
             unresolvedFqnByNegId = unresolvedFqnByNegId2
         )
     end deserializeMapped
@@ -1145,19 +1140,19 @@ object SnapshotReader:
         offset: Int,
         length: Int,
         namePool: Array[String]
-    ): Map[Int, String] =
+    ): Map[SymbolId, String] =
         val end     = offset + length
         val count   = SnapshotFormat.readInt32LE(bytes, offset)
         var pos     = offset + 4
         var i       = 0
-        val builder = scala.collection.mutable.HashMap.empty[Int, String]
+        val builder = scala.collection.mutable.HashMap.empty[SymbolId, String]
         while i < count && pos + 8 <= end do
             val negId      = SnapshotFormat.readInt32LE(bytes, pos)
             val namePoolId = SnapshotFormat.readInt32LE(bytes, pos + 4)
             pos += 8
             if namePoolId >= 0 && namePoolId < namePool.length then
                 val fqn = namePool(namePoolId)
-                if fqn.nonEmpty then builder(negId) = fqn
+                if fqn.nonEmpty then builder(SymbolId(negId)) = fqn
             end if
             i += 1
         end while

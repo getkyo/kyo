@@ -102,8 +102,7 @@ class SubclassesOfTest extends Test:
                 ),
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
         }
     end ladderClasspath
@@ -189,8 +188,7 @@ class SubclassesOfTest extends Test:
                 subclassIndex = Map(SymbolId(0) -> Chunk(SymbolId(1), SymbolId(2), SymbolId(3))),
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
         }
     end traitClasspath

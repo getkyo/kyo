@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Tasty.SymbolId
-import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 07 (leaves 145-150): declared vs inherited member split.
   *
@@ -83,8 +82,7 @@ class SymbolMemberSearchTest extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
 
     /** Fixture: class A { def foo }; class B extends A { def bar } Symbol ids: 0=A, 1=foo, 2=B, 3=bar B.parentTypes =
@@ -112,8 +110,7 @@ class SymbolMemberSearchTest extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
 
     /** Fixture: class A { def foo(x: Int); def foo(s: String) } (overloaded) Symbol ids: 0=A, 1=foo(Int), 2=foo(String)
@@ -133,8 +130,7 @@ class SymbolMemberSearchTest extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
 
     // ── Leaf 145: declaredMembers-on-classlike ────────────────────────────────

@@ -6,7 +6,6 @@ import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
-import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
 /** Decoder-fidelity-5 Phase 5.02: cold/warm fidelity gaps -- 6 findings.
@@ -123,8 +122,7 @@ class DecoderFidelity5Phase02Test extends Test:
                     SymbolId(4) -> SymbolId(3)
                 ),
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
     end syntheticCp
 
@@ -153,12 +151,12 @@ class DecoderFidelity5Phase02Test extends Test:
             syntheticCp.flatMap: cold =>
                 roundTrip(cold, 0x01).map: (cold, warm) =>
                     assert(
-                        cold.subclassIndex.size == 1,
-                        s"Expected subclassIndex.size == 1; got ${cold.subclassIndex.size}"
+                        cold.indices.subclassIndex.size == 1,
+                        s"Expected subclassIndex.size == 1; got ${cold.indices.subclassIndex.size}"
                     )
                     assert(
-                        warm.subclassIndex.size == 1,
-                        s"warm subclassIndex is empty or wrong size; expected 1 got ${warm.subclassIndex.size}; F-W2-30 not fixed"
+                        warm.indices.subclassIndex.size == 1,
+                        s"warm subclassIndex is empty or wrong size; expected 1 got ${warm.indices.subclassIndex.size}; F-W2-30 not fixed"
                     )
                     val coldAnimal = cold.findClass("Animal").get
                     val warmAnimal = warm.findClass("Animal").get
@@ -190,12 +188,12 @@ class DecoderFidelity5Phase02Test extends Test:
             syntheticCp.flatMap: cold =>
                 roundTrip(cold, 0x02).map: (cold, warm) =>
                     assert(
-                        cold.companionIndex.size == 2,
-                        s"Expected companionIndex.size == 2; got ${cold.companionIndex.size}"
+                        cold.indices.companionIndex.size == 2,
+                        s"Expected companionIndex.size == 2; got ${cold.indices.companionIndex.size}"
                     )
                     assert(
-                        warm.companionIndex.size == 2,
-                        s"warm companionIndex is empty or wrong; expected 2 got ${warm.companionIndex.size}; F-W2-31 not fixed"
+                        warm.indices.companionIndex.size == 2,
+                        s"warm companionIndex is empty or wrong; expected 2 got ${warm.indices.companionIndex.size}; F-W2-31 not fixed"
                     )
                     val coldFoo  = cold.findClass("Foo").get
                     val warmFoo  = warm.findClass("Foo").get

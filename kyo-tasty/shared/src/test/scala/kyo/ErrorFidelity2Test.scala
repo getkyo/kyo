@@ -191,7 +191,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
         kyo.internal.TestClasspaths.withClasspath().flatMap: cp =>
             given Tasty.Classpath = cp
             // Find any real FQN from the loaded classpath
-            val anyFqn = cp.fqnIndex.keys.headOption.getOrElse("PlainClass")
+            val anyFqn = cp.indices.byFqn.keys.headOption.getOrElse("PlainClass")
             cp.requireSymbol(anyFqn).map: sym =>
                 import Tasty.Name.asString
                 assert(

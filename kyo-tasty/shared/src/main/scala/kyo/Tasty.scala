@@ -8,7 +8,6 @@ import kyo.internal.tasty.query.TastyStat
 import kyo.internal.tasty.snapshot.DigestComputer as SnapshotDigest
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
-import kyo.internal.tasty.type_.TypeArena
 import kyo.stats.Attributes
 import scala.collection.immutable.IntMap
 
@@ -61,6 +60,9 @@ object Tasty:
         end extension
 
         given CanEqual[SymbolId, SymbolId] = CanEqual.canEqualAny
+
+        /** Schema[SymbolId] delegates to Schema[Int], mirroring the Schema[Name] = Schema[String] precedent. */
+        given schemaSymbolId: Schema[SymbolId] = summon[Schema[Int]]
 
     end SymbolId
 
@@ -2333,111 +2335,41 @@ object Tasty:
 
     /** Immutable snapshot of a fully-loaded TASTy classpath.
       *
-      * All fields are plain immutable values populated once during `init` and never mutated. Reading any field after `init` returns is a
-      * pure operation with no effect row and no `AllowUnsafe`. The sole exception is `decodeBody`, which decodes AST bytes on demand and
-      * carries `Sync & Abort[TastyError]`.
+      * All fields are plain immutable values populated once during `init` and never mutated. Reading any
+      * field after `init` returns is a pure operation with no effect row and no `AllowUnsafe`. The sole
+      * exception is `bodyTree`, which decodes AST bytes on demand and carries `Sync & Abort[TastyError]`.
       *
-      * Constructor is `private[Tasty]`; instances are obtained exclusively via `Classpath.init`, `Classpath.initCached`,
-      * `Classpath.fromPickles`, or `Classpath.fromPicklesWithSymbols`.
+      * Pure data: no methods except `symbol(id)`, which is a direct array lookup. All query operations
+      * live on `object Tasty.*` and accept an explicit `(using cp: Classpath)`.
       *
-      * Pins: INV-003 (Classpath case class fields immutable post-construction), INV-004 (bodyMemo excluded from equality).
+      * `derives Schema, CanEqual`: Schema derivation is available after `object Classpath` closes (see
+      * `given schemaClasspath` below), once `Classpath.Indices` is in scope.
+      *
+      * Instances are obtained via `Classpath.init`, `Classpath.initCached`, `Classpath.fromPickles`,
+      * `Classpath.fromPicklesWithSymbols`, or constructed directly from the case class for tests.
       */
-    final case class Classpath private[Tasty] (
+    final case class Classpath(
         symbols: Chunk[Symbol],
-        rootSymbolId: SymbolId,
-        topLevelClassIds: Chunk[SymbolId],
-        packageIds: Chunk[SymbolId],
-        private[kyo] val fqnIndex: Map[String, SymbolId],
-        private[kyo] val packageIndex: Map[String, SymbolId],
-        private[kyo] val subclassIndex: Map[SymbolId, Chunk[SymbolId]],
-        private[kyo] val companionIndex: Map[SymbolId, SymbolId],
-        private[kyo] val moduleIndex: Map[String, ModuleDescriptor],
+        indices: Classpath.Indices,
         errors: Chunk[TastyError],
-        canonical: kyo.internal.tasty.type_.TypeArena,
-        /** Structured diagnostics accumulated during classpath initialization.
-          *
-          * Currently populated with `Classpath.FqnCollision` entries when two roots each define a symbol under the same fully-qualified
-          * name. Under `ErrorMode.SoftFail` these are recorded here rather than raising `Abort[TastyError]`. Under `ErrorMode.FailFast`
-          * the first collision raises `TastyError.InconsistentClasspath` and initialization aborts.
-          *
-          * Unlike `errors` (which carries decode-time failures such as `MalformedSection`), `diagnostics` carries build-time observations
-          * about the classpath shape itself.
-          */
-        diagnostics: Chunk[Classpath.Diagnostic],
-        /** Map from negative SymbolId values to their fully-qualified name string for annotation types that could not be resolved
-          * because the defining library (e.g. scala-library) is not on the classpath.
-          *
-          * Used by `typeFqnString` as a fallback when `symbol(id)` returns `sentinelUnresolved` for a negative id. This enables
-          * `symbolsAnnotatedWith` to find symbols annotated with `scala.deprecated` or `scala.annotation.tailrec` even on JS/Native
-          * where the embedded fixture set does not include scala-library.
-          */
-        private[kyo] val unresolvedFqnByNegId: Map[Int, String]
+        modules: Chunk[ModuleDescriptor],
+        rootSymbolId: SymbolId
     ):
-        // NOT constructor parameters -- excluded from auto-generated equals / hashCode / copy / unapply.
-        // A cp.copy(...) call produces a new Classpath with fresh empty memos; this is correct because
-        // memoized results are an optimization, not observable state.
-        private lazy val bodyMemo: java.util.concurrent.ConcurrentHashMap[SymbolId, Result[TastyError, Tree]] =
+        // bodyMemo is a private body field (not a constructor param) so it is excluded from
+        // equals/hashCode/copy/unapply. A cp.copy(...) call produces a new Classpath with a fresh
+        // empty memo; this is correct because memoized results are an optimization, not observable state.
+        // Unsafe: ConcurrentHashMap used for thread-safe lazy body decoding (INV-009 site-3).
+        private val bodyMemo: java.util.concurrent.ConcurrentHashMap[SymbolId, Result[TastyError, Tree]] =
             new java.util.concurrent.ConcurrentHashMap()
 
-        // F-W2-7: cached unresolvedTypeReferenceCount -- linear scan performed once and memoized.
-        // A cp.copy(...) call recomputes this lazily on the new Classpath.
-        private lazy val cachedUnresolvedTypeReferenceCount: Int =
-            val sentinelId = Classpath.sentinelUnresolved.id.value
-            symbols.foldLeft(0): (acc, sym) =>
-                sym match
-                    case c: Symbol.ClassLike =>
-                        acc + c.parentTypes.count:
-                            case Type.Named(id) => id.value == sentinelId
-                            case _              => false
-                    case _ => acc
-        end cachedUnresolvedTypeReferenceCount
-
-        // F-W2-24: simple-name index for O(1) findClassesByName. Keyed by String content; built once.
-        // Name is opaque over String so equality is content-based across all classpaths.
-        // A cp.copy(...) call rebuilds this lazily on the new Classpath.
-        private lazy val nameIndex: Map[String, Chunk[Symbol.Class]] =
-            import Name.asString
-            val builder = scala.collection.mutable.HashMap.empty[String, scala.collection.mutable.ArrayBuffer[Symbol.Class]]
-            symbols.foreach:
-                case c: Symbol.Class =>
-                    builder.getOrElseUpdate(c.name.asString, new scala.collection.mutable.ArrayBuffer()) += c
-                case _ => ()
-            builder.map((k, v) => k -> Chunk.from(v)).toMap
-        end nameIndex
-
-        /** Bucketed view of `symbols` keyed by `SymbolKind`. Built once on first access; each `allXxx`
-          * accessor becomes an O(1) map lookup that reuses the cached Chunk for its kind. Empty classpaths
-          * yield an empty map; missing kinds return `Chunk.empty`. The aggregated ClassLike view
-          * (`Class ∪ Trait ∪ Object ∪ EnumCase`) is materialized once in `cachedAllClassLike`.
-          */
-        private lazy val symbolsByKind: Map[SymbolKind, Chunk[Symbol]] =
-            if symbols.isEmpty then Map.empty
-            else
-                val buckets = scala.collection.mutable.HashMap.empty[SymbolKind, scala.collection.mutable.ArrayBuffer[Symbol]]
-                symbols.foreach: s =>
-                    buckets.getOrElseUpdate(s.kind, new scala.collection.mutable.ArrayBuffer()) += s
-                buckets.map((k, v) => k -> Chunk.from(v)).toMap
-            end if
-        end symbolsByKind
-
         private def symbolsOfKind[A <: Symbol](k: SymbolKind): Chunk[A] =
-            // safe: `symbolsByKind` is built by Pass C so that the kind key matches the runtime class of
-            // every contained Symbol; callers (allTraits/allObjects/...) pick `A` to align with `k`.
-            symbolsByKind.getOrElse(k, Chunk.empty).asInstanceOf[Chunk[A]]
-
-        /** Cached ClassLike aggregate: every Class, Trait, Object, and EnumCase symbol. Materialized once
-          * on first access by `allClassLike`. Empty when no such symbols exist.
-          */
-        private lazy val cachedAllClassLike: Chunk[Symbol.ClassLike] =
             if symbols.isEmpty then Chunk.empty
             else
-                val b = Chunk.newBuilder[Symbol.ClassLike]
+                val b = Chunk.newBuilder[A]
                 symbols.foreach:
-                    case c: Symbol.ClassLike => b += c
-                    case _                   => ()
+                    case s if s.kind == k => b += s.asInstanceOf[A]
+                    case _                => ()
                 b.result()
-            end if
-        end cachedAllClassLike
 
         /** O(1) Symbol lookup by SymbolId. Returns the Symbol at index `id.value`. Returns a sentinel Unresolved symbol for out-of-range or
           * unassigned ids.
@@ -2471,7 +2403,7 @@ object Tasty:
           * Defensive null checks in call sites are unnecessary.
           */
         def findSymbol(fqn: String): Maybe[Symbol] =
-            fqnIndex.get(fqn) match
+            indices.byFqn.get(fqn) match
                 case Some(id) => Maybe(symbol(id))
                 case None     => Maybe.Absent
 
@@ -2491,7 +2423,7 @@ object Tasty:
           * ```
           */
         def findClass(fqn: String): Maybe[Symbol.Class] =
-            fqnIndex.get(fqn) match
+            indices.byFqn.get(fqn) match
                 case Some(id) =>
                     symbol(id) match
                         case c: Symbol.Class => Maybe(c)
@@ -2529,14 +2461,23 @@ object Tasty:
           * cache is NOT a constructor parameter and is NOT preserved by `cp.copy(...)`; copying recomputes
           * it lazily on the next access of the new Classpath.
           */
-        def unresolvedTypeReferenceCount: Int = cachedUnresolvedTypeReferenceCount
+        def unresolvedTypeReferenceCount: Int =
+            val sentinelId = Classpath.sentinelUnresolved.id.value
+            symbols.foldLeft(0): (acc, sym) =>
+                sym match
+                    case c: Symbol.ClassLike =>
+                        acc + c.parentTypes.count:
+                            case Type.Named(id) => id.value == sentinelId
+                            case _              => false
+                    case _ => acc
+        end unresolvedTypeReferenceCount
 
         /** Look up a trait symbol by fully-qualified dotted name.
           *
           * Returns `Absent` when the FQN resolves to a non-Trait symbol. Use `findClassLike` for the broader case.
           */
         def findTrait(fqn: String): Maybe[Symbol.Trait] =
-            fqnIndex.get(fqn) match
+            indices.byFqn.get(fqn) match
                 case Some(id) =>
                     symbol(id) match
                         case t: Symbol.Trait => Maybe(t)
@@ -2556,7 +2497,7 @@ object Tasty:
           * Returns `Absent` when neither key resolves to an Object symbol.
           */
         def findObject(fqn: String): Maybe[Symbol.Object] =
-            fqnIndex.get(fqn) match
+            indices.byFqn.get(fqn) match
                 case Some(id) =>
                     symbol(id) match
                         case o: Symbol.Object => Maybe(o)
@@ -2565,7 +2506,7 @@ object Tasty:
                             // Fall back to the binary $-suffixed key where the companion Object lives.
                             if fqn.endsWith("$") then Maybe.Absent
                             else
-                                fqnIndex.get(fqn + "$") match
+                                indices.byFqn.get(fqn + "$") match
                                     case Some(id2) =>
                                         symbol(id2) match
                                             case o: Symbol.Object => Maybe(o)
@@ -2575,7 +2516,7 @@ object Tasty:
                     // No entry at the source-form key; try the binary $-suffixed key directly.
                     if fqn.endsWith("$") then Maybe.Absent
                     else
-                        fqnIndex.get(fqn + "$") match
+                        indices.byFqn.get(fqn + "$") match
                             case Some(id2) =>
                                 symbol(id2) match
                                     case o: Symbol.Object => Maybe(o)
@@ -2587,7 +2528,7 @@ object Tasty:
           * Returns `Absent` when the FQN resolves to a Package or other non-ClassLike symbol.
           */
         def findClassLike(fqn: String): Maybe[Symbol.ClassLike] =
-            fqnIndex.get(fqn) match
+            indices.byFqn.get(fqn) match
                 case Some(id) =>
                     symbol(id) match
                         case c: Symbol.ClassLike => Maybe(c)
@@ -2599,7 +2540,7 @@ object Tasty:
           * Pure O(1) lookup in the immutable packageIndex. Returns `Absent` if the package is not in this classpath.
           */
         def findPackage(fqn: String): Maybe[Symbol.Package] =
-            packageIndex.get(fqn) match
+            indices.packageIndex.get(fqn) match
                 case Some(id) =>
                     symbol(id) match
                         case p: Symbol.Package => Maybe(p)
@@ -2616,7 +2557,10 @@ object Tasty:
           * it lazily on the next `findClassesByName` call of the new Classpath.
           */
         def findClassesByName(simpleName: String): Chunk[Symbol.Class] =
-            nameIndex.getOrElse(simpleName, Chunk.empty)
+            indices.bySimpleName.getOrElse(simpleName, Chunk.empty).flatMap: id =>
+                symbol(id) match
+                    case c: Symbol.Class => Chunk(c)
+                    case _               => Chunk.empty
         end findClassesByName
 
         /** All package symbols in this classpath.
@@ -2625,7 +2569,7 @@ object Tasty:
           * non-Package symbols are excluded.
           */
         def packages: Chunk[Symbol.Package] =
-            packageIds.flatMap: id =>
+            indices.packageIds.flatMap: id =>
                 symbol(id) match
                     case p: Symbol.Package => Chunk(p)
                     case _                 => Chunk.empty
@@ -2636,7 +2580,7 @@ object Tasty:
           * resolve to non-ClassLike symbols are excluded.
           */
         def topLevelClasses: Chunk[Symbol.ClassLike] =
-            topLevelClassIds.flatMap: id =>
+            indices.topLevelClassIds.flatMap: id =>
                 symbol(id) match
                     case c: Symbol.ClassLike => Chunk(c)
                     case _                   => Chunk.empty
@@ -2646,17 +2590,10 @@ object Tasty:
           * Returns `Present(descriptor)` if a `module-info.class` with the given module name was found in the classpath roots. Returns
           * `Absent` if no matching module was found.
           *
-          * Pure O(1) lookup in the immutable moduleIndex.
+          * O(1) lookup via the modulesIndex in Indices.
           */
         def findModule(name: String): Maybe[ModuleDescriptor] =
-            Maybe.fromOption(moduleIndex.get(name))
-
-        /** All JPMS module descriptors loaded into this classpath.
-          *
-          * Pure O(n) accessor over the immutable `moduleIndex` values where n is the number of loaded `module-info.class` files.
-          */
-        def modules: Chunk[ModuleDescriptor] =
-            Chunk.from(moduleIndex.values.toSeq)
+            Maybe.fromOption(indices.modulesIndex.get(name))
 
         /** Find a class symbol by JVM binary name (e.g., "com/example/Foo$Inner").
           *
@@ -2763,16 +2700,16 @@ object Tasty:
           * Returns an empty `Chunk` when no collisions occurred.
           */
         def collisionReport: Chunk[Classpath.FqnCollision] =
-            diagnostics.flatMap:
+            indices.diagnostics.flatMap:
                 case c: Classpath.FqnCollision => Chunk(c)
                 case null                      => Chunk.empty
 
         // ── typed Classpath-wide all* aggregations ──
 
-        /** All Trait symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        /** All Trait symbols in the classpath. Linear scan over symbols. */
         def allTraits: Chunk[Symbol.Trait] = symbolsOfKind(SymbolKind.Trait)
 
-        /** All Object symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        /** All Object symbols in the classpath. Linear scan over symbols. */
         def allObjects: Chunk[Symbol.Object] = symbolsOfKind(SymbolKind.Object)
 
         /** All ClassLike symbols (Class, Trait, Object, EnumCase) at any nesting depth.
@@ -2780,10 +2717,15 @@ object Tasty:
           * The invariant `allClassLike.size >= topLevelClasses.size` holds because the result includes
           * nested ClassLike symbols. Use `allTraits` / `allObjects` / `symbolsOfKind(SymbolKind.Class)`
           * to narrow to a specific subtype; the result here keeps the union of all four.
-          *
-          * O(1) after first call: backed by `cachedAllClassLike`, populated lazily.
           */
-        def allClassLike: Chunk[Symbol.ClassLike] = cachedAllClassLike
+        def allClassLike: Chunk[Symbol.ClassLike] =
+            if symbols.isEmpty then Chunk.empty
+            else
+                val b = Chunk.newBuilder[Symbol.ClassLike]
+                symbols.foreach:
+                    case c: Symbol.ClassLike => b += c
+                    case _                   => ()
+                b.result()
 
         /** All Method symbols in the classpath. O(1) lookup via `symbolsByKind`. */
         def allMethods: Chunk[Symbol.Method] = symbolsOfKind(SymbolKind.Method)
@@ -2873,7 +2815,7 @@ object Tasty:
                         // The type resolved to the sentinel. For annotation types that reference
                         // external symbols (e.g. scala.deprecated when scala-library is absent),
                         // the negative SymbolId may have a known FQN in unresolvedFqnByNegId.
-                        unresolvedFqnByNegId.getOrElse(SymbolId.value(id), "")
+                        indices.unresolvedFqnByNegId.getOrElse(id, "")
                     else fullNameUnsafe(sym).asString
                     end if
                 case Type.TermRef(qual, name) =>
@@ -2896,7 +2838,7 @@ object Tasty:
           * Pure O(1) lookup in the immutable `companionIndex`. Returns `Absent` when no companion is registered.
           */
         def companion(sym: Symbol): Maybe[Symbol] =
-            companionIndex.get(sym.id) match
+            indices.companionIndex.get(sym.id) match
                 case Some(cid) => Maybe(symbol(cid))
                 case None      => Maybe.Absent
 
@@ -3000,7 +2942,7 @@ object Tasty:
           * Non-ClassLike entries in the index are silently excluded (defensive; should not occur in well-formed classpath data).
           */
         def directSubclassesOf(sym: Symbol.ClassLike): Chunk[Symbol.ClassLike] =
-            subclassIndex.getOrElse(sym.id, Chunk.empty).flatMap: id =>
+            indices.subclassIndex.getOrElse(sym.id, Chunk.empty).flatMap: id =>
                 symbol(id) match
                     case c: Symbol.ClassLike => Chunk(c)
                     case _                   => Chunk.empty
@@ -3030,7 +2972,7 @@ object Tasty:
                 if frontier.isEmpty then ()
                 else
                     val next = frontier.flatMap: curId =>
-                        subclassIndex.getOrElse(curId, Chunk.empty).flatMap: childId =>
+                        indices.subclassIndex.getOrElse(curId, Chunk.empty).flatMap: childId =>
                             if visited.add(childId) then
                                 symbol(childId) match
                                     case c: Symbol.ClassLike =>
@@ -3052,13 +2994,13 @@ object Tasty:
             Symbol.Unresolved(SymbolId(-1), ("<unresolved>": Name), SymbolId(-1))
         end sentinelUnresolved
 
-        /** Sealed hierarchy for structured build-time observations accumulated in `Classpath.diagnostics`.
+        /** Sealed hierarchy for structured build-time observations accumulated in `Classpath.Indices.diagnostics`.
           *
           * Unlike `TastyError` (which represents failures during decoding or classpath operations), `Diagnostic` represents observations
           * about the classpath shape that do not prevent a usable classpath from being returned. Currently the only concrete type is
           * `FqnCollision`.
           */
-        sealed trait Diagnostic derives CanEqual
+        sealed trait Diagnostic derives Schema, CanEqual
 
         /** Recorded when two or more source roots each provide a symbol under the same fully-qualified name.
           *
@@ -3068,7 +3010,67 @@ object Tasty:
           * This diagnostic is only populated under `ErrorMode.SoftFail`. Under `ErrorMode.FailFast`, a collision immediately raises
           * `TastyError.InconsistentClasspath` and initialization aborts.
           */
-        final case class FqnCollision(fqn: String, ids: Chunk[SymbolId]) extends Diagnostic
+        final case class FqnCollision(fqn: String, ids: Chunk[SymbolId]) extends Diagnostic derives Schema, CanEqual
+
+        /** All lookup indices for a Classpath. Immutable, populated once during `init` and never mutated.
+          *
+          * Fields:
+          *   - `byFqn`: fully-qualified dotted name to SymbolId (replaces old `fqnIndex`).
+          *   - `bySimpleName`: simple name to SymbolId chunk (for findClassesByName; replaces lazy `nameIndex`).
+          *   - `packageIndex`: package FQN to SymbolId.
+          *   - `subclassIndex`: parent SymbolId to direct subclass SymbolIds (for directSubclassesOf).
+          *   - `companionIndex`: SymbolId to companion SymbolId.
+          *   - `modulesIndex`: module name to ModuleDescriptor (O(1) findModule).
+          *   - `topLevelClassIds`: top-level class-like SymbolIds.
+          *   - `packageIds`: package SymbolIds.
+          *   - `unresolvedFqnByNegId`: negative SymbolId to FQN string (annotation types not on classpath).
+          *   - `diagnostics`: FQN collision records from initialization.
+          *
+          * `derives Schema, CanEqual`: Schema derivation succeeds because all fields use supported types;
+          * `Map[SymbolId, V]` fields use the `symbolIdMapSchema` given defined in `object Classpath`.
+          */
+        final case class Indices(
+            byFqn: Map[String, SymbolId],
+            bySimpleName: Map[String, Chunk[SymbolId]],
+            packageIndex: Map[String, SymbolId],
+            subclassIndex: Map[SymbolId, Chunk[SymbolId]],
+            companionIndex: Map[SymbolId, SymbolId],
+            modulesIndex: Map[String, ModuleDescriptor],
+            topLevelClassIds: Chunk[SymbolId],
+            packageIds: Chunk[SymbolId],
+            unresolvedFqnByNegId: Map[SymbolId, String],
+            diagnostics: Chunk[Classpath.Diagnostic]
+        ) derives CanEqual
+
+        object Indices:
+            val empty: Indices = Indices(
+                byFqn = Map.empty,
+                bySimpleName = Map.empty,
+                packageIndex = Map.empty,
+                subclassIndex = Map.empty,
+                companionIndex = Map.empty,
+                modulesIndex = Map.empty,
+                topLevelClassIds = Chunk.empty,
+                packageIds = Chunk.empty,
+                unresolvedFqnByNegId = Map.empty,
+                diagnostics = Chunk.empty
+            )
+        end Indices
+
+        /** Schema for Map[SymbolId, V]: encodes SymbolId keys as their String representation (Int value).
+          *
+          * kyo-schema provides Schema[Map[String, V]] but not Schema[Map[K, V]] for non-String keys.
+          * This given bridges the gap for all Map[SymbolId, V] fields in Classpath.Indices.
+          * Encoding: each SymbolId key is converted to its Int value rendered as a String; decoding
+          * parses the String back to Int and wraps in SymbolId.
+          */
+        private[kyo] given symbolIdMapSchema[V](using vs: Schema[V]): Schema[Map[SymbolId, V]] =
+            summon[Schema[Map[String, V]]].transform((m: Map[String, V]) => m.map((k, v) => (SymbolId(k.toInt), v)))(
+                (m: Map[SymbolId, V]) => m.map((k, v) => (k.value.toString, v))
+            )
+
+        /** Schema for Classpath.Indices. Placed here (after symbolIdMapSchema is defined) so Map[SymbolId, V] fields resolve. */
+        given schemaIndices: Schema[Indices] = Schema.derived
 
         /** Init a classpath from directory/file roots using `ErrorMode.SoftFail` (errors accumulate in `cp.errors`).
           *
@@ -3147,7 +3149,13 @@ object Tasty:
                 for
                     cp         <- init(jdkClassFiles.toSeq ++ roots, ErrorMode.SoftFail)
                     jdkModules <- PlatformModuleOps.readJdkModuleDescriptors
-                yield cp.copy(moduleIndex = cp.moduleIndex ++ jdkModules)
+                yield
+                    val newModulesIndex = cp.indices.modulesIndex ++ jdkModules
+                    val newModules      = Chunk.from(newModulesIndex.values.toSeq)
+                    cp.copy(
+                        modules = newModules,
+                        indices = cp.indices.copy(modulesIndex = newModulesIndex)
+                    )
                 end for
         end initWithPlatformModulesFiltered
 
@@ -3216,18 +3224,10 @@ object Tasty:
             Sync.defer:
                 Classpath(
                     symbols = symbols,
-                    rootSymbolId = if symbols.nonEmpty then SymbolId(0) else SymbolId(-1),
-                    topLevelClassIds = Chunk.empty,
-                    packageIds = Chunk.empty,
-                    fqnIndex = Map.empty,
-                    packageIndex = Map.empty,
-                    subclassIndex = Map.empty,
-                    companionIndex = Map.empty,
-                    moduleIndex = Map.empty,
+                    indices = Indices.empty,
                     errors = Chunk.empty,
-                    canonical = TypeArena.canonical(),
-                    diagnostics = Chunk.empty,
-                    unresolvedFqnByNegId = Map.empty
+                    modules = Chunk.empty,
+                    rootSymbolId = if symbols.nonEmpty then SymbolId(0) else SymbolId(-1)
                 )
 
         /** Internal: init implementation, delegates to ClasspathOrchestrator. */
@@ -3276,11 +3276,12 @@ object Tasty:
                                 Abort.run[TastyError](SnapshotWriter.write(cp, cacheDir, digest, source)).andThen(cp)
         end initCachedImpl
 
-        /** Internal factory for constructing a Tasty.Classpath case class from the finalized data produced by ClasspathOrchestrator or
-          * SnapshotReader.
+        /** Internal factory for constructing a Tasty.Classpath from the finalized data produced by
+          * ClasspathOrchestrator or SnapshotReader.
           *
-          * Called from ClasspathOrchestrator.finalizeMerge and SnapshotReader.deserialize (package kyo.internal.tasty.query and
-          * kyo.internal.tasty.snapshot) which cannot access the private[Tasty] constructor directly.
+          * Called from ClasspathOrchestrator.finalizeMerge and SnapshotReader.deserialize. The Classpath
+          * constructor is now public so callers can also construct directly; this shim exists for
+          * backward-compatible call sites that supply the 13-parameter expanded form.
           */
         private[kyo] def make(
             symbols: Chunk[Symbol],
@@ -3293,50 +3294,66 @@ object Tasty:
             companionIndex: Map[SymbolId, SymbolId],
             moduleIndex: Map[String, ModuleDescriptor],
             errors: Chunk[TastyError],
-            canonical: kyo.internal.tasty.type_.TypeArena,
             diagnostics: Chunk[Classpath.Diagnostic] = Chunk.empty,
-            unresolvedFqnByNegId: Map[Int, String] = Map.empty
+            unresolvedFqnByNegId: Map[SymbolId, String] = Map.empty
         ): Classpath =
-            new Classpath(
+            import Name.asString
+            val bySimpleName: Map[String, Chunk[SymbolId]] =
+                val b = scala.collection.mutable.HashMap.empty[String, scala.collection.mutable.ArrayBuffer[SymbolId]]
+                symbols.foreach: sym =>
+                    val nm = sym.name.asString
+                    if nm.nonEmpty then
+                        b.getOrElseUpdate(nm, new scala.collection.mutable.ArrayBuffer()) += sym.id
+                b.map((k, v) => k -> Chunk.from(v)).toMap
+            end bySimpleName
+            Classpath(
                 symbols = symbols,
-                rootSymbolId = rootSymbolId,
-                topLevelClassIds = topLevelClassIds,
-                packageIds = packageIds,
-                fqnIndex = fqnIndex,
-                packageIndex = packageIndex,
-                subclassIndex = subclassIndex,
-                companionIndex = companionIndex,
-                moduleIndex = moduleIndex,
+                indices = Classpath.Indices(
+                    byFqn = fqnIndex,
+                    bySimpleName = bySimpleName,
+                    packageIndex = packageIndex,
+                    subclassIndex = subclassIndex,
+                    companionIndex = companionIndex,
+                    modulesIndex = moduleIndex,
+                    topLevelClassIds = topLevelClassIds,
+                    packageIds = packageIds,
+                    unresolvedFqnByNegId = unresolvedFqnByNegId,
+                    diagnostics = diagnostics
+                ),
                 errors = errors,
-                canonical = canonical,
-                diagnostics = diagnostics,
-                unresolvedFqnByNegId = unresolvedFqnByNegId
+                modules = Chunk.from(moduleIndex.values.toSeq),
+                rootSymbolId = rootSymbolId
             )
         end make
 
-        /** CanEqual instance for structural equality comparisons in tests. */
-        given CanEqual[Classpath, Classpath] = CanEqual.canEqualAny
-
-        /** Internal helper: copy a Classpath with a replacement errors field.
-          *
-          * Equivalent to `cp.copy(errors = newErrors)` but accessible from `kyo.internal.*` callers via `private[kyo]`.
-          *
-          * The Classpath case class is `final case class Classpath private[Tasty](...)`, so `cp.copy(...)` is
-          * inaccessible from outside `object Tasty` because the constructor is `private[Tasty]`. This helper
-          * is the correct bridge for internal callers that must adjust the errors field.
-          */
+        /** Internal helper: copy a Classpath with a replacement errors field. */
         private[kyo] def copyWithErrors(cp: Classpath, newErrors: Chunk[TastyError]): Classpath =
             cp.copy(errors = newErrors)
 
-        /** Internal helper: prepend pre-errors (e.g., FileNotFound for missing roots under SoftFail) to cp.errors.
-          *
-          * Called from `ClasspathOrchestrator.init` after running the decode pipeline with only the valid roots. Accessible from
-          * `kyo.internal.*` callers via `private[kyo]`.
-          */
+        /** Internal helper: prepend pre-errors (e.g., FileNotFound for missing roots under SoftFail) to cp.errors. */
         private[kyo] def copyWithPreErrors(cp: Classpath, preErrors: Chunk[TastyError]): Classpath =
             cp.copy(errors = preErrors ++ cp.errors)
 
+        /** empty: canonical empty classpath, useful for tests and as a default value. */
+        val empty: Classpath = Classpath(
+            symbols = Chunk.empty,
+            indices = Indices.empty,
+            errors = Chunk.empty,
+            modules = Chunk.empty,
+            rootSymbolId = SymbolId(-1)
+        )
+
     end Classpath
+
+    /** Schema[Classpath] placed after object Classpath closes so Classpath.Indices and its Schema are in scope.
+      *
+      * Mirrors the schemaSymbol placement pattern (Decision 18 in Phase 03) that resolved the forward-reference
+      * issue when derives Schema is placed inline on the class.
+      */
+    given schemaClasspath: Schema[Classpath] = Schema.derived
+
+    /** CanEqual[Classpath, Classpath] derived after the companion closes; same placement rationale as schemaClasspath. */
+    given canEqualClasspath: CanEqual[Classpath, Classpath] = CanEqual.canEqualAny
 
     // ── FQN helper ──────────────────────────────────────────────────────────
 

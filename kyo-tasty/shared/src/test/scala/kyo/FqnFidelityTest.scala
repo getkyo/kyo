@@ -22,7 +22,7 @@ class FqnFidelityTest extends Test:
 
     // F-I-001 / INV-002 leaf 1 (Phase 02): no-doubled-segments
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
-    // When: scanning every key of cp.fqnIndex
+    // When: scanning every key of cp.indices.byFqn
     // Then: post-fix zero keys contain the substring "scala.scala" or "kyo.kyo";
     //       zero keys begin with "<empty>.";
     //       before fix keys like "scala.scala.collection.scala.collection.immutable.List" appear
@@ -30,7 +30,7 @@ class FqnFidelityTest extends Test:
     // Cross-platform: invariant "no doubled segments" holds for any classpath after the fix; passes on embedded fixtures.
     "F-I-001 (Phase 02): fqnIndex contains no doubled-package-segment keys" in run {
         TestClasspaths.withClasspath().map: cp =>
-            val doubled = cp.fqnIndex.keys.filter: k =>
+            val doubled = cp.indices.byFqn.keys.filter: k =>
                 k.contains("scala.scala") || k.contains("kyo.kyo") || k.startsWith("<empty>.")
             assert(
                 doubled.isEmpty,
@@ -56,7 +56,7 @@ class FqnFidelityTest extends Test:
                     )
                     succeed
                 case Absent =>
-                    val matching = cp.fqnIndex.keys
+                    val matching = cp.indices.byFqn.keys
                         .filter(k => k.contains("PlainClass") && k.contains("fixtures"))
                         .toSeq
                         .sorted
@@ -77,8 +77,8 @@ class FqnFidelityTest extends Test:
         TestClasspaths.withClasspath().map: cp =>
             val caseClassResult = cp.findClassLike("kyo.fixtures.SomeCaseClass")
             val traitResult     = cp.findClassLike("kyo.fixtures.SomeTrait")
-            val caseClassKeys   = cp.fqnIndex.keys.filter(_.contains("SomeCaseClass")).toSeq.sorted.take(3)
-            val traitKeys       = cp.fqnIndex.keys.filter(k => k.contains("SomeTrait") && k.startsWith("kyo")).toSeq.sorted.take(3)
+            val caseClassKeys   = cp.indices.byFqn.keys.filter(_.contains("SomeCaseClass")).toSeq.sorted.take(3)
+            val traitKeys       = cp.indices.byFqn.keys.filter(k => k.contains("SomeTrait") && k.startsWith("kyo")).toSeq.sorted.take(3)
             assert(
                 caseClassResult.isDefined,
                 s"cp.findClassLike(kyo.fixtures.SomeCaseClass) returned Absent. Related fqnIndex keys: ${caseClassKeys.mkString(", ")}"
@@ -159,7 +159,7 @@ class FqnFidelityTest extends Test:
                             s"Expected Symbol.Object."
                     )
                 case Absent =>
-                    val related = cp.fqnIndex.keys
+                    val related = cp.indices.byFqn.keys
                         .filter(k => k.startsWith("kyo.fixtures.SomeObject"))
                         .toSeq
                         .sorted
@@ -207,7 +207,7 @@ class FqnFidelityTest extends Test:
                     )
                     succeed
                 case (Absent, _) =>
-                    val related = cp.fqnIndex.keys
+                    val related = cp.indices.byFqn.keys
                         .filter(k => k.contains("SomeObject") && k.startsWith("kyo"))
                         .toSeq
                         .sorted

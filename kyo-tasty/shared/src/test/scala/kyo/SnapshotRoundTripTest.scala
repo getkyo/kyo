@@ -7,7 +7,6 @@ import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotFormat
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
-import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
 /** Tests for Phase 7: KRFL snapshot round-trip, digest determinism, and openCached behavior.
@@ -597,8 +596,7 @@ class SnapshotRoundTripTest extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = kyo.internal.tasty.type_.TypeArena.canonical()
+                errors = Chunk.empty
             )
             SnapshotWriter.write(coldCp, "cache", digest, cacheSrc).andThen:
                 val hex      = DigestComputer.toHexString(digest)
@@ -646,16 +644,16 @@ class SnapshotRoundTripTest extends Test:
                         s"symbols count mismatch: ${cp.symbols.length} != ${cp2.symbols.length}"
                     )
                     assert(
-                        cp.fqnIndex.keySet == cp2.fqnIndex.keySet,
+                        cp.indices.byFqn.keySet == cp2.indices.byFqn.keySet,
                         s"fqnIndex key sets differ after round-trip"
                     )
                     assert(
-                        cp.topLevelClassIds.length == cp2.topLevelClassIds.length,
-                        s"topLevelClassIds length mismatch: ${cp.topLevelClassIds.length} != ${cp2.topLevelClassIds.length}"
+                        cp.indices.topLevelClassIds.length == cp2.indices.topLevelClassIds.length,
+                        s"topLevelClassIds length mismatch: ${cp.indices.topLevelClassIds.length} != ${cp2.indices.topLevelClassIds.length}"
                     )
                     assert(
-                        cp.packageIds.length == cp2.packageIds.length,
-                        s"packageIds length mismatch: ${cp.packageIds.length} != ${cp2.packageIds.length}"
+                        cp.indices.packageIds.length == cp2.indices.packageIds.length,
+                        s"packageIds length mismatch: ${cp.indices.packageIds.length} != ${cp2.indices.packageIds.length}"
                     )
                     assert(
                         cp.errors.size == cp2.errors.size,
@@ -713,8 +711,7 @@ class SnapshotRoundTripTest extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = kyo.internal.tasty.type_.TypeArena.canonical()
+                errors = Chunk.empty
             )
             SnapshotWriter.write(syntheticCp, "cache", digest, cacheSrc).andThen:
                 val hex      = DigestComputer.toHexString(digest)

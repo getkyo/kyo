@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Tasty.SymbolId
-import kyo.internal.tasty.type_.TypeArena
 
 /** Phase 08 followup for W-06-03: exercises `Classpath.modules` bulk aggregator.
   *
@@ -41,8 +40,7 @@ class ClasspathModulesAggregatorTest extends Test:
                     "java.logging" -> makeModule("java.logging"),
                     "myApp"        -> makeModule("myApp")
                 ),
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
 
     // Given: a classpath with 3 module descriptors in moduleIndex

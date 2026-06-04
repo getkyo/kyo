@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Tasty.SymbolId
 import kyo.internal.tasty.symbol.SymbolSignature
-import kyo.internal.tasty.type_.TypeArena
 
 /** Tests for SymbolSignature.compute across all symbol subtypes.
   *
@@ -112,8 +111,7 @@ class SymbolSignatureTest extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
 
     "SymbolSignature.compute for Method returns def-prefixed string with param list" in run {
@@ -172,8 +170,7 @@ class SymbolSignatureTest extends Test:
             subclassIndex = Map.empty,
             companionIndex = Map.empty,
             moduleIndex = Map.empty,
-            errors = Chunk.empty,
-            canonical = TypeArena.canonical()
+            errors = Chunk.empty
         )
         SymbolSignature.compute(ta, cp).map: sig =>
             assert(sig.contains("type MyAlias"), s"Unexpected: $sig")

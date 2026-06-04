@@ -7,7 +7,6 @@ import kyo.internal.tasty.query.PlatformFileSource
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
-import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
 /** JVM-only tests for Decoder-fidelity-5 Phase 5.02.
@@ -107,8 +106,7 @@ class DecoderFidelity5Phase02JvmTest extends Test:
                 subclassIndex = Map(SymbolId(0) -> Chunk(SymbolId(1), SymbolId(2))),
                 companionIndex = Map(SymbolId(3) -> SymbolId(4), SymbolId(4) -> SymbolId(3)),
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
     end syntheticCp
 
@@ -202,10 +200,10 @@ class DecoderFidelity5Phase02JvmTest extends Test:
                         val snapPath = s"$tmpDir/$hex.krfl"
                         SnapshotReader.readMapped(snapPath, platSrc).map: warm =>
                             (
-                                cold.subclassIndex.size,
-                                cold.companionIndex.size,
-                                warm.subclassIndex.size,
-                                warm.companionIndex.size
+                                cold.indices.subclassIndex.size,
+                                cold.indices.companionIndex.size,
+                                warm.indices.subclassIndex.size,
+                                warm.indices.companionIndex.size
                             )
             .map:
                 case Result.Success((coldSub, coldComp, warmSub, warmComp)) =>

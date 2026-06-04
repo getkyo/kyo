@@ -183,12 +183,12 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
                     s"Two cold loads produced different symbol counts: ${cold1.symbols.size} vs ${cold2.symbols.size}"
                 )
                 assert(
-                    warm1.fqnIndex.size == cold1.fqnIndex.size,
-                    s"warm1.fqnIndex.size (${warm1.fqnIndex.size}) != cold1.fqnIndex.size (${cold1.fqnIndex.size})"
+                    warm1.indices.byFqn.size == cold1.indices.byFqn.size,
+                    s"warm1.indices.byFqn.size (${warm1.indices.byFqn.size}) != cold1.indices.byFqn.size (${cold1.indices.byFqn.size})"
                 )
                 assert(
-                    warm2.fqnIndex.size == cold2.fqnIndex.size,
-                    s"warm2.fqnIndex.size (${warm2.fqnIndex.size}) != cold2.fqnIndex.size (${cold2.fqnIndex.size})"
+                    warm2.indices.byFqn.size == cold2.indices.byFqn.size,
+                    s"warm2.indices.byFqn.size (${warm2.indices.byFqn.size}) != cold2.indices.byFqn.size (${cold2.indices.byFqn.size})"
                 )
                 assert(
                     warm1.symbols.size == warm2.symbols.size,

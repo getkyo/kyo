@@ -40,8 +40,8 @@ class TestClasspaths2Test extends kyo.Test:
                 s"cold.symbols.size (${cold.symbols.size}) != warm.symbols.size (${warm.symbols.size})"
             )
             assert(
-                cold.fqnIndex.size == warm.fqnIndex.size,
-                s"cold.fqnIndex.size (${cold.fqnIndex.size}) != warm.fqnIndex.size (${warm.fqnIndex.size})"
+                cold.indices.byFqn.size == warm.indices.byFqn.size,
+                s"cold.fqnIndex.size (${cold.indices.byFqn.size}) != warm.fqnIndex.size (${warm.indices.byFqn.size})"
             )
             succeed
     }

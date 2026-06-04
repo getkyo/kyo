@@ -8,7 +8,7 @@ import kyo.internal.TestClasspaths2
 /** Snapshot warm-cold parity tests for decoder-fidelity-2 campaign Phase 2.02.
   *
   * Pins findings F-A4-001 (finalizeMerge ghost-symbol fix), F-A4-002 (SnapshotWriter defensive Named(-1) filter), and F-A4-005
-  * (byte-equal idempotent cold writes). Produces invariants INV-013 (cold.fqnIndex.size == warm.fqnIndex.size) and INV-101-DF2
+  * (byte-equal idempotent cold writes). Produces invariants INV-013 (cold.indices.byFqn.size == warm.indices.byFqn.size) and INV-101-DF2
   * (warmColdEquivalent returns Equal on the standard classpath pair).
   *
   * Phase 2.10: relocated from jvm/src/test to shared/src/test. All leaves depend on TestClasspaths2.standardWithSnapshot (cold + warm
@@ -27,18 +27,18 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
 
     // Leaf 4 (Phase 2.02, migrated Phase 2 post-audit): fqnindex-size-cold-equals-warm
     // Given: a cold + warm classpath from embedded fixtures via withSnapshotInMemory
-    // When: comparing cold.fqnIndex.size to warm.fqnIndex.size
+    // When: comparing cold.indices.byFqn.size to warm.indices.byFqn.size
     // Then: sizes are equal (in-memory round-trip preserves full fqnIndex)
     // Pins: INV-013; F-A4-001
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly with standardWithSnapshot + >= 110,000 stdlib lower bound (removed).
-    "INV-013 (Phase 2.02): cold.fqnIndex.size == warm.fqnIndex.size after in-memory round-trip" in run {
+    "INV-013 (Phase 2.02): cold.indices.byFqn.size == warm.indices.byFqn.size after in-memory round-trip" in run {
         TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
-            val coldSize = cold.fqnIndex.size
-            val warmSize = warm.fqnIndex.size
+            val coldSize = cold.indices.byFqn.size
+            val warmSize = warm.indices.byFqn.size
             assert(
                 coldSize == warmSize,
-                s"cold.fqnIndex.size ($coldSize) != warm.fqnIndex.size ($warmSize); " +
+                s"cold.indices.byFqn.size ($coldSize) != warm.indices.byFqn.size ($warmSize); " +
                     s"pre-fix gap was 37,225 entries due to ghost SymbolId(-1) entries dropped by SnapshotWriter"
             )
             succeed
@@ -97,7 +97,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
             assert(
                 result.isEqual,
                 s"Expected EquivResult.Equal but got $result; " +
-                    s"cold.fqnIndex.size=${cold.fqnIndex.size} warm.fqnIndex.size=${warm.fqnIndex.size}"
+                    s"cold.indices.byFqn.size=${cold.indices.byFqn.size} warm.indices.byFqn.size=${warm.indices.byFqn.size}"
             )
             succeed
     }
@@ -140,16 +140,16 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
                     s"Two cold loads produced different symbol counts: ${cold1.symbols.size} vs ${cold2.symbols.size}"
                 )
                 assert(
-                    cold1.fqnIndex.size == cold2.fqnIndex.size,
-                    s"Two cold loads produced different fqnIndex sizes: ${cold1.fqnIndex.size} vs ${cold2.fqnIndex.size}"
+                    cold1.indices.byFqn.size == cold2.indices.byFqn.size,
+                    s"Two cold loads produced different fqnIndex sizes: ${cold1.indices.byFqn.size} vs ${cold2.indices.byFqn.size}"
                 )
                 assert(
-                    warm1.fqnIndex.size == cold1.fqnIndex.size,
-                    s"Warm1.fqnIndex.size (${warm1.fqnIndex.size}) != cold1.fqnIndex.size (${cold1.fqnIndex.size})"
+                    warm1.indices.byFqn.size == cold1.indices.byFqn.size,
+                    s"Warm1.indices.byFqn.size (${warm1.indices.byFqn.size}) != cold1.indices.byFqn.size (${cold1.indices.byFqn.size})"
                 )
                 assert(
-                    warm2.fqnIndex.size == cold2.fqnIndex.size,
-                    s"Warm2.fqnIndex.size (${warm2.fqnIndex.size}) != cold2.fqnIndex.size (${cold2.fqnIndex.size})"
+                    warm2.indices.byFqn.size == cold2.indices.byFqn.size,
+                    s"Warm2.indices.byFqn.size (${warm2.indices.byFqn.size}) != cold2.indices.byFqn.size (${cold2.indices.byFqn.size})"
                 )
                 succeed
     }
@@ -159,7 +159,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
     // Phase 2.13: coldWarmEquiv uses TestClasspaths2.withSnapshotInMemory (cross-platform).
     // ─────────────────────────────────────────────────────────────────────────
 
-    coldWarmEquiv("INV-013-cw (Phase 2.13): fqnIndex.size is equal on cold and warm after in-memory round-trip")(_.fqnIndex.size)
+    coldWarmEquiv("INV-013-cw (Phase 2.13): fqnIndex.size is equal on cold and warm after in-memory round-trip")(_.indices.byFqn.size)
 
     // Leaf 10 (Phase 2.13): in-memory-snapshot-symbols-size-equal
     // Given: a cold classpath from embedded fixtures and a warm classpath from in-memory snapshot round-trip
@@ -184,8 +184,8 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
     // Pins: Target 3 (unresolvedFqnByNegId snapshot persistence), FQNMAP__ section
     "Phase 2.13: in-memory snapshot round-trip persists unresolvedFqnByNegId via FQNMAP__ section" in run {
         TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
-            val coldSize = cold.unresolvedFqnByNegId.size
-            val warmSize = warm.unresolvedFqnByNegId.size
+            val coldSize = cold.indices.unresolvedFqnByNegId.size
+            val warmSize = warm.indices.unresolvedFqnByNegId.size
             assert(
                 warmSize == coldSize,
                 s"In-memory snapshot lost unresolvedFqnByNegId entries: cold=$coldSize warm=$warmSize. " +

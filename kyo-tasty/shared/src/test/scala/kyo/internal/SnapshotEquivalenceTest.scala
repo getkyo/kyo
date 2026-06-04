@@ -115,8 +115,7 @@ class SnapshotEquivalenceTest extends kyo.Test:
             subclassIndex = Map.empty,
             companionIndex = Map.empty,
             moduleIndex = Map.empty,
-            errors = Chunk.empty,
-            canonical = kyo.internal.tasty.type_.TypeArena.canonical()
+            errors = Chunk.empty
         )
 
 end SnapshotEquivalenceTest

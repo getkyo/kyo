@@ -57,26 +57,24 @@ class ClasspathImmutabilityTest extends Test:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Sync.defer:
                     // Access each field twice; both accesses must return reference-equal (or value-equal) results.
-                    val syms1  = cp.symbols
-                    val syms2  = cp.symbols
-                    val errs1  = cp.errors
-                    val errs2  = cp.errors
-                    val fqn1   = cp.fqnIndex
-                    val fqn2   = cp.fqnIndex
-                    val top1   = cp.topLevelClassIds
-                    val top2   = cp.topLevelClassIds
-                    val root1  = cp.rootSymbolId
-                    val root2  = cp.rootSymbolId
-                    val canon1 = cp.canonical
-                    val canon2 = cp.canonical
-                    (syms1 eq syms2, errs1 eq errs2, fqn1 eq fqn2, top1 eq top2, root1 == root2, canon1 eq canon2)).map:
-                case Result.Success((symsSame, errsSame, fqnSame, topSame, rootSame, canonSame)) =>
+                    val syms1 = cp.symbols
+                    val syms2 = cp.symbols
+                    val errs1 = cp.errors
+                    val errs2 = cp.errors
+                    val fqn1  = cp.indices.byFqn
+                    val fqn2  = cp.indices.byFqn
+                    val top1  = cp.indices.topLevelClassIds
+                    val top2  = cp.indices.topLevelClassIds
+                    val root1 = cp.rootSymbolId
+                    val root2 = cp.rootSymbolId
+                    // canonical field removed in Phase 04: Classpath is now pure data with no TypeArena.
+                    (syms1 eq syms2, errs1 eq errs2, fqn1 eq fqn2, top1 eq top2, root1 == root2)).map:
+                case Result.Success((symsSame, errsSame, fqnSame, topSame, rootSame)) =>
                     assert(symsSame, "symbols field must return reference-equal value on repeated access")
                     assert(errsSame, "errors field must return reference-equal value on repeated access")
-                    assert(fqnSame, "fqnIndex field must return reference-equal value on repeated access")
+                    assert(fqnSame, "byFqn field must return reference-equal value on repeated access")
                     assert(topSame, "topLevelClassIds field must return reference-equal value on repeated access")
                     assert(rootSame, "rootSymbolId field must return equal value on repeated access")
-                    assert(canonSame, "canonical field must return reference-equal value on repeated access")
                     succeed
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")

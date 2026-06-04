@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Tasty.SymbolId
-import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 07 (leaves 131-136): Symbol convenience accessors.
   *
@@ -74,8 +73,7 @@ class SymbolConvenienceTest extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
             cls.fullNameString(using summon[Frame], cp)
         }.map: fqn =>
@@ -116,8 +114,7 @@ class SymbolConvenienceTest extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
             val chain = clsD.ownersChain(using cp).map(_.simpleName)
             assert(chain == Chunk("D", "C", "B", "A", "pkg"), s"Unexpected chain: $chain")
@@ -143,8 +140,7 @@ class SymbolConvenienceTest extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
             val size = pkg.ownersChain(using cp).size
             assert(size == 1, s"Expected size 1 for self-loop but got $size")
@@ -171,8 +167,7 @@ class SymbolConvenienceTest extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
             m.owner(using cp) match
                 case Maybe.Present(a) =>
@@ -202,8 +197,7 @@ class SymbolConvenienceTest extends Test:
             subclassIndex = Map.empty,
             companionIndex = Map.empty,
             moduleIndex = Map.empty,
-            errors = Chunk.empty,
-            canonical = TypeArena.canonical()
+            errors = Chunk.empty
         )
         assert(sym.owner(using cp) == Maybe.Absent)
         succeed

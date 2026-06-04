@@ -742,7 +742,7 @@ class QueryApiTest extends Test:
     }
 
     // Phase 4 Test 4 (G24): companion is pure; returns Absent after scope close for a plain class.
-    // sym.companion uses cp.companionIndex which is empty in fromPickles.
+    // sym.companion uses cp.indices.companionIndex which is empty in fromPickles.
     "Phase 4: sym.companion after classpath close returns Absent (pure, no failure)" in run {
         val captureResult: Result[TastyError, Tasty.Symbol] < Async =
             Scope.run:

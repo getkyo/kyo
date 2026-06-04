@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Tasty.SymbolId
-import kyo.internal.tasty.type_.TypeArena
 
 /** Plan-mandated tests for Phase 08 (leaves 175-178): steering target-use-case end-to-end validation.
   *
@@ -96,8 +95,7 @@ class SteeringTargetUseCaseTest extends Test:
                 subclassIndex = Map.empty,
                 companionIndex = Map.empty,
                 moduleIndex = Map.empty,
-                errors = Chunk.empty,
-                canonical = TypeArena.canonical()
+                errors = Chunk.empty
             )
 
     // ── Leaf 175: target-use-case-compiles-and-runs ───────────────────────────
