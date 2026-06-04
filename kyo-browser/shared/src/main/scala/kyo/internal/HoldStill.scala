@@ -15,13 +15,13 @@ import kyo.*
   *      `captureHoldStillTimeout` elapses; returns the last frame.
   *
   * The cross-CDP per-frame loop (paced by `Clock.sleep(captureHoldStillInterval)`) is exempt from
-  * the in-page `awaitPromise` single-eval constraint (PRE-002 note): that constraint binds only
+  * the in-page `awaitPromise` single-eval constraint: that constraint binds only
   * in-page transient loops. The JS-side font/freeze evals are each a single non-splitting eval.
   * The hold-still loop is NOT an in-page transient loop; each iteration issues a full CDP
   * round-trip.
   *
   * `Async` used internally (`Clock.sleep`, capture suspension) is absorbed by the `Browser` effect
-  * at the `Browser.run` boundary and does not appear in callers' public rows (Q-007: `Browser <:
+  * at the `Browser.run` boundary and does not appear in callers' public rows (`Browser <:
   * Async` at the run boundary; the locked public signatures stay `Browser &
   * Abort[BrowserReadException]` without `Async`).
   *
@@ -140,7 +140,7 @@ private[kyo] object HoldStill:
     /** Awaits fonts.ready, injects the freeze style (removed on scope exit), then loops `capture`
       * until `frameHash` repeats or `captureHoldStillTimeout` elapses; returns the last captured
       * frame. The loop reads `captureHoldStillTimeout`/`captureHoldStillInterval` from
-      * `Browser.configLocal` (PRE-004, INV-008). Never aborts on timeout (INV-004).
+      * `Browser.configLocal`. Never aborts on timeout.
       *
       * Equivalent to `withFrozenPage { holdStillFrame(capture) }`. Use this for single captures;
       * use `withFrozenPage` + `holdStillFrame` directly when capturing multiple bands that must all

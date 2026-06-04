@@ -42,8 +42,7 @@ private[kyo] object BrowserTab:
       *
       * Stored in the per-tab `viewportOverride: AtomicRef[Maybe[ViewportOverride]]`. A value
       * of `Absent` means no active override (natural viewport). `dpr` defaults to `1.0` for
-      * the no-DPR-override case. Widened in Phase 1; consumed by `setViewport`/`withViewport`
-      * in Phase 8.
+      * the no-DPR-override case. Consumed by `setViewport`/`withViewport`.
       */
     final case class ViewportOverride(width: Int, height: Int, dpr: Double) derives CanEqual
 

@@ -4,8 +4,8 @@ class BrowserDiscoverTest extends BrowserTest:
 
     override def timeout = 90.seconds
 
-    // Test 14 (plan scenario 14): element returns full ElementInfo for a present match
-    // (pins PRE-005, INV-001, Q-005). A #submit button with known geometry and classes.
+    // element returns full ElementInfo for a present match.
+    // A #submit button with known geometry and classes.
     "element returns full ElementInfo for a present match" in run {
         withBrowser {
             onPage("""<html><body style="margin:0;padding:0;">
@@ -35,7 +35,7 @@ class BrowserDiscoverTest extends BrowserTest:
         }
     }
 
-    // Test 15 (plan scenario 15): element returns Absent on no match (pins INV-001, PRE-005).
+    // element returns Absent on no match.
     "element returns Absent on no match" in run {
         withBrowser {
             onPage("<html><body></body></html>") {
@@ -46,8 +46,8 @@ class BrowserDiscoverTest extends BrowserTest:
         }
     }
 
-    // Test 16 (plan scenario 16): elementAt hit-tests the topmost element at a pixel
-    // (pins design pixel-hit-test, INV-001). A #box at (120,48,100,60). Hit point (130,58) is inside it.
+    // elementAt hit-tests the topmost element at a pixel.
+    // A #box at (120,48,100,60). Hit point (130,58) is inside it.
     "elementAt hit-tests the topmost element at a pixel" in run {
         withBrowser {
             onPage("""<html><body style="margin:0;padding:0;">
@@ -66,8 +66,8 @@ class BrowserDiscoverTest extends BrowserTest:
         }
     }
 
-    // Test 17 (plan scenario 17): elementAt returns Absent for an empty point and aborts on negative coords
-    // (pins INV-001, INV-006). (a) a point over blank background returns Absent; (b) negative coords abort
+    // elementAt returns Absent for an empty point and aborts on negative coords.
+    // (a) a point over blank background returns Absent; (b) negative coords abort
     // BrowserInvalidArgumentException BEFORE any page eval.
     "elementAt returns Absent for empty point and aborts on negative coordinates" in run {
         withBrowser {
@@ -89,8 +89,8 @@ class BrowserDiscoverTest extends BrowserTest:
         }
     }
 
-    // Test 18 (plan scenario 18): elements returns a Chunk in document order, empty-fast-paths, and
-    // ElementInfo.leaves filters ancestors (pins PRE-005, INV-001, pure-leaf-filter).
+    // elements returns a Chunk in document order, empty-fast-paths, and
+    // ElementInfo.leaves filters ancestors.
     // Three sub-cases in one test.
     "elements document order, empty fast-path, and ElementInfo.leaves pure filter" in run {
 
@@ -166,8 +166,7 @@ class BrowserDiscoverTest extends BrowserTest:
         }
     }
 
-    // ---- Test 7-11: screenshotMarks overlays numbered badges and is settlement-transparent
-    //      (INV-003 consumer, PRE-009, Q-006).
+    // ---- screenshotMarks overlays numbered badges and is settlement-transparent.
     //
     // A page with 3 buttons. Issue screenshotMarks on the buttons. Assert:
     //   (a) returns a non-empty PNG,
@@ -238,7 +237,7 @@ class BrowserDiscoverTest extends BrowserTest:
         }
     }
 
-    // ---- Test 7-12: screenshotMarks aborts over maxMarks (INV-006).
+    // ---- screenshotMarks aborts over maxMarks.
     //
     // Build a Chunk of 5 ElementInfo stubs. screenshotMarks(marks, maxMarks = 3) must abort with
     // BrowserCaptureLimitExceededException("screenshotMarks", 3, 5) before any CDP call.

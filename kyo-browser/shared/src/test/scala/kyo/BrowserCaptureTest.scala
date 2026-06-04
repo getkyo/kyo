@@ -22,8 +22,7 @@ class BrowserCaptureTest extends BrowserTest:
                 .map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
         }
 
-    // ---- Test 4 (pure, no Chrome): frameHash equates byte-identical images and
-    //      distinguishes different ones (INV-004).
+    // ---- frameHash equates byte-identical images and distinguishes different ones (pure, no Chrome).
     //
     // This test does NOT use ImageDiff: it asserts on hash values of decoded bytes directly.
     // The "no ImageDiff symbol exists" constraint is prose only, never an assertion (test discipline).
@@ -50,7 +49,7 @@ class BrowserCaptureTest extends BrowserTest:
         succeed
     }
 
-    // ---- Test 1: hold-still returns an Image on a never-quiescing page (INV-004).
+    // ---- hold-still returns an Image on a never-quiescing page.
     //
     // Page has a perpetual @keyframes animation cycling through background-color every 100ms.
     // Two consecutive captures will never be hash-identical. A tight captureHoldStillTimeout of
@@ -102,7 +101,7 @@ class BrowserCaptureTest extends BrowserTest:
         }
     }
 
-    // ---- Test 2: hold-still converges on a static page (INV-004).
+    // ---- hold-still converges on a static page.
     //
     // A fully static page with no animation, no JS timers, fonts loaded. Two consecutive captures
     // of the same static page will be hash-identical. Assert: returns quickly (well under
@@ -138,15 +137,14 @@ class BrowserCaptureTest extends BrowserTest:
         }
     }
 
-    // ---- Test 3: the freeze stylesheet is injected during capture and removed on exit (PRE-009,
-    //      INV-003 consumer).
+    // ---- the freeze stylesheet is injected during capture and removed on exit.
     //
     // After HoldStill.withHoldStill returns:
     //   - document.querySelectorAll('style[data-kyo-internal]').length === 0  (0)
     //
     // The injection-during guarantee is covered by Test 1 and Test 2 converging correctly (if the
     // freeze style were not injected, animations would not pause and the convergence behavior would
-    // differ). The explicit teardown assertion here pins PRE-009: the removal targets the freeze
+    // differ). The explicit teardown assertion here checks that the removal targets the freeze
     // node by its unique token, so the actual DOM node count is the correctness witness.
 
     "the freeze stylesheet is injected during capture and removed on exit" in run {
@@ -260,7 +258,7 @@ class BrowserCaptureTest extends BrowserTest:
         }
     }
 
-    // ---- Test 7-1: screenshot captures the live viewport size (INV-004 consumer).
+    // ---- screenshot captures the live viewport size.
     //
     // Set the viewport to 390x844 then take a screenshot. The returned Image bytes must decode to
     // dimensions 390x844, confirming the live-viewport path (NOT the legacy 1280x720 crop).
@@ -331,7 +329,7 @@ class BrowserCaptureTest extends BrowserTest:
         }
     }
 
-    // ---- Test 7-4: screenshotRegion aborts on non-positive size (INV-006).
+    // ---- screenshotRegion aborts on non-positive size.
     //
     // Both screenshotRegion(0, 0, 0, 300) and screenshotRegion(0, 0, 100, -1) must abort with
     // BrowserInvalidArgumentException BEFORE any CDP call (the abort fires synchronously, not
@@ -469,7 +467,7 @@ class BrowserCaptureTest extends BrowserTest:
         }
     }
 
-    // ---- Test 7-6: screenshotFullPage aborts over maxBands BEFORE any capture (INV-006).
+    // ---- screenshotFullPage aborts over maxBands BEFORE any capture.
     //
     // Set body height to 7 * viewport-height. screenshotFullPage(maxBands = 3) must abort with
     // BrowserCaptureLimitExceededException("screenshotFullPage", 3, 7) before producing any
@@ -502,7 +500,7 @@ class BrowserCaptureTest extends BrowserTest:
         }
     }
 
-    // ---- Test 7-7: screenshotElement auto-waits for a late-appearing element (PRE-001).
+    // ---- screenshotElement auto-waits for a late-appearing element.
     //
     // A page with a setTimeout that inserts .badge after 200ms. screenshotElement issued
     // immediately must auto-wait (withRetry) and return the badge's Image when it appears.
@@ -534,8 +532,7 @@ class BrowserCaptureTest extends BrowserTest:
         }
     }
 
-    // ---- Test 7-8: screenshotElement aborts BrowserElementNotFoundException when the element
-    //      never appears (INV-002, PRE-003).
+    // ---- screenshotElement aborts BrowserElementNotFoundException when the element never appears.
     //
     // A page with no .never element. Under a tight retrySchedule, screenshotElement must abort
     // BrowserElementNotFoundException within the schedule budget.
@@ -556,8 +553,7 @@ class BrowserCaptureTest extends BrowserTest:
         }
     }
 
-    // ---- Test 7-9: screenshotElement with transparentBackground produces a transparent background
-    //      (PRE-007).
+    // ---- screenshotElement with transparentBackground produces a transparent background.
     //
     // The .badge element has a TRANSPARENT background of its own and contains a small opaque dot, so
     // the badge's bounding box has the page's default background showing through the surrounding gap.
@@ -625,7 +621,7 @@ class BrowserCaptureTest extends BrowserTest:
         }
     }
 
-    // ---- Test 7-10: screenshotElement never widens the retry channel (INV-002 producer).
+    // ---- screenshotElement never widens the retry channel.
     //
     // A page that perpetually mutates (setInterval DOM mutation) AND has no .never element.
     // screenshotElement under a tight retrySchedule must abort BrowserElementNotFoundException

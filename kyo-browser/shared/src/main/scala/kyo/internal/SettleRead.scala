@@ -10,8 +10,8 @@ import kyo.*
   * When `decode` itself aborts (a must-exist read finding an absent element), that abort is treated as an unstable sample and re-tried for the
   * full `retrySchedule` budget before the failure is surfaced to the caller.
   *
-  * The whole in-page sampling loop runs inside `StabilitySampler.sampleWindow`'s single `awaitPromise=true` eval (PRE-002), and the bound is
-  * the configurable `retrySchedule` from `SessionConfig` (PRE-004 / INV-008), never a hardcoded value.
+  * The whole in-page sampling loop runs inside `StabilitySampler.sampleWindow`'s single `awaitPromise=true` eval, and the bound is
+  * the configurable `retrySchedule` from `SessionConfig`, never a hardcoded value.
   */
 private[kyo] object SettleRead:
 

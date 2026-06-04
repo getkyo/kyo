@@ -1185,7 +1185,7 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    // ── Phase 2: data-kyo-internal filter + waitForStable + settleForCapture ──
+    // ── data-kyo-internal filter + waitForStable + settleForCapture ──
 
     // Test 1: injecting a data-kyo-internal node leaves __kyoMutCount unchanged.
     // The observer is installed via a no-op afterAction call so __kyoMutCount and the

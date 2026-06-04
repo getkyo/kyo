@@ -8,7 +8,7 @@ class BrowserViewportTest extends BrowserTest:
 
     // ---- setViewport ----
 
-    // Test 1 (plan scenario 1): setViewport applies the CDP override; window.innerWidth reflects it (pins INV-007, PRE-001).
+    // setViewport applies the CDP override; window.innerWidth reflects it.
     "setViewport changes the rendered viewport width" in run {
         withBrowser {
             onPage("<html><body>set-viewport-width</body></html>") {
@@ -21,8 +21,8 @@ class BrowserViewportTest extends BrowserTest:
         }
     }
 
-    // Test 2 (plan scenario 2): setViewport threads deviceScaleFactor to both the per-tab cache and the CDP send
-    // (pins INV-007). devicePixelRatio reports the DPR and the cache holds the ViewportOverride triple.
+    // setViewport threads deviceScaleFactor to both the per-tab cache and the CDP send.
+    // devicePixelRatio reports the DPR and the cache holds the ViewportOverride triple.
     "setViewport threads the DPR to the cache and the CDP send" in run {
         withBrowser {
             onPage("<html><body>set-viewport-dpr</body></html>") {
@@ -43,8 +43,8 @@ class BrowserViewportTest extends BrowserTest:
         }
     }
 
-    // Test 3 (plan scenario 3): setViewport settles after, so the re-layout has quiesced on return. Reading innerWidth
-    // immediately after setViewport returns observes the post-resize value, never a mid-resize race (pins PRE-001).
+    // setViewport settles after, so the re-layout has quiesced on return. Reading innerWidth
+    // immediately after setViewport returns observes the post-resize value, never a mid-resize race.
     "setViewport settles after so the re-layout has quiesced on return" in run {
         withBrowser {
             // A responsive page: a media query swaps the marker text when the viewport narrows below 500px.
@@ -67,7 +67,7 @@ class BrowserViewportTest extends BrowserTest:
 
     // ---- resetViewport ----
 
-    // Test 4 (plan scenario 4): resetViewport clears the CDP override and the cache (pins INV-007). innerWidth returns to
+    // resetViewport clears the CDP override and the cache. innerWidth returns to
     // the natural width and the per-tab cache returns to Absent.
     "resetViewport clears the override and the cache" in run {
         withBrowser {
@@ -96,8 +96,8 @@ class BrowserViewportTest extends BrowserTest:
 
     // ---- withViewport ----
 
-    // Test 5 (plan scenario 5): withViewport applies the override for the body and restores the prior DPR-carrying override
-    // on exit (LIFO). A prior setViewport(800, 600, 2.0) establishes the override to restore (pins PRE-007, INV-007).
+    // withViewport applies the override for the body and restores the prior DPR-carrying override
+    // on exit (LIFO). A prior setViewport(800, 600, 2.0) establishes the override to restore.
     "withViewport applies for the body and restores the prior DPR-carrying override after" in run {
         withBrowser {
             onPage("<html><body>with-viewport-lifo</body></html>") {
@@ -116,7 +116,7 @@ class BrowserViewportTest extends BrowserTest:
         }
     }
 
-    // Test 6 (plan scenario 6): withViewport restores the prior override on interruption (pins PRE-007). The Browser effect
+    // withViewport restores the prior override on interruption. The Browser effect
     // carries Env[BrowserTab] and the module deliberately provides no same-tab isolate, so the interrupted body is a
     // self-contained Browser.run (the established interruption pattern in BrowserIsolateTest). The inner tab is captured via
     // a Promise so its viewportOverride cache (a plain AtomicRef, readable under Sync) can be inspected after the timeout:
@@ -166,7 +166,7 @@ class BrowserViewportTest extends BrowserTest:
 
     // ---- scrollTo(x, y) ----
 
-    // Test 7 (plan scenario 7): scrollTo(x, y) moves the scroll position to the coordinate and settles after (pins PRE-001).
+    // scrollTo(x, y) moves the scroll position to the coordinate and settles after.
     // A tall page makes the y-offset reachable; window.scrollY reports the landed offset.
     "scrollTo(x, y) scrolls to the coordinate and settles" in run {
         withBrowser {
@@ -182,8 +182,8 @@ class BrowserViewportTest extends BrowserTest:
 
     // ---- scrollToElement ----
 
-    // Test 8 (plan scenario 8): scrollToElement scrolls an off-screen element into view and auto-waits for a late-appearing
-    // element (pins INV-002, PRE-003). The #footer below the fold is inserted after ~150ms; the auto-wait retries until it
+    // scrollToElement scrolls an off-screen element into view and auto-waits for a late-appearing
+    // element. The #footer below the fold is inserted after ~150ms; the auto-wait retries until it
     // appears, then scrolls it into view. The raw getBoundingClientRect check confirms it is fully within the viewport.
     "scrollToElement scrolls the element into view and auto-waits for a late-appearing element" in run {
         val html =
@@ -211,8 +211,8 @@ class BrowserViewportTest extends BrowserTest:
         }
     }
 
-    // Test 9 (plan scenario 9): scrollToElement aborts BrowserElementNotFoundException for a never-appearing element via the
-    // narrow retry channel (pins INV-002, PRE-003). The abort is BrowserElementNotFoundException, never a
+    // scrollToElement aborts BrowserElementNotFoundException for a never-appearing element via the
+    // narrow retry channel. The abort is BrowserElementNotFoundException, never a
     // BrowserMutationException (proving the channel is BrowserElementException, not widened).
     "scrollToElement aborts BrowserElementNotFoundException for a never-appearing element via the narrow channel" in run {
         withBrowser {

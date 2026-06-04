@@ -11,8 +11,8 @@ class BrowserEmulationTest extends BrowserTest:
 
     // ---- withEmulation ----
 
-    // Test 1: colorScheme = Dark applies prefers-color-scheme: dark inside the body. The single setEmulatedMedia send
-    // composes the prefers-color-scheme feature; matchMedia reports the emulated value (pins the single-call design, PRE-001).
+    // colorScheme = Dark applies prefers-color-scheme: dark inside the body. The single setEmulatedMedia send
+    // composes the prefers-color-scheme feature; matchMedia reports the emulated value.
     "withEmulation dark color-scheme matches inside the body" in run {
         withBrowser {
             onPage("<html><body>emulation-dark</body></html>") {
@@ -25,9 +25,9 @@ class BrowserEmulationTest extends BrowserTest:
         }
     }
 
-    // Test 2: nested withEmulation restores the prior scheme on exit (LIFO). Outer Light wraps inner Dark; after the inner
+    // nested withEmulation restores the prior scheme on exit (LIFO). Outer Light wraps inner Dark; after the inner
     // block exits, the outer block reads prefers-color-scheme: dark as false because the inner Dark was restored to the
-    // outer Light from the per-tab cache (pins PRE-007).
+    // outer Light from the per-tab cache.
     "withEmulation restores the prior scheme after the body" in run {
         withBrowser {
             onPage("<html><body>emulation-lifo</body></html>") {
@@ -45,8 +45,8 @@ class BrowserEmulationTest extends BrowserTest:
         }
     }
 
-    // Test 3: media = Print applies the print media type inside the body. matchMedia('print') reports the emulated media
-    // type (pins the media-param design).
+    // media = Print applies the print media type inside the body. matchMedia('print') reports the emulated media
+    // type.
     "withEmulation media=print is applied" in run {
         withBrowser {
             onPage("<html><body>emulation-print</body></html>") {
@@ -59,8 +59,8 @@ class BrowserEmulationTest extends BrowserTest:
         }
     }
 
-    // Test 4: reducedMotion = true sends prefers-reduced-motion: reduce inside the body. matchMedia reports the emulated
-    // value, proving the reduced-motion feature rides the single setEmulatedMedia send (pins the design, single call).
+    // reducedMotion = true sends prefers-reduced-motion: reduce inside the body. matchMedia reports the emulated
+    // value, proving the reduced-motion feature rides the single setEmulatedMedia send.
     "withEmulation reducedMotion is applied" in run {
         withBrowser {
             onPage("<html><body>emulation-reduced-motion</body></html>") {
@@ -73,7 +73,7 @@ class BrowserEmulationTest extends BrowserTest:
         }
     }
 
-    // Test 5: withEmulation restores the prior state on interruption (pins PRE-007). The Browser effect carries
+    // withEmulation restores the prior state on interruption. The Browser effect carries
     // Env[BrowserTab] with no same-tab isolate, so the interrupted body is a self-contained Browser.run (the established
     // interruption pattern in BrowserViewportTest / BrowserIsolateTest). The inner tab is captured via a Promise so its
     // emulationOverride cache (a plain AtomicRef readable under Sync) can be inspected after the timeout: the
@@ -226,7 +226,7 @@ class BrowserEmulationTest extends BrowserTest:
 
     // ---- withHighlights ----
 
-    // Test 6: the highlights overlay is settlement-transparent (pins INV-003, PRE-009). The observer is installed via a
+    // the highlights overlay is settlement-transparent. The observer is installed via a
     // no-op afterAction so __kyoMutCount is initialized; injecting the data-kyo-internal overlay does NOT change the
     // counter (the observer filters the tagged-subtree insertion), and the overlay is removed after the body.
     "withHighlights overlay is settlement-transparent" in run {
@@ -252,7 +252,7 @@ class BrowserEmulationTest extends BrowserTest:
         }
     }
 
-    // Test 7: withHighlights draws a box at the matched element and removes it on exit (pins the overlay design, PRE-007).
+    // withHighlights draws a box at the matched element and removes it on exit.
     // Inside the body exactly one data-kyo-internal highlight box exists for the single annotation; after the body the
     // overlay is removed by the Scope.acquireRelease release.
     "withHighlights draws a box at the element and removes it after" in run {

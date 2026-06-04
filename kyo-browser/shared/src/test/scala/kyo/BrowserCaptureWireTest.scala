@@ -3,7 +3,7 @@ package kyo
 import kyo.internal.*
 import kyo.internal.CdpTypes.*
 
-/** Pure wire encode/decode tests for Phase 1 CDP type additions.
+/** Pure wire encode/decode tests for the new CDP type additions.
   *
   * All tests are synchronous (no Chrome, no `withBrowser`). Each test exercises the derived `Schema`
   * by encoding or decoding a concrete value and asserting on the result. No reflection is used.

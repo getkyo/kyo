@@ -1958,7 +1958,7 @@ object Browser:
     /** Captures the entire scroll height as a `Chunk` of viewport-tall bands, top to bottom. Aborts
       * `BrowserCaptureLimitExceededException` BEFORE any capture when the page needs more than `maxBands` bands. The freeze stylesheet is
       * injected ONCE around the entire band loop so all bands reflect the same frozen animation state. Band coordinates are CSS px
-      * (DPR-independent; Q-009).
+      * (DPR-independent).
       */
     def screenshotFullPage(
         maxBands: Int = 50,
@@ -2081,7 +2081,7 @@ object Browser:
         }
     end screenshotElement
 
-    /** Captures the viewport with numbered badges overlaid at each element in `marks` (1-based, top-left corner; Q-006). The overlay is one
+    /** Captures the viewport with numbered badges overlaid at each element in `marks` (1-based, top-left corner). The overlay is one
       * settlement-transparent `data-kyo-internal` subtree. Aborts `BrowserCaptureLimitExceededException` when `marks.size > maxMarks`. The
       * settle gate runs BEFORE mark injection (via `HoldStill.withFrozenPage`) so the marks overlay mutation does not reset quiescence;
       * marks are injected exactly once inside the frozen scope and removed via `Scope.acquireRelease`.
@@ -2634,7 +2634,7 @@ object Browser:
     /** Converts a CDP event `timestamp` (milliseconds since epoch when present) into an offset relative to the recording baseline `t0Ms`.
       * An absent timestamp yields `0L`.
       */
-    private def computeOffsetMs(ts: Maybe[Double], t0Ms: Long) =
+    private def computeOffsetMs(ts: Maybe[Double], t0Ms: Long): Long =
         ts match
             case Present(v) => math.round(v) - t0Ms
             case Absent     => 0L

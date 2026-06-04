@@ -9,8 +9,6 @@ import kyo.internal.ConsoleApiCalledWire
   *
   * These need no Chrome: they construct the wire records directly and call the `private[kyo]` decoders. The CDP `'warning'` spelling and the
   * drain `'warn'` spelling live in separate decoders and never collide.
-  *
-  * Pins: INV-009, PRE-008, Q-008.
   */
 class BrowserConsoleDecodeTest extends Test:
 

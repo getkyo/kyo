@@ -10,11 +10,9 @@ import kyo.internal.ScreencastFrameMetadata
 import kyo.internal.ScreencastFrameWire
 import kyo.internal.StartScreencastParams
 
-/** Behavioral tests for Phase-5 screencast and console event routing.
+/** Behavioral tests for screencast and console event routing.
   *
   * Tests 1, 3, 4, 5, and 6 are pure unit tests (no Chrome required). Test 2 is Chrome-backed and verifies the full ack loop.
-  *
-  * Pins: INV-005, PRE-008.
   */
 class BrowserScreencastTest extends BrowserTest:
 
