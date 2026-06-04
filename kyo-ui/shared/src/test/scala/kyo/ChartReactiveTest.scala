@@ -71,7 +71,10 @@ class ChartReactiveTest extends Test:
         val hasReactive = root.children.exists:
             case _: Reactive[?] => true
             case _              => false
-        assert(hasReactive, s"Expected a Reactive child in root but children are: ${root.children.map(_.getClass.getSimpleName)}")
+        assert(
+            hasReactive,
+            s"Expected a Reactive child in root but found ${root.children.size} children, none of which matched Reactive[?]"
+        )
 
         // The root children must also include static elements NOT wrapped in a Reactive.
         val staticElements = root.children.filter:

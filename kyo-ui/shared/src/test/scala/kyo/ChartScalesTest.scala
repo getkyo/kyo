@@ -75,22 +75,39 @@ class ChartScalesTest extends Test:
         assert(sc.y.toPixelCategory("b") == Absent, "Continuous axis must return Absent for category projection")
     }
 
-    // ---- Leaf 24: ChartScales is sealed and never exposes the internal Scale type ----
+    // ---- Leaf 24: ChartScales is sealed and public accessors do not leak kyo.internal.Scale types ----
+    // Type ascriptions below enforce at compile time that each accessor returns a public type.
+    // If any accessor returned kyo.internal.Scale, the ascription would fail to compile.
 
-    "ChartScales is sealed and the toSvgWithScales return type does not mention internal.Scale" in {
+    "ChartScales public accessors do not leak kyo.internal.Scale types (compile-time type-ascription gate)" in {
         val rows                          = Chunk(PRow(0.0, 1.0), PRow(1.0, 2.0))
         val spec                          = UI.chart(rows)(point(x = _.x, y = _.y))
         val pair: (Svg.Root, ChartScales) = spec.toSvgWithScales
         val sc: ChartScales               = pair._2
 
-        // The trait is sealed (compile-time guarantee) and exposes only the public projection surface.
+        // Compile-time ascriptions: these fail to compile if any accessor returns kyo.internal.Scale.
+        val _: ChartScales.Axis        = sc.x
+        val _: ChartScales.Axis        = sc.y
+        val _: Maybe[ChartScales.Axis] = sc.yRight
+        val _: ChartScales.Rect        = sc.plot
+        val _: ScaleKind               = sc.x.kind
+        val _: Double                  = sc.x.toPixel(0.5)
+        val _: Maybe[Double]           = sc.x.toPixelCategory("a")
+        val _: ChartScales.Resolved    = sc.x.invert(60.0)
+
+        // Behavioral assertions: the sealed trait is consistent with a single-axis chart.
         assert(sc.yRight == Absent, "Single-axis chart has no right axis")
-        // The accessors return public types only: ScaleKind, Double, Maybe[Double], ChartScales.Resolved.
-        val k: ScaleKind = sc.x.kind
-        assert(k != null, "kind accessor returns the public ScaleKind")
-        // Reflectively confirm no public accessor return type leaks kyo.internal.Scale.
-        val leaks = classOf[ChartScales].getMethods.toSeq.map(_.getReturnType.getName).filter(_.contains("internal.Scale"))
-        assert(leaks.isEmpty, s"ChartScales public methods must not return internal.Scale, but found: $leaks")
+        // x-axis is Linear for continuous x values; the fitted domain covers the data.
+        sc.x.kind match
+            case ScaleKind.Linear(lo, hi) =>
+                assert(lo <= 0.0, s"x-axis domain lo must be <= data min 0.0, got $lo")
+                assert(hi >= 1.0, s"x-axis domain hi must be >= data max 1.0, got $hi")
+            case other => fail(s"Expected ScaleKind.Linear for continuous x but got $other")
+        end match
+        // Round-trip: x.invert(x.toPixel(v)) returns a Continuous wrapping approximately v.
+        sc.x.invert(sc.x.toPixel(0.5)) match
+            case ChartScales.Resolved.Continuous(v) => assert(math.abs(v - 0.5) < Tol, s"round-trip invert expected ~0.5 but got $v")
+            case other                              => fail(s"Expected Continuous but got $other")
     }
 
     // ---- Leaf 25: ScaleKind.Linear carries the actual fitted domain, not (0.0, 0.0) ----
