@@ -3319,15 +3319,23 @@ private[kyo] object ChartLower:
         newGeom: Map[String, MarkGeom],
         markIdx: Int
     )(using Frame): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
-        val animOk  = spec.animateCfg.enabled
-        val durStr  = formatDur(spec.animateCfg.duration)
-        val palette = themePalette(spec.theme)
+        val animOk = spec.animateCfg.enabled
+        val durStr = formatDur(spec.animateCfg.duration)
         // rawPathsWithIdx is enumerated by CatKey-stable seriesIdx so pathKey is stable per (mark, series).
         // The color-split uses distinctKeyed (CatKey identity, INV-002) instead of toString.
         val rawPathsWithIdx: Chunk[(Svg.Path, Int)] = mark.color match
             case Absent =>
                 Chunk((lowerLineSeries(rows, mark, layout, xs, ys, defaultColor), 0))
             case Present(colorEnc) =>
+                // FIX B (transitions path, mirrors lowerLine): resolve per-series colors via resolvePalette
+                // (the same path the legend and the static line use) so an explicit categorical/sequential
+                // colorScale is honored and the animated line agrees with the legend. resolvePalette falls
+                // back to theme.palette then DefaultPalette when no colorScale is set, so an animated line
+                // WITHOUT a colorScale keeps byte-identical colors to before (theme palette by index).
+                // collectColorCategoriesWithRaw and distinctKeyed dedupe by the SAME categoryKey, so
+                // resolved[seriesIdx] aligns with distinct[seriesIdx].
+                val cats: Chunk[(String, Any)]   = collectColorCategoriesWithRaw(rows, colorEnc)
+                val resolved: Chunk[Style.Color] = resolvePalette(spec, cats)
                 val distinct = ChartFoundations.distinctKeyed(
                     rows,
                     r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r.asInstanceOf[A]))
@@ -3338,8 +3346,8 @@ private[kyo] object ChartLower:
                             ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r.asInstanceOf[A])) == catKey
                         )
                         val strokeColor =
-                            if palette.isEmpty then DefaultPalette.toSeq.apply(seriesIdx % DefaultPalette.size)
-                            else palette.toSeq.apply(seriesIdx                           % palette.size)
+                            if resolved.isEmpty then DefaultPalette.toSeq.apply(seriesIdx % DefaultPalette.size)
+                            else resolved.toSeq.apply(seriesIdx                           % resolved.size)
                         (lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor), seriesIdx)
         // For each raw path: optionally attach a SMIL animate on `d`, then record the new PathData.
         // pathKey = "line-$markIdx-$seriesIdx" is stable per (mark identity, series identity), so a prior

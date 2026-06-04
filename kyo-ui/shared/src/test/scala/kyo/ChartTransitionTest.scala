@@ -407,4 +407,72 @@ class ChartTransitionTest extends Test:
         end for
     }
 
+    // ---- FIX B (animated path): a color-split ANIMATED line honors an explicit categorical colorScale ----
+
+    // Reproduce-before-fix. A chart with `.animate(...)` is lowered through `lowerLineWithTransitions`,
+    // NOT `lowerLine`. Before the fix, `lowerLineWithTransitions` colored each series from
+    // `themePalette(spec.theme)` by category index, ignoring `spec.legendCfg.colorScale`. So an animated
+    // color-split line drew DefaultPalette blue/orange while the legend (which uses resolvePalette) showed
+    // the colorScale cyan/amber: legend and line disagreed (e.g. the LiveDashboard latency chart).
+    // After the fix, `lowerLineWithTransitions` resolves colors via resolvePalette, so the "a" series path
+    // carries the colorScale cyan and the "b" series path carries the colorScale amber, matching the legend
+    // and the static (non-animated) line path.
+    "an animated color-split line honors an explicit categorical colorScale (FIX B, transitions path)" in run {
+        case class SRow(x: Double, y: Double, series: String) derives CanEqual
+        val cyan  = Style.Color.rgb(6, 182, 212)
+        val amber = Style.Color.rgb(245, 158, 11)
+        // CssStyleRenderer.color(Rgb(r,g,b)) renders as "rgb(r, g, b)".
+        val cyanCss  = "rgb(6, 182, 212)"
+        val amberCss = "rgb(245, 158, 11)"
+        // DefaultPalette.blue/orange are Hex colors, rendered as "#3b82f6"/"#f97316".
+        val blueCss   = "#3b82f6"
+        val orangeCss = "#f97316"
+        val rows = Chunk(
+            SRow(0.0, 1.0, "a"),
+            SRow(1.0, 2.0, "a"),
+            SRow(0.0, 3.0, "b"),
+            SRow(1.0, 4.0, "b")
+        )
+        for
+            ref <- Signal.initRef(rows)
+            // .animate enabled routes lowering through lowerLineWithTransitions (the path under test).
+            spec = UI.chart(ref: Signal[Chunk[SRow]])(line(x = _.x, y = _.y, color = _.series))
+                .animate(_.ease(300.millis))
+                .legend(_.colorScale {
+                    case "a" => cyan
+                    case _   => amber
+                })
+            root = summon[Conversion[ChartSpec[SRow], Svg.Root]](spec)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // Extract each <path ...> element's stroke colour in document order. The transitions lowering
+            // emits one path per series in distinctKeyed seriesIdx order (a=0 then b=1).
+            val strokes: Chunk[String] = Chunk.from(
+                "<path[^>]*".r.findAllIn(html).toSeq.flatMap { tag =>
+                    "stroke=\"([^\"]+)\"".r.findFirstMatchIn(tag).map(_.group(1))
+                }
+            )
+            assert(strokes.size == 2, s"Expected 2 line-path strokes (one per series) but got ${strokes.size}:\n$html")
+            // Series "a" (seriesIdx 0) must carry the colorScale cyan, NOT DefaultPalette blue.
+            assert(
+                strokes(0) == cyanCss,
+                s"FIX B (animated): series 'a' line must use colorScale cyan $cyanCss but got ${strokes(0)}:\n$html"
+            )
+            // Series "b" (seriesIdx 1) must carry the colorScale amber, NOT DefaultPalette orange.
+            assert(
+                strokes(1) == amberCss,
+                s"FIX B (animated): series 'b' line must use colorScale amber $amberCss but got ${strokes(1)}:\n$html"
+            )
+            // DefaultPalette colours must not appear: the bug rendered these instead.
+            assert(
+                !html.contains(s"stroke=\"$blueCss\""),
+                s"FIX B (animated): DefaultPalette blue $blueCss must not be a stroke under a colorScale:\n$html"
+            )
+            assert(
+                !html.contains(s"stroke=\"$orangeCss\""),
+                s"FIX B (animated): DefaultPalette orange $orangeCss must not be a stroke under a colorScale:\n$html"
+            )
+        end for
+    }
+
 end ChartTransitionTest
