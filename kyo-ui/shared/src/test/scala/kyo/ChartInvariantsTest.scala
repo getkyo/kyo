@@ -88,9 +88,36 @@ class ChartInvariantsTest extends Test:
         end for
     }
 
+    // ---- INV-004: golden full-SVG string pins the fused single-pass scale resolution ----
+
+    "INV-004: golden SVG pins the fused single-pass scale resolution" in run {
+        // Same no-gradient 3-mark (bar + line + point) right-axis chart as the determinism test above.
+        // It emits NO <linearGradient> (no sequential colorScale), so the AtomicInt gradient-id prefix
+        // never appears and the rendered HTML is fully deterministic. A future refactor that perturbs the
+        // fused extent/scale walk fails this exact-string golden loudly instead of silently.
+        case class Row(x: String, yL: Double, yR: Double)
+        val rows = Chunk(
+            Row("Jan", 10.0, 100.0),
+            Row("Feb", 20.0, 200.0),
+            Row("Mar", 15.0, 150.0)
+        )
+        val spec = UI.chart(rows)(
+            bar(x = _.x, y = _.yL),
+            line(x = _.x, y = _.yL),
+            point(x = _.x, y = _.yR, axis = Axis.Right)
+        ).yAxisRight(identity)
+        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        for html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            assert(!html.contains("linearGradient"), "golden chart must emit no gradient (determinism guard)")
+            assert(!html.contains("kyo-chart-"), "golden chart must carry no non-deterministic chart-id prefix")
+            assert(html == ChartInvariantsTest.expectedGolden, s"INV-004 golden SVG drift:\n$html")
+        end for
+    }
+
     // ---- Phase 2: INV-007: ScaleOverride.pad wins over AxisConfig.pad ----
 
-    "INV-007: ScaleOverride.withPad(0.2) wins over AxisConfig.pad(0.05) for extent widening" in run {
+    "INV-007: ScaleOverride.withPad(0.2) wins over AxisConfig.pad(0.05) for extent widening" in {
         // The chart uses a linear x scale with known domain [0,10].
         // ScaleOverride.withPad(0.2) should widen by 20%: delta = 0.2*(10-0) = 2; domain -> [-2,12].
         // AxisConfig.pad(0.05) would widen by only 5%: delta = 0.5; domain -> [-0.5,10.5].
@@ -101,34 +128,66 @@ class ChartInvariantsTest extends Test:
         val spec = UI.chart(rows)(bar(x = _.x, y = _.y))
             .xScale(_.linear(0.0, 10.0).withPad(0.2))
             .xAxis(_.pad(0.05))
-        // Lower to SVG; if the scale wires correctly it should not throw.
-        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
-        for html <- HtmlRenderer.render(root, Seq.empty)
-        yield assert(html.nonEmpty, "SVG output must be non-empty (INV-007)")
-        end for
+        // Read the resolved x-scale back: ScaleOverride.withPad(0.2) widens [0,10] by 0.2*(10-0)=2 each
+        // side -> [-2,12]; AxisConfig.pad(0.05) would give [-0.5,10.5]. The OVERRIDE must win.
+        val (_, sc) = spec.toSvgWithScales
+        sc.x.kind match
+            case ScaleKind.Linear(lo, hi) =>
+                assert(
+                    math.abs(lo - -2.0) < 1e-9,
+                    s"ScaleOverride.withPad(0.2) must widen domain min to -2.0 (not AxisConfig.pad's -0.5), got $lo"
+                )
+                assert(
+                    math.abs(hi - 12.0) < 1e-9,
+                    s"ScaleOverride.withPad(0.2) must widen domain max to 12.0, got $hi"
+                )
+            case other => fail(s"Expected ScaleKind.Linear but got $other")
+        end match
     }
 
     // INV-007: reversed=true via AxisConfig places first datum at the far range end.
-    "INV-007: AxisConfig.reverse flips pixel orientation (first datum at far range end)" in run {
+    "INV-007: AxisConfig.reverse flips pixel orientation (first datum at far range end)" in {
         case class Row(x: String, y: Double)
         val rows = Chunk(Row("a", 1.0), Row("b", 2.0), Row("c", 3.0))
-        val spec = UI.chart(rows)(bar(x = _.x, y = _.y))
-            .xAxis(_.reverse)
-        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
-        for html <- HtmlRenderer.render(root, Seq.empty)
-        yield assert(html.nonEmpty, "SVG output with reverse must be non-empty (INV-007)")
-        end for
+        // Forward control (no reverse): the first category 'a' sits left of the last 'c'.
+        val fwdSpec    = UI.chart(rows)(bar(x = _.x, y = _.y))
+        val (_, fwdSc) = fwdSpec.toSvgWithScales
+        val fwdA       = fwdSc.x.toPixelCategory("a").getOrElse(fail("forward: band key 'a' must project"))
+        val fwdC       = fwdSc.x.toPixelCategory("c").getOrElse(fail("forward: band key 'c' must project"))
+        assert(fwdA < fwdC, s"forward (no reverse): first band 'a' must be left of 'c', px(a)=$fwdA, px(c)=$fwdC")
+
+        // Reversed: the first category 'a' must project to the FAR (right) end, the last 'c' to the near end.
+        val spec    = UI.chart(rows)(bar(x = _.x, y = _.y)).xAxis(_.reverse)
+        val (_, sc) = spec.toSvgWithScales
+        val pa      = sc.x.toPixelCategory("a").getOrElse(fail("reverse: band key 'a' must project"))
+        val pc      = sc.x.toPixelCategory("c").getOrElse(fail("reverse: band key 'c' must project"))
+        assert(pa > pc, s"reverse must place first datum 'a' at the far (right) end: px(a)=$pa must exceed px(c)=$pc")
+        // 'a' must sit in the right half of the plot under reverse.
+        assert(
+            pa > sc.plot.x + sc.plot.width / 2.0,
+            s"reversed first band must be in the right half, px(a)=$pa, plot=[${sc.plot.x}, ${sc.plot.x + sc.plot.width}]"
+        )
     }
 
     // ---- Phase 4 smoke tests: INV-020..024 ----
 
-    // INV-020: rule defaults to RuleValue.Unset; both-Unset rule renders without crash.
-    "INV-020: rule() with both-Unset positions lowers to an empty mark without crashing" in {
+    // INV-020: rule defaults to RuleValue.Unset; a both-Unset rule is skipped at lowering (empty Chunk)
+    // so it emits NO Svg.Line, while a sibling bar still renders a rect.
+    "INV-020: rule() with both-Unset positions emits no rule line while the sibling bar renders" in {
         case class Row(x: String, y: Double)
         val rows = Chunk(Row("a", 1.0))
         val spec = UI.chart(rows)(bar(x = _.x, y = _.y), rule[Row, Double]())
         val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
-        succeed
+        // In the static lowering the marks live in a single Svg.G; chrome (axis) lines are direct root
+        // children (not inside a G). Scope the line check to the marks group so axis lines do not leak in.
+        val marksGroups = root.children.collect { case g: Svg.G => g }.filter(g =>
+            g.children.exists { case _: Svg.Rect => true; case _ => false }
+        )
+        assert(marksGroups.nonEmpty, "the sibling bar must still render inside a marks Svg.G")
+        val marksRects = marksGroups.flatMap(_.children.collect { case r: Svg.Rect => r })
+        val marksLines = marksGroups.flatMap(_.children.collect { case l: Svg.Line => l })
+        assert(marksRects.nonEmpty, "the sibling bar must still render a rect")
+        assert(marksLines.isEmpty, "a rule() with both positions Unset must emit NO Svg.Line (skipped at lowering)")
     }
 
     // INV-021: text mark lowers to Svg.Text elements and contributes to extent.
@@ -183,4 +242,11 @@ class ChartInvariantsTest extends Test:
         succeed
     }
 
+end ChartInvariantsTest
+
+object ChartInvariantsTest:
+    // Captured verbatim from a green run of the no-gradient 3-mark right-axis chart. Regenerate (never
+    // hand-edit) from a green run if the rendering legitimately changes; the chart must stay no-gradient.
+    val expectedGolden: String =
+        """<svg data-kyo-path="" viewBox="0 0 640 480" width="640" height="480"><rect data-kyo-path="0" fill="#ffffff" x="0" y="0" width="640" height="480"></rect><line data-kyo-path="1" stroke="#374151" x1="60" y1="20" x2="60" y2="440"></line><line data-kyo-path="2" stroke="#374151" x1="60" y1="440" x2="580" y2="440"></line><line data-kyo-path="3" stroke="#22c55e" x1="580" y1="20" x2="580" y2="440"></line><line data-kyo-path="4" stroke="#374151" x1="55" y1="440" x2="60" y2="440"></line><text data-kyo-path="5" fill="#374151" x="51" y="440" text-anchor="end" dominant-baseline="middle">0</text><line data-kyo-path="6" stroke="#374151" x1="55" y1="335" x2="60" y2="335"></line><text data-kyo-path="7" fill="#374151" x="51" y="335" text-anchor="end" dominant-baseline="middle">5</text><line data-kyo-path="8" stroke="#374151" x1="55" y1="230" x2="60" y2="230"></line><text data-kyo-path="9" fill="#374151" x="51" y="230" text-anchor="end" dominant-baseline="middle">10</text><line data-kyo-path="10" stroke="#374151" x1="55" y1="125" x2="60" y2="125"></line><text data-kyo-path="11" fill="#374151" x="51" y="125" text-anchor="end" dominant-baseline="middle">15</text><line data-kyo-path="12" stroke="#374151" x1="55" y1="20" x2="60" y2="20"></line><text data-kyo-path="13" fill="#374151" x="51" y="20" text-anchor="end" dominant-baseline="middle">20</text><line data-kyo-path="14" stroke="#22c55e" x1="580" y1="440" x2="585" y2="440"></line><text data-kyo-path="15" fill="#22c55e" x="589" y="440" text-anchor="start" dominant-baseline="middle">100</text><line data-kyo-path="16" stroke="#22c55e" x1="580" y1="230" x2="585" y2="230"></line><text data-kyo-path="17" fill="#22c55e" x="589" y="230" text-anchor="start" dominant-baseline="middle">150</text><line data-kyo-path="18" stroke="#22c55e" x1="580" y1="20" x2="585" y2="20"></line><text data-kyo-path="19" fill="#22c55e" x="589" y="20" text-anchor="start" dominant-baseline="middle">200</text><line data-kyo-path="20" stroke="#374151" x1="146.66666666666669" y1="440" x2="146.66666666666669" y2="445"></line><text data-kyo-path="21" fill="#374151" x="146.66666666666669" y="449" text-anchor="middle" dominant-baseline="hanging">Jan</text><line data-kyo-path="22" stroke="#374151" x1="320" y1="440" x2="320" y2="445"></line><text data-kyo-path="23" fill="#374151" x="320" y="449" text-anchor="middle" dominant-baseline="hanging">Feb</text><line data-kyo-path="24" stroke="#374151" x1="493.33333333333337" y1="440" x2="493.33333333333337" y2="445"></line><text data-kyo-path="25" fill="#374151" x="493.33333333333337" y="449" text-anchor="middle" dominant-baseline="hanging">Mar</text><g data-kyo-path="26"><rect data-kyo-path="26.0" fill="#3b82f6" x="68.66666666666667" y="230" width="156" height="210"></rect><rect data-kyo-path="26.1" fill="#3b82f6" x="242" y="20" width="156" height="420"></rect><rect data-kyo-path="26.2" fill="#3b82f6" x="415.33333333333337" y="125" width="156" height="315"></rect><path data-kyo-path="26.3" fill="none" stroke="#f97316" stroke-width="2px" d="M68.66666666666667 230 L242 20 L415.33333333333337 125"></path><circle data-kyo-path="26.4" fill="#22c55e" stroke="#ffffff" stroke-width="1.5px" cx="68.66666666666667" cy="440" r="4"></circle><circle data-kyo-path="26.5" fill="#22c55e" stroke="#ffffff" stroke-width="1.5px" cx="242" cy="20" r="4"></circle><circle data-kyo-path="26.6" fill="#22c55e" stroke="#ffffff" stroke-width="1.5px" cx="415.33333333333337" cy="230" r="4"></circle></g></svg>"""
 end ChartInvariantsTest

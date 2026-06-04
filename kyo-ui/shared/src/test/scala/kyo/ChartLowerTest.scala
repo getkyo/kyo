@@ -63,6 +63,10 @@ class ChartLowerTest extends Test:
                     case _           => Chunk.empty
             case _ => Chunk.empty
 
+    // The marks region is the last top-level Svg.G child appended by lowerStatic (chrome groups precede it).
+    private def marksGroup(root: Svg.Root): Svg.G =
+        root.children.collect { case g: Svg.G => g }.lastOption.getOrElse(fail("no marks Svg.G found"))
+
     // Layout constants (must match ChartLower defaults).
     private val PlotX    = 60.0
     private val PlotY    = 20.0
@@ -1699,6 +1703,63 @@ class ChartLowerTest extends Test:
                 s"WARN-2 leaf 14: DefaultPalette orange must not appear under a custom palette:\n$html"
             )
         end for
+    }
+
+    // ---- INV-005: every Mark variant lowers to its expected element kind (behavioral exhaustiveness) ----
+
+    "INV-005: every Mark variant lowers to its signature element kind in the marks region" in {
+        case class ErrRow(x: String, mean: Double, lo: Double, hi: Double)
+        val erows = Chunk(ErrRow("a", 6.0, 4.0, 8.0))
+        val rows  = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
+
+        // bar -> Svg.Rect
+        val barG = marksGroup(summon[Conversion[ChartSpec[Sale], Svg.Root]](UI.chart(rows)(bar(x = _.month, y = _.revenue))))
+        assert(barG.children.exists { case _: Svg.Rect => true; case _ => false }, "bar must lower to a Svg.Rect")
+
+        // line -> Svg.Path
+        val lineG = marksGroup(summon[Conversion[ChartSpec[Sale], Svg.Root]](UI.chart(rows)(line(x = _.month, y = _.revenue))))
+        assert(lineG.children.exists { case _: Svg.Path => true; case _ => false }, "line must lower to a Svg.Path")
+
+        // area -> Svg.Path
+        val areaG = marksGroup(summon[Conversion[ChartSpec[Sale], Svg.Root]](UI.chart(rows)(area(x = _.month, y = _.revenue))))
+        assert(areaG.children.exists { case _: Svg.Path => true; case _ => false }, "area must lower to a Svg.Path")
+
+        // point -> Svg.Circle
+        val pointG = marksGroup(summon[Conversion[ChartSpec[Sale], Svg.Root]](UI.chart(rows)(point(x = _.month, y = _.revenue))))
+        assert(pointG.children.exists { case _: Svg.Circle => true; case _ => false }, "point must lower to a Svg.Circle")
+
+        // rule(y=...) -> Svg.Line
+        val ruleG = marksGroup(summon[Conversion[ChartSpec[Sale], Svg.Root]](UI.chart(rows)(rule[Sale, Double](y = 1500.0))))
+        assert(ruleG.children.exists { case _: Svg.Line => true; case _ => false }, "rule(y) must lower to a Svg.Line")
+
+        // text -> Svg.Text
+        val textG = marksGroup(summon[Conversion[ChartSpec[Sale], Svg.Root]](
+            UI.chart(rows)(text(x = _.month, y = _.revenue, label = _.month))
+        ))
+        assert(textG.children.exists { case _: Svg.Text => true; case _ => false }, "text must lower to a Svg.Text")
+
+        // errorBar -> Svg.Line (whiskers/caps) AND Svg.Circle (center marker)
+        val errG = marksGroup(summon[Conversion[ChartSpec[ErrRow], Svg.Root]](
+            UI.chart(erows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi))
+        ))
+        assert(errG.children.exists { case _: Svg.Line => true; case _ => false }, "errorBar must lower to Svg.Line whiskers")
+        assert(errG.children.exists { case _: Svg.Circle => true; case _ => false }, "errorBar must lower to a Svg.Circle center")
+    }
+
+    // ---- INV-037: lowering is a pure synchronous Svg.Root projection with NO effect row ----
+
+    "INV-037: ChartSpec lowers to a plain Svg.Root synchronously (no effect row)" in {
+        val rows = Chunk(Sale("Jan", Usd(1000)))
+        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+        // The Conversion yields a plain Svg.Root, not Svg.Root < S; the explicit annotation is the witness.
+        val root: Svg.Root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        assert(root.children.nonEmpty, "the pure projection must produce a non-empty Svg.Root")
+        // .toSvg likewise returns a bare Svg.Root with no Sync/Async row.
+        val viaToSvg: Svg.Root = spec.toSvg
+        assert(viaToSvg.children.nonEmpty, "spec.toSvg must return a non-empty Svg.Root with no effect row")
+        // .toSvgWithScales returns a pure (Svg.Root, ChartScales) tuple, again with no effect row.
+        val pair: (Svg.Root, ChartScales) = spec.toSvgWithScales
+        assert(pair._1.children.nonEmpty, "spec.toSvgWithScales must return a pure Svg.Root with no effect row")
     }
 
 end ChartLowerTest

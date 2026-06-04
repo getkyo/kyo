@@ -213,10 +213,12 @@ class ChartInteractionTest extends Test:
             // The rule is wrapped in a Reactive[Svg.Line] inside a Svg.G.
             // After threshold=1000, the rule y1/y2 is at pixel 335.
             // After threshold=3000, the rule y1/y2 is at pixel 125.
-            // We verify the second render contains the new position (y1="125").
+            // A vertical reactive rule is a single Svg.Line whose y1 and y2 BOTH equal the scaled
+            // pixel (125 after threshold=3000). The original `||` was a test bug: it green-lit a rule
+            // with only one endpoint moved to the new pixel (a misplaced line). Require BOTH endpoints.
             assert(
-                html1.contains("y1=\"125") || html1.contains("y2=\"125"),
-                s"Expected rule y at 125 (threshold=3000) in updated render but got:\n${html1.take(2000)}"
+                html1.contains("y1=\"125") && html1.contains("y2=\"125"),
+                s"Reactive rule must place BOTH y1 and y2 at 125 (threshold=3000), got:\n${html1.take(2000)}"
             )
     }
 

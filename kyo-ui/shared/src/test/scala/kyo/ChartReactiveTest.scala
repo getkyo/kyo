@@ -152,15 +152,25 @@ class ChartReactiveTest extends Test:
             case _                    => "")
 
         // niceTicks(0, 5000, 5) -> step=2000, ticks=[0, 2000, 4000].
-        // The tick for "0" must be among static frame texts (proves static y-axis).
+        // `exists(_.contains("0"))` proved nothing: "0", "2000", "4000" all contain a "0".
+        // Assert EXACT membership of each y-tick label so a wrong tick set fails.
         assert(
-            staticLabels.toSeq.exists(_.contains("0")),
-            s"Expected static y-axis tick '0' outside Reactive but got static texts: $staticLabels"
+            staticLabels.toSeq.contains("0"),
+            s"Expected the exact static y-axis tick '0' but got static texts: $staticLabels"
         )
-        // The tick for "4000" (the max from niceTicks) must be among static frame texts.
         assert(
-            staticLabels.toSeq.exists(_.contains("4000")),
-            s"Expected static y-axis tick '4000' outside Reactive but got static texts: $staticLabels"
+            staticLabels.toSeq.contains("2000"),
+            s"Expected the exact static y-axis tick '2000' but got static texts: $staticLabels"
+        )
+        assert(
+            staticLabels.toSeq.contains("4000"),
+            s"Expected the exact static y-axis tick '4000' but got static texts: $staticLabels"
+        )
+        // The full y-tick numeric label set must be exactly {0, 2000, 4000} (no extra/missing tick).
+        val yTickLabels = staticLabels.toSeq.filter(s => Set("0", "2000", "4000").contains(s)).toSet
+        assert(
+            yTickLabels == Set("0", "2000", "4000"),
+            s"Expected y-tick labels exactly {0,2000,4000} but got: $yTickLabels (all static: $staticLabels)"
         )
     }
 

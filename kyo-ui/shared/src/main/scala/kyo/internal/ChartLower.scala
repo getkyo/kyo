@@ -587,8 +587,10 @@ private[kyo] object ChartLower:
             case _                               => Absent
         val xKind = xKindOpt.getOrElse(inferKind(xExt, marks, isX = true))
         val (xExtFinal, xLoRaw, xHiRaw) = xOverride.flatMap(_.kind) match
-            case Present(ScaleKind.Linear(domLo, domHi)) => (Extent.Continuous(domLo, domHi), layout.plotX, layout.plotX + layout.plotW)
-            case _                                       => (padExtent(xExt, xPad), layout.plotX, layout.plotX + layout.plotW)
+            // INV-007: pad applies to an explicit linear domain too (every other arm pads); withPad must win.
+            case Present(ScaleKind.Linear(domLo, domHi)) =>
+                (padExtent(Extent.Continuous(domLo, domHi), xPad), layout.plotX, layout.plotX + layout.plotW)
+            case _ => (padExtent(xExt, xPad), layout.plotX, layout.plotX + layout.plotW)
         // Swap range bounds when reverse=true so the first datum appears at the far end (D20).
         val (xLo, xHi) = if xReverse then (xHiRaw, xLoRaw) else (xLoRaw, xHiRaw)
         val xClamp     = xOverride.map(_.clamp).getOrElse(false)
@@ -615,7 +617,9 @@ private[kyo] object ChartLower:
         // Swap range bounds when reverse=true (D20).
         val (yRLoBase, yRHiBase) = if yReverse then (top, baseline) else (baseline, top)
         val (yExtFinal, yRLo, yRHi, useNice) = yOverride.flatMap(_.kind) match
-            case Present(ScaleKind.Linear(domLo, domHi)) => (Extent.Continuous(domLo, domHi), yRLoBase, yRHiBase, false)
+            // INV-007: pad applies to an explicit linear domain too (mirrors the log arm below); withPad must win.
+            case Present(ScaleKind.Linear(domLo, domHi)) =>
+                (padExtent(Extent.Continuous(domLo, domHi), yPad), yRLoBase, yRHiBase, false)
             // G7: log scale uses the no-zero extent computation
             case Present(ScaleKind.Log) =>
                 val rawExt = yLeftExtentNoZero(rows, marks).getOrElse(Extent.Continuous(1.0, 10.0))

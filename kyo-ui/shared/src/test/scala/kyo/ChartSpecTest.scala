@@ -309,12 +309,20 @@ class ChartSpecTest extends Test:
     }
 
     // Test: rule with both positions Unset is skipped at lowering (INV-020, plan leaf 10)
-    "rule() with both positions Unset lowers to an empty mark without crashing (INV-020)" in {
+    "rule() with both positions Unset emits no rule line while the sibling bar renders (INV-020)" in {
         val m    = rule[Sale, Double]()
-        val spec = UI.chart(sales)(m)
-        // Should not throw; render produces a valid Svg.Root with no rule line.
+        val spec = UI.chart(sales)(bar(x = _.month, y = _.revenue), m)
         val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
-        succeed
+        // The marks live in a single Svg.G (chrome axis lines are direct root children, not in a G).
+        // Scope the line check to the marks group so axis lines do not leak into the assertion.
+        val marksGroups = root.children.collect { case g: Svg.G => g }.filter(g =>
+            g.children.exists { case _: Svg.Rect => true; case _ => false }
+        )
+        assert(marksGroups.nonEmpty, "the sibling bar must still render inside a marks Svg.G")
+        val marksRects = marksGroups.flatMap(_.children.collect { case r: Svg.Rect => r })
+        val marksLines = marksGroups.flatMap(_.children.collect { case l: Svg.Line => l })
+        assert(marksRects.nonEmpty, "the sibling bar must still render a rect")
+        assert(marksLines.isEmpty, "a rule() with both positions Unset must emit NO Svg.Line (skipped at lowering)")
     }
 
     // Test: no null.asInstanceOf remains in Chart.scala rule factory (INV-020, plan leaf 11)

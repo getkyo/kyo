@@ -83,25 +83,6 @@ class ChartTransitionTest extends Test:
             case inner: Svg.G => pathsFromG(inner)
             case _            => Chunk.empty
 
-    /** Render a Reactive root twice: once with `initial`, once after setting `ref` to `updated`.
-      * Returns (html-before, rectsBefore, html-after, rectsAfter) from the rendered Reactive region.
-      *
-      * The `spec` is a live chart built from `ref`. After rendering with initial rows, the ref is updated
-      * and the root is rendered again.
-      */
-    private def renderTwice(
-        initial: Chunk[Sale],
-        updated: Chunk[Sale],
-        specBuilder: Signal[Chunk[Sale]] => ChartSpec[Sale]
-    ): (Svg.Root, Svg.Root) < Async =
-        for
-            ref <- Signal.initRef(initial)
-            spec = specBuilder(ref: Signal[Chunk[Sale]])
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
-            _ <- ref.set(updated)
-            root2 = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
-        yield (root, root2)
-
     // ---- Test 1: UPDATE emits animate with from=prev and to=new ----
 
     "UPDATE: a key present before and after emits a rect with two Svg.Animate children (from=prev, to=new)" in run {
