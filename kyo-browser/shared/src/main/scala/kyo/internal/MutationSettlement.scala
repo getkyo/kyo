@@ -122,10 +122,25 @@ private[kyo] object MutationSettlement:
             window.__kyoMutCount = 0;
             window.__kyoMutObsRef = 1;
             window.__kyoMutObs = new MutationObserver((records) => {
-                const real = records.filter(r => {
-                    const n = r.target;
+                const inInternal = (n) => {
                     const el = (n && n.nodeType === 1) ? n : (n && n.parentElement);
-                    return !(el && el.closest && el.closest('[data-kyo-internal]'));
+                    return !!(el && el.closest && el.closest('[data-kyo-internal]'));
+                };
+                const real = records.filter(r => {
+                    // Transparent when the record's target sits inside a data-kyo-internal subtree (covers attribute /
+                    // characterData / childList mutations made WITHIN a tagged overlay).
+                    if (inInternal(r.target)) return false;
+                    // Transparent when the record INSERTS or REMOVES a tagged root: the target is the untagged parent
+                    // (e.g. document.body), and the tagged node is in addedNodes / removedNodes. Treat the record as
+                    // transparent only when it touches at least one node and EVERY added AND removed node is (or is
+                    // within) a tagged subtree, so a mixed batch that also moves real nodes still arms the gate.
+                    const touched = (r.addedNodes ? r.addedNodes.length : 0) + (r.removedNodes ? r.removedNodes.length : 0);
+                    if (r.type === 'childList' && touched > 0) {
+                        const added = Array.prototype.every.call(r.addedNodes || [], inInternal);
+                        const removed = Array.prototype.every.call(r.removedNodes || [], inInternal);
+                        if (added && removed) return false;
+                    }
+                    return true;
                 });
                 if (real.length === 0) return;
                 window.__kyoMutCount = (window.__kyoMutCount || 0) + real.length;

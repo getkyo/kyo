@@ -2293,6 +2293,132 @@ object Browser:
             }
         }
 
+    /** Scoped wrapper that applies emulated media features for the duration of `body`, then restores the prior state.
+      *
+      * The three features compose into a single `Emulation.setEmulatedMedia` send: `media` selects the media type (`screen` /
+      * `print`, omitted when `Absent`); `colorScheme` sets `prefers-color-scheme` (omitted when `Absent`, cleared to its
+      * empty-string default for [[Browser.ColorScheme.NoPreference]] since W3C dropped that value); `reducedMotion` always sends
+      * `prefers-reduced-motion` as `reduce` or `no-preference`. The override is cached on the tab and re-applied (or cleared, when
+      * no prior override was active) on exit via `Scope.acquireRelease` inside an inner `Scope.run`, so nested calls compose in LIFO
+      * order and the restore fires on success, failure, AND interruption. The apply settles via `MutationSettlement.afterAction` so
+      * any media-query re-layout has quiesced before `body` starts.
+      */
+    def withEmulation[A, S](
+        colorScheme: Maybe[Browser.ColorScheme] = Absent,
+        media: Maybe[Browser.MediaType] = Absent,
+        reducedMotion: Boolean = false
+    )(body: A < (Browser & S))(using Frame): A < (Browser & Abort[BrowserReadException] & S) =
+        Env.use[BrowserTab] { tab =>
+            val features = Chunk(
+                colorScheme.map(cs => EmulatedMediaFeature("prefers-color-scheme", cs.wire)),
+                Present(EmulatedMediaFeature("prefers-reduced-motion", if reducedMotion then "reduce" else "no-preference"))
+            ).flatMap(_.toChunk)
+            val params = SetEmulatedMediaParams(media.map(_.wire), Present(features.toSeq))
+            Scope.run {
+                tab.emulationOverride.get.map { prior =>
+                    Scope.acquireRelease(
+                        MutationSettlement.afterAction {
+                            tab.emulationOverride.set(Present(BrowserTab.EmulatedMediaState(
+                                colorScheme.map(_.wire),
+                                media.map(_.wire),
+                                reducedMotion
+                            ))).andThen(
+                                CdpBackend.setEmulatedMedia(tab.session, params)
+                            )
+                        }(Absent)
+                    ) { _ =>
+                        tab.emulationOverride.set(prior).andThen(
+                            prior match
+                                case Present(s) =>
+                                    CdpBackend.setEmulatedMedia(
+                                        tab.session,
+                                        SetEmulatedMediaParams(
+                                            s.media,
+                                            Present(Seq(
+                                                EmulatedMediaFeature("prefers-color-scheme", s.colorScheme.getOrElse("")),
+                                                EmulatedMediaFeature(
+                                                    "prefers-reduced-motion",
+                                                    if s.reducedMotion then "reduce" else "no-preference"
+                                                )
+                                            ))
+                                        )
+                                    )
+                                case Absent =>
+                                    CdpBackend.setEmulatedMedia(
+                                        tab.session,
+                                        SetEmulatedMediaParams(
+                                            Present(""),
+                                            Present(Seq(
+                                                EmulatedMediaFeature("prefers-color-scheme", ""),
+                                                EmulatedMediaFeature("prefers-reduced-motion", "no-preference")
+                                            ))
+                                        )
+                                    )
+                        )
+                    }.andThen(body)
+                }
+            }
+        }
+    end withEmulation
+
+    /** Injects a settlement-transparent overlay (a dashed box per annotation, plus a label when one is provided) for the duration of
+      * `body`, then removes it on exit.
+      *
+      * The overlay is one container subtree tagged `data-kyo-internal`, so the mutation observer ignores both its insertion and its
+      * removal: the overlay does NOT arm the mutation gate, and a capture inside `body` sees the boxes while a settlement inside
+      * `body` stays transparent to them. Each annotation resolves its element via the same selector machinery the rest of the API
+      * uses; an annotation whose selector matches nothing is skipped. The inject eval completes before `body` runs, so screenshots
+      * taken inside `body` include the overlays. The container is removed via `Scope.acquireRelease` inside an inner `Scope.run`, so
+      * the removal fires on success, failure, AND interruption; the removal eval is idempotent.
+      */
+    def withHighlights[A, S](annotations: Span[Browser.Annotation])(body: A < (Browser & S))(using
+        Frame
+    ): A < (Browser & Abort[BrowserReadException] & S) =
+        val specs = annotations.map { a =>
+            val sel   = SelectorJs.resolveElementJs(Selector.toNode(a.selector))
+            val color = s""""${JsStringUtil.escapeJsString(a.color.getOrElse("#d00"))}""""
+            val label = s""""${JsStringUtil.escapeJsString(a.label.getOrElse(""))}""""
+            s"""{ sel: () => $sel, color: $color, label: $label }"""
+        }.mkString("[", ",", "]")
+        val injectJs = s"""(() => {
+            const root = document.createElement('div');
+            root.setAttribute('data-kyo-internal', 'highlights');
+            root.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483646;';
+            for (const a of $specs) {
+                const el = a.sel(); if (!el) continue;
+                const r = el.getBoundingClientRect();
+                const box = document.createElement('div');
+                box.setAttribute('data-kyo-internal', 'highlight');
+                box.style.cssText = 'position:absolute;left:'+r.left+'px;top:'+r.top+'px;width:'+r.width+'px;height:'+r.height+'px;outline-width:2px;outline-style:dashed;outline-color:'+a.color+';';
+                if (a.label) {
+                    const b = document.createElement('div');
+                    b.setAttribute('data-kyo-internal', 'label');
+                    b.textContent = a.label;
+                    b.style.cssText = 'position:absolute;left:'+r.left+'px;top:'+(r.top-16)+'px;background:'+a.color+';color:#fff;font:11px sans-serif;padding:0 3px;';
+                    root.appendChild(b);
+                }
+                root.appendChild(box);
+            }
+            document.body.appendChild(root);
+            window.__kyoHighlights = root;
+            return 'highlighted';
+        })()"""
+        val removeJs = """(() => {
+            if (window.__kyoHighlights) {
+                document.body.removeChild(window.__kyoHighlights);
+                delete window.__kyoHighlights;
+            }
+            return 'unhighlighted';
+        })()"""
+        Env.use[BrowserTab] { tab =>
+            Scope.run {
+                Scope.acquireRelease(BrowserEval.evalJs(injectJs).unit)(_ =>
+                    releaseHook(tab)(BrowserEval.evalJs(removeJs).unit)
+                ).andThen(body)
+            }
+        }
+    end withHighlights
+
     // --- Keyboard ---
 
     /** Types the given text character by character via keyboard events. */
@@ -3396,6 +3522,48 @@ object Browser:
       * `ScreenshotFrame`.
       */
     final case class ScrollPosition(x: Int, y: Int) derives Schema, CanEqual
+
+    /** Emulated `prefers-color-scheme` value for [[withEmulation]].
+      *
+      * [[NoPreference]] clears the override: the W3C dropped `no-preference` as a settable value for this feature, so it maps to the
+      * empty-string clear sent to `Emulation.setEmulatedMedia`.
+      */
+    enum ColorScheme derives CanEqual:
+        case Light, Dark, NoPreference
+
+    object ColorScheme:
+        /** CDP wire form for the `prefers-color-scheme` feature: `"light"` / `"dark"` / `""` (cleared). */
+        extension (c: ColorScheme)
+            private[kyo] def wire: String = c match
+                case Light        => "light"
+                case Dark         => "dark"
+                case NoPreference => ""
+        end extension
+    end ColorScheme
+
+    /** Emulated media type for [[withEmulation]]. */
+    enum MediaType derives CanEqual:
+        case Screen, Print
+
+    object MediaType:
+        /** CDP wire form for the emulated media type: `"screen"` / `"print"`. */
+        extension (m: MediaType)
+            private[kyo] def wire: String = m match
+                case Screen => "screen"
+                case Print  => "print"
+        end extension
+    end MediaType
+
+    /** Input to [[withHighlights]]: a dashed box drawn over the element matched by `selector`, with an optional `label` and `color`.
+      *
+      * `label` and `color` default to `Absent`; `color` is a CSS color string (defaulting to a red when absent). Carries a
+      * [[Selector]] (an opaque type), so it derives only `CanEqual`.
+      */
+    final case class Annotation(
+        selector: Selector,
+        label: Maybe[String] = Absent,
+        color: Maybe[String] = Absent
+    ) derives CanEqual
 
     /** DISCOVER artifact: a resolved element snapshot. Optional fields (`id` / `text` / `role`) are `Maybe`, never null; `classes` is a
       * `Chunk`; `selector` is the generated stable unique CSS path. The companion holds the pure `leaves` filter. `area` delegates to

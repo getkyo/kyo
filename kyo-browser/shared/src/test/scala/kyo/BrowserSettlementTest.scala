@@ -1260,6 +1260,106 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
+    // Test 2b: APPENDING a data-kyo-internal root to document.body does NOT arm the gate.
+    // This is the overlay-injection case: the childList record's target is the UNTAGGED parent (document.body) and the
+    // tagged node is in addedNodes, so the original target-ancestor-only filter would have armed the gate. The extended
+    // filter treats a childList record as transparent when every added/removed node is (or is within) a tagged subtree.
+    // evalJsAwaiting flushes the MutationObserver microtask (via setTimeout(0)) before reading the post-callback count.
+    "appending a data-kyo-internal node does not arm the settlement gate" in run {
+        withBrowser {
+            onPage("<body><div id='real'>initial</div></body>") {
+                val action = kyo.internal.BrowserEval.evalJsAwaiting("""(async () => {
+                    const before = window.__kyoMutCount || 0;
+                    const d = document.createElement('div');
+                    d.setAttribute('data-kyo-internal', 'overlay');
+                    d.id = 'kyo-overlay-root';
+                    const child = document.createElement('span');
+                    child.textContent = 'box';
+                    d.appendChild(child);
+                    document.body.appendChild(d);
+                    await new Promise(r => setTimeout(r, 0));
+                    const after = window.__kyoMutCount || 0;
+                    return String(before) + ',' + String(after);
+                })()""")
+                kyo.internal.MutationSettlement.afterAction(action)(Absent).map { result =>
+                    val parts  = result.split(",")
+                    val before = parts(0).toLong
+                    val after  = parts(1).toLong
+                    assert(
+                        after == before,
+                        s"expected __kyoMutCount to remain $before after appending a data-kyo-internal node but got $after"
+                    )
+                }
+            }
+        }
+    }
+
+    // Test 2c: REMOVING a data-kyo-internal root from document.body does NOT arm the gate.
+    // The childList record's target is document.body (untagged) and the tagged node is in removedNodes. A detached removed
+    // tagged element still satisfies closest('[data-kyo-internal]') on itself, so the extended filter treats the removal as
+    // transparent. Pre-seeds the tagged root before the observer is installed so the only mutation under measurement is the
+    // removal.
+    "removing a data-kyo-internal node does not arm the settlement gate" in run {
+        withBrowser {
+            onPage("<body><div id='real'>initial</div></body>") {
+                // Pre-seed the tagged overlay root before installing the observer.
+                Browser.eval("""(() => {
+                    const d = document.createElement('div');
+                    d.setAttribute('data-kyo-internal', 'overlay');
+                    d.id = 'kyo-overlay-root';
+                    document.body.appendChild(d);
+                    return 'seeded';
+                })()""").andThen {
+                    val action = kyo.internal.BrowserEval.evalJsAwaiting("""(async () => {
+                        const before = window.__kyoMutCount || 0;
+                        const d = document.getElementById('kyo-overlay-root');
+                        document.body.removeChild(d);
+                        await new Promise(r => setTimeout(r, 0));
+                        const after = window.__kyoMutCount || 0;
+                        return String(before) + ',' + String(after);
+                    })()""")
+                    kyo.internal.MutationSettlement.afterAction(action)(Absent).map { result =>
+                        val parts  = result.split(",")
+                        val before = parts(0).toLong
+                        val after  = parts(1).toLong
+                        assert(
+                            after == before,
+                            s"expected __kyoMutCount to remain $before after removing a data-kyo-internal node but got $after"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // Test 2d: appending a NON-tagged node STILL arms the gate (regression guard for the childList filter extension).
+    // Proves the extended filter is narrow: a childList record whose added node is untagged increments __kyoMutCount.
+    "appending a non-tagged node still arms the settlement gate" in run {
+        withBrowser {
+            onPage("<body><div id='real'>initial</div></body>") {
+                val action = kyo.internal.BrowserEval.evalJsAwaiting("""(async () => {
+                    const before = window.__kyoMutCount || 0;
+                    const d = document.createElement('div');
+                    d.id = 'plain-node';
+                    d.textContent = 'plain';
+                    document.body.appendChild(d);
+                    await new Promise(r => setTimeout(r, 0));
+                    const after = window.__kyoMutCount || 0;
+                    return String(before) + ',' + String(after);
+                })()""")
+                kyo.internal.MutationSettlement.afterAction(action)(Absent).map { result =>
+                    val parts  = result.split(",")
+                    val before = parts(0).toLong
+                    val after  = parts(1).toLong
+                    assert(
+                        after > before,
+                        s"expected __kyoMutCount to increase from $before after appending an untagged node but got $after (the filter must not suppress untagged insertions)"
+                    )
+                }
+            }
+        }
+    }
+
     // Test 3: waitForStable returns () once the DOM quiesces.
     // A burst of 5 mutations fires at ~20ms intervals then stops; waitForStable must
     // return within the 2s timeout. Uses Test.timed for the upper-bound assertion.

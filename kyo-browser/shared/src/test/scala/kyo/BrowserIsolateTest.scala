@@ -684,12 +684,13 @@ class BrowserIsolateTest extends BrowserTest:
         withBrowser {
             Browser.use { parent =>
                 for
-                    fctx     <- AtomicRef.init[Dict[FrameId, ExecutionContextId]](Dict.empty)
-                    root     <- AtomicRef.init[Maybe[FrameId]](Absent)
-                    console  <- AtomicBoolean.init(false)
-                    response <- AtomicBoolean.init(false)
-                    viewport <- AtomicRef.init[Maybe[BrowserTab.ViewportOverride]](Absent)
-                    download <- AtomicRef.init[Maybe[(Browser.DownloadBehavior, Maybe[String])]](Absent)
+                    fctx      <- AtomicRef.init[Dict[FrameId, ExecutionContextId]](Dict.empty)
+                    root      <- AtomicRef.init[Maybe[FrameId]](Absent)
+                    console   <- AtomicBoolean.init(false)
+                    response  <- AtomicBoolean.init(false)
+                    viewport  <- AtomicRef.init[Maybe[BrowserTab.ViewportOverride]](Absent)
+                    emulation <- AtomicRef.init[Maybe[BrowserTab.EmulatedMediaState]](Absent)
+                    download  <- AtomicRef.init[Maybe[(Browser.DownloadBehavior, Maybe[String])]](Absent)
                     tab = new BrowserTab(
                         TargetId("t-test"),
                         SessionId("s-test"),
@@ -700,6 +701,7 @@ class BrowserIsolateTest extends BrowserTest:
                         console,
                         response,
                         viewport,
+                        emulation,
                         download
                     )
                 yield tab.browserContextId match
