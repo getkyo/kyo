@@ -166,231 +166,6 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    // ---- boundingBox ----
-
-    "boundingBox returns Present rect with declared CSS width and height for a known-size div" in run {
-        withBrowser {
-            onPage(
-                "<div id='b' style='position:absolute;left:50px;top:30px;width:120px;height:80px;background:red'></div>"
-            ) {
-                Browser.setViewport(1024, 768).andThen {
-                    Browser.boundingBox(Browser.Selector.id("b")).map {
-                        case Present(box) =>
-                            assert(
-                                (box.width - 120.0).abs <= 1.0,
-                                s"Expected width ~120 but got ${box.width}"
-                            )
-                            assert(
-                                (box.height - 80.0).abs <= 1.0,
-                                s"Expected height ~80 but got ${box.height}"
-                            )
-                            assert((box.x - 50.0).abs <= 1.0, s"Expected x ~50 but got ${box.x}")
-                            assert((box.y - 30.0).abs <= 1.0, s"Expected y ~30 but got ${box.y}")
-                        case Absent =>
-                            fail("expected Present(BoundingBox) for visible element, got Absent")
-                    }
-                }
-            }
-        }
-    }
-
-    "boundingBox reports actual rect for an off-viewport element (negative or beyond-viewport coords)" in run {
-        withBrowser {
-            onPage(
-                "<div id='b' style='position:absolute;left:-500px;top:5000px;width:50px;height:50px;background:blue'></div>"
-            ) {
-                Browser.setViewport(1024, 768).andThen {
-                    Browser.boundingBox(Browser.Selector.id("b")).map {
-                        case Present(box) =>
-                            assert(box.x < 0.0, s"Expected x < 0 but got ${box.x}")
-                            assert(box.y > 768.0, s"Expected y > viewport-height but got ${box.y}")
-                            assert(
-                                (box.width - 50.0).abs <= 1.0,
-                                s"Expected width ~50 but got ${box.width}"
-                            )
-                            assert(
-                                (box.height - 50.0).abs <= 1.0,
-                                s"Expected height ~50 but got ${box.height}"
-                            )
-                        case Absent =>
-                            fail("expected Present(BoundingBox) for off-viewport element, got Absent")
-                    }
-                }
-            }
-        }
-    }
-
-    "boundingBox returns Absent for a non-existent selector" in run {
-        withBrowser {
-            onPage("<div>nothing matching</div>") {
-                Browser.setViewport(1024, 768).andThen {
-                    Browser.boundingBox(Browser.Selector.id("nope")).map { result =>
-                        assert(result.isEmpty, s"Expected Absent but got $result")
-                    }
-                }
-            }
-        }
-    }
-
-    "boundingBox returns Absent for a display:none element (no box model)" in run {
-        withBrowser {
-            onPage(
-                "<div id='b' style='display:none;width:100px;height:100px'></div>"
-            ) {
-                Browser.setViewport(1024, 768).andThen {
-                    Browser.boundingBox(Browser.Selector.id("b")).map { result =>
-                        assert(
-                            result.isEmpty,
-                            s"Expected Absent for display:none element but got $result"
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    "boundingBox rect matches getBoundingClientRect within 1px for in-viewport element" in run {
-        withBrowser {
-            onPage(
-                "<div id='b' style='position:absolute;left:10px;top:20px;width:200px;height:100px;background:green'></div>"
-            ) {
-                Browser.setViewport(1024, 768).andThen {
-                    Browser.boundingBox(Browser.Selector.id("b")).map {
-                        case Present(box) =>
-                            Browser.eval("document.getElementById('b').getBoundingClientRect().x").map { xStr =>
-                                Browser.eval("document.getElementById('b').getBoundingClientRect().y").map { yStr =>
-                                    Browser.eval("document.getElementById('b').getBoundingClientRect().width").map { wStr =>
-                                        Browser.eval("document.getElementById('b').getBoundingClientRect().height").map { hStr =>
-                                            val jsX = xStr.toDouble
-                                            val jsY = yStr.toDouble
-                                            val jsW = wStr.toDouble
-                                            val jsH = hStr.toDouble
-                                            assert(
-                                                (box.x - jsX).abs <= 1.0,
-                                                s"Expected x ~$jsX but got ${box.x}"
-                                            )
-                                            assert(
-                                                (box.y - jsY).abs <= 1.0,
-                                                s"Expected y ~$jsY but got ${box.y}"
-                                            )
-                                            assert(
-                                                (box.width - jsW).abs <= 1.0,
-                                                s"Expected width ~$jsW but got ${box.width}"
-                                            )
-                                            assert(
-                                                (box.height - jsH).abs <= 1.0,
-                                                s"Expected height ~$jsH but got ${box.height}"
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        case Absent =>
-                            fail("expected Present(BoundingBox) for in-viewport element, got Absent")
-                    }
-                }
-            }
-        }
-    }
-
-    "boundingBox inside a same-origin iframe returns coords in top-level viewport" in run {
-        val parent =
-            """<body>
-                <iframe id="f" data-testid="frame" srcdoc="{srcdoc}"
-                        style="position:absolute;left:100px;top:50px;width:300px;height:200px;border:0"></iframe>
-            </body>"""
-        val inner =
-            """<body><div id="inner" style="position:absolute;left:20px;top:30px;width:40px;height:40px;background:orange"></div></body>"""
-        withBrowser {
-            Browser.setViewport(1024, 768).andThen {
-                Browser.goto(srcdocPage(parent, inner)).andThen {
-                    Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).take(40))) {
-                        Browser.assertExists(Browser.Selector.testId("frame")).andThen {
-                            Browser.iframe(Browser.Selector.testId("frame")).map { f =>
-                                Browser.withIFrame(f) {
-                                    Browser.assertExists(Browser.Selector.id("inner")).andThen {
-                                        Browser.boundingBox(Browser.Selector.id("inner")).map {
-                                            case Present(box) =>
-                                                // Inner offset = iframe.left(100) + inner.left(20) = 120;
-                                                // similarly y = iframe.top(50) + inner.top(30) = 80.
-                                                assert(
-                                                    box.x >= 119.0,
-                                                    s"Expected x carrying iframe offset (>=119) but got ${box.x}"
-                                                )
-                                                assert(
-                                                    box.y >= 79.0,
-                                                    s"Expected y carrying iframe offset (>=79) but got ${box.y}"
-                                                )
-                                            case Absent =>
-                                                fail("expected Present(BoundingBox) inside iframe, got Absent")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    "boundingBox inside a cross-origin iframe returns coords within outer iframe rect" in run {
-        val outerHtml =
-            """<html><body><iframe id="f" data-testid="frame" src="{iframe-src}"
-                        style="position:absolute;left:100px;top:50px;width:300px;height:200px;border:0"></iframe></body></html>"""
-        val innerHtml =
-            """<html><body><div id="inner" style="position:absolute;left:20px;top:30px;width:40px;height:40px;background:purple"></div></body></html>"""
-        withBrowserOnLocalhostIframe(outerHtml, innerHtml) {
-            Browser.setViewport(1024, 768).andThen {
-                Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).take(40))) {
-                    Browser.assertExists(Browser.Selector.testId("frame")).andThen {
-                        // Outer iframe rect in top-level viewport coords.
-                        Browser.boundingBox(Browser.Selector.testId("frame")).map {
-                            case Present(outer) =>
-                                Browser.iframe(Browser.Selector.testId("frame")).map { f =>
-                                    Browser.withIFrame(f) {
-                                        Browser.assertExists(Browser.Selector.id("inner")).andThen {
-                                            Browser.boundingBox(Browser.Selector.id("inner")).map {
-                                                case Present(inner) =>
-                                                    assert(
-                                                        inner.x >= outer.x - 1.0 && inner.x <= outer.x + outer.width + 1.0,
-                                                        s"Expected inner.x in outer rect [${outer.x}, ${outer.x + outer.width}] but got ${inner.x}"
-                                                    )
-                                                    assert(
-                                                        inner.y >= outer.y - 1.0 && inner.y <= outer.y + outer.height + 1.0,
-                                                        s"Expected inner.y in outer rect [${outer.y}, ${outer.y + outer.height}] but got ${inner.y}"
-                                                    )
-                                                case Absent =>
-                                                    fail("expected Present(BoundingBox) for inner element, got Absent")
-                                            }
-                                        }
-                                    }
-                                }
-                            case Absent =>
-                                fail("expected Present(BoundingBox) for outer iframe, got Absent")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    "boundingBox is idempotent: two consecutive calls return the same rect" in run {
-        withBrowser {
-            onPage(
-                "<div id='b' style='position:absolute;left:50px;top:30px;width:120px;height:80px;background:red'></div>"
-            ) {
-                Browser.setViewport(1024, 768).andThen {
-                    Browser.boundingBox(Browser.Selector.id("b")).map { first =>
-                        Browser.boundingBox(Browser.Selector.id("b")).map { second =>
-                            assert(first == second, s"Expected $first == $second")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // ---- accessibilityNodes / role / accessibleName ----
 
     "accessibilityNodes contains a button node with role and name" in run {
@@ -711,7 +486,7 @@ class BrowserReadTest extends BrowserTest:
             onPage("<html><body><div id='marker'>X</div></body></html>") {
                 Browser.eval("window.innerWidth").map { preWidthStr =>
                     Browser.eval("window.innerHeight").map { preHeightStr =>
-                        Browser.screenshot(400, 300, Browser.ScreenshotFormat.Png, 90).map { img =>
+                        Browser.screenshotRegion(0, 0, 400, 300, Browser.ScreenshotFormat.Png, 90).map { img =>
                             assert(img.binary.size > 0, "Screenshot should be non-empty")
                             Browser.eval("window.innerWidth").map { postWidthStr =>
                                 Browser.eval("window.innerHeight").map { postHeightStr =>
@@ -745,7 +520,7 @@ class BrowserReadTest extends BrowserTest:
                             val sentinel = new RuntimeException("deterministic abort sentinel")
                             Abort.run[Throwable] {
                                 Async.raceFirst[Throwable, Any, Any](
-                                    Browser.runOn(tab)(Browser.screenshot(1234, 567, Browser.ScreenshotFormat.Png, 90)),
+                                    Browser.runOn(tab)(Browser.screenshotRegion(0, 0, 1234, 567, Browser.ScreenshotFormat.Png, 90)),
                                     Abort.fail[Throwable](sentinel)
                                 )
                             }.map { result =>
@@ -927,8 +702,8 @@ class BrowserReadTest extends BrowserTest:
         // quality 30 and quality 90 must therefore yield identical byte payloads.
         withBrowser {
             onPage(gradientPageHtml) {
-                Browser.screenshot(width = 400, height = 300, format = Browser.ScreenshotFormat.Png, quality = 30).map { low =>
-                    Browser.screenshot(width = 400, height = 300, format = Browser.ScreenshotFormat.Png, quality = 90).map { high =>
+                Browser.screenshotRegion(0, 0, 400, 300, format = Browser.ScreenshotFormat.Png, quality = 30).map { low =>
+                    Browser.screenshotRegion(0, 0, 400, 300, format = Browser.ScreenshotFormat.Png, quality = 90).map { high =>
                         assert(low.binary.size > 0, "expected non-empty PNG at quality 30")
                         assert(high.binary.size > 0, "expected non-empty PNG at quality 90")
                         assert(
@@ -944,8 +719,8 @@ class BrowserReadTest extends BrowserTest:
     "screenshot in JPEG format produces a smaller payload at quality 30 than at quality 90" in run {
         withBrowser {
             onPage(gradientPageHtml) {
-                Browser.screenshot(width = 400, height = 300, format = Browser.ScreenshotFormat.Jpeg, quality = 30).map { low =>
-                    Browser.screenshot(width = 400, height = 300, format = Browser.ScreenshotFormat.Jpeg, quality = 90).map { high =>
+                Browser.screenshotRegion(0, 0, 400, 300, format = Browser.ScreenshotFormat.Jpeg, quality = 30).map { low =>
+                    Browser.screenshotRegion(0, 0, 400, 300, format = Browser.ScreenshotFormat.Jpeg, quality = 90).map { high =>
                         assert(low.binary.size > 0, "expected non-empty JPEG at quality 30")
                         assert(high.binary.size > 0, "expected non-empty JPEG at quality 90")
                         assert(
@@ -961,7 +736,7 @@ class BrowserReadTest extends BrowserTest:
     "screenshot in WEBP format produces a valid image" in run {
         withBrowser {
             onPage(gradientPageHtml) {
-                Browser.screenshot(width = 400, height = 300, format = Browser.ScreenshotFormat.Webp, quality = 90).map { img =>
+                Browser.screenshotRegion(0, 0, 400, 300, format = Browser.ScreenshotFormat.Webp, quality = 90).map { img =>
                     val bytes = img.binary
                     assert(bytes.size > 0, "expected non-empty WEBP image")
                     // RIFF header; every WEBP file starts with 'R' 'I' 'F' 'F' (0x52 0x49 0x46 0x46).
@@ -1025,9 +800,9 @@ class BrowserReadTest extends BrowserTest:
             onPage("<html><body>nested</body></html>") {
                 Browser.eval("window.innerWidth").map { preWidthStr =>
                     Browser.eval("window.innerHeight").map { preHeightStr =>
-                        Browser.screenshot(640, 480, Browser.ScreenshotFormat.Png, 90).map { outerImg =>
+                        Browser.screenshotRegion(0, 0, 640, 480, Browser.ScreenshotFormat.Png, 90).map { outerImg =>
                             assert(outerImg.binary.size > 0, "outer screenshot should be non-empty")
-                            Browser.screenshot(320, 240, Browser.ScreenshotFormat.Png, 90).map { innerImg =>
+                            Browser.screenshotRegion(0, 0, 320, 240, Browser.ScreenshotFormat.Png, 90).map { innerImg =>
                                 assert(innerImg.binary.size > 0, "inner screenshot should be non-empty")
                                 Browser.eval("window.innerWidth").map { postWidthStr =>
                                     Browser.eval("window.innerHeight").map { postHeightStr =>
@@ -1385,25 +1160,27 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- screenshot no-arg overload ----
 
-    "screenshot(using Frame) captures the viewport with default dims, same as screenshot(1280, 720, 90)" in run {
+    "screenshot captures the live viewport set by setViewport" in run {
         val p = page("<html><body><h1>Screenshot Test</h1></body></html>")
         withBrowser {
-            Browser.goto(p).map { _ =>
-                Browser.screenshot().map { img =>
-                    assert(img.binary.size > 0, "Expected non-empty screenshot bytes")
-                    val bytes = img.binary.toArray
-                    assert(bytes.length >= 24, "Expected at least 24 bytes for PNG header + IHDR chunk")
-                    assert(bytes(0) == 0x89.toByte, "Expected PNG signature byte 0")
-                    assert(bytes(1) == 'P'.toByte, "Expected PNG signature byte 1")
-                    assert(bytes(2) == 'N'.toByte, "Expected PNG signature byte 2")
-                    assert(bytes(3) == 'G'.toByte, "Expected PNG signature byte 3")
-                    // Width and height are at offsets 16 and 20 in the IHDR chunk (big-endian 4-byte ints)
-                    val width =
-                        ((bytes(16) & 0xff) << 24) | ((bytes(17) & 0xff) << 16) | ((bytes(18) & 0xff) << 8) | (bytes(19) & 0xff)
-                    val height =
-                        ((bytes(20) & 0xff) << 24) | ((bytes(21) & 0xff) << 16) | ((bytes(22) & 0xff) << 8) | (bytes(23) & 0xff)
-                    assert(width == 1280, s"Expected default screenshot width 1280 but got $width")
-                    assert(height == 720, s"Expected default screenshot height 720 but got $height")
+            Browser.goto(p).andThen {
+                Browser.setViewport(1024, 768).andThen {
+                    Browser.screenshot().map { img =>
+                        assert(img.binary.size > 0, "Expected non-empty screenshot bytes")
+                        val bytes = img.binary.toArray
+                        assert(bytes.length >= 24, "Expected at least 24 bytes for PNG header + IHDR chunk")
+                        assert(bytes(0) == 0x89.toByte, "Expected PNG signature byte 0")
+                        assert(bytes(1) == 'P'.toByte, "Expected PNG signature byte 1")
+                        assert(bytes(2) == 'N'.toByte, "Expected PNG signature byte 2")
+                        assert(bytes(3) == 'G'.toByte, "Expected PNG signature byte 3")
+                        // Width and height are at offsets 16 and 20 in the IHDR chunk (big-endian 4-byte ints)
+                        val width =
+                            ((bytes(16) & 0xff) << 24) | ((bytes(17) & 0xff) << 16) | ((bytes(18) & 0xff) << 8) | (bytes(19) & 0xff)
+                        val height =
+                            ((bytes(20) & 0xff) << 24) | ((bytes(21) & 0xff) << 16) | ((bytes(22) & 0xff) << 8) | (bytes(23) & 0xff)
+                        assert(width == 1024, s"Expected live-viewport screenshot width 1024 but got $width")
+                        assert(height == 768, s"Expected live-viewport screenshot height 768 but got $height")
+                    }
                 }
             }
         }

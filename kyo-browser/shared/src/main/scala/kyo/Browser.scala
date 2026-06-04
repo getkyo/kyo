@@ -1581,41 +1581,11 @@ object Browser:
             case v => v == "empty"
         }
 
-    /** Returns the bounding box of the first element matching `selector` in the top-level viewport coordinate system. Returns `Absent` when
-      * the selector matches nothing or the element has no box model (e.g. `display: none`).
-      *
-      * Uses CDP `DOM.getBoxModel` (not JS `getBoundingClientRect`) so coordinates are correct for elements inside cross-origin iframes and
-      * shadow DOM where JS-side reads return iframe-local coords.
-      */
-    def boundingBox(selector: Selector)(using Frame): Maybe[BoundingBox] < (Browser & Abort[BrowserReadException]) =
-        Resolver.resolveOne(selector).map {
-            case Absent => Maybe.empty[BoundingBox]
-            case Present(ref) =>
-                Env.use[BrowserTab] { tab =>
-                    Abort.recover[BrowserProtocolErrorException] { _ => Maybe.empty[BoundingBox] } {
-                        CdpBackend.getBoxModel(tab.session, GetBoxModelParams(backendNodeId = ref.backendNodeId)).map { bm =>
-                            val c = bm.model.content
-                            if c.size < 8 then Maybe.empty[BoundingBox]
-                            else
-                                val xs = Chunk(c(0), c(2), c(4), c(6))
-                                val ys = Chunk(c(1), c(3), c(5), c(7))
-                                val x  = xs.min
-                                val y  = ys.min
-                                val w  = xs.max - x
-                                val h  = ys.max - y
-                                Present(BoundingBox(x, y, w, h))
-                            end if
-                        }
-                    }
-                }
-        }
-    end boundingBox
-
     /** Returns the settled bounding rectangle of the first element matching `selector`. Re-samples until the geometry stabilizes, then
       * performs an authoritative `DOM.getBoxModel` CDP read for the final value. Returns `Absent` when the selector matches nothing or the
       * element has no box model (`display:none`). Coordinates are CSS pixels in the page's top-level viewport coordinate system.
       *
-      * Uses `SettleRead.settle` (twin: `boundingBox`) to wait for layout stability before the CDP box-model read.
+      * Uses `SettleRead.settle` to wait for layout stability before the CDP box-model read.
       */
     def boundingRect(selector: Selector)(using Frame): Maybe[Browser.Bounds] < (Browser & Abort[BrowserReadException]) =
         val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
@@ -1725,7 +1695,7 @@ object Browser:
     end elementAt
 
     /** Returns the full DISCOVER snapshot for the first element matching `selector`. Settled read: re-samples until stable. Returns `Absent`
-      * when no element matches (twin: `boundingBox`).
+      * when no element matches (twin: `boundingRect`).
       */
     def element(selector: Selector)(using Frame): Maybe[Browser.ElementInfo] < (Browser & Abort[BrowserReadException]) =
         installDiscover.andThen {
@@ -1954,27 +1924,6 @@ object Browser:
                     ScreenshotParams(format, screenshotQuality(format, quality), clip = Absent)
                 ).map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
             }
-        }
-
-    /** Captures a `width x height` crop of the current page starting from `(0, 0)`. All parameters are required (no defaults) to avoid
-      * conflict with the live-viewport [[screenshot(format, quality)]] overload. Prefer `screenshotRegion(0, 0, width, height)` for new
-      * callers; this overload is kept for backward compatibility.
-      */
-    def screenshot(
-        width: Int,
-        height: Int,
-        format: ScreenshotFormat,
-        quality: Int
-    )(using Frame): Image < (Browser & Abort[BrowserReadException]) =
-        Env.use[BrowserTab] { tab =>
-            CdpBackend.captureScreenshot(
-                tab.session,
-                ScreenshotParams(
-                    format,
-                    screenshotQuality(format, quality),
-                    clip = Present(ScreenshotClip(0.0, 0.0, width.toDouble, height.toDouble, scale = 1.0))
-                )
-            ).map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
         }
 
     /** Captures a `width x height` region at document offset `(x, y)`. `captureBeyondViewport = true` allows the region to lie below or
@@ -2484,22 +2433,6 @@ object Browser:
         }
 
     // --- Scrolling ---
-
-    /** Scrolls the page until the element matched by the selector is visible. */
-    def scrollTo(selector: Selector)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
-        val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
-        configLocal.use { cfg =>
-            Retry[BrowserMutationException](cfg.retrySchedule) {
-                Actionability.requireResolved(selector) {
-                    BrowserEval.evalJs(s"""(() => {
-                        const el = $jsExpr;
-                        el.scrollIntoView({behavior:'instant'});
-                        return 'ok';
-                    })()""").unit
-                }
-            }
-        }
-    end scrollTo
 
     /** Scrolls the window to the document coordinate `(x, y)` via `window.scrollTo`.
       *
@@ -3814,16 +3747,6 @@ object Browser:
         /** The currently-visible entry. */
         def current: NavigationEntry = entries(currentIndex)
     end NavigationHistory
-
-    /** A rectangle in the page's top-level viewport coordinate system. Used by [[boundingBox]] to report an element's geometry. Coordinates
-      * may be negative or exceed viewport size if the element is off-screen.
-      */
-    final case class BoundingBox(
-        x: Double,
-        y: Double,
-        width: Double,
-        height: Double
-    ) derives Schema, CanEqual
 
     /** Geometry artifact returned by [[boundingRect]]. Fields are CSS pixels relative to the page document. `right`, `bottom`, and `area`
       * are derived accessors (pure, total, no `Frame`).

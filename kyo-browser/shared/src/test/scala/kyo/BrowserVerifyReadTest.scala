@@ -180,6 +180,108 @@ class BrowserVerifyReadTest extends BrowserTest:
         }
     }
 
+    // boundingRect reports the actual rect for an off-viewport element: negative left and a top below the
+    // viewport must be reflected in the returned coordinates (not clamped to the viewport).
+    "boundingRect reports the actual rect for an off-viewport element" in run {
+        withBrowser {
+            onPage(
+                "<div id='b' style='position:absolute;left:-500px;top:5000px;width:50px;height:50px;background:blue'></div>"
+            ) {
+                Browser.setViewport(1024, 768).andThen {
+                    Browser.boundingRect(Browser.Selector.id("b")).map {
+                        case Present(b) =>
+                            assert(b.x < 0.0, s"expected x < 0 but got ${b.x}")
+                            assert(b.y > 768.0, s"expected y > viewport-height but got ${b.y}")
+                            assert((b.width - 50.0).abs <= 1.0, s"expected width ~50 but got ${b.width}")
+                            assert((b.height - 50.0).abs <= 1.0, s"expected height ~50 but got ${b.height}")
+                        case Absent =>
+                            fail("expected Present(Bounds) for off-viewport element, got Absent")
+                    }
+                }
+            }
+        }
+    }
+
+    // boundingRect inside a same-origin iframe returns coordinates in the top-level viewport: the inner
+    // element's offset carries the iframe's own position (CDP DOM.getBoxModel, not JS getBoundingClientRect).
+    "boundingRect inside a same-origin iframe returns coords in top-level viewport" in run {
+        val parent =
+            """<body>
+                <iframe id="f" data-testid="frame" srcdoc="{srcdoc}"
+                        style="position:absolute;left:100px;top:50px;width:300px;height:200px;border:0"></iframe>
+            </body>"""
+        val inner =
+            """<body><div id="inner" style="position:absolute;left:20px;top:30px;width:40px;height:40px;background:orange"></div></body>"""
+        withBrowser {
+            Browser.setViewport(1024, 768).andThen {
+                Browser.goto(srcdocPage(parent, inner)).andThen {
+                    Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).take(40))) {
+                        Browser.assertExists(Browser.Selector.testId("frame")).andThen {
+                            Browser.iframe(Browser.Selector.testId("frame")).map { f =>
+                                Browser.withIFrame(f) {
+                                    Browser.assertExists(Browser.Selector.id("inner")).andThen {
+                                        Browser.boundingRect(Browser.Selector.id("inner")).map {
+                                            case Present(b) =>
+                                                // Inner offset = iframe.left(100) + inner.left(20) = 120;
+                                                // similarly y = iframe.top(50) + inner.top(30) = 80.
+                                                assert(b.x >= 119.0, s"expected x carrying iframe offset (>=119) but got ${b.x}")
+                                                assert(b.y >= 79.0, s"expected y carrying iframe offset (>=79) but got ${b.y}")
+                                            case Absent =>
+                                                fail("expected Present(Bounds) inside iframe, got Absent")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // boundingRect inside a cross-origin iframe returns coordinates within the outer iframe's rect: the inner
+    // element's top-level coordinates land inside the outer iframe box.
+    "boundingRect inside a cross-origin iframe returns coords within outer iframe rect" in run {
+        val outerHtml =
+            """<html><body><iframe id="f" data-testid="frame" src="{iframe-src}"
+                        style="position:absolute;left:100px;top:50px;width:300px;height:200px;border:0"></iframe></body></html>"""
+        val innerHtml =
+            """<html><body><div id="inner" style="position:absolute;left:20px;top:30px;width:40px;height:40px;background:purple"></div></body></html>"""
+        withBrowserOnLocalhostIframe(outerHtml, innerHtml) {
+            Browser.setViewport(1024, 768).andThen {
+                Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).take(40))) {
+                    Browser.assertExists(Browser.Selector.testId("frame")).andThen {
+                        // Outer iframe rect in top-level viewport coords.
+                        Browser.boundingRect(Browser.Selector.testId("frame")).map {
+                            case Present(outer) =>
+                                Browser.iframe(Browser.Selector.testId("frame")).map { f =>
+                                    Browser.withIFrame(f) {
+                                        Browser.assertExists(Browser.Selector.id("inner")).andThen {
+                                            Browser.boundingRect(Browser.Selector.id("inner")).map {
+                                                case Present(inner) =>
+                                                    assert(
+                                                        inner.x >= outer.x - 1.0 && inner.x <= outer.x + outer.width + 1.0,
+                                                        s"expected inner.x in outer rect [${outer.x}, ${outer.x + outer.width}] but got ${inner.x}"
+                                                    )
+                                                    assert(
+                                                        inner.y >= outer.y - 1.0 && inner.y <= outer.y + outer.height + 1.0,
+                                                        s"expected inner.y in outer rect [${outer.y}, ${outer.y + outer.height}] but got ${inner.y}"
+                                                    )
+                                                case Absent =>
+                                                    fail("expected Present(Bounds) for inner element, got Absent")
+                                            }
+                                        }
+                                    }
+                                }
+                            case Absent =>
+                                fail("expected Present(Bounds) for outer iframe, got Absent")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Test 8 (plan scenario 4): computedStyles returns resolved values for a present element
     // (pins PRE-005, INV-001).
     "computedStyles returns the resolved values for a present element" in run {

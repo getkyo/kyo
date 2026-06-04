@@ -1,6 +1,7 @@
 package kyo
 
-import kyo.internal.HoldStill
+import kyo.internal.*
+import kyo.internal.CdpTypes.*
 
 /** Behavior tests for the HoldStill capture helper.
   *
@@ -11,6 +12,15 @@ import kyo.internal.HoldStill
 class BrowserCaptureTest extends BrowserTest:
 
     override def timeout = 90.seconds
+
+    // A single raw viewport capture with no internal hold-still loop, used as the body of an explicit
+    // HoldStill.withHoldStill block so the loop under test drives the captures (nesting screenshot()
+    // would inject a second freeze stylesheet inside the outer one).
+    private def rawCapture(using Frame): Image < (Browser & Abort[BrowserReadException]) =
+        Browser.use { tab =>
+            CdpBackend.captureScreenshot(tab.session, ScreenshotParams(clip = Absent))
+                .map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
+        }
 
     // ---- Test 4 (pure, no Chrome): frameHash equates byte-identical images and
     //      distinguishes different ones (INV-004).
@@ -67,7 +77,7 @@ class BrowserCaptureTest extends BrowserTest:
                     timed {
                         Abort.run[BrowserReadException] {
                             HoldStill.withHoldStill {
-                                Browser.screenshot(1280, 720, Browser.ScreenshotFormat.Png, 90)
+                                rawCapture
                             }
                         }
                     }.map { case (elapsed, result) =>
@@ -108,7 +118,7 @@ class BrowserCaptureTest extends BrowserTest:
                 Browser.withConfig(_.captureHoldStillTimeout(1.second).captureHoldStillInterval(50.millis)) {
                     timed {
                         HoldStill.withHoldStill {
-                            Browser.screenshot(1280, 720, Browser.ScreenshotFormat.Png, 90)
+                            rawCapture
                         }
                     }.map { case (elapsed, img) =>
                         assert(
@@ -116,7 +126,7 @@ class BrowserCaptureTest extends BrowserTest:
                             s"static page should converge well before 1s timeout; elapsed=$elapsed"
                         )
                         // Re-capture: hash should match (page is still static).
-                        Browser.screenshot(1280, 720, Browser.ScreenshotFormat.Png, 90).map { img2 =>
+                        Browser.screenshot().map { img2 =>
                             assert(
                                 HoldStill.frameHash(img) == HoldStill.frameHash(img2),
                                 "hash of hold-still result should equal hash of immediate re-capture on static page"
@@ -144,7 +154,7 @@ class BrowserCaptureTest extends BrowserTest:
         withBrowser {
             onPage(html) {
                 HoldStill.withHoldStill {
-                    Browser.screenshot(1280, 720, Browser.ScreenshotFormat.Png, 90)
+                    rawCapture
                 }.andThen {
                     // After withHoldStill returns, the freeze style must be gone.
                     Browser.eval("window.__kyoFreezeStyle === undefined").map { undefinedResult =>
@@ -184,7 +194,7 @@ class BrowserCaptureTest extends BrowserTest:
                 Browser.withConfig(_.captureHoldStillTimeout(1.second).captureHoldStillInterval(50.millis)) {
                     Abort.run[BrowserReadException] {
                         HoldStill.withHoldStill {
-                            Browser.screenshot(1280, 720, Browser.ScreenshotFormat.Png, 90)
+                            rawCapture
                         }
                     }.map { result =>
                         result match
