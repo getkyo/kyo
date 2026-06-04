@@ -32,6 +32,9 @@ private[kyo] object PlatformFallback:
                     case Result.Success(binding) => binding
                     case _                       => Binding.empty
             catch
+                // Unsafe: JVM boot-classpath load may fail (missing system property, malformed jar,
+                // IO error, timeout) and we fall back to an empty binding so the module still loads.
+                // The user-side withClasspath is the canonical entry point that returns typed errors.
                 case _: Throwable => Binding.empty
             end try
         end if

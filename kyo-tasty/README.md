@@ -12,36 +12,33 @@ in examples is internal effect-plumbing. The library itself is generic Scala 3
 reflection; nothing about it is Kyo-specific.
 
 The mental model has three tiers and the rest of this README only makes sense
-once they are clear. **Acquiring** a classpath is async, scoped, and can fail:
-`Classpath.init(roots)` returns `Classpath < (Async & Scope & Abort[TastyError])`
+once they are clear. **Acquiring** a classpath is async and can fail:
+`Tasty.withClasspath(roots) { ... }` returns `A < (Async & Abort[TastyError] & S)`
 because the loader decodes files in parallel and registers mmap finalizers.
 **Decoding a body** (a method or val implementation) is sync and can fail:
-`bodyTree` returns `Maybe[Tree] < (Sync & Abort[TastyError])` because the AST
-bytes are parsed on demand. **Everything else** is plain immutable data with no
-effect row. `sym.owner`, `cp.findClass(fqn)`, `cls.methods`, `tpe.isSubtypeOf`
-all return their result directly. Do not wrap them in `Sync.defer`.
+`Tasty.bodyTree(sym)` returns `Maybe[Tree] < (Sync & Abort[TastyError])` because
+the AST bytes are parsed on demand. **Everything else** is a `Sync`-carrying
+query on `object Tasty.*`. `Tasty.owner(sym)`, `Tasty.findClass(fqn)`,
+`Tasty.allMethods`, `tpe.isSubtypeOf` all carry `< Sync` to enable the
+module-level fallback classpath; do not confuse that with `IO`.
 
-The reading arc is **load -> look up -> navigate -> inspect -> decode**.
+The reading arc is **withClasspath -> look up -> navigate -> inspect -> decode**.
 
 ```scala
 import kyo.*
 import kyo.AllowUnsafe.embrace.danger
 import kyo.Tasty.*
 
-val program: Chunk[String] < (Async & Scope & Abort[TastyError]) =
-    Classpath.init(Seq("target/scala-3.7.4/classes")).map { cp =>
-        given Classpath = cp
-        Kyo.foreach(cp.allClassLike)(_.fullNameString)
-    }
+val program: Chunk[String] < (Async & Abort[TastyError]) =
+    Tasty.withClasspath(Seq("target/scala-3.7.4/classes")):
+        Tasty.allClassLike.map(Kyo.foreach(_)(sym => Tasty.fullName(sym)))
 ```
 
-The `given Classpath = cp` line is the price of the implicit-classpath
-convention used throughout this module. Cross-symbol references inside the
-model travel as `SymbolId` (an opaque `Int` index into `cp.symbols`) rather
-than as direct symbol pointers, which sidesteps case-class cycles. Resolving
-any of them needs the classpath in scope. This matches the implicit-context
-pattern used by `tasty-query` and Scala 3 `Quotes`. Pass it as a `given` once
-and chains of accessors compose.
+Cross-symbol references inside the model travel as `SymbolId` (an opaque `Int`
+index into `cp.symbols`) rather than as direct symbol pointers, which sidesteps
+case-class cycles. Resolving any of them needs the active classpath binding.
+Every `Tasty.*` query reads that binding automatically via the module-level
+`Local`; the `Tasty.withClasspath` block installs it.
 
 **Running domain.** Every example below queries this sealed family, which we
 assume is already compiled and present on the classpath under FQN
@@ -62,47 +59,56 @@ end example
 
 <!-- doctest:setup
 ```scala
-// Type-check stub: every block below sees `cp` and the implicit `Classpath`.
-// Acquisition happens through Classpath.init / fromPickles at runtime; the
+// Type-check stub: every block below is inside a Tasty.withClasspath block.
+// Acquisition happens through Tasty.withClasspath / withPickles at runtime; the
 // stub keeps doctest blocks typed without performing any I/O.
-def cp: Classpath = ???
-given Classpath   = cp
 ```
 -->
 
 ## Acquiring a classpath
 
-You start by pointing `kyo-tasty` at one or more roots and getting back an
-immutable snapshot. Roots can be directories of `.class` / `.tasty` files or
-`.jar` archives; both are decoded uniformly into the same `Symbol` model. The
-acquisition step is the only place where the library does I/O on your behalf,
-and the resulting `Classpath` value is what every other API in this README
-takes as `using cp: Classpath`.
+You start by pointing `kyo-tasty` at one or more roots and opening a scoped
+context. Roots can be directories of `.class` / `.tasty` files or `.jar`
+archives; both are decoded uniformly into the same `Symbol` model. The
+acquisition step is the only place where the library does I/O on your behalf.
+Every query inside the block reads the installed classpath automatically.
 
-### Three ways to acquire a Classpath
+### Three ways to open a classpath context
 
-The acquisition step has three constructors. Pick by where the bytes are coming
-from and how often you re-open the same roots:
+Pick by where the bytes are coming from:
 
 ```scala
-val roots: Seq[String]                                        = Seq("target/classes")
-val a: Classpath < (Async & Scope & Abort[TastyError])        = Classpath.init(roots)
-val b: Classpath < (Async & Scope & Abort[TastyError])        = Classpath.init(roots, ErrorMode.FailFast)
-val c: Classpath < (Sync & Async & Scope & Abort[TastyError]) = Classpath.initCached(roots, "/tmp/cache")
-val d: Classpath < (Async & Scope & Abort[TastyError])        = Classpath.fromPickles(Seq.empty[Pickle])
+val roots: Seq[String] = Seq("target/classes")
+
+// From the filesystem (parallel decoder):
+Tasty.withClasspath(roots):
+    Tasty.allClassLike // Chunk[Symbol.ClassLike] < Sync
+
+// With an on-disk dev cache (digest-keyed; cold-start only on first open):
+Tasty.withClasspath(roots, Maybe.Present("/tmp/cache")):
+    Tasty.allClassLike
+
+// From in-memory pickles (no filesystem access; tests and embedded uses):
+Tasty.withPickles(pickles):
+    Tasty.allClassLike
+
+// From a pre-loaded pure-data Classpath (no decode context; serialisation):
+Tasty.withClasspath(cp):
+    Tasty.allClassLike
 ```
 
-`init` is the canonical entry point and runs the parallel per-file decoder.
-`initCached` wraps `init` with a binary-snapshot read/write keyed by a digest
-of the roots; cold-start latency drops on repeat opens and stays the same on a
-miss. `fromPickles` skips the filesystem entirely and builds a classpath from
-in-memory `Pickle` byte chunks, which is what tests and embedded uses reach
-for. The `Scope` effect on the disk-based forms is what closes JAR pools and
-mmap arenas; once the scope exits, the snapshot is closed and accessors will
-raise `TastyError.ClasspathClosed`.
+`withClasspath(roots)` is the canonical entry point and runs the parallel
+per-file decoder. Passing `Maybe.Present(cacheDir)` wraps the decode with a
+binary-snapshot read/write keyed by a content-hash digest of the roots;
+cold-start latency drops on repeat opens and stays the same on a miss.
+`withPickles` skips the filesystem entirely and builds a classpath from
+in-memory `Pickle` byte chunks. `withClasspath(cp: Classpath)` binds a
+pre-loaded value without a decode context (body decoding returns
+`Maybe.Absent`). Resource cleanup (JAR pools, mmap arenas) is handled
+automatically inside `withClasspath(roots, ...)`.
 
-Cache maintenance for the `initCached` path is handled outside the init call.
-`Snapshot.evictOlderThan(cacheDir, maxAge: Duration)` deletes any `*.krfl` file
+Cache maintenance is handled outside the open call.
+`Tasty.evictOlderThan(cacheDir, maxAge: Duration)` deletes any `*.krfl` file
 in `cacheDir` whose modified time is older than `maxAge`. The return type is
 `Unit < (Sync & Abort[TastyError])`: the call touches the disk and surfaces I/O
 errors through `Abort`, but the list of evicted files is not part of the
@@ -123,57 +129,63 @@ val failFast: ErrorMode = ErrorMode.FailFast // first decode error aborts the op
 ```
 
 In `SoftFail` mode (the default) the loader keeps going and the resulting
-`Classpath` carries a `Chunk[TastyError]` in `cp.errors`. **If you do not
-inspect `cp.errors`, silent data loss is on you.** The classpath is still
+`Classpath` carries a `Chunk[TastyError]` in its `errors` field. **If you do
+not inspect `cp.errors`, silent data loss is on you.** The classpath is still
 useful, but it is an incomplete view of the roots. `FailFast` is the right
 choice in CI or test harnesses where you want any decode error to surface.
 
 ```scala
 import kyo.AllowUnsafe.embrace.danger
 
-Classpath.init(Seq("target/classes"), ErrorMode.FailFast).map { cp =>
-    given Classpath = cp
-    cp.findClass("example.Circle").map(_.fullNameString)
-}
+Tasty.withClasspath(Seq("target/classes")):
+    Tasty.classpath.map { cp =>
+        if cp.errors.nonEmpty then Abort.fail(cp.errors.head)
+        else Tasty.findClass("example.Circle").map(Tasty.fullName)
+    }
 ```
 
 ## Looking up symbols by name
 
-Once a classpath is open, the most common starting point is a fully-qualified
-name. `kyo-tasty` returns those lookups as narrowly-typed `Maybe[Symbol.X]`
-where `X` is the kind you asked for, so a `findClass` result lets you reach
-straight for `Symbol.Class`-specific accessors without re-narrowing.
+Inside a `withClasspath` block, the most common starting point is a
+fully-qualified name. `kyo-tasty` returns those lookups as narrowly-typed
+`Maybe[Symbol.X] < Sync` where `X` is the kind you asked for, so a `findClass`
+result lets you reach straight for `Symbol.Class`-specific fields without
+re-narrowing.
 
 ### Find vs require
 
-The lookups come in two flavours that mirror each other. `findClass(fqn)`,
-`findTrait(fqn)`, `findObject(fqn)`, `findClassLike(fqn)`, `findPackage(fqn)`
-all return `Maybe[Symbol.X]`; `Absent` means no symbol of that exact kind at
-that FQN. The `require*` variants raise `Abort.fail(TastyError.NotFound)` when
-the symbol is missing, which is the right shape when "I expect this to exist"
-is a postcondition of your code rather than a question.
+The lookups come in two flavours that mirror each other. `Tasty.findClass(fqn)`,
+`Tasty.findTrait(fqn)`, `Tasty.findObject(fqn)`, `Tasty.findClassLike(fqn)`,
+`Tasty.findPackage(fqn)` all return `Maybe[Symbol.X] < Sync`; `Absent` means no
+symbol of that exact kind at that FQN. The `require*` variants raise
+`Abort.fail(TastyError.NotFound)` when the symbol is missing, which is the right
+shape when "I expect this to exist" is a postcondition of your code rather than
+a question.
 
 ```scala
-val maybeCircle: Maybe[Symbol.Class]         = cp.findClass("example.Circle")
-val circle: Symbol.Class < Abort[TastyError] = cp.requireClass("example.Circle")
+val maybeCircle: Maybe[Symbol.Class] < Sync         = Tasty.findClass("example.Circle")
+val circle: Symbol.Class < (Sync & Abort[TastyError]) = Tasty.requireClass("example.Circle")
 ```
 
 The narrow naming has a real trap. `findClass("example.Shape")` returns
 `Absent` because `Shape` is a `trait`, not a `class`. When the question is
-"any class-like at this FQN", reach for `findClassLike`, which returns
-`Maybe[Symbol.ClassLike]` and matches a `Class`, `Trait`, or `Object`. For
-"any symbol whatsoever", `findSymbol(fqn)` returns `Maybe[Symbol]`. When you
-need to restrict the result to a concrete, instantiable class (skipping sealed
-abstract bases like `scala.Option`), reach for `findConcreteClass(fqn)`; it
-behaves like `findClass` but filters out the `Abstract` flag. A companion
-accessor, `findClassesByName(simpleName: String)`, uses a prebuilt index keyed
-on simple name and returns `Chunk[Symbol.Class]` (because two unrelated
-packages can both define `Circle`); `findClassByBinary` accepts the JVM
-`com/example/Foo$Inner` form. For the compile-time case where you
-have the type statically, `Tasty.classFqn[example.Circle]` is a macro that
-expands to the FQN string via the `Tag` machinery.
+"any class-like at this FQN", reach for `Tasty.findClassLike`, which returns
+`Maybe[Symbol.ClassLike] < Sync` and matches a `Class`, `Trait`, or `Object`. For
+"any symbol whatsoever", `Tasty.findSymbol(fqn)` returns `Maybe[Symbol] < Sync`.
+When you need to restrict the result to a concrete, instantiable class (skipping
+sealed abstract bases like `scala.Option`), reach for `Tasty.findConcreteClass(fqn)`;
+it behaves like `findClass` but filters out the `Abstract` flag. A companion
+accessor, `Tasty.findClassesByName(simpleName: String)`, uses a prebuilt index
+keyed on simple name and returns `Chunk[Symbol.Class] < Sync` (because two
+unrelated packages can both define `Circle`); `Tasty.findClassByBinary` accepts
+the JVM `com/example/Foo$Inner` form. For the compile-time case where you have
+the type statically, `Tasty.classFqn[example.Circle]` is a macro that expands to
+the FQN string via the `Tag` machinery.
 
-Within a `ClassLike`, three lookup primitives sit on the typed Symbol: `findDeclaredMember(name: String)` returns the first declared member with that simple name, `findInheritedMember(name: String)` walks parents and returns the first inherited match, and `findAnyMember(name: String)` checks declared members first then falls through to inherited. All three return `Maybe[Symbol]`. `membersByKind(k: SymbolKind)` filters declarations by the kind enum.
+Within a `ClassLike`, member lookup is done via `Tasty.findMember(sym, name)`,
+which checks declared members first and then inherited ones. For scope-specific
+lookup, use `Tasty.members(sym, scope)` with `MemberScope.Declared`,
+`MemberScope.Inherited`, or `MemberScope.All`.
 
 ## The Symbol model
 
@@ -195,32 +207,28 @@ Symbol
   Unresolved
 ```
 
-`Symbol.EnumCase` is a `final class` that extends `Symbol.Class`: any
-`EnumCase` value also matches a `Class` pattern, so put the more specific
-`EnumCase` arm first when you need to specialize Scala 3 enum cases.
+`Symbol.EnumCase` is a peer of `Symbol.Class` under `Symbol.ClassLike`; a
+`Symbol.EnumCase` does NOT match a `Symbol.Class` pattern. Put an explicit
+`EnumCase` arm before `Class` when you need to specialize Scala 3 enum cases.
 
-Every concrete symbol carries the same five fields: `id: SymbolId`,
-`name: Name`, `flags: Flags`, `ownerId: SymbolId`, and
-`sourcePosition: Maybe[Position]` (plus `scaladoc: Maybe[String]` and a
-`javaMetadata: Maybe[JavaMetadata]` for symbols sourced from `.class` files).
-Equality and hashing are by `id` alone; two `Symbol.Class` values with the
-same id are the same symbol. This lets you put symbols into a `HashSet`
-without surprises, and it lets the model carry cross-references as
-`SymbolId` indexes into `cp.symbols`. The trade-off is the implicit
-classpath: any accessor that resolves a reference needs `using cp: Classpath`
-in scope to dereference the id.
+Every concrete symbol is a pure case class that carries data only. The five
+common fields are: `id: SymbolId`, `name: Name`, `flags: Flags`,
+`ownerId: SymbolId`. Subtype-specific fields (parent IDs, member IDs, param
+IDs, type IDs) vary by case. Symbols derive `Schema` and `CanEqual`; they
+are serialisable and equality-comparable out of the box.
 
 A typed walk over the hierarchy is an exhaustive pattern match:
 
 ```scala
 def role(sym: Symbol): String = sym match
-    case _: Symbol.Class  => "class"
-    case _: Symbol.Trait  => "trait"
-    case _: Symbol.Object => "object"
-    case _: Symbol.Method => "method"
-    case _: Symbol.Val    => "val"
-    case _: Symbol.Var    => "var"
-    case _: Symbol.Field  => "field"
+    case _: Symbol.Class     => "class"
+    case _: Symbol.EnumCase  => "enum case"
+    case _: Symbol.Trait     => "trait"
+    case _: Symbol.Object    => "object"
+    case _: Symbol.Method    => "method"
+    case _: Symbol.Val       => "val"
+    case _: Symbol.Var       => "var"
+    case _: Symbol.Field     => "field"
     case _: Symbol.TypeAlias |
         _: Symbol.OpaqueType |
         _: Symbol.AbstractType |
@@ -233,80 +241,76 @@ def role(sym: Symbol): String = sym match
 `Symbol.Unresolved` is not an error; it is the placeholder for a reference
 the loader could not resolve in the current classpath (for instance, a
 parent type whose defining JAR is missing). Match it explicitly when you
-need to skip such holes. The legacy `SymbolKind` enum (a flat 14-way enum,
-exposed via `sym.kind`) is kept for code that prefers a single-match-on-
-value style; new code should pattern-match the sealed `Symbol` hierarchy.
+need to skip such holes.
 
 ## Navigating from a symbol
 
 Once you have a symbol, the rest is navigation: walking owner chains
 upward, walking declarations downward, and asking simple questions about
-modifiers and naming. None of this allocates effects; it is all pure data
-threaded through the implicit classpath.
+modifiers and naming. All navigation goes through `object Tasty.*` free
+functions that read the current classpath binding automatically.
 
 ### Walking up: owners, parents, companions
 
 A symbol's owner chain is the path from itself up to the root package. The
 companion is the matching object or class at the same FQN. The first
 declared parent of a `Symbol.Class` (the `extends` class) is the head of
-`classLike.parents`, not a separate accessor.
+`Tasty.parents(classLike)`.
 
 ```scala
-val box: Maybe[Symbol.Class] = cp.findClass("example.Box")
-box.foreach { b =>
-    b.owner       // Maybe[Symbol]     -- the example package, Absent at root
-    b.ownersChain // Chunk(Box, example, <root>)
-    b.parentTypes // Chunk(Type)       -- raw parent Types (AnyRef and Shape)
-    b.parents     // Chunk(ClassLike)  -- resolved parent ClassLikes
-    b.companion   // Maybe[Symbol]     -- the companion object if any
-}
+Tasty.withClasspath(roots):
+    Tasty.findClass("example.Box").map { mbBox =>
+        mbBox.foreach { b =>
+            Tasty.owner(b)        // Maybe[Symbol] < Sync -- the example package, Absent at root
+            Tasty.ownersChain(b)  // Chunk[Symbol] < Sync
+            Tasty.parents(b)      // Chunk[Symbol.ClassLike] < Sync
+            Tasty.companion(b)    // Maybe[Symbol] < Sync
+        }
+    }
 ```
 
-For sealed hierarchies, `cls.permittedSubclasses` returns the
-`Chunk[Symbol.ClassLike]` declared in the `sealed` parent. Type parameters
-of the symbol are `cls.typeParams: Chunk[Symbol.TypeParam]`. Every symbol
-also carries `sourcePosition: Maybe[Position]` pointing back into the
-original source file when the TASTy file recorded one.
+For sealed hierarchies, `Tasty.permittedSubclasses(cls)` returns the
+`Chunk[Symbol.ClassLike] < Sync` declared in the `sealed` parent. Type
+parameters of the symbol are `Tasty.typeParams(sym): Chunk[Symbol.TypeParam] < Sync`.
+Every symbol also carries a `sourcePosition: Maybe[Position]` field pointing
+back into the original source file when the TASTy file recorded one.
 
-`Parameter` carries `defaultArg(using cp): Maybe[Symbol]` (the synthesized default-argument method when the parameter has one, otherwise `Absent`) plus `isImplicit` / `isByName` / `isRepeated`. `TypeParam` carries `bounds: TypeBounds` and `variance: Variance`, plus a convenience `varianceLabel: String` returning `''` / `'+'` / `'-'` for printing.
+`Parameter` carries `defaultArgId: Maybe[SymbolId]` (the synthesized
+default-argument method when the parameter has one, otherwise `Absent`) plus
+`isImplicit` / `isByName` / `isRepeated`. `TypeParam` carries `varianceOrdinal:
+Int` and `boundsId: SymbolId`.
 
 ### Walking down: declarations and members
 
-The downward walk has two layers. `sym.declaredMembers` returns only what
-this symbol directly declares; `sym.allMembers` walks parents and
-deduplicates by simple name, so an overridden method appears once. Both
-return `Chunk[Symbol]`. The single-symbol lookups mirror the same split:
-`findDeclaredMember(name)`, `findInheritedMember(name)`,
-`findAnyMember(name)`, each returning `Maybe[Symbol]`.
+Member lookup goes through `Tasty.members(sym)` and `Tasty.findMember(sym, name)`.
 
 ```scala
-cp.findClassLike("example.Shape").foreach { shape =>
-    shape.declaredMembers            // Chunk(area: Symbol.Method)
-    shape.findDeclaredMember("area") // Present(Symbol.Method)
-}
-
-cp.findClass("example.Circle").foreach { circle =>
-    circle.allMembers                  // includes Shape.area, AnyRef.toString, etc
-    circle.findInheritedMember("area") // Present(Shape.area)
-}
+Tasty.withClasspath(roots):
+    Tasty.findClassLike("example.Shape").map { mbShape =>
+        mbShape.foreach { shape =>
+            Tasty.members(shape, MemberScope.Declared) // Chunk[Symbol] < Sync
+            Tasty.findMember(shape, "area")            // Maybe[Symbol] < Sync
+        }
+    }
 ```
 
-When you want only one kind, `ClassLike` exposes narrowed accessors that
-already filter: `cls.methods: Chunk[Symbol.Method]`, `cls.vals`, `cls.vars`,
-`cls.fields`, `cls.nestedTypes`, `cls.typeMembers`. These are pure filters
-over `declaredMembers`; reach for `allMembers` if you also want inherited
-ones. `constructors(using cp)` returns `Chunk[Method]` of the class's `<init>` methods, separated from the regular `methods` list for ergonomics; an instance constructor and any auxiliary constructors all appear here.
+`MemberScope.Declared` returns only what this symbol directly declares;
+`MemberScope.Inherited` walks parents and returns inherited members;
+`MemberScope.All` gives the deduplicated union (most-specific per simple name).
+The default scope is `Declared`.
+
+For typed aggregation, `Tasty.allMethods`, `Tasty.allVals`, `Tasty.allVars`,
+`Tasty.allFields` each return the classpath-wide `Chunk` of that symbol kind.
 
 ### Names, modifiers, visibility
 
 Every symbol has multiple naming projections, each answering a different
-question. `simpleName` is the local name. `fullName: Name` is the dotted
-fully-qualified name as a single interned `Name`. `fullNameString` decodes
-the same value to a `String` for human display. `binaryName` returns the
-JVM internal form (`example/Circle$Inner`). `signature` is a
+question. `sym.name.asString` is the local name. `Tasty.fullName(sym)` returns
+the dotted fully-qualified name as a `String`. `Tasty.binaryName(sym)` returns
+the JVM internal form (`example/Circle$Inner`). `Tasty.signature(sym)` is a
 Scala-source-shaped declaration string (e.g. `def area: Double`,
-`class Box[T] extends Shape`), not a JVM erased descriptor. `show` and
-`show(format: ShowFormat)` render via `ShowFormat.FullyQualified`,
+`class Box[T] extends Shape`), not a JVM erased descriptor. `Tasty.show(sym)`
+and `Tasty.show(sym, format: ShowFormat)` render via `ShowFormat.FullyQualified`,
 `Simple`, or `Code`; `Code` delegates to `signature`.
 
 Modifiers live in `sym.flags: Flags`, a packed bitfield. The most-used
@@ -398,27 +402,30 @@ Bodies are the only part of the model that is not eagerly decoded. Every
 `Symbol.Method`, `Symbol.Val`, and `Symbol.Var` carries a
 `Maybe[SymbolBody]` byte-slice slot. `SymbolBody` is just the envelope:
 the raw AST bytes, the local name table, and an address map. Calling
-`bodyTree` parses those bytes into a `Tree` on demand and the result is
-memoized per classpath instance keyed by `SymbolId`. **This is the only
-post-open accessor that carries `Sync & Abort[TastyError]`**; everything
-else on the snapshot is pure.
+`Tasty.bodyTree(sym)` parses those bytes into a `Tree` on demand and the
+result is memoized per classpath instance keyed by `SymbolId`. **This is
+the only post-open accessor that carries `Sync & Abort[TastyError]`**;
+everything else on the snapshot is pure.
 
 ### Decoding a body and traversing the AST
 
 ```scala
-val areaMethod: Maybe[Symbol.Method] =
-    cp.findClass("example.Circle")
-        .flatMap(_.findDeclaredMember("area"))
-        .collect { case m: Symbol.Method => m }
-
-val areaBody: Maybe[Maybe[Tree] < (Sync & Abort[TastyError])] =
-    areaMethod.map(_.bodyTree)
+Tasty.withClasspath(roots):
+    Tasty.findClass("example.Circle").map { mbCircle =>
+        mbCircle.foreach { circle =>
+            Tasty.findMember(circle, "area").map { mbArea =>
+                mbArea.collect { case m: Symbol.Method => m }.foreach { m =>
+                    Tasty.bodyTree(m) // Maybe[Tree] < (Sync & Abort[TastyError])
+                }
+            }
+        }
+    }
 ```
 
-`cp.bodyTree(sym)` is the underlying call; `sym.bodyTree` is the
-convenience that threads `using cp`. `Absent` means the symbol has no
-recorded body (an abstract method, for instance, or a body the loader
-chose not to keep).
+`Absent` means the symbol has no recorded body (an abstract method, for
+instance, or a body the loader chose not to keep). Under
+`withClasspath(cp: Classpath)` (no decode context), `bodyTree` always returns
+`Absent`.
 
 `Tree` is a sealed-trait ADT with more than fifty cases (`Apply`,
 `Select`, `Ident`, `Literal`, `If`, `Match`, `Block`, `ValDef`,
@@ -442,7 +449,11 @@ For "find every selection of `math.Pi` inside `Circle.area`", `collect`
 with a partial function that matches `Tree.Select(_, name)` is the
 idiomatic shape.
 
-Alongside `bodyTree`, `Method` carries a handful of shape accessors that are all pure data reads against the in-memory Symbol: `paramLists: Chunk[Chunk[Parameter]]` (the parameter groups with their resolved Symbols), `returnType: Maybe[Type]` (the result type unwrapped from `Type.Function` when applicable), `isConstructor` (true when the method's simple name is `<init>`), plus `isExtension` / `isInline` / `isGiven` / `isMacro` / `isTailrec`. None take a `Classpath` and none lift into `Sync`.
+Alongside `bodyTree`, `Method` carries a handful of shape fields that are
+all pure data reads: `paramListIds: Chunk[Chunk[SymbolId]]` (the parameter
+groups), `resultTypeId: SymbolId`, plus flag predicates `isExtension` /
+`isInline` / `isGiven` / `isMacro` / `isTailrec`. None carry a `Sync`
+effect; they are straight case-class field reads.
 
 ## Annotations
 
@@ -457,18 +468,19 @@ loaded from a `.class` file with retention-class annotations carries
 The two predicates work uniformly across both sides:
 
 ```scala
-import kyo.AllowUnsafe.embrace.danger
-
-cp.findClass("example.Circle").foreach { circle =>
-    val has: Boolean < Sync                            = circle.hasAnnotation("scala.deprecated")
-    val one: Maybe[Annotation | JavaAnnotation] < Sync = circle.findAnnotation("scala.deprecated")
-    (has, one)
-}
+Tasty.withClasspath(roots):
+    Tasty.findClass("example.Circle").map { mbCircle =>
+        mbCircle.foreach { circle =>
+            Tasty.hasAnnotation(circle, "scala.deprecated")         // Boolean < Sync
+            Tasty.findAnnotation(circle, "scala.deprecated")        // Maybe[Annotation | JavaAnnotation] < Sync
+        }
+    }
 ```
 
-`hasAnnotation(fqn)` is subtype-aware: it returns true for any annotation
-whose annotation class is a subclass of `fqn` (so a `@MyDeprecated extends
-scala.deprecated` is caught by querying for `scala.deprecated`).
+`Tasty.hasAnnotation(sym, fqn)` is subtype-aware: it returns true for any
+annotation whose annotation class is a subclass of `fqn` (so a
+`@MyDeprecated extends scala.deprecated` is caught by querying for
+`scala.deprecated`).
 
 `Annotation` carries `annotationType: Type` and
 `arguments: Chunk[Tree]`. Each entry of `arguments` is one argument tree
@@ -495,9 +507,9 @@ annotations.
 ### Classpath-wide annotation queries
 
 When the question is "every symbol annotated with X", reach for
-`cp.symbolsAnnotatedWith(fqn): Chunk[Symbol]`. This walks both Scala and
-Java annotation lists and is subtype-aware on the FQN. It is the only
-classpath-wide annotation query you need for the common cases.
+`Tasty.symbolsAnnotatedWith(fqn): Chunk[Symbol] < Sync`. This walks both
+Scala and Java annotation lists and is subtype-aware on the FQN. It is the
+only classpath-wide annotation query you need for the common cases.
 
 ## Classpath-wide queries
 
@@ -510,18 +522,22 @@ time, so closure queries do not scan.
 For a sealed hierarchy, "list every implementation" is one call:
 
 ```scala
-cp.findClassLike("example.Shape").foreach { shape =>
-    cp.directSubclassesOf(shape) // Chunk(Circle, Box)  -- exactly one hop
-    cp.subclassesOf(shape)       // Chunk(Circle, Box)  -- transitive closure
-    cp.implementationsOf(shape)  // Chunk(Circle, Box)  -- concrete classes only
-}
+Tasty.withClasspath(roots):
+    Tasty.findClassLike("example.Shape").map { mbShape =>
+        mbShape.foreach { shape =>
+            Tasty.directSubclassesOf(shape) // Chunk[Symbol.ClassLike] < Sync
+            Tasty.subclassesOf(shape)       // Chunk[Symbol.ClassLike] < Sync
+            Tasty.implementationsOf(shape)  // Chunk[Symbol.ClassLike] < Sync
+        }
+    }
 ```
 
-`directSubclassesOf` returns only the immediate subclasses;
-`subclassesOf` walks the full transitive closure; `implementationsOf`
-returns only the concrete (non-abstract, non-trait) leaves. All three are
-backed by an inverted index built at open time, so they are O(number of
-direct edges) rather than a linear classpath scan.
+`Tasty.directSubclassesOf` returns only the immediate subclasses;
+`Tasty.subclassesOf` walks the full transitive closure;
+`Tasty.implementationsOf` returns only the concrete (non-abstract,
+non-trait) leaves. All three are backed by an inverted index built at open
+time, so they are O(number of direct edges) rather than a linear classpath
+scan.
 
 ### Linear scans for everything else
 
@@ -529,22 +545,23 @@ When you need every symbol of a kind, the `all*` accessors do a linear
 scan and return a typed `Chunk`:
 
 ```scala
-cp.allClassLike // Chunk[Symbol.ClassLike] (Class + Trait + Object + EnumCase)
-cp.allTraits    // Chunk[Symbol.Trait]
-cp.allObjects   // Chunk[Symbol.Object]
-cp.allMethods   // Chunk[Symbol.Method]
+Tasty.allClassLike // Chunk[Symbol.ClassLike] < Sync (Class + Trait + Object + EnumCase)
+Tasty.allTraits    // Chunk[Symbol.Trait] < Sync
+Tasty.allObjects   // Chunk[Symbol.Object] < Sync
+Tasty.allMethods   // Chunk[Symbol.Method] < Sync
 // ... plus allVals, allVars, allFields, allTypeAliases,
 //     allOpaqueTypes, allAbstractTypes, allTypeParams,
 //     allParameters, allPackages, allUnresolved.
 ```
 
+`Tasty.classpath` returns the active `Classpath` value directly.
 `cp.topLevelClasses` and `cp.packages` are O(1) accessors of pre-built
 chunks; they are what you reach for when you want to iterate roots
 rather than the full symbol table.
 
 JPMS modules are surfaced through a parallel descriptor index built from
-`module-info.class` files. `cp.modules` returns
-`Chunk[ModuleDescriptor]`; `cp.findModule(name)` looks one up by name; and
+`module-info.class` files. `Tasty.classpath.map(_.modules)` returns
+`Chunk[ModuleDescriptor]`; `Tasty.findModule(name)` looks one up by name; and
 each `ModuleDescriptor` carries `requires`, `exports`, `opens`, `uses`,
 and `provides` directives as plain immutable data (`ModuleRequires`,
 `ModuleExports`, `ModuleOpens`, `ModuleProvides`). If you do not work
@@ -569,7 +586,7 @@ The variants group naturally by source:
   classpath), `NotFound` (the FQN does not resolve; raised by the
   `require*` lookups).
 - **Snapshot errors:** `SnapshotFormatError`, `SnapshotVersionMismatch`,
-  `SnapshotIoError`. Raised by the `initCached` path when the cache
+  `SnapshotIoError`. Raised by the cached-open path when the cache
   file is corrupt or written by a different `kyo-tasty` version.
 - **Lifecycle errors:** `ClasspathClosed` (you used the classpath after
   its scope exited), `ClasspathBuilding` (you tried to query a classpath
@@ -582,37 +599,39 @@ The variants group naturally by source:
 
 A realistic use is: given a sealed trait, list every concrete
 implementation together with the names of any methods it overrides,
-sorted by FQN. Every accessor below is pure; the only effect comes from
-`Classpath.init` itself.
+sorted by FQN. Every accessor below is a `< Sync` query; the only
+`Async` effect comes from `Tasty.withClasspath(roots)`.
 
 ```scala
 import kyo.*
 import kyo.AllowUnsafe.embrace.danger
 import kyo.Tasty.*
 
-def shapeImplementations(roots: Seq[String]): Chunk[String] < (Async & Scope & Abort[TastyError]) =
-    Classpath.init(roots, ErrorMode.FailFast).map { cp =>
-        given Classpath = cp
-
-        cp.requireTrait("example.Shape").map { shape =>
-            val impls = cp.implementationsOf(shape).sortBy(_.simpleName)
-            Kyo.foreach(impls) { impl =>
-                impl.fullNameString.map { fqn =>
-                    val overrides = impl.methods
-                        .filter(_.isOverride)
-                        .map(_.simpleName)
-                        .mkString(", ")
-                    s"$fqn overrides: [$overrides]"
+def shapeImplementations(roots: Seq[String]): Chunk[String] < (Async & Abort[TastyError]) =
+    Tasty.withClasspath(roots):
+        Tasty.requireTrait("example.Shape").map { shape =>
+            Tasty.implementationsOf(shape).map { impls =>
+                val sorted = impls.sortBy(_.name.asString)
+                Kyo.foreach(sorted) { impl =>
+                    Tasty.fullName(impl).map { fqn =>
+                        Tasty.members(impl, MemberScope.Declared).map { members =>
+                            val overrides = members
+                                .collect { case m: Symbol.Method if m.flags.contains(Flag.Override) => m }
+                                .map(_.name.asString)
+                                .mkString(", ")
+                            s"$fqn overrides: [$overrides]"
+                        }
+                    }
                 }
             }
         }
-    }
 ```
 
-The composition pattern that makes this idiomatic Kyo: `Classpath.init`
-once at the boundary, `.map` to project into pure data, and let the
-effect row stay where the I/O actually lives. Everything between the open
-and the final `.map` is plain data manipulation. `ErrorMode.FailFast` raises
-the first decode error through `Abort`; the soft-fail default would instead
-accumulate them into `cp.errors`, where `cp.errors.headOption` is the
-minimum check before trusting any query result.
+The composition pattern that makes this idiomatic Kyo: `Tasty.withClasspath`
+once at the boundary, then chain `Tasty.*` queries inside the block where the
+binding is active. Every query carries `< Sync` because the module-level
+fallback may trigger a lazy classpath init on first call; the actual I/O is
+confined to the `withClasspath` open. `ErrorMode.FailFast` raises the first
+decode error through `Abort`; the soft-fail default would instead accumulate
+them into `cp.errors`, where `cp.errors.headOption` is the minimum check
+before trusting any query result.
