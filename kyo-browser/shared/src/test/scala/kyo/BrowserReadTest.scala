@@ -711,7 +711,7 @@ class BrowserReadTest extends BrowserTest:
             onPage("<html><body><div id='marker'>X</div></body></html>") {
                 Browser.eval("window.innerWidth").map { preWidthStr =>
                     Browser.eval("window.innerHeight").map { preHeightStr =>
-                        Browser.screenshot(width = 400, height = 300).map { img =>
+                        Browser.screenshot(400, 300, Browser.ScreenshotFormat.Png, 90).map { img =>
                             assert(img.binary.size > 0, "Screenshot should be non-empty")
                             Browser.eval("window.innerWidth").map { postWidthStr =>
                                 Browser.eval("window.innerHeight").map { postHeightStr =>
@@ -745,7 +745,7 @@ class BrowserReadTest extends BrowserTest:
                             val sentinel = new RuntimeException("deterministic abort sentinel")
                             Abort.run[Throwable] {
                                 Async.raceFirst[Throwable, Any, Any](
-                                    Browser.runOn(tab)(Browser.screenshot(width = 1234, height = 567)),
+                                    Browser.runOn(tab)(Browser.screenshot(1234, 567, Browser.ScreenshotFormat.Png, 90)),
                                     Abort.fail[Throwable](sentinel)
                                 )
                             }.map { result =>
@@ -961,7 +961,7 @@ class BrowserReadTest extends BrowserTest:
     "screenshot in WEBP format produces a valid image" in run {
         withBrowser {
             onPage(gradientPageHtml) {
-                Browser.screenshot(width = 400, height = 300, format = Browser.ScreenshotFormat.Webp).map { img =>
+                Browser.screenshot(width = 400, height = 300, format = Browser.ScreenshotFormat.Webp, quality = 90).map { img =>
                     val bytes = img.binary
                     assert(bytes.size > 0, "expected non-empty WEBP image")
                     // RIFF header; every WEBP file starts with 'R' 'I' 'F' 'F' (0x52 0x49 0x46 0x46).
@@ -1025,9 +1025,9 @@ class BrowserReadTest extends BrowserTest:
             onPage("<html><body>nested</body></html>") {
                 Browser.eval("window.innerWidth").map { preWidthStr =>
                     Browser.eval("window.innerHeight").map { preHeightStr =>
-                        Browser.screenshot(width = 640, height = 480).map { outerImg =>
+                        Browser.screenshot(640, 480, Browser.ScreenshotFormat.Png, 90).map { outerImg =>
                             assert(outerImg.binary.size > 0, "outer screenshot should be non-empty")
-                            Browser.screenshot(width = 320, height = 240).map { innerImg =>
+                            Browser.screenshot(320, 240, Browser.ScreenshotFormat.Png, 90).map { innerImg =>
                                 assert(innerImg.binary.size > 0, "inner screenshot should be non-empty")
                                 Browser.eval("window.innerWidth").map { postWidthStr =>
                                     Browser.eval("window.innerHeight").map { postHeightStr =>
@@ -1389,7 +1389,7 @@ class BrowserReadTest extends BrowserTest:
         val p = page("<html><body><h1>Screenshot Test</h1></body></html>")
         withBrowser {
             Browser.goto(p).map { _ =>
-                Browser.screenshot.map { img =>
+                Browser.screenshot().map { img =>
                     assert(img.binary.size > 0, "Expected non-empty screenshot bytes")
                     val bytes = img.binary.toArray
                     assert(bytes.length >= 24, "Expected at least 24 bytes for PNG header + IHDR chunk")

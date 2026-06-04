@@ -489,6 +489,24 @@ final private[kyo] case class ActionabilityResponse(
 /** Wire shape for the in-page `getBoundingClientRect()` snapshot used by `Browser.screenshotElement`. */
 final private[kyo] case class BoundingRectWire(x: Double, y: Double, width: Double, height: Double) derives Schema
 
+/** Wire shape for the full-page dimension probe used by `Browser.screenshotFullPage`. `content` is the total scroll height in CSS px,
+  * `viewport` is the inner height, and `width` is the inner width (all from `window` / `document.documentElement`).
+  */
+final private[kyo] case class FullPageDimsWire(content: Int, viewport: Int, width: Int) derives Schema
+
+/** Wire shape for the box-stable check in `Browser.screenshotElement`. `found` is false when the element does not exist; `ok` is false when
+  * the element exists but its bounding rect is still moving. When both `found` and `ok` are true, the remaining fields hold the post-scroll
+  * rect in CSS px.
+  */
+final private[kyo] case class ElementClipWire(
+    found: Boolean = true,
+    ok: Boolean,
+    x: Double = 0,
+    y: Double = 0,
+    width: Double = 0,
+    height: Double = 0
+) derives Schema
+
 /** Wire envelope used by `Browser.mockFetchResponse` to pass the mock definition to the JS interceptor via `JSON.parse`.
   *
   * `headers` is an ordered list of `(name, value)` pairs (rather than a `Map`-like shape) so the JS payload can preserve duplicate

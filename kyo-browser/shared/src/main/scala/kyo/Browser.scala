@@ -1938,24 +1938,33 @@ object Browser:
     def title(using Frame): String < (Browser & Abort[BrowserReadException]) =
         BrowserEval.evalJs(ProbesJs.titleJs)
 
-    /** Captures a screenshot of the current page and returns it as an Image. */
-    def screenshot(using Frame): Image < (Browser & Abort[BrowserReadException]) =
-        screenshot(width = 1280, height = 720)
-
-    /** Captures a `width × height` crop of the current page starting from `(0, 0)`.
-      *
-      * The page is rendered at its current viewport: `width` and `height` are the crop dimensions, NOT a render-size override. Use
-      * [[setViewport]] before calling this method when you need the page to render at a specific size (for example, exercising responsive
-      * design at a mobile viewport).
-      *
-      * `format` selects the encoding ([[ScreenshotFormat.Png]], [[ScreenshotFormat.Jpeg]], or [[ScreenshotFormat.Webp]]). `quality` is in
-      * the range `0..100` and applies only to lossy formats; Chrome ignores it for PNG.
+    /** Captures the live current viewport (whatever `setViewport` / `withViewport` last established, else the natural viewport). The legacy
+      * `1280x720` crop is dropped; this method no longer clips. Hold-still capture is the TARGET convention: animations are paused via a
+      * `data-kyo-internal` freeze stylesheet, fonts are awaited, and the capture loops until two consecutive frames are byte-identical or the
+      * `captureHoldStillTimeout` elapses.
       */
     def screenshot(
-        width: Int = 1280,
-        height: Int = 720,
         format: ScreenshotFormat = ScreenshotFormat.Png,
         quality: Int = 90
+    )(using Frame): Image < (Browser & Abort[BrowserReadException]) =
+        HoldStill.withHoldStill {
+            Env.use[BrowserTab] { tab =>
+                CdpBackend.captureScreenshot(
+                    tab.session,
+                    ScreenshotParams(format, screenshotQuality(format, quality), clip = Absent)
+                ).map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
+            }
+        }
+
+    /** Captures a `width x height` crop of the current page starting from `(0, 0)`. All parameters are required (no defaults) to avoid
+      * conflict with the live-viewport [[screenshot(format, quality)]] overload. Prefer `screenshotRegion(0, 0, width, height)` for new
+      * callers; this overload is kept for backward compatibility.
+      */
+    def screenshot(
+        width: Int,
+        height: Int,
+        format: ScreenshotFormat,
+        quality: Int
     )(using Frame): Image < (Browser & Abort[BrowserReadException]) =
         Env.use[BrowserTab] { tab =>
             CdpBackend.captureScreenshot(
@@ -1966,6 +1975,84 @@ object Browser:
                     clip = Present(ScreenshotClip(0.0, 0.0, width.toDouble, height.toDouble, scale = 1.0))
                 )
             ).map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
+        }
+
+    /** Captures a `width x height` region at document offset `(x, y)`. `captureBeyondViewport = true` allows the region to lie below or
+      * beside the visible fold. Aborts `BrowserInvalidArgumentException` BEFORE any CDP call when `width <= 0` or `height <= 0`. Clip
+      * coordinates are CSS px (`scale = 1.0`); an active DPR scales the output raster only. Hold-still capture is the TARGET convention.
+      */
+    def screenshotRegion(
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        format: ScreenshotFormat = ScreenshotFormat.Png,
+        quality: Int = 90
+    )(using Frame): Image < (Browser & Abort[BrowserReadException]) =
+        if width <= 0 || height <= 0 then
+            Abort.fail(BrowserInvalidArgumentException("screenshotRegion", "width and height must be positive"))
+        else
+            HoldStill.withHoldStill {
+                Env.use[BrowserTab] { tab =>
+                    CdpBackend.captureScreenshot(
+                        tab.session,
+                        ScreenshotParams(
+                            format,
+                            screenshotQuality(format, quality),
+                            clip = Present(ScreenshotClip(x.toDouble, y.toDouble, width.toDouble, height.toDouble, scale = 1.0)),
+                            captureBeyondViewport = Present(true)
+                        )
+                    ).map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
+                }
+            }
+
+    /** Captures the entire scroll height as a `Chunk` of viewport-tall bands, top to bottom. Aborts
+      * `BrowserCaptureLimitExceededException` BEFORE any capture when the page needs more than `maxBands` bands. The freeze stylesheet is
+      * injected ONCE around the entire band loop so all bands reflect the same frozen animation state. Band coordinates are CSS px
+      * (DPR-independent; Q-009).
+      */
+    def screenshotFullPage(
+        maxBands: Int = 50,
+        format: ScreenshotFormat = ScreenshotFormat.Png,
+        quality: Int = 90
+    )(using Frame): Chunk[Image] < (Browser & Abort[BrowserReadException]) =
+        BrowserEval.evalJs(
+            "JSON.stringify({content: Math.ceil(document.documentElement.scrollHeight), viewport: Math.ceil(window.innerHeight), width: Math.ceil(window.innerWidth)})"
+        ).map { raw =>
+            Json.decode[FullPageDimsWire](raw) match
+                case Result.Success(d) =>
+                    val bandCount = math.ceil(d.content.toDouble / d.viewport.toDouble).toInt.max(1)
+                    if bandCount > maxBands then
+                        Abort.fail(BrowserCaptureLimitExceededException("screenshotFullPage", maxBands, bandCount))
+                    else
+                        // Freeze ONCE around the whole band loop so all bands are frozen consistently.
+                        HoldStill.withFrozenPage {
+                            Env.use[BrowserTab] { tab =>
+                                Kyo.foreach(Chunk.from(0 until bandCount)) { i =>
+                                    HoldStill.holdStillFrame {
+                                        CdpBackend.captureScreenshot(
+                                            tab.session,
+                                            ScreenshotParams(
+                                                format,
+                                                screenshotQuality(format, quality),
+                                                clip = Present(
+                                                    ScreenshotClip(
+                                                        0.0,
+                                                        (i * d.viewport).toDouble,
+                                                        d.width.toDouble,
+                                                        d.viewport.toDouble,
+                                                        scale = 1.0
+                                                    )
+                                                ),
+                                                captureBeyondViewport = Present(true)
+                                            )
+                                        ).map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
+                                    }
+                                }
+                            }
+                        }
+                    end if
+                case _ => Abort.fail(BrowserProtocolErrorException.decodeFailure("screenshotFullPage", raw))
         }
 
     /** Extracts the main readable text content from the page using a readability algorithm. */
@@ -1983,40 +2070,51 @@ object Browser:
             )
         }
 
-    /** Captures a screenshot of a specific element.
-      *
-      * `format` selects the encoding ([[ScreenshotFormat.Png]], [[ScreenshotFormat.Jpeg]], or [[ScreenshotFormat.Webp]]). `quality` is in
-      * the range `0..100` and applies only to lossy formats; Chrome ignores it for PNG.
+    /** Captures a screenshot of a specific element. AUTO-WAITS for the element via `Actionability.withRetry` (retry channel
+      * `BrowserElementException`, NEVER widened to `BrowserMutationException`); performs a box-stable check (two bounding-rect samples 16 ms
+      * apart must agree within 1 px) and scrolls the element into view before capturing. Gains `transparentBackground`: when true, sets CDP
+      * `Emulation.setDefaultBackgroundColorOverride` to fully transparent for the shot and restores it via `Scope.acquireRelease`. Hold-still
+      * capture is the TARGET convention. Returns `Image` and ABORTS `BrowserElementNotFoundException` when the element never appears within
+      * the configured `retrySchedule`; NOT changed to `Maybe`.
       */
     def screenshotElement(
         selector: Selector,
         format: ScreenshotFormat = ScreenshotFormat.Png,
-        quality: Int = 90
-    )(using
-        Frame
-    )
-        : Image < (Browser & Abort[BrowserReadException]) =
-        Actionability.requireResolved(selector) {
-            val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
-            BrowserEval.evalJs(s"""(() => {
-                const el = $jsExpr;
+        quality: Int = 90,
+        transparentBackground: Boolean = false
+    )(using Frame): Image < (Browser & Abort[BrowserReadException]) =
+        val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
+        Actionability.withRetry {
+            // Resolve, box-stable check (two samples ~16 ms apart, agree within 1 px), then scroll into view and re-read the post-scroll rect.
+            // found=false means the element does not exist (triggers BrowserElementNotFoundException for retry).
+            // ok=false with found=true means the element exists but its bounding rect is still moving (triggers NotActionable for retry).
+            BrowserEval.evalJsAwaiting(s"""(async () => {
+                const el = $jsExpr; if (!el) return JSON.stringify({found:false,ok:false});
+                const r1 = el.getBoundingClientRect();
+                await new Promise(res => setTimeout(res, 16));
+                const r2 = el.getBoundingClientRect();
+                if (Math.abs(r1.x - r2.x) > 1 || Math.abs(r1.y - r2.y) > 1 || Math.abs(r1.width - r2.width) > 1 || Math.abs(r1.height - r2.height) > 1)
+                    return JSON.stringify({found:true,ok:false});
+                el.scrollIntoViewIfNeeded ? el.scrollIntoViewIfNeeded(true) : el.scrollIntoView({block:'center'});
                 const r = el.getBoundingClientRect();
-                return JSON.stringify({x: r.x, y: r.y, width: r.width, height: r.height});
+                return JSON.stringify({found:true,ok:true, x:r.x, y:r.y, width:r.width, height:r.height});
             })()""").map { result =>
-                Json.decode[BoundingRectWire](result) match
-                    case Result.Success(r) =>
-                        Env.use[BrowserTab] { tab =>
-                            val clip = ScreenshotClip(r.x, r.y, r.width, r.height, scale = 1.0)
-                            CdpBackend.captureScreenshot(
-                                tab.session,
-                                ScreenshotParams(format, screenshotQuality(format, quality), clip = Present(clip))
-                            ).map { sr =>
-                                CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data)
+                Json.decode[ElementClipWire](result) match
+                    case Result.Success(w) if w.ok =>
+                        val clip = ScreenshotClip(w.x, w.y, w.width, w.height, scale = 1.0)
+                        withTransparentBackground(transparentBackground) {
+                            HoldStill.withHoldStill {
+                                Env.use[BrowserTab] { tab =>
+                                    CdpBackend.captureScreenshot(
+                                        tab.session,
+                                        ScreenshotParams(format, screenshotQuality(format, quality), clip = Present(clip))
+                                    ).map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
+                                }
                             }
                         }
+                    case Result.Success(w) if !w.found =>
+                        Abort.fail(BrowserElementNotFoundException(selectorNodeDescription(Selector.toNode(selector))))
                     case _ =>
-                        // A malformed bounding-rect payload means the element yielded no usable geometry, semantically the same as a
-                        // zero-size element, so surface it as NotVisible(ZeroComputedSize).
                         Abort.fail(
                             BrowserElementNotActionableException(
                                 selectorNodeDescription(Selector.toNode(selector)),
@@ -2028,6 +2126,81 @@ object Browser:
             }
         }
     end screenshotElement
+
+    /** Captures the viewport with numbered badges overlaid at each element in `marks` (1-based, top-left corner; Q-006). The overlay is one
+      * settlement-transparent `data-kyo-internal` subtree. Aborts `BrowserCaptureLimitExceededException` when `marks.size > maxMarks`. The
+      * settle gate runs BEFORE mark injection (via `HoldStill.withFrozenPage`) so the marks overlay mutation does not reset quiescence;
+      * marks are injected exactly once inside the frozen scope and removed via `Scope.acquireRelease`.
+      */
+    def screenshotMarks(
+        marks: Chunk[Browser.ElementInfo],
+        maxMarks: Int = 100,
+        format: ScreenshotFormat = ScreenshotFormat.Png,
+        quality: Int = 90
+    )(using Frame): Image < (Browser & Abort[BrowserReadException]) =
+        if marks.size > maxMarks then Abort.fail(BrowserCaptureLimitExceededException("screenshotMarks", maxMarks, marks.size))
+        else
+            val badges = marks.zipWithIndex.map((m, i) => s"""{x:${m.bounds.x},y:${m.bounds.y},n:${i + 1}}""").mkString("[", ",", "]")
+            val injectJs = s"""(() => {
+                const root = document.createElement('div');
+                root.setAttribute('data-kyo-internal', 'marks');
+                root.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647;';
+                for (const b of $badges) {
+                    const d = document.createElement('div');
+                    d.setAttribute('data-kyo-internal', 'mark');
+                    d.textContent = b.n;
+                    d.style.cssText = 'position:absolute;left:'+(b.x+2)+'px;top:'+(b.y+2)+'px;background:#d00;color:#fff;font:12px sans-serif;padding:1px 4px;border-radius:3px;';
+                    root.appendChild(d);
+                }
+                document.body.appendChild(root); window.__kyoMarks = root; return 'marked';
+            })()"""
+            val removeJs =
+                "(() => { if (window.__kyoMarks) { document.body.removeChild(window.__kyoMarks); delete window.__kyoMarks; } return 'unmarked'; })()"
+            // Settle BEFORE injecting marks: withFrozenPage runs settleForCapture + fonts.ready + freeze injection before entering the body.
+            // Mark injection inside the frozen scope ensures the quiescence gate has already passed when the overlay mutation fires.
+            HoldStill.withFrozenPage {
+                Browser.use { tab =>
+                    Scope.run {
+                        Scope.acquireRelease(BrowserEval.evalJs(injectJs).unit) { _ =>
+                            Browser.releaseHook(tab)(BrowserEval.evalJs(removeJs).unit)
+                        }.andThen {
+                            HoldStill.holdStillFrame {
+                                CdpBackend.captureScreenshot(
+                                    tab.session,
+                                    ScreenshotParams(format, screenshotQuality(format, quality), clip = Absent)
+                                ).map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
+                            }
+                        }
+                    }
+                }
+            }
+
+    /** Applies a transparent default background for `body`'s duration when `enabled`. Sets
+      * `Emulation.setDefaultBackgroundColorOverride` to `{r:0,g:0,b:0,a:0}` on enter and clears it on exit (success, failure, or
+      * interruption) via `Scope.acquireRelease`. A no-op when `enabled` is false.
+      */
+    private def withTransparentBackground[A, S](enabled: Boolean)(
+        body: => A < (Browser & Abort[BrowserReadException] & S)
+    )(using Frame): A < (Browser & Abort[BrowserReadException] & S) =
+        if !enabled then body
+        else
+            Env.use[BrowserTab] { tab =>
+                Scope.run {
+                    Scope.acquireRelease(
+                        CdpBackend.setDefaultBackgroundColorOverride(
+                            tab.session,
+                            SetDefaultBackgroundColorOverrideParams(Present(RgbaColor(0, 0, 0, Present(0.0))))
+                        )
+                    )(_ =>
+                        Browser.releaseHook(tab)(
+                            CdpBackend.setDefaultBackgroundColorOverride(
+                                tab.session,
+                                SetDefaultBackgroundColorOverrideParams(Absent)
+                            )
+                        )
+                    ).andThen(body)
+                }
+            }
 
     /** Derives the CDP `quality` field for a screenshot. PNG output is lossless and Chrome ignores the field entirely, so we drop it via
       * [[Absent]] / `None` rather than send a value the server discards. JPEG and WEBP both clamp the integer to the wire range `0..100`.

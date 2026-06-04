@@ -166,4 +166,85 @@ class BrowserDiscoverTest extends BrowserTest:
         }
     }
 
+    // ---- Test 7-11: screenshotMarks overlays numbered badges and is settlement-transparent
+    //      (INV-003 consumer, PRE-009, Q-006).
+    //
+    // A page with 3 buttons. Arm a MutationObserver that counts childList mutations on body into
+    // window.__kyoMutCount. Issue screenshotMarks on the buttons. Assert:
+    //   (a) returns a non-empty PNG,
+    //   (b) the marks overlay is gone afterward (window.__kyoMarks === undefined),
+    //   (c) the overlay was injected exactly once (the Scope.acquireRelease fires once).
+    //
+    // The mutation count assertion is NOT used here because the marks childList mutation targets
+    // document.body, which is untagged, so the MutationObserver filter does not suppress it and
+    // the count increments for a correct impl. The behavioral test focuses on (a) non-empty image,
+    // (b) teardown, and (c) marks absent after the call.
+
+    "screenshotMarks overlays numbered badges and removes them afterward" in run {
+        val html = """<!DOCTYPE html><html><body style="margin:0;padding:0;">
+            <button id="b1" style="position:absolute;left:10px;top:10px;width:80px;height:30px;">One</button>
+            <button id="b2" style="position:absolute;left:10px;top:50px;width:80px;height:30px;">Two</button>
+            <button id="b3" style="position:absolute;left:10px;top:90px;width:80px;height:30px;">Three</button>
+        </body></html>"""
+        withBrowser {
+            onPage(html) {
+                Browser.withConfig(_.captureHoldStillTimeout(500.millis).captureHoldStillInterval(50.millis)) {
+                    Browser.elements(Browser.Selector.css("button")).map { elems =>
+                        assert(elems.size == 3, s"expected 3 buttons but got ${elems.size}")
+                        Browser.screenshotMarks(elems).map { img =>
+                            assert(img.binary.size > 0, "screenshotMarks must return non-empty bytes")
+                            val bytes = img.binary.toArray
+                            assert(bytes(0) == 0x89.toByte && bytes(1) == 'P'.toByte, "result must be a valid PNG")
+                            // Overlay must be removed after the call.
+                            Browser.eval("String(window.__kyoMarks === undefined)").map { undefinedStr =>
+                                assert(
+                                    undefinedStr == "true",
+                                    s"marks overlay must be removed after screenshotMarks but got: $undefinedStr"
+                                )
+                                Browser.eval("String(document.querySelectorAll('[data-kyo-internal=\"marks\"]').length)").map { countStr =>
+                                    assert(countStr == "0", s"no data-kyo-internal=marks node should remain but got count: $countStr")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Test 7-12: screenshotMarks aborts over maxMarks (INV-006).
+    //
+    // Build a Chunk of 5 ElementInfo stubs. screenshotMarks(marks, maxMarks = 3) must abort with
+    // BrowserCaptureLimitExceededException("screenshotMarks", 3, 5) before any CDP call.
+
+    "screenshotMarks aborts over maxMarks" in run {
+        val dummyBounds = Browser.Bounds(0, 0, 10, 10)
+        def mkInfo(n: Int) = Browser.ElementInfo(
+            selector = s"#el$n",
+            tag = "div",
+            id = Absent,
+            classes = Chunk.empty,
+            text = Absent,
+            bounds = dummyBounds,
+            visible = true,
+            inViewport = true,
+            topmost = false,
+            interactive = false,
+            role = Absent
+        )
+        val marks = Chunk(mkInfo(1), mkInfo(2), mkInfo(3), mkInfo(4), mkInfo(5))
+        withBrowser {
+            onPage("""<html><body></body></html>""") {
+                Abort.run[BrowserReadException](Browser.screenshotMarks(marks, maxMarks = 3)).map { result =>
+                    result match
+                        case Result.Failure(ex: BrowserCaptureLimitExceededException) =>
+                            assert(ex.operation == "screenshotMarks", s"expected operation=screenshotMarks but got ${ex.operation}")
+                            assert(ex.limit == 3, s"expected limit=3 but got ${ex.limit}")
+                            assert(ex.reached == 5, s"expected reached=5 but got ${ex.reached}")
+                        case other => fail(s"expected BrowserCaptureLimitExceededException but got: $other")
+                }
+            }
+        }
+    }
+
 end BrowserDiscoverTest

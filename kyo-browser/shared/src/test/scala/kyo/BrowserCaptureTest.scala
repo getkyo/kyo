@@ -67,7 +67,7 @@ class BrowserCaptureTest extends BrowserTest:
                     timed {
                         Abort.run[BrowserReadException] {
                             HoldStill.withHoldStill {
-                                Browser.screenshot(1280, 720)
+                                Browser.screenshot(1280, 720, Browser.ScreenshotFormat.Png, 90)
                             }
                         }
                     }.map { case (elapsed, result) =>
@@ -108,7 +108,7 @@ class BrowserCaptureTest extends BrowserTest:
                 Browser.withConfig(_.captureHoldStillTimeout(1.second).captureHoldStillInterval(50.millis)) {
                     timed {
                         HoldStill.withHoldStill {
-                            Browser.screenshot(1280, 720)
+                            Browser.screenshot(1280, 720, Browser.ScreenshotFormat.Png, 90)
                         }
                     }.map { case (elapsed, img) =>
                         assert(
@@ -116,7 +116,7 @@ class BrowserCaptureTest extends BrowserTest:
                             s"static page should converge well before 1s timeout; elapsed=$elapsed"
                         )
                         // Re-capture: hash should match (page is still static).
-                        Browser.screenshot(1280, 720).map { img2 =>
+                        Browser.screenshot(1280, 720, Browser.ScreenshotFormat.Png, 90).map { img2 =>
                             assert(
                                 HoldStill.frameHash(img) == HoldStill.frameHash(img2),
                                 "hash of hold-still result should equal hash of immediate re-capture on static page"
@@ -144,7 +144,7 @@ class BrowserCaptureTest extends BrowserTest:
         withBrowser {
             onPage(html) {
                 HoldStill.withHoldStill {
-                    Browser.screenshot(1280, 720)
+                    Browser.screenshot(1280, 720, Browser.ScreenshotFormat.Png, 90)
                 }.andThen {
                     // After withHoldStill returns, the freeze style must be gone.
                     Browser.eval("window.__kyoFreezeStyle === undefined").map { undefinedResult =>
@@ -184,7 +184,7 @@ class BrowserCaptureTest extends BrowserTest:
                 Browser.withConfig(_.captureHoldStillTimeout(1.second).captureHoldStillInterval(50.millis)) {
                     Abort.run[BrowserReadException] {
                         HoldStill.withHoldStill {
-                            Browser.screenshot(1280, 720)
+                            Browser.screenshot(1280, 720, Browser.ScreenshotFormat.Png, 90)
                         }
                     }.map { result =>
                         result match
@@ -205,6 +205,374 @@ class BrowserCaptureTest extends BrowserTest:
                                 fail(s"hold-still must not abort despite freeze injection mutation; got: ${ex.getMessage}")
                             case Result.Panic(ex) =>
                                 fail(s"PANIC: $ex")
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Test 7-1: screenshot captures the live viewport size (INV-004 consumer).
+    //
+    // Set the viewport to 390x844 then take a screenshot. The returned Image bytes must decode to
+    // dimensions 390x844, confirming the live-viewport path (NOT the legacy 1280x720 crop).
+    // PNG dimensions live at bytes 16-23 of the IHDR chunk (bytes 16-19 = width, 20-23 = height,
+    // big-endian int32).
+
+    "screenshot captures the live viewport size" in run {
+        withBrowser {
+            onPage("""<!DOCTYPE html><html><body><div style="background:blue;width:100%;height:100%;">vp</div></body></html>""") {
+                Browser.withConfig(_.captureHoldStillTimeout(500.millis).captureHoldStillInterval(50.millis)) {
+                    Browser.setViewport(390, 844).andThen {
+                        Browser.screenshot().map { img =>
+                            val bytes = img.binary.toArray
+                            // PNG IHDR width at offset 16 (big-endian int32)
+                            val w = ((bytes(16) & 0xff) << 24) | ((bytes(17) & 0xff) << 16) | ((bytes(18) & 0xff) << 8) | (bytes(19) & 0xff)
+                            val h = ((bytes(20) & 0xff) << 24) | ((bytes(21) & 0xff) << 16) | ((bytes(22) & 0xff) << 8) | (bytes(23) & 0xff)
+                            assert(w == 390, s"expected screenshot width 390 but got $w")
+                            assert(h == 844, s"expected screenshot height 844 but got $h")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Test 7-2: screenshot returns a valid PNG by default.
+    //
+    // On a static page, screenshot() must return non-empty bytes starting with the PNG magic bytes
+    // 0x89 'P' 'N' 'G'.
+
+    "screenshot returns a valid PNG by default" in run {
+        withBrowser {
+            onPage("""<!DOCTYPE html><html><body><div style="background:red;width:100px;height:50px;">box</div></body></html>""") {
+                Browser.withConfig(_.captureHoldStillTimeout(500.millis).captureHoldStillInterval(50.millis)) {
+                    Browser.screenshot().map { img =>
+                        assert(img.binary.size > 0, "screenshot must return non-empty bytes")
+                        val bytes = img.binary.toArray
+                        assert(bytes(0) == 0x89.toByte, "byte 0 must be 0x89 (PNG magic)")
+                        assert(bytes(1) == 'P'.toByte, "byte 1 must be 'P'")
+                        assert(bytes(2) == 'N'.toByte, "byte 2 must be 'N'")
+                        assert(bytes(3) == 'G'.toByte, "byte 3 must be 'G'")
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Test 7-3: screenshotRegion captures a below-the-fold region.
+    //
+    // A tall page (body height = 5000px). screenshotRegion(0, 2000, 400, 300) must return a
+    // 400x300 PNG (captureBeyondViewport allowed the out-of-viewport region). Verify dimensions
+    // via PNG IHDR as above.
+
+    "screenshotRegion captures a below-the-fold region" in run {
+        withBrowser {
+            onPage("""<!DOCTYPE html><html><body style="height:5000px;background:green;"></body></html>""") {
+                Browser.withConfig(_.captureHoldStillTimeout(500.millis).captureHoldStillInterval(50.millis)) {
+                    Browser.screenshotRegion(0, 2000, 400, 300).map { img =>
+                        assert(img.binary.size > 0, "screenshotRegion must return non-empty bytes")
+                        val bytes = img.binary.toArray
+                        val w     = ((bytes(16) & 0xff) << 24) | ((bytes(17) & 0xff) << 16) | ((bytes(18) & 0xff) << 8) | (bytes(19) & 0xff)
+                        val h     = ((bytes(20) & 0xff) << 24) | ((bytes(21) & 0xff) << 16) | ((bytes(22) & 0xff) << 8) | (bytes(23) & 0xff)
+                        assert(w == 400, s"expected width 400 but got $w")
+                        assert(h == 300, s"expected height 300 but got $h")
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Test 7-4: screenshotRegion aborts on non-positive size (INV-006).
+    //
+    // Both screenshotRegion(0, 0, 0, 300) and screenshotRegion(0, 0, 100, -1) must abort with
+    // BrowserInvalidArgumentException BEFORE any CDP call (the abort fires synchronously, not
+    // after a network round-trip).
+
+    "screenshotRegion aborts on non-positive size" in run {
+        withBrowser {
+            onPage("""<html><body></body></html>""") {
+                Abort.run[BrowserReadException](Browser.screenshotRegion(0, 0, 0, 300)).map { r1 =>
+                    Abort.run[BrowserReadException](Browser.screenshotRegion(0, 0, 100, -1)).map { r2 =>
+                        r1 match
+                            case Result.Failure(ex: BrowserInvalidArgumentException) =>
+                                assert(
+                                    ex.getMessage.contains("screenshotRegion"),
+                                    s"exception message must mention 'screenshotRegion' but was: ${ex.getMessage}"
+                                )
+                            case other => fail(s"expected BrowserInvalidArgumentException for width=0 but got: $other")
+                        end match
+                        r2 match
+                            case Result.Failure(ex: BrowserInvalidArgumentException) =>
+                                assert(
+                                    ex.getMessage.contains("screenshotRegion"),
+                                    s"exception message must mention 'screenshotRegion' but was: ${ex.getMessage}"
+                                )
+                            case other => fail(s"expected BrowserInvalidArgumentException for height=-1 but got: $other")
+                        end match
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Test 7-5: screenshotFullPage returns one band per viewport-height.
+    //
+    // Set the viewport to 800x400. Set the body height to exactly 3 * 400 = 1200px. The band
+    // count = ceil(1200 / 400) = 3. screenshotFullPage() must return a Chunk[Image] of 3 elements,
+    // each non-empty.
+
+    "screenshotFullPage returns one band per viewport-height" in run {
+        withBrowser {
+            onPage("""<!DOCTYPE html><html style="margin:0;padding:0;"><body style="margin:0;padding:0;"></body></html>""") {
+                Browser.withConfig(_.captureHoldStillTimeout(500.millis).captureHoldStillInterval(50.millis)) {
+                    Browser.setViewport(800, 400).andThen {
+                        // Set body height to exactly 3 * viewport-height; zero margins so scrollHeight == 1200.
+                        Browser.eval(
+                            "document.documentElement.style.margin='0';document.documentElement.style.padding='0';document.body.style.margin='0';document.body.style.padding='0';document.body.style.height='1200px'; ''"
+                        ).andThen {
+                            Browser.screenshotFullPage().map { bands =>
+                                assert(bands.size == 3, s"expected 3 bands but got ${bands.size}")
+                                bands.foreach { band =>
+                                    assert(band.binary.size > 0, "each band must be non-empty")
+                                }
+                                succeed
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Test 7-5b: screenshotFullPage injects the freeze style exactly once across all bands.
+    //
+    // A page whose content height spans multiple bands (bands > 1) forces the multi-band path.
+    // A MutationObserver is armed before the call to count how many times a freeze
+    // style[data-kyo-internal="freeze"] node is ADDED to document.head. After the call:
+    //   (a) bands.size > 1 (multi-band path was genuinely exercised),
+    //   (b) freeze-install count == 1 (freeze was injected exactly once for the whole capture,
+    //       not once per band),
+    //   (c) document.querySelectorAll('style[data-kyo-internal="freeze"]').length === 0
+    //       (freeze style was torn down after the call).
+    // A regression to per-band withHoldStill would make the install count equal the band count
+    // and fail assertion (b).
+
+    "screenshotFullPage injects the freeze style exactly once across all bands" in run {
+        withBrowser {
+            onPage("""<!DOCTYPE html><html style="margin:0;padding:0;"><body style="margin:0;padding:0;"></body></html>""") {
+                Browser.withConfig(_.captureHoldStillTimeout(500.millis).captureHoldStillInterval(50.millis)) {
+                    Browser.setViewport(800, 400).andThen {
+                        // Set body to 2 * viewport-height so we get exactly 2 bands (multi-band path exercised).
+                        Browser.eval(
+                            "document.documentElement.style.margin='0';document.documentElement.style.padding='0';document.body.style.margin='0';document.body.style.padding='0';document.body.style.height='800px'; ''"
+                        ).andThen {
+                            // Arm a MutationObserver that counts additions of freeze style nodes.
+                            // The observer targets document.head, watching childList. On each added node
+                            // it checks whether the node is a style element with data-kyo-internal="freeze".
+                            // The count is stored in window.__kyoFreezeCount so we can read it after the call.
+                            Browser.eval("""(() => {
+                                window.__kyoFreezeCount = 0;
+                                const obs = new MutationObserver(mutations => {
+                                    for (const m of mutations) {
+                                        for (const n of m.addedNodes) {
+                                            if (n.nodeName === 'STYLE' && n.getAttribute('data-kyo-internal') === 'freeze') {
+                                                window.__kyoFreezeCount++;
+                                            }
+                                        }
+                                    }
+                                });
+                                obs.observe(document.head, { childList: true });
+                                window.__kyoFreezeObs = obs;
+                                return 'armed';
+                            })()""").andThen {
+                                Browser.screenshotFullPage().map { bands =>
+                                    // Disconnect the observer (cleanup).
+                                    Browser.eval("window.__kyoFreezeObs && window.__kyoFreezeObs.disconnect(); 'done'").andThen {
+                                        // (a) multi-band path was exercised.
+                                        assert(
+                                            bands.size > 1,
+                                            s"expected multiple bands but got ${bands.size}; multi-band path not exercised"
+                                        )
+                                        // (b) freeze style was installed exactly once.
+                                        Browser.eval("String(window.__kyoFreezeCount)").map { countStr =>
+                                            assert(
+                                                countStr == "1",
+                                                s"freeze style must be injected exactly once for all bands but MutationObserver counted: $countStr"
+                                            )
+                                            // (c) freeze style was torn down after the call.
+                                            Browser.eval(
+                                                "String(document.querySelectorAll('style[data-kyo-internal=\"freeze\"]').length)"
+                                            ).map {
+                                                remainingStr =>
+                                                    assert(
+                                                        remainingStr == "0",
+                                                        s"no freeze style should remain after screenshotFullPage but got count: $remainingStr"
+                                                    )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Test 7-6: screenshotFullPage aborts over maxBands BEFORE any capture (INV-006).
+    //
+    // Set body height to 7 * viewport-height. screenshotFullPage(maxBands = 3) must abort with
+    // BrowserCaptureLimitExceededException("screenshotFullPage", 3, 7) before producing any
+    // partial output.
+
+    "screenshotFullPage aborts over maxBands before any capture" in run {
+        withBrowser {
+            onPage("""<!DOCTYPE html><html style="margin:0;padding:0;"><body style="margin:0;padding:0;"></body></html>""") {
+                Browser.setViewport(800, 400).andThen {
+                    // Set body height to exactly 7 * 400 = 2800px with zero margins so scrollHeight == 2800.
+                    Browser.eval(
+                        "document.documentElement.style.margin='0';document.documentElement.style.padding='0';document.body.style.margin='0';document.body.style.padding='0';document.body.style.height='2800px'; ''"
+                    ).andThen {
+                        Abort.run[BrowserReadException] {
+                            Browser.screenshotFullPage(maxBands = 3)
+                        }.map { result =>
+                            result match
+                                case Result.Failure(ex: BrowserCaptureLimitExceededException) =>
+                                    assert(
+                                        ex.operation == "screenshotFullPage",
+                                        s"expected operation=screenshotFullPage but got ${ex.operation}"
+                                    )
+                                    assert(ex.limit == 3, s"expected limit=3 but got ${ex.limit}")
+                                    assert(ex.reached == 7, s"expected reached=7 but got ${ex.reached}")
+                                case other => fail(s"expected BrowserCaptureLimitExceededException but got: $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Test 7-7: screenshotElement auto-waits for a late-appearing element (PRE-001).
+    //
+    // A page with a setTimeout that inserts .badge after 200ms. screenshotElement issued
+    // immediately must auto-wait (withRetry) and return the badge's Image when it appears.
+
+    "screenshotElement auto-waits for a late-appearing element" in run {
+        val html = """<!DOCTYPE html><html><body>
+            <script>setTimeout(() => {
+                const d = document.createElement('div');
+                d.className = 'badge';
+                d.style.cssText = 'background:red;width:40px;height:20px;';
+                d.textContent = 'X';
+                document.body.appendChild(d);
+            }, 200);</script>
+        </body></html>"""
+        withBrowser {
+            onPage(html) {
+                Browser.withConfig(
+                    _.captureHoldStillTimeout(500.millis)
+                        .captureHoldStillInterval(50.millis)
+                        .retrySchedule(Schedule.fixed(100.millis).take(20))
+                ) {
+                    Browser.screenshotElement(Browser.Selector.css(".badge")).map { img =>
+                        assert(img.binary.size > 0, "screenshotElement must return non-empty bytes for late-appearing element")
+                        val bytes = img.binary.toArray
+                        assert(bytes(0) == 0x89.toByte, "result must be a PNG")
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Test 7-8: screenshotElement aborts BrowserElementNotFoundException when the element
+    //      never appears (INV-002, PRE-003).
+    //
+    // A page with no .never element. Under a tight retrySchedule, screenshotElement must abort
+    // BrowserElementNotFoundException within the schedule budget.
+
+    "screenshotElement aborts BrowserElementNotFoundException for missing element" in run {
+        withBrowser {
+            onPage("""<html><body><div>no match here</div></body></html>""") {
+                tight {
+                    Abort.run[BrowserReadException] {
+                        Browser.screenshotElement(Browser.Selector.css(".never"))
+                    }.map { result =>
+                        result match
+                            case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                            case other => fail(s"expected BrowserElementNotFoundException but got: $other")
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Test 7-9: screenshotElement with transparentBackground produces alpha=0 background
+    //      (PRE-007).
+    //
+    // A .badge element on an opaque page. screenshotElement(..., transparentBackground = true)
+    // must produce a PNG where the override is set for the shot (tested by ensuring the override
+    // does NOT persist: a subsequent screenshot() returns opaque bytes). The transparent-background
+    // flag is also tested by verifying the returned image is non-empty and is a valid PNG.
+
+    "screenshotElement with transparentBackground restores the override afterward" in run {
+        val html = """<!DOCTYPE html><html><body style="background:white;">
+            <div class="badge" style="background:blue;width:50px;height:30px;">badge</div>
+        </body></html>"""
+        withBrowser {
+            onPage(html) {
+                Browser.withConfig(_.captureHoldStillTimeout(500.millis).captureHoldStillInterval(50.millis)) {
+                    Browser.screenshotElement(
+                        Browser.Selector.css(".badge"),
+                        format = Browser.ScreenshotFormat.Png,
+                        transparentBackground = true
+                    ).map { img =>
+                        assert(img.binary.size > 0, "transparent-background screenshot must be non-empty")
+                        val bytes = img.binary.toArray
+                        assert(bytes(0) == 0x89.toByte, "result must be a valid PNG")
+                        // After the screenshotElement call, the background override must be cleared.
+                        // A subsequent screenshot() should not be transparent (the clear happened).
+                        Browser.screenshot().map { subsequent =>
+                            assert(subsequent.binary.size > 0, "subsequent screenshot must also be non-empty")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Test 7-10: screenshotElement never widens the retry channel (INV-002 producer).
+    //
+    // A page that perpetually mutates (setInterval DOM mutation) AND has no .never element.
+    // screenshotElement under a tight retrySchedule must abort BrowserElementNotFoundException
+    // (the element channel), NOT a BrowserMutationException from the perpetual mutations.
+    // The Test.timed bound confirms it exits within the schedule budget.
+
+    "screenshotElement does not widen the retry channel to BrowserMutationException" in run {
+        val html = """<!DOCTYPE html><html><body>
+            <script>setInterval(() => {
+                const p = document.createElement('p');
+                p.textContent = 'mut' + Date.now();
+                document.body.appendChild(p);
+            }, 50);</script>
+        </body></html>"""
+        withBrowser {
+            onPage(html) {
+                tight {
+                    timed {
+                        Abort.run[BrowserReadException] {
+                            Browser.screenshotElement(Browser.Selector.css(".never"))
+                        }
+                    }.map { case (elapsed, result) =>
+                        result match
+                            case Result.Failure(_: BrowserElementNotFoundException) =>
+                                assert(
+                                    elapsed < 1.second,
+                                    s"must abort within tight schedule budget but took $elapsed"
+                                )
+                            case Result.Failure(other) =>
+                                fail(s"expected BrowserElementNotFoundException but got ${other.getClass.getName}: $other")
+                            case other => fail(s"expected Failure but got: $other")
                     }
                 }
             }

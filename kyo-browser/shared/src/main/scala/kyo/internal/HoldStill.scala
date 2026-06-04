@@ -31,6 +31,11 @@ import kyo.*
   * injection (step 1 above), so the mutation lands within its quiet-window. HoldStill convergence
   * is FRAME-HASH based (two byte-identical consecutive frames), not settlement-gate based, so the
   * injection mutation does not break convergence.
+  *
+  * For multi-band captures (e.g. full-page strips) use `withFrozenPage` to settle and freeze ONCE
+  * around the whole loop, then call `holdStillFrame` per band. This guarantees all bands are
+  * captured from the same frozen animation state, preventing visual inconsistencies between strips.
+  * `withHoldStill` remains the single-call form: settle + freeze + hold-still loop + teardown.
   */
 private[kyo] object HoldStill:
 
@@ -74,47 +79,72 @@ private[kyo] object HoldStill:
     private[kyo] val fontsReadyJs: String =
         "(async () => { try { await document.fonts.ready; } catch (e) {} return 'ready'; })()"
 
-    /** Awaits fonts.ready, injects the freeze style (removed on scope exit), then loops `capture`
-      * until `frameHash` repeats or `captureHoldStillTimeout` elapses; returns the last captured
-      * frame. The loop reads `captureHoldStillTimeout`/`captureHoldStillInterval` from
-      * `Browser.configLocal` (PRE-004, INV-008). Never aborts on timeout (INV-004).
+    /** Settles the page for capture, awaits fonts, and injects the freeze stylesheet for the
+      * duration of `body`. The freeze style is removed via `Scope.acquireRelease` on
+      * success/failure/interruption. This is the setup half of the hold-still protocol; use it
+      * directly when multiple captures need to share a single frozen animation state (e.g. full-page
+      * bands). Pair with `holdStillFrame` per individual capture.
       */
-    private[kyo] def withHoldStill[S](
+    private[kyo] def withFrozenPage[A, S](
+        body: => A < (Browser & Abort[BrowserReadException] & S)
+    )(using Frame): A < (Browser & Abort[BrowserReadException] & S) =
+        MutationSettlement.settleForCapture.andThen {
+            BrowserEval.evalJsAwaiting(fontsReadyJs).andThen {
+                Browser.use { tab =>
+                    Scope.run {
+                        Scope.acquireRelease(BrowserEval.evalJs(freezeStyleJs).unit) { _ =>
+                            Browser.releaseHook(tab)(BrowserEval.evalJs(removeFreezeStyleJs).unit)
+                        }.andThen(body)
+                    }
+                }
+            }
+        }
+    end withFrozenPage
+
+    /** Runs `capture` in the two-identical-frames hold-still loop, assuming the page is already
+      * settled and frozen (i.e. called inside `withFrozenPage`). Reads
+      * `captureHoldStillTimeout`/`captureHoldStillInterval` from `Browser.configLocal`. Never
+      * aborts on timeout; returns the last captured frame.
+      */
+    private[kyo] def holdStillFrame[S](
         capture: => Image < (Browser & Abort[BrowserReadException] & S)
     )(using Frame): Image < (Browser & Abort[BrowserReadException] & S) =
         Browser.configLocal.use { cfg =>
             val timeout  = cfg.captureHoldStillTimeout
             val interval = cfg.captureHoldStillInterval
-            MutationSettlement.settleForCapture.andThen {
-                BrowserEval.evalJsAwaiting(fontsReadyJs).andThen {
-                    Browser.use { tab =>
-                        Scope.run {
-                            Scope.acquireRelease(BrowserEval.evalJs(freezeStyleJs).unit) { _ =>
-                                Browser.releaseHook(tab)(BrowserEval.evalJs(removeFreezeStyleJs).unit)
-                            }.andThen {
-                                Clock.nowMonotonic.map { start =>
-                                    capture.map { first =>
-                                        Loop(first, frameHash(first)) { (prev, prevHash) =>
-                                            Clock.nowMonotonic.map { now =>
-                                                if now - start >= timeout then Loop.done(prev)
-                                                else
-                                                    Clock.sleep(interval).andThen {
-                                                        capture.map { next =>
-                                                            val h = frameHash(next)
-                                                            if h == prevHash then Loop.done(next)
-                                                            else Loop.continue(next, h)
-                                                        }
-                                                    }
-                                            }
-                                        }
+            Clock.nowMonotonic.map { start =>
+                capture.map { first =>
+                    Loop(first, frameHash(first)) { (prev, prevHash) =>
+                        Clock.nowMonotonic.map { now =>
+                            if now - start >= timeout then Loop.done(prev)
+                            else
+                                Clock.sleep(interval).andThen {
+                                    capture.map { next =>
+                                        val h = frameHash(next)
+                                        if h == prevHash then Loop.done(next)
+                                        else Loop.continue(next, h)
                                     }
                                 }
-                            }
                         }
                     }
                 }
             }
         }
+    end holdStillFrame
+
+    /** Awaits fonts.ready, injects the freeze style (removed on scope exit), then loops `capture`
+      * until `frameHash` repeats or `captureHoldStillTimeout` elapses; returns the last captured
+      * frame. The loop reads `captureHoldStillTimeout`/`captureHoldStillInterval` from
+      * `Browser.configLocal` (PRE-004, INV-008). Never aborts on timeout (INV-004).
+      *
+      * Equivalent to `withFrozenPage { holdStillFrame(capture) }`. Use this for single captures;
+      * use `withFrozenPage` + `holdStillFrame` directly when capturing multiple bands that must all
+      * reflect the same frozen animation state.
+      */
+    private[kyo] def withHoldStill[S](
+        capture: => Image < (Browser & Abort[BrowserReadException] & S)
+    )(using Frame): Image < (Browser & Abort[BrowserReadException] & S) =
+        withFrozenPage(holdStillFrame(capture))
     end withHoldStill
 
 end HoldStill
