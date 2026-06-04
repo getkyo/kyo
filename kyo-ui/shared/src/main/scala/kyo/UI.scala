@@ -534,8 +534,8 @@ object UI:
           *
           * Carries required positional channels `x` and `y`, and optional grouping
           * channels `color` and `stack`. `axis` selects the y-axis. The additive
-          * fields `opacity`, `label`, and `tooltip` default `Absent`; behavior lands
-          * in Phase 3/4.
+          * fields `opacity`, `label`, and `tooltip` are optional per-datum accessors
+          * that default to `Absent` when not supplied by the factory.
           */
         final case class Bar[A, X, Y](
             x: Channel[A, X],
@@ -552,8 +552,8 @@ object UI:
           *
           * `y` is a `ChannelMaybe` to support `Maybe[Y]` accessors (gaps). `color`
           * splits into one line per series. `defined` overrides gap detection. The
-          * additive fields `opacity`, `label`, and `tooltip` default `Absent`; behavior
-          * lands in Phase 3/4.
+          * additive fields `opacity`, `label`, and `tooltip` are optional per-datum
+          * accessors that default to `Absent` when not supplied by the factory.
           */
         final case class Line[A, X, Y](
             x: Channel[A, X],
@@ -571,8 +571,8 @@ object UI:
           *
           * Either `y` (fill to baseline) or the `y0`/`y1` band form must be supplied.
           * Exactly one of the two forms is valid; a lowering-time check selects it. The
-          * additive fields `opacity`, `label`, and `tooltip` default `Absent`; behavior
-          * lands in Phase 3/4.
+          * additive fields `opacity`, `label`, and `tooltip` are optional per-datum
+          * accessors that default to `Absent` when not supplied by the factory.
           */
         final case class Area[A, X, Y](
             x: Channel[A, X],
@@ -591,10 +591,10 @@ object UI:
         /** A point (scatter/bubble) mark.
           *
           * `y` is a `ChannelMaybe` so `Maybe[Y]` accessors render gaps as absent dots.
-          * `size` controls the dot radius (D7: meaning becomes sqrt-area magnitude in
-          * Phase 3); `sizePx` is the raw-pixel-radius escape hatch; `symbol` selects
-          * the glyph. The additive fields `opacity`, `label`, and `tooltip` default
-          * `Absent`; behavior lands in Phase 3/4.
+          * `size` controls the dot radius as a sqrt-area magnitude; `sizePx` is the
+          * raw-pixel-radius escape hatch; `symbol` selects the glyph. The additive
+          * fields `opacity`, `label`, and `tooltip` are optional per-datum accessors
+          * that default to `Absent` when not supplied by the factory.
           */
         final case class Point[A, X, Y](
             x: Channel[A, X],
@@ -626,7 +626,7 @@ object UI:
           * Renders one `Svg.text` per row at `(x, y)` with the string produced by
           * `label`. `y` is a `ChannelMaybe` so gap rows produce no text. `color`
           * optionally groups by category; `anchor` controls horizontal alignment;
-          * `opacity` controls per-datum transparency. Full lowering lands in Phase 4.
+          * `opacity` controls per-datum transparency.
           */
         final case class Text[A, X, Y](
             x: Channel[A, X],
@@ -642,8 +642,7 @@ object UI:
           *
           * Renders a vertical line from `low` to `high` at `x`, with horizontal
           * caps of `capWidth` pixels, and a center marker at `y`. All three y-channels
-          * fold into the y-extent. `color` optionally groups by category. Full
-          * lowering lands in Phase 4.
+          * fold into the y-extent. `color` optionally groups by category.
           */
         final case class ErrorBar[A, X, Y](
             x: Channel[A, X],
