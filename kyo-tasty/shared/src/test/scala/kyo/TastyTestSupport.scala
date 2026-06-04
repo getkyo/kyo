@@ -21,7 +21,7 @@ trait TastyTestSupport:
         val sym = Tasty.Symbol.makePlaceholder(
             Tasty.SymbolKind.Class,
             Tasty.Flags.empty,
-            Tasty.Name.fromString(leafName)
+            Tasty.Name(leafName)
         )
         Tasty.Type.Named(sym.id)
     end makeNamed

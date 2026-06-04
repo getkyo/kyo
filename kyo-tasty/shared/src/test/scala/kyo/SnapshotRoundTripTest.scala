@@ -541,11 +541,11 @@ class SnapshotRoundTripTest extends Test:
 
         import AllowUnsafe.embrace.danger
         import kyo.Tasty.SymbolId
-        val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name.fromString(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
-        val pkgSym  = Tasty.Symbol.Package(SymbolId(1), Tasty.Name.fromString("test"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val pkgSym  = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("test"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val barSym = Tasty.Symbol.Class(
             SymbolId(2),
-            Tasty.Name.fromString("Bar"),
+            Tasty.Name("Bar"),
             Tasty.Flags.empty,
             SymbolId(1),
             Maybe.Absent,
@@ -561,7 +561,7 @@ class SnapshotRoundTripTest extends Test:
         )
         val fooSym = Tasty.Symbol.Class(
             SymbolId(3),
-            Tasty.Name.fromString("Foo"),
+            Tasty.Name("Foo"),
             Tasty.Flags.empty,
             SymbolId(1),
             Maybe.Absent,
@@ -677,11 +677,11 @@ class SnapshotRoundTripTest extends Test:
 
         import AllowUnsafe.embrace.danger
         import kyo.Tasty.SymbolId
-        val rootSym2 = Tasty.Symbol.Package(SymbolId(0), Tasty.Name.fromString(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
-        val pkgSym2  = Tasty.Symbol.Package(SymbolId(1), Tasty.Name.fromString("legacy"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val rootSym2 = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val pkgSym2  = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("legacy"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val classSym2 = Tasty.Symbol.Class(
             SymbolId(2),
-            Tasty.Name.fromString("OldClass"),
+            Tasty.Name("OldClass"),
             Tasty.Flags.empty,
             SymbolId(1),
             Maybe.Absent,

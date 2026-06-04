@@ -108,7 +108,7 @@ object ClassfileUnpickler:
         SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags(Tasty.Flag.JavaDefined),
-            Tasty.Name.fromString(simpleName)
+            Tasty.Name(simpleName)
         )
     end makeUnresolvedSymbol
 
@@ -116,7 +116,7 @@ object ClassfileUnpickler:
         val sym = SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags(Tasty.Flag.JavaDefined),
-            Tasty.Name.fromString(binaryName.replace('/', '.'))
+            Tasty.Name(binaryName.replace('/', '.'))
         )
         Tasty.Type.Named(sym.id)
     end unresolvedType
@@ -1065,7 +1065,7 @@ object ClassfileUnpickler:
                                                             id = -1,
                                                             kind = kind,
                                                             flags = classFlags,
-                                                            name = Tasty.Name.fromString(symName),
+                                                            name = Tasty.Name(symName),
                                                             ownerId = -1,
                                                             declaredType = Maybe.Absent,
                                                             scaladoc = Maybe.Absent,
@@ -1299,7 +1299,7 @@ object ClassfileUnpickler:
                 SymbolFactory.makeSymbol(
                     Tasty.SymbolKind.Class,
                     Tasty.Flags(Tasty.Flag.JavaDefined),
-                    Tasty.Name.fromString(outerSimpleName)
+                    Tasty.Name(outerSimpleName)
                 )
             case _ =>
                 // Top-level outer class: parse the package prefix and class name
@@ -1309,7 +1309,7 @@ object ClassfileUnpickler:
                 SymbolFactory.makeSymbol(
                     Tasty.SymbolKind.Class,
                     Tasty.Flags(Tasty.Flag.JavaDefined),
-                    Tasty.Name.fromString(className)
+                    Tasty.Name(className)
                 )
         end match
     end buildPackageOwnerChain
@@ -1328,7 +1328,7 @@ object ClassfileUnpickler:
                 cur = SymbolFactory.makeSymbol(
                     Tasty.SymbolKind.Package,
                     Tasty.Flags(Tasty.Flag.JavaDefined),
-                    Tasty.Name.fromString(segments(i))
+                    Tasty.Name(segments(i))
                 )
                 i += 1
             end while
@@ -1353,7 +1353,7 @@ object ClassfileUnpickler:
                     val enclosingClassSym = SymbolFactory.makeSymbol(
                         Tasty.SymbolKind.Unresolved,
                         Tasty.Flags(Tasty.Flag.JavaDefined),
-                        Tasty.Name.fromString(enclosingName)
+                        Tasty.Name(enclosingName)
                     )
                     enclosingMethodIdx match
                         case Absent =>
@@ -1364,7 +1364,7 @@ object ClassfileUnpickler:
                             Absent
                         case Present(methodIdx) =>
                             pool.nameAndType(methodIdx).map: (methodName, _) =>
-                                Present(Tasty.EnclosingMethod(enclosingClassSym, Tasty.Name.fromString(methodName)))
+                                Present(Tasty.EnclosingMethod(enclosingClassSym, Tasty.Name(methodName)))
                     end match
 
     private def buildRecordComponents(
@@ -1389,7 +1389,7 @@ object ClassfileUnpickler:
             pool.utf8(nameIdx).map: compName =>
                 pool.utf8(descIdx).map: descriptor =>
                     resolveComponentType(pool, path, descriptor, sigIdx).map: compType =>
-                        val name = Tasty.Name.fromString(compName)
+                        val name = Tasty.Name(compName)
                         buildRecordComponentList(
                             pool,
                             path,
@@ -1441,7 +1441,7 @@ object ClassfileUnpickler:
         val sym = SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Class,
             Tasty.Flags(Tasty.Flag.JavaDefined),
-            Tasty.Name.fromString(fqn.split("\\.").last)
+            Tasty.Name(fqn.split("\\.").last)
         )
         Tasty.Type.Named(sym.id)
     end primType
@@ -1526,8 +1526,8 @@ object ClassfileUnpickler:
                                 if info.paramNames.isEmpty then Chunk.empty
                                 else
                                     Chunk(Tasty.ParamGroup(
-                                        Tasty.Name.fromString(memberName),
-                                        info.paramNames.map(n => Tasty.Name.fromString(n))
+                                        Tasty.Name(memberName),
+                                        info.paramNames.map(n => Tasty.Name(n))
                                     ))
                             val metadata = Tasty.JavaMetadata(
                                 throwsTypes = throwsTypes,
@@ -1546,7 +1546,7 @@ object ClassfileUnpickler:
                                 id = -1,
                                 kind = kind,
                                 flags = memberFlags,
-                                name = Tasty.Name.fromString(memberName),
+                                name = Tasty.Name(memberName),
                                 ownerId = -1,
                                 declaredType = Maybe(memberType),
                                 scaladoc = Maybe.Absent,
@@ -1581,7 +1581,7 @@ object ClassfileUnpickler:
                 val exSym = SymbolFactory.makeSymbol(
                     Tasty.SymbolKind.Unresolved,
                     Tasty.Flags(Tasty.Flag.JavaDefined),
-                    Tasty.Name.fromString(binaryName.replace('/', '.'))
+                    Tasty.Name(binaryName.replace('/', '.'))
                 )
                 resolveThrowsList(pool, path, idxs, i + 1, acc.appended(Tasty.Type.Named(exSym.id)))
 

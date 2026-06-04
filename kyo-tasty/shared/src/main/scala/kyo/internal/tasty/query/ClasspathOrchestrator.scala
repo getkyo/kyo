@@ -1758,7 +1758,7 @@ object ClasspathOrchestrator:
             cached = InternalSymbol.makeSymbol(
                 Tasty.SymbolKind.Unresolved,
                 Tasty.Flags.empty,
-                Tasty.Name.fromString("<unresolved>")
+                Tasty.Name("<unresolved>")
             )
             _sentinelUnresolvedCached = cached
         end if
@@ -1783,7 +1783,7 @@ object ClasspathOrchestrator:
         val ghost = kyo.internal.tasty.symbol.Symbol.makeSymbol(
             Tasty.SymbolKind.Class,
             Tasty.Flags.empty,
-            Tasty.Name.fromString("GhostClass")
+            Tasty.Name("GhostClass")
         )
         state.fqnIndex("test.GhostClass") = ghost
         // allSyms intentionally left empty so symbolIdMap.getOrDefault(ghost, -1) == -1.

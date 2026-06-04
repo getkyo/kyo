@@ -21,7 +21,7 @@ class SymbolConvenienceTest extends Test:
     ): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -39,7 +39,7 @@ class SymbolConvenienceTest extends Test:
     private def makeMethod(id: Int, name: String, ownerId: Int): Tasty.Symbol.Method =
         Tasty.Symbol.Method(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -53,7 +53,7 @@ class SymbolConvenienceTest extends Test:
         )
 
     private def makePackage(id: Int, name: String, ownerId: Int, members: Chunk[SymbolId]): Tasty.Symbol.Package =
-        Tasty.Symbol.Package(SymbolId(id), Tasty.Name.fromString(name), Tasty.Flags.empty, SymbolId(ownerId), members)
+        Tasty.Symbol.Package(SymbolId(id), Tasty.Name(name), Tasty.Flags.empty, SymbolId(ownerId), members)
 
     // ── Leaf 131: fullNameString-dotted ──────────────────────────────────────
     // Given: Symbol.Class named "List" owned by package "scala.collection".

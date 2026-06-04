@@ -159,16 +159,16 @@ class TastySymbolTest extends Test:
 
     // plan: phase-02 bridge; helpers use Symbol.make(kind, flags, name) - owner no longer stored on Symbol.
     private def makeRoot(): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Package, Tasty.Flags.empty, Tasty.Name.fromString(""))
+        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Package, Tasty.Flags.empty, Tasty.Name(""))
 
     private def makePkg(name: String, owner: Tasty.Symbol): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Package, Tasty.Flags.empty, Tasty.Name.fromString(name))
+        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Package, Tasty.Flags.empty, Tasty.Name(name))
 
     private def makeClass(name: String, owner: Tasty.Symbol): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString(name))
+        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(name))
 
     private def makeModule(name: String, owner: Tasty.Symbol): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Object, Tasty.Flags(Tasty.Flag.Module), Tasty.Name.fromString(name))
+        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Object, Tasty.Flags(Tasty.Flag.Module), Tasty.Name(name))
 
     // Test 1 (INV: T1, Symbol.binaryName): nested Scala class produces JVM binary name with '$' separator.
     // Given: synthetic Symbol tree com.example.Outer.Inner where Outer and Inner have SymbolKind.Class.
@@ -177,11 +177,11 @@ class TastySymbolTest extends Test:
     // Pins: T1 (binaryName nested-class coverage).
     "Symbol.binaryName nested class returns com/example/Outer$Inner" in run {
         import kyo.Tasty.SymbolId
-        val comSym     = Tasty.Symbol.Package(SymbolId(0), Tasty.Name.fromString("com"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
-        val exampleSym = Tasty.Symbol.Package(SymbolId(1), Tasty.Name.fromString("example"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val comSym     = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("com"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val exampleSym = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("example"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val outerSym = Tasty.Symbol.Class(
             SymbolId(2),
-            Tasty.Name.fromString("Outer"),
+            Tasty.Name("Outer"),
             Tasty.Flags.empty,
             SymbolId(1),
             Maybe.Absent,
@@ -197,7 +197,7 @@ class TastySymbolTest extends Test:
         )
         val innerSym = Tasty.Symbol.Class(
             SymbolId(3),
-            Tasty.Name.fromString("Inner"),
+            Tasty.Name("Inner"),
             Tasty.Flags.empty,
             SymbolId(2),
             Maybe.Absent,
@@ -222,11 +222,11 @@ class TastySymbolTest extends Test:
 
     "Symbol.binaryName top-level class returns com/example/Foo" in run {
         import kyo.Tasty.SymbolId
-        val comSym     = Tasty.Symbol.Package(SymbolId(0), Tasty.Name.fromString("com"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
-        val exampleSym = Tasty.Symbol.Package(SymbolId(1), Tasty.Name.fromString("example"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val comSym     = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("com"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val exampleSym = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("example"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val fooSym = Tasty.Symbol.Class(
             SymbolId(2),
-            Tasty.Name.fromString("Foo"),
+            Tasty.Name("Foo"),
             Tasty.Flags.empty,
             SymbolId(1),
             Maybe.Absent,
@@ -276,7 +276,7 @@ class TastySymbolTest extends Test:
         val sym = Tasty.Symbol.makePlaceholder(
             Tasty.SymbolKind.Class,
             Tasty.Flags.empty,
-            Tasty.Name.fromString("Foo")
+            Tasty.Name("Foo")
         )
         assert(sym.kind == Tasty.SymbolKind.Class, s"Expected kind Class but got ${sym.kind}")
         assert(sym.name.asString == "Foo", s"Expected name 'Foo' but got '${sym.name.asString}'")
@@ -397,7 +397,7 @@ class TastySymbolTest extends Test:
     // Pins: T4 (root-owned symbol FQN handling).
     "T4: root sentinel Symbol fullName returns its own name" in run {
         import kyo.Tasty.SymbolId
-        val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name.fromString(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(rootSym)).flatMap: cp =>
             given Tasty.Classpath = cp
             rootSym.fullName.map: name =>
@@ -410,7 +410,7 @@ class TastySymbolTest extends Test:
         import kyo.Tasty.SymbolId
         val syms: Seq[Tasty.Symbol] = (0 to 5).map: i =>
             val ownerId = if i == 0 then 0 else i - 1
-            val n       = Tasty.Name.fromString(('A' + i).toChar.toString)
+            val n       = Tasty.Name(('A' + i).toChar.toString)
             if i < 2 then
                 Tasty.Symbol.Package(SymbolId(i), n, Tasty.Flags.empty, SymbolId(ownerId), Chunk.empty)
             else
@@ -448,7 +448,7 @@ class TastySymbolTest extends Test:
             val ownerId = if i == 0 then 0 else i - 1
             Tasty.Symbol.Class(
                 SymbolId(i),
-                Tasty.Name.fromString(seg),
+                Tasty.Name(seg),
                 Tasty.Flags.empty,
                 SymbolId(ownerId),
                 Maybe.Absent,
@@ -489,7 +489,7 @@ class TastySymbolTest extends Test:
         )
         val mismatches = kindCases.flatMap { (name, expectedKind) =>
             // plan: phase-02 bridge; Symbol.make(kind, flags, name).
-            val sym = Tasty.Symbol.makePlaceholder(expectedKind, Tasty.Flags.empty, Tasty.Name.fromString(name))
+            val sym = Tasty.Symbol.makePlaceholder(expectedKind, Tasty.Flags.empty, Tasty.Name(name))
             if sym.kind == expectedKind then None
             else Some(s"'$name': expected $expectedKind but got ${sym.kind}")
         }

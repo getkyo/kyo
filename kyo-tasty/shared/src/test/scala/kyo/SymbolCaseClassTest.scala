@@ -30,7 +30,7 @@ class SymbolCaseClassTest extends Test:
     ): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             id = SymbolId(id),
-            name = Tasty.Name.fromString(name),
+            name = Tasty.Name(name),
             flags = flags,
             ownerId = SymbolId(ownerId),
             scaladoc = scaladoc,

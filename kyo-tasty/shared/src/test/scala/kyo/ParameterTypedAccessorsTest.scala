@@ -19,7 +19,7 @@ class ParameterTypedAccessorsTest extends Test:
     private def makeDefaultArgSymbol(id: Int): Tasty.Symbol.Method =
         Tasty.Symbol.Method(
             SymbolId(id),
-            Tasty.Name.fromString("f$default$1"),
+            Tasty.Name("f$default$1"),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,
@@ -41,7 +41,7 @@ class ParameterTypedAccessorsTest extends Test:
     ): Tasty.Symbol.Parameter =
         Tasty.Symbol.Parameter(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             flags,
             SymbolId(-1),
             Maybe.Absent,

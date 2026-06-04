@@ -78,7 +78,7 @@ class AttributeUnpicklerTest extends Test:
         import AllowUnsafe.embrace.danger
         // Build a names array with "Foo.scala" at index 0.
         val nameStr                  = "Foo.scala"
-        val names: Array[Tasty.Name] = Array(Tasty.Name.fromString(nameStr))
+        val names: Array[Tasty.Name] = Array(Tasty.Name(nameStr))
         // SOURCEFILEattr (0x81=129) + Utf8Ref=0 (encoded as single-byte NAT: 0 | 0x80 = 0x80)
         val attrs = Array[Byte](
             TastyFormat.SOURCEFILEattr.toByte, // 0x81

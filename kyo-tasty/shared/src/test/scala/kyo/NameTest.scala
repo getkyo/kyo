@@ -6,18 +6,18 @@ import kyo.Test
 class NameTest extends Test:
 
     "asString round-trips through the opaque alias" in {
-        val n = Tasty.Name.fromString("hello")
+        val n = Tasty.Name("hello")
         assert(n.asString == "hello")
-        assert(n == Tasty.Name.fromString("hello"))
+        assert(n == Tasty.Name("hello"))
 
-        val n2 = Tasty.Name.fromString("scala.Predef")
+        val n2 = Tasty.Name("scala.Predef")
         assert(n2.asString == "scala.Predef")
 
-        val n3 = Tasty.Name.fromString("kyo.Tasty")
+        val n3 = Tasty.Name("kyo.Tasty")
         assert(n3.asString == "kyo.Tasty")
 
         // Non-ASCII: e-acute
-        val n4 = Tasty.Name.fromString("abcé")
+        val n4 = Tasty.Name("abcé")
         assert(n4.asString == "abcé")
     }
 
@@ -35,16 +35,16 @@ class NameTest extends Test:
     }
 
     "CanEqual[Name, Name] derived" in {
-        val n1 = Tasty.Name.fromString("foo")
-        val n2 = Tasty.Name.fromString("foo")
+        val n1 = Tasty.Name("foo")
+        val n2 = Tasty.Name("foo")
         assert(n1 == n2)
 
         // Two distinct String objects with same content
         val s  = "f" + "oo"
-        val n3 = Tasty.Name.fromString(s)
+        val n3 = Tasty.Name(s)
         assert(n1 == n3)
 
-        val n4 = Tasty.Name.fromString("bar")
+        val n4 = Tasty.Name("bar")
         assert(n1 != n4)
     }
 

@@ -29,7 +29,7 @@ class MethodBodyNamingTest extends Test:
         )
         val m: Tasty.Symbol.Method = Tasty.Symbol.Method(
             id = SymbolId(99),
-            name = Tasty.Name.fromString("testMethod"),
+            name = Tasty.Name("testMethod"),
             flags = Tasty.Flags.empty,
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,

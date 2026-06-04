@@ -20,7 +20,7 @@ class FlatSymbolGrepAuditTest extends Test:
         // Constructing a Class subtype must compile and produce a Symbol (not a flat case class).
         val sym: Tasty.Symbol = Tasty.Symbol.Unresolved(
             kyo.Tasty.SymbolId(-1),
-            Tasty.Name.fromString("<unresolved>"),
+            Tasty.Name("<unresolved>"),
             kyo.Tasty.SymbolId(-1)
         )
         sym match

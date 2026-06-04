@@ -32,7 +32,7 @@ class SymbolExhaustiveMatchTest extends Test:
             case _: Tasty.Symbol.Package      => "Package"
             case _: Tasty.Symbol.Unresolved   => "Unresolved"
 
-        val sym: Tasty.Symbol = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name.fromString("x"), SymbolId(-1))
+        val sym: Tasty.Symbol = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name("x"), SymbolId(-1))
         assert(kindLabel(sym) == "Unresolved")
         succeed
     }
@@ -51,7 +51,7 @@ class SymbolExhaustiveMatchTest extends Test:
 
         val obj: Tasty.Symbol.ClassLike = Tasty.Symbol.Object(
             id = SymbolId(1),
-            name = Tasty.Name.fromString("MyObj"),
+            name = Tasty.Name("MyObj"),
             flags = Tasty.Flags.empty,
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,

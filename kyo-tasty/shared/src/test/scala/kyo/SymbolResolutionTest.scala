@@ -233,7 +233,7 @@ class SymbolResolutionTest extends Test:
     private def makeClassSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -250,13 +250,13 @@ class SymbolResolutionTest extends Test:
     end makeClassSym9
 
     private def makePkgSym9(id: Int, name: String): Tasty.Symbol.Package =
-        Tasty.Symbol.Package(SymbolId(id), Tasty.Name.fromString(name), Tasty.Flags.empty, SymbolId(id), Chunk.empty)
+        Tasty.Symbol.Package(SymbolId(id), Tasty.Name(name), Tasty.Flags.empty, SymbolId(id), Chunk.empty)
     end makePkgSym9
 
     private def makeMethodSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Method =
         Tasty.Symbol.Method(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -273,7 +273,7 @@ class SymbolResolutionTest extends Test:
     private def makeValSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Val =
         Tasty.Symbol.Val(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -287,7 +287,7 @@ class SymbolResolutionTest extends Test:
     private def makeVarSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Var =
         Tasty.Symbol.Var(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,

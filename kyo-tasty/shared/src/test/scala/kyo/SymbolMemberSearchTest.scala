@@ -22,7 +22,7 @@ class SymbolMemberSearchTest extends Test:
     ): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -40,7 +40,7 @@ class SymbolMemberSearchTest extends Test:
     private def makeMethod(id: Int, name: String, ownerId: Int): Tasty.Symbol.Method =
         Tasty.Symbol.Method(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -56,7 +56,7 @@ class SymbolMemberSearchTest extends Test:
     private def makeVal(id: Int, name: String, ownerId: Int): Tasty.Symbol.Val =
         Tasty.Symbol.Val(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,

@@ -592,7 +592,7 @@ object SnapshotReader:
                     anns(k) = Tasty.Annotation(
                         annotationType = Tasty.Type.TermRef(
                             Tasty.Type.Tuple(Chunk.empty),
-                            Tasty.Name.fromString(fqn)
+                            Tasty.Name(fqn)
                         ),
                         arguments = Chunk.empty
                     )
@@ -1022,8 +1022,8 @@ object SnapshotReader:
             val kind  = kindFromOrd(raw.kindOrd)
             val flags = Tasty.Flags.fromBits(raw.flagBits)
             val name: Tasty.Name =
-                if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name.fromString(namePool(raw.nameId))
-                else Tasty.Name.fromString("")
+                if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name(namePool(raw.nameId))
+                else Tasty.Name("")
             val ownerIdInt = raw.ownerId
             val ownerIdVal = if ownerIdInt >= 0 && ownerIdInt < count then ownerIdInt else idx
             // For mmap path: body bytes are accessed via bodyView sub-view.
@@ -1336,8 +1336,8 @@ object SnapshotReader:
             val kind  = kindFromOrd(raw.kindOrd)
             val flags = Tasty.Flags.fromBits(raw.flagBits)
             val name: Tasty.Name =
-                if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name.fromString(namePool(raw.nameId))
-                else Tasty.Name.fromString("")
+                if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name(namePool(raw.nameId))
+                else Tasty.Name("")
             val ownerIdInt = raw.ownerId
             // ownerId: use index directly; -1 means self-referential (root sentinel).
             val ownerIdVal = if ownerIdInt >= 0 && ownerIdInt < count then ownerIdInt else idx

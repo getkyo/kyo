@@ -16,7 +16,7 @@ class SymbolAnnotationQueryTest extends Test:
     private def makeAnnotClass(id: Int, pkgId: Int, simpleName: String): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name.fromString(simpleName),
+            Tasty.Name(simpleName),
             Tasty.Flags.empty,
             SymbolId(pkgId),
             Maybe.Absent,
@@ -32,7 +32,7 @@ class SymbolAnnotationQueryTest extends Test:
         )
 
     private def makePackage(id: Int, name: String): Tasty.Symbol.Package =
-        Tasty.Symbol.Package(SymbolId(id), Tasty.Name.fromString(name), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
+        Tasty.Symbol.Package(SymbolId(id), Tasty.Name(name), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
 
     private def makeMethod(
         id: Int,
@@ -42,7 +42,7 @@ class SymbolAnnotationQueryTest extends Test:
     ): Tasty.Symbol.Method =
         Tasty.Symbol.Method(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -64,7 +64,7 @@ class SymbolAnnotationQueryTest extends Test:
     ): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -87,7 +87,7 @@ class SymbolAnnotationQueryTest extends Test:
     ): Tasty.Symbol.Field =
         Tasty.Symbol.Field(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -130,7 +130,7 @@ class SymbolAnnotationQueryTest extends Test:
             val emptyPkg  = makePackage(8, "empty")
             val typeParam = Tasty.Symbol.TypeParam(
                 SymbolId(9),
-                Tasty.Name.fromString("T"),
+                Tasty.Name("T"),
                 Tasty.Flags.empty,
                 SymbolId(-1),
                 Maybe.Absent,

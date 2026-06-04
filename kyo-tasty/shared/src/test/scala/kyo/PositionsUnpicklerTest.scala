@@ -54,7 +54,7 @@ class PositionsUnpicklerTest extends Test:
         Tasty.Symbol.makePlaceholder(
             Tasty.SymbolKind.Class,
             Tasty.Flags.empty,
-            Tasty.Name.fromString(nameStr)
+            Tasty.Name(nameStr)
         )
     end makeTestSymbol
 

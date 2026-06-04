@@ -474,7 +474,7 @@ object Scala2PickleReader:
         val anyRefSym = SymbolFactory.makeSymbol(
             Tasty.SymbolKind.Class,
             Tasty.Flags(Tasty.Flag.Scala2, Tasty.Flag.JavaDefined),
-            Tasty.Name.fromString("AnyRef")
+            Tasty.Name("AnyRef")
         )
         Tasty.Type.Named(anyRefSym.id)
     end buildAnyRefParent
@@ -484,7 +484,7 @@ object Scala2PickleReader:
         flags: Tasty.Flags,
         name: String
     )(using AllowUnsafe): Tasty.Symbol =
-        SymbolFactory.makeSymbol(kind, flags, Tasty.Name.fromString(name))
+        SymbolFactory.makeSymbol(kind, flags, Tasty.Name(name))
     end makePickleSym
 
     /** Variant of makePickleSym with a specified declaredType. */
@@ -498,7 +498,7 @@ object Scala2PickleReader:
             id = -1,
             kind = kind,
             flags = flags,
-            name = Tasty.Name.fromString(name),
+            name = Tasty.Name(name),
             ownerId = -1,
             declaredType = declaredType,
             scaladoc = kyo.Maybe.Absent,

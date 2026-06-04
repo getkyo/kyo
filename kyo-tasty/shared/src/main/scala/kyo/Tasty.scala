@@ -109,7 +109,7 @@ object Tasty:
         given Schema[Name]         = summon[Schema[String]]
 
         /** Internal factory: widen a raw `String` to `Name`. For use by kyo-internal unpicklers only. */
-        private[kyo] def fromString(s: String): Name = s
+        private[kyo] def apply(s: String): Name = s
 
         extension (n: Name)
             /** Return the `String` form of this name. */

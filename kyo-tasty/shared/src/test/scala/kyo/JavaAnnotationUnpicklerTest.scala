@@ -128,7 +128,7 @@ class JavaAnnotationUnpicklerTest extends Test:
                     case Result.Success(anns) =>
                         assert(anns.size == 1, s"Expected 1 annotation, got ${anns.size}")
                         val ann      = anns.head
-                        val key      = Tasty.Name.fromString("value")
+                        val key      = Tasty.Name("value")
                         val valueOpt = ann.values.find(_._1 == key)
                         assert(valueOpt.isDefined, s"Expected key Name('value') in values: ${ann.values}")
                         valueOpt.get._2 match

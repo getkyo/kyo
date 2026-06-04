@@ -59,7 +59,7 @@ object TypeUnpickler:
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name.fromString("$$MatchCase")
+            Tasty.Name("$$MatchCase")
         )
     end MatchCaseSentinel
 
@@ -76,7 +76,7 @@ object TypeUnpickler:
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name.fromString("<unresolved>")
+            Tasty.Name("<unresolved>")
         )
     end sentinelUnresolved
 
@@ -94,7 +94,7 @@ object TypeUnpickler:
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name.fromString("<rec-placeholder>")
+            Tasty.Name("<rec-placeholder>")
         )
     end sentinelRecPlaceholder
 
@@ -182,8 +182,8 @@ object TypeUnpickler:
       */
     private[tasty] def readTypeForTree(view: ByteView, session: TreeTypeSession)(using AllowUnsafe): Tasty.Type =
         // internal frame used here because readTypeForTree is called from
-        // TreeUnpickler.decodeSync, which is the OnceCell init lambda for Symbol.body.
-        // The init lambda has type () => Tree and cannot accept a Frame parameter.
+        // TreeUnpickler.decodeSync, which performs lazy Symbol.body decoding.
+        // The decode thunk has type () => Tree and cannot accept a Frame parameter.
         // This is the one legitimate Frame.internal site; all other decode paths propagate a real Frame.
         val callFrame = Frame.internal
         val peek      = view.peekByte(view.position) & 0xff
@@ -355,7 +355,7 @@ object TypeUnpickler:
         InternalSymbol.makeSymbol(
             Tasty.SymbolKind.Unresolved,
             Tasty.Flags.empty,
-            Tasty.Name.fromString(fqn)
+            Tasty.Name(fqn)
         )
 
     /** Make a unique negative SymbolId for a cross-file FQN reference and record it in `fqns`.

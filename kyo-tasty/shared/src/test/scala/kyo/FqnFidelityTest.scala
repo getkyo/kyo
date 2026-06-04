@@ -107,7 +107,7 @@ class FqnFidelityTest extends Test:
         def encNat(n: Int): Array[Byte] =
             if n < 128 then Array((n | 0x80).toByte)
             else Array((n >> 7).toByte, ((n & 0x7f) | 0x80).toByte)
-        val names = Array(Tasty.Name.fromString("scala"), Tasty.Name.fromString("Map"))
+        val names = Array(Tasty.Name("scala"), Tasty.Name("Map"))
         // qual  = TYPEREFpkg nameRef=1 -> "Map"; tracked by the session as qualFqn="Map"
         // ns    = TYPEREFpkg nameRef=1  (namespace, ignored in FQN reconstruction)
         val qualBytes    = TastyFormat.TYPEREFpkg.toByte +: encNat(1)

@@ -15,7 +15,7 @@ class SymbolSignatureTest extends Test:
     import AllowUnsafe.embrace.danger
 
     private def makePackage(id: Int, name: String, members: Chunk[SymbolId] = Chunk.empty): Tasty.Symbol.Package =
-        Tasty.Symbol.Package(SymbolId(id), Tasty.Name.fromString(name), Tasty.Flags.empty, SymbolId(-1), members)
+        Tasty.Symbol.Package(SymbolId(id), Tasty.Name(name), Tasty.Flags.empty, SymbolId(-1), members)
 
     private def makeClass(
         id: Int,
@@ -27,7 +27,7 @@ class SymbolSignatureTest extends Test:
     ): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -51,7 +51,7 @@ class SymbolSignatureTest extends Test:
     ): Tasty.Symbol.Method =
         Tasty.Symbol.Method(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -67,7 +67,7 @@ class SymbolSignatureTest extends Test:
     private def makeVal(id: Int, name: String, ownerId: Int, tpe: Maybe[Tasty.Type]): Tasty.Symbol.Val =
         Tasty.Symbol.Val(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -80,7 +80,7 @@ class SymbolSignatureTest extends Test:
     private def makeParameter(id: Int, name: String, ownerId: Int, tpe: Tasty.Type): Tasty.Symbol.Parameter =
         Tasty.Symbol.Parameter(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -153,7 +153,7 @@ class SymbolSignatureTest extends Test:
     "SymbolSignature.compute for TypeAlias returns type-equals string" in run {
         val ta = Tasty.Symbol.TypeAlias(
             SymbolId(0),
-            Tasty.Name.fromString("MyAlias"),
+            Tasty.Name("MyAlias"),
             Tasty.Flags.empty,
             SymbolId(-1),
             Maybe.Absent,

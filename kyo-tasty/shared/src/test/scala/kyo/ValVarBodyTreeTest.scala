@@ -98,7 +98,7 @@ class ValVarBodyTreeTest extends Test:
                             // Verify that a Var with Absent body returns Absent (same as leaf 78 for Method).
                             val varSym = Tasty.Symbol.Var(
                                 SymbolId(1),
-                                Tasty.Name.fromString("y"),
+                                Tasty.Name("y"),
                                 Tasty.Flags.empty,
                                 SymbolId(0),
                                 Maybe.Absent,
@@ -133,7 +133,7 @@ class ValVarBodyTreeTest extends Test:
     "Leaf 81b: Val.bodyTree effect row is exactly (Sync & Abort[TastyError]) -- compile check" in run {
         val valSym = Tasty.Symbol.Val(
             SymbolId(1),
-            Tasty.Name.fromString("x"),
+            Tasty.Name("x"),
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,

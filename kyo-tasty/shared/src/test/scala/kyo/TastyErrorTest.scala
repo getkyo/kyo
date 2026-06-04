@@ -13,7 +13,7 @@ class TastyErrorTest extends Test:
 
     private def makeName(s: String): Tasty.Name =
         val bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        Tasty.Name.fromString(kyo.internal.tasty.binary.Utf8.decode(bytes, 0, bytes.length))
+        Tasty.Name(kyo.internal.tasty.binary.Utf8.decode(bytes, 0, bytes.length))
     end makeName
 
     private def encodeNat(n: Int): Array[Byte] =

@@ -135,7 +135,7 @@ class NameUnpicklerTest extends Test:
                 case Result.Success(names) =>
                     // Construct a second Name with the same string value from a different source.
                     val n1 = names.find(_.asString == "PlainClass").get
-                    val n2 = Tasty.Name.fromString("PlainClass")
+                    val n2 = Tasty.Name("PlainClass")
                     // Both names decode to the same string value.
                     assert(n1.asString == "PlainClass")
                     assert(n2.asString == "PlainClass")

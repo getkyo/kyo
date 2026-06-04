@@ -21,7 +21,7 @@ class SymbolPredicateTest extends Test:
         kind: Tasty.SymbolKind = Tasty.SymbolKind.Class,
         flags: Tasty.Flags = Tasty.Flags.empty
     ): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(kind, flags, Tasty.Name.fromString("TestSym")) match
+        Tasty.Symbol.makePlaceholder(kind, flags, Tasty.Name("TestSym")) match
             case u: Tasty.Symbol.Unresolved    => u.copy(id = SymbolId(1), ownerId = SymbolId(0))
             case c: Tasty.Symbol.Class         => c.copy(id = SymbolId(1), ownerId = SymbolId(0))
             case t: Tasty.Symbol.Trait         => t.copy(id = SymbolId(1), ownerId = SymbolId(0))

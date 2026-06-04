@@ -403,7 +403,7 @@ class UnifiedModelTest extends Test:
 
     // Test 19: CLASSconst with a known TYPEREFdirect decodes to ConstantType(ClassConst(Named(sym))).
     "CLASSconst with TYPEREFdirect decodes to ConstantType(ClassConst(Named(stringSym)))" in run {
-        val stringSym  = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString("java.lang.String"))
+        val stringSym  = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("java.lang.String"))
         val stringAddr = 10
         val addrMap    = IntMap(stringAddr -> stringSym)
         // CLASSconst (92) is category 3: tag + sub-type.
@@ -430,7 +430,7 @@ class UnifiedModelTest extends Test:
     // The unresolved symbol carries the class fqn as its name.
     "CLASSconst with unresolved TYPEREFpkg decodes to ConstantType(ClassConst(Named(Unresolved)))" in run {
         val missingFqn = "com.missing.X"
-        val names      = Array(Tasty.Name.fromString(missingFqn))
+        val names      = Array(Tasty.Name(missingFqn))
         val nameRef    = 0
         // Sub-type: TYPEREFpkg (65) category 2: tag + Nat(nameRef).
         val subBytes = cat2(TastyFormat.TYPEREFpkg, nameRef)

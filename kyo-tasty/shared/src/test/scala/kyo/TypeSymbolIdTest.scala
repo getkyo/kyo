@@ -37,7 +37,7 @@ class TypeSymbolIdTest extends Test:
       * AIOOBE. Pins: INV-002 (every Type.Named id resolves to a valid symbol).
       */
     "Type.Named(unresolved) references a valid symbol in classpath" in run {
-        val unresolvedSym = Tasty.Symbol.Unresolved(SymbolId(0), Tasty.Name.fromString("does.not.Exist"), SymbolId(-1))
+        val unresolvedSym = Tasty.Symbol.Unresolved(SymbolId(0), Tasty.Name("does.not.Exist"), SymbolId(-1))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(unresolvedSym)).map: cp =>
             val namedType = Tasty.Type.Named(SymbolId(0))
             namedType match

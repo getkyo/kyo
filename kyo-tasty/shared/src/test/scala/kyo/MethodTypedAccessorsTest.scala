@@ -51,7 +51,7 @@ class MethodTypedAccessorsTest extends Test:
     private def makeParameter(id: Int, name: String, ownerId: Int): Tasty.Symbol.Parameter =
         Tasty.Symbol.Parameter(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -63,7 +63,7 @@ class MethodTypedAccessorsTest extends Test:
     private def makeTypeParam(id: Int, name: String, ownerId: Int): Tasty.Symbol.TypeParam =
         Tasty.Symbol.TypeParam(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
@@ -82,7 +82,7 @@ class MethodTypedAccessorsTest extends Test:
     ): Tasty.Symbol.Method =
         Tasty.Symbol.Method(
             SymbolId(id),
-            Tasty.Name.fromString(name),
+            Tasty.Name(name),
             flags,
             SymbolId(ownerId),
             Maybe.Absent,

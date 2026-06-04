@@ -26,7 +26,7 @@ class SubclassesOfTest extends Test:
             val concFlags = Tasty.Flags.empty
             val a = Tasty.Symbol.Class(
                 SymbolId(0),
-                Tasty.Name.fromString("A"),
+                Tasty.Name("A"),
                 absFlags,
                 SymbolId(-1),
                 kyo.Maybe.Absent,
@@ -42,7 +42,7 @@ class SubclassesOfTest extends Test:
             )
             val b = Tasty.Symbol.Class(
                 SymbolId(1),
-                Tasty.Name.fromString("B"),
+                Tasty.Name("B"),
                 absFlags,
                 SymbolId(-1),
                 kyo.Maybe.Absent,
@@ -58,7 +58,7 @@ class SubclassesOfTest extends Test:
             )
             val c = Tasty.Symbol.Class(
                 SymbolId(2),
-                Tasty.Name.fromString("C"),
+                Tasty.Name("C"),
                 absFlags,
                 SymbolId(-1),
                 kyo.Maybe.Absent,
@@ -74,7 +74,7 @@ class SubclassesOfTest extends Test:
             )
             val d = Tasty.Symbol.Class(
                 SymbolId(3),
-                Tasty.Name.fromString("D"),
+                Tasty.Name("D"),
                 concFlags,
                 SymbolId(-1),
                 kyo.Maybe.Absent,
@@ -117,7 +117,7 @@ class SubclassesOfTest extends Test:
             val concFlags = Tasty.Flags.empty
             val t = Tasty.Symbol.Trait(
                 SymbolId(0),
-                Tasty.Name.fromString("T"),
+                Tasty.Name("T"),
                 absFlags,
                 SymbolId(-1),
                 kyo.Maybe.Absent,
@@ -133,7 +133,7 @@ class SubclassesOfTest extends Test:
             )
             val impl1 = Tasty.Symbol.Class(
                 SymbolId(1),
-                Tasty.Name.fromString("Impl1"),
+                Tasty.Name("Impl1"),
                 concFlags,
                 SymbolId(-1),
                 kyo.Maybe.Absent,
@@ -149,7 +149,7 @@ class SubclassesOfTest extends Test:
             )
             val impl2 = Tasty.Symbol.Class(
                 SymbolId(2),
-                Tasty.Name.fromString("Impl2"),
+                Tasty.Name("Impl2"),
                 concFlags,
                 SymbolId(-1),
                 kyo.Maybe.Absent,
@@ -165,7 +165,7 @@ class SubclassesOfTest extends Test:
             )
             val abs = Tasty.Symbol.Class(
                 SymbolId(3),
-                Tasty.Name.fromString("AbsImpl"),
+                Tasty.Name("AbsImpl"),
                 absFlags,
                 SymbolId(-1),
                 kyo.Maybe.Absent,

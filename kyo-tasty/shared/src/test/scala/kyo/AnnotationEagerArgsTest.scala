@@ -19,7 +19,7 @@ class AnnotationEagerArgsTest extends Test:
     import AllowUnsafe.embrace.danger
 
     private def makeSym(name: String): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name.fromString(name))
+        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(name))
 
     private def encodeNat(n: Int): Array[Byte] =
         if n < 128 then Array((n | 0x80).toByte)
@@ -49,7 +49,7 @@ class AnnotationEagerArgsTest extends Test:
         val sym        = makeSym("Int")
         val symAddr    = 3
         val addrMap    = IntMap(symAddr -> sym)
-        val names      = Array(Tasty.Name.fromString("scala"))
+        val names      = Array(Tasty.Name("scala"))
         val qual       = cat2(TastyFormat.TYPEREFpkg, 0)
         val underlying = cat4(TastyFormat.TYPEREFsymbol, symAddr, qual)
         // UNITconst is category 1 (single byte); decodes to Literal(UnitConst).
@@ -78,7 +78,7 @@ class AnnotationEagerArgsTest extends Test:
         val sym        = makeSym("Int")
         val symAddr    = 3
         val addrMap    = IntMap(symAddr -> sym)
-        val names      = Array(Tasty.Name.fromString("scala"))
+        val names      = Array(Tasty.Name("scala"))
         val qual       = cat2(TastyFormat.TYPEREFpkg, 0)
         val underlying = cat4(TastyFormat.TYPEREFsymbol, symAddr, qual)
         // Tag 50 is below firstASTtag (60) and not a valid modifier; TreeUnpickler throws DecodeException.
