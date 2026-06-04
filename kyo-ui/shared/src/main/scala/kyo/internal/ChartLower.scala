@@ -54,7 +54,7 @@ private[kyo] object ChartLower:
     private val AxisLabelInset = 14.0
 
     /** Default chart colors used when no `colorScale` override is set. */
-    private val DefaultPalette: Chunk[Style.Color] = Chunk(
+    private[kyo] val DefaultPalette: Chunk[Style.Color] = Chunk(
         Style.Color.blue,
         Style.Color.orange,
         Style.Color.green,
@@ -79,7 +79,7 @@ private[kyo] object ChartLower:
 
     /** Resolve the axis chrome color (tick lines, tick labels, axis labels) for the given theme. */
     private def axisChromeColor(theme: Theme): Style.Color =
-        if theme.isDark then DarkThemeTextColor else LightThemeTextColor
+        theme.axisColor.getOrElse(if theme.isDark then DarkThemeTextColor else LightThemeTextColor)
 
     /** The y-axis a data-series mark binds to. Rule marks are reference annotations, not series, and are
       * excluded from axis-to-mark binding by the caller.
@@ -119,11 +119,15 @@ private[kyo] object ChartLower:
       * palette color does not misrepresent a multi-color series and the chart stays legible.
       */
     private def axisChromeColorFor[A](theme: Theme, marks: Chunk[Mark[A]], axis: Axis): Style.Color =
-        val bound: Chunk[(Mark[A], Int)] = marks.zipWithIndex.collect:
-            case (m, i) if !m.isInstanceOf[Mark.Rule[?]] && markAxisOf(m) == axis => (m, i)
-        bound match
-            case Chunk((mark, idx)) if isSolidColorMark(mark) => markDefaultColor(theme, idx)
-            case _                                            => axisChromeColor(theme)
+        // An explicit theme axis color is a deliberate override and wins over per-mark color-coding (D25).
+        theme.axisColor match
+            case Present(c) => c
+            case Absent =>
+                val bound: Chunk[(Mark[A], Int)] = marks.zipWithIndex.collect:
+                    case (m, i) if !m.isInstanceOf[Mark.Rule[?]] && markAxisOf(m) == axis => (m, i)
+                bound match
+                    case Chunk((mark, idx)) if isSolidColorMark(mark) => markDefaultColor(theme, idx)
+                    case _                                            => axisChromeColor(theme)
     end axisChromeColorFor
 
     /** Gridline color: ALWAYS the neutral theme chrome color, regardless of whether the axis chrome is
@@ -132,7 +136,7 @@ private[kyo] object ChartLower:
       * applied at the draw site).
       */
     private def gridlineColor(theme: Theme): Style.Color =
-        axisChromeColor(theme)
+        theme.gridColor.getOrElse(axisChromeColor(theme))
 
     /** Separating outline color for `point` circles: the theme background color (white on light, the dark
       * background on dark) so each filled bubble is bordered by a thin contrasting ring and adjacent bubbles
@@ -189,8 +193,11 @@ private[kyo] object ChartLower:
       * overlapping the bars.
       */
     private def buildLayout(spec: ChartSpec[?]): Layout =
-        val (w, h)      = spec.chartSize
-        val marginRight = if spec.yAxisRightCfg.isDefined then MarginRightAxis else MarginRightDefault
+        val (w, h) = spec.chartSize
+        val m      = spec.marginsCfg
+        // The right-axis layout still needs the extra fixed reserve for dual-axis charts; otherwise use the
+        // configured right margin (D30).
+        val marginRight = if spec.yAxisRightCfg.isDefined then MarginRightAxis else m.right
         val hasLegend = !spec.legendCfg.isHidden && spec.marks.exists:
             case m: Mark.Bar[?, ?, ?]      => m.color.isDefined || m.stack.group.isDefined
             case m: Mark.Line[?, ?, ?]     => m.color.isDefined
@@ -209,10 +216,10 @@ private[kyo] object ChartLower:
         Layout(
             svgW = w.toDouble,
             svgH = h.toDouble,
-            plotX = MarginLeft + leftPad,
-            plotY = MarginTop + topPad,
-            plotW = w.toDouble - MarginLeft - marginRight - leftPad - rightPad,
-            plotH = h.toDouble - MarginTop - topPad - bottomPad - MarginBottom
+            plotX = m.left + leftPad,
+            plotY = m.top + topPad,
+            plotW = w.toDouble - m.left - marginRight - leftPad - rightPad,
+            plotH = h.toDouble - m.top - topPad - bottomPad - m.bottom
         )
     end buildLayout
 
@@ -584,7 +591,8 @@ private[kyo] object ChartLower:
             case _                                       => (padExtent(xExt, xPad), layout.plotX, layout.plotX + layout.plotW)
         // Swap range bounds when reverse=true so the first datum appears at the far end (D20).
         val (xLo, xHi) = if xReverse then (xHiRaw, xLoRaw) else (xLoRaw, xHiRaw)
-        val xs         = Scale.fit(xKind, xExtFinal, xLo, xHi, nice = xNice)
+        val xClamp     = xOverride.map(_.clamp).getOrElse(false)
+        val xs         = Scale.fit(xKind, xExtFinal, xLo, xHi, nice = xNice, clamp = xClamp)
 
         // Y left scale
         val yExt     = yLeftExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
@@ -611,9 +619,11 @@ private[kyo] object ChartLower:
             // G7: log scale uses the no-zero extent computation
             case Present(ScaleKind.Log) =>
                 val rawExt = yLeftExtentNoZero(rows, marks).getOrElse(Extent.Continuous(1.0, 10.0))
-                (rawExt, yRLoBase, yRHiBase, false)
+                // WARN-3: apply pad to the explicitly-overridden log extent too (every other arm pads).
+                (padExtent(rawExt, yPad), yRLoBase, yRHiBase, false)
             case _ => (padExtent(yExt, yPad), yRLoBase, yRHiBase, yNice)
-        val ysL = Scale.fit(yKind, yExtFinal, yRLo, yRHi, nice = useNice)
+        val yClamp = yOverride.map(_.clamp).getOrElse(false)
+        val ysL    = Scale.fit(yKind, yExtFinal, yRLo, yRHi, nice = useNice, clamp = yClamp)
 
         // Y right scale (optional)
         val ysR: Maybe[Scale] =
@@ -679,7 +689,7 @@ private[kyo] object ChartLower:
       * white, matching the page background.
       */
     private def buildBackground(layout: Layout, theme: Theme)(using Frame): Chunk[Svg.SvgElement] =
-        val color = if theme.isDark then DarkBg else LightBg
+        val color = theme.background.getOrElse(if theme.isDark then DarkBg else LightBg)
         Chunk(
             Svg.rect
                 .x(0.0)
@@ -835,9 +845,21 @@ private[kyo] object ChartLower:
         cfg: AxisConfig,
         theme: Theme
     )(using Frame): Chunk[Svg.SvgElement] =
-        val ticks  = xs.ticks(cfg.tickCount)
-        val axisY  = layout.plotBaseline
-        val chrome = axisChromeColor(theme)
+        val ticks   = xs.ticks(cfg.tickCount)
+        val axisY   = layout.plotBaseline
+        val chrome  = axisChromeColor(theme)
+        val gridCol = gridlineColor(theme)
+        val labelY  = axisY + TickLen + 4.0
+        // D17: map the configured tick anchor to the SVG text-anchor token.
+        val svgAnchor = cfg.tickAnchor match
+            case TextAnchor.Start  => Svg.TextAnchor.Start
+            case TextAnchor.Middle => Svg.TextAnchor.Middle
+            case TextAnchor.End    => Svg.TextAnchor.End
+
+        // D25: optional theme font on tick labels.
+        def withFont(t: Svg.Text): Svg.Text =
+            val t1 = theme.fontFamily.fold(t)(f => t.fontFamily(f))
+            theme.fontSize.fold(t1)(px => t1.fontSize(Svg.SvgLength.Px(px)))
 
         @scala.annotation.tailrec
         def loop(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
@@ -845,6 +867,17 @@ private[kyo] object ChartLower:
             else
                 val tick = ticks(i)
                 val px   = tick.pixel
+                // D19: vertical gridline at this tick when showGrid is enabled.
+                val withGrid =
+                    if cfg.showGrid then
+                        acc.append(
+                            Svg.line
+                                .x1(px).y1(layout.plotY)
+                                .x2(px).y2(layout.plotBaseline)
+                                .stroke(Svg.Paint.Color(gridCol))
+                                .strokeOpacity(0.5)
+                        )
+                    else acc
                 val tickMark: Svg.SvgElement =
                     Svg.line
                         .x1(px).y1(axisY)
@@ -854,15 +887,21 @@ private[kyo] object ChartLower:
                 val xLabelStr = cfg.tickFormat match
                     case Present(f) => f(tick.value)
                     case Absent     => tick.label
+                val tickLabelBase: Svg.Text =
+                    withFont(
+                        Svg.text
+                            .x(px)
+                            .y(labelY)
+                            .textAnchor(svgAnchor)
+                            .dominantBaseline(Svg.DominantBaseline.Hanging)
+                            .fill(Svg.Paint.Color(chrome))
+                    ).apply(xLabelStr)
+                // D17: rotate the label about its anchor point when a rotation is configured.
                 val tickLabel: Svg.SvgElement =
-                    Svg.text
-                        .x(px)
-                        .y(axisY + TickLen + 4.0)
-                        .textAnchor(Svg.TextAnchor.Middle)
-                        .dominantBaseline(Svg.DominantBaseline.Hanging)
-                        .fill(Svg.Paint.Color(chrome))
-                        .apply(xLabelStr)
-                loop(i + 1, acc.append(tickMark).append(tickLabel))
+                    if cfg.tickRotation != 0.0 then
+                        tickLabelBase.transform(Svg.Transform.Rotate(cfg.tickRotation, Present(px), Present(labelY)))
+                    else tickLabelBase
+                loop(i + 1, withGrid.append(tickMark).append(tickLabel))
         val base = loop(0, Chunk.empty)
         // axis label
         cfg.axisLabel match
@@ -3465,7 +3504,7 @@ private[kyo] object ChartLower:
         val ysLForFrame = ysLFixed.getOrElse(ysLInitial)
         val staticFrame = buildStaticFrameLive(layout, xs, ysLForFrame, ysRFixed, spec, initialRows)
         val vb          = Svg.ViewBox(0.0, 0.0, layout.svgW, layout.svgH)
-        val baseSvg     = Svg.svg.width(layout.svgW).height(layout.svgH).viewBox(vb)
+        val baseSvg     = buildBaseSvg(spec, layout, vb)
         val withFrame = staticFrame.foldLeft(baseSvg): (acc, el) =>
             el match
                 case r: Svg.Rect => acc(r)
@@ -3536,6 +3575,40 @@ private[kyo] object ChartLower:
         end match
     end lower
 
+    /** Lower a `ChartSpec[A]` to an `Svg.Root` together with its resolved scales (D32, escape hatch).
+      *
+      * The returned `ChartScales` projects the same resolved `xs`/`ysL`/`ysR` the lowering used, plus the inner
+      * plot rectangle, so callers can compute exact chart pixel coordinates. For a live chart the scales are
+      * resolved from the signal's current value at call time.
+      */
+    private[kyo] def lowerWithScales[A](spec: ChartSpec[A]): (Svg.Root, UI.Ast.ChartScales) =
+        given Frame = Frame.internal
+        val rows: Chunk[A] = spec.data match
+            case DataSource.Static(rs)   => rs
+            case DataSource.Live(signal) =>
+                // For a live chart, sample the current emission so the scales match what is on screen now.
+                // Unsafe: evalOrThrow runs the pure synchronous current-value read; the escape hatch is a
+                // point-in-time projection, documented to reflect the signal value at call time.
+                import AllowUnsafe.embrace.danger
+                Sync.Unsafe.evalOrThrow(signal.current)
+        val layout = buildLayout(spec)
+        val hasRight = spec.marks.exists:
+            case m: Mark.Bar[A, ?, ?]      => m.axis == Axis.Right
+            case m: Mark.Line[A, ?, ?]     => m.axis == Axis.Right
+            case m: Mark.Area[A, ?, ?]     => m.axis == Axis.Right
+            case m: Mark.Point[A, ?, ?]    => m.axis == Axis.Right
+            case _: Mark.Rule[A]           => false
+            case _: Mark.Text[A, ?, ?]     => false
+            case _: Mark.ErrorBar[A, ?, ?] => false
+        val computeRight = hasRight || spec.yAxisRightCfg.isDefined
+        val ResolvedScales(xs, ysL, ysR) =
+            resolveAllScales(rows, spec.marks, layout, spec.xScaleOverride, spec.yScaleOverride, computeRight, spec.xAxisCfg, spec.yAxisCfg)
+        val plot   = UI.Ast.ChartScales.Rect(layout.plotX, layout.plotY, layout.plotW, layout.plotH)
+        val scales = UI.Ast.ChartScales.from(xs, ysL, ysR, plot)
+        val svg    = lower(spec)
+        (svg, scales)
+    end lowerWithScales
+
     /** Build a tooltip overlay `Reactive[Svg.G]` driven by the chart's internal hover ref.
       *
       * When the hover ref holds `Present(row)`, the overlay renders a translucent rect background and
@@ -3575,6 +3648,30 @@ private[kyo] object ChartLower:
                 Svg.g
     end buildTooltipOverlay
 
+    /** Build the root `<svg>` with responsive sizing and a11y attributes applied (D28/D29/Q-008).
+      *
+      * Responsive (D29): when `spec.isResponsive`, the root uses `width="100%"` and a `viewBox` (no fixed
+      * pixel `height`) so the chart scales to its container; an explicit `aspectRatio` adds a `preserveAspectRatio`.
+      * A11y (D28): `spec.a11y.title`/`desc` become `<title>`/`<desc>` children; a title implies the generic
+      * `role="img"` builder, and `ariaLabel` sets the generic `aria-label`. All attrs use the generic UI builders;
+      * no chart-specific hardwiring in the renderer.
+      */
+    private def buildBaseSvg[A](spec: ChartSpec[A], layout: Layout, vb: Svg.ViewBox)(using Frame): Svg.Root =
+        val sized =
+            if spec.isResponsive then
+                val base = Svg.svg.width(Svg.SvgLength.Pct(100.0)).viewBox(vb)
+                spec.aspectRatio match
+                    case Present(_) =>
+                        base.preserveAspectRatio(Svg.PreserveAspectRatio(Svg.Align.XMidYMid, Svg.MeetOrSlice.Meet))
+                    case Absent => base
+                end match
+            else Svg.svg.width(layout.svgW).height(layout.svgH).viewBox(vb)
+        val withTitle = spec.a11y.title.fold(sized)(t => sized(Svg.title(t)))
+        val withDesc  = spec.a11y.desc.fold(withTitle)(d => withTitle(Svg.desc(d)))
+        val withRole  = if spec.a11y.title.isDefined then withDesc.role("img") else withDesc
+        spec.a11y.ariaLabel.fold(withRole)(lbl => withRole.aria("label", lbl))
+    end buildBaseSvg
+
     private def lowerStatic[A](rows: Chunk[A], spec: ChartSpec[A], gradPrefix: String)(using Frame): Svg.Root =
         val layout = buildLayout(spec)
         val hasRight = spec.marks.exists:
@@ -3602,7 +3699,7 @@ private[kyo] object ChartLower:
                 Present(Signal.SignalRef.Unsafe.init[Maybe[A]](Absent).safe)
             case Absent => Absent
         val marksG  = marksRegion(visibleRows, spec.marks, layout, xs, ysL, ysR, Present(spec), internalHoverRef)
-        val baseSvg = Svg.svg.width(layout.svgW).height(layout.svgH).viewBox(vb)
+        val baseSvg = buildBaseSvg(spec, layout, vb)
         val withFrame = frame.foldLeft(baseSvg): (acc, el) =>
             el match
                 case r: Svg.Rect => acc(r)

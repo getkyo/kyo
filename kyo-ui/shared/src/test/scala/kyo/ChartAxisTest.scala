@@ -944,4 +944,165 @@ class ChartAxisTest extends Test:
             assert(c != Style.Color.blue, s"Gridline must NOT be palette(0) (blue) but was $c")
     }
 
+    // ---- Phase 6 helpers ----
+
+    /** X-axis tick labels: bottom texts with the Hanging dominant baseline. */
+    private def xTickLabelsIn(root: Svg.Root): Chunk[Svg.Text] =
+        frameTextsIn(root).filter(_.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Hanging))
+
+    private def circlesIn(root: Svg.Root): Chunk[Svg.Circle] =
+        root.children.flatMap:
+            case g: Svg.G =>
+                g.children.flatMap:
+                    case c: Svg.Circle => Chunk(c)
+                    case _             => Chunk.empty
+            case _ => Chunk.empty
+
+    private def barsIn(root: Svg.Root): Chunk[Svg.Rect] =
+        root.children.last match
+            case g: Svg.G =>
+                g.children.flatMap:
+                    case r: Svg.Rect => Chunk(r)
+                    case _           => Chunk.empty
+            case _ => Chunk.empty
+
+    // ---- Phase 6 Leaf 1 (INV-030): rotateTicks adds a rotate transform on x tick labels ----
+
+    "xAxis(_.rotateTicks(-45)) gives every x tick label a Rotate(-45) transform" in {
+        val rows   = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
+        val spec   = UI.chart(rows)(bar(x = _.month, y = _.revenue)).xAxis(_.rotateTicks(-45.0))
+        val root   = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val labels = xTickLabelsIn(root)
+        assert(labels.nonEmpty, "Expected x tick labels")
+        labels.foldLeft(succeed): (_, t) =>
+            val rot = t.svgAttrs.transform.toSeq.collectFirst { case r: Svg.Transform.Rotate => r }
+            rot match
+                case Some(r) => assertClose(r.deg, -45.0, "x tick label rotate degrees")
+                case None    => fail(s"Expected a Rotate transform on tick label but got ${t.svgAttrs.transform}")
+    }
+
+    // ---- Phase 6 Leaf 2 (INV-030): anchor sets the SVG text-anchor on x tick labels ----
+
+    "xAxis(_.anchor(TextAnchor.End)) sets text-anchor=end on x tick labels" in {
+        val rows   = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
+        val spec   = UI.chart(rows)(bar(x = _.month, y = _.revenue)).xAxis(_.anchor(TextAnchor.End))
+        val root   = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val labels = xTickLabelsIn(root)
+        assert(labels.nonEmpty, "Expected x tick labels")
+        labels.foldLeft(succeed): (_, t) =>
+            assert(t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End), s"Expected text-anchor=end but got ${t.svgAttrs.textAnchor}")
+    }
+
+    // ---- Phase 6 Leaf 3 (INV-030): x gridlines at each tick from plotY to plotBaseline ----
+
+    "xAxis(_.grid) emits vertical gridlines at each x tick from plotY to plotBaseline" in {
+        val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)), Sale("Mar", Usd(1500)))
+        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue)).xAxis(_.bottom.grid)
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        // Vertical gridlines: x1==x2, y1==plotY, y2==plotBaseline, with a strokeOpacity.
+        val vGrid = frameLinesIn(root).filter: l =>
+            l.svgAttrs.x1 == l.svgAttrs.x2 &&
+                l.svgAttrs.y1.exists(_ == PlotY) && l.svgAttrs.y2.exists(_ == Baseline) &&
+                l.svgAttrs.strokeOpacity.isDefined
+        // 3 bands -> 3 tick gridlines.
+        assert(vGrid.size == 3, s"Expected 3 vertical gridlines but got ${vGrid.size}")
+    }
+
+    // ---- Phase 6 Leaf 4 (INV-030): yAxis(_.reverse) places the first datum at the far pixel end ----
+
+    "yAxis(_.reverse) swaps the y range so a small value sits near the top, not the baseline" in {
+        // Without reverse, y=0 maps near baseline (440); with reverse, the range swaps so y=0 maps near top (20).
+        val rows    = Chunk(Sale("Jan", Usd(0)), Sale("Feb", Usd(2000)))
+        val normal  = UI.chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.left)
+        val flipped = UI.chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.left.reverse)
+        val rNorm   = barsIn(summon[Conversion[ChartSpec[Sale], Svg.Root]](normal))
+        val rFlip   = barsIn(summon[Conversion[ChartSpec[Sale], Svg.Root]](flipped))
+        // The Jan bar (value 0): normal top y is at the baseline; reversed top y is at the plot top.
+        val janNormalY = numOf(rNorm(0).svgAttrs.y)
+        val janFlipY   = numOf(rFlip(0).svgAttrs.y)
+        assert(janFlipY < janNormalY, s"Reversed Jan-bar y ($janFlipY) should be nearer the top than normal ($janNormalY)")
+        assertClose(janFlipY, PlotY, "reversed zero datum sits at plot top")
+    }
+
+    // ---- Phase 6 Leaf 5 (INV-030): xAxis(_.pad) widens the domain so the first datum is inset ----
+
+    "xScale linear with pad insets the first datum from the plot edge (continuous x)" in {
+        case class XRow(x: Double, y: Double)
+        val rows     = Chunk(XRow(0.0, 1.0), XRow(10.0, 2.0))
+        val noPad    = UI.chart(rows)(point(x = _.x, y = _.y))
+        val padded   = UI.chart(rows)(point(x = _.x, y = _.y)).xScale(_.withPad(0.1))
+        val cxNoPad  = circlesIn(summon[Conversion[ChartSpec[XRow], Svg.Root]](noPad))(0).svgAttrs.cx
+        val cxPadded = circlesIn(summon[Conversion[ChartSpec[XRow], Svg.Root]](padded))(0).svgAttrs.cx
+        val noPadX = cxNoPad match
+            case Present(v) => v;
+            case Absent     => fail("cx")
+        val padX = cxPadded match
+            case Present(v) => v;
+            case Absent     => fail("cx")
+        // Padding widens the domain symmetrically, so the first datum moves inward (to a larger pixel).
+        assert(padX > noPadX, s"Padded first-datum cx ($padX) should be inset past the un-padded cx ($noPadX)")
+    }
+
+    // ---- Phase 6 Leaf 6 (INV-009): a 7-category band x-axis yields 7 tick labels ----
+
+    "a 7-category band x-axis produces 7 tick labels (labelAllBands default)" in {
+        case class CRow(cat: String, y: Int)
+        val cats   = Chunk("a", "b", "c", "d", "e", "f", "g")
+        val rows   = cats.map(c => CRow(c, 1))
+        val spec   = UI.chart(rows)(bar(x = _.cat, y = _.y)).xAxis(_.ticks(7))
+        val root   = summon[Conversion[ChartSpec[CRow], Svg.Root]](spec)
+        val labels = xTickLabelsIn(root)
+        assert(labels.size == 7, s"Expected 7 band tick labels but got ${labels.size}")
+    }
+
+    // ---- Phase 6 WARN-1a (INV-012): chart-level linear clamp ----
+
+    "yScale linear withClamp(true) clamps an out-of-range datum to the range; withClamp(false) extrapolates" in {
+        // Fixed domain [0,10]; a datum y=20 is out of range. Bars: barY for the datum.
+        // clamp=true: y=20 maps to rangeHi (plot top, 20.0) -> barY = 20.0.
+        // clamp=false: y=20 extrapolates beyond the top -> barY < 20.0 (negative offset above the plot).
+        val rows       = Chunk(Sale("Jan", Usd(20)))
+        val clamped    = UI.chart(rows)(bar(x = _.month, y = _.revenue)).yScale(_.linear(0.0, 10.0).withClamp(true))
+        val unclamped  = UI.chart(rows)(bar(x = _.month, y = _.revenue)).yScale(_.linear(0.0, 10.0).withClamp(false))
+        val yClamped   = numOf(barsIn(summon[Conversion[ChartSpec[Sale], Svg.Root]](clamped))(0).svgAttrs.y)
+        val yUnclamped = numOf(barsIn(summon[Conversion[ChartSpec[Sale], Svg.Root]](unclamped))(0).svgAttrs.y)
+        // Clamped pins to the top of the plot (PlotY=20).
+        assertClose(yClamped, PlotY, "clamped out-of-range datum pins to plot top")
+        // Unclamped extrapolates ABOVE the plot top, i.e. a smaller (more negative) pixel.
+        assert(yUnclamped < yClamped, s"Unclamped y ($yUnclamped) must extrapolate past the clamped top ($yClamped)")
+    }
+
+    // ---- Phase 6 WARN-1b (INV-012): chart-level symlog clamp ----
+
+    "yScale symlog withClamp(true) pins an out-of-domain datum to the boundary; withClamp(false) extrapolates" in {
+        // Symlog domain inferred from data [-5, 5]; add an out-of-domain datum 50.
+        case class SRow(x: String, y: Double)
+        val rows = Chunk(SRow("a", -5.0), SRow("b", 5.0))
+        // Build a scale directly via Scale to compare clamp on/off at the same domain.
+        val s          = Scale.Symlog(-5.0, 5.0, 0.0, 200.0, clamp = true)
+        val sOff       = Scale.Symlog(-5.0, 5.0, 0.0, 200.0, clamp = false)
+        val atBoundary = s.apply(kyo.internal.Domain.Continuous(50.0))
+        val atMax      = s.apply(kyo.internal.Domain.Continuous(5.0))
+        val extrap     = sOff.apply(kyo.internal.Domain.Continuous(50.0))
+        assertClose(atBoundary, atMax, "symlog clamp=true pins 50 to the domain max")
+        assert(extrap > atMax, s"symlog clamp=false ($extrap) must extrapolate past the domain max pixel ($atMax)")
+    }
+
+    // ---- Phase 6 WARN-3 (INV-012): pad applied to an explicitly-overridden log scale ----
+
+    "yScale log withPad widens the log domain so the smallest datum is inset from the baseline" in {
+        // Data [10, 1000]; without pad, y=10 sits at the baseline. With pad, the log domain widens
+        // below 10, so y=10 is inset above the baseline.
+        val rows   = Chunk(Sale("a", Usd(10)), Sale("b", Usd(1000)))
+        val noPad  = UI.chart(rows)(bar(x = _.month, y = _.revenue)).yScale(_.log)
+        val padded = UI.chart(rows)(bar(x = _.month, y = _.revenue)).yScale(_.log.withPad(0.1))
+        // The y pixel of the smallest datum (10): the bar bottom is at baseline; compare the bar TOP y.
+        val yNoPad  = numOf(barsIn(summon[Conversion[ChartSpec[Sale], Svg.Root]](noPad))(0).svgAttrs.y)
+        val yPadded = numOf(barsIn(summon[Conversion[ChartSpec[Sale], Svg.Root]](padded))(0).svgAttrs.y)
+        // Without pad the smallest datum maps to the baseline (440). With pad the domain widens below 10,
+        // so the datum maps ABOVE the baseline (a smaller y pixel).
+        assertClose(yNoPad, Baseline, "un-padded smallest log datum at baseline")
+        assert(yPadded < yNoPad, s"Padded log datum y ($yPadded) must be inset above the baseline ($yNoPad)")
+    }
+
 end ChartAxisTest

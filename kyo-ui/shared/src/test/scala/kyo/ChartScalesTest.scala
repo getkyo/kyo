@@ -1,0 +1,96 @@
+package kyo
+
+import kyo.UI.*
+import kyo.UI.Ast.*
+import kyo.UI.mark.*
+import scala.language.implicitConversions
+
+/** Phase 06 tests for the `toSvgWithScales` escape hatch and its read-only [[ChartScales]] projection (INV-035).
+  *
+  * Asserts that the projected pixel coordinates match the coordinates actually emitted in the SVG, that
+  * category projection works for a band axis, and that the public surface never leaks the internal `Scale` type.
+  */
+class ChartScalesTest extends Test:
+
+    private val Tol = 1.0e-6
+
+    private def assertClose(actual: Double, expected: Double, msg: String): Assertion =
+        assert(math.abs(actual - expected) < Tol, s"$msg: expected $expected but got $actual")
+
+    private def circlesIn(root: Svg.Root): Chunk[Svg.Circle] =
+        root.children.flatMap:
+            case g: Svg.G =>
+                g.children.flatMap:
+                    case c: Svg.Circle => Chunk(c)
+                    case _             => Chunk.empty
+            case c: Svg.Circle => Chunk(c)
+            case _             => Chunk.empty
+
+    case class PRow(x: Double, y: Double)
+    case class BRow(cat: String, y: Int)
+
+    // ---- Leaf 22: scales.x.toPixel(datumX) equals the cx of the corresponding circle ----
+
+    "toSvgWithScales: x.toPixel(datumX) equals the emitted circle cx" in {
+        // Continuous x so the linear x-scale projection is directly comparable to cx.
+        val rows       = Chunk(PRow(0.0, 10.0), PRow(10.0, 20.0))
+        val spec       = UI.chart(rows)(point(x = _.x, y = _.y)).xScale(_.linear(0.0, 10.0))
+        val (root, sc) = spec.toSvgWithScales
+        val circles    = circlesIn(root)
+        assert(circles.size == 2, s"Expected 2 circles but got ${circles.size}")
+
+        // Match the second datum (x=10.0) against its circle.
+        val cx = circles(1).svgAttrs.cx match
+            case Present(v) => v
+            case Absent     => fail("Expected cx Present")
+        assertClose(sc.x.toPixel(10.0), cx, "x.toPixel(10.0) vs emitted cx")
+
+        // The plot rectangle is exposed and matches the default layout.
+        assertClose(sc.plot.x, 60.0, "plot.x")
+        assertClose(sc.plot.width, 560.0, "plot.width")
+        // Round-trip: inverting the projected pixel returns the original continuous value.
+        sc.x.invert(sc.x.toPixel(10.0)) match
+            case ChartScales.Resolved.Continuous(v) => assertClose(v, 10.0, "x.invert round-trip")
+            case other                              => fail(s"Expected Continuous but got $other")
+    }
+
+    // ---- Leaf 23: toPixelCategory returns Present for a band axis and Absent for a continuous axis ----
+
+    "toSvgWithScales: x.toPixelCategory returns Present for a known band key, Absent for an unknown key" in {
+        val rows       = Chunk(BRow("a", 1), BRow("b", 2), BRow("c", 3))
+        val spec       = UI.chart(rows)(bar(x = _.cat, y = _.y))
+        val (root, sc) = spec.toSvgWithScales
+
+        // Band axis: a known key projects to a pixel; an unknown key is Absent.
+        sc.x.toPixelCategory("b") match
+            case Present(px) =>
+                // Band centers lie inside the plot width.
+                assert(px > 60.0 && px < 620.0, s"Expected band pixel inside plot but got $px")
+            case Absent => fail("Expected Present pixel for known band key 'b'")
+        end match
+        assert(sc.x.toPixelCategory("zzz") == Absent, "Unknown band key must be Absent")
+        assert(sc.x.kind == ScaleKind.Band, s"Expected Band kind but got ${sc.x.kind}")
+
+        // A continuous y-axis has no category projection.
+        assert(sc.y.toPixelCategory("b") == Absent, "Continuous axis must return Absent for category projection")
+    }
+
+    // ---- Leaf 24: ChartScales is sealed and never exposes the internal Scale type ----
+
+    "ChartScales is sealed and the toSvgWithScales return type does not mention internal.Scale" in {
+        val rows                          = Chunk(PRow(0.0, 1.0), PRow(1.0, 2.0))
+        val spec                          = UI.chart(rows)(point(x = _.x, y = _.y))
+        val pair: (Svg.Root, ChartScales) = spec.toSvgWithScales
+        val sc: ChartScales               = pair._2
+
+        // The trait is sealed (compile-time guarantee) and exposes only the public projection surface.
+        assert(sc.yRight == Absent, "Single-axis chart has no right axis")
+        // The accessors return public types only: ScaleKind, Double, Maybe[Double], ChartScales.Resolved.
+        val k: ScaleKind = sc.x.kind
+        assert(k != null, "kind accessor returns the public ScaleKind")
+        // Reflectively confirm no public accessor return type leaks kyo.internal.Scale.
+        val leaks = classOf[ChartScales].getMethods.toSeq.map(_.getReturnType.getName).filter(_.contains("internal.Scale"))
+        assert(leaks.isEmpty, s"ChartScales public methods must not return internal.Scale, but found: $leaks")
+    }
+
+end ChartScalesTest

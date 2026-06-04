@@ -389,4 +389,95 @@ class ChartSpecTest extends Test:
     private def assertClose(actual: Double, expected: Double, msg: String): Assertion =
         assert(math.abs(actual - expected) < 1e-9, s"$msg: expected $expected but got $actual")
 
+    // ---- Phase 6: a11y, responsive, margins ----
+
+    private def rootOf[A](spec: ChartSpec[A]): Svg.Root =
+        summon[Conversion[ChartSpec[A], Svg.Root]](spec)
+
+    private def titleTextsIn(root: Svg.Root): Chunk[String] =
+        root.children.flatMap:
+            case t: Svg.Title => Chunk(t.text)
+            case _            => Chunk.empty
+
+    private def descTextsIn(root: Svg.Root): Chunk[String] =
+        root.children.flatMap:
+            case d: Svg.Desc => Chunk(d.text)
+            case _           => Chunk.empty
+
+    // Leaf 14
+    "title(t) adds an Svg.Title child carrying the title text" in {
+        val root = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)).title("Revenue by month"))
+        assert(titleTextsIn(root).toSeq.contains("Revenue by month"), "Expected a <title> child with the text")
+    }
+
+    // Leaf 15
+    "title(t) sets role=img on the root svg" in {
+        val root = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)).title("T"))
+        assert(root.attrs.role == Present("img"), s"Expected role=img but got ${root.attrs.role}")
+    }
+
+    // Leaf 16
+    "desc(d) adds an Svg.Desc child carrying the description text" in {
+        val root = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)).desc("Monthly totals"))
+        assert(descTextsIn(root).toSeq.contains("Monthly totals"), "Expected a <desc> child with the text")
+    }
+
+    // Leaf 17
+    "ariaLabel(l) sets aria-label on the root svg" in {
+        val root = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)).ariaLabel("chart"))
+        assert(root.attrs.ariaAttrs.get("label") == Some("chart"), s"Expected aria-label=chart but got ${root.attrs.ariaAttrs}")
+    }
+
+    // Leaf 18
+    "no a11y configured -> no title, no desc, no role, no aria-label" in {
+        val root = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)))
+        assert(titleTextsIn(root).isEmpty, "Expected no <title>")
+        assert(descTextsIn(root).isEmpty, "Expected no <desc>")
+        assert(root.attrs.role == Absent, "Expected no role")
+        assert(!root.attrs.ariaAttrs.contains("label"), "Expected no aria-label")
+    }
+
+    // Leaf 19
+    "responsive uses width=100% and a viewBox with no fixed pixel height" in {
+        val root = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)).size(400, 300).responsive)
+        assert(
+            root.svgAttrs.width == Present(Svg.Coord.Len(Svg.SvgLength.Pct(100.0))),
+            s"Expected width=100% but got ${root.svgAttrs.width}"
+        )
+        assert(root.svgAttrs.height == Absent, s"Expected no fixed height but got ${root.svgAttrs.height}")
+        assert(root.svgAttrs.viewBox.isDefined, "Expected a viewBox")
+    }
+
+    // Leaf 20
+    "responsive(ratio) keeps width=100% and a viewBox and sets preserveAspectRatio" in {
+        val root = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)).responsive(16.0 / 9.0))
+        assert(root.svgAttrs.width == Present(Svg.Coord.Len(Svg.SvgLength.Pct(100.0))), "Expected width=100%")
+        assert(root.svgAttrs.viewBox.isDefined, "Expected a viewBox")
+        assert(root.svgAttrs.preserveAspectRatio.isDefined, "Expected preserveAspectRatio for an explicit ratio")
+    }
+
+    // Leaf 21
+    "responsive and size are mutually exclusive with last-set-wins" in {
+        // size after responsive -> fixed wins.
+        val sizeWins = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)).responsive.size(400, 300))
+        assert(
+            sizeWins.svgAttrs.width == Present(Svg.Coord.Num(400.0)),
+            s"size-after-responsive must keep fixed width, got ${sizeWins.svgAttrs.width}"
+        )
+        assert(sizeWins.svgAttrs.height == Present(Svg.Coord.Num(300.0)), "size-after-responsive must keep fixed height")
+        // responsive after size -> responsive wins.
+        val respWins = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)).size(400, 300).responsive)
+        assert(respWins.svgAttrs.width == Present(Svg.Coord.Len(Svg.SvgLength.Pct(100.0))), "responsive-after-size must use width=100%")
+        assert(respWins.svgAttrs.height == Absent, "responsive-after-size must have no fixed height")
+    }
+
+    // Leaf (margins)
+    "margins(...) shifts the plot rectangle by the configured left/top margins" in {
+        val base     = UI.chart(sales)(bar(x = _.month, y = _.revenue))
+        val (_, sc0) = base.toSvgWithScales
+        val (_, sc1) = base.margins(_.left(120.0)).toSvgWithScales
+        // Increasing the left margin moves plot.x right by the delta from the default (60).
+        assertClose(sc1.plot.x - sc0.plot.x, 60.0, "left margin delta shifts plot.x")
+    }
+
 end ChartSpecTest

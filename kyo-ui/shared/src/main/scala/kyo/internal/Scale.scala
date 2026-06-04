@@ -55,16 +55,17 @@ private[kyo] object Scale:
         extent: Extent,
         rangeLo: Double,
         rangeHi: Double,
-        nice: Boolean = true
+        nice: Boolean = true,
+        clamp: Boolean = false
     ): Scale =
         kind match
-            case Kind.Linear  => fitLinear(extent, rangeLo, rangeHi, nice)
-            case Kind.Log     => fitLog(extent, rangeLo, rangeHi)
+            case Kind.Linear  => fitLinear(extent, rangeLo, rangeHi, nice, clamp)
+            case Kind.Log     => fitLog(extent, rangeLo, rangeHi, clamp)
             case Kind.Band    => fitBand(extent, rangeLo, rangeHi)
             case Kind.Time    => fitTime(extent, rangeLo, rangeHi, nice)
             case Kind.Ordinal => fitOrdinal(extent, rangeLo, rangeHi)
             case Kind.Point   => fitPoint(extent, rangeLo, rangeHi)
-            case Kind.Symlog  => fitSymlog(extent, rangeLo, rangeHi)
+            case Kind.Symlog  => fitSymlog(extent, rangeLo, rangeHi, clamp)
     end fit
 
     /** Produce at most `maxTicks` evenly-spaced tick values covering `[min, max]`, snapped to a nice step.
@@ -100,7 +101,8 @@ private[kyo] object Scale:
         domainMin: Double,
         domainMax: Double,
         rangeLo: Double,
-        rangeHi: Double
+        rangeHi: Double,
+        clamp: Boolean = false
     ) extends Scale:
 
         def apply(d: Domain): Double = d match
@@ -110,9 +112,12 @@ private[kyo] object Scale:
                 else
                     val t   = (v - domainMin) / (domainMax - domainMin)
                     val out = rangeLo + t * (rangeHi - rangeLo)
-                    val lo  = math.min(rangeLo, rangeHi)
-                    val hi  = math.max(rangeLo, rangeHi)
-                    if out < lo then lo else if out > hi then hi else out
+                    if clamp then
+                        val lo = math.min(rangeLo, rangeHi)
+                        val hi = math.max(rangeLo, rangeHi)
+                        if out < lo then lo else if out > hi then hi else out
+                    else out
+                    end if
             case Domain.Category(_)  => rangeLo
             case Domain.Temporal(ms) => apply(Domain.Continuous(ms.toDouble))
 
@@ -134,7 +139,8 @@ private[kyo] object Scale:
         domainMin: Double,
         domainMax: Double,
         rangeLo: Double,
-        rangeHi: Double
+        rangeHi: Double,
+        clamp: Boolean = false
     ) extends Scale:
 
         private val logMin: Double = if domainMin > 0 then math.log10(domainMin) else 0.0
@@ -143,14 +149,20 @@ private[kyo] object Scale:
         def apply(d: Domain): Double = d match
             case Domain.Continuous(v) =>
                 if !v.isFinite then rangeLo
-                else if v <= 0 then rangeLo
-                else if logMax == logMin then rangeLo
                 else
-                    val t   = (math.log10(v) - logMin) / (logMax - logMin)
-                    val out = rangeLo + t * (rangeHi - rangeLo)
-                    val lo  = math.min(rangeLo, rangeHi)
-                    val hi  = math.max(rangeLo, rangeHi)
-                    if out < lo then lo else if out > hi then hi else out
+                    val vc = if clamp then math.max(domainMin, math.min(domainMax, v)) else v
+                    if vc <= 0 then rangeLo
+                    else if logMax == logMin then rangeLo
+                    else
+                        val t   = (math.log10(vc) - logMin) / (logMax - logMin)
+                        val out = rangeLo + t * (rangeHi - rangeLo)
+                        if clamp then
+                            val lo = math.min(rangeLo, rangeHi)
+                            val hi = math.max(rangeLo, rangeHi)
+                            if out < lo then lo else if out > hi then hi else out
+                        else out
+                        end if
+                    end if
             case Domain.Category(_)  => rangeLo
             case Domain.Temporal(ms) => apply(Domain.Continuous(ms.toDouble))
 
@@ -316,7 +328,7 @@ private[kyo] object Scale:
 
     // ---- private fit helpers ----
 
-    private def fitLinear(extent: Extent, rangeLo: Double, rangeHi: Double, nice: Boolean): Scale =
+    private def fitLinear(extent: Extent, rangeLo: Double, rangeHi: Double, nice: Boolean, clamp: Boolean): Scale =
         val (lo, hi) = extent match
             case Extent.Continuous(mn, mx) => (mn, mx)
             case Extent.Categories(keys)   => (0.0, keys.size.toDouble - 1.0)
@@ -330,16 +342,16 @@ private[kyo] object Scale:
                 else (math.min(lo, tks(0)), math.max(hi, tks(tks.size - 1)))
                 end if
             else (lo, hi)
-        Linear(nLo, nHi, rangeLo, rangeHi)
+        Linear(nLo, nHi, rangeLo, rangeHi, clamp)
     end fitLinear
 
-    private def fitLog(extent: Extent, rangeLo: Double, rangeHi: Double): Scale =
+    private def fitLog(extent: Extent, rangeLo: Double, rangeHi: Double, clamp: Boolean): Scale =
         val (lo, hi) = extent match
             case Extent.Continuous(mn, mx) => (mn, mx)
             case Extent.Categories(keys)   => (1.0, keys.size.toDouble)
         // INV-011: non-positive values are filtered upstream in yLeftExtentNoZero; lo is positive by construction.
         // math.max(hi, lo) guards a degenerate empty domain after filtering.
-        Log(lo, math.max(hi, lo), rangeLo, rangeHi)
+        Log(lo, math.max(hi, lo), rangeLo, rangeHi, clamp)
     end fitLog
 
     private def fitBand(extent: Extent, rangeLo: Double, rangeHi: Double): Scale =
@@ -381,11 +393,11 @@ private[kyo] object Scale:
         Band(keys, rangeLo, rangeHi, padding = 0.5)
     end fitPoint
 
-    private def fitSymlog(extent: Extent, rangeLo: Double, rangeHi: Double): Scale =
+    private def fitSymlog(extent: Extent, rangeLo: Double, rangeHi: Double, clamp: Boolean): Scale =
         val (rawLo, rawHi) = extent match
             case Extent.Continuous(mn, mx) => (mn, mx)
             case Extent.Categories(_)      => (-1.0, 1.0)
-        Symlog(rawLo, rawHi, rangeLo, rangeHi, clamp = false)
+        Symlog(rawLo, rawHi, rangeLo, rangeHi, clamp)
     end fitSymlog
 
     /** Symmetric-log scale for data spanning negative-to-positive values (catalog #30/D11, Q-001).

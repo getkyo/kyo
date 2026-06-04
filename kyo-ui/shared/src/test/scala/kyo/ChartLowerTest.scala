@@ -1472,4 +1472,58 @@ class ChartLowerTest extends Test:
         )
     }
 
+    // ---- Phase 6 (INV-032): theme color overrides ----
+
+    private def themeRows: Chunk[Sale] = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
+
+    // Leaf 10
+    "theme.background(c) sets the background rect fill to the override color" in {
+        val custom = Style.Color.rgb(10, 20, 30)
+        val spec   = UI.chart(themeRows)(bar(x = _.month, y = _.revenue)).theme(_.background(custom)).yAxis(_.left.grid)
+        val root   = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val bg     = root.children.collectFirst { case r: Svg.Rect => r }.getOrElse(fail("Expected a background rect"))
+        assert(fillColorOf(bg.svgAttrs.fill) == custom, s"Expected background fill $custom but got ${fillColorOf(bg.svgAttrs.fill)}")
+    }
+
+    // Leaf 11
+    "theme.axisColor(c) sets the axis line / tick mark stroke color" in {
+        val custom = Style.Color.rgb(200, 0, 0)
+        val spec   = UI.chart(themeRows)(bar(x = _.month, y = _.revenue)).theme(_.axisColor(custom)).yAxis(_.left)
+        val root   = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        // Axis lines / tick marks are frame lines WITHOUT a strokeOpacity (gridlines carry one).
+        val axisLines = frameLines(root).filter(_.svgAttrs.strokeOpacity.isEmpty)
+        assert(axisLines.nonEmpty, "Expected axis/tick lines")
+        axisLines.foldLeft(succeed): (_, l) =>
+            l.svgAttrs.stroke match
+                case Present(Svg.Paint.Color(c)) => assert(c == custom, s"Expected axis stroke $custom but got $c")
+                case other                       => fail(s"Expected an axis stroke color but got $other")
+    }
+
+    // Leaf 12
+    "theme.gridColor(c) sets the gridline stroke color" in {
+        val custom    = Style.Color.rgb(0, 200, 0)
+        val spec      = UI.chart(themeRows)(bar(x = _.month, y = _.revenue)).theme(_.gridColor(custom)).yAxis(_.left.grid)
+        val root      = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val gridLines = frameLines(root).filter(_.svgAttrs.strokeOpacity.isDefined)
+        assert(gridLines.nonEmpty, "Expected gridlines")
+        gridLines.foldLeft(succeed): (_, l) =>
+            l.svgAttrs.stroke match
+                case Present(Svg.Paint.Color(c)) => assert(c == custom, s"Expected gridline stroke $custom but got $c")
+                case other                       => fail(s"Expected a gridline stroke color but got $other")
+    }
+
+    // Leaf 13
+    "an unset theme produces output identical to the explicit default theme (no regression)" in run {
+        val rows      = themeRows
+        val unset     = UI.chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.left.grid)
+        val explicit  = UI.chart(rows)(bar(x = _.month, y = _.revenue)).theme(_.light).yAxis(_.left.grid)
+        val rUnset    = summon[Conversion[ChartSpec[Sale], Svg.Root]](unset)
+        val rExplicit = summon[Conversion[ChartSpec[Sale], Svg.Root]](explicit)
+        for
+            hUnset    <- HtmlRenderer.render(rUnset, Seq.empty)
+            hExplicit <- HtmlRenderer.render(rExplicit, Seq.empty)
+        yield assert(hUnset == hExplicit, "Unset theme must render identically to the explicit light default")
+        end for
+    }
+
 end ChartLowerTest

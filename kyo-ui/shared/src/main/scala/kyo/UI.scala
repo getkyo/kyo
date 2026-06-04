@@ -1156,6 +1156,10 @@ object UI:
             def aria(pairs: (String, String)*): Self =
                 withAttrs(attrs.copy(ariaAttrs = attrs.ariaAttrs ++ pairs))
 
+            /** Sets the WAI-ARIA `role` attribute (emitted as the bare `role="..."` HTML attribute). */
+            def role(v: String): Self =
+                withAttrs(attrs.copy(role = Present(v)))
+
             // Data attributes (kyo- prefix is reserved)
             /** Sets a single `data-*` attribute (the `name` is the suffix after `data-`).
               *
@@ -1444,7 +1448,8 @@ object UI:
             onScrollEvt: Maybe[WheelEvent => Any < Async] = Absent,
             ariaAttrs: Map[String, String] = Map.empty,
             dataAttrs: Map[String, String] = Map.empty,
-            jsProps: Map[String, String] = Map.empty
+            jsProps: Map[String, String] = Map.empty,
+            role: Maybe[String] = Absent
         )
 
         // ---- Non-element AST cases ----
@@ -2240,11 +2245,58 @@ object UI:
             onHover: Maybe[Signal.SignalRef[Maybe[A]]],
             onSelect: Maybe[Signal.SignalRef[Maybe[A]]],
             tooltip: Maybe[A => String],
-            interactionCfg: ChartSpec.InteractionConfig = ChartSpec.InteractionConfig.default
+            interactionCfg: ChartSpec.InteractionConfig = ChartSpec.InteractionConfig.default,
+            a11y: ChartSpec.A11y = ChartSpec.A11y.default,
+            isResponsive: Boolean = false,
+            aspectRatio: Maybe[Double] = Absent,
+            marginsCfg: ChartSpec.Margins = ChartSpec.Margins.default
         )
 
         /** Companion for `ChartSpec`. Holds nested configuration types. */
         object ChartSpec:
+
+            /** Accessibility metadata emitted into the chart's root `<svg>` (D28, Q-008).
+              *
+              * `title` becomes a `<title>` child and implies `role="img"` on the root so assistive
+              * technology announces the chart as a single image with that accessible name. `desc`
+              * becomes a `<desc>` child for a longer description. `ariaLabel` sets the `aria-label`
+              * attribute directly. All three default to `Absent`, in which case no a11y markup is
+              * emitted. Set them with `.title(s)`, `.desc(s)`, and `.ariaLabel(s)`.
+              */
+            final case class A11y(
+                title: Maybe[String],
+                desc: Maybe[String],
+                ariaLabel: Maybe[String]
+            )
+
+            object A11y:
+                /** The default: no accessibility metadata. */
+                val default: A11y = A11y(Absent, Absent, Absent)
+            end A11y
+
+            /** Plot margins in pixels around the inner plot rectangle (D30).
+              *
+              * `top`, `right`, `bottom`, and `left` reserve space for axis chrome and labels.
+              * The defaults (`20/20/40/60`) match the historical built-in constants; the larger
+              * bottom and left make room for the x-axis tick labels and the y-axis numbers. Set
+              * them with `.margins(t, r, b, l)` or `.margins(_.left(80))`.
+              */
+            final case class Margins(
+                top: Double,
+                right: Double,
+                bottom: Double,
+                left: Double
+            ):
+                def top(v: Double): Margins    = copy(top = v)
+                def right(v: Double): Margins  = copy(right = v)
+                def bottom(v: Double): Margins = copy(bottom = v)
+                def left(v: Double): Margins   = copy(left = v)
+            end Margins
+
+            object Margins:
+                /** The default margins matching the historical built-in layout constants. */
+                val default: Margins = Margins(20.0, 20.0, 40.0, 60.0)
+            end Margins
 
             /** Controls built-in visual highlight behavior when a hover or select ref is set.
               *
@@ -2305,9 +2357,9 @@ object UI:
             def theme(f: Theme => Theme): ChartSpec[A] =
                 spec.copy(theme = f(spec.theme))
 
-            /** Sets the chart width and height in user units. */
+            /** Sets the chart width and height in user units. Disables responsive sizing (last-set wins). */
             def size(w: Int, h: Int): ChartSpec[A] =
-                spec.copy(chartSize = (w, h))
+                spec.copy(chartSize = (w, h), isResponsive = false)
 
             /** Overrides the x-axis scale using a builder lambda. */
             def xScale(f: ScaleOverride => ScaleOverride): ChartSpec[A] =
@@ -2345,12 +2397,51 @@ object UI:
             def interaction(f: ChartSpec.InteractionConfig => ChartSpec.InteractionConfig): ChartSpec[A] =
                 spec.copy(interactionCfg = f(spec.interactionCfg))
 
+            /** Sets the accessible title (a `<title>` child); also implies `role="img"` on the root. */
+            def title(s: String): ChartSpec[A] =
+                spec.copy(a11y = spec.a11y.copy(title = Present(s)))
+
+            /** Sets the accessible long description (a `<desc>` child). */
+            def desc(s: String): ChartSpec[A] =
+                spec.copy(a11y = spec.a11y.copy(desc = Present(s)))
+
+            /** Sets the `aria-label` on the chart's root `<svg>`. */
+            def ariaLabel(s: String): ChartSpec[A] =
+                spec.copy(a11y = spec.a11y.copy(ariaLabel = Present(s)))
+
+            /** Makes the chart responsive: the root uses `width="100%"` and a `viewBox`, no fixed height. */
+            def responsive: ChartSpec[A] =
+                spec.copy(isResponsive = true)
+
+            /** Makes the chart responsive with the given aspect ratio (width / height). */
+            def responsive(aspectRatio: Double): ChartSpec[A] =
+                spec.copy(isResponsive = true, aspectRatio = Present(aspectRatio))
+
+            /** Sets all four plot margins (top, right, bottom, left) in pixels. */
+            def margins(top: Double, right: Double, bottom: Double, left: Double): ChartSpec[A] =
+                spec.copy(marginsCfg = ChartSpec.Margins(top, right, bottom, left))
+
+            /** Configures plot margins using a builder lambda: `.margins(_.left(80))`. */
+            def margins(f: ChartSpec.Margins => ChartSpec.Margins): ChartSpec[A] =
+                spec.copy(marginsCfg = f(spec.marginsCfg))
+
             /** Lowers this chart spec to an `Svg.Root`.
               *
               * Equivalent to `summon[Conversion[ChartSpec[A], Svg.Root]](spec)`. Provided as an explicit
               * method for callers that do not have `scala.language.implicitConversions` in scope.
               */
             def toSvg: Svg.Root = kyo.internal.ChartLower.lower(spec)
+
+            /** Lowers this chart spec to an `Svg.Root` together with its resolved [[ChartScales]].
+              *
+              * The returned `ChartScales` exposes the data-to-pixel projection for both axes and the
+              * inner plot rectangle, so callers can build overlays, brush outlines, or annotations at
+              * exact chart pixel coordinates without re-deriving the scale math. For live charts the
+              * scales are computed from the current signal value at call time; they do not update until
+              * `toSvgWithScales` is called again.
+              */
+            def toSvgWithScales: (Svg.Root, ChartScales) =
+                kyo.internal.ChartLower.lowerWithScales(spec)
 
         end extension
 
@@ -2386,16 +2477,18 @@ object UI:
             padding: Double = 0.0,                      // D21
             labelAllBands: Boolean = true               // D18
         ):
-            def left: AxisConfig                        = copy(side = Present(Side.Left))
-            def right: AxisConfig                       = copy(side = Present(Side.Right))
-            def bottom: AxisConfig                      = copy(side = Present(Side.Bottom))
-            def top: AxisConfig                         = copy(side = Present(Side.Top))
-            def label(s: String): AxisConfig            = copy(axisLabel = Present(s))
-            def grid: AxisConfig                        = copy(showGrid = true)
-            def ticks(n: Int): AxisConfig               = copy(tickCount = n)
-            def format(f: Double => String): AxisConfig = copy(tickFormat = Present(f))
-            def reverse: AxisConfig                     = copy(reversed = true)
-            def pad(fraction: Double): AxisConfig       = copy(padding = fraction)
+            def left: AxisConfig                         = copy(side = Present(Side.Left))
+            def right: AxisConfig                        = copy(side = Present(Side.Right))
+            def bottom: AxisConfig                       = copy(side = Present(Side.Bottom))
+            def top: AxisConfig                          = copy(side = Present(Side.Top))
+            def label(s: String): AxisConfig             = copy(axisLabel = Present(s))
+            def grid: AxisConfig                         = copy(showGrid = true)
+            def ticks(n: Int): AxisConfig                = copy(tickCount = n)
+            def format(f: Double => String): AxisConfig  = copy(tickFormat = Present(f))
+            def reverse: AxisConfig                      = copy(reversed = true)
+            def pad(fraction: Double): AxisConfig        = copy(padding = fraction)
+            def rotateTicks(degrees: Double): AxisConfig = copy(tickRotation = degrees)
+            def anchor(a: TextAnchor): AxisConfig        = copy(tickAnchor = a)
 
         end AxisConfig
 
@@ -2519,10 +2612,36 @@ object UI:
           */
         final case class Theme(
             isDark: Boolean,
-            palette: Maybe[Chunk[Style.Color]]
+            palette: Maybe[Chunk[Style.Color]],
+            background: Maybe[Style.Color] = Absent,
+            axisColor: Maybe[Style.Color] = Absent,
+            gridColor: Maybe[Style.Color] = Absent,
+            fontFamily: Maybe[String] = Absent,
+            fontSize: Maybe[Double] = Absent
         ):
             def light: Theme = copy(isDark = false)
             def dark: Theme  = copy(isDark = true)
+
+            /** Overrides the plot background fill color. */
+            def background(c: Style.Color): Theme = copy(background = Present(c))
+
+            /** Overrides the axis line, tick mark, and tick label color. */
+            def axisColor(c: Style.Color): Theme = copy(axisColor = Present(c))
+
+            /** Overrides the gridline color. */
+            def gridColor(c: Style.Color): Theme = copy(gridColor = Present(c))
+
+            /** Sets the font family for axis and tick labels. */
+            def font(family: String): Theme = copy(fontFamily = Present(family))
+
+            /** Sets the font size (in pixels) for axis and tick labels. */
+            def fontSize(px: Double): Theme = copy(fontSize = Present(px))
+
+            /** Sets the categorical palette from a named [[Palette]]. */
+            def palette(p: Palette): Theme = copy(palette = Present(Palette.colors(p)))
+
+            /** Sets the categorical palette from an explicit color list. */
+            def palette(colors: Chunk[Style.Color]): Theme = copy(palette = Present(colors))
 
         end Theme
 
@@ -2585,6 +2704,149 @@ object UI:
 
         object ScaleOverride:
             val default: ScaleOverride = ScaleOverride(Absent)
+
+        /** Named color palettes for categorical charts (D26).
+          *
+          * Pass to `_.theme(_.palette(Palette.Okabe))` to select a categorical color set.
+          * `Default` is the built-in palette (unchanged for backward compatibility; not optimized
+          * for color-vision deficiency). `Okabe` is the Okabe-Ito 8-color set, the recommended
+          * accessible choice for categorical data. `Viridis` is an 8-category perceptually-derived
+          * set. `Tableau10` is the Tableau 10 categorical palette. Resolve a palette to its colors
+          * with `Palette.colors(p)`.
+          */
+        enum Palette derives CanEqual:
+            case Default
+            case Okabe
+            case Viridis
+            case Tableau10
+        end Palette
+
+        object Palette:
+            /** Resolve a named palette to its `Chunk[Style.Color]`. */
+            def colors(p: Palette): Chunk[Style.Color] = p match
+                case Palette.Default => kyo.internal.ChartLower.DefaultPalette
+                case Palette.Okabe =>
+                    Chunk(
+                        Style.Color.rgb(0, 0, 0),
+                        Style.Color.rgb(230, 159, 0),
+                        Style.Color.rgb(86, 180, 233),
+                        Style.Color.rgb(0, 158, 115),
+                        Style.Color.rgb(240, 228, 66),
+                        Style.Color.rgb(0, 114, 178),
+                        Style.Color.rgb(213, 94, 0),
+                        Style.Color.rgb(204, 121, 167)
+                    )
+                case Palette.Viridis =>
+                    Chunk(
+                        Style.Color.rgb(68, 1, 84),
+                        Style.Color.rgb(72, 40, 120),
+                        Style.Color.rgb(62, 74, 137),
+                        Style.Color.rgb(49, 104, 142),
+                        Style.Color.rgb(38, 130, 142),
+                        Style.Color.rgb(31, 158, 137),
+                        Style.Color.rgb(53, 183, 121),
+                        Style.Color.rgb(253, 231, 37)
+                    )
+                case Palette.Tableau10 =>
+                    Chunk(
+                        Style.Color.rgb(31, 119, 180),
+                        Style.Color.rgb(255, 127, 14),
+                        Style.Color.rgb(44, 160, 44),
+                        Style.Color.rgb(214, 39, 40),
+                        Style.Color.rgb(148, 103, 189),
+                        Style.Color.rgb(140, 86, 75),
+                        Style.Color.rgb(227, 119, 194),
+                        Style.Color.rgb(127, 127, 127),
+                        Style.Color.rgb(188, 189, 34),
+                        Style.Color.rgb(23, 190, 207)
+                    )
+        end Palette
+
+        /** Read-only projection of the resolved scale state after lowering a `ChartSpec` (D32).
+          *
+          * Obtain one via `spec.toSvgWithScales`. The accessors expose the data-to-pixel projection
+          * for both axes and the inner plot rectangle, while the internal `Scale`/`Layout` types stay
+          * private. Use it as an escape hatch to build overlays, brush outlines, or custom annotations
+          * at exact chart pixel coordinates. `x` and `y` are always present; `yRight` is `Present` only
+          * for dual-axis charts; `plot` is the inner plot rectangle in pixel coordinates.
+          */
+        sealed trait ChartScales:
+            def x: ChartScales.Axis
+            def y: ChartScales.Axis
+            def yRight: Maybe[ChartScales.Axis]
+            def plot: ChartScales.Rect
+        end ChartScales
+
+        object ChartScales:
+
+            /** The inner plot rectangle in pixel coordinates. */
+            final case class Rect(x: Double, y: Double, width: Double, height: Double)
+
+            /** A single axis projection: maps domain values to pixels and back. */
+            sealed trait Axis:
+                /** Map a continuous domain value to its pixel coordinate on this axis. */
+                def toPixel(value: Double): Double
+
+                /** Map a category key to its band pixel coordinate, or `Absent` for non-categorical axes / unknown keys. */
+                def toPixelCategory(key: String): Maybe[Double]
+
+                /** Invert a pixel coordinate back to a resolved domain value. */
+                def invert(pixel: Double): ChartScales.Resolved
+
+                /** The scale family this axis was fitted with. */
+                def kind: ScaleKind
+            end Axis
+
+            /** The inverse of an axis projection: a continuous value or a category key. */
+            enum Resolved derives CanEqual:
+                case Continuous(value: Double)
+                case Category(key: String)
+            end Resolved
+
+            final private case class AxisImpl(scale: kyo.internal.Scale, kind: ScaleKind) extends Axis:
+                def toPixel(value: Double): Double =
+                    scale.apply(kyo.internal.Domain.Continuous(value))
+                def toPixelCategory(key: String): Maybe[Double] =
+                    // Only categorical scales project a category key, and only when the key is actually present.
+                    scale match
+                        case b: kyo.internal.Scale.Band =>
+                            if b.keys.contains(key) then Present(scale.apply(kyo.internal.Domain.Category(key))) else Absent
+                        case o: kyo.internal.Scale.Ordinal =>
+                            if o.keys.contains(key) then Present(scale.apply(kyo.internal.Domain.Category(key))) else Absent
+                        case _ => Absent
+                    end match
+                end toPixelCategory
+                def invert(pixel: Double): ChartScales.Resolved =
+                    scale.invert(pixel) match
+                        case kyo.internal.Domain.Continuous(v) => Resolved.Continuous(v)
+                        case kyo.internal.Domain.Category(k)   => Resolved.Category(k)
+                        case kyo.internal.Domain.Temporal(ms)  => Resolved.Continuous(ms.toDouble)
+            end AxisImpl
+
+            final private case class Impl(x: Axis, y: Axis, yRight: Maybe[Axis], plot: Rect) extends ChartScales
+
+            private def kindOf(scale: kyo.internal.Scale): ScaleKind = scale match
+                case _: kyo.internal.Scale.Band    => ScaleKind.Band
+                case _: kyo.internal.Scale.Log     => ScaleKind.Log
+                case _: kyo.internal.Scale.Linear  => ScaleKind.Linear(0.0, 0.0)
+                case _: kyo.internal.Scale.Time    => ScaleKind.Time
+                case _: kyo.internal.Scale.Ordinal => ScaleKind.Ordinal
+                case _: kyo.internal.Scale.Symlog  => ScaleKind.Symlog
+
+            /** Internal factory used by the lowering to project resolved scales into the public surface. */
+            private[kyo] def from(
+                xs: kyo.internal.Scale,
+                ysL: kyo.internal.Scale,
+                ysR: Maybe[kyo.internal.Scale],
+                plot: Rect
+            ): ChartScales =
+                Impl(
+                    AxisImpl(xs, kindOf(xs)),
+                    AxisImpl(ysL, kindOf(ysL)),
+                    ysR.map(s => AxisImpl(s, kindOf(s))),
+                    plot
+                )
+        end ChartScales
 
     end Ast
 

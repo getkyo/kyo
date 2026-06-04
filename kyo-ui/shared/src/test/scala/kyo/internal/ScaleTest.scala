@@ -30,12 +30,23 @@ class ScaleTest extends Test:
         assert(back == Domain.Continuous(50.0))
     }
 
-    "Scale.fit Linear clamps out-of-range values" in {
-        val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(0.0, 100.0), 0.0, 200.0)
+    "Scale.fit Linear clamps out-of-range values when clamp=true" in {
+        // Phase 6 (WARN-1): clamping is now opt-in via the clamp flag (d3 semantics).
+        // The default (clamp=false) extrapolates; clamp=true pins out-of-range to the bounds.
+        val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(0.0, 100.0), 0.0, 200.0, nice = false, clamp = true)
         // value above max should clamp to rangeHi
         assert(scale.apply(Domain.Continuous(200.0)) == 200.0)
         // value below min should clamp to rangeLo
         assert(scale.apply(Domain.Continuous(-50.0)) == 0.0)
+    }
+
+    "Scale.fit Linear extrapolates out-of-range values when clamp=false (default)" in {
+        // Phase 6 (WARN-1): default clamp=false extrapolates beyond the range.
+        val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(0.0, 100.0), 0.0, 200.0, nice = false)
+        // value above max extrapolates past rangeHi (200): 200.0 -> 400.0
+        assert(scale.apply(Domain.Continuous(200.0)) == 400.0)
+        // value below min extrapolates below rangeLo (0): -50.0 -> -100.0
+        assert(scale.apply(Domain.Continuous(-50.0)) == -100.0)
     }
 
     "Scale.fit Band returns the left edge of band 2 and the center is reconstructable" in {
@@ -142,7 +153,7 @@ class ScaleTest extends Test:
     "INV-011: fitLog over extent [10,1000] sets domainMin == 10.0, not the old 1e-10 floor" in {
         val scale = Scale.fit(Scale.Kind.Log, Extent.continuous(10.0, 1000.0), 0.0, 300.0)
         scale match
-            case Scale.Log(domainMin, _, _, _) =>
+            case Scale.Log(domainMin, _, _, _, _) =>
                 assert(domainMin == 10.0, s"Expected domainMin=10.0 but got $domainMin")
             case other => fail(s"Expected Scale.Log but got $other")
         end match
@@ -150,10 +161,16 @@ class ScaleTest extends Test:
 
     // ---- Phase 2: Clamp (INV-012) ----
 
-    // Test 10: existing Scale.Linear unconditionally clamps out-of-range values.
-    "INV-012: Scale.Linear apply clamps a value beyond domainMax to rangeHi" in {
-        val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(0.0, 10.0), 0.0, 100.0)
+    // Test 10: Scale.Linear with clamp=true pins a value beyond domainMax to rangeHi.
+    "INV-012: Scale.Linear apply clamps a value beyond domainMax to rangeHi when clamp=true" in {
+        val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(0.0, 10.0), 0.0, 100.0, nice = false, clamp = true)
         assert(scale.apply(Domain.Continuous(20.0)) == 100.0, "Expected 100.0 (clamped to rangeHi)")
+    }
+
+    // Test 10b: with clamp=false (default), the same value extrapolates beyond rangeHi.
+    "INV-012: Scale.Linear apply extrapolates a value beyond domainMax when clamp=false" in {
+        val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(0.0, 10.0), 0.0, 100.0, nice = false)
+        assert(scale.apply(Domain.Continuous(20.0)) == 200.0, "Expected 200.0 (extrapolated past rangeHi)")
     }
 
     // Symlog clamp=true: input 20.0 clamped to domainMax=10 before transform.

@@ -246,6 +246,7 @@ private[kyo] object HtmlRenderer:
         attrs.ariaAttrs.toSeq.sortBy(_._1).foreach { case (name, value) =>
             w(sb, s""" aria-$name="${esc(value)}"""")
         }
+        attrs.role.foreach(r => w(sb, s""" role="${esc(r)}""""))
         attrs.dataAttrs.toSeq.sortBy(_._1).foreach { case (name, value) =>
             w(sb, s""" data-$name="${esc(value)}"""")
         }
