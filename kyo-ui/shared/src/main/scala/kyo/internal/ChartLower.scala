@@ -694,15 +694,16 @@ private[kyo] object ChartLower:
             case Present(ScaleKind.Symlog)       => Present(Scale.Kind.Symlog)
             case _                               => Absent
         val xKind = xKindOpt.getOrElse(inferKind(xExt, marks, isX = true))
-        val (xExtFinal, xLoRaw, xHiRaw) = xOverride.flatMap(_.kind) match
+        val (xExtFinal, xLoRaw, xHiRaw, useXNice) = xOverride.flatMap(_.kind) match
             // INV-007: pad applies to an explicit linear domain too (every other arm pads); withPad must win.
+            // An explicit linear x-domain is honored exactly (nice=false), mirroring the y path below.
             case Present(ScaleKind.Linear(domLo, domHi)) =>
-                (padExtent(Extent.Continuous(domLo, domHi), xPad), layout.plotX, layout.plotX + layout.plotW)
-            case _ => (padExtent(xExt, xPad), layout.plotX, layout.plotX + layout.plotW)
+                (padExtent(Extent.Continuous(domLo, domHi), xPad), layout.plotX, layout.plotX + layout.plotW, false)
+            case _ => (padExtent(xExt, xPad), layout.plotX, layout.plotX + layout.plotW, xNice)
         // Swap range bounds when reverse=true so the first datum appears at the far end (D20).
         val (xLo, xHi) = if xReverse then (xHiRaw, xLoRaw) else (xLoRaw, xHiRaw)
         val xClamp     = xOverride.map(_.clamp).getOrElse(false)
-        val xs         = Scale.fit(xKind, xExtFinal, xLo, xHi, nice = xNice, clamp = xClamp)
+        val xs         = Scale.fit(xKind, xExtFinal, xLo, xHi, nice = useXNice, clamp = xClamp)
 
         // Y left scale
         val yExt     = yLeftExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))

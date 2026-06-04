@@ -1044,6 +1044,25 @@ class ChartAxisTest extends Test:
         assert(padX > noPadX, s"Padded first-datum cx ($padX) should be inset past the un-padded cx ($noPadX)")
     }
 
+    // ---- FIX 1: an explicit linear x-domain is honored exactly (no nice-expansion) ----
+
+    "xScale linear with an explicit domain honors it exactly and does not nice-expand it" in {
+        // Data x spans 1..12; an explicit .xScale(_.linear(1.0, 12.0)) must resolve to [1,12].
+        // Before the fix the X path passed nice=true uniformly, so fitLinear nice-expanded
+        // [1,12] to [0,15] (data crammed into part of the plot). This mirrors the Y path,
+        // which already honors an explicit linear domain with nice=false.
+        case class XRow(x: Double, y: Double)
+        val rows    = Chunk.from((1 to 12).map(m => XRow(m.toDouble, m.toDouble)))
+        val spec    = UI.chart(rows)(point(x = _.x, y = _.y)).xScale(_.linear(1.0, 12.0))
+        val (_, sc) = spec.toSvgWithScales
+        sc.x.kind match
+            case ScaleKind.Linear(lo, hi) =>
+                assertClose(lo, 1.0, "explicit x-domain lo (must stay 1.0, not nice-expand to 0.0)")
+                assertClose(hi, 12.0, "explicit x-domain hi (must stay 12.0, not nice-expand to 15.0)")
+            case other => fail(s"Expected ScaleKind.Linear for explicit linear x but got $other")
+        end match
+    }
+
     // ---- Phase 6 Leaf 6 (INV-009): a 7-category band x-axis yields 7 tick labels ----
 
     "a 7-category band x-axis produces 7 tick labels (labelAllBands default)" in {
