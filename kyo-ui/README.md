@@ -18,6 +18,19 @@ import UI.*
 import kyo.*
 import scala.language.implicitConversions
 case class Todo(id: String, text: String, done: Boolean)
+enum Region derives CanEqual, Plottable:
+    case NA, EU, APAC
+opaque type Usd <: Double = Double
+object Usd:
+    def apply(d: Double): Usd = d
+    given Plottable[Usd]      = Plottable.numeric
+    given CanEqual[Usd, Usd]  = CanEqual.derived
+end Usd
+case class Sale(month: String, revenue: Usd, region: Region, lo: Usd, hi: Usd)
+val sales: Chunk[Sale] = Chunk(
+    Sale("Jan", Usd(49800.0), Region.EU, Usd(46000.0), Usd(53000.0)),
+    Sale("Feb", Usd(61200.0), Region.NA, Usd(58000.0), Usd(64000.0))
+)
 ```
 -->
 
@@ -1037,13 +1050,15 @@ end board
 
 ## Charts
 
-A chart is a value of type `Svg.Root`. Drop it into any `UI` container. The marks and channels are named parameters, so the row type is fixed before the lambda is read and no type annotations are needed.
+A chart lowers to a value of type `Svg.Root`. Drop it into any `UI` container. The marks and channels are named parameters, so the row type is fixed before the lambda is read and no type annotations are needed.
 
 ### A first chart
 
-`Chart(data)` opens a chart over a `Chunk[A]`, fixing the row type. The second application `(marks*)` names the visual layers. Configuration methods chain fluently and each returns a copy:
+`UI.chart(data)` opens a chart over a `Chunk[A]`, fixing the row type. The second application `(marks*)` names the visual layers. Configuration methods chain fluently and each returns a copy.
 
-```scala
+The whole Charts section works one running domain, defined once and shared by every example below. Each row is a monthly sale with a `region`, a `revenue`, and a `lo`/`hi` band the variance examples reach for later. The `region` enum derives its `Plottable` instance, and `revenue`/`lo`/`hi` are an opaque `Usd <: Double` whose instance comes from `Plottable.numeric`, so the scales are selected from the field types with no annotation at the call site:
+
+```scala doctest:expect=skipped
 enum Region derives CanEqual, Plottable:
     case NA, EU, APAC
 
@@ -1054,53 +1069,65 @@ object Usd:
     given CanEqual[Usd, Usd]  = CanEqual.derived
 end Usd
 
-case class Sale(month: String, revenue: Usd, region: Region)
+case class Sale(month: String, revenue: Usd, region: Region, lo: Usd, hi: Usd)
 
 val sales: Chunk[Sale] = Chunk(
-    Sale("Jan", Usd(49800.0), Region.EU),
-    Sale("Feb", Usd(61200.0), Region.NA)
+    Sale("Jan", Usd(49800.0), Region.EU, Usd(46000.0), Usd(53000.0)),
+    Sale("Feb", Usd(61200.0), Region.NA, Usd(58000.0), Usd(64000.0))
 )
+```
 
-val chart: Svg.Root =
-    Chart(sales)(
-        bar(x = _.month, y = _.revenue, color = _.region),
-        rule[Sale, Usd](y = RuleValue.Const(Usd(1000.0), summon[Plottable[Usd]]))
+With that domain in scope, the first chart is one `bar` mark over `sales` plus a horizontal `rule` baseline:
+
+```scala
+val firstChart: Svg.Root =
+    UI.chart(sales)(
+        UI.mark.bar(x = _.month, y = _.revenue, color = _.region),
+        UI.mark.rule[Sale, Usd](y = Usd(1000.0))
     )
         .yAxis(_.left.grid.ticks(5).format(v => f"$$$v%,.0f"))
         .legend(_.top)
         .size(640, 360)
         .toSvg
 
-UI.div(UI.h2("Revenue by region"), chart)
+UI.div(UI.h2("Revenue by region"), firstChart)
 ```
+
+The `UI.mark.rule[Sale, Usd](y = Usd(1000.0))` call takes a plain `Usd` where a `RuleValue[Usd]` is expected: the `given constConversion[C: Plottable]: Conversion[C, RuleValue[C]]` lifts it. A `signalConversion` lifts a `Signal[Usd]` the same way, so a reactive threshold needs no wrapper either. Here `.toSvg` lowers the spec explicitly; the `given Conversion[ChartSpec, Svg.Root]` also lowers a spec wherever an `Svg.Root` is expected, so `UI.div(UI.h2(...), spec)` embeds a chart without the explicit call.
 
 ### Marks compose; there is no chart zoo
 
-There is one `Chart` and a list of marks. The mark you pick, and the channels you map onto it, determine the chart type:
+There is one `UI.chart` and a list of marks. The mark you pick, and the channels you map onto it, determine the chart type:
 
 ```scala
-case class DataPoint(label: String, value: Double, weight: Double)
-
-val pts: Chunk[DataPoint] = Chunk(DataPoint("a", 1.0, 3.0), DataPoint("b", 2.0, 5.0))
-
-val barChart: Svg.Root  = Chart(pts)(bar(x = _.label, y = _.value)).toSvg
-val lineChart: Svg.Root = Chart(pts)(line(x = _.label, y = _.value)).toSvg
-val scatter: Svg.Root   = Chart(pts)(point(x = _.value, y = _.weight)).toSvg
+val barChart: Svg.Root  = UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue)).toSvg
+val lineChart: Svg.Root = UI.chart(sales)(UI.mark.line(x = _.month, y = _.revenue)).toSvg
+val scatter: Svg.Root   = UI.chart(sales)(UI.mark.point(x = _.lo, y = _.hi)).toSvg
 ```
 
 A combo chart is two marks in the same list. Marks share the chart's x-scale automatically:
 
 ```scala
-case class Row(month: String, revenue: Double, movingAvg: Double)
-
-val rows: Chunk[Row] = Chunk(Row("Jan", 100.0, 90.0), Row("Feb", 120.0, 110.0))
-
 val combo: Svg.Root =
-    Chart(rows)(
-        bar(x = _.month, y = _.revenue),
-        line(x = _.month, y = _.movingAvg),
-        rule[Row, Double](y = RuleValue.Const(80.0, summon[Plottable[Double]]))
+    UI.chart(sales)(
+        UI.mark.bar(x = _.month, y = _.revenue),
+        UI.mark.line(x = _.month, y = _.hi),
+        UI.mark.rule[Sale, Usd](y = Usd(50000.0))
     ).toSvg
+```
+
+A `point` mark carries `size` (a magnitude scaled by square-root area, so the eye reads area not radius) and `sizePx` (a raw-pixel-radius escape hatch). If you supply both, `size` wins and `sizePx` is silently dropped:
+
+```scala
+val bubbles: Svg.Root =
+    UI.chart(sales)(UI.mark.point(x = _.month, y = _.revenue, size = _.hi)).toSvg
+```
+
+The `symbol` channel selects the glyph for each point from the `UI.Symbol` enum (`circle`, `square`, `triangle`, `diamond`, `cross`). Here every point uses a constant glyph; an accessor could vary it by row:
+
+```scala
+val diamonds: Svg.Root =
+    UI.chart(sales)(UI.mark.point(x = _.lo, y = _.hi, symbol = _ => UI.Symbol.diamond)).toSvg
 ```
 
 ### Named-parameter channels
@@ -1108,68 +1135,37 @@ val combo: Svg.Root =
 Channels are named parameters, not chained method calls. This is what keeps the accessor lambdas inferring without annotations. A chained `.color(by = _.region)` after `bar(...)` would collapse the row type to `Any`; the named form does not:
 
 ```scala
-case class Sale2(month: String, revenue: Double, region: String)
-val s2: Chunk[Sale2] = Chunk.empty
-
 // named parameter: row type inferred before the lambda is read
-val grouped: ChartSpec[Sale2] = Chart(s2)(bar(x = _.month, y = _.revenue, color = _.region))
+val grouped = UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.region))
 
 // stack carries its grouping; normalize is a named parameter
-val stacked: ChartSpec[Sale2]    = Chart(s2)(bar(x = _.month, y = _.revenue, stack = by(_.region)))
-val normalized: ChartSpec[Sale2] = Chart(s2)(bar(x = _.month, y = _.revenue, stack = by(_.region, normalize = true)))
+val stacked    = UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, stack = UI.by(_.region)))
+val normalized = UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, stack = UI.by(_.region, normalize = true)))
 ```
+
+> **Note:** Mark factories gate capability by omission. `bar` has no `symbol` or `size` parameter; `rule` has no `color` or `size`. If a channel is not a parameter on a given mark, the type system rejects any attempt to pass it: there is no runtime flag to check and no silent no-op.
 
 ### Typed values
 
-The scale for a channel is selected by the static type of its accessor. `Plottable` is an open typeclass. The library provides instances for `Int`, `Long`, `Double`, `String`, and `Instant`. Enum types derive instances automatically. Opaque numeric quantities use `Plottable.numeric`:
+The scale for a channel is selected by the static type of its accessor. `Plottable` is an open typeclass. The library provides instances for `Int`, `Long`, `Double`, `String`, and `Instant`. Enum types derive instances automatically (`Region` above gets one from `derives ... Plottable`). Opaque numeric quantities use `Plottable.numeric`, as `Usd` does. So in the running domain `Region` selects a band (categorical) x-scale and `Usd` selects a linear y-scale, with no annotation at the call site:
 
 ```scala
-enum Category derives CanEqual, Plottable:
-    case Alpha, Beta, Gamma
-
-opaque type Kg <: Double = Double
-object Kg:
-    def apply(d: Double): Kg = d
-    given Plottable[Kg]      = Plottable.numeric
-end Kg
-
-case class Item(label: Category, weight: Kg)
-val items: Chunk[Item] = Chunk(Item(Category.Alpha, Kg(1.5)), Item(Category.Beta, Kg(2.0)))
-
-// Category selects a band (categorical) x-scale; Kg selects a linear y-scale
-val weightChart: Svg.Root = Chart(items)(bar(x = _.label, y = _.weight)).toSvg
+// month: String selects a band x-scale; revenue: Usd selects a linear y-scale
+val typedChart: Svg.Root = UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue)).toSvg
 ```
 
-For control over which color each enum case gets, supply a typed total function. The compiler checks exhaustiveness when the argument is a match on a sealed type:
-
-```scala
-enum Zone derives CanEqual, Plottable:
-    case North, South
-
-case class Measure(zone: Zone, value: Double)
-val measures: Chunk[Measure] = Chunk(Measure(Zone.North, 10.0), Measure(Zone.South, 20.0))
-
-val colored: Svg.Root =
-    Chart(measures)(bar(x = _.zone, y = _.value, color = _.zone))
-        .legend(_.colorScale[Zone]:
-            case Zone.North => Style.Color.blue
-            case Zone.South => Style.Color.orange)
-        .toSvg
-```
+A channel over a type with no `Plottable` instance does not compile, so you cannot accidentally plot a `Boolean` or an arbitrary class.
 
 ### Scales, axes, and legends
 
 Scales are inferred from the accessor type and are overridable. Axes and legends appear automatically and are configured through builder lambdas:
 
 ```scala
-case class YearRow(year: Int, revenue: Double)
-val yearRows: Chunk[YearRow] = Chunk(YearRow(2022, 1000.0), YearRow(2023, 2000.0))
-
 val axisChart: Svg.Root =
-    Chart(yearRows)(bar(x = _.year, y = _.revenue))
+    UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.region))
         .xScale(_.band)
-        .yScale(_.linear(0.0, 5000.0))
-        .xAxis(_.bottom.label("Year"))
+        .yScale(_.linear(0.0, 80000.0))
+        .xAxis(_.bottom.label("Month"))
         .yAxis(_.left.grid.ticks(5).format(v => f"$$$v%,.0f"))
         .legend(_.top)
         .theme(_.light)
@@ -1182,103 +1178,175 @@ val axisChart: Svg.Root =
 A mark opts onto the right y-axis with `axis = Axis.Right`. Each axis gets its own independent scale:
 
 ```scala
-case class ComboRow(month: String, revenue: Double, growthPct: Double)
-val comboRows: Chunk[ComboRow] = Chunk(ComboRow("Jan", 1000.0, 5.0), ComboRow("Feb", 1200.0, 7.0))
-
 val twoAxis: Svg.Root =
-    Chart(comboRows)(
-        bar(x = _.month, y = _.revenue),
-        line(x = _.month, y = _.growthPct, axis = Axis.Right)
+    UI.chart(sales)(
+        UI.mark.bar(x = _.month, y = _.revenue),
+        UI.mark.line(x = _.month, y = _.hi, axis = Axis.Right)
     )
         .yAxis(_.left.label("Revenue"))
-        .yAxisRight(_.right.label("Growth %"))
+        .yAxisRight(_.right.label("Upper bound"))
         .toSvg
 ```
 
 ### More one-liners
 
-An `area` mark fills between a y value and the baseline (or between `y0` and `y1` for a band):
+An `area` mark fills between a y value and the baseline:
 
 ```scala
-case class AreaRow(month: String, revenue: Double)
-val areaRows: Chunk[AreaRow] = Chunk(AreaRow("Jan", 1000.0), AreaRow("Feb", 1200.0))
-
-val areaChart: Svg.Root = Chart(areaRows)(area(x = _.month, y = _.revenue)).toSvg
+val areaChart: Svg.Root = UI.chart(sales)(UI.mark.area(x = _.month, y = _.revenue)).toSvg
 ```
 
-A `rule` is a reference line at a constant (or `Signal`-tracked) value; here a horizontal target line:
+A `rule` is a reference line at a constant (or `Signal`-tracked) value; here a horizontal target line. The plain `Usd` lifts to a `RuleValue[Usd]` through the same conversion as before:
 
 ```scala
-case class RuleRow(month: String, revenue: Double)
-val ruleRows: Chunk[RuleRow] = Chunk(RuleRow("Jan", 1000.0), RuleRow("Feb", 1200.0))
-
 val withTarget: Svg.Root =
-    Chart(ruleRows)(
-        line(x = _.month, y = _.revenue),
-        rule[RuleRow, Double](y = RuleValue.Const(1100.0, summon[Plottable[Double]]))
+    UI.chart(sales)(
+        UI.mark.line(x = _.month, y = _.revenue),
+        UI.mark.rule[Sale, Usd](y = Usd(55000.0))
     ).toSvg
 ```
 
 `curve` selects the interpolation between vertices. `Curve.monotone` smooths the line; `Curve.stepAfter` draws a staircase:
 
 ```scala
-case class CurveRow(month: String, revenue: Double)
-val curveRows: Chunk[CurveRow] = Chunk(CurveRow("Jan", 1000.0), CurveRow("Feb", 1200.0))
-
-val smooth: Svg.Root = Chart(curveRows)(line(x = _.month, y = _.revenue, curve = Curve.monotone)).toSvg
+val smooth: Svg.Root = UI.chart(sales)(UI.mark.line(x = _.month, y = _.revenue, curve = Curve.monotone)).toSvg
 ```
 
-`.yScale(_.log)` overrides the inferred scale with a log scale. A time x-axis needs nothing special: just map `x` to an `Instant` accessor (it has a `Plottable` instance):
+`.yScale(_.log)` overrides the inferred scale with a log scale. A time x-axis needs nothing special: map `x` to an `Instant` accessor, which has a `Plottable` instance:
 
 ```scala
 case class Hit(at: Instant, count: Double)
 val hits: Chunk[Hit] = Chunk(Hit(Instant.Epoch, 10.0), Hit(Instant.Epoch + 1.minute, 100.0))
 
-val logOverTime: Svg.Root = Chart(hits)(line(x = _.at, y = _.count)).yScale(_.log).toSvg
+val logOverTime: Svg.Root = UI.chart(hits)(UI.mark.line(x = _.at, y = _.count)).yScale(_.log).toSvg
 ```
+
+### Color scales and themes
+
+The legend's color scale decides how the color channel maps to swatch and mark fills. A categorical scale takes value-equality pairs over a typed key; a category with no matching pair falls back to `Style.Color.blue`:
+
+```scala
+val categorical: Svg.Root =
+    UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.region))
+        .legend(_.colorScale[Region](Region.NA -> Style.Color.blue, Region.EU -> Style.Color.green))
+        .toSvg
+```
+
+A sequential scale interpolates a gradient over a numeric color channel. Each row's value is normalized into `[0, 1]` across the data extent; the mark fills are concrete interpolated colors, never `url(#...)` gradient references:
+
+```scala
+val sequential: Svg.Root =
+    UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.hi))
+        .legend(_.colorScaleSequential(Style.Color.blue, Style.Color.red))
+        .toSvg
+```
+
+`.theme` switches between light and dark and selects a named palette. The palettes live at `UI.Ast.Palette`; `Okabe` is the Okabe-Ito set chosen for color-vision accessibility:
+
+```scala
+val themed: Svg.Root =
+    UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.region))
+        .theme(_.dark.palette(UI.Ast.Palette.Okabe))
+        .toSvg
+```
+
+### Annotations and intervals
+
+A `text` mark stamps a label string at each `(x, y)`; `anchor` controls horizontal alignment:
+
+```scala
+val labeled: Svg.Root =
+    UI.chart(sales)(
+        UI.mark.bar(x = _.month, y = _.revenue),
+        UI.mark.text(x = _.month, y = _.revenue, label = _.region.toString, anchor = UI.TextAnchor.Middle)
+    ).toSvg
+```
+
+An `errorBar` draws a `low`-to-`high` whisker with caps (default `capWidth` near 6 pixels) and a center marker at `y`. It renders plain `Svg.line` and `Svg.circle` with no `<marker>` element:
+
+```scala
+val withError: Svg.Root =
+    UI.chart(sales)(
+        UI.mark.point(x = _.month, y = _.revenue),
+        UI.mark.errorBar(x = _.month, y = _.revenue, low = _.lo, high = _.hi)
+    ).toSvg
+```
+
+An `area` mark also fills a band between `y0` and `y1`. Supply exactly one of `{y}` or `{y0, y1}`; a misconfiguration renders an empty frame rather than crashing:
+
+```scala
+val band: Svg.Root =
+    UI.chart(sales)(UI.mark.area(x = _.month, y0 = _.lo, y1 = _.hi)).toSvg
+```
+
+### Axis chrome, responsive sizing, and accessibility
+
+Config methods chain on the spec. `.responsive(ratio)` makes the root scale to its container at a fixed aspect ratio; `.margins(_.left(80))` widens one plot margin; scale knobs refine the fitted domain; `rotateTicks`/`pad` adjust tick chrome; `.title`/`.desc`/`.ariaLabel` add accessibility markup (`.title` also implies `role="img"` on the root `<svg>`, so assistive tech announces the chart as one image; `.ariaLabel` sets the `aria-label` attribute directly when you need a short override without a visible `<title>`). All accessibility fields default to absent:
+
+```scala
+val a11yChart: Svg.Root =
+    UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue))
+        .responsive(16.0 / 9)
+        .yScale(_.linear(0.0, 80000.0).withNice(true).withClamp(true).withPad(0.05))
+        .xAxis(_.bottom.rotateTicks(45).pad(8))
+        .title("Revenue by region")
+        .desc("Quarterly revenue, EU vs NA")
+        .ariaLabel("Revenue by region bar chart")
+        .toSvg
+```
+
+`.withNice` (or `.noNice`) rounds the fitted domain to tidy human values, such as stretching `[0, 78 432]` to `[0, 80 000]`. It is a `ScaleOverride` knob like `.withClamp` and `.withPad`.
+
+### Reading back scales for overlays
+
+`toSvgWithScales` returns the lowered SVG together with the resolved scales, so you can place overlays at exact chart pixels. `scales.x.toPixel`, `invert`, and `kind` expose the projection both ways:
+
+```scala
+val (overlaySvg, scales)    = UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue)).toSvgWithScales
+val pixelForRevenue: Double = scales.y.toPixel(60000.0)
+```
+
+For a live chart the returned scales reflect the signal value at call time and do not update on later emissions; call `toSvgWithScales` again to recompute.
 
 ### Reactivity
 
 Pass a `Signal[Chunk[A]]` instead of a `Chunk[A]` to get a live chart. The marks region redraws on each emission; the frame, axes, and legend stay put. The marks and channels are identical to the static form:
 
 ```scala
-case class LiveRow(label: String, value: Double) derives CanEqual
-
 val livePage: UI < Async =
     for
-        data <- Signal.initRef(Chunk(LiveRow("a", 1.0), LiveRow("b", 2.0)))
+        data <- Signal.initRef(sales)
     yield
-        val chart: Svg.Root =
-            Chart(data)(bar(x = _.label, y = _.value))
+        val liveChart: Svg.Root =
+            UI.chart(data)(UI.mark.bar(x = _.month, y = _.revenue))
                 .animate(_.ease(300.millis))
                 .toSvg
-        UI.div(chart)
+        UI.div(liveChart)
 ```
+
+`.animate(_.ease(300.millis))` tweens same-structure path morphs but snaps on a structural change, such as a category added or removed; `AnimateConfig.morphSteps` is reserved and not yet consulted.
 
 ### Interaction
 
 Hover and selection are published to `SignalRef`s. The hovered datum becomes an ordinary signal readable anywhere on the page:
 
 ```scala
-case class SaleItem(month: String, revenue: Double) derives CanEqual
-val saleItems: Chunk[SaleItem] = Chunk(SaleItem("Jan", 1000.0), SaleItem("Feb", 1200.0))
-
 val interactivePage: UI < Async =
     for
-        hovered  <- Signal.initRef(Maybe.empty[SaleItem])
-        selected <- Signal.initRef(Maybe.empty[SaleItem])
+        hovered  <- Signal.initRef(Maybe.empty[Sale])
+        selected <- Signal.initRef(Maybe.empty[Sale])
     yield
-        val chart: Svg.Root =
-            Chart(saleItems)(bar(x = _.month, y = _.revenue))
+        val hoverChart: Svg.Root =
+            UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue))
                 .onHover(hovered)
                 .onSelect(selected)
                 .toSvg
         val withTooltip: Svg.Root =
-            Chart(saleItems)(bar(x = _.month, y = _.revenue))
+            UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue))
                 .tooltip(s => s"${s.month}: ${s.revenue}")
                 .toSvg
         UI.div(
-            chart,
+            hoverChart,
             hovered.render(s => UI.div(s.map(i => s"${i.month}: ${i.revenue}").getOrElse("hover a bar"))),
             withTooltip
         )
