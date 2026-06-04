@@ -618,7 +618,6 @@ def kyoTastyEmbeddedTextGenerator(platform: String): Def.Initialize[Task[Seq[Fil
     val outFile = outDir / "EmbeddedText.scala"
     val filesToEmbed = Seq(
         "readme"      -> ("README.md",                                                         IO.read(base / "README.md")),
-        "design"      -> ("DESIGN.md",                                                         IO.read(base / "DESIGN.md")),
         "tasty"       -> ("kyo/Tasty.scala",                                                   IO.read(srcBase / "kyo" / "Tasty.scala")),
         "clsUnpickle" -> ("kyo/internal/tasty/classfile/ClassfileUnpickler.scala",             IO.read(srcBase / "kyo" / "internal" / "tasty" / "classfile" / "ClassfileUnpickler.scala")),
         "onceCell"    -> ("kyo/internal/tasty/symbol/OnceCell.scala",                          IO.read(srcBase / "kyo" / "internal" / "tasty" / "symbol" / "OnceCell.scala")),
@@ -663,7 +662,6 @@ lazy val `kyo-tasty` =
                 val resManaged = (Test / resourceManaged).value
                 val filesToCopy = Seq(
                     (base / "README.md")                                                                -> "README.md",
-                    (base / "DESIGN.md")                                                                -> "DESIGN.md",
                     (srcBase / "kyo" / "Tasty.scala")                                                   -> "kyo/Tasty.scala",
                     (srcBase / "kyo" / "internal" / "tasty" / "classfile" / "ClassfileUnpickler.scala") -> "kyo/internal/tasty/classfile/ClassfileUnpickler.scala",
                     (srcBase / "kyo" / "internal" / "tasty" / "symbol" / "OnceCell.scala")              -> "kyo/internal/tasty/symbol/OnceCell.scala",

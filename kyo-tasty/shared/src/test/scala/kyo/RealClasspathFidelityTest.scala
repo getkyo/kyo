@@ -31,11 +31,6 @@ class RealClasspathFidelityTest extends Test:
         val testDir      = s"$worktreeRoot/kyo-tasty/jvm/src/test/scala/kyo"
         val fidelityFiles = TestClasspaths2.walkFilesWithSuffix(testDir, "FidelityTest.scala") ++
             TestClasspaths2.walkFilesWithSuffix(testDir, "InvariantsTest.scala")
-        val fileCount = fidelityFiles.length
-        assert(
-            fileCount >= 0,
-            s"FidelityTest scan should return non-negative count, found $fileCount"
-        )
         val missing = fidelityFiles.filterNot: p =>
             val src = TestClasspaths2.readFileAsString(p)
             src.contains("TestClasspaths.withClasspath")
