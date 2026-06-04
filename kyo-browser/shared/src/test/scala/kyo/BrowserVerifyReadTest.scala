@@ -308,32 +308,29 @@ class BrowserVerifyReadTest extends BrowserTest:
         }
     }
 
-    // Test 15 (plan scenario 11): scrollPosition settles after a scroll-snap
-    // (pins INV-001 settles). The page has a scroll-snap container with two snap-points at y=0 and y=600.
-    // After triggering a scroll to y=350 (between snap-points), the settled value must be 0 or 600.
-    "scrollPosition settles after a scroll-snap" in run {
+    // Test 15 (plan scenario 11): scrollPosition returns the snapped (settled) window offset, not the
+    // in-flight intermediate. The document itself is the snap scroller: html/body carry
+    // scroll-snap-type:y mandatory with two 800px sections (matching the fixed 800px viewport height),
+    // so window snap points are y=0 and y=800. Scrolling to y=600 (past the 400px midpoint) must snap
+    // to the second section. Browser.scrollPosition must return exactly 800, not 0 or the intermediate 600.
+    "scrollPosition returns the snapped window offset after scroll-snap settles" in run {
         withBrowser {
-            onPage("""<html><body style="margin:0;padding:0;">
-                <div id="container" style="overflow-y:scroll;scroll-snap-type:y mandatory;height:400px;width:400px;">
-                    <div style="scroll-snap-align:start;height:600px;width:400px;background:lightblue;"></div>
-                    <div style="scroll-snap-align:start;height:600px;width:400px;background:lightcoral;"></div>
-                </div>
-                <script>
-                    setTimeout(() => {
-                        document.getElementById('container').scrollTo({top:350, behavior:'smooth'});
-                    }, 100);
-                </script>
-            </body></html>""") {
-                Browser.withConfig(
-                    _.retrySchedule(Schedule.fixed(50.millis).maxDuration(4.seconds))
-                        .assertionStabilityWindow(150.millis)
-                ) {
-                    Browser.eval("window.scrollTo(0,0)").andThen {
-                        Browser.scrollPosition.map { result =>
-                            assert(
-                                result.y == 0 || result.y == 1200,
-                                s"expected scrollY to be settled at a snap point (0 or 1200) but got ${result.y}"
-                            )
+            Browser.setViewport(1280, 800).andThen {
+                onPage("""<html style="margin:0;padding:0;scroll-snap-type:y mandatory;"><body style="margin:0;padding:0;">
+                    <section style="scroll-snap-align:start;height:800px;background:lightblue;"></section>
+                    <section style="scroll-snap-align:start;height:800px;background:lightcoral;"></section>
+                </body></html>""") {
+                    Browser.withConfig(
+                        _.retrySchedule(Schedule.fixed(50.millis).maxDuration(4.seconds))
+                            .assertionStabilityWindow(150.millis)
+                    ) {
+                        Browser.eval("window.scrollTo({top:600,behavior:'instant'})").andThen {
+                            Browser.scrollPosition.map { result =>
+                                assert(
+                                    result.y == 800,
+                                    s"expected scrollY=800 (snapped to second section) but got ${result.y}"
+                                )
+                            }
                         }
                     }
                 }
