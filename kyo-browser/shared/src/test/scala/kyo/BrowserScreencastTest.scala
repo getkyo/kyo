@@ -281,7 +281,7 @@ class BrowserScreencastTest extends BrowserTest:
     // Test 10: aborts on the duration cap while frames stay under maxFrames
     // -------------------------------------------------------------------------
 
-    "screenshotFrames aborts on the duration cap with limit equal to maxDurationMs" in run {
+    "screenshotFrames aborts on the duration cap with reached and limit both in milliseconds" in run {
         withBrowser {
             onPage(spinPage) {
                 Abort.run[BrowserReadException] {
@@ -291,8 +291,18 @@ class BrowserScreencastTest extends BrowserTest:
                 }.map {
                     case Result.Failure(ex: BrowserCaptureLimitExceededException) =>
                         assert(ex.operation == "screenshotFrames", s"unexpected operation ${ex.operation}")
+                        // The duration cap reports BOTH numbers in milliseconds: limit == maxDurationMs, reached == elapsed ms.
                         assert(ex.limit == 300, s"expected limit 300 (duration cap ms) but got ${ex.limit}")
-                        assert(ex.reached <= 10000, s"expected reached within the frame budget but got ${ex.reached}")
+                        // reached is the elapsed ms at the cap, so it must exceed the 300ms limit (that is why the cap fired) and
+                        // stay well under the 800ms window cap. A frame count (a handful of frames) could never satisfy reached > 300.
+                        assert(
+                            ex.reached > ex.limit,
+                            s"expected reached (elapsed ms) to exceed the 300ms limit but got ${ex.reached}"
+                        )
+                        assert(
+                            ex.reached < 10000,
+                            s"expected reached (elapsed ms) under the spin window but got ${ex.reached}"
+                        )
                     case other =>
                         fail(s"expected BrowserCaptureLimitExceededException on the duration cap but got $other")
                 }

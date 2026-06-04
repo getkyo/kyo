@@ -2250,13 +2250,16 @@ object Browser:
 
     /** Scoped wrapper that applies emulated media features for the duration of `body`, then restores the prior state.
       *
-      * The three features compose into a single `Emulation.setEmulatedMedia` send: `media` selects the media type (`screen` /
-      * `print`, omitted when `Absent`); `colorScheme` sets `prefers-color-scheme` (omitted when `Absent`, cleared to its
-      * empty-string default for [[Browser.ColorScheme.NoPreference]] since W3C dropped that value); `reducedMotion` always sends
-      * `prefers-reduced-motion` as `reduce` or `no-preference`. The override is cached on the tab and re-applied (or cleared, when
-      * no prior override was active) on exit via `Scope.acquireRelease` inside an inner `Scope.run`, so nested calls compose in LIFO
-      * order and the restore fires on success, failure, AND interruption. The apply settles via `MutationSettlement.afterAction` so
-      * any media-query re-layout has quiesced before `body` starts.
+      * Only the features the caller actually requests are sent in the single `Emulation.setEmulatedMedia` call: `media` selects the
+      * media type (`screen` / `print`) and is omitted when `Absent`; `colorScheme` sets `prefers-color-scheme` (`light` / `dark`, or
+      * the empty-string clear for [[Browser.ColorScheme.NoPreference]] since W3C dropped that value) and is omitted when `Absent`;
+      * `prefers-reduced-motion` is sent as `reduce` only when `reducedMotion = true` and is omitted otherwise. So a color-scheme-only
+      * call leaves the page's real `prefers-reduced-motion` untouched, and `reducedMotion = false` means "do not emulate reduced
+      * motion", not "force no-preference". The override is cached on the tab and re-applied on exit via `Scope.acquireRelease` inside
+      * an inner `Scope.run`, so nested calls compose in LIFO order and the restore fires on success, failure, AND interruption. When no
+      * prior override was active the restore clears all media emulation with an empty `Emulation.setEmulatedMedia` send, so the host's
+      * real media values return rather than a forced override. The apply settles via `MutationSettlement.afterAction` so any
+      * media-query re-layout has quiesced before `body` starts.
       */
     def withEmulation[A, S](
         colorScheme: Maybe[Browser.ColorScheme] = Absent,
@@ -2264,11 +2267,7 @@ object Browser:
         reducedMotion: Boolean = false
     )(body: A < (Browser & S))(using Frame): A < (Browser & Abort[BrowserReadException] & S) =
         Env.use[BrowserTab] { tab =>
-            val features = Chunk(
-                colorScheme.map(cs => EmulatedMediaFeature("prefers-color-scheme", cs.wire)),
-                Present(EmulatedMediaFeature("prefers-reduced-motion", if reducedMotion then "reduce" else "no-preference"))
-            ).flatMap(_.toChunk)
-            val params = SetEmulatedMediaParams(media.map(_.wire), Present(features.toSeq))
+            val params = emulatedMediaParams(media.map(_.wire), colorScheme.map(_.wire), reducedMotion)
             Scope.run {
                 tab.emulationOverride.get.map { prior =>
                     Scope.acquireRelease(
@@ -2287,34 +2286,45 @@ object Browser:
                                 case Present(s) =>
                                     CdpBackend.setEmulatedMedia(
                                         tab.session,
-                                        SetEmulatedMediaParams(
-                                            s.media,
-                                            Present(Seq(
-                                                EmulatedMediaFeature("prefers-color-scheme", s.colorScheme.getOrElse("")),
-                                                EmulatedMediaFeature(
-                                                    "prefers-reduced-motion",
-                                                    if s.reducedMotion then "reduce" else "no-preference"
-                                                )
-                                            ))
-                                        )
+                                        emulatedMediaParams(s.media, s.colorScheme, s.reducedMotion)
                                     )
                                 case Absent =>
-                                    CdpBackend.setEmulatedMedia(
-                                        tab.session,
-                                        SetEmulatedMediaParams(
-                                            Present(""),
-                                            Present(Seq(
-                                                EmulatedMediaFeature("prefers-color-scheme", ""),
-                                                EmulatedMediaFeature("prefers-reduced-motion", "no-preference")
-                                            ))
-                                        )
-                                    )
+                                    // No prior override: clear all media emulation so the host's real values return. An empty
+                                    // features list with empty media drops every prefers-* override back to the environment value.
+                                    CdpBackend.setEmulatedMedia(tab.session, clearEmulatedMediaParams)
                         )
                     }.andThen(body)
                 }
             }
         }
     end withEmulation
+
+    /** Composes a `SetEmulatedMediaParams` carrying only the features the caller requested.
+      *
+      * `media` becomes the top-level media-type override when `Present`, omitted otherwise. `colorScheme` (already a CDP wire string,
+      * `""` for the [[Browser.ColorScheme.NoPreference]] clear) contributes a `prefers-color-scheme` feature only when `Present`.
+      * `reducedMotion = true` contributes a `prefers-reduced-motion: reduce` feature; `false` contributes nothing, so an unrelated
+      * media feature is never perturbed. Used by both the apply path and the restore-to-a-prior-state path so the two stay in lockstep.
+      */
+    private[kyo] def emulatedMediaParams(
+        media: Maybe[String],
+        colorScheme: Maybe[String],
+        reducedMotion: Boolean
+    ): SetEmulatedMediaParams =
+        val features = Chunk(
+            colorScheme.map(cs => EmulatedMediaFeature("prefers-color-scheme", cs)),
+            if reducedMotion then Present(EmulatedMediaFeature("prefers-reduced-motion", "reduce")) else Absent
+        ).flatMap(_.toChunk)
+        SetEmulatedMediaParams(media, Present(features.toSeq))
+    end emulatedMediaParams
+
+    /** The `SetEmulatedMediaParams` that clears every media-feature override back to the host.
+      *
+      * Empty media plus an empty features list drops every `prefers-*` override back to the environment value, rather than enumerating
+      * each feature (which can silently miss one). Sent by the restore path when no prior override was active.
+      */
+    private[kyo] val clearEmulatedMediaParams: SetEmulatedMediaParams =
+        SetEmulatedMediaParams(Present(""), Present(Seq.empty))
 
     /** Injects a settlement-transparent overlay (a dashed box per annotation, plus a label when one is provided) for the duration of
       * `body`, then removes it on exit.
@@ -3254,8 +3264,10 @@ object Browser:
       *
       * Two bounds protect against an unbounded recording, checked frame-count-first: when the recorded frame count exceeds `maxFrames`,
       * or the elapsed wall-clock time exceeds `maxDurationMs`, the cast is poisoned and the call aborts
-      * [[BrowserCaptureLimitExceededException]] after `body` returns. `Webp` has no screencast codec, so it maps to the `jpeg` codec
-      * (CDP screencast supports `jpeg` and `png` only); the call still succeeds.
+      * [[BrowserCaptureLimitExceededException]] after `body` returns. The exception's two numbers always share one unit: the frame cap
+      * reports `limit = maxFrames` against the frame count reached, and the duration cap reports `limit = maxDurationMs` against the
+      * elapsed milliseconds reached. `Webp` has no screencast codec, so it maps to the `jpeg` codec (CDP screencast supports `jpeg`
+      * and `png` only); the call still succeeds.
       *
       * Implementation: a per-session dispatcher is registered on `screencastEventDispatchers` BEFORE the cast starts. The dispatcher
       * decodes each `Page.screencastFrame`, issues the per-frame `Page.screencastFrameAck` from inside the handler (a detached fiber so
@@ -3283,11 +3295,15 @@ object Browser:
                 case Browser.ScreenshotFormat.Webp => "jpeg"
             Clock.now.map { t0 =>
                 AtomicRef.init(Chunk.empty[Browser.ScreenshotFrame]).map { collected =>
-                    AtomicRef.init(false).map { poisoned =>
+                    // The poison cell, when set, carries the exact `(limit, reached)` pair for the abort, computed at the
+                    // moment the cap is hit so both numbers share one unit: frame counts for the frame cap, milliseconds for
+                    // the duration cap. The first cap to trip wins (the dispatcher only sets the cell when it is still Absent).
+                    AtomicRef.init(Maybe.empty[(Int, Int)]).map { poisoned =>
                         // The dispatcher decodes each frame, acks it from a detached fiber so the reader fiber stays < Sync (the ack
                         // carries Async; Chrome keeps delivering once it sees the ack), appends to `collected`, then checks the caps
-                        // frame-count-first: `cur.size > maxFrames` poisons on the frame bound, otherwise the elapsed-time check
-                        // poisons on the duration bound.
+                        // frame-count-first: `cur.size > maxFrames` poisons on the frame bound (limit = maxFrames, reached = frame
+                        // count); otherwise the elapsed-time check poisons on the duration bound (limit = maxDurationMs, reached =
+                        // elapsed ms), so the two reported numbers always share the same unit.
                         val handler: CdpEvent.Generic => Unit < Sync = ev =>
                             parseScreencastFrame(ev, t0).map {
                                 case Present((frame, sessionId)) =>
@@ -3296,13 +3312,16 @@ object Browser:
                                             CdpBackend.screencastFrameAck(session, ScreencastFrameAckParams(sessionId))
                                         ).unit
                                     ).andThen(collected.updateAndGet(_.append(frame))).map { cur =>
-                                        if cur.size > maxFrames then poisoned.set(true)
+                                        def poison(cap: (Int, Int)): Unit < Sync =
+                                            poisoned.updateAndGet(prev => if prev.isDefined then prev else Present(cap)).unit
+                                        if cur.size > maxFrames then poison((maxFrames, cur.size))
                                         else
                                             Clock.now.map { now =>
-                                                if now.toJava.toEpochMilli - t0.toJava.toEpochMilli > maxDurationMs then
-                                                    poisoned.set(true)
+                                                val elapsedMs = now.toJava.toEpochMilli - t0.toJava.toEpochMilli
+                                                if elapsedMs > maxDurationMs then poison((maxDurationMs.toInt, elapsedMs.toInt))
                                                 else Kyo.unit
                                             }
+                                        end if
                                     }
                                 case Absent => Kyo.unit
                             }
@@ -3323,18 +3342,16 @@ object Browser:
                                         StartScreencastParams(Present(wireFormat), screenshotQuality(format, quality))
                                     ).andThen {
                                         body.map { result =>
-                                            poisoned.get.map { p =>
+                                            poisoned.get.map { cap =>
                                                 collected.get.map { frames =>
-                                                    if p then
-                                                        val limit =
-                                                            if frames.size > maxFrames then maxFrames
-                                                            else maxDurationMs.toInt
-                                                        Abort.fail(BrowserCaptureLimitExceededException(
-                                                            "screenshotFrames",
-                                                            limit,
-                                                            frames.size
-                                                        ))
-                                                    else (frames, result)
+                                                    cap match
+                                                        case Present((limit, reached)) =>
+                                                            Abort.fail(BrowserCaptureLimitExceededException(
+                                                                "screenshotFrames",
+                                                                limit,
+                                                                reached
+                                                            ))
+                                                        case Absent => (frames, result)
                                                 }
                                             }
                                         }

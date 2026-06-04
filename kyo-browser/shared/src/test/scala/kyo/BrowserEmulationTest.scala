@@ -1,6 +1,9 @@
 package kyo
 
 import kyo.internal.BrowserTab
+import kyo.internal.CdpBackend
+import kyo.internal.EmulatedMediaFeature
+import kyo.internal.SetEmulatedMediaParams
 
 class BrowserEmulationTest extends BrowserTest:
 
@@ -108,6 +111,112 @@ class BrowserEmulationTest extends BrowserTest:
                                 restored == Absent,
                                 s"withEmulation did not clear the override on interruption: got $restored"
                             )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // A color-scheme-only withEmulation composes ONLY the prefers-color-scheme feature, so it must not perturb the page's
+    // real prefers-reduced-motion. The body reads matchMedia('(prefers-reduced-motion: reduce)') before and inside the block
+    // and asserts the value is identical, while also confirming the color-scheme emulation actually took effect inside.
+    "withEmulation color-scheme-only leaves prefers-reduced-motion untouched" in run {
+        withBrowser {
+            onPage("<html><body>emulation-cs-only</body></html>") {
+                Browser.eval("String(window.matchMedia('(prefers-reduced-motion: reduce)').matches)").map { hostReduce =>
+                    Browser.withEmulation(colorScheme = Present(Browser.ColorScheme.Dark)) {
+                        Browser.eval("String(window.matchMedia('(prefers-reduced-motion: reduce)').matches)").map { insideReduce =>
+                            Browser.eval("String(window.matchMedia('(prefers-color-scheme: dark)').matches)").map { insideDark =>
+                                assert(
+                                    insideDark == "true",
+                                    s"expected the color-scheme emulation to apply dark inside the body but got $insideDark"
+                                )
+                                assert(
+                                    insideReduce == hostReduce,
+                                    s"color-scheme-only withEmulation must not change prefers-reduced-motion (host=$hostReduce) but got $insideReduce inside the body"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // On scope exit with NO prior emulation, the restore CLEARS all media emulation so the host's real values return, rather than
+    // forcing prefers-reduced-motion: no-preference. To witness the full clear independently of the host's own reduced-motion
+    // value (which is no-preference in headless Chrome), a raw CDP override forces prefers-color-scheme: dark BEFORE the block; the
+    // block's emulationOverride cache is still Absent, so its release takes the clear path. After the block, both prefers-color-scheme
+    // and prefers-reduced-motion report their host values, proving the clear removed every media override, not just some of them.
+    "withEmulation restore with no prior clears all media emulation back to host" in run {
+        withBrowser {
+            onPage("<html><body>emulation-clear</body></html>") {
+                Browser.use { tab =>
+                    // Read the host values first (no emulation active).
+                    Browser.eval("String(window.matchMedia('(prefers-color-scheme: dark)').matches)").map { hostDark =>
+                        Browser.eval("String(window.matchMedia('(prefers-reduced-motion: reduce)').matches)").map { hostReduce =>
+                            // Force a NON-host color-scheme via raw CDP. This bypasses the emulationOverride cache, so the
+                            // withEmulation below still sees prior = Absent and takes the clear path on exit.
+                            CdpBackend.setEmulatedMedia(
+                                tab.session,
+                                SetEmulatedMediaParams(Present(""), Present(Seq(EmulatedMediaFeature("prefers-color-scheme", "dark"))))
+                            ).andThen {
+                                Browser.eval("String(window.matchMedia('(prefers-color-scheme: dark)').matches)").map { forcedDark =>
+                                    Browser.withEmulation(reducedMotion = true) {
+                                        Browser.eval("String(window.matchMedia('(prefers-reduced-motion: reduce)').matches)")
+                                    }.map { insideReduce =>
+                                        Browser.eval("String(window.matchMedia('(prefers-color-scheme: dark)').matches)").map { afterDark =>
+                                            Browser.eval("String(window.matchMedia('(prefers-reduced-motion: reduce)').matches)").map {
+                                                afterReduce =>
+                                                    assert(
+                                                        forcedDark == "true",
+                                                        s"expected the raw override to force dark before the block but got $forcedDark"
+                                                    )
+                                                    assert(
+                                                        insideReduce == "true",
+                                                        s"expected reducedMotion emulation to apply inside the block but got $insideReduce"
+                                                    )
+                                                    assert(
+                                                        afterDark == hostDark,
+                                                        s"expected prefers-color-scheme cleared back to host=$hostDark after the block but got $afterDark"
+                                                    )
+                                                    assert(
+                                                        afterReduce == hostReduce,
+                                                        s"expected prefers-reduced-motion cleared back to host=$hostReduce after the block but got $afterReduce"
+                                                    )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // A nested color-scheme-only withEmulation inside an outer reducedMotion=true block must restore the OUTER reduced-motion on
+    // inner exit, not clear it: the inner exit re-applies the outer's prior state from the per-tab cache. Inside the inner block
+    // the reduced-motion is the host value (the inner color-scheme-only apply replaces the feature set); after the inner exits but
+    // still inside the outer body, prefers-reduced-motion: reduce matches again because the outer state was re-applied.
+    "withEmulation inner color-scheme-only restores the outer reduced-motion on exit" in run {
+        withBrowser {
+            onPage("<html><body>emulation-nested-rm</body></html>") {
+                Browser.withEmulation(reducedMotion = true) {
+                    Browser.eval("String(window.matchMedia('(prefers-reduced-motion: reduce)').matches)").map { outerReduce =>
+                        Browser.withEmulation(colorScheme = Present(Browser.ColorScheme.Dark)) {
+                            Browser.eval("String(window.matchMedia('(prefers-color-scheme: dark)').matches)")
+                        }.map { innerDark =>
+                            Browser.eval("String(window.matchMedia('(prefers-reduced-motion: reduce)').matches)").map { afterInner =>
+                                assert(outerReduce == "true", s"expected the outer reducedMotion emulation to apply but got $outerReduce")
+                                assert(innerDark == "true", s"expected the inner color-scheme emulation to apply dark but got $innerDark")
+                                assert(
+                                    afterInner == "true",
+                                    s"expected the outer reduced-motion restored after the inner color-scheme block exits but got $afterInner"
+                                )
+                            }
                         }
                     }
                 }
