@@ -185,14 +185,87 @@ private[kyo] object ChartLower:
         def plotBaseline: Double = plotY + plotH
     end Layout
 
+    /** Approximate rendered pixel width of one tick-label glyph at the default font size.
+      *
+      * Matches the 7.0px-per-char estimate already used by the tooltip overlay so the auto-margin
+      * math is consistent with the rest of the lowering. The labels are short numeric strings, so a
+      * single average advance is accurate enough to keep the widest label inside the SVG.
+      */
+    private val TickLabelCharW = 7.0
+
+    /** Pixel column reserved for a rotated (vertical) y-axis title, measured from the SVG edge.
+      *
+      * The title is centred at `AxisLabelInset` and rotated -90 degrees, so it occupies a thin vertical
+      * strip about one cap-height wide plus the inset. Reserving this much keeps the title clear of the
+      * tick numbers that sit just inside it.
+      */
+    private val RotatedAxisTitleW = AxisLabelInset + 12.0
+
+    /** Compute the left margin needed so the widest left y-axis tick label (and the rotated axis title,
+      * when present) fits without clipping at the SVG's left edge.
+      *
+      * The tick label STRINGS depend only on the resolved left y-domain and tick count, not on the plot
+      * height, so they can be computed before the final plot rectangle is known: a provisional unit pixel
+      * range yields the same tick VALUES (only `Tick.pixel` differs, which is unused here). The required
+      * margin is `TickLen + gap + widestLabel`, plus the rotated-title column when a left axis label is set.
+      * Returns the configured margin unchanged when it is already wide enough (so existing narrow-label
+      * charts keep byte-identical output).
+      */
+    private def leftAxisMargin[A](spec: ChartSpec[A], configuredLeft: Double)(using Frame): Double =
+        val rowsMaybe: Maybe[Chunk[A]] = spec.data match
+            case DataSource.Static(rs)   => Present(rs)
+            case DataSource.Live(signal) =>
+                // Unsafe: a point-in-time sample of the live signal's current rows, used only to size the
+                // left margin to the labels currently on screen. Pure synchronous read, no suspension.
+                import AllowUnsafe.embrace.danger
+                Present(Sync.Unsafe.evalOrThrow(signal.current))
+        rowsMaybe match
+            case Absent => configuredLeft
+            case Present(rows) =>
+                val cfg = spec.yAxisCfg
+                // Resolve the left y-domain exactly as resolveAllScales does (the pixel range is provisional:
+                // tick VALUES/labels are pixel-range-independent, only Tick.pixel changes).
+                val yExt  = yLeftExtent(rows, spec.marks).getOrElse(Extent.Continuous(0.0, 1.0))
+                val yNice = spec.yScaleOverride.map(_.nice).getOrElse(true)
+                val yKind = spec.yScaleOverride.flatMap(_.kind) match
+                    case Present(ScaleKind.Band)         => Scale.Kind.Band
+                    case Present(ScaleKind.Log)          => Scale.Kind.Log
+                    case Present(ScaleKind.Linear(_, _)) => Scale.Kind.Linear
+                    case Present(ScaleKind.Time)         => Scale.Kind.Time
+                    case Present(ScaleKind.Ordinal)      => Scale.Kind.Ordinal
+                    case Present(ScaleKind.Point)        => Scale.Kind.Point
+                    case Present(ScaleKind.Symlog)       => Scale.Kind.Symlog
+                    case _                               => Scale.Kind.Linear
+                val extFinal: Extent = spec.yScaleOverride.flatMap(_.kind) match
+                    case Present(ScaleKind.Linear(domLo, domHi)) => Extent.Continuous(domLo, domHi)
+                    case Present(ScaleKind.Log) =>
+                        yLeftExtentNoZero(rows, spec.marks).getOrElse(Extent.Continuous(1.0, 10.0))
+                    case _ => yExt
+                val useNice = spec.yScaleOverride.flatMap(_.kind) match
+                    case Present(ScaleKind.Linear(_, _)) => false
+                    case Present(ScaleKind.Log)          => false
+                    case _                               => yNice
+                val scale = Scale.fit(yKind, extFinal, 100.0, 0.0, nice = useNice, clamp = false)
+                val labels = scale.ticks(cfg.tickCount).map: t =>
+                    cfg.tickFormat match
+                        case Present(f) => f(t.value)
+                        case Absent     => t.label
+                val widestLabel = labels.foldLeft(0.0)((mx, s) => math.max(mx, s.length.toDouble * TickLabelCharW))
+                val titleCol    = if cfg.axisLabel.isDefined then RotatedAxisTitleW else 0.0
+                val needed      = TickLen + 4.0 + widestLabel + titleCol
+                math.max(configuredLeft, needed)
+        end match
+    end leftAxisMargin
+
     /** Compute the `Layout` from a chart spec's `size` field.
       *
       * Widens the right margin when a right y-axis is configured so tick labels on the right margin do not overlap
-      * the plot area. Shifts the plot down by `LegendReservedH` when the legend will actually render (not hidden
-      * AND at least one mark carries a color channel) so legend rows sit in reserved space above the plot without
-      * overlapping the bars.
+      * the plot area. Widens the LEFT margin so wide left y-tick labels (e.g. 5-digit values) and a rotated left
+      * axis title fit without clipping at the SVG edge. Shifts the plot down by `LegendReservedH` when the legend
+      * will actually render (not hidden AND at least one mark carries a color channel) so legend rows sit in
+      * reserved space above the plot without overlapping the bars.
       */
-    private def buildLayout(spec: ChartSpec[?]): Layout =
+    private def buildLayout(spec: ChartSpec[?])(using Frame): Layout =
         val (w, h) = spec.chartSize
         val m      = spec.marginsCfg
         // The right-axis layout still needs the extra fixed reserve for dual-axis charts; otherwise use the
@@ -206,19 +279,28 @@ private[kyo] object ChartLower:
             case _: Mark.Rule[?]           => false
             case _: Mark.Text[?, ?, ?]     => false
             case _: Mark.ErrorBar[?, ?, ?] => false
+        // A point mark with a `size` channel emits a size legend (representative sample bubbles). That legend
+        // always sits in the TOP reserved strip, so the plot must be shifted down to make room even when there
+        // is no color legend; otherwise the sample bubbles render over the plotted data (the scatter case).
+        val hasSizeLegend = !spec.legendCfg.isHidden && spec.marks.exists:
+            case m: Mark.Point[?, ?, ?] => m.size.isDefined
+            case _                      => false
         // Reserve margin for the legend on the side it is positioned: Top shifts the plot down (default),
         // Bottom shrinks plot height, Left/Right reserve a column beside the plot.
-        val pos       = if hasLegend then spec.legendCfg.position.getOrElse(LegendPosition.Top) else LegendPosition.Top
-        val topPad    = if hasLegend && pos == LegendPosition.Top then LegendReservedH else 0.0
-        val bottomPad = if hasLegend && pos == LegendPosition.Bottom then LegendReservedH else 0.0
-        val leftPad   = if hasLegend && pos == LegendPosition.Left then LegendColumnW else 0.0
-        val rightPad  = if hasLegend && pos == LegendPosition.Right then LegendColumnW else 0.0
+        val pos        = if hasLegend then spec.legendCfg.position.getOrElse(LegendPosition.Top) else LegendPosition.Top
+        val reserveTop = (hasLegend && pos == LegendPosition.Top) || hasSizeLegend
+        val topPad     = if reserveTop then LegendReservedH else 0.0
+        val bottomPad  = if hasLegend && pos == LegendPosition.Bottom then LegendReservedH else 0.0
+        val leftPad    = if hasLegend && pos == LegendPosition.Left then LegendColumnW else 0.0
+        val rightPad   = if hasLegend && pos == LegendPosition.Right then LegendColumnW else 0.0
+        // Grow the configured left margin so wide left y-tick labels + a rotated left axis title clear the SVG edge.
+        val marginLeft = leftAxisMargin(spec, m.left)
         Layout(
             svgW = w.toDouble,
             svgH = h.toDouble,
-            plotX = m.left + leftPad,
+            plotX = marginLeft + leftPad,
             plotY = m.top + topPad,
-            plotW = w.toDouble - m.left - marginRight - leftPad - rightPad,
+            plotW = w.toDouble - marginLeft - marginRight - leftPad - rightPad,
             plotH = h.toDouble - m.top - topPad - bottomPad - m.bottom
         )
     end buildLayout
@@ -1046,10 +1128,17 @@ private[kyo] object ChartLower:
                 val (magMin, magMax) = foldMag(0, Double.MaxValue, Double.MinValue)
                 if magMin == Double.MaxValue then Chunk.empty
                 else
-                    val scale = SizeScale(magMin, magMax, SizeScale.DefaultRMin, SizeScale.DefaultRMax)
-                    val rMin  = scale.radius(magMin)
-                    val rMax  = scale.radius(magMax)
-                    // Place size bubbles in the legend region after color swatches.
+                    // Representative legend glyphs are sized to FIT the top legend strip (a data point's
+                    // DefaultRMax of 20px would overflow the strip and dip into the plot). Cap the max legend
+                    // radius at half the reserved strip height so both sample bubbles sit entirely in the strip,
+                    // above the plot data area, never over the plotted points.
+                    val legendRMax = (LegendReservedH / 2.0) - 1.0
+                    val legendRMin = SizeScale.DefaultRMin
+                    val scale      = SizeScale(magMin, magMax, legendRMin, legendRMax)
+                    val rMin       = scale.radius(magMin)
+                    val rMax       = scale.radius(magMax)
+                    // Place size bubbles in the TOP legend strip, after any color swatches. legendY is the strip
+                    // centre; with rMax <= strip/2 the bubbles stay within [plotY - LegendReservedH, plotY).
                     val startX  = layout.plotX + colorItemCount.toDouble * 80.0
                     val legendY = MarginTop + LegendReservedH / 2.0
                     val minCirc = Svg.circle

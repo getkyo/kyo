@@ -421,14 +421,15 @@ class ChartAxisTest extends Test:
         val growthX = numOf(growthLabel.svgAttrs.x)
         assert(growthX >= 340.0 && growthX <= 360.0, s"Growth %% label x should be near the right edge [340,360] but was $growthX")
 
-        // The labels must clear the tick numbers: left ticks (TextAnchor.End) sit at x ~= 51 and extend
-        // leftward; the Revenue label centre at ~14 is left of any tick-number right edge.
-        val leftTickLabels = texts.filter(t =>
-            t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End) &&
-                t.svgAttrs.x.exists { case Coord.Num(v) => v < PlotX; case _ => false }
-        )
+        // The labels must clear the tick numbers: left ticks are the End-anchored numeric texts (the rotated
+        // axis labels are Middle-anchored, so anchor=End isolates the tick numbers). The Revenue label centre
+        // at ~14 must be left of every tick-number anchor.
+        // NOTE: the defect-2 fix (visual-review #218) grows the left margin so the 5-digit "50000" tick label
+        // no longer clips the rotated title. The tick-number anchor therefore now sits at ~61 (plotX 70 minus
+        // TickLen+gap), not the old ~51 the pre-fix layout produced; the `< PlotX` (60) filter the old test used
+        // encoded the BUG (it assumed plotX stayed at the default 60), so it is replaced by an anchor-only filter.
+        val leftTickLabels = texts.filter(t => t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
         assert(leftTickLabels.nonEmpty, "Expected left-axis tick numbers")
-        // Revenue label x (~14) must be strictly left of every left tick-number anchor x (~51).
         leftTickLabels.foldLeft(succeed): (_, t) =>
             val tx = numOf(t.svgAttrs.x)
             assert(revenueX < tx, s"Revenue label ($revenueX) must be left of tick number anchor ($tx)")
@@ -1103,6 +1104,137 @@ class ChartAxisTest extends Test:
         // so the datum maps ABOVE the baseline (a smaller y pixel).
         assertClose(yNoPad, Baseline, "un-padded smallest log datum at baseline")
         assert(yPadded < yNoPad, s"Padded log datum y ($yPadded) must be inset above the baseline ($yNoPad)")
+    }
+
+    // ---- Visual-review defect fixes (#218) ----
+
+    /** All `Svg.Circle`s that are DIRECT children of root (frame chrome, e.g. size-legend sample bubbles),
+      * not the per-point data circles which live inside the marks group.
+      */
+    private def frameCirclesIn(root: Svg.Root): Chunk[Svg.Circle] =
+        root.children.flatMap:
+            case c: Svg.Circle => Chunk(c)
+            case _             => Chunk.empty
+
+    case class WideRow(month: String, revenue: Double, growthPct: Double)
+    given CanEqual[WideRow, WideRow] = CanEqual.derived
+
+    // DEFECT 2 (visual-review #218): wide left y-tick labels + a rotated left axis title must not clip at the
+    // left SVG edge. A 5-digit revenue domain forces a "50000"-class tick label; with a left axis title the
+    // left margin must grow so the leftmost tick label stays >= 0 and the plot is pushed right of the labels.
+    "wide 5-digit left y-tick labels + a left axis title do not clip at the SVG edge (defect 2)" in {
+        val rows = Chunk(
+            WideRow("Jan", 45000, 0.0),
+            WideRow("Jun", 83000, 18.6)
+        )
+        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+            .yAxis(_.left.label("Revenue"))
+            .xAxis(_.bottom)
+            .size(360, 240)
+        val root = summon[Conversion[ChartSpec[WideRow], Svg.Root]](spec)
+
+        // The left y-tick labels are right-anchored (TextAnchor.End). A 5-digit label "50000" must appear.
+        val leftTickLabels = frameTextsIn(root).filter(_.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
+        val fiveDigit = leftTickLabels.filter: t =>
+            t.children.headOption match
+                case Some(UI.Ast.Text(s)) => s.count(_.isDigit) >= 5
+                case _                    => false
+        assert(fiveDigit.nonEmpty, s"Expected a 5-digit left tick label; got ${leftTickLabels.flatMap(_.children)}")
+
+        // The widest label is right-anchored at labelX; its leftmost rendered pixel is labelX - width.
+        // Assert it stays inside the SVG (>= 0) so the leading digit is not clipped. Width estimate: 7px/char.
+        val widest = fiveDigit.maxBy: t =>
+            t.children.headOption match
+                case Some(UI.Ast.Text(s)) => s.length
+                case _                    => 0
+        val labelX = numOf(widest.svgAttrs.x)
+        val widthEstimate =
+            (widest.children.headOption match
+                case Some(UI.Ast.Text(s)) => s.length
+                case _                    => 0
+            ) * 7.0
+        val leftmost = labelX - widthEstimate
+        assert(leftmost >= 0.0, s"Leftmost tick-label pixel ($leftmost) clips off the left edge (labelX=$labelX)")
+
+        // The plot must be pushed right of the labels. The left axis SPINE is the vertical frame line with
+        // x1 == x2 and y1 < y2; its x is plotX. The old (bug) layout pinned plotX at the default 60 (so the
+        // "50000" label, right-anchored at x=51, extended left to ~16 and collided with the rotated title at
+        // x=14, clipping the leading digit). The fix grows plotX so the widest label clears the title column.
+        val spineXs = frameLinesIn(root).flatMap: l =>
+            (l.svgAttrs.x1, l.svgAttrs.x2, l.svgAttrs.y1, l.svgAttrs.y2) match
+                case (Present(x1), Present(x2), Present(y1), Present(y2)) if math.abs(x1 - x2) < Tol && y1 < y2 =>
+                    Chunk(x1)
+                case _ => Chunk.empty
+        val plotX = if spineXs.isEmpty then 0.0 else spineXs.min
+        assert(plotX >= 70.0, s"Left margin did not grow for wide labels: plotX=$plotX (default 60)")
+        // The tick label likewise shifted right of its old buggy x=51 (it now sits at plotX - TickLen - 4).
+        assert(labelX > 51.0, s"Tick label x ($labelX) did not move right of the default 51")
+    }
+
+    case class SizeRow(a: Double, b: Double, w: Double)
+    given CanEqual[SizeRow, SizeRow] = CanEqual.derived
+
+    // DEFECT 4 (visual-review #218): a point chart with a size channel must render its size legend as sample
+    // circles OUTSIDE the plot data area, not floating over a data bubble. The plot is shifted down to reserve
+    // a top legend strip; the sample bubbles sit entirely above plotY.
+    "size-legend sample circles render outside the plot data area, above plotY (defect 4)" in {
+        val rows = Chunk(
+            SizeRow(1.2, 3.4, 8.0),
+            SizeRow(5.0, 5.5, 15.0),
+            SizeRow(8.2, 4.0, 6.0)
+        )
+        val spec = UI.chart(rows)(point(x = _.a, y = _.b, size = _.w))
+            .yAxis(_.left.grid)
+            .xAxis(_.bottom)
+            .size(360, 240)
+        val root = summon[Conversion[ChartSpec[SizeRow], Svg.Root]](spec)
+
+        // plotY is where the left axis line starts (its top y). With the top strip reserved it is 40, not 20.
+        val ys1   = frameLinesIn(root).map(_.svgAttrs.y1.getOrElse(0.0)).filter(_ > 0.0)
+        val plotY = if ys1.isEmpty then 0.0 else ys1.min
+        assert(plotY >= 40.0, s"Plot was not shifted down to reserve the size-legend strip: plotY=$plotY")
+
+        // The size legend emits two translucent (fillOpacity 0.5) sample circles in frame chrome.
+        val sampleCircles = frameCirclesIn(root).filter(_.svgAttrs.fillOpacity.contains(0.5))
+        assert(sampleCircles.size == 2, s"Expected 2 size-legend sample circles, got ${sampleCircles.size}")
+
+        // Each sample circle's full extent (center +/- radius) must sit ABOVE the plot data area (cy + r <= plotY),
+        // so it never overlaps a plotted point.
+        sampleCircles.foldLeft(succeed): (_, c) =>
+            val cy = c.svgAttrs.cy.getOrElse(0.0)
+            val r  = c.svgAttrs.r.getOrElse(0.0)
+            assert(cy + r <= plotY, s"Size-legend bubble (cy=$cy r=$r) dips into the plot data area (plotY=$plotY)")
+    }
+
+    case class ComboRow(month: String, revenue: Double, growthPct: Double)
+    given CanEqual[ComboRow, ComboRow] = CanEqual.derived
+
+    // DEFECT 3 (visual-review #218): GUARD. A bar+line combo lists bar THEN line, so spec order must place the
+    // line path AFTER all bar rects in the SVG so the line draws ON TOP of the bars. This was reported as a
+    // possible z-order bug; it is correct already, and this test guards that the spec-order layering holds.
+    "bar+line combo emits the line path after all bar rects (z-order guard, defect 3)" in run {
+        val rows = Chunk(
+            ComboRow("Jan", 45000, 0.0),
+            ComboRow("Feb", 52000, 15.6),
+            ComboRow("Mar", 48000, -7.7)
+        )
+        val spec = UI.chart(rows)(
+            bar(x = _.month, y = _.revenue),
+            line(x = _.month, y = _.growthPct, axis = Axis.Right)
+        )
+            .yAxis(_.left.label("Revenue"))
+            .yAxisRight(_.right.label("Growth %"))
+            .xAxis(_.bottom)
+            .size(360, 240)
+        val root = summon[Conversion[ChartSpec[ComboRow], Svg.Root]](spec)
+        for html <- kyo.internal.HtmlRenderer.render(root, Seq.empty)
+        yield
+            val lastRect  = html.lastIndexOf("<rect")
+            val firstPath = html.indexOf("<path")
+            assert(lastRect >= 0, "expected at least one bar <rect>")
+            assert(firstPath >= 0, "expected a line <path>")
+            assert(firstPath > lastRect, s"line path (idx $firstPath) must come after the last bar rect (idx $lastRect)")
+        end for
     }
 
 end ChartAxisTest
