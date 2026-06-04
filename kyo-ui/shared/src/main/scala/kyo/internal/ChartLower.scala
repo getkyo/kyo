@@ -1946,9 +1946,12 @@ private[kyo] object ChartLower:
                 val colorKeys: Chunk[String] = rows.foldLeft(Chunk.empty[String]): (acc, row) =>
                     val key = colorCh.accessor(row.asInstanceOf[A]).toString
                     if acc.toSeq.contains(key) then acc else acc.append(key)
+                val palette: Chunk[Style.Color] = spec match
+                    case Present(s) => themePalette(s.theme)
+                    case Absent     => DefaultPalette
                 colorKeys.zipWithIndex.map: (key, idx) =>
                     val seriesRows  = rows.filter(r => colorCh.accessor(r).toString == key)
-                    val strokeColor = DefaultPalette.toSeq.apply(idx % DefaultPalette.size)
+                    val strokeColor = palette.toSeq.apply(idx % palette.size)
                     // INV-023: thread interaction into each per-series path.
                     lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor, spec, internalHoverRef)
     end lowerLine

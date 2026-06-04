@@ -383,32 +383,61 @@ class ChartMorphTest extends Test:
     // ---- INV-036 Leaf 3: new series added in second emission snaps in ----
 
     "new series added in second emission snaps in (no false morph from prior slot)" in run {
-        // Emission 1: single-series line (no color channel), key "line-0-0".
-        // Emission 2: color channel added, now two series: key "line-0-0" (prior series) and "line-0-1" (new).
-        // The new series "line-0-1" has no prior entry in fromGeom, so it must snap (no <animate> for it).
-        // The existing series "line-0-0" may morph if its structure is stable.
-        val e1 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-        val e2 = Chunk(Sale("Jan", Rev(1500.0)), Sale("Feb", Rev(2500.0)))
+        // Emission 1: one series (Col.Red only), key "line-0-0", stroke #3b82f6 (blue, idx=0).
+        //   Jan and Feb are present -> 2-point path stored in fromGeom under "line-0-0".
+        // Emission 2: two series (Col.Red + Col.Blue), keys "line-0-0" (Red) and "line-0-1" (Blue).
+        //   Red series (line-0-0): Jan/Feb still present with new y-values -> same command count
+        //     -> MORPHS via SMIL (has <animate attributeName="d">), stroke #3b82f6.
+        //   Blue series (line-0-1): no prior entry in fromGeom -> SNAPS (no <animate>), stroke #f97316.
+        // Asserting that blue-stroked segment contains attributeName="d" and orange-stroked does not
+        // proves the new series does NOT falsely morph off a stale prior slot.
+        val e1 = Chunk(
+            ColSale("Jan", Rev(1000.0), Col.Red),
+            ColSale("Feb", Rev(2000.0), Col.Red)
+        )
+        val e2 = Chunk(
+            ColSale("Jan", Rev(1500.0), Col.Red),
+            ColSale("Feb", Rev(2500.0), Col.Red),
+            ColSale("Jan", Rev(800.0), Col.Blue),
+            ColSale("Feb", Rev(1200.0), Col.Blue)
+        )
         for
             ref <- Signal.initRef(e1)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
-                .yScale(_.linear(0.0, 4000.0))
+            spec = UI.chart(ref: Signal[Chunk[ColSale]])(
+                line(x = _.month, y = _.revenue, color = _.col)
+            ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
-            // Emission 1: record "line-0-0" geometry.
+            root = summon[Conversion[ChartSpec[ColSale], Svg.Root]](spec)
+            // Emission 1: record "line-0-0" (Red, Jan+Feb) in fromGeom.
             _ <- HtmlRenderer.render(root, Seq.empty)
-            // Emission 2: same structure (Jan, Feb still present) with changed y-values.
+            // Emission 2: Red series stable (morphs); Blue series new (snaps).
             _    <- ref.set(e2)
             html <- HtmlRenderer.render(root, Seq.empty)
         yield
-            // The stable series must morph: SMIL fires on "line-0-0".
+            // Split on "<path " to isolate each path element's content.
+            // The first segment (index 0) is pre-path preamble (axes, legend) and is skipped.
+            // Segment 1 starts with the blue (Red series) path attributes; segment 2 with the orange.
+            // The legend's line swatches also use stroke colors but appear in segment 0 only,
+            // so segments 1 and 2 cleanly separate the two series paths.
+            val rawSegments   = html.split("<path ").toSeq
+            val pathSegs      = rawSegments.drop(1) // skip preamble
+            val blueSegment   = pathSegs.find(_.contains("stroke=\"#3b82f6\""))
+            val orangeSegment = pathSegs.find(_.contains("stroke=\"#f97316\""))
+            assert(blueSegment.isDefined, s"INV-036 leaf 3: expected a blue-stroked path (Red series):\n$html")
+            assert(orangeSegment.isDefined, s"INV-036 leaf 3: expected an orange-stroked path (Blue series):\n$html")
+            // Existing Red series (line-0-0) must MORPH: its path segment contains attributeName="d".
             assert(
-                html.contains("attributeName=\"d\""),
-                s"INV-036 leaf 3: stable series must morph after emission 2:\n$html"
+                blueSegment.get.contains("attributeName=\"d\""),
+                s"INV-036 leaf 3: existing Red series must morph (attributeName=d), segment:\n${blueSegment.get}"
             )
-            // Exactly one animate (single series, single path).
+            // New Blue series (line-0-1) must SNAP: its path segment has no <animate at all.
+            assert(
+                !orangeSegment.get.contains("<animate"),
+                s"INV-036 leaf 3: new Blue series must snap (no <animate>), segment:\n${orangeSegment.get}"
+            )
+            // Total animate count must be exactly 1 (only the morphing Red series).
             val animateCount = html.split("<animate").length - 1
-            assert(animateCount == 1, s"INV-036 leaf 3: expected exactly 1 animate, got $animateCount:\n$html")
+            assert(animateCount == 1, s"INV-036 leaf 3: expected exactly 1 <animate total, got $animateCount:\n$html")
         end for
     }
 

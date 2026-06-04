@@ -1526,4 +1526,46 @@ class ChartLowerTest extends Test:
         end for
     }
 
+    // Leaf 14 (WARN-2): static colored line respects theme.palette
+    "static multi-series line uses theme.palette colors, not DefaultPalette, under a custom theme" in run {
+        // Two series via region channel: NA (idx=0) and EU (idx=1).
+        // Custom palette: first color magenta (#ff00ff), second color cyan (#00ffff).
+        // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
+        // With the fix, lowerLine reads themePalette(spec.theme) and must use the custom colors.
+        // Without the fix it reads DefaultPalette and uses #3b82f6/#f97316, failing the assertion.
+        val magenta = Style.Color.hex("#ff00ff").getOrElse(fail("bad hex"))
+        val cyan    = Style.Color.hex("#00ffff").getOrElse(fail("bad hex"))
+        val rows = Chunk(
+            Sale("Jan", Usd(1000), Region.NA),
+            Sale("Feb", Usd(2000), Region.NA),
+            Sale("Jan", Usd(500), Region.EU),
+            Sale("Feb", Usd(1500), Region.EU)
+        )
+        val spec = UI.chart(rows)(line(x = _.month, y = _.revenue, color = _.region))
+            .yScale(_.linear(0.0, 4000.0))
+            .theme(_.palette(Chunk(magenta, cyan)))
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        for html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // Both custom palette colors must appear as stroke attributes.
+            assert(
+                html.contains("stroke=\"#ff00ff\""),
+                s"WARN-2 leaf 14: expected custom first-series stroke #ff00ff (magenta):\n$html"
+            )
+            assert(
+                html.contains("stroke=\"#00ffff\""),
+                s"WARN-2 leaf 14: expected custom second-series stroke #00ffff (cyan):\n$html"
+            )
+            // DefaultPalette blue and orange must NOT appear as path strokes (only custom colors).
+            assert(
+                !html.contains("stroke=\"#3b82f6\""),
+                s"WARN-2 leaf 14: DefaultPalette blue must not appear under a custom palette:\n$html"
+            )
+            assert(
+                !html.contains("stroke=\"#f97316\""),
+                s"WARN-2 leaf 14: DefaultPalette orange must not appear under a custom palette:\n$html"
+            )
+        end for
+    }
+
 end ChartLowerTest
