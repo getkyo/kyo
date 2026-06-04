@@ -171,8 +171,8 @@ object ChartReactiveScales extends KyoApp:
                     line(x = _.x, y = _.y, curve = Curve.monotone),
                     point(x = _.x, y = _.y)
                 )
-                    .yScale(_.linear(0.0, 160.0))
-                    .yAxis(_.left.grid.ticks(4))
+                    .yScale(_.linear(0.0, 200.0))
+                    .yAxis(_.left.grid.ticks(5))
                     .xAxis(_.bottom)
                     .animate(_.ease(800.millis))
                     .size(360, 240)
