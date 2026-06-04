@@ -23,6 +23,64 @@ class ScaleTest extends Test:
         assert(scale.apply(Domain.Continuous(50.0)) == 100.0)
     }
 
+    "Scale.fit Linear nice expands a non-aligned domain to step-aligned bounds [230,390] -> [200,400]" in {
+        // niceTicks(230,390,5) picks step 50; the nice domain must snap DOWN at lo and UP at hi
+        // to the nearest step multiple so the endpoints ARE ticks: floor(230/50)*50=200, ceil(390/50)*50=400.
+        // The top rendered tick then equals domainMax (400), giving the data max (390) headroom and
+        // leaving no bare spine stub above the highest tick.
+        val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(230.0, 390.0), 0.0, 200.0, nice = true)
+        scale match
+            case Scale.Linear(domainMin, domainMax, _, _, _, _) =>
+                assert(domainMin == 200.0, s"Expected domainMin=200.0 but got $domainMin")
+                assert(domainMax == 400.0, s"Expected domainMax=400.0 but got $domainMax")
+            case other => fail(s"Expected Scale.Linear but got $other")
+        end match
+        assert(scale.ticks(5).last.value == 400.0, s"Expected top tick 400.0 but got ${scale.ticks(5).last.value}")
+    }
+
+    "Scale.fit Linear nice expands a signed non-aligned domain [-7.7,27.1] -> [-10,30]" in {
+        // niceTicks(-7.7,27.1,5) picks step 10; floor(-7.7/10)*10=-10, ceil(27.1/10)*10=30.
+        val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(-7.7, 27.1), 0.0, 200.0, nice = true)
+        scale match
+            case Scale.Linear(domainMin, domainMax, _, _, _, _) =>
+                assert(domainMin == -10.0, s"Expected domainMin=-10.0 but got $domainMin")
+                assert(domainMax == 30.0, s"Expected domainMax=30.0 but got $domainMax")
+            case other => fail(s"Expected Scale.Linear but got $other")
+        end match
+        assert(scale.ticks(5).last.value == 30.0, s"Expected top tick 30.0 but got ${scale.ticks(5).last.value}")
+    }
+
+    "Scale.fit Linear nice leaves an already step-aligned domain [0,4000] unchanged" in {
+        // floor/ceil are no-ops when the endpoints already land on step multiples (step 1000),
+        // so an aligned domain must NOT expand.
+        val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(0.0, 4000.0), 0.0, 200.0, nice = true)
+        scale match
+            case Scale.Linear(domainMin, domainMax, _, _, _, _) =>
+                assert(domainMin == 0.0, s"Expected domainMin=0.0 but got $domainMin")
+                assert(domainMax == 4000.0, s"Expected domainMax=4000.0 but got $domainMax")
+            case other => fail(s"Expected Scale.Linear but got $other")
+        end match
+        assert(scale.ticks(5).last.value == 4000.0, s"Expected top tick 4000.0 but got ${scale.ticks(5).last.value}")
+    }
+
+    "Scale.fit Linear nice [10,210] snaps to [0,250] and the top tick equals domainMax" in {
+        // Regression: niceTicks(10,210,5) picks step 50 -> snaps to [0,250]. But niceTicks(0,250,5)
+        // independently recomputes step 100 (ticks 0/100/200, top 200 != 250). The old fitLinear
+        // asserted that the recomputed top tick == snappedHi, which THREW AssertionError here,
+        // crashing the render path. The fix shares the snap step with ticks so the top tick is
+        // always domainMax (250), with NO overshoot and NO crash.
+        val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(10.0, 210.0), 0.0, 200.0, nice = true)
+        scale match
+            case Scale.Linear(domainMin, domainMax, _, _, _, _) =>
+                assert(domainMin == 0.0, s"Expected domainMin=0.0 but got $domainMin")
+                assert(domainMax == 250.0, s"Expected domainMax=250.0 but got $domainMax")
+            case other => fail(s"Expected Scale.Linear but got $other")
+        end match
+        val tickValues = scale.ticks(5).map(_.value)
+        assert(tickValues == Chunk(0.0, 50.0, 100.0, 150.0, 200.0, 250.0), s"Expected 0..250 by 50 but got $tickValues")
+        assert(tickValues.last == 250.0, s"Expected top tick 250.0 (== domainMax) but got ${tickValues.last}")
+    }
+
     "Scale.fit Linear invert round-trips" in {
         val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(0.0, 100.0), 0.0, 200.0)
         val px    = scale.apply(Domain.Continuous(50.0))

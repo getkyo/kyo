@@ -123,10 +123,14 @@ class ChartInvariantsTest extends Test:
         // AxisConfig.pad(0.05) would widen by only 5%: delta = 0.5; domain -> [-0.5,10.5].
         // We verify by rendering with both and checking the resolved scale: the fitted linear scale
         // domain min should be around -2 (not -0.5) confirming ScaleOverride wins.
+        // noNice is required here so the pad difference is observable: nice now snaps to step-aligned
+        // bounds (floor lo / ceil hi to the nice step), and both [-2,12] and [-0.5,10.5] would snap to
+        // the same [-5,15], hiding which pad won. With noNice the resolved domain is the padded extent
+        // verbatim, so [-2,12] (override) is distinguishable from [-0.5,10.5] (AxisConfig).
         case class Row(x: Double, y: Double)
         val rows = Chunk(Row(0.0, 1.0), Row(5.0, 2.0), Row(10.0, 3.0))
         val spec = UI.chart(rows)(bar(x = _.x, y = _.y))
-            .xScale(_.linear(0.0, 10.0).withPad(0.2))
+            .xScale(_.linear(0.0, 10.0).withPad(0.2).noNice)
             .xAxis(_.pad(0.05))
         // Read the resolved x-scale back: ScaleOverride.withPad(0.2) widens [0,10] by 0.2*(10-0)=2 each
         // side -> [-2,12]; AxisConfig.pad(0.05) would give [-0.5,10.5]. The OVERRIDE must win.

@@ -1,6 +1,9 @@
 package kyo.internal
 
+import kyo.Absent
 import kyo.Chunk
+import kyo.Maybe
+import kyo.Present
 import kyo.internal.NumberFormat
 
 /** A resolved mapping from a data domain to a pixel range, with its inverse and tick generator.
@@ -102,7 +105,8 @@ private[kyo] object Scale:
         domainMax: Double,
         rangeLo: Double,
         rangeHi: Double,
-        clamp: Boolean = false
+        clamp: Boolean = false,
+        niceStep: Maybe[Double] = Absent
     ) extends Scale:
 
         def apply(d: Domain): Double = d match
@@ -128,8 +132,56 @@ private[kyo] object Scale:
                 Domain.Continuous(domainMin + t * (domainMax - domainMin))
 
         def ticks(maxTicks: Int): Chunk[Tick] =
-            niceTicks(domainMin, domainMax, maxTicks).map: v =>
-                Tick(v, NumberFormat.double(v), apply(Domain.Continuous(v)))
+            // Emit ticks at exactly `step` from domainMin by multiply-by-index (not accumulation,
+            // to avoid float drift), so the TOP tick is exactly domainMax. The step is chosen to
+            // honor the caller's maxTicks while guaranteeing it divides the domain evenly (top tick
+            // lands on domainMax with no overshoot, no recomputed-step disagreement, no crash).
+            def emit(step: Double): Chunk[Tick] =
+                val count = math.max(0, math.round((domainMax - domainMin) / step).toInt)
+                Chunk.from(0 to count).map: i =>
+                    val v = domainMin + i.toDouble * step
+                    Tick(v, NumberFormat.double(v), apply(Domain.Continuous(v)))
+            end emit
+            niceStep match
+                case Present(fitStep) if fitStep > 0 =>
+                    // niceTicks honors maxTicks but may pick a step that does NOT land on
+                    // domainMax over the widened snapped range (e.g. [0,250] -> step 100 -> top
+                    // tick 200 != 250). fitStep divides the snapped range exactly by construction
+                    // (snappedHi = fitStep*ceil(hi/fitStep)). When the maxTicks-honoring step
+                    // already lands on domainMax, use it directly (byte-identical to the old
+                    // niceTicks output for every non-overshooting domain). Otherwise fall back to
+                    // the fitStep multiple closest to that step, which is guaranteed to land on
+                    // domainMax.
+                    val req     = niceTicks(domainMin, domainMax, maxTicks)
+                    val reqStep = if req.size >= 2 then req(1) - req(0) else fitStep
+                    val span    = domainMax - domainMin
+                    val eps     = math.abs(fitStep) * 1.0e-9
+                    val reqLandsOnMax =
+                        reqStep > 0 && math.abs(math.round(span / reqStep) * reqStep - span) <= eps
+                    if reqLandsOnMax then emit(reqStep)
+                    else
+                        // k = number of fitStep intervals in the snapped span (integer). Choose the
+                        // multiplier m (>= 1) of fitStep whose interval count k/m is nearest the
+                        // requested count, restricted to divisors of k so the top tick stays on
+                        // domainMax. Ties prefer the smaller step (more ticks).
+                        val k       = math.max(1, math.round(span / fitStep).toInt)
+                        val wantInt = math.max(1, maxTicks - 1)
+                        @scala.annotation.tailrec
+                        def bestDivisor(m: Int, best: Int): Int =
+                            if m > k then best
+                            else if k % m == 0 then
+                                val curDist  = math.abs(k / m - wantInt)
+                                val bestDist = math.abs(k / best - wantInt)
+                                bestDivisor(m + 1, if curDist < bestDist then m else best)
+                            else bestDivisor(m + 1, best)
+                        val m = bestDivisor(1, 1)
+                        emit(fitStep * m.toDouble)
+                    end if
+                case _ =>
+                    niceTicks(domainMin, domainMax, maxTicks).map: v =>
+                        Tick(v, NumberFormat.double(v), apply(Domain.Continuous(v)))
+            end match
+        end ticks
 
         def bandwidth: Double = 0.0
     end Linear
@@ -332,17 +384,26 @@ private[kyo] object Scale:
         val (lo, hi) = extent match
             case Extent.Continuous(mn, mx) => (mn, mx)
             case Extent.Categories(keys)   => (0.0, keys.size.toDouble - 1.0)
-        val (nLo, nHi) =
-            if nice then
-                val tks = niceTicks(lo, hi, 5)
-                if tks.isEmpty then (lo, hi)
-                // math.max ensures the domain always contains the data maximum; niceTicks rounds
-                // DOWN to the last nice step (e.g. max=5000 -> last tick=4000 < 5000), so without
-                // the max guard the tallest bar would be clipped to full height and lose magnitude.
-                else (math.min(lo, tks(0)), math.max(hi, tks(tks.size - 1)))
-                end if
-            else (lo, hi)
-        Linear(nLo, nHi, rangeLo, rangeHi, clamp)
+        if nice then
+            val tks  = niceTicks(lo, hi, 5)
+            val step = if tks.size >= 2 then tks(1) - tks(0) else 0.0
+            // Snap the domain to step-aligned bounds (d3 scale.nice() semantics): floor lo and
+            // ceil hi to the nearest multiple of the nice step so the endpoints ARE ticks. The
+            // chosen step is STORED on the scale (niceStep) and reused by Linear.ticks to emit
+            // ticks at exactly that step from domainMin to domainMax. This makes the top tick
+            // equal domainMax for ANY snapped domain. Previously ticks re-derived the step via
+            // niceTicks over the widened range, which could pick a larger step that overshoots
+            // domainMax (e.g. [10,210] snaps to [0,250] but niceTicks(0,250) steps by 100), so
+            // sharing the step removes the disagreement and the former assert/crash entirely.
+            // An already-aligned domain stays unchanged (floor/ceil are no-ops).
+            if step > 0 then
+                val snappedLo = step * math.floor(lo / step)
+                val snappedHi = step * math.ceil(hi / step)
+                Linear(snappedLo, snappedHi, rangeLo, rangeHi, clamp, niceStep = Present(step))
+            else Linear(lo, hi, rangeLo, rangeHi, clamp) // degenerate (lo == hi): niceStep Absent
+            end if
+        else Linear(lo, hi, rangeLo, rangeHi, clamp)
+        end if
     end fitLinear
 
     private def fitLog(extent: Extent, rangeLo: Double, rangeHi: Double, clamp: Boolean): Scale =
