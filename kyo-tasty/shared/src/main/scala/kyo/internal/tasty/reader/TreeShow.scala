@@ -6,6 +6,9 @@ import kyo.Tasty.Name.asString
 /** Produces a human-readable string for a Tree node, resolving Symbols and Types via the Classpath. */
 private[kyo] object TreeShow:
 
+    private def showType(tpe: Tasty.Type, cp: Tasty.Classpath): String =
+        kyo.Tasty.typeShow(tpe)(using cp)
+
     def show(tree: Tasty.Tree, cp: Tasty.Classpath): String =
         tree match
             case Tasty.Tree.Ident(name, _)        => name.asString
@@ -13,7 +16,7 @@ private[kyo] object TreeShow:
             case Tasty.Tree.Apply(fun, args) =>
                 s"${show(fun, cp)}(${args.map(show(_, cp)).mkString(", ")})"
             case Tasty.Tree.TypeApply(fun, args) =>
-                s"${show(fun, cp)}[${args.map(_.show(using cp)).mkString(", ")}]"
+                s"${show(fun, cp)}[${args.map(showType(_, cp)).mkString(", ")}]"
             case Tasty.Tree.Block(stats, expr) =>
                 val parts = stats.map(show(_, cp)) :+ show(expr, cp)
                 parts.mkString("{ ", "; ", " }")
@@ -27,7 +30,7 @@ private[kyo] object TreeShow:
                     case kyo.Maybe.Absent     => ""
                 s"case ${show(pat, cp)}$guardStr => ${show(body, cp)}"
             case Tasty.Tree.Literal(c)       => c.show
-            case Tasty.Tree.New(tpe)         => s"new ${tpe.show(using cp)}"
+            case Tasty.Tree.New(tpe)         => s"new ${showType(tpe, cp)}"
             case Tasty.Tree.Assign(lhs, rhs) => s"${show(lhs, cp)} = ${show(rhs, cp)}"
             case Tasty.Tree.Return(expr, _) =>
                 expr match
@@ -35,7 +38,7 @@ private[kyo] object TreeShow:
                     case kyo.Maybe.Absent     => "return"
             case Tasty.Tree.Throw(expr)         => s"throw ${show(expr, cp)}"
             case Tasty.Tree.Lambda(method, _)   => s"<lambda:${show(method, cp)}>"
-            case Tasty.Tree.Typed(expr, tpe)    => s"(${show(expr, cp)}: ${tpe.show(using cp)})"
+            case Tasty.Tree.Typed(expr, tpe)    => s"(${show(expr, cp)}: ${showType(tpe, cp)})"
             case Tasty.Tree.Inlined(_, _, body) => s"<inlined:${show(body, cp)}>"
             case Tasty.Tree.Try(expr, cases, fin) =>
                 val finStr = fin match
@@ -48,9 +51,9 @@ private[kyo] object TreeShow:
             case Tasty.Tree.Unapply(fun, _, pats) =>
                 s"${show(fun, cp)}(${pats.map(show(_, cp)).mkString(", ")})"
             case Tasty.Tree.ValDef(sym, tpt, _) =>
-                s"val ${sym.name.asString}: ${tpt.show(using cp)}"
+                s"val ${sym.name.asString}: ${showType(tpt, cp)}"
             case Tasty.Tree.DefDef(sym, _, tpt, _) =>
-                s"def ${sym.name.asString}: ${tpt.show(using cp)}"
+                s"def ${sym.name.asString}: ${showType(tpt, cp)}"
             case Tasty.Tree.TypeDef(sym, _)           => s"type ${sym.name.asString}"
             case Tasty.Tree.PackageDef(sym, _)        => s"package ${sym.name.asString}"
             case Tasty.Tree.ClassDef(sym, _)          => s"class ${sym.name.asString}"
@@ -93,10 +96,10 @@ private[kyo] object TreeShow:
             case Tasty.Tree.SelectOuter(qual, name, _, _) => s"${show(qual, cp)}.${name.asString}"
             case Tasty.Tree.Imported(qual)                => show(qual, cp)
             case Tasty.Tree.Renamed(name)                 => name.asString
-            case Tasty.Tree.ByNameTpt(inner)              => s"=> ${inner.show(using cp)}"
+            case Tasty.Tree.ByNameTpt(inner)              => s"=> ${showType(inner, cp)}"
             case Tasty.Tree.Bounded(bound)                => show(bound, cp)
-            case Tasty.Tree.ExplicitTpt(inner)            => inner.show(using cp)
-            case Tasty.Tree.Elided(inner)                 => inner.show(using cp)
+            case Tasty.Tree.ExplicitTpt(inner)            => showType(inner, cp)
+            case Tasty.Tree.Elided(inner)                 => showType(inner, cp)
             case Tasty.Tree.RecThisAddr(addr)             => s"<recthis@$addr>"
             case Tasty.Tree.Unknown(tag, _)               => s"<unknown:$tag>"
         end match

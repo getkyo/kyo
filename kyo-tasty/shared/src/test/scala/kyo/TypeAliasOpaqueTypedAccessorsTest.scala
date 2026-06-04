@@ -114,8 +114,8 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
         val tpB       = makeTypeParam(1, "B", ownerId = 2)
         val typeAlias = makeTypeAlias(2, "Foo", Tasty.Type.Unknown, typeParamIds = Chunk(SymbolId(0), SymbolId(1)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(tpA, tpB, typeAlias)).map: cp =>
-            given Tasty.Classpath                  = cp
-            val tps: Chunk[Tasty.Symbol.TypeParam] = typeAlias.typeParams
+            given Tasty.Classpath = cp
+            val tps               = typeAlias.typeParams.asInstanceOf[Chunk[Tasty.Symbol.TypeParam]]
             assert(tps.length == 2, s"Expected 2 type params but got ${tps.length}")
             import Tasty.Name.asString
             val names = tps.map(_.name.asString).toSet
@@ -215,8 +215,8 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
         val bounds     = Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown)
         val opaqueType = makeOpaqueType(1, "Box", Tasty.Type.Unknown, bounds, typeParamIds = Chunk(SymbolId(0)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(tpA, opaqueType)).map: cp =>
-            given Tasty.Classpath                  = cp
-            val tps: Chunk[Tasty.Symbol.TypeParam] = opaqueType.typeParams
+            given Tasty.Classpath = cp
+            val tps               = opaqueType.typeParams.asInstanceOf[Chunk[Tasty.Symbol.TypeParam]]
             assert(tps.length == 1, s"Expected 1 type param but got ${tps.length}")
             import Tasty.Name.asString
             assert(tps(0).name.asString == "A", s"Expected name A but got ${tps(0).name.asString}")

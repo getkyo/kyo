@@ -19,6 +19,7 @@ private[kyo] object SymbolSignature:
         sym match
             case m: Tasty.Symbol.Method       => methodSig(m)
             case c: Tasty.Symbol.Class        => classlikeSig("class", c)
+            case e: Tasty.Symbol.EnumCase     => classlikeSig("enum case", e)
             case t: Tasty.Symbol.Trait        => classlikeSig("trait", t)
             case o: Tasty.Symbol.Object       => classlikeSig("object", o)
             case v: Tasty.Symbol.Val          => s"val ${v.simpleName}${typeAscription(v.declaredType)}"
@@ -34,34 +35,44 @@ private[kyo] object SymbolSignature:
         end match
     end computeUnsafe
 
-    private def methodSig(m: Tasty.Symbol.Method)(using Tasty.Classpath, AllowUnsafe): String =
+    private def methodSig(m: Tasty.Symbol.Method)(using cp: Tasty.Classpath)(using AllowUnsafe): String =
         val tps =
-            if m.typeParams.isEmpty then ""
-            else m.typeParams.map(_.simpleName).mkString("[", ", ", "]")
-        val plists = m.paramLists.map: pl =>
-            pl.map(p => s"${p.simpleName}: ${renderType(p.declaredType)}").mkString("(", ", ", ")")
+            if m.typeParamIds.isEmpty then ""
+            else m.typeParamIds.map(cp.symbol(_).simpleName).mkString("[", ", ", "]")
+        val plists = m.paramListIds.map: pl =>
+            pl.map: pid =>
+                val p = cp.symbol(pid)
+                p match
+                    case param: Tasty.Symbol.Parameter =>
+                        s"${param.simpleName}: ${renderType(param.declaredType)}"
+                    case other => other.simpleName
+                end match
+            .mkString("(", ", ", ")")
         .mkString
-        val rt = m.returnType match
-            case Maybe.Present(t) => s": ${renderType(t)}"
-            case Maybe.Absent     => ""
+        val rt = m.declaredType match
+            case Maybe.Present(Tasty.Type.Function(_, result, _)) => s": ${renderType(result)}"
+            case Maybe.Present(t)                                 => s": ${renderType(t)}"
+            case Maybe.Absent                                     => ""
         s"def ${m.simpleName}$tps$plists$rt"
     end methodSig
 
-    private def classlikeSig(kw: String, c: Tasty.Symbol.ClassLike)(using Tasty.Classpath): String =
+    private def classlikeSig(kw: String, c: Tasty.Symbol.ClassLike)(using cp: Tasty.Classpath)(using AllowUnsafe): String =
         val tps =
-            if c.typeParams.isEmpty then ""
-            else c.typeParams.map(_.simpleName).mkString("[", ", ", "]")
+            if c.typeParamIds.isEmpty then ""
+            else c.typeParamIds.map(cp.symbol(_).simpleName).mkString("[", ", ", "]")
+        val parentSyms = c.parentTypes.collect:
+            case Tasty.Type.Named(pid) => cp.symbol(pid)
         val parents =
-            if c.parents.isEmpty then ""
-            else " extends " + c.parents.map(_.simpleName).mkString(", ")
+            if parentSyms.isEmpty then ""
+            else " extends " + parentSyms.map(_.simpleName).mkString(", ")
         s"$kw ${c.simpleName}$tps$parents"
     end classlikeSig
 
-    private def typeAscription(t: Maybe[Tasty.Type])(using Tasty.Classpath, AllowUnsafe): String = t match
+    private def typeAscription(t: Maybe[Tasty.Type])(using Tasty.Classpath)(using AllowUnsafe): String = t match
         case Maybe.Present(tp) => s": ${renderType(tp)}"
         case Maybe.Absent      => ""
 
-    private def renderType(t: Tasty.Type)(using cp: Tasty.Classpath, allow: AllowUnsafe): String =
+    private def renderType(t: Tasty.Type)(using cp: Tasty.Classpath)(using AllowUnsafe): String =
         t match
             case Tasty.Type.Named(id) =>
                 // Resolve symbol and produce its FQN string using the unsafe kernel.

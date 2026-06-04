@@ -73,13 +73,13 @@ object ClasspathOrchestrator:
         arena: TypeArena,
         errors: Seq[TastyError],
         placeholders: Chunk[Nothing], // placeholder field; always empty after Phase 07
-        parentsBySymbol: mutable.HashMap[Tasty.Symbol, Chunk[Tasty.Type]],
-        childrenByOwner: mutable.HashMap[Tasty.Symbol, Chunk[Tasty.Symbol]],
-        typeBySymbol: mutable.HashMap[Tasty.Symbol, Tasty.Type],
+        parentsBySymbol: java.util.IdentityHashMap[Tasty.Symbol, Chunk[Tasty.Type]],
+        childrenByOwner: java.util.IdentityHashMap[Tasty.Symbol, Chunk[Tasty.Symbol]],
+        typeBySymbol: java.util.IdentityHashMap[Tasty.Symbol, Tasty.Type],
         commentsBySymbol: Map[Tasty.Symbol, String],
         positionsBySymbol: Map[Tasty.Symbol, Tasty.Position],
-        ownerBySymbol: mutable.HashMap[Tasty.Symbol, Tasty.Symbol],
-        bodyDataByAddr: mutable.HashMap[Tasty.Symbol, (Int, Int)],
+        ownerBySymbol: java.util.IdentityHashMap[Tasty.Symbol, Tasty.Symbol],
+        bodyDataByAddr: java.util.IdentityHashMap[Tasty.Symbol, (Int, Int)],
         sectionBytes: Array[Byte],
         sectionOffset: Int,
         fileNames: Array[Tasty.Name],
@@ -92,13 +92,13 @@ object ClasspathOrchestrator:
         /** F-G-001 fix: per-symbol annotation lists decoded from ANNOTATION modifier blocks. Populated in Phase B by AstUnpickler;
           * consumed by finalizeMerge to write descs(idx).annotations.
           */
-        annotationsBySymbol: mutable.HashMap[Tasty.Symbol, mutable.ArrayBuffer[Tasty.Annotation]],
+        annotationsBySymbol: java.util.IdentityHashMap[Tasty.Symbol, mutable.ArrayBuffer[Tasty.Annotation]],
         /** F-G-002 fix: javaMetadata from the companion .class file, keyed by the partial (pre-finalize) TASTy symbol.
           *
           * Populated during readAndDecodeTastyFile when a same-named .class file exists alongside the .tasty file.
           * Consumed by finalizeMerge to write descs(idx).javaMetadata for TASTy-loaded class symbols.
           */
-        companionJavaMeta: mutable.HashMap[Tasty.Symbol, Tasty.JavaMetadata]
+        companionJavaMeta: java.util.IdentityHashMap[Tasty.Symbol, Tasty.JavaMetadata]
     )
 
     /** Tagged union for results flowing through the result channel.
@@ -126,10 +126,14 @@ object ClasspathOrchestrator:
       * once the merger has drained the result channel.
       */
     final private class MergeState:
-        val fqnIndex: mutable.HashMap[String, Tasty.Symbol]              = mutable.HashMap.empty
-        val packageIndex: mutable.HashMap[String, Tasty.Symbol]          = mutable.HashMap.empty
-        val allSyms: mutable.ArrayBuffer[Tasty.Symbol]                   = mutable.ArrayBuffer.empty
-        val allSymsSet: mutable.HashSet[Tasty.Symbol]                    = mutable.HashSet.empty
+        val fqnIndex: mutable.HashMap[String, Tasty.Symbol]     = mutable.HashMap.empty
+        val packageIndex: mutable.HashMap[String, Tasty.Symbol] = mutable.HashMap.empty
+        val allSyms: mutable.ArrayBuffer[Tasty.Symbol]          = mutable.ArrayBuffer.empty
+        // IdentityHashMap-backed set: placeholder symbols (id=-1) require identity-based containment checks.
+        // Field-based equality (Phase 03) would cause structurally-equal placeholders to collide.
+        val allSymsSet: java.util.Set[Tasty.Symbol] = java.util.Collections.newSetFromMap(
+            new java.util.IdentityHashMap[Tasty.Symbol, java.lang.Boolean]()
+        )
         val topLevelCls: mutable.ArrayBuffer[Tasty.Symbol]               = mutable.ArrayBuffer.empty
         val packages: mutable.ArrayBuffer[Tasty.Symbol]                  = mutable.ArrayBuffer.empty
         val accErrors: mutable.ArrayBuffer[TastyError]                   = mutable.ArrayBuffer.empty
@@ -432,11 +436,15 @@ object ClasspathOrchestrator:
                 // hashCodes vary across JVM runs, making symbol IDs non-deterministic and breaking
                 // byte-equal snapshot idempotency. symbolsInOrder preserves the AstUnpickler traversal
                 // order, which is deterministic given the same input bytes.
-                val seenSyms = new java.util.HashSet[Tasty.Symbol]()
+                // IdentityHashMap-backed set: placeholder symbols require identity-based dedup.
+                // Field-based equality (Phase 03) would cause structurally-equal placeholders to collide.
+                val seenSyms = java.util.Collections.newSetFromMap(
+                    new java.util.IdentityHashMap[Tasty.Symbol, java.lang.Boolean]()
+                )
                 for sym <- fr.symbolsInOrder do
                     if seenSyms.add(sym) then
                         state.allSyms += sym
-                        state.allSymsSet += sym
+                        discard(state.allSymsSet.add(sym))
                 end for
 
                 for (fqn, sym) <- fr.fqns do
@@ -507,7 +515,7 @@ object ClasspathOrchestrator:
                     end if
                     if seenSyms.add(sym) then
                         state.allSyms += sym
-                        state.allSymsSet += sym
+                        discard(state.allSymsSet.add(sym))
                     sym.kind match
                         case Tasty.SymbolKind.Package =>
                             state.packages += sym
@@ -541,15 +549,13 @@ object ClasspathOrchestrator:
                 // Add classSymbol and all member symbols to allSyms for finalizeMerge.
                 // allSymsSet provides O(1) membership checks to avoid the O(N^2) indexOf scan
                 // over the growing global list (critical for JPMS paths with 27k+ classes).
-                if !state.allSymsSet.contains(classSym) then
+                if state.allSymsSet.add(classSym) then
                     state.allSyms += classSym
-                    state.allSymsSet += classSym
                     state.topLevelCls += classSym
                 end if
                 for memberSym <- cfResult.symbols do
-                    if !state.allSymsSet.contains(memberSym) then
+                    if state.allSymsSet.add(memberSym) then
                         state.allSyms += memberSym
-                        state.allSymsSet += memberSym
                 end for
                 // Keep classfile result for parent-type wiring in finalizeMerge.
                 state.javaClassfileResults += ((fqn, cfResult))
@@ -581,10 +587,12 @@ object ClasspathOrchestrator:
             TastyStat.scope.traceSpan("finalize.materializeSymbols") {
                 Sync.Unsafe.defer:
                     // Build a map from partial Symbol -> its final SymbolId (index in allPartial).
-                    val symbolIdMap = new java.util.HashMap[Tasty.Symbol, Int](allPartial.length * 2)
+                    // IdentityHashMap required: placeholder symbols (id=-1) use identity-based keys.
+                    // Field-based equality (Phase 03) would cause structurally-equal placeholders to collide.
+                    val symbolIdMap = new java.util.IdentityHashMap[Tasty.Symbol, Int](allPartial.length * 2)
                     var i           = 0
                     for sym <- allPartial do
-                        symbolIdMap.put(sym, i)
+                        discard(symbolIdMap.put(sym, i))
                         i += 1
                     end for
 
@@ -645,12 +653,12 @@ object ClasspathOrchestrator:
                     end for
 
                     for fr <- fileResults do
-                        for (sym, owner) <- fr.ownerBySymbol do
-                            val symIdx   = symbolIdMap.get(sym)
+                        fr.ownerBySymbol.forEach { (sym, owner) =>
+                            val symIdx   = symbolIdMap.getOrDefault(sym, -1)
                             val ownerIdx = symbolIdMap.getOrDefault(owner, symIdx)
                             if symIdx >= 0 && symIdx < count then
                                 descs(symIdx).ownerId = ownerIdx
-                        end for
+                        }
                     end for
 
                     // Build per-file remapping structures for Phase-B temporary SymbolId resolution.
@@ -801,34 +809,34 @@ object ClasspathOrchestrator:
                     var frIdx2 = 0
                     for fr <- fileResults do
                         val frRemap = fileRemaps(frIdx2)
-                        for (sym, parents) <- fr.parentsBySymbol do
-                            val idx = symbolIdMap.get(sym)
+                        fr.parentsBySymbol.forEach { (sym, parents) =>
+                            val idx = symbolIdMap.getOrDefault(sym, -1)
                             if idx >= 0 && idx < count then
                                 descs(idx).parentTypes = parents.map(remapType(_, frRemap))
-                        end for
+                        }
                         frIdx2 += 1
                     end for
 
                     for fr <- fileResults do
-                        for (sym, children) <- fr.childrenByOwner do
-                            val idx = symbolIdMap.get(sym)
+                        fr.childrenByOwner.forEach { (sym, children) =>
+                            val idx = symbolIdMap.getOrDefault(sym, -1)
                             if idx >= 0 && idx < count then
                                 val typeParams   = children.filter(_.kind == Tasty.SymbolKind.TypeParam)
                                 val declarations = children.filter(_.kind != Tasty.SymbolKind.TypeParam)
                                 descs(idx).typeParamIds = typeParams.map(c => symbolIdMap.getOrDefault(c, -1)).filter(_ >= 0)
                                 descs(idx).declarationIds = declarations.map(c => symbolIdMap.getOrDefault(c, -1)).filter(_ >= 0)
                             end if
-                        end for
+                        }
                     end for
 
                     var frIdx3 = 0
                     for fr <- fileResults do
                         val frRemap3 = fileRemaps(frIdx3)
-                        for (sym, t) <- fr.typeBySymbol do
-                            val idx = symbolIdMap.get(sym)
+                        fr.typeBySymbol.forEach { (sym, t) =>
+                            val idx = symbolIdMap.getOrDefault(sym, -1)
                             if idx >= 0 && idx < count && descs(idx).declaredType.isEmpty then
                                 descs(idx).declaredType = Maybe(remapType(t, frRemap3))
-                        end for
+                        }
                         frIdx3 += 1
                     end for
 
@@ -881,7 +889,7 @@ object ClasspathOrchestrator:
 
                     for fr <- fileResults do
                         for (sym, text) <- fr.commentsBySymbol do
-                            val idx = symbolIdMap.get(sym)
+                            val idx = symbolIdMap.getOrDefault(sym, -1)
                             if idx >= 0 && idx < count && descs(idx).scaladoc.isEmpty then
                                 descs(idx).scaladoc = Maybe(text)
                         end for
@@ -889,7 +897,7 @@ object ClasspathOrchestrator:
 
                     for fr <- fileResults do
                         for (sym, pos) <- fr.positionsBySymbol do
-                            val idx = symbolIdMap.get(sym)
+                            val idx = symbolIdMap.getOrDefault(sym, -1)
                             if idx >= 0 && idx < count && descs(idx).sourcePosition.isEmpty then
                                 descs(idx).sourcePosition = Maybe(pos)
                         end for
@@ -901,14 +909,14 @@ object ClasspathOrchestrator:
                     var frIdxAnn = 0
                     for fr <- fileResults do
                         val frRemapAnn = fileRemaps(frIdxAnn)
-                        for (sym, annBuf) <- fr.annotationsBySymbol do
-                            val idx = symbolIdMap.get(sym)
+                        fr.annotationsBySymbol.forEach { (sym, annBuf) =>
+                            val idx = symbolIdMap.getOrDefault(sym, -1)
                             if idx >= 0 && idx < count then
                                 val remapped = annBuf.map: ann =>
                                     Tasty.Annotation(remapType(ann.annotationType, frRemapAnn), ann.arguments)
                                 descs(idx).annotations = Chunk.from(remapped.toSeq)
                             end if
-                        end for
+                        }
                         frIdxAnn += 1
                     end for
 
@@ -917,11 +925,11 @@ object ClasspathOrchestrator:
                     // Here we look up each partial symbol in symbolIdMap and write into descs(idx).javaMetadata.
                     // HARD RULE 7: this write happens before materializeSymbols converts descriptors to immutable Symbols.
                     for fr <- fileResults do
-                        for (sym, meta) <- fr.companionJavaMeta do
+                        fr.companionJavaMeta.forEach { (sym, meta) =>
                             val idx = symbolIdMap.getOrDefault(sym, -1)
                             if idx >= 0 && idx < count && descs(idx).javaMetadata.isEmpty then
                                 descs(idx).javaMetadata = Maybe(meta)
-                        end for
+                        }
                     end for
 
                     // F-A3-001..004 fix: wire parent types and javaMetadata for standalone classfile symbols.
@@ -1280,8 +1288,10 @@ object ClasspathOrchestrator:
                     end while
 
                     for fr <- fileResults do
-                        for (sym, (bodyStart, bodyEnd)) <- fr.bodyDataByAddr do
-                            val idx = symbolIdMap.get(sym)
+                        fr.bodyDataByAddr.forEach { (sym, bodyData) =>
+                            val bodyStart = bodyData._1
+                            val bodyEnd   = bodyData._2
+                            val idx       = symbolIdMap.getOrDefault(sym, -1)
                             if idx >= 0 && idx < count && bodyStart > 0 && bodyEnd > bodyStart then
                                 descs(idx).body = Maybe(Tasty.SymbolBody(
                                     bodyStart = bodyStart,
@@ -1292,7 +1302,7 @@ object ClasspathOrchestrator:
                                     addrMap = scala.collection.immutable.IntMap.empty
                                 ))
                             end if
-                        end for
+                        }
                     end for
 
                     val finalSymbols = materializeSymbols(descs, count)
@@ -1531,7 +1541,7 @@ object ClasspathOrchestrator:
                                                 // TASTy partial symbol to its FQN; we populate all of them since
                                                 // a single .tasty file may declare exactly one top-level class.
                                                 for (_, sym) <- fr.fqns do
-                                                    fr.companionJavaMeta(sym) = meta
+                                                    discard(fr.companionJavaMeta.put(sym, meta))
                                                 end for
                                             case Maybe.Absent => ()
                                     case _ => ()
@@ -1566,20 +1576,20 @@ object ClasspathOrchestrator:
             TypeArena.canonical(),
             Seq(err),
             Chunk.empty[Nothing],
-            mutable.HashMap.empty[Tasty.Symbol, Chunk[Tasty.Type]],
-            mutable.HashMap.empty[Tasty.Symbol, Chunk[Tasty.Symbol]],
-            mutable.HashMap.empty[Tasty.Symbol, Tasty.Type],
+            new java.util.IdentityHashMap[Tasty.Symbol, Chunk[Tasty.Type]](),
+            new java.util.IdentityHashMap[Tasty.Symbol, Chunk[Tasty.Symbol]](),
+            new java.util.IdentityHashMap[Tasty.Symbol, Tasty.Type](),
             Map.empty,
             Map.empty,
-            mutable.HashMap.empty[Tasty.Symbol, Tasty.Symbol],
-            mutable.HashMap.empty[Tasty.Symbol, (Int, Int)],
+            new java.util.IdentityHashMap[Tasty.Symbol, Tasty.Symbol](),
+            new java.util.IdentityHashMap[Tasty.Symbol, (Int, Int)](),
             Array.empty[Byte],
             0,
             Array.empty[Tasty.Name],
             scala.collection.immutable.IntMap.empty[Tasty.Symbol],
             mutable.HashMap.empty[Int, String],
-            mutable.HashMap.empty[Tasty.Symbol, mutable.ArrayBuffer[Tasty.Annotation]],
-            mutable.HashMap.empty[Tasty.Symbol, Tasty.JavaMetadata]
+            new java.util.IdentityHashMap[Tasty.Symbol, mutable.ArrayBuffer[Tasty.Annotation]](),
+            new java.util.IdentityHashMap[Tasty.Symbol, Tasty.JavaMetadata]()
         )
 
     /** Wrap a synchronous Kyo computation, adding elapsed nanoseconds to `counter` after it completes.
@@ -1666,7 +1676,7 @@ object ClasspathOrchestrator:
                 pass1Result.annotationsBySymbol,
                 // companionJavaMeta is populated by readAndDecodeTastyFile AFTER decodeTastyBytes returns,
                 // so this field starts empty here and is filled in the caller.
-                mutable.HashMap.empty[Tasty.Symbol, Tasty.JavaMetadata]
+                new java.util.IdentityHashMap[Tasty.Symbol, Tasty.JavaMetadata]()
             )
         end for
     end decodeTastyBytes
@@ -1714,15 +1724,16 @@ object ClasspathOrchestrator:
       */
     private def computeFqn(
         sym: Tasty.Symbol,
-        ownerBySymbol: mutable.HashMap[Tasty.Symbol, Tasty.Symbol]
+        ownerBySymbol: java.util.IdentityHashMap[Tasty.Symbol, Tasty.Symbol]
     )(using AllowUnsafe): String =
         import Tasty.Name.asString
         val parts = new scala.collection.mutable.ArrayBuffer[String]()
         var cur   = sym
         // Sentinel: the root symbol owns itself (added as self-ref) or doesn't appear in ownerBySymbol.
-        val visited = new java.util.HashSet[Tasty.Symbol]()
+        // IdentityHashMap used for cycle detection to match ownerBySymbol's identity-based keys.
+        val visited = new java.util.IdentityHashMap[Tasty.Symbol, java.lang.Boolean]()
         var done    = false
-        while !done && cur != null && visited.add(cur) do
+        while !done && cur != null && visited.put(cur, java.lang.Boolean.TRUE) == null do
             val n = cur.name.asString
             if n.nonEmpty then parts.prepend(n)
             // Package symbols store the full dotted package name (e.g. "scala.collection.immutable")
@@ -1730,7 +1741,7 @@ object ClasspathOrchestrator:
             // individual package segments that are already embedded in that flat name, doubling them.
             // Stop here: the flat name is the entire package prefix for this symbol.
             if cur.kind == Tasty.SymbolKind.Package then done = true
-            else cur = ownerBySymbol.getOrElse(cur, null)
+            else cur = ownerBySymbol.get(cur)
         end while
         parts.filter(_.nonEmpty).mkString(".")
     end computeFqn

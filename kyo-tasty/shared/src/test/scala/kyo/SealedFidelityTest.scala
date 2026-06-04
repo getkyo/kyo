@@ -142,10 +142,17 @@ class SealedFidelityTest extends Test:
                         s"but only $asEnumCaseCount matched. " +
                         s"Phase 13 removed `final` from Symbol.Class and routes SymbolKind.EnumCase to Symbol.EnumCase."
                 )
+                // Phase 03 change: Symbol.EnumCase is now a peer of Symbol.Class under Symbol.ClassLike.
+                // EnumCase is NOT a subtype of Symbol.Class (Decision 10 reversed from Phase 13 expectation).
+                val asClassLikeCount = enumCases.count(_.isInstanceOf[Tasty.Symbol.ClassLike])
+                assert(
+                    asClassLikeCount == enumCases.size,
+                    s"Expected Symbol.EnumCase to match Symbol.ClassLike, but $asClassLikeCount out of ${enumCases.size} did"
+                )
                 val asClassCount = enumCases.count(_.isInstanceOf[Tasty.Symbol.Class])
                 assert(
-                    asClassCount == enumCases.size,
-                    s"Expected Symbol.EnumCase to also match Symbol.Class (subtype), but $asClassCount out of ${enumCases.size} did"
+                    asClassCount == 0,
+                    s"Phase 03: Symbol.EnumCase is NOT a subtype of Symbol.Class; expected 0 matches but got $asClassCount"
                 )
                 succeed
             end if

@@ -236,8 +236,8 @@ class ClassLikeAccessorsTest extends Test:
             parentTypes = Chunk(Tasty.Type.Named(SymbolId(0)), Tasty.Type.Named(SymbolId(1)))
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(anyRefSym, traitT, classSym)).map: cp =>
-            given Tasty.Classpath                      = cp
-            val parents: Chunk[Tasty.Symbol.ClassLike] = classSym.parents
+            given Tasty.Classpath            = cp
+            val parents: Chunk[Tasty.Symbol] = classSym.parents
             assert(parents.length == 2, s"Expected 2 parents but got ${parents.length}")
             parents(0) match
                 case c: Tasty.Symbol.Class =>
@@ -267,8 +267,8 @@ class ClassLikeAccessorsTest extends Test:
         val valSym    = makeVal(id = 3, name = "x", ownerId = 0)
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2), SymbolId(3)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1, method2, valSym)).map: cp =>
-            given Tasty.Classpath              = cp
-            val ms: Chunk[Tasty.Symbol.Method] = withDecls.methods
+            given Tasty.Classpath = cp
+            val ms                = withDecls.methods.asInstanceOf[Chunk[Tasty.Symbol.Method]]
             assert(ms.length == 2, s"Expected 2 methods but got ${ms.length}")
             val names = ms.map(_.name.asString).toSet
             assert(names == Set("foo", "bar"), s"Expected foo/bar but got $names")
@@ -287,8 +287,8 @@ class ClassLikeAccessorsTest extends Test:
         val valSym    = makeVal(id = 2, name = "x", ownerId = 0)
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1, valSym)).map: cp =>
-            given Tasty.Classpath           = cp
-            val vs: Chunk[Tasty.Symbol.Val] = withDecls.vals
+            given Tasty.Classpath = cp
+            val vs                = withDecls.vals.asInstanceOf[Chunk[Tasty.Symbol.Val]]
             assert(vs.length == 1, s"Expected 1 val but got ${vs.length}")
             assert(vs(0).name.asString == "x", s"Expected name 'x' but got '${vs(0).name.asString}'")
             succeed
@@ -305,8 +305,8 @@ class ClassLikeAccessorsTest extends Test:
         val varSym    = makeVar(id = 1, name = "y", ownerId = 0)
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, varSym)).map: cp =>
-            given Tasty.Classpath           = cp
-            val vs: Chunk[Tasty.Symbol.Var] = withDecls.vars
+            given Tasty.Classpath = cp
+            val vs                = withDecls.vars.asInstanceOf[Chunk[Tasty.Symbol.Var]]
             assert(vs.length == 1, s"Expected 1 var but got ${vs.length}")
             assert(vs(0).name.asString == "y", s"Expected name 'y' but got '${vs(0).name.asString}'")
             succeed
@@ -324,8 +324,8 @@ class ClassLikeAccessorsTest extends Test:
         val field2    = makeField(id = 2, name = "F2", ownerId = 0)
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, field1, field2)).map: cp =>
-            given Tasty.Classpath             = cp
-            val fs: Chunk[Tasty.Symbol.Field] = withDecls.fields
+            given Tasty.Classpath = cp
+            val fs                = withDecls.fields.asInstanceOf[Chunk[Tasty.Symbol.Field]]
             assert(fs.length == 2, s"Expected 2 fields but got ${fs.length}")
             val names = fs.map(_.name.asString).toSet
             assert(names == Set("F1", "F2"), s"Expected F1/F2 but got $names")
@@ -344,18 +344,18 @@ class ClassLikeAccessorsTest extends Test:
         val innerObject = makeObject(id = 3, name = "InnerO", ownerId = 0)
         val withDecls   = outerClass.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2), SymbolId(3)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, innerClass, innerTrait, innerObject)).map: cp =>
-            given Tasty.Classpath                     = cp
-            val nested: Chunk[Tasty.Symbol.ClassLike] = withDecls.nestedTypes
+            given Tasty.Classpath = cp
+            val nested            = withDecls.nestedTypes.asInstanceOf[Chunk[Tasty.Symbol.ClassLike]]
             assert(nested.length == 3, s"Expected 3 nested types but got ${nested.length}")
             succeed
     }
 
     // Leaf 58: typeAliases
     // Given: class fixture with type A = Int, type B = String
-    // When: c.typeAliases
+    // When: c.declarations.collect { case t: Tasty.Symbol.TypeAlias => t }
     // Then: Chunk[TypeAlias] size 2
     // Pins: INV-005
-    "typeAliases: c.typeAliases returns Chunk[TypeAlias] size 2" in run {
+    "typeAliases: c.declarations.collect { case t: Tasty.Symbol.TypeAlias => t } returns Chunk[TypeAlias] size 2" in run {
         import Tasty.Name.asString
         val classSym   = makeClass(id = 0, name = "Foo", ownerId = 0)
         val typeAlias1 = makeTypeAlias(id = 1, name = "A", ownerId = 0)
@@ -363,7 +363,7 @@ class ClassLikeAccessorsTest extends Test:
         val withDecls  = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, typeAlias1, typeAlias2)).map: cp =>
             given Tasty.Classpath                  = cp
-            val tas: Chunk[Tasty.Symbol.TypeAlias] = withDecls.typeAliases
+            val tas: Chunk[Tasty.Symbol.TypeAlias] = withDecls.declarations.collect { case t: Tasty.Symbol.TypeAlias => t }
             assert(tas.length == 2, s"Expected 2 type aliases but got ${tas.length}")
             val names = tas.map(_.name.asString).toSet
             assert(names == Set("A", "B"), s"Expected A/B but got $names")
@@ -372,17 +372,17 @@ class ClassLikeAccessorsTest extends Test:
 
     // Leaf 59: abstractTypes
     // Given: trait fixture with abstract type X (no body)
-    // When: t.abstractTypes
+    // When: t.declarations.collect { case t: Tasty.Symbol.AbstractType => t }
     // Then: Chunk[AbstractType] size 1
     // Pins: INV-005
-    "abstractTypes: t.abstractTypes returns Chunk[AbstractType] size 1" in run {
+    "abstractTypes: t.declarations.collect { case t: Tasty.Symbol.AbstractType => t } returns Chunk[AbstractType] size 1" in run {
         import Tasty.Name.asString
         val traitSym     = makeTrait(id = 0, name = "MyTrait", ownerId = 0)
         val abstractType = makeAbstractType(id = 1, name = "X", ownerId = 0)
         val withDecls    = traitSym.copy(declarationIds = Chunk(SymbolId(1)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, abstractType)).map: cp =>
             given Tasty.Classpath                     = cp
-            val ats: Chunk[Tasty.Symbol.AbstractType] = withDecls.abstractTypes
+            val ats: Chunk[Tasty.Symbol.AbstractType] = withDecls.declarations.collect { case t: Tasty.Symbol.AbstractType => t }
             assert(ats.length == 1, s"Expected 1 abstract type but got ${ats.length}")
             assert(ats(0).name.asString == "X", s"Expected name 'X' but got '${ats(0).name.asString}'")
             succeed
@@ -390,17 +390,17 @@ class ClassLikeAccessorsTest extends Test:
 
     // Leaf 60: opaqueTypes
     // Given: object fixture with opaque type Money = Long
-    // When: o.opaqueTypes
+    // When: o.declarations.collect { case t: Tasty.Symbol.OpaqueType => t }
     // Then: Chunk[OpaqueType] size 1
     // Pins: INV-005
-    "opaqueTypes: o.opaqueTypes returns Chunk[OpaqueType] size 1" in run {
+    "opaqueTypes: o.declarations.collect { case t: Tasty.Symbol.OpaqueType => t } returns Chunk[OpaqueType] size 1" in run {
         import Tasty.Name.asString
         val objectSym  = makeObject(id = 0, name = "MyObject", ownerId = 0)
         val opaqueType = makeOpaqueType(id = 1, name = "Money", ownerId = 0)
         val withDecls  = objectSym.copy(declarationIds = Chunk(SymbolId(1)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, opaqueType)).map: cp =>
             given Tasty.Classpath                   = cp
-            val ots: Chunk[Tasty.Symbol.OpaqueType] = withDecls.opaqueTypes
+            val ots: Chunk[Tasty.Symbol.OpaqueType] = withDecls.declarations.collect { case t: Tasty.Symbol.OpaqueType => t }
             assert(ots.length == 1, s"Expected 1 opaque type but got ${ots.length}")
             assert(ots(0).name.asString == "Money", s"Expected name 'Money' but got '${ots(0).name.asString}'")
             succeed
@@ -418,8 +418,8 @@ class ClassLikeAccessorsTest extends Test:
         val tpC         = makeTypeParamContra(id = 3, name = "C", ownerId = 0)
         val withTParams = classSym.copy(typeParamIds = Chunk(SymbolId(1), SymbolId(2), SymbolId(3)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withTParams, tpA, tpB, tpC)).map: cp =>
-            given Tasty.Classpath                  = cp
-            val tps: Chunk[Tasty.Symbol.TypeParam] = withTParams.typeParams
+            given Tasty.Classpath = cp
+            val tps               = withTParams.typeParams.asInstanceOf[Chunk[Tasty.Symbol.TypeParam]]
             assert(tps.length == 3, s"Expected 3 type params but got ${tps.length}")
             assert(tps(0).variance == Tasty.Variance.Invariant, s"Expected Invariant for A but got ${tps(0).variance}")
             assert(tps(1).variance == Tasty.Variance.Covariant, s"Expected Covariant for B but got ${tps(1).variance}")
@@ -448,10 +448,10 @@ class ClassLikeAccessorsTest extends Test:
 
     // Leaf 63: constructors-typed
     // Given: class with primary <init> and secondary <init>
-    // When: c.constructors
+    // When: c.methods.collect { case m: Tasty.Symbol.Method if m.name.asString == "<init>" => m }
     // Then: Chunk[Method] size 2; all names == "<init>"
     // Pins: INV-005
-    "constructors-typed: c.constructors returns Chunk[Method] size 2 all named <init>" in run {
+    "constructors-typed: declarations filtered by init name returns Chunk[Method] size 2 all named <init>" in run {
         import Tasty.Name.asString
         val classSym  = makeClass(id = 0, name = "MyCaseClass", ownerId = 0)
         val ctor1     = makeMethod(id = 1, name = "<init>", ownerId = 0)
@@ -459,8 +459,9 @@ class ClassLikeAccessorsTest extends Test:
         val applyM    = makeMethod(id = 3, name = "apply", ownerId = 0)
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2), SymbolId(3)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, ctor1, ctor2, applyM)).map: cp =>
-            given Tasty.Classpath                 = cp
-            val ctors: Chunk[Tasty.Symbol.Method] = withDecls.constructors
+            given Tasty.Classpath = cp
+            val ctors: Chunk[Tasty.Symbol.Method] =
+                withDecls.methods.collect { case m: Tasty.Symbol.Method if m.name.asString == "<init>" => m }
             assert(ctors.length == 2, s"Expected 2 constructors but got ${ctors.length}")
             assert(
                 ctors.map(_.name.asString).forall(_ == "<init>"),
@@ -481,8 +482,8 @@ class ClassLikeAccessorsTest extends Test:
             parentTypes = Chunk(Tasty.Type.Named(SymbolId(0)))
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(traitU, traitT)).map: cp =>
-            given Tasty.Classpath                      = cp
-            val parents: Chunk[Tasty.Symbol.ClassLike] = traitT.parents
+            given Tasty.Classpath            = cp
+            val parents: Chunk[Tasty.Symbol] = traitT.parents
             assert(parents.length == 1, s"Expected 1 parent but got ${parents.length}")
             parents(0) match
                 case t: Tasty.Symbol.Trait =>
@@ -559,16 +560,16 @@ class ClassLikeAccessorsTest extends Test:
         )
         assert(classSym.isFinal, "classSym.isFinal must be true")
         assert(classSym.isCase, "classSym.isCase must be true")
-        assert(classSym.isClass, "classSym.isClass must be true")
-        assert(classSym.isClassLike, "classSym.isClassLike must be true")
-        assert(!classSym.isTrait, "classSym.isTrait must be false")
-        assert(!classSym.isMethod, "classSym.isMethod must be false")
+        assert(classSym.isInstanceOf[Tasty.Symbol.Class], "classSym.isInstanceOf[Tasty.Symbol.Class] must be true")
+        assert(classSym.isInstanceOf[Tasty.Symbol.ClassLike], "classSym.isInstanceOf[Tasty.Symbol.ClassLike] must be true")
+        assert(!classSym.isInstanceOf[Tasty.Symbol.Trait], "classSym.isInstanceOf[Tasty.Symbol.Trait] must be false")
+        assert(!classSym.isInstanceOf[Tasty.Symbol.Method], "classSym.isInstanceOf[Tasty.Symbol.Method] must be false")
         assert(traitSym.isAbstract, "traitSym.isAbstract must be true")
         assert(traitSym.isSealed, "traitSym.isSealed must be true")
-        assert(traitSym.isTrait, "traitSym.isTrait must be true")
-        assert(traitSym.isClassLike, "traitSym.isClassLike must be true")
-        assert(!traitSym.isClass, "traitSym.isClass must be false")
-        assert(!traitSym.isObject, "traitSym.isObject must be false")
+        assert(traitSym.isInstanceOf[Tasty.Symbol.Trait], "traitSym.isInstanceOf[Tasty.Symbol.Trait] must be true")
+        assert(traitSym.isInstanceOf[Tasty.Symbol.ClassLike], "traitSym.isInstanceOf[Tasty.Symbol.ClassLike] must be true")
+        assert(!traitSym.isInstanceOf[Tasty.Symbol.Class], "traitSym.isInstanceOf[Tasty.Symbol.Class] must be false")
+        assert(!traitSym.isInstanceOf[Tasty.Symbol.Object], "traitSym.isInstanceOf[Tasty.Symbol.Object] must be false")
         succeed
     }
 

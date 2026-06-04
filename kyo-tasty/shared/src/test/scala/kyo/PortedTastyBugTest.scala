@@ -79,7 +79,7 @@ class PortedTastyBugTest extends Test:
                     val outerTpe = Tasty.Type.Named(o.id)
                     val supTpe   = Tasty.Type.Named(s.id)
                     // Outer is unrelated to SuperClass: must return NotSub or Unknown, never loop.
-                    val verdict = outerTpe.isSubtypeOf(supTpe)
+                    val verdict = Tasty.isSubtypeOf(outerTpe, supTpe)
                     assert(verdict != null, "subtype query must return a verdict, not loop")
                     succeed
                 case _ =>
@@ -158,7 +158,7 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findObject(s"$FixturePkg.PortedBug415Holder") match
                 case kyo.Maybe.Present(holder) =>
-                    val methods = holder.declarations.filter(_.isMethod)
+                    val methods = holder.declarations.filter(_.isInstanceOf[Tasty.Symbol.Method])
                     assert(
                         methods.exists(_.name.asString == "makeF"),
                         s"makeF must be visible; got ${methods.map(_.name.asString)}"
@@ -494,7 +494,10 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findClass(s"$FixturePkg.PortedBug405ParamValueClass") match
                 case kyo.Maybe.Present(cls) =>
-                    val ctors = cls.constructors
+                    val ctors =
+                        cls.declarations.filter(s => s.isInstanceOf[Tasty.Symbol.Method] && s.simpleName == "<init>").asInstanceOf[Chunk[
+                            Tasty.Symbol.Method
+                        ]]
                     assert(ctors.nonEmpty, "constructor must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug405ParamValueClass missing")
@@ -528,7 +531,10 @@ class PortedTastyBugTest extends Test:
             given Tasty.Classpath = cp
             cp.findClass(s"$FixturePkg.PortedBug80UsesRawAware") match
                 case kyo.Maybe.Present(cls) =>
-                    val ctors = cls.constructors
+                    val ctors =
+                        cls.declarations.filter(s => s.isInstanceOf[Tasty.Symbol.Method] && s.simpleName == "<init>").asInstanceOf[Chunk[
+                            Tasty.Symbol.Method
+                        ]]
                     assert(ctors.nonEmpty, "constructor must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug80UsesRawAware missing")

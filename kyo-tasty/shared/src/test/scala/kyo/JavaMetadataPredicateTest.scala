@@ -27,11 +27,11 @@ class JavaMetadataPredicateTest extends Test:
     // Then: true, true, false
     "Leaf 170: isJvmPublic and isJvmStatic true for 0x0009; isJvmFinal false" in run {
         val m = meta(0x0001 | 0x0008)
-        assert(m.isJvmPublic, "isJvmPublic must be true for 0x0001")
-        assert(m.isJvmStatic, "isJvmStatic must be true for 0x0008")
-        assert(!m.isJvmFinal, "isJvmFinal must be false")
-        assert(!m.isJvmPrivate, "isJvmPrivate must be false")
-        assert(!m.isJvmProtected, "isJvmProtected must be false")
+        assert((m.accessFlags & 0x0001) != 0, "isJvmPublic must be true for 0x0001")
+        assert((m.accessFlags & 0x0008) != 0, "isJvmStatic must be true for 0x0008")
+        assert(!((m.accessFlags & 0x0010) != 0), "isJvmFinal must be false")
+        assert(!((m.accessFlags & 0x0002) != 0), "isJvmPrivate must be false")
+        assert(!((m.accessFlags & 0x0004) != 0), "isJvmProtected must be false")
         succeed
     }
 
@@ -41,33 +41,33 @@ class JavaMetadataPredicateTest extends Test:
     // Then: isJvmPrivate == true; others false
     "Leaf 171: isJvmPrivate true for 0x0002; others false" in run {
         val m = meta(0x0002)
-        assert(m.isJvmPrivate, "isJvmPrivate must be true for 0x0002")
-        assert(!m.isJvmPublic, "isJvmPublic must be false")
-        assert(!m.isJvmProtected, "isJvmProtected must be false")
-        assert(!m.isJvmStatic, "isJvmStatic must be false")
-        assert(!m.isJvmFinal, "isJvmFinal must be false")
+        assert((m.accessFlags & 0x0002) != 0, "isJvmPrivate must be true for 0x0002")
+        assert(!((m.accessFlags & 0x0001) != 0), "isJvmPublic must be false")
+        assert(!((m.accessFlags & 0x0004) != 0), "isJvmProtected must be false")
+        assert(!((m.accessFlags & 0x0008) != 0), "isJvmStatic must be false")
+        assert(!((m.accessFlags & 0x0010) != 0), "isJvmFinal must be false")
         succeed
     }
 
     // Additional: isJvmFinal
     "Leaf 171b: isJvmFinal true for 0x0010; others false" in run {
         val m = meta(0x0010)
-        assert(m.isJvmFinal, "isJvmFinal must be true for 0x0010")
-        assert(!m.isJvmPublic)
-        assert(!m.isJvmPrivate)
-        assert(!m.isJvmProtected)
-        assert(!m.isJvmStatic)
+        assert((m.accessFlags & 0x0010) != 0, "isJvmFinal must be true for 0x0010")
+        assert(!((m.accessFlags & 0x0001) != 0))
+        assert(!((m.accessFlags & 0x0002) != 0))
+        assert(!((m.accessFlags & 0x0004) != 0))
+        assert(!((m.accessFlags & 0x0008) != 0))
         succeed
     }
 
     // Additional: isJvmProtected
     "Leaf 171c: isJvmProtected true for 0x0004" in run {
         val m = meta(0x0004)
-        assert(m.isJvmProtected, "isJvmProtected must be true for 0x0004")
-        assert(!m.isJvmPublic)
-        assert(!m.isJvmPrivate)
-        assert(!m.isJvmStatic)
-        assert(!m.isJvmFinal)
+        assert((m.accessFlags & 0x0004) != 0, "isJvmProtected must be true for 0x0004")
+        assert(!((m.accessFlags & 0x0001) != 0))
+        assert(!((m.accessFlags & 0x0002) != 0))
+        assert(!((m.accessFlags & 0x0008) != 0))
+        assert(!((m.accessFlags & 0x0010) != 0))
         succeed
     }
 

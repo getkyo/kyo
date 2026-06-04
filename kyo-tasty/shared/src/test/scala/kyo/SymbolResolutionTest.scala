@@ -402,12 +402,17 @@ class SymbolResolutionTest extends Test:
                 val _vars: Chunk[Tasty.Symbol]       = sym.vars
                 val _fields: Chunk[Tasty.Symbol]     = sym.fields
                 val _nested: Chunk[Tasty.Symbol]     = sym.nestedTypes
-                val _typeM: Chunk[Tasty.Symbol]      = sym.typeMembers
-                val _find: Maybe[Tasty.Symbol]       = sym.findDeclaredMember("anything")
-                val _findInh: Maybe[Tasty.Symbol]    = sym.findInheritedMember("anything")
-                val _findAny: Maybe[Tasty.Symbol]    = sym.findAnyMember("anything")
-                val _byKind: Chunk[Tasty.Symbol]     = sym.membersByKind(Tasty.SymbolKind.Method)
-                val _showEff: String < Sync          = sym.show
+                val _typeM: Chunk[Tasty.Symbol] =
+                    sym.declarations.filter(s =>
+                        s.isInstanceOf[Tasty.Symbol.TypeAlias] ||
+                            s.isInstanceOf[Tasty.Symbol.OpaqueType] ||
+                            s.isInstanceOf[Tasty.Symbol.AbstractType]
+                    )
+                val _find: Maybe[Tasty.Symbol]    = sym.findDeclaredMember("anything")
+                val _findInh: Maybe[Tasty.Symbol] = sym.findInheritedMember("anything")
+                val _findAny: Maybe[Tasty.Symbol] = sym.findAnyMember("anything")
+                val _byKind: Chunk[Tasty.Symbol]  = sym.membersByKind(Tasty.SymbolKind.Method)
+                val _showEff: String < Sync       = sym.show
             succeed
     }
 

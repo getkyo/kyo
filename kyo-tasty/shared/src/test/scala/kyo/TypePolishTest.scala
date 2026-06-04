@@ -12,7 +12,7 @@ class TypePolishTest extends Test:
 
     // ── Leaf 155: symbol-named ───────────────────────────────────────────
     // Given: Type.Named(SymbolId(5)) in a cp where SymbolId(5) is a Symbol.Class.
-    // When: t.symbol
+    // When: Tasty.typeSymbol(t)
     // Then: returns Maybe.Present(c) where c.id == SymbolId(5)
     "Leaf 155: symbol returns Present(sym) for Type.Named" in run {
         val classSym = Tasty.Symbol.Class(
@@ -34,7 +34,7 @@ class TypePolishTest extends Test:
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(classSym)).map: cp =>
             given Tasty.Classpath = cp
             val t: Tasty.Type     = Tasty.Type.Named(SymbolId(0))
-            val result            = t.symbol
+            val result            = Tasty.typeSymbol(t)
             assert(result.isDefined, "symbol must return Present for Named")
             result match
                 case Maybe.Present(sym: Tasty.Symbol.Class) =>
@@ -49,13 +49,13 @@ class TypePolishTest extends Test:
 
     // ── Leaf 156: symbol-non-named ──────────────────────────────────────
     // Given: Type.Function(Chunk.empty, Type.Named(SymbolId(5)))
-    // When: t.symbol
+    // When: Tasty.typeSymbol(t)
     // Then: returns Maybe.Absent (head is not Named)
     "Leaf 156: symbol returns Absent for non-Named types" in run {
         Tasty.Classpath.fromPickles(Nil).map: cp =>
             given Tasty.Classpath = cp
             val t                 = Tasty.Type.Function(Chunk.empty, Tasty.Type.Named(SymbolId(5)), false)
-            assert(!t.symbol.isDefined, "symbol must return Absent for non-Named type")
+            assert(!Tasty.typeSymbol(t).isDefined, "symbol must return Absent for non-Named type")
             succeed
     }
 
@@ -110,7 +110,7 @@ class TypePolishTest extends Test:
 
     // ── Leaf 160: show-covers-all-cases ──────────────────────────────────────
     // Given: one literal per Type case
-    // When: t.show
+    // When: Tasty.typeShow(t)
     // Then: every case returns a non-empty String (no MatchError)
     "Leaf 160: show returns non-empty String for every Type case" in run {
         val n = Tasty.Type.Named(SymbolId(0))
@@ -160,7 +160,7 @@ class TypePolishTest extends Test:
                 Tasty.Type.ContextFunction(Chunk(n), n)
             )
             cases.foreach: t =>
-                val s = t.show
+                val s = Tasty.typeShow(t)
                 assert(s.nonEmpty, s"show returned empty string for ${t.getClass.getSimpleName}")
             succeed
     }

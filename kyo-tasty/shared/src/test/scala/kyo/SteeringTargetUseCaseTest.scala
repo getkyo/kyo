@@ -140,7 +140,7 @@ class SteeringTargetUseCaseTest extends Test:
             given Tasty.Classpath = cp
             cp.findClass("pkg.A") match
                 case Maybe.Present(c) =>
-                    val ms: Chunk[Tasty.Symbol.Method] = c.methods
+                    val ms = c.methods.asInstanceOf[Chunk[Tasty.Symbol.Method]]
                     assert(ms.length >= 1, s"Expected at least 1 method, got ${ms.length}")
                     succeed
                 case Maybe.Absent => fail("pkg.A must be Present")

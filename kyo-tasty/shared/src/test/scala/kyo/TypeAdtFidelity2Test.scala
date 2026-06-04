@@ -172,8 +172,9 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // Pins: F-A2-003 predicate-shape correctness
     "F-A2-003 leaf 7 (Phase 2.09): isMacroTransparent is a subset of isTransparentInline" in run {
         TestClasspaths.withClasspath().map: cp =>
-            val allTransparentInline  = cp.allMethods.count(_.isTransparentInline)
-            val macroTransparentCount = cp.allMethods.count(m => m.isMacroTransparent)
+            val allTransparentInline = cp.allMethods.count(_.isTransparentInline)
+            val macroTransparentCount =
+                cp.allMethods.count(m => m.flags.contains(Tasty.Flag.Macro) && m.flags.contains(Tasty.Flag.Transparent))
             assert(
                 macroTransparentCount <= allTransparentInline,
                 s"isMacroTransparent ($macroTransparentCount) must be a subset of isTransparentInline ($allTransparentInline)"

@@ -181,7 +181,7 @@ class SymbolAnnotationQueryTest extends Test:
     "Leaf 137: hasAnnotation returns true for Scala annotation on method" in run {
         buildFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(5)).asInstanceOf[Tasty.Symbol.Method]
-            m.hasAnnotation("scala.deprecated")(using summon[Frame], cp).map: has =>
+            Tasty.hasAnnotation(m, "scala.deprecated")(using summon[Frame], cp).map: has =>
                 assert(has)
                 succeed
     }
@@ -194,7 +194,7 @@ class SymbolAnnotationQueryTest extends Test:
     "Leaf 138: hasAnnotation returns true for Scala annotation on class" in run {
         buildFixture.flatMap: cp =>
             val c = cp.symbol(SymbolId(6)).asInstanceOf[Tasty.Symbol.Class]
-            c.hasAnnotation("scala.deprecated")(using summon[Frame], cp).map: has =>
+            Tasty.hasAnnotation(c, "scala.deprecated")(using summon[Frame], cp).map: has =>
                 assert(has)
                 succeed
     }
@@ -207,7 +207,7 @@ class SymbolAnnotationQueryTest extends Test:
     "Leaf 139: hasAnnotation returns true for Java annotation on field" in run {
         buildFixture.flatMap: cp =>
             val f = cp.symbol(SymbolId(7)).asInstanceOf[Tasty.Symbol.Field]
-            f.hasAnnotation("java.lang.Deprecated")(using summon[Frame], cp).map: has =>
+            Tasty.hasAnnotation(f, "java.lang.Deprecated")(using summon[Frame], cp).map: has =>
                 assert(has)
                 succeed
     }
@@ -220,7 +220,7 @@ class SymbolAnnotationQueryTest extends Test:
     "Leaf 140: hasAnnotation returns false for Package" in run {
         buildFixture.flatMap: cp =>
             val p = cp.symbol(SymbolId(8)).asInstanceOf[Tasty.Symbol.Package]
-            p.hasAnnotation("anything")(using summon[Frame], cp).map: has =>
+            Tasty.hasAnnotation(p, "anything")(using summon[Frame], cp).map: has =>
                 assert(!has)
                 succeed
     }
@@ -233,7 +233,7 @@ class SymbolAnnotationQueryTest extends Test:
     "Leaf 141: hasAnnotation returns false for TypeParam" in run {
         buildFixture.flatMap: cp =>
             val t = cp.symbol(SymbolId(9)).asInstanceOf[Tasty.Symbol.TypeParam]
-            t.hasAnnotation("scala.deprecated")(using summon[Frame], cp).map: has =>
+            Tasty.hasAnnotation(t, "scala.deprecated")(using summon[Frame], cp).map: has =>
                 assert(!has)
                 succeed
     }
@@ -246,7 +246,7 @@ class SymbolAnnotationQueryTest extends Test:
     "Leaf 142: findAnnotation returns Present Annotation for matching Scala annotation" in run {
         buildFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(10)).asInstanceOf[Tasty.Symbol.Method]
-            m.findAnnotation("scala.inline")(using summon[Frame], cp).map:
+            Tasty.findAnnotation(m, "scala.inline")(using summon[Frame], cp).map:
                 case Maybe.Present(a: Tasty.Annotation) =>
                     assert(a.annotationType == Tasty.Type.Named(SymbolId(2)), s"Expected Named(SymbolId(2)) but got ${a.annotationType}")
                     assert(a.arguments.isEmpty, s"Expected empty arguments but got ${a.arguments}")
@@ -263,7 +263,7 @@ class SymbolAnnotationQueryTest extends Test:
     "Leaf 143: findAnnotation returns Present JavaAnnotation for matching Java annotation" in run {
         buildFixture.flatMap: cp =>
             val f = cp.symbol(SymbolId(7)).asInstanceOf[Tasty.Symbol.Field]
-            f.findAnnotation("java.lang.Deprecated")(using summon[Frame], cp).map:
+            Tasty.findAnnotation(f, "java.lang.Deprecated")(using summon[Frame], cp).map:
                 case Maybe.Present(a: Tasty.JavaAnnotation) =>
                     assert(a.annotationClass.id == SymbolId(4), s"Expected annotationClass id SymbolId(4) but got ${a.annotationClass.id}")
                     assert(a.values.isEmpty, s"Expected empty values but got ${a.values}")
@@ -280,7 +280,7 @@ class SymbolAnnotationQueryTest extends Test:
     "Leaf 144: findAnnotation returns Absent when annotation not present" in run {
         buildFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(5)).asInstanceOf[Tasty.Symbol.Method]
-            m.findAnnotation("missing.Anno")(using summon[Frame], cp).map: result =>
+            Tasty.findAnnotation(m, "missing.Anno")(using summon[Frame], cp).map: result =>
                 assert(!result.isDefined, s"Expected Absent but got $result")
                 succeed
     }

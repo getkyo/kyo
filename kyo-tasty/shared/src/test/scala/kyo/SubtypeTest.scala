@@ -92,7 +92,7 @@ class SubtypeTest extends Test:
         val intType = Tasty.Type.Named(intSym.id)
         makeTestClasspath(Chunk(intSym)).map: cp =>
             given Tasty.Classpath = cp
-            assert(intType.isSubtypeOf(intType) == Tasty.SubtypeVerdict.Sub)
+            assert(Tasty.isSubtypeOf(intType, intType) == Tasty.SubtypeVerdict.Sub)
     }
 
     // Test 2: Named(String).isSubtypeOf(Named(Object)) returns Sub via parent chain
@@ -104,7 +104,7 @@ class SubtypeTest extends Test:
         val stringType = Tasty.Type.Named(stringSym.id)
         makeTestClasspath(Chunk(objectSym, stringSym)).map: cp =>
             given Tasty.Classpath = cp
-            assert(stringType.isSubtypeOf(objectType) == Tasty.SubtypeVerdict.Sub)
+            assert(Tasty.isSubtypeOf(stringType, objectType) == Tasty.SubtypeVerdict.Sub)
     }
 
     // Test 3: Named(String).isSubtypeOf(Named(Int)) returns NotSub
@@ -116,7 +116,7 @@ class SubtypeTest extends Test:
         val stringType = Tasty.Type.Named(stringSym.id)
         makeTestClasspath(Chunk(intSym, stringSym)).map: cp =>
             given Tasty.Classpath = cp
-            assert(stringType.isSubtypeOf(intType) == Tasty.SubtypeVerdict.NotSub)
+            assert(Tasty.isSubtypeOf(stringType, intType) == Tasty.SubtypeVerdict.NotSub)
     }
 
     // Test 4: AndType(A, B).isSubtypeOf(A) returns Sub
@@ -129,7 +129,7 @@ class SubtypeTest extends Test:
         val andType = Tasty.Type.AndType(typeA, typeB)
         makeTestClasspath(Chunk(symA, symB)).map: cp =>
             given Tasty.Classpath = cp
-            assert(andType.isSubtypeOf(typeA) == Tasty.SubtypeVerdict.Sub)
+            assert(Tasty.isSubtypeOf(andType, typeA) == Tasty.SubtypeVerdict.Sub)
     }
 
     // Test 5: A.isSubtypeOf(OrType(A, B)) returns Sub
@@ -142,7 +142,7 @@ class SubtypeTest extends Test:
         val orType = Tasty.Type.OrType(typeA, typeB)
         makeTestClasspath(Chunk(symA, symB)).map: cp =>
             given Tasty.Classpath = cp
-            assert(typeA.isSubtypeOf(orType) == Tasty.SubtypeVerdict.Sub)
+            assert(Tasty.isSubtypeOf(typeA, orType) == Tasty.SubtypeVerdict.Sub)
     }
 
     // Test 6: Applied(List[String]).isSubtypeOf(Applied(List[AnyRef])) Sub when List is covariant
@@ -160,7 +160,7 @@ class SubtypeTest extends Test:
         val listAnyRef = Tasty.Type.Applied(listType, Chunk(anyRefType))
         makeTestClasspath(Chunk(anyRefSym, stringSym, tParam, listSym)).map: cp =>
             given Tasty.Classpath = cp
-            assert(listString.isSubtypeOf(listAnyRef) == Tasty.SubtypeVerdict.Sub)
+            assert(Tasty.isSubtypeOf(listString, listAnyRef) == Tasty.SubtypeVerdict.Sub)
     }
 
     // Test 7: Named(Nothing).isSubtypeOf(anyType) returns Sub (Nothing is subtype of all)
@@ -172,7 +172,7 @@ class SubtypeTest extends Test:
         val anyType     = Tasty.Type.Named(anySym.id)
         makeTestClasspath(Chunk(nothingSym, anySym)).map: cp =>
             given Tasty.Classpath = cp
-            assert(nothingType.isSubtypeOf(anyType) == Tasty.SubtypeVerdict.Sub)
+            assert(Tasty.isSubtypeOf(nothingType, anyType) == Tasty.SubtypeVerdict.Sub)
     }
 
     // Test 8: TypeLambda([T], C[T]) isSubtypeOf TypeLambda([U], C[U]) Sub (alpha-equivalence)
@@ -192,7 +192,7 @@ class SubtypeTest extends Test:
         )
         makeTestClasspath(Chunk(cSym, tSym, uSym)).map: cp =>
             given Tasty.Classpath = cp
-            val result            = lambda1.isSubtypeOf(lambda2)
+            val result            = Tasty.isSubtypeOf(lambda1, lambda2)
             assert(result == Tasty.SubtypeVerdict.Sub)
     }
 
@@ -205,7 +205,7 @@ class SubtypeTest extends Test:
         val rec     = Tasty.Type.Rec(recBody)
         makeTestClasspath(Chunk(cSym)).map: cp =>
             given Tasty.Classpath = cp
-            val result            = rec.isSubtypeOf(rec)
+            val result            = Tasty.isSubtypeOf(rec, rec)
             assert(
                 result == Tasty.SubtypeVerdict.Sub ||
                     result == Tasty.SubtypeVerdict.NotSub ||
@@ -224,7 +224,7 @@ class SubtypeTest extends Test:
         val anyType = Tasty.Type.Named(anySym.id)
         makeTestClasspath(Chunk(intSym, anySym)).map: cp =>
             given Tasty.Classpath = cp
-            assert(intType.isSubtypeOf(anyType) == Tasty.SubtypeVerdict.Sub)
+            assert(Tasty.isSubtypeOf(intType, anyType) == Tasty.SubtypeVerdict.Sub)
     }
 
     // Test 11: String <: Int returns NotSub
@@ -236,7 +236,7 @@ class SubtypeTest extends Test:
         val intType    = Tasty.Type.Named(intSym.id)
         makeTestClasspath(Chunk(stringSym, intSym)).map: cp =>
             given Tasty.Classpath = cp
-            assert(stringType.isSubtypeOf(intType) == Tasty.SubtypeVerdict.NotSub)
+            assert(Tasty.isSubtypeOf(stringType, intType) == Tasty.SubtypeVerdict.NotSub)
     }
 
     // Test 12: budget=0 forces Unknown (simulates deep Rec exhaustion without building 66 unfoldings)
@@ -264,7 +264,7 @@ class SubtypeTest extends Test:
         end while
         makeTestClasspath(Chunk(leafSym)).map: cp =>
             given Tasty.Classpath = cp
-            val result            = t.isSubtypeOf(t)
+            val result            = Tasty.isSubtypeOf(t, t)
             assert(
                 result == Tasty.SubtypeVerdict.Unknown,
                 s"Expected Unknown from real 66-deep Rec chain (budget=64) but got $result"
@@ -281,7 +281,7 @@ class SubtypeTest extends Test:
         makeTestClasspath(Chunk(fooSym, barSym)).map: cp =>
             given Tasty.Classpath = cp
             assert(
-                fooType.isSubtypeOf(barType) == Tasty.SubtypeVerdict.NotSub,
+                Tasty.isSubtypeOf(fooType, barType) == Tasty.SubtypeVerdict.NotSub,
                 "Expected NotSub for symbol with empty parentTypes (no parent chain)"
             )
     }

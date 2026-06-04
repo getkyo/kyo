@@ -36,7 +36,7 @@ class TastyAnnotationTest extends Test with TastyTestSupport:
             given Tasty.Classpath = cp
             val deprecatedType    = Tasty.Type.Named(SymbolId(0))
             val a                 = Tasty.Annotation(deprecatedType, Chunk.empty)
-            val showStr           = a.annotationType.show
+            val showStr           = Tasty.typeShow(a.annotationType)
             assert(
                 showStr == "deprecated",
                 s"Expected 'deprecated' but got '$showStr'"

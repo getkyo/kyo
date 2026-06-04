@@ -196,7 +196,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
             val paramType         = Tasty.Type.Named(SymbolId(0))
             val resultType        = Tasty.Type.Named(SymbolId(0))
             val cfType            = Tasty.Type.ContextFunction(Chunk(paramType), resultType)
-            val s                 = cfType.show
+            val s                 = Tasty.typeShow(cfType)
             assert(
                 s.contains("?=>"),
                 s"Type.ContextFunction.show should contain '?=>' but got: $s"

@@ -64,11 +64,26 @@ class FieldJvmAccessTest extends Test:
     "Leaf 82: isJvmPublic: returns true when ACC_PUBLIC bit is set in accessFlags" in run {
         val field = makeFieldWithAccess(id = 1, name = "F", accessFlags = 0x0001)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>
-            assert(field.isJvmPublic, "isJvmPublic must be true when ACC_PUBLIC (0x0001) is set")
-            assert(!field.isJvmPrivate, "isJvmPrivate must be false when only ACC_PUBLIC is set")
-            assert(!field.isJvmProtected, "isJvmProtected must be false when only ACC_PUBLIC is set")
-            assert(!field.isJvmStatic, "isJvmStatic must be false when only ACC_PUBLIC is set")
-            assert(!field.isJvmFinal, "isJvmFinal must be false when only ACC_PUBLIC is set")
+            assert(
+                field.javaMetadata.map(m => (m.accessFlags & 0x0001) != 0).getOrElse(false),
+                "isJvmPublic must be true when ACC_PUBLIC (0x0001) is set"
+            )
+            assert(
+                !field.javaMetadata.map(m => (m.accessFlags & 0x0002) != 0).getOrElse(false),
+                "isJvmPrivate must be false when only ACC_PUBLIC is set"
+            )
+            assert(
+                !field.javaMetadata.map(m => (m.accessFlags & 0x0004) != 0).getOrElse(false),
+                "isJvmProtected must be false when only ACC_PUBLIC is set"
+            )
+            assert(
+                !field.javaMetadata.map(m => (m.accessFlags & 0x0008) != 0).getOrElse(false),
+                "isJvmStatic must be false when only ACC_PUBLIC is set"
+            )
+            assert(
+                !field.javaMetadata.map(m => (m.accessFlags & 0x0010) != 0).getOrElse(false),
+                "isJvmFinal must be false when only ACC_PUBLIC is set"
+            )
             succeed
     }
 
@@ -80,11 +95,26 @@ class FieldJvmAccessTest extends Test:
     "Leaf 83: isJvmStatic-absent-javaMetadata: returns false when javaMetadata is Absent" in run {
         val field = makeFieldNoMeta(id = 1, name = "G")
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>
-            assert(!field.isJvmStatic, "isJvmStatic must be false when javaMetadata is Absent")
-            assert(!field.isJvmPublic, "isJvmPublic must be false when javaMetadata is Absent")
-            assert(!field.isJvmPrivate, "isJvmPrivate must be false when javaMetadata is Absent")
-            assert(!field.isJvmProtected, "isJvmProtected must be false when javaMetadata is Absent")
-            assert(!field.isJvmFinal, "isJvmFinal must be false when javaMetadata is Absent")
+            assert(
+                !field.javaMetadata.map(m => (m.accessFlags & 0x0008) != 0).getOrElse(false),
+                "isJvmStatic must be false when javaMetadata is Absent"
+            )
+            assert(
+                !field.javaMetadata.map(m => (m.accessFlags & 0x0001) != 0).getOrElse(false),
+                "isJvmPublic must be false when javaMetadata is Absent"
+            )
+            assert(
+                !field.javaMetadata.map(m => (m.accessFlags & 0x0002) != 0).getOrElse(false),
+                "isJvmPrivate must be false when javaMetadata is Absent"
+            )
+            assert(
+                !field.javaMetadata.map(m => (m.accessFlags & 0x0004) != 0).getOrElse(false),
+                "isJvmProtected must be false when javaMetadata is Absent"
+            )
+            assert(
+                !field.javaMetadata.map(m => (m.accessFlags & 0x0010) != 0).getOrElse(false),
+                "isJvmFinal must be false when javaMetadata is Absent"
+            )
             succeed
     }
 
@@ -94,11 +124,26 @@ class FieldJvmAccessTest extends Test:
         // ACC_PRIVATE=0x0002, ACC_STATIC=0x0008, ACC_FINAL=0x0010
         val field = makeFieldWithAccess(id = 1, name = "CONSTANT", accessFlags = 0x0002 | 0x0008 | 0x0010)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>
-            assert(!field.isJvmPublic, "isJvmPublic must be false for private static final")
-            assert(field.isJvmPrivate, "isJvmPrivate must be true for private static final")
-            assert(!field.isJvmProtected, "isJvmProtected must be false for private static final")
-            assert(field.isJvmStatic, "isJvmStatic must be true for private static final")
-            assert(field.isJvmFinal, "isJvmFinal must be true for private static final")
+            assert(
+                !field.javaMetadata.map(m => (m.accessFlags & 0x0001) != 0).getOrElse(false),
+                "isJvmPublic must be false for private static final"
+            )
+            assert(
+                field.javaMetadata.map(m => (m.accessFlags & 0x0002) != 0).getOrElse(false),
+                "isJvmPrivate must be true for private static final"
+            )
+            assert(
+                !field.javaMetadata.map(m => (m.accessFlags & 0x0004) != 0).getOrElse(false),
+                "isJvmProtected must be false for private static final"
+            )
+            assert(
+                field.javaMetadata.map(m => (m.accessFlags & 0x0008) != 0).getOrElse(false),
+                "isJvmStatic must be true for private static final"
+            )
+            assert(
+                field.javaMetadata.map(m => (m.accessFlags & 0x0010) != 0).getOrElse(false),
+                "isJvmFinal must be true for private static final"
+            )
             succeed
     }
 
@@ -106,11 +151,26 @@ class FieldJvmAccessTest extends Test:
         // ACC_PROTECTED=0x0004
         val field = makeFieldWithAccess(id = 1, name = "protectedField", accessFlags = 0x0004)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>
-            assert(!field.isJvmPublic, "isJvmPublic must be false for protected field")
-            assert(!field.isJvmPrivate, "isJvmPrivate must be false for protected field")
-            assert(field.isJvmProtected, "isJvmProtected must be true for protected field")
-            assert(!field.isJvmStatic, "isJvmStatic must be false for protected field")
-            assert(!field.isJvmFinal, "isJvmFinal must be false for protected field")
+            assert(
+                !field.javaMetadata.map(m => (m.accessFlags & 0x0001) != 0).getOrElse(false),
+                "isJvmPublic must be false for protected field"
+            )
+            assert(
+                !field.javaMetadata.map(m => (m.accessFlags & 0x0002) != 0).getOrElse(false),
+                "isJvmPrivate must be false for protected field"
+            )
+            assert(
+                field.javaMetadata.map(m => (m.accessFlags & 0x0004) != 0).getOrElse(false),
+                "isJvmProtected must be true for protected field"
+            )
+            assert(
+                !field.javaMetadata.map(m => (m.accessFlags & 0x0008) != 0).getOrElse(false),
+                "isJvmStatic must be false for protected field"
+            )
+            assert(
+                !field.javaMetadata.map(m => (m.accessFlags & 0x0010) != 0).getOrElse(false),
+                "isJvmFinal must be false for protected field"
+            )
             succeed
     }
 

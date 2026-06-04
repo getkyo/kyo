@@ -33,13 +33,13 @@ class FlagPredicatePreservationTest extends Test:
         )
         assert(sym.isFinal, "isFinal must be true")
         assert(sym.isCase, "isCase must be true")
-        assert(sym.isClass, "isClass must be true")
-        assert(sym.isClassLike, "isClassLike must be true")
-        assert(!sym.isMethod, "isMethod must be false")
-        assert(!sym.isVal, "isVal must be false")
-        assert(!sym.isVar, "isVar must be false")
-        assert(!sym.isTrait, "isTrait must be false")
-        assert(!sym.isObject, "isObject must be false")
+        assert(sym.isInstanceOf[Tasty.Symbol.Class], "isClass must be true")
+        assert(sym.isInstanceOf[Tasty.Symbol.ClassLike], "isClassLike must be true")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Method], "isMethod must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Val], "isVal must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Var], "isVar must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Trait], "isTrait must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Object], "isObject must be false")
         assert(!sym.isAbstract, "isAbstract must be false")
         succeed
     }
@@ -63,12 +63,12 @@ class FlagPredicatePreservationTest extends Test:
             Maybe.Absent,
             Maybe.Absent
         )
-        assert(sym.isMethod, "isMethod must be true")
+        assert(sym.isInstanceOf[Tasty.Symbol.Method], "isMethod must be true")
         assert(sym.isInline, "isInline must be true")
         assert(sym.isGiven, "isGiven must be true")
-        assert(!sym.isClass, "isClass must be false")
-        assert(!sym.isTrait, "isTrait must be false")
-        assert(!sym.isVal, "isVal must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Class], "isClass must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Trait], "isTrait must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Val], "isVal must be false")
         assert(!sym.isAbstract, "isAbstract must be false for method with no Abstract flag")
         succeed
     }
@@ -78,13 +78,13 @@ class FlagPredicatePreservationTest extends Test:
     // Pins: INV-003
     "40-predicates-on-package: isPackage true; isClass/isMethod/isVal false" in {
         val sym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("pkg"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
-        assert(sym.isPackage, "isPackage must be true")
-        assert(!sym.isClass, "isClass must be false")
-        assert(!sym.isTrait, "isTrait must be false")
-        assert(!sym.isMethod, "isMethod must be false")
-        assert(!sym.isVal, "isVal must be false")
-        assert(!sym.isVar, "isVar must be false")
-        assert(!sym.isUnresolved, "isUnresolved must be false")
+        assert(sym.isInstanceOf[Tasty.Symbol.Package], "isPackage must be true")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Class], "isClass must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Trait], "isTrait must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Method], "isMethod must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Val], "isVal must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Var], "isVar must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Unresolved], "isUnresolved must be false")
         succeed
     }
 
@@ -93,13 +93,13 @@ class FlagPredicatePreservationTest extends Test:
     // Pins: INV-003
     "40-predicates-on-unresolved: isUnresolved true; all class-like predicates false" in {
         val sym = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name("<unresolved>"), SymbolId(-1))
-        assert(sym.isUnresolved, "isUnresolved must be true")
-        assert(!sym.isClass, "isClass must be false")
-        assert(!sym.isTrait, "isTrait must be false")
-        assert(!sym.isObject, "isObject must be false")
-        assert(!sym.isMethod, "isMethod must be false")
-        assert(!sym.isVal, "isVal must be false")
-        assert(!sym.isPackage, "isPackage must be false")
+        assert(sym.isInstanceOf[Tasty.Symbol.Unresolved], "isUnresolved must be true")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Class], "isClass must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Trait], "isTrait must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Object], "isObject must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Method], "isMethod must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Val], "isVal must be false")
+        assert(!sym.isInstanceOf[Tasty.Symbol.Package], "isPackage must be false")
         assert(!sym.isFinal, "isFinal must be false (no flags)")
         succeed
     }

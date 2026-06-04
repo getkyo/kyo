@@ -40,9 +40,9 @@ class SymbolHierarchyTest extends Test:
         import Tasty.Name.asString
         assert(sym.name.asString == "Foo")
         assert(sym.flags.bits == Tasty.Flags.empty.bits)
-        assert(sym.isClass)
-        assert(sym.isClassLike)
-        assert(!sym.isTrait)
+        assert(sym.isInstanceOf[Tasty.Symbol.Class])
+        assert(sym.isInstanceOf[Tasty.Symbol.ClassLike])
+        assert(!sym.isInstanceOf[Tasty.Symbol.Trait])
         succeed
     }
 
@@ -71,8 +71,8 @@ class SymbolHierarchyTest extends Test:
         )
         assert(sym.isSealed)
         assert(sym.openLevel == Tasty.OpenLevel.Sealed)
-        assert(sym.isTrait)
-        assert(sym.isClassLike)
+        assert(sym.isInstanceOf[Tasty.Symbol.Trait])
+        assert(sym.isInstanceOf[Tasty.Symbol.ClassLike])
         succeed
     }
 
@@ -99,9 +99,11 @@ class SymbolHierarchyTest extends Test:
             body = Maybe.Absent,
             javaMetadata = Maybe.Absent
         )
-        assert(sym.isMethod)
-        assert(sym.isTerm)
-        assert(!sym.isClassLike)
+        assert(sym.isInstanceOf[Tasty.Symbol.Method])
+        assert(sym.isInstanceOf[Tasty.Symbol.Method] || sym.isInstanceOf[Tasty.Symbol.Val] || sym.isInstanceOf[
+            Tasty.Symbol.Var
+        ] || sym.isInstanceOf[Tasty.Symbol.Field] || sym.isInstanceOf[Tasty.Symbol.Parameter])
+        assert(!sym.isInstanceOf[Tasty.Symbol.ClassLike])
         val m = sym.asInstanceOf[Tasty.Symbol.Method]
         assert(m.paramListIds.size == 1)
         assert(m.paramListIds(0).size == 2)
@@ -126,10 +128,12 @@ class SymbolHierarchyTest extends Test:
             annotations = Chunk.empty,
             body = Maybe.Absent
         )
-        assert(sym.isVal)
+        assert(sym.isInstanceOf[Tasty.Symbol.Val])
         assert(sym.isLazy)
-        assert(sym.isTerm)
-        assert(!sym.isMethod)
+        assert(sym.isInstanceOf[Tasty.Symbol.Method] || sym.isInstanceOf[Tasty.Symbol.Val] || sym.isInstanceOf[
+            Tasty.Symbol.Var
+        ] || sym.isInstanceOf[Tasty.Symbol.Field] || sym.isInstanceOf[Tasty.Symbol.Parameter])
+        assert(!sym.isInstanceOf[Tasty.Symbol.Method])
         succeed
     }
 
@@ -153,8 +157,10 @@ class SymbolHierarchyTest extends Test:
         )
         val ta = sym.asInstanceOf[Tasty.Symbol.TypeAlias]
         assert(ta.body == Tasty.Type.Named(SymbolId(50)))
-        assert(sym.isTypeAlias)
-        assert(sym.isTypeLike)
+        assert(sym.isInstanceOf[Tasty.Symbol.TypeAlias])
+        assert(sym.isInstanceOf[Tasty.Symbol.TypeAlias] || sym.isInstanceOf[Tasty.Symbol.OpaqueType] || sym.isInstanceOf[
+            Tasty.Symbol.AbstractType
+        ] || sym.isInstanceOf[Tasty.Symbol.TypeParam])
         succeed
     }
 
@@ -183,7 +189,7 @@ class SymbolHierarchyTest extends Test:
         assert(ot.body == Tasty.Type.Named(SymbolId(60)))
         assert(ot.bounds.lower == Tasty.Type.Nothing)
         assert(ot.bounds.upper == Tasty.Type.Any)
-        assert(sym.isOpaqueType)
+        assert(sym.isInstanceOf[Tasty.Symbol.OpaqueType])
         succeed
     }
 
@@ -250,8 +256,10 @@ class SymbolHierarchyTest extends Test:
         val p = sym.asInstanceOf[Tasty.Symbol.Parameter]
         assert(p.declaredType == Tasty.Type.Named(SymbolId(70)))
         assert(p.defaultArgId == Maybe(SymbolId(71)))
-        assert(sym.isParameter)
-        assert(sym.isTerm)
+        assert(sym.isInstanceOf[Tasty.Symbol.Parameter])
+        assert(sym.isInstanceOf[Tasty.Symbol.Method] || sym.isInstanceOf[Tasty.Symbol.Val] || sym.isInstanceOf[
+            Tasty.Symbol.Var
+        ] || sym.isInstanceOf[Tasty.Symbol.Field] || sym.isInstanceOf[Tasty.Symbol.Parameter])
         succeed
     }
 
@@ -273,7 +281,7 @@ class SymbolHierarchyTest extends Test:
         )
         val pkg = sym.asInstanceOf[Tasty.Symbol.Package]
         assert(pkg.memberIds.size == 2)
-        assert(sym.isPackage)
+        assert(sym.isInstanceOf[Tasty.Symbol.Package])
         assert(sym.scaladoc == Maybe.Absent)
         assert(sym.sourcePosition == Maybe.Absent)
         succeed
@@ -296,7 +304,7 @@ class SymbolHierarchyTest extends Test:
         assert(sym.flags.bits == Tasty.Flags.empty.bits)
         assert(sym.scaladoc == Maybe.Absent)
         assert(sym.sourcePosition == Maybe.Absent)
-        assert(sym.isUnresolved)
+        assert(sym.isInstanceOf[Tasty.Symbol.Unresolved])
         succeed
     }
 
@@ -339,20 +347,22 @@ class SymbolHierarchyTest extends Test:
             javaAnnotations = Chunk.empty,
             body = Maybe.Absent
         )
-        assert(a == b, "Two Symbol.Class with same non-negative id must be equal (id-based equality)")
+        // Phase 03 change: Symbol equality is now field-based (case class default, Decision 15).
+        // Two symbols with the same id but different names are NOT equal.
+        assert(a != b, "Two Symbol.Class with different names are not equal (field-based equality, Phase 03 Decision 15)")
         succeed
     }
 
-    // ── Leaf 12: equals-id-minus-one-is-reference ───────────────────────────
+    // ── Leaf 12: equals-field-based-all-fields ──────────────────────────────
 
-    // Given: two distinct Symbol.Unresolved literals both with id=SymbolId(-1).
+    // Given: two Symbol.Unresolved instances with identical fields (including id=-1).
     // When: compare with ==.
-    // Then: returns false (identity rule for id=-1 is preserved).
-    // Pins: INV-002.
-    "Leaf 12: two Symbol.Unresolved with id=-1 are not equal (reference equality at id=-1)" in {
+    // Then: returns true (field-based equality; id=-1 is not special in Phase 03).
+    // Pins: INV-002; Phase 03 Decision 15.
+    "Leaf 12: two Symbol.Unresolved with same fields are equal (field-based equality)" in {
         val x: Tasty.Symbol = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name("u"), SymbolId(-1))
         val y: Tasty.Symbol = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name("u"), SymbolId(-1))
-        assert(x != y, "Two distinct Unresolved symbols with id=-1 must not be equal (reference equality rule)")
+        assert(x == y, "Two Unresolved symbols with identical fields must be equal (field-based equality, Phase 03 Decision 15)")
         succeed
     }
 

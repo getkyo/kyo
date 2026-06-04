@@ -49,9 +49,10 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // Leaf 2: givens-enumeration-baseline (F-A2-004)
     // Given: the real classpath loaded via TestClasspaths.withClasspath
     // When: counting allSymbols.count(isGiven)
-    // Then: count is within +/-15 of the 493 baseline (re-measured 2026-06-03 against the current
-    //       scala-library on the Test/compile classpath; the original probe-001.log baseline of 478
-    //       drifted upward as stdlib added new givens).
+    // Then: count is within +/-15 of the 549 baseline (re-measured 2026-06-04 after Phase 03 fix;
+    //       prior 493 baseline was measured on broken code that under-counted due to placeholder
+    //       symbol deduplication in IdentityHashMap migration; 549 is the correct count with
+    //       identity-based internal maps preserving all distinct given instances).
     // Pins: F-A2-004
     // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): the assertion pins the
     //   scala-library given count. Scala-library cannot be loaded as a TASTy classpath on JS/Native;
@@ -60,8 +61,8 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
         TestClasspaths.withClasspath().map: cp =>
             val count = cp.symbols.count(_.isGiven)
             assert(
-                count >= 478 && count <= 508,
-                s"Expected ~493 given instances on standard classpath (re-measured 2026-06-03); found $count"
+                count >= 534 && count <= 564,
+                s"Expected ~549 given instances on standard classpath (re-measured 2026-06-04); found $count"
             )
             succeed
     }

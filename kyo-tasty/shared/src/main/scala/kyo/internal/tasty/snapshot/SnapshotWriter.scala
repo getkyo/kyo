@@ -113,12 +113,11 @@ object SnapshotWriter:
                 }
             )
 
-        // Assign IDs to all symbols
-        val symbolId = mutable.HashMap.empty[Tasty.Symbol, Int]
-        for (sym, i) <- symbolList.zipWithIndex do
-            symbolId(sym) = i
-
         // Intern symbol names and FQNs
+        // Note: the symbolId HashMap (Symbol -> Int) was removed in Phase 03 because it was never
+        // used for lookups (all serialization functions iterate symbolList.zipWithIndex directly),
+        // and building it with field-based Symbol equality (Phase 03) was O(n * |body|) due to
+        // hashing SymbolBody.sectionBytes on every insertion, causing a 60s timeout.
         val symNames = Chunk.from(symbolList.map: sym =>
             internName(nameToStr(sym.name)))
 
@@ -166,7 +165,7 @@ object SnapshotWriter:
         // --- Build section payloads ---
 
         // SYMBOLS section: fixed record per symbol (includes body offsets into BODY_BYTES)
-        val symbolsBytes = serializeSymbols(symbolList, symNames, symFqns, symbolId, symBodyStarts, symBodyEnds)
+        val symbolsBytes = serializeSymbols(symbolList, symNames, symFqns, symBodyStarts, symBodyEnds)
 
         // FILES section: empty (metadata not critical for cache load)
         val filesBytes = Array.empty[Byte]
@@ -188,7 +187,6 @@ object SnapshotWriter:
         // by encoding -1 in a slot that is indistinguishable from the non-Named sentinel.
         val parentsBytes = serializeSymbolRelLists(
             symbolList,
-            symbolId,
             sym =>
                 (sym match
                     case c: Tasty.Symbol.ClassLike =>
@@ -205,7 +203,6 @@ object SnapshotWriter:
         // _declarationIds carries SymbolId.value directly.
         val membersBytes = serializeSymbolRelLists(
             symbolList,
-            symbolId,
             sym =>
                 import kyo.Tasty.SymbolId
                 (sym match
@@ -219,7 +216,6 @@ object SnapshotWriter:
         // _typeParamIds carries SymbolId.value directly.
         val tparamsBytes = serializeSymbolRelLists(
             symbolList,
-            symbolId,
             sym =>
                 import kyo.Tasty.SymbolId
                 (sym match
@@ -235,7 +231,6 @@ object SnapshotWriter:
         // Uses the same serializeSymbolRelLists format as PARENTS/MEMBERS.
         val permits2Bytes = serializeSymbolRelLists(
             symbolList,
-            symbolId,
             sym =>
                 import kyo.Tasty.SymbolId
                 (sym match
@@ -264,11 +259,11 @@ object SnapshotWriter:
         // Non-Named annotation tycons are omitted (skipped during collection).
         // Phase 2.13: pass unresolvedFqnByNegId so that annotations with negative SymbolIds (unresolved
         // external annotation types like scala.deprecated on JS/Native) are serialized by FQN string.
-        val annotsBytes = serializeAnnotations(symbolList, symbolId, internName, symbolById, fqnBySymbol, cp.unresolvedFqnByNegId)
+        val annotsBytes = serializeAnnotations(symbolList, internName, symbolById, fqnBySymbol, cp.unresolvedFqnByNegId)
 
         // JAVAMETA section: accessFlags per symbol with javaMetadata present.
         // Layout: [4-byte count] then entries [4-byte symIdx][4-byte accessFlags].
-        val javaMetaBytes = serializeJavaMetadata(symbolList, symbolId)
+        val javaMetaBytes = serializeJavaMetadata(symbolList)
 
         // FQNIDX__ section: full fqnIndex serialization (all key->symIdx pairs, including
         // dual-index source-FQN aliases for Object companions and opaque types).
@@ -279,7 +274,7 @@ object SnapshotWriter:
         // decode FQNIDX__ name IDs. Moving serializeFqnIndex after serializeNamePool causes the reader
         // to skip entries whose name IDs exceed the stored pool length (the root cause of the cold/warm
         // fqnIndex.size gap fixed by this phase).
-        val fqnIdxBytes = serializeFqnIndex(cp.fqnIndex, symbolList, symbolId, internName)
+        val fqnIdxBytes = serializeFqnIndex(cp.fqnIndex, symbolList, internName)
 
         // FQNMAP__ section: unresolvedFqnByNegId map (negId -> FQN string for external annotation types).
         // Per Phase 2.13: name pool must be populated (internName calls for FQN strings) BEFORE
@@ -424,7 +419,6 @@ object SnapshotWriter:
         symbols: Seq[Tasty.Symbol],
         names: Chunk[Int],
         fqns: Chunk[Int],
-        symbolId: mutable.HashMap[Tasty.Symbol, Int],
         bodyStarts: Array[Int],
         bodyEnds: Array[Int]
     ): Array[Byte] =
@@ -534,7 +528,6 @@ object SnapshotWriter:
       */
     private def serializeSymbolRelLists(
         symbols: Seq[Tasty.Symbol],
-        symbolId: scala.collection.mutable.HashMap[Tasty.Symbol, Int],
         refsOf: Tasty.Symbol => Chunk[Int]
     ): Array[Byte] =
         // parentTypes / declarationIds / typeParamIds are direct fields on Symbol.
@@ -570,7 +563,6 @@ object SnapshotWriter:
       */
     private def serializeAnnotations(
         symbols: Seq[Tasty.Symbol],
-        symbolId: scala.collection.mutable.HashMap[Tasty.Symbol, Int],
         internFqn: String => Int,
         symbolById: scala.collection.mutable.HashMap[Int, Tasty.Symbol],
         fqnBySymbol: mutable.HashMap[Int, String],
@@ -629,8 +621,7 @@ object SnapshotWriter:
       * Only symbols that have javaMetadata present are included.
       */
     private def serializeJavaMetadata(
-        symbols: Seq[Tasty.Symbol],
-        symbolId: scala.collection.mutable.HashMap[Tasty.Symbol, Int]
+        symbols: Seq[Tasty.Symbol]
     ): Array[Byte] =
         val baos = new java.io.ByteArrayOutputStream(4 * 1024)
         val tmp  = new Array[Byte](4)
@@ -671,7 +662,6 @@ object SnapshotWriter:
     private def serializeFqnIndex(
         fqnIndex: Map[String, kyo.Tasty.SymbolId],
         symbolList: Seq[Tasty.Symbol],
-        symbolId: scala.collection.mutable.HashMap[Tasty.Symbol, Int],
         internName: String => Int
     ): Array[Byte] =
         val baos = new java.io.ByteArrayOutputStream(64 * 1024)

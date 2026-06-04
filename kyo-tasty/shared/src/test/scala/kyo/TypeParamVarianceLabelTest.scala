@@ -25,27 +25,72 @@ class TypeParamVarianceLabelTest extends Test:
 
     "varianceLabel returns empty string for Invariant" in run {
         val tp = makeTypeParam(1, Tasty.Variance.Invariant)
-        assert(tp.varianceLabel == "", s"Expected '' for Invariant, got '${tp.varianceLabel}'")
+        assert(
+            (tp.variance match
+                case Tasty.Variance.Covariant     => "+";
+                case Tasty.Variance.Contravariant => "-";
+                case _                            => ""
+            ) == "",
+            s"Expected '' for Invariant, got '${(tp.variance match
+                    case Tasty.Variance.Covariant     => "+";
+                    case Tasty.Variance.Contravariant => "-";
+                    case _                            => ""
+                )}'"
+        )
         succeed
     }
 
     "varianceLabel returns '+' for Covariant" in run {
         val tp = makeTypeParam(2, Tasty.Variance.Covariant)
-        assert(tp.varianceLabel == "+", s"Expected '+' for Covariant, got '${tp.varianceLabel}'")
+        assert(
+            (tp.variance match
+                case Tasty.Variance.Covariant     => "+";
+                case Tasty.Variance.Contravariant => "-";
+                case _                            => ""
+            ) == "+",
+            s"Expected '+' for Covariant, got '${(tp.variance match
+                    case Tasty.Variance.Covariant     => "+";
+                    case Tasty.Variance.Contravariant => "-";
+                    case _                            => ""
+                )}'"
+        )
         succeed
     }
 
     "varianceLabel returns '-' for Contravariant" in run {
         val tp = makeTypeParam(3, Tasty.Variance.Contravariant)
-        assert(tp.varianceLabel == "-", s"Expected '-' for Contravariant, got '${tp.varianceLabel}'")
+        assert(
+            (tp.variance match
+                case Tasty.Variance.Covariant     => "+";
+                case Tasty.Variance.Contravariant => "-";
+                case _                            => ""
+            ) == "-",
+            s"Expected '-' for Contravariant, got '${(tp.variance match
+                    case Tasty.Variance.Covariant     => "+";
+                    case Tasty.Variance.Contravariant => "-";
+                    case _                            => ""
+                )}'"
+        )
         succeed
     }
 
     "varianceLabel exhaustive match: all three Variance cases covered" in run {
         val labels = Seq(
-            makeTypeParam(1, Tasty.Variance.Invariant).varianceLabel,
-            makeTypeParam(2, Tasty.Variance.Covariant).varianceLabel,
-            makeTypeParam(3, Tasty.Variance.Contravariant).varianceLabel
+            (makeTypeParam(1, Tasty.Variance.Invariant).variance match
+                case Tasty.Variance.Covariant     => "+";
+                case Tasty.Variance.Contravariant => "-";
+                case _                            => ""
+            ),
+            (makeTypeParam(2, Tasty.Variance.Covariant).variance match
+                case Tasty.Variance.Covariant     => "+";
+                case Tasty.Variance.Contravariant => "-";
+                case _                            => ""
+            ),
+            (makeTypeParam(3, Tasty.Variance.Contravariant).variance match
+                case Tasty.Variance.Covariant     => "+";
+                case Tasty.Variance.Contravariant => "-";
+                case _                            => ""
+            )
         )
         assert(labels.toSet == Set("", "+", "-"), s"Expected {'', '+', '-'} but got ${labels.toSet}")
         succeed

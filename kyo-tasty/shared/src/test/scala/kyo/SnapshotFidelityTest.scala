@@ -149,8 +149,8 @@ class SnapshotFidelityTest extends Test:
                                 val coldMeta = coldSym.javaMetadata.get
                                 val warmMeta = warmSym.javaMetadata.get
                                 assert(
-                                    warmMeta.isJvmPublic == coldMeta.isJvmPublic,
-                                    s"isJvmPublic differs for $fqn: cold=${coldMeta.isJvmPublic} warm=${warmMeta.isJvmPublic}"
+                                    ((warmMeta.accessFlags & 0x0001) != 0) == ((coldMeta.accessFlags & 0x0001) != 0),
+                                    s"isJvmPublic differs for $fqn: cold=${(coldMeta.accessFlags & 0x0001) != 0} warm=${(warmMeta.accessFlags & 0x0001) != 0}"
                                 )
                                 assert(
                                     warmMeta.accessFlags == coldMeta.accessFlags,

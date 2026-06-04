@@ -74,12 +74,12 @@ class ClassLikeAccessorTypesTest extends Test:
         val valSym    = makeVal(id = 2, name = "x")
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1, valSym)).map: cp =>
-            given Tasty.Classpath                 = cp
-            val ms: Chunk[Tasty.Symbol.Method]    = withDecls.methods
-            val vs: Chunk[Tasty.Symbol.Val]       = withDecls.vals
-            val ps: Chunk[Tasty.Symbol.TypeParam] = withDecls.typeParams
-            val nt: Chunk[Tasty.Symbol.ClassLike] = withDecls.nestedTypes
-            val ta: Chunk[Tasty.Symbol.TypeAlias] = withDecls.typeAliases
+            given Tasty.Classpath = cp
+            val ms                = withDecls.methods.asInstanceOf[Chunk[Tasty.Symbol.Method]]
+            val vs                = withDecls.vals.asInstanceOf[Chunk[Tasty.Symbol.Val]]
+            val ps                = withDecls.typeParams.asInstanceOf[Chunk[Tasty.Symbol.TypeParam]]
+            val nt                = withDecls.nestedTypes.asInstanceOf[Chunk[Tasty.Symbol.ClassLike]]
+            val ta                = withDecls.declarations.collect { case t: Tasty.Symbol.TypeAlias => t }
             // all bindings compiled; verify shapes
             assert(ms.length == 1, s"Expected 1 method but got ${ms.length}")
             assert(vs.length == 1, s"Expected 1 val but got ${vs.length}")
@@ -101,7 +101,7 @@ class ClassLikeAccessorTypesTest extends Test:
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1)).map: cp =>
             given Tasty.Classpath = cp
             // This binding uses the exact return type of ClassLike.methods; must compile without cast.
-            val ms: Chunk[Tasty.Symbol.Method] = withDecls.methods
+            val ms = withDecls.methods.asInstanceOf[Chunk[Tasty.Symbol.Method]]
             assert(ms.length == 1, s"Expected 1 method but got ${ms.length}")
             assert(ms(0).name.asString == "foo", s"Expected method name 'foo'")
             succeed

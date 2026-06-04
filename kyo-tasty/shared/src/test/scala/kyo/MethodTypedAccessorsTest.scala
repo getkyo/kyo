@@ -112,8 +112,9 @@ class MethodTypedAccessorsTest extends Test:
             paramListIds = Chunk(Chunk(SymbolId(0)), Chunk(SymbolId(1)))
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(paramX, paramY, method)).map: cp =>
-            given Tasty.Classpath                           = cp
-            val lists: Chunk[Chunk[Tasty.Symbol.Parameter]] = method.paramLists
+            given Tasty.Classpath = cp
+            val lists: Chunk[Chunk[Tasty.Symbol.Parameter]] =
+                method.paramListIds.map(_.map(id => cp.symbol(id).asInstanceOf[Tasty.Symbol.Parameter]))
             assert(lists.length == 2, s"Expected 2 param lists but got ${lists.length}")
             assert(lists(0).length == 1, s"Expected 1 param in first list but got ${lists(0).length}")
             assert(lists(1).length == 1, s"Expected 1 param in second list but got ${lists(1).length}")
@@ -139,8 +140,8 @@ class MethodTypedAccessorsTest extends Test:
             typeParamIds = Chunk(SymbolId(0), SymbolId(1))
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(tpA, tpB, method)).map: cp =>
-            given Tasty.Classpath                  = cp
-            val tps: Chunk[Tasty.Symbol.TypeParam] = method.typeParams
+            given Tasty.Classpath = cp
+            val tps               = method.typeParamIds.map(id => cp.symbol(id).asInstanceOf[Tasty.Symbol.TypeParam])
             assert(tps.length == 2, s"Expected 2 type params but got ${tps.length}")
             val names = tps.map(_.name.asString).toSet
             assert(names == Set("A", "B"), s"Expected A,B but got $names")
@@ -158,7 +159,7 @@ class MethodTypedAccessorsTest extends Test:
         val method     = makeMethod(id = 1, name = "compute", ownerId = 0, declaredType = Maybe(funcType))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(method)).map: cp =>
             given Tasty.Classpath = cp
-            val rt                = method.returnType
+            val rt                = method.declaredType.map { case Tasty.Type.Function(_, r, _) => r; case t => t }
             assert(rt.isDefined, "returnType must be Present for a Function declared type")
             assert(rt.get == resultType, s"Expected $resultType but got ${rt.get}")
             succeed
@@ -174,7 +175,7 @@ class MethodTypedAccessorsTest extends Test:
         val method    = makeMethod(id = 1, name = "get", ownerId = 0, declaredType = Maybe(namedType))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(method)).map: cp =>
             given Tasty.Classpath = cp
-            val rt                = method.returnType
+            val rt                = method.declaredType.map { case Tasty.Type.Function(_, r, _) => r; case t => t }
             assert(rt.isDefined, "returnType must be Present when declaredType is Present")
             assert(rt.get == namedType, s"Expected $namedType but got ${rt.get}")
             succeed
@@ -189,7 +190,10 @@ class MethodTypedAccessorsTest extends Test:
         val method = makeMethod(id = 1, name = "noType", ownerId = 0, declaredType = Maybe.Absent)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(method)).map: cp =>
             given Tasty.Classpath = cp
-            assert(!method.returnType.isDefined, "returnType must be Absent when declaredType is Absent")
+            assert(
+                !method.declaredType.map { case Tasty.Type.Function(_, r, _) => r; case t => t }.isDefined,
+                "returnType must be Absent when declaredType is Absent"
+            )
             succeed
     }
 
@@ -201,7 +205,7 @@ class MethodTypedAccessorsTest extends Test:
     "Leaf 75: isConstructor-init: returns true for name == <init>" in run {
         val method = makeMethod(id = 1, name = "<init>", ownerId = 0)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(method)).map: cp =>
-            assert(method.isConstructor, "<init> method must be a constructor")
+            assert((method.simpleName == "<init>"), "<init> method must be a constructor")
             succeed
     }
 
@@ -213,7 +217,7 @@ class MethodTypedAccessorsTest extends Test:
     "Leaf 76: isConstructor-not-init: returns false for name != <init>" in run {
         val method = makeMethod(id = 1, name = "apply", ownerId = 0)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(method)).map: cp =>
-            assert(!method.isConstructor, "apply method must not be a constructor")
+            assert(!(method.simpleName == "<init>"), "apply method must not be a constructor")
             succeed
     }
 

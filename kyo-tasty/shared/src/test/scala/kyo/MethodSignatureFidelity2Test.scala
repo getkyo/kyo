@@ -136,7 +136,7 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
                 case Some(m) =>
                     var hasEmptyShow = false
                     m.declaredType.foreach: dt =>
-                        val shown = dt.show
+                        val shown = Tasty.typeShow(dt)
                         if shown.isEmpty then hasEmptyShow = true
                     assert(!hasEmptyShow, s"Expected non-empty show string for all declaredType variants of method ${m.name}")
                     succeed

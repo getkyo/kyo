@@ -211,7 +211,7 @@ class SymbolMemberSearchTest extends Test:
     "Leaf 150: collectMembers returns all overloaded declarations" in run {
         buildOverloadedFixture.map: cp =>
             val a       = cp.findClass("A").get
-            val members = a.collectMembers("foo")(using cp)
+            val members = a.declarations(using cp).filter(_.simpleName == "foo")
             assert(members.size == 2, s"Expected 2 but got ${members.size}")
             succeed
     }

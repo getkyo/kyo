@@ -59,7 +59,7 @@ class TreePolishTest extends Test:
                 Tasty.Tree.Unknown(99, 0)
             )
             trees.foreach: t =>
-                val s = t.show
+                val s = Tasty.treeShow(t)
                 assert(s.nonEmpty, s"Tree.show returned empty for ${t.getClass.getSimpleName}")
             succeed
     }

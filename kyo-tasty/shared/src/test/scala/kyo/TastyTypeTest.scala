@@ -19,7 +19,7 @@ class TastyTypeTest extends Test with TastyTestSupport:
             val intType           = makeNamed("scala.Int")
             val applied           = Tasty.Type.Applied(listType, Chunk(intType))
             // plan: phase-05; Name resolution deferred to Phase 09; show renders id values.
-            val showResult = applied.show
+            val showResult = applied.toString
             assert(
                 showResult.nonEmpty,
                 s"Expected non-empty show but got '$showResult'"

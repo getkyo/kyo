@@ -49,7 +49,8 @@ class TreeAdtVariantCoverageTest extends Test:
     end runPass1
 
     private def symbolBody(sym: Tasty.Symbol, pass1: AstUnpickler.Pass1Result): Maybe[Tasty.SymbolBody] =
-        pass1.bodyDataByAddr.get(sym) match
+        val bodyDataEntry = pass1.bodyDataByAddr.get(sym)
+        (if bodyDataEntry == null then None else Some(bodyDataEntry)) match
             case Some((bodyStart, bodyEnd)) =>
                 Maybe(Tasty.SymbolBody(
                     bodyStart = bodyStart,
@@ -60,6 +61,8 @@ class TreeAdtVariantCoverageTest extends Test:
                     addrMap = scala.collection.immutable.IntMap.empty
                 ))
             case None => Maybe.Absent
+        end match
+    end symbolBody
 
     private val dummyLookup: Int => Tasty.Symbol =
         _ => Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("unresolved"))

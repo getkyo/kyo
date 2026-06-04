@@ -73,7 +73,7 @@ class TypeSymbolIdTest extends Test:
 
     // ── Test 5: isSubtypeOf and show are member methods, not extensions ──────
 
-    /** Given: a Type t. When: t.isSubtypeOf(other) and t.show are called from user code without importing any extension namespace. Then:
+    /** Given: a Type t. When: Tasty.isSubtypeOf(t, other) and Tasty.typeShow(t) are called from user code without importing any extension namespace. Then:
       * both calls compile and resolve to the enum member. Pins: INV-009 (member methods on owned types).
       */
     "isSubtypeOf and show are member methods, not extensions" in run {
@@ -82,8 +82,8 @@ class TypeSymbolIdTest extends Test:
             val t: Tasty.Type     = Tasty.Type.Named(SymbolId(0))
             val other: Tasty.Type = Tasty.Type.Named(SymbolId(1))
             // Both calls must compile as member method calls (no import of any extension namespace).
-            val verdict: Tasty.SubtypeVerdict = t.isSubtypeOf(other)
-            val showResult: String            = t.show
+            val verdict: Tasty.SubtypeVerdict = Tasty.isSubtypeOf(t, other)
+            val showResult: String            = Tasty.typeShow(t)
             assert(
                 verdict == Tasty.SubtypeVerdict.Sub ||
                     verdict == Tasty.SubtypeVerdict.NotSub ||

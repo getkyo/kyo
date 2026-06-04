@@ -59,7 +59,7 @@ class ShowMethodTest extends Test with TastyTestSupport:
         makeClasspath.map: cp =>
             import kyo.Tasty.SymbolId
             val tpe = Tasty.Type.Named(SymbolId(1))
-            val s   = tpe.show(using cp)
+            val s   = Tasty.typeShow(tpe)(using cp)
             assert(s.nonEmpty, s"Type.show was empty for $tpe")
             succeed
     }
@@ -67,7 +67,7 @@ class ShowMethodTest extends Test with TastyTestSupport:
     "Tree.show returns non-empty string" in run {
         makeClasspath.map: cp =>
             val tree: Tasty.Tree = Tasty.Tree.Literal(Tasty.Constant.IntConst(42))
-            val s                = tree.show(using cp)
+            val s                = Tasty.treeShow(tree)(using cp)
             assert(s.nonEmpty, s"Tree.show was empty for $tree")
             succeed
     }
