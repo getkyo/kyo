@@ -200,12 +200,16 @@ class ChartTransitionTest extends Test:
         // Jan and Feb are present in both emissions, so the Band scale produces the same x positions
         // and the command count is 2 (MoveTo + LineTo) before and after.
         //
-        // Band scale (Jan, Feb), plotX=60, plotW=560, n=2, slot=280, padding=0.1, bandW=252:
-        //   px_Jan = 60 + 0*280 + (280-252)/2 = 60 + 14 = 74
-        //   px_Feb = 60 + 1*280 + (280-252)/2 = 60 + 294 = 354
+        // Band scale (Jan, Feb), plotX=60, plotW=560, n=2, slot=280, padding=0.1:
+        // Line points are centred on their band (band centre = plotX + i*slot + slot/2), matching the
+        // centred x-axis tick labels and the band-centred area/point/text marks (see ChartInvariantsTest's
+        // golden, also band-centred). xs.apply for a Band scale returns the band LEFT edge, so the line
+        // lowering adds bandwidth/2 to centre:
+        //   px_Jan = 60 + 0*280 + 280/2 = 200
+        //   px_Feb = 60 + 1*280 + 280/2 = 480
         // Y scale linear(0,4000), baseline=440, top=20: pixel(v) = 440 - v*0.105
-        //   initial: Jan=1000 -> py=335, Feb=2000 -> py=230  (from: "M74 335 L354 230")
-        //   updated: Jan=3000 -> py=125, Feb=500  -> py=387.5 (to:   "M74 125 L354 387.5")
+        //   initial: Jan=1000 -> py=335, Feb=2000 -> py=230  (from: "M200 335 L480 230")
+        //   updated: Jan=3000 -> py=125, Feb=500  -> py=387.5 (to:   "M200 125 L480 387.5")
         val initial = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val updated = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
         for
@@ -230,12 +234,12 @@ class ChartTransitionTest extends Test:
             )
             // The from/to strings must match the computed path coordinates.
             assert(
-                html1.contains("from=\"M74 335 L354 230\""),
-                s"Expected from=M74 335 L354 230 in updated render:\n$html1"
+                html1.contains("from=\"M200 335 L480 230\""),
+                s"Expected from=M200 335 L480 230 in updated render:\n$html1"
             )
             assert(
-                html1.contains("to=\"M74 125 L354 387.5\""),
-                s"Expected to=M74 125 L354 387.5 in updated render:\n$html1"
+                html1.contains("to=\"M200 125 L480 387.5\""),
+                s"Expected to=M200 125 L480 387.5 in updated render:\n$html1"
             )
         end for
     }

@@ -26,8 +26,12 @@ import scala.language.implicitConversions
   *
   * Band scale (2 categories, padding=0.1):
   *   slot=280, bandW=252
-  *   px_Jan = 60 + 0*280 + (280-252)/2 = 60 + 14 = 74
-  *   px_Feb = 60 + 1*280 + (280-252)/2 = 60 + 294 = 354
+  *   Line/area/point/text vertices are centred on their band (band centre = band left edge + bandW/2),
+  *   matching the centred x-axis tick labels and the slot-centred bars. xs.apply returns the band LEFT
+  *   edge, so the lowering adds bandW/2 to centre:
+  *   px_Jan = 60 + 0*280 + (280-252)/2 + 252/2 = 74 + 126 = 200
+  *   px_Feb = 60 + 1*280 + (280-252)/2 + 252/2 = 354 + 126 = 480
+  *   (The old 74/354 were the band LEFT edge and encoded the off-by-half-band bug, now fixed.)
   *
   * Y scale linear(0,4000), baseline=440, top=20: pixel(v) = 440 - v*0.105
   *   1000 -> 335,  2000 -> 230,  3000 -> 125,  500 -> 387.5
@@ -87,8 +91,8 @@ class ChartMorphTest extends Test:
         // Jan and Feb are present in both emissions: command count is 2 (M + L) before and after.
         // from = initial path d string, to = updated path d string.
         //
-        // Initial: Jan=1000 py=335, Feb=2000 py=230  -> d = "M74 335 L354 230"
-        // Updated: Jan=3000 py=125, Feb=500  py=387.5 -> d = "M74 125 L354 387.5"
+        // Initial: Jan=1000 py=335, Feb=2000 py=230  -> d = "M200 335 L480 230"
+        // Updated: Jan=3000 py=125, Feb=500  py=387.5 -> d = "M200 125 L480 387.5"
         val initial = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val updated = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
         for
@@ -112,13 +116,13 @@ class ChartMorphTest extends Test:
             )
             // The from string must be the rendered d of the initial path.
             assert(
-                html.contains("from=\"M74 335 L354 230\""),
-                s"Expected from=M74 335 L354 230:\n$html"
+                html.contains("from=\"M200 335 L480 230\""),
+                s"Expected from=M200 335 L480 230:\n$html"
             )
             // The to string must be the rendered d of the updated path.
             assert(
-                html.contains("to=\"M74 125 L354 387.5\""),
-                s"Expected to=M74 125 L354 387.5:\n$html"
+                html.contains("to=\"M200 125 L480 387.5\""),
+                s"Expected to=M200 125 L480 387.5:\n$html"
             )
         end for
     }
@@ -180,11 +184,11 @@ class ChartMorphTest extends Test:
         // top forward (2 pts), then baseline back (2 pts), then close = M+L+L+L+Z = 5 commands.
         //
         // Initial: Jan=1000 py=335, Feb=2000 py=230, baseline=440
-        //   top:      M74 335 L354 230
-        //   baseline: L354 440 L74 440 Z
-        //   -> "M74 335 L354 230 L354 440 L74 440 Z"
+        //   top:      M200 335 L480 230
+        //   baseline: L480 440 L200 440 Z
+        //   -> "M200 335 L480 230 L480 440 L200 440 Z"
         // Updated: Jan=3000 py=125, Feb=500 py=387.5
-        //   -> "M74 125 L354 387.5 L354 440 L74 440 Z"
+        //   -> "M200 125 L480 387.5 L480 440 L200 440 Z"
         val initial = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val updated = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
         for
@@ -204,11 +208,11 @@ class ChartMorphTest extends Test:
                 s"Expected attributeName=d in area animate:\n$html"
             )
             assert(
-                html.contains("from=\"M74 335 L354 230 L354 440 L74 440 Z\""),
+                html.contains("from=\"M200 335 L480 230 L480 440 L200 440 Z\""),
                 s"Expected area from path:\n$html"
             )
             assert(
-                html.contains("to=\"M74 125 L354 387.5 L354 440 L74 440 Z\""),
+                html.contains("to=\"M200 125 L480 387.5 L480 440 L200 440 Z\""),
                 s"Expected area to path:\n$html"
             )
         end for
@@ -249,25 +253,25 @@ class ChartMorphTest extends Test:
             assert(!html1b.contains("<animate"), s"R1 pull 2: no animate expected:\n$html1b")
             // R2 pull 1: animate present with correct from/to.
             assert(
-                html2a.contains("from=\"M74 335 L354 230\""),
+                html2a.contains("from=\"M200 335 L480 230\""),
                 s"R2 pull 1: expected from=R1 path:\n$html2a"
             )
             assert(
-                html2a.contains("to=\"M74 125 L354 387.5\""),
+                html2a.contains("to=\"M200 125 L480 387.5\""),
                 s"R2 pull 1: expected to=R2 path:\n$html2a"
             )
             // R2 pull 2: same from/to (idempotent double-pull).
             assert(
-                html2b.contains("from=\"M74 335 L354 230\""),
+                html2b.contains("from=\"M200 335 L480 230\""),
                 s"R2 pull 2: expected same from=R1 path (idempotent):\n$html2b"
             )
             assert(
-                html2b.contains("to=\"M74 125 L354 387.5\""),
+                html2b.contains("to=\"M200 125 L480 387.5\""),
                 s"R2 pull 2: expected same to=R2 path (idempotent):\n$html2b"
             )
             // Must NOT produce a dead animation from==to.
             assert(
-                !html2b.contains("from=\"M74 125 L354 387.5\" to=\"M74 125 L354 387.5\""),
+                !html2b.contains("from=\"M200 125 L480 387.5\" to=\"M200 125 L480 387.5\""),
                 s"R2 pull 2: must not produce dead animation from==to:\n$html2b"
             )
         end for
@@ -294,15 +298,15 @@ class ChartMorphTest extends Test:
             assert(!html1a.contains("<animate"), s"R1 pull 1: no animate:\n$html1a")
             assert(!html1b.contains("<animate"), s"R1 pull 2: no animate:\n$html1b")
             assert(
-                html2a.contains("from=\"M74 335 L354 230 L354 440 L74 440 Z\""),
+                html2a.contains("from=\"M200 335 L480 230 L480 440 L200 440 Z\""),
                 s"R2 pull 1: expected from=area R1 path:\n$html2a"
             )
             assert(
-                html2b.contains("from=\"M74 335 L354 230 L354 440 L74 440 Z\""),
+                html2b.contains("from=\"M200 335 L480 230 L480 440 L200 440 Z\""),
                 s"R2 pull 2: expected same from (idempotent):\n$html2b"
             )
             assert(
-                !html2b.contains("from=\"M74 125 L354 387.5 L354 440 L74 440 Z\" to=\"M74 125 L354 387.5 L354 440 L74 440 Z\""),
+                !html2b.contains("from=\"M200 125 L480 387.5 L480 440 L200 440 Z\" to=\"M200 125 L480 387.5 L480 440 L200 440 Z\""),
                 s"R2 pull 2: must not produce dead animation:\n$html2b"
             )
         end for

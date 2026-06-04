@@ -180,7 +180,11 @@ private[kyo] object ChartLower:
         plotX: Double,
         plotY: Double,
         plotW: Double,
-        plotH: Double
+        plotH: Double,
+        // Extra pixels of headroom reserved INSIDE the plot top for point glyphs whose centre sits at the data
+        // max: the y-scale's top range is pushed down by this much so the topmost point's edge (cy - r) clears
+        // plotY. Zero for charts without a reserved top legend band (so legend-free charts are byte-identical).
+        topHeadroom: Double = 0.0
     ):
         def plotBaseline: Double = plotY + plotH
     end Layout
@@ -293,6 +297,19 @@ private[kyo] object ChartLower:
         val bottomPad  = if hasLegend && pos == LegendPosition.Bottom then LegendReservedH else 0.0
         val leftPad    = if hasLegend && pos == LegendPosition.Left then LegendColumnW else 0.0
         val rightPad   = if hasLegend && pos == LegendPosition.Right then LegendColumnW else 0.0
+        // Point glyphs are centred on their data value, so the topmost (max-value) point's top edge (cy - r)
+        // would cross into the reserved top band and be clipped. Reserve the max point radius as in-plot top
+        // headroom (consumed by the y-scale range in resolveAllScales). Only when a top band is reserved, so
+        // legend-free point charts keep byte-identical output. A size channel scales up to DefaultRMax.
+        val topHeadroom =
+            if !reserveTop then 0.0
+            else
+                spec.marks.foldLeft(0.0): (mx, mark) =>
+                    mark match
+                        case m: Mark.Point[?, ?, ?] =>
+                            val r = if m.size.isDefined then SizeScale.DefaultRMax else DefaultRadius
+                            math.max(mx, r)
+                        case _ => mx
         // Grow the configured left margin so wide left y-tick labels + a rotated left axis title clear the SVG edge.
         val marginLeft = leftAxisMargin(spec, m.left)
         Layout(
@@ -301,7 +318,8 @@ private[kyo] object ChartLower:
             plotX = marginLeft + leftPad,
             plotY = m.top + topPad,
             plotW = w.toDouble - marginLeft - marginRight - leftPad - rightPad,
-            plotH = h.toDouble - m.top - topPad - bottomPad - m.bottom
+            plotH = h.toDouble - m.top - topPad - bottomPad - m.bottom,
+            topHeadroom = topHeadroom
         )
     end buildLayout
 
@@ -703,7 +721,9 @@ private[kyo] object ChartLower:
             case _                               => Absent
         val yKind    = yKindOpt.getOrElse(Scale.Kind.Linear)
         val baseline = layout.plotBaseline
-        val top      = layout.plotY
+        // Push the top of the y range down by the reserved point headroom so the max-value point's centre sits
+        // topHeadroom px below plotY, keeping its top edge (cy - r) at or below plotY (no clipping into the band).
+        val top = layout.plotY + layout.topHeadroom
         // Swap range bounds when reverse=true (D20).
         val (yRLoBase, yRHiBase) = if yReverse then (top, baseline) else (baseline, top)
         val (yExtFinal, yRLo, yRHi, useNice) = yOverride.flatMap(_.kind) match
@@ -1040,9 +1060,10 @@ private[kyo] object ChartLower:
                     if categories.isEmpty then Chunk.empty
                     else
                         spec.legendCfg.colorScale match
-                            case Present(LegendConfig.ColorScale.Sequential(lo, hi, _)) =>
-                                // Sequential legend: a single continuous gradient swatch under a doc-unique def id.
-                                buildSequentialLegend(layout, spec, lo, hi, gradPrefix)
+                            case Present(LegendConfig.ColorScale.Sequential(lo, hi, domOv)) =>
+                                // Sequential legend: a continuous gradient swatch under a doc-unique def id, plus
+                                // the numeric value extent (min/mid/max) so the gradient is quantitatively readable.
+                                buildSequentialLegend(layout, spec, lo, hi, categories, domOv, gradPrefix)
                             case _ =>
                                 val palette = resolvePalette(spec, categories)
                                 buildLegendItems(layout, categories, palette, spec.legendCfg, spec.marks, axisChromeColor(spec.theme))
@@ -1074,6 +1095,8 @@ private[kyo] object ChartLower:
         spec: ChartSpec[A],
         lo: Style.Color,
         hi: Style.Color,
+        categories: Chunk[(String, Any)],
+        domainOv: Maybe[(Double, Double)],
         gradPrefix: String
     )(using Frame): Chunk[Svg.SvgElement] =
         val gradId = s"$gradPrefix-grad-0"
@@ -1089,14 +1112,32 @@ private[kyo] object ChartLower:
             case LegendPosition.Bottom => (layout.plotX, layout.plotBaseline + (LegendReservedH - SwatchSize) / 2.0)
             case LegendPosition.Left   => (MarginLeft / 2.0 - SwatchSize, layout.plotY)
             case LegendPosition.Right  => (layout.plotX + layout.plotW + 8.0, layout.plotY)
+        val swatchW = SwatchSize * 4.0
         val swatch: Svg.SvgElement =
             Svg.rect
                 .x(legendX)
                 .y(legendY)
-                .width(SwatchSize * 4.0)
+                .width(swatchW)
                 .height(SwatchSize)
                 .fill(gradient.paint)
-        Chunk(Svg.defs(gradient), swatch)
+        // Numeric value extent at the two ends, so the gradient reads quantitatively. The labels sit INLINE to
+        // the left (min) and right (max) of the swatch, vertically centred on it, so they stay inside the thin
+        // reserved band (placing them below the swatch would spill into the plot area). They use the axis-tick
+        // chrome color and the same NumberFormat the tick/size legends use.
+        val (domLo, domHi) = domainExtentOf(categories, domainOv)
+        val labelColor     = axisChromeColor(spec.theme)
+        val labelY         = legendY + SwatchSize / 2.0
+        def label(value: Double, lx: Double, anchor: Svg.TextAnchor): Svg.SvgElement =
+            Svg.text
+                .x(lx)
+                .y(labelY)
+                .textAnchor(anchor)
+                .dominantBaseline(Svg.DominantBaseline.Middle)
+                .fill(Svg.Paint.Color(labelColor))
+                .apply(NumberFormat.double(value))
+        val minLabel = label(domLo, legendX - 6.0, Svg.TextAnchor.End)
+        val maxLabel = label(domHi, legendX + swatchW + 6.0, Svg.TextAnchor.Start)
+        Chunk(Svg.defs(gradient), swatch, minLabel, maxLabel)
     end buildSequentialLegend
 
     /** Build representative size-bubble legend items for a point mark with a size channel.
@@ -1836,6 +1877,24 @@ private[kyo] object ChartLower:
                     basePalette.toSeq.apply(i % basePalette.size)
         val baseline = layout.plotBaseline
 
+        // Degenerate-grouping guard: a `color` channel only DODGES (subdivides a band into sub-slots) when
+        // MULTIPLE distinct colors actually share the SAME x-band. When `color` is 1:1 with `x` (e.g.
+        // bar(x=_.label, color=_.label)), every band holds exactly one color; dodging each band's single bar
+        // into its global color sub-slot would march thin bars left-to-right, misaligned with the centered
+        // x-axis tick labels. So compute the max distinct color keys present within any single x-band; when
+        // that max is <= 1, render SIMPLE full-band bars (slot-centered, full bandwidth) instead of dodging.
+        val maxColorsPerBand: Int =
+            rows.foldLeft(Map.empty[String, Set[String]]): (m, row) =>
+                val xKeyMaybe = mark.x.plottable.toDomain(mark.x.accessor(row)).map(domainKey)
+                xKeyMaybe match
+                    case Present(xKey) =>
+                        val colorKey = colorEnc.accessor(row).toString
+                        m.updated(xKey, m.getOrElse(xKey, Set.empty[String]) + colorKey)
+                    case Absent => m
+                end match
+            .foldLeft(0)((mx, kv) => math.max(mx, kv._2.size))
+        val dodge = maxColorsPerBand > 1
+
         @scala.annotation.tailrec
         def loop(i: Int, acc: Chunk[(A, Svg.SvgElement)]): Chunk[(A, Svg.SvgElement)] =
             if i >= rows.size then acc
@@ -1849,12 +1908,14 @@ private[kyo] object ChartLower:
                         xDomain match
                             case Absent => acc
                             case Present(xd) =>
-                                val bandX     = xs.apply(xd)
-                                val bandW     = xs.bandwidth
-                                val subW      = bandW / numColors.toDouble
-                                val colorKey  = colorEnc.accessor(row).toString
-                                val colorIdx  = colorIdxByKey.getOrElse(colorKey, -1)
-                                val barX      = bandX + colorIdx.toDouble * subW
+                                val bandX    = xs.apply(xd)
+                                val bandW    = xs.bandwidth
+                                val colorKey = colorEnc.accessor(row).toString
+                                val colorIdx = colorIdxByKey.getOrElse(colorKey, -1)
+                                // Dodge only when a real grouped bar (some band holds >1 color); otherwise the
+                                // bar spans the full band, slot-centered under its x tick label.
+                                val subW      = if dodge then bandW / numColors.toDouble else bandW
+                                val barX      = if dodge then bandX + colorIdx.toDouble * subW else bandX
                                 val barY      = ys.apply(yd)
                                 val barH      = baseline - barY
                                 val fillColor = if colorIdx >= 0 && colorIdx < palette.size then palette(colorIdx) else basePalette(0)
@@ -2128,7 +2189,9 @@ private[kyo] object ChartLower:
                             val yd = mark.y.plottable.toDomain(yv)
                             (xd, yd) match
                                 case (Present(x), Present(y)) =>
-                                    val px = xs.apply(x)
+                                    // Centre on the band (xs.apply is the band LEFT edge; bandwidth is 0 for
+                                    // continuous scales) so line vertices align with the centred tick labels.
+                                    val px = xs.apply(x) + xs.bandwidth / 2.0
                                     val py = ys.apply(y)
                                     // WARN-2 (phase-1 audit): skip non-finite pixel coordinates.
                                     if java.lang.Double.isFinite(px) && java.lang.Double.isFinite(py) then
@@ -2247,7 +2310,10 @@ private[kyo] object ChartLower:
                         val yd = mark.y.plottable.toDomain(yv)
                         (xd, yd) match
                             case (Present(x), Present(y)) =>
-                                val px = xs.apply(x)
+                                // For a band/categorical x, xs.apply(x) is the band's LEFT edge (where bars start).
+                                // Centre the label on the band (the same x the bar is centred on) by adding half
+                                // the band width. For continuous scales bandwidth is 0, so this is a no-op there.
+                                val px = xs.apply(x) + xs.bandwidth / 2.0
                                 val py = ys.apply(y)
                                 val fillColor: Style.Color = mark.color match
                                     case Absent => defaultColor
@@ -2386,7 +2452,9 @@ private[kyo] object ChartLower:
                                     val yd = yEnc.plottable.toDomain(yv)
                                     (xd, yd) match
                                         case (Present(x), Present(y)) =>
-                                            val px = xs.apply(x)
+                                            // Centre on the band (xs.apply is the band LEFT edge; bandwidth is 0
+                                            // for continuous scales) so the area aligns with the centred tick labels.
+                                            val px = xs.apply(x) + xs.bandwidth / 2.0
                                             val py = ys.apply(y)
                                             if java.lang.Double.isFinite(px) && java.lang.Double.isFinite(py) then
                                                 Chunk((px, py))
@@ -2600,9 +2668,14 @@ private[kyo] object ChartLower:
                     val rawY     = groupMap.getOrElse(gk, 0.0)
                     val accY     = accByX.getOrElse(xk, 0.0)
                     val total    = xTotals.getOrElse(xk, 0.0)
-                    val px = xDomainByKey.get(xk) match
-                        case Some(d) => xs.apply(d)
-                        case None    => xs.apply(Domain.Category(xk))
+                    // Centre area vertices on the band (xs.apply gives the band LEFT edge; bandwidth is 0 for
+                    // continuous scales). Tick labels sit at band centres, so left-edge vertices leave the last
+                    // band slot empty (a wedge of unfilled plot to the right of the final vertex).
+                    val px =
+                        (xDomainByKey.get(xk) match
+                            case Some(d) => xs.apply(d)
+                            case None    => xs.apply(Domain.Category(xk))
+                        ) + xs.bandwidth / 2.0
                     val (py0, py1) =
                         if mark.stack.normalize then
                             val f0 = if total > 0.0 then accY / total else 0.0
@@ -2743,7 +2816,9 @@ private[kyo] object ChartLower:
                         val yd = mark.y.plottable.toDomain(yv)
                         (xd, yd) match
                             case (Present(x), Present(y)) =>
-                                val cx = xs.apply(x)
+                                // Centre on the band (xs.apply is the band LEFT edge; bandwidth is 0 for
+                                // continuous scales) so glyphs align with the centred tick labels.
+                                val cx = xs.apply(x) + xs.bandwidth / 2.0
                                 val cy = ys.apply(y)
                                 // WARN-2 (phase-1 audit): skip non-finite pixel coordinates.
                                 if !java.lang.Double.isFinite(cx) || !java.lang.Double.isFinite(cy) then (glyphs, labels)

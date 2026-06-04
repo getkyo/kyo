@@ -9,6 +9,7 @@ import kyo.UI.Ast.Encoding
 import kyo.UI.mark.*
 import kyo.internal.ChartLower
 import kyo.internal.HtmlRenderer
+import kyo.internal.NumberFormat
 import kyo.internal.Scale
 import scala.language.implicitConversions
 
@@ -125,12 +126,14 @@ class ChartLowerTest extends Test:
         val cmds = paths(0).svgAttrs.d match
             case Present(pd) => PathData.commands(pd)
             case Absent      => fail("Expected path to have d attribute")
-        // Band: n=2, slot=280, bandW=252, padding=(280-252)/2=14
+        // Band: n=2, slot=280, bandW=252, padding=(280-252)/2=14.
+        // Line vertices sit at the band CENTRE (left edge + bandW/2), aligning with the centred x-tick labels.
+        // (Old values 74/354 were the band LEFT edge and encoded the off-by-half-band bug.)
         val slot  = 280.0
         val bandW = 252.0
-        val pad   = (slot - bandW) / 2.0   // 14.0
-        val px_a  = PlotX + 0 * slot + pad // 74.0
-        val px_b  = PlotX + 1 * slot + pad // 354.0
+        val pad   = (slot - bandW) / 2.0               // 14.0
+        val px_a  = PlotX + 0 * slot + pad + bandW / 2 // 200.0 (band centre)
+        val px_b  = PlotX + 1 * slot + pad + bandW / 2 // 480.0 (band centre)
         assert(cmds.size == 2, s"Expected 2 path commands but got ${cmds.size}")
         cmds(0) match
             case PathCommand.MoveTo(x, y) =>
@@ -166,11 +169,13 @@ class ChartLowerTest extends Test:
         val cmds = paths(0).svgAttrs.d match
             case Present(pd) => PathData.commands(pd)
             case Absent      => fail("Expected path to have d attribute")
+        // Area vertices sit at the band CENTRE (left edge + bandW/2), aligning with the centred x-tick labels.
+        // (Old values 74/354 were the band LEFT edge and encoded the off-by-half-band bug.)
         val slot  = 280.0
         val bandW = 252.0
         val pad   = (slot - bandW) / 2.0
-        val px_a  = PlotX + pad        // 74.0
-        val px_b  = PlotX + slot + pad // 354.0
+        val px_a  = PlotX + pad + bandW / 2        // 200.0 (band centre)
+        val px_b  = PlotX + slot + pad + bandW / 2 // 480.0 (band centre)
         // Commands: MoveTo(px_a,230), LineTo(px_b,20), LineTo(px_b,440), LineTo(px_a,440), Close
         assert(cmds.size == 5, s"Expected 5 path commands but got ${cmds.size}")
         cmds(0) match
@@ -215,11 +220,13 @@ class ChartLowerTest extends Test:
         val root    = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
         val circles = circlesIn(root)
         assert(circles.size == 2, s"Expected 2 circles but got ${circles.size}")
+        // Point glyphs sit at the band CENTRE (left edge + bandW/2), aligning with the centred x-tick labels.
+        // (Old value 354.0 was the band LEFT edge and encoded the off-by-half-band bug.)
         val slot  = 280.0
         val bandW = 252.0
         val pad   = (slot - bandW) / 2.0
-        val px_b  = PlotX + slot + pad // 354.0
-        val c     = circles(1)         // second circle (for row "b", y=100)
+        val px_b  = PlotX + slot + pad + bandW / 2 // 480.0 (band centre)
+        val c     = circles(1)                     // second circle (for row "b", y=100)
         c.svgAttrs.cx match
             case Present(v) => assertClose(v, px_b, "point cx")
             case Absent     => fail("Expected cx to be Present")
@@ -322,11 +329,13 @@ class ChartLowerTest extends Test:
         assert(moveToCount == 2, s"Expected 2 MoveTos (one per contiguous run) but got $moveToCount")
         // Both commands should be MoveTos (no LineTo between gaps)
         assert(cmds.size == 2, s"Expected exactly 2 path commands but got ${cmds.size}")
+        // Vertices sit at the band CENTRE (left edge + bandW/2), aligning with the centred x-tick labels.
+        // (Old values were the band LEFT edge and encoded the off-by-half-band bug.)
         val slot  = PlotW / 3.0
         val bandW = PlotW * 0.9 / 3.0 // 168.0
         val pad   = (slot - bandW) / 2.0
-        val px_a  = PlotX + 0 * slot + pad
-        val px_c  = PlotX + 2 * slot + pad
+        val px_a  = PlotX + 0 * slot + pad + bandW / 2
+        val px_c  = PlotX + 2 * slot + pad + bandW / 2
         cmds(0) match
             case PathCommand.MoveTo(x, y) =>
                 assertClose(x, px_a, "gap MoveTo(a) x")
@@ -385,6 +394,51 @@ class ChartLowerTest extends Test:
         assertClose(xs(0), 88.0, "first sub-band x")
         assertClose(xs(1), 88.0 + expectedSubW, "second sub-band x")
         assertClose(xs(2), 88.0 + 2 * expectedSubW, "third sub-band x")
+    }
+
+    // ---- Test 8a (BUG): color 1:1 with x must NOT dodge; bars stay full-band and slot-centered ----
+    // When the color channel is 1:1 with the x channel (each x-band contains exactly ONE color),
+    // grammar-of-graphics convention says color must NOT subdivide the band: it just paints full-width
+    // bars. The old lowerBarGrouped dodged EVERY bar into a global color sub-slot keyed by global color
+    // index, so category 0 landed at the far left (width bandW/N), category 1 one slot right, etc. =>
+    // thin bars marching left-to-right, misaligned with their centered x-axis tick labels. The fix
+    // renders simple full-band bars when no band holds more than one distinct color.
+
+    "color channel that is 1:1 with x does not dodge: bars stay full-band and slot-centered" in {
+        // 3 distinct categories A/B/C, each its OWN color (color == label). Each x-band holds exactly one
+        // color => max-distinct-colors-per-band = 1 => simple full-band bars, NOT N grouped sub-bands.
+        // x Band: n=3, totalW=560, slot=560/3=186.666..., bandW=560*0.9/3=168.0
+        //   A: bandX = 60 + 0*slot + (slot-bandW)/2 = 60 + 9.333... = 69.333...
+        //   B: bandX = 60 + 1*slot + (slot-bandW)/2 = 256.0
+        //   C: bandX = 60 + 2*slot + (slot-bandW)/2 = 442.666...
+        case class Cat(label: String, value: Double)
+        given CanEqual[Cat, Cat] = CanEqual.derived
+        val rows = Chunk(
+            Cat("A", 1000.0),
+            Cat("B", 2000.0),
+            Cat("C", 1500.0)
+        )
+        val spec  = UI.chart(rows)(bar(x = _.label, y = _.value, color = _.label))
+        val root  = summon[Conversion[ChartSpec[Cat], Svg.Root]](spec)
+        val rects = rectsIn(root)
+        assert(rects.size == 3, s"Expected 3 rects (one per category) but got ${rects.size}")
+
+        val slot          = 560.0 / 3.0
+        val expectedBandW = 560.0 * 0.9 / 3.0 // 168.0
+        // Old (buggy) sub-band width would have been bandW/3 = 56.0; full-band is 3x that.
+        val oldSubW = expectedBandW / 3.0
+        assertClose(expectedBandW, oldSubW * 3.0, "full band is 3x old sub-band width")
+
+        // Every rect must be FULL band width (168), not the thin dodge width (56).
+        rects.foreach: r =>
+            assertClose(numOf(r.svgAttrs.width), expectedBandW, "full-band width (must NOT be bandW/3)")
+
+        // Each rect's x must be its band LEFT edge (slot-centered), NOT offset by colorIdx*subW.
+        val xsSorted         = rects.map(r => numOf(r.svgAttrs.x)).toSeq.sorted
+        def bandLeft(i: Int) = 60.0 + i.toDouble * slot + (slot - expectedBandW) / 2.0
+        assertClose(xsSorted(0), bandLeft(0), "A band left edge (69.333..)")
+        assertClose(xsSorted(1), bandLeft(1), "B band left edge (256.0)")
+        assertClose(xsSorted(2), bandLeft(2), "C band left edge (442.666..)")
     }
 
     // ---- Test 8b (ISSUE): grouped bar with numeric color channel honors a Sequential color scale ----
@@ -1868,6 +1922,117 @@ class ChartLowerTest extends Test:
         // .toSvgWithScales returns a pure (Svg.Root, ChartScales) tuple, again with no effect row.
         val pair: (Svg.Root, ChartScales) = spec.toSvgWithScales
         assert(pair._1.children.nonEmpty, "spec.toSvgWithScales must return a pure Svg.Root with no effect row")
+    }
+
+    // ---- Bug A: TEXT mark over a band x is centred on the band, honouring TextAnchor.Middle ----
+    // A text label with anchor=Middle over a categorical (band) x must sit at the band CENTRE (the same x
+    // the bar is centred on), not the band's LEFT edge where the bar rect starts.
+    "text mark with anchor=Middle over a band x is positioned at the band centre, not the band left edge" in {
+        // One category "Jan": band slot is the full plot width [60, 620], slot centre = 340.
+        // The bar rect starts at the band's left inset (88) but is centred at 340 (88 + 504/2).
+        val rows = Chunk(Sale("Jan", Usd(1000)))
+        val spec = UI.chart(rows)(
+            bar(x = _.month, y = _.revenue),
+            text(x = _.month, y = _.revenue, label = _ => "L", anchor = UI.TextAnchor.Middle)
+        )
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        // The bar's centre x = barX + barW/2.
+        val bar0 = rectsIn(root).find(_.svgAttrs.width.exists { case Coord.Num(w) => w == 504.0; case _ => false })
+            .getOrElse(fail("expected the data bar rect"))
+        val barX  = numOf(bar0.svgAttrs.x)
+        val barW  = numOf(bar0.svgAttrs.width)
+        val barCx = barX + barW / 2.0 // 88 + 252 = 340
+        // The text label "L" is the deep text whose content is "L".
+        val labelTxt = deepTextsIn(root).find(_.children.exists { case UI.Ast.Text("L") => true; case _ => false })
+            .getOrElse(fail("expected the text-mark label element"))
+        val txtX = numOf(labelTxt.svgAttrs.x)
+        assertClose(txtX, barCx, "Middle-anchored text x must equal the bar/band centre x")
+    }
+
+    // ---- Bug B: SEQUENTIAL color legend carries numeric min/max scale labels ----
+    // The gradient swatch alone is quantitatively meaningless; the legend must show the value extent.
+    "sequential color legend emits numeric min and max value labels as text" in {
+        case class P(x: Double, y: Double, heat: Double)
+        given CanEqual[P, P] = CanEqual.derived
+        val rows             = Chunk(P(0.0, 0.0, 10.0), P(1.0, 1.0, 50.0), P(2.0, 2.0, 90.0))
+        val spec = UI.chart(rows)(point(x = _.x, y = _.y, color = _.heat))
+            .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
+        val root = summon[Conversion[ChartSpec[P], Svg.Root]](spec)
+        // Collect every text anywhere in the tree (legend labels are direct root children, not under a G).
+        def allTexts(e: UI): Chunk[Svg.Text] = e match
+            case t: Svg.Text => Chunk(t)
+            case g: Svg.G    => g.children.flatMap(allTexts)
+            case _           => Chunk.empty
+        val texts  = root.children.flatMap(allTexts).map(_.children.collect { case UI.Ast.Text(s) => s }.mkString).toSeq
+        val minStr = NumberFormat.double(10.0)
+        val maxStr = NumberFormat.double(90.0)
+        assert(texts.contains(minStr), s"sequential legend must show min value label '$minStr'; texts=$texts")
+        assert(texts.contains(maxStr), s"sequential legend must show max value label '$maxStr'; texts=$texts")
+    }
+
+    // ---- Bug C: POINT chart color/size legend sits in a reserved band, plot reserves top headroom ----
+    // A point chart with a sequential color legend must place the legend ABOVE the plot area, and the
+    // topmost plotted point must clear the plot top (cy - r >= plotY): no overlap, no clipping.
+    "point chart with a sequential color legend reserves a top band; legend is above plot and top point is not clipped" in {
+        case class P(x: Double, y: Double, heat: Double)
+        given CanEqual[P, P] = CanEqual.derived
+        val rows             = Chunk(P(0.0, 0.0, 10.0), P(1.0, 1.0, 50.0), P(2.0, 2.0, 90.0))
+        val spec = UI.chart(rows)(point(x = _.x, y = _.y, color = _.heat))
+            .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
+        val (root, scales) = spec.toSvgWithScales
+        val plotY          = scales.plot.y
+        // Collect every rect anywhere in the tree (the legend swatch is a direct root child, not under the marks G).
+        def allRects(e: UI): Chunk[Svg.Rect] = e match
+            case r: Svg.Rect => Chunk(r)
+            case g: Svg.G    => g.children.flatMap(allRects)
+            case _           => Chunk.empty
+        val rectsAll = root.children.flatMap(allRects)
+        // The gradient swatch (legend rect, filled with a gradient paint) must sit above the plot.
+        val swatch = rectsAll.find(_.svgAttrs.fill.exists {
+            case Svg.Paint.Ref(_) => true
+            case _                => false
+        }).getOrElse(fail("expected the sequential gradient swatch rect"))
+        val swatchY = numOf(swatch.svgAttrs.y)
+        assert(swatchY < plotY, s"legend swatch y ($swatchY) must be above plotY ($plotY) in the reserved band")
+        // The topmost data point must clear the plot top: cy - r >= plotY.
+        val pts = deepCirclesIn(root).toSeq.flatMap { c =>
+            (c.svgAttrs.cy, c.svgAttrs.r) match
+                case (Present(cy), Present(r)) => Some((cy, r))
+                case _                         => None
+        }
+        assert(pts.nonEmpty, "expected plotted point circles")
+        val (topCy, topR) = pts.minBy(_._1)
+        assert(topCy - topR >= plotY - Tol, s"topmost point top (cy-r=${topCy - topR}) must clear plotY ($plotY)")
+    }
+
+    // ---- Bug D (root cause): area/line/point over a band x are centred on the band, aligning with the
+    // centred x-tick labels. A left-edge area leaves the last band slot empty (the "empty wedge"). ----
+    "stacked area over a band x spans the full plot width; the last vertex is centred on the last band" in {
+        case class S(month: String, units: Double, region: Region = Region.NA)
+        given CanEqual[S, S] = CanEqual.derived
+        // Four categories -> band slots; the rightmost (Apr) vertex must sit at Apr's band centre, not its left
+        // edge (which would leave a wedge of empty plot to the right of the area).
+        val rows = Chunk(S("Jan", 60), S("Feb", 72), S("Mar", 80), S("Apr", 90))
+        val spec = UI.chart(rows)(area(x = _.month, y = _.units, color = _.region, stack = by(_.region)))
+        val root = summon[Conversion[ChartSpec[S], Svg.Root]](spec)
+        // Band of 4 over [PlotX, PlotX+PlotW]: slot = PlotW/4 = 140, bandW = PlotW*0.9/4 = 126.
+        val slot      = PlotW / 4.0
+        val bandW     = PlotW * 0.9 / 4.0
+        val pad       = (slot - bandW) / 2.0
+        val aprCentre = PlotX + 3 * slot + pad + bandW / 2.0 // 60 + 420 + 7 + 63 = 550
+        // Collect every path x coordinate; the max x must equal the Apr band centre (full-width area).
+        val xs = deepPathsIn(root).flatMap { p =>
+            p.svgAttrs.d match
+                case Present(pd) => PathData.commands(pd).flatMap {
+                        case PathCommand.MoveTo(x, _) => Chunk(x)
+                        case PathCommand.LineTo(x, _) => Chunk(x)
+                        case _                        => Chunk.empty
+                    }
+                case Absent => Chunk.empty
+        }.toSeq
+        assert(xs.nonEmpty, "expected area path vertices")
+        val maxX = xs.max
+        assertClose(maxX, aprCentre, "rightmost area vertex must be the last band's centre (no empty wedge)")
     }
 
 end ChartLowerTest
