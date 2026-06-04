@@ -8,8 +8,9 @@ import kyo.*
   *   - args(0): colon-separated (or OS path-separator-separated) compile classpath roots
   *   - args(1): absolute path to the snapshot output directory
   *
-  * Calls `Tasty.Classpath.initCached`, which writes a `.krfl` snapshot to the given directory if none exists for the current classpath
-  * digest. Exits 0 on success, 1 on known [[TastyError]], 2 on unexpected failure.
+  * Calls `Tasty.withClasspath` with the snapshot directory as the cache dir, which writes a `.krfl` snapshot
+  * to the given directory if none exists for the current classpath digest. Exits 0 on success, 1 on known
+  * [[TastyError]], 2 on unexpected failure.
   *
   * Error output goes to stderr as a single line (no stack trace) so the sbt plugin can relay it in a
   * [[sbt.internal.util.MessageOnlyException]].
@@ -26,7 +27,8 @@ object SnapshotRunner extends KyoApp:
             val roots       = args(0).split(java.io.File.pathSeparatorChar).toSeq.filterNot(_.isEmpty)
             val snapshotDir = args(1)
 
-            Abort.run[TastyError](Tasty.Classpath.initCached(roots, snapshotDir)).map:
+            // withClasspath writes the snapshot on a cache miss as a side effect of loading.
+            Abort.run[TastyError](Tasty.withClasspath(roots, Maybe.Present(snapshotDir))(Sync.defer(()))).map:
                 case Result.Success(_) =>
                     java.lang.System.out.println(
                         s"kyo-tasty-sbt: snapshot written to $snapshotDir"
