@@ -12,6 +12,9 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
   * Leaf 4: SOURCE BREAK -- Classpath.init not on surface (compileErrors).
   * Leaf 5: SOURCE BREAK -- Classpath.initCached not on surface (compileErrors).
   * Leaf 6: withClasspath(roots, Present(cacheDir)) activates dev cache (JVM only).
+  *         SPLIT: lives in kyo-tasty/jvm/src/test/scala/kyo/WithClasspathJvmTest.scala because
+  *         java.nio.file.Files.createTempDirectory and java.io.File are not available in
+  *         Scala.js and would cause fastLinkJS linker errors in shared test code.
   * Leaf 7: withClasspath(roots, Absent) does not touch any cache.
   * Leaf 8: SnapshotRunner port -- Classpath.initCached not on surface confirms runner migration.
   *
@@ -108,53 +111,6 @@ class WithClasspathTest extends Test:
         val err = compiletime.testing.typeCheckErrors("kyo.Tasty.Classpath.initCached(Seq(\"x\"), \"/tmp\")")
         assert(err.nonEmpty, "Classpath.initCached must not be on the surface; expected a compile error")
         succeed
-    }
-
-    // ── Leaf 6: withClasspath(roots, Present(cacheDir)) activates dev cache ──
-    // Given: a fresh OS temp directory; kyo-tasty-fixtures jar or classes dir from java.class.path
-    // When: two sequential Tasty.withClasspath(roots, Present(cacheDir)) calls
-    // Then: a <cacheDir>/<digest>.krfl file appears after the first call;
-    //       both calls return the same symbol count
-    // Pins: item 31 cacheDir argument
-    // JVM only: temp directories and real filesystem roots are JVM-only.
-    "Leaf 6: withClasspath(roots, Present(cacheDir)) writes snapshot on miss, reads on hit" taggedAs jvmOnly in run {
-        val tmpDir = java.nio.file.Files.createTempDirectory("kyo-wc-leaf6-").toAbsolutePath.toString
-        // Discover kyo-tasty-fixtures from the JVM classpath (the smallest available fixtures jar/dir).
-        val cpRoots: Seq[String] =
-            sys.props
-                .getOrElse("java.class.path", "")
-                .split(java.io.File.pathSeparatorChar)
-                .filter(p => p.contains("kyo-tasty-fixtures") && (p.endsWith(".jar") || p.endsWith("/classes")))
-                .toSeq
-        // Fall back to all classpath entries if the fixtures jar is not separately discoverable.
-        val roots: Seq[String] =
-            if cpRoots.nonEmpty then cpRoots
-            else
-                sys.props
-                    .getOrElse("java.class.path", "")
-                    .split(java.io.File.pathSeparatorChar)
-                    .filter(p =>
-                        val f = new java.io.File(p)
-                        f.exists && ((f.isFile && p.endsWith(".jar")) || (f.isDirectory))
-                    )
-                    .take(1)
-                    .toSeq
-        Abort.run[TastyError](
-            Tasty.withClasspath(roots, Maybe.Present(tmpDir)):
-                Tasty.classpath.map(_.symbols.size)
-            .flatMap: n1 =>
-                Tasty.withClasspath(roots, Maybe.Present(tmpDir)):
-                    Tasty.classpath.map(_.symbols.size)
-                .map: n2 =>
-                    val krflFiles = new java.io.File(tmpDir).listFiles()
-                    val krflCount = if krflFiles == null then 0 else krflFiles.count(_.getName.endsWith(".krfl"))
-                    assert(krflCount >= 1, s"at least one .krfl file must be written to $tmpDir; got $krflCount")
-                    assert(n1 == n2, s"both withClasspath calls must return same symbol count; got $n1 vs $n2")
-                    succeed
-        ).map:
-            case Result.Success(r) => r
-            case Result.Failure(e) => fail(s"Unexpected TastyError: $e")
-            case Result.Panic(t)   => throw t
     }
 
     // ── Leaf 7: withClasspath(roots, Absent) does not touch any cache ─────────
