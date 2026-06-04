@@ -2145,11 +2145,14 @@ private[kyo] object ChartLower:
                 // INV-023: pass spec/internalHoverRef so click/hover handlers are attached to the path.
                 Chunk(lowerLineSeries(rows, mark, layout, xs, ys, defaultColor, spec, internalHoverRef))
             case Present(colorEnc) =>
-                val keys: Chunk[String] = rows.map(row => colorEnc.accessor(row.asInstanceOf[A]).toString)
-                val colorKeys: Chunk[String] =
-                    ChartFoundations.distinctKeyed(keys, k => ChartFoundations.categoryKey(k)).map(_._2)
+                // FIX B: resolve per-series colors via resolvePalette (the same path the legend and stacked
+                // bars use), so an explicit categorical/sequential colorScale is honored and the line agrees
+                // with the legend. resolvePalette falls back to theme.palette then DefaultPalette when no
+                // colorScale is set, so a line WITHOUT a colorScale keeps byte-identical colors to before.
+                val cats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, colorEnc)
+                val colorKeys: Chunk[String]   = cats.map(_._1)
                 val palette: Chunk[Style.Color] = spec match
-                    case Present(s) => themePalette(s.theme)
+                    case Present(s) => resolvePalette(s, cats)
                     case Absent     => DefaultPalette
                 colorKeys.zipWithIndex.map: (key, idx) =>
                     val seriesRows  = rows.filter(r => colorEnc.accessor(r).toString == key)

@@ -1803,6 +1803,44 @@ class ChartLowerTest extends Test:
         end for
     }
 
+    // FIX B (reproduce-before-fix): a color-split line must honor an explicit categorical colorScale.
+    // Before the fix, lowerLine's color-split branch colored each series from themePalette(s.theme) by
+    // category index, ignoring spec.legendCfg.colorScale. So the line drew DefaultPalette blue/orange while
+    // the legend (which uses resolvePalette) showed the colorScale colors: legend and line disagreed.
+    // After the fix, lowerLine resolves colors via resolvePalette, so the "a" path is the colorScale cyan
+    // and the "b" path is the colorScale amber, matching the legend.
+    "a color-split line honors an explicit categorical colorScale (FIX B)" in {
+        case class SRow(x: Double, y: Double, series: String) derives CanEqual
+        val cyan  = Style.Color.rgb(6, 182, 212)
+        val amber = Style.Color.rgb(245, 158, 11)
+        val rows = Chunk(
+            SRow(0.0, 1.0, "a"),
+            SRow(1.0, 2.0, "a"),
+            SRow(0.0, 3.0, "b"),
+            SRow(1.0, 4.0, "b")
+        )
+        val spec = UI.chart(rows)(line(x = _.x, y = _.y, color = _.series))
+            .legend(_.colorScale {
+                case "a" => cyan
+                case _   => amber
+            })
+        val root  = summon[Conversion[ChartSpec[SRow], Svg.Root]](spec)
+        val paths = pathsIn(root)
+        assert(paths.size == 2, s"Expected 2 line paths (one per series) but got ${paths.size}")
+        def strokeOf(p: Svg.Path): Style.Color =
+            p.svgAttrs.stroke match
+                case Present(Svg.Paint.Color(c)) => c
+                case other                       => fail(s"Expected a line stroke color but got $other")
+        val aStroke = strokeOf(paths(0))
+        val bStroke = strokeOf(paths(1))
+        // The "a" series path must carry the colorScale cyan, NOT DefaultPalette blue.
+        assert(aStroke == cyan, s"FIX B: series 'a' line must use colorScale cyan rgb(6,182,212) but got $aStroke")
+        // The "b" series path must carry the colorScale amber, NOT DefaultPalette orange.
+        assert(bStroke == amber, s"FIX B: series 'b' line must use colorScale amber rgb(245,158,11) but got $bStroke")
+        assert(aStroke != Style.Color.blue, s"FIX B: series 'a' must not fall back to DefaultPalette blue: $aStroke")
+        assert(bStroke != Style.Color.orange, s"FIX B: series 'b' must not fall back to DefaultPalette orange: $bStroke")
+    }
+
     // Leaf 19 (fill fix): stacked-area bands carry a per-group palette fill, not colorless paths.
     // Each group's band must be filled with its palette color (custom theme.palette here),
     // mirroring the non-stacked area's color fill. Before the fix the band paths had no fill.
