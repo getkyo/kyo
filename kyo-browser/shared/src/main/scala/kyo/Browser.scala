@@ -2212,11 +2212,13 @@ object Browser:
 
     // --- Viewport ---
 
-    /** Overrides the rendered viewport to `width × height` until [[resetViewport]] is called.
+    /** Overrides the rendered viewport to `width × height` (and `deviceScaleFactor` for the device pixel ratio) until [[resetViewport]] is
+      * called.
       *
-      * Forwards to `Emulation.setDeviceMetricsOverride` with `deviceScaleFactor = 1` and `mobile = false`. The override affects how the
-      * page renders: responsive media queries match the new viewport, and elements re-layout. It is sticky: subsequent operations on the
-      * same tab observe the overridden viewport until the caller invokes [[resetViewport]] (or the tab is closed).
+      * Forwards to `Emulation.setDeviceMetricsOverride` with `deviceScaleFactor` (default `1.0`) and `mobile = false`. The override affects
+      * how the page renders: responsive media queries match the new viewport, elements re-layout, and `window.devicePixelRatio` reflects the
+      * override. It is sticky: subsequent operations on the same tab observe the overridden viewport until the caller invokes
+      * [[resetViewport]] (or the tab is closed). Settles after via `MutationSettlement.afterAction` so the re-layout has quiesced on return.
       *
       * The override persists until [[resetViewport]] is called or the tab is closed; not scope-managed.
       *
@@ -2225,51 +2227,59 @@ object Browser:
       * `isolate.clone`. Each child tab starts with its own natural viewport; re-apply `setViewport` inside the child if you need the same
       * override there. For a snapshot-driven workflow consider invoking `setViewport` per-tab as part of the child's setup.
       */
-    private[kyo] def setViewport(width: Int, height: Int)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
-        Env.use[BrowserTab] { tab =>
-            // Cache write FIRST, then issue the CDP call. If the CDP call fails, the cache reflects intent;
-            // the reverse order would risk a permanently-stale cache on a missed update following a successful CDP call.
-            tab.viewportOverride.set(Present(BrowserTab.ViewportOverride(width, height, 1.0))).andThen(
-                CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(width, height))
-            )
-        }
+    def setViewport(width: Int, height: Int, deviceScaleFactor: Double = 1.0)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        MutationSettlement.afterAction {
+            Env.use[BrowserTab] { tab =>
+                // Cache write FIRST, then issue the CDP call. If the CDP call fails, the cache reflects intent;
+                // the reverse order would risk a permanently-stale cache on a missed update following a successful CDP call.
+                tab.viewportOverride.set(Present(BrowserTab.ViewportOverride(width, height, deviceScaleFactor))).andThen(
+                    CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(width, height, deviceScaleFactor))
+                )
+            }
+        }(Absent)
 
     /** Removes any viewport override set by [[setViewport]], restoring the tab's natural viewport.
       *
-      * Forwards to `Emulation.clearDeviceMetricsOverride`. No-op when no override is currently active.
+      * Forwards to `Emulation.clearDeviceMetricsOverride`. No-op when no override is currently active. Settles after via
+      * `MutationSettlement.afterAction` so any re-layout from clearing the override has quiesced on return.
       */
-    private[kyo] def resetViewport(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
-        Env.use[BrowserTab] { tab =>
-            tab.viewportOverride.set(Absent).andThen(
-                CdpBackend.clearDeviceMetricsOverride(tab.session)
-            )
-        }
+    def resetViewport(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        MutationSettlement.afterAction {
+            Env.use[BrowserTab] { tab =>
+                tab.viewportOverride.set(Absent).andThen(
+                    CdpBackend.clearDeviceMetricsOverride(tab.session)
+                )
+            }
+        }(Absent)
 
-    /** Scoped form of [[setViewport]]: applies the `width x height` override for the duration of `body`, then clears the override on body
-      * exit (success, failure, or interruption).
+    /** Scoped form of [[setViewport]]: applies the `width x height` override (and `deviceScaleFactor` for the device pixel ratio) for the
+      * duration of `body`, then restores the prior override on body exit (success, failure, or interruption).
       *
       * Use this instead of `setViewport(w, h).andThen(...)` when you want the override bounded to a specific block. Composes naturally with
       * the rest of the API: viewport-dependent assertions inside `body` see the override, code after `body` does not.
       *
-      * The prior override (if any) is cached on the BrowserTab. On exit, the cache is consulted: if a prior `(w, h)` override was active
-      * at entry, it is re-applied via `setDeviceMetricsOverride`; otherwise the override is cleared via `clearDeviceMetricsOverride`. This
-      * lets nested `withViewport` calls compose correctly.
+      * The prior override (if any) is cached on the BrowserTab. On exit, the cache is consulted: if a prior override was active at entry, it
+      * is re-applied via `setDeviceMetricsOverride` carrying that prior override's own `deviceScaleFactor`; otherwise the override is cleared
+      * via `clearDeviceMetricsOverride`. This lets nested `withViewport` calls compose correctly in LIFO order. The apply settles via
+      * `MutationSettlement.afterAction` before `body` runs; the restore on teardown does not add settlement.
       */
-    def withViewport[A, S](width: Int, height: Int)(body: A < (Browser & S))(using
+    def withViewport[A, S](width: Int, height: Int, deviceScaleFactor: Double = 1.0)(body: A < (Browser & S))(using
         Frame
     ): A < (Browser & Abort[BrowserReadException] & S) =
         Env.use[BrowserTab] { tab =>
             Scope.run {
                 tab.viewportOverride.get.map { prior =>
                     Scope.acquireRelease(
-                        tab.viewportOverride.set(Present(BrowserTab.ViewportOverride(width, height, 1.0))).andThen(
-                            CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(width, height))
-                        )
+                        MutationSettlement.afterAction {
+                            tab.viewportOverride.set(Present(BrowserTab.ViewportOverride(width, height, deviceScaleFactor))).andThen(
+                                CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(width, height, deviceScaleFactor))
+                            )
+                        }(Absent)
                     ) { _ =>
                         tab.viewportOverride.set(prior).andThen(
                             prior match
                                 case Present(vo) =>
-                                    CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(vo.width, vo.height))
+                                    CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(vo.width, vo.height, vo.dpr))
                                 case Absent =>
                                     CdpBackend.clearDeviceMetricsOverride(tab.session)
                         )
@@ -2359,6 +2369,36 @@ object Browser:
             }
         }
     end scrollTo
+
+    /** Scrolls the window to the document coordinate `(x, y)` via `window.scrollTo`.
+      *
+      * Settles after via `MutationSettlement.afterAction` so any layout reaction to the scroll has quiesced on return.
+      */
+    def scrollTo(x: Int, y: Int)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        MutationSettlement.afterAction {
+            BrowserEval.evalJs(s"window.scrollTo($x, $y)").unit
+        }(Absent)
+
+    /** Scrolls the page until the element matched by the selector is visible.
+      *
+      * Auto-waits for the element via `Actionability.withRetry`: the read is retried over the configured `retrySchedule` until the element
+      * resolves, then `scrollIntoView` runs. The retry channel is `BrowserElementException` (never widened to `BrowserMutationException`).
+      * Aborts `BrowserElementNotFoundException` when the element never appears within the schedule. Settles after.
+      */
+    def scrollToElement(selector: Selector)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
+        MutationSettlement.afterAction {
+            Actionability.withRetry {
+                Actionability.requireResolved(selector) {
+                    BrowserEval.evalJs(s"""(() => {
+                        const el = $jsExpr;
+                        el.scrollIntoView({behavior:'instant'});
+                        return 'ok';
+                    })()""").unit
+                }
+            }
+        }(Absent)
+    end scrollToElement
 
     /** Scrolls the page to the top. */
     def scrollToTop(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
