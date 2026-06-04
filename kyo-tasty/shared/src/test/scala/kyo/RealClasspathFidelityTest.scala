@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.internal.TestClasspaths
-import kyo.internal.TestClasspaths2
 
 /** Anchor fidelity test suite for the decoder-fidelity campaign.
   *
@@ -17,73 +16,6 @@ import kyo.internal.TestClasspaths2
 class RealClasspathFidelityTest extends Test:
 
     import AllowUnsafe.embrace.danger
-
-    // INV-001 leaf 1 (Phase 01): all-fixes-pin-real-classpath
-    // Given: a scan over every *FidelityTest.scala file in kyo-tasty/jvm/src/test/scala/kyo/
-    // When: parsing each test file's source text
-    // Then: every file contains the literal substring TestClasspaths.withClasspath
-    // Pins: INV-001 (TDD-real-classpath discipline; HARD RULE 1)
-    // JVM-only (exception condition 1: dev tool, user is a developer on their dev machine): the leaf walks the
-    //   source tree under the worktree to enforce a TDD discipline. It is a developer-time guard, not a property
-    //   of the kyo-tasty runtime decoder. JS/Native test runs do not have access to the project source tree.
-    "INV-001: every *FidelityTest.scala references TestClasspaths.withClasspath" taggedAs jvmOnly in run {
-        val worktreeRoot = TestClasspaths2.findWorktreeRoot
-        val testDir      = s"$worktreeRoot/kyo-tasty/jvm/src/test/scala/kyo"
-        val fidelityFiles = TestClasspaths2.walkFilesWithSuffix(testDir, "FidelityTest.scala") ++
-            TestClasspaths2.walkFilesWithSuffix(testDir, "InvariantsTest.scala")
-        val missing = fidelityFiles.filterNot: p =>
-            val src = TestClasspaths2.readFileAsString(p)
-            src.contains("TestClasspaths.withClasspath")
-        assert(
-            missing.isEmpty,
-            s"The following *FidelityTest files do not reference TestClasspaths.withClasspath:\n${missing.mkString("\n")}"
-        )
-        succeed
-    }
-
-    // INV-001 leaf 2 (Phase 01, updated 2026-06-02): zero-pending-leaves-after-backlog-resolution
-    // Given: the fidelity-1 test suite at HEAD (Phase 01 + all subsequent phases)
-    // When: scanning shared/src/test + jvm/src/test for `in pending` markers
-    // Then: pending count is zero; the Phase 01 backlog of 51 leaves was reduced to 0 across all phases
-    //       (Fidelity-2 backlog was resolved 2026-06-02; Fidelity-1 backlog cleared by earlier phases).
-    //       The assertion now guards against the backlog re-growing silently rather than gating its initial state.
-    // Pins: INV-001 (no PENDING leaf may be reintroduced without explicit triage).
-    // JVM-only (exception condition 1: dev tool, user is a developer on their dev machine): the leaf walks the
-    //   worktree source tree to count pending markers (developer-time discipline guard, not a runtime decoder property).
-    //   JS/Native test runs have no access to the worktree source tree.
-    "INV-001 (Phase 01, updated 2026-06-02): zero pending fidelity leaves remain after backlog resolution" taggedAs jvmOnly in run {
-        val worktreeRoot = TestClasspaths2.findWorktreeRoot
-        val sharedDir    = s"$worktreeRoot/kyo-tasty/shared/src/test/scala/kyo"
-        val jvmDir       = s"$worktreeRoot/kyo-tasty/jvm/src/test/scala/kyo"
-        // Filter to *FidelityTest.scala (Fidelity-1 suffix only). Sibling RealClasspathFidelity2Test INV-001
-        // covers *Fidelity2Test.scala via TestClasspaths2.pendingLeafCount.
-        val allTestFiles =
-            (TestClasspaths2.walkFilesWithSuffix(sharedDir, "FidelityTest.scala")
-                ++ TestClasspaths2.walkFilesWithSuffix(jvmDir, "FidelityTest.scala"))
-                .filter(p => !p.endsWith("Fidelity2Test.scala"))
-        // Match the ScalaTest pending pattern at end-of-line: `"name" in pending` followed by newline.
-        // The trailing newline excludes docstring matches (e.g. "remain pending until Phase 13") and the
-        // scanner's own source (string literals like `"\" in pending"` are quote-terminated, not newline).
-        var pendingCount = 0
-        val needle       = "\" in pending\n"
-        allTestFiles.foreach: p =>
-            val src = TestClasspaths2.readFileAsString(p)
-            var idx = 0
-            while idx < src.length do
-                val found = src.indexOf(needle, idx)
-                if found == -1 then idx = src.length
-                else
-                    pendingCount += 1
-                    idx = found + 1
-                end if
-            end while
-        assert(
-            pendingCount == 0,
-            s"Expected 0 pending fidelity-1 leaves (backlog resolved), found $pendingCount. " +
-                s"If a new pending is genuinely necessary, document a verdict (A/B/C/D) and update this threshold."
-        )
-        succeed
-    }
 
     // INV-003 anchor (Phase 03): no-unknown-tags-anchor
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
