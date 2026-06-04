@@ -2593,44 +2593,97 @@ object Browser:
 
     /** Returns all console messages captured since the last call (or since page load on the first call) and clears the buffer.
       *
-      * The `console.log`, `console.warn`, and `console.error` override is installed eagerly when the tab is attached, so messages emitted
-      * during page load are captured even before the first `consoleLogs` call. Each call drains and clears the buffer. Each entry carries a
-      * typed [[Browser.ConsoleLevel]], the original message, and the page-side `Date.now()` timestamp at emit time.
+      * The `console.debug` / `console.info` / `console.log` / `console.warn` / `console.error` override is installed eagerly when the tab is
+      * attached, so messages emitted during page load are captured even before the first `consoleLogs` call. Each call drains and clears the
+      * buffer. Each entry carries a typed [[Browser.ConsoleLevel]], the joined message text, and an `offsetMs` relative to the page-side
+      * capture baseline (`window.__kyoConsoleT0`, the `Date.now()` at install time).
       */
     def consoleLogs(using Frame): Chunk[Browser.ConsoleMessage] < (Browser & Abort[BrowserReadException]) =
-        BrowserEval.evalJs("""(() => {
-            const logs = window.__kyoConsoleLogs || [];
-            window.__kyoConsoleLogs = [];
-            return JSON.stringify(logs);
-        })()""").map { json =>
-            if json.isEmpty then Chunk.empty
-            else
-                Json.decode[Seq[ConsoleMessageWire]](json) match
-                    case Result.Success(list) =>
-                        Kyo.foreach(Chunk.from(list))(decodeConsoleMessage)
-                    case other =>
-                        Log.warn(s"consoleLogs: unexpected wire shape decoding Seq[ConsoleMessageWire]: $other; raw=$json")
-                            .andThen(Abort.fail(BrowserProtocolErrorException.decodeFailure("consoleLogs", s"$other; raw=$json")))
+        BrowserEval.evalJs("(window.__kyoConsoleT0 || 0)").map { t0Raw =>
+            val t0Ms = t0Raw.toLongOption.getOrElse(0L)
+            BrowserEval.evalJs("""(() => {
+                const logs = window.__kyoConsoleLogs || [];
+                window.__kyoConsoleLogs = [];
+                return JSON.stringify(logs);
+            })()""").map { json =>
+                if json.isEmpty then Chunk.empty
+                else
+                    Json.decode[Seq[ConsoleMessageWire]](json) match
+                        case Result.Success(list) =>
+                            Kyo.foreach(Chunk.from(list))(w => decodeConsoleMessage(w, t0Ms))
+                        case other =>
+                            Log.warn(s"consoleLogs: unexpected wire shape decoding Seq[ConsoleMessageWire]: $other; raw=$json")
+                                .andThen(Abort.fail(BrowserProtocolErrorException.decodeFailure("consoleLogs", s"$other; raw=$json")))
+            }
         }
 
     /** Filtering overload of [[consoleLogs]] that drains the buffer and returns only entries whose level equals `level`. */
     def consoleLogs(level: Browser.ConsoleLevel)(using Frame): Chunk[Browser.ConsoleMessage] < (Browser & Abort[BrowserReadException]) =
         consoleLogs.map(_.filter(_.level == level))
 
-    private def decodeConsoleMessage(wire: ConsoleMessageWire)(using
+    private[kyo] def decodeConsoleMessage(wire: ConsoleMessageWire, t0Ms: Long)(using
         Frame
     ): Browser.ConsoleMessage < Abort[BrowserReadException] =
         val levelE: Browser.ConsoleLevel < Abort[BrowserReadException] = wire.level match
             case "log"   => Browser.ConsoleLevel.Log
+            case "info"  => Browser.ConsoleLevel.Info
             case "warn"  => Browser.ConsoleLevel.Warn
             case "error" => Browser.ConsoleLevel.Error
+            case "debug" => Browser.ConsoleLevel.Debug
             case other =>
                 Abort.fail(BrowserProtocolErrorException.decodeFailure(
                     "consoleLogs",
-                    s"unknown level '$other' (expected log|warn|error)"
+                    s"unknown level '$other' (expected log|info|warn|error|debug)"
                 ))
-        levelE.map(lv => Browser.ConsoleMessage(lv, wire.message, Instant.fromJava(java.time.Instant.ofEpochMilli(wire.timestamp))))
+        levelE.map(lv => Browser.ConsoleMessage(lv, wire.message, Absent, wire.timestamp - t0Ms))
     end decodeConsoleMessage
+
+    /** Decodes a CDP `Runtime.consoleAPICalled` wire record into a typed [[Browser.ConsoleMessage]]. The 18 CDP `type` literals are mapped
+      * or aborted explicitly: the 10 non-structural types fold onto the five [[Browser.ConsoleLevel]] severities (`warning` maps to `Warn`,
+      * `trace` to `Debug`, `dir`/`dirxml`/`table` to `Log`, `assert` to `Error`), and the 8 structural types (`count`, `countReset`,
+      * `timeEnd`, `startGroup`, `startGroupCollapsed`, `endGroup`, `clear`, `profile`/`profileEnd`) abort
+      * [[BrowserProtocolErrorException.decodeFailure]] so a new CDP type surfaces as a typed protocol error rather than a silent `Log`.
+      *
+      * The CDP path knows `warning`, never the drain path's `warn` spelling; the two spellings never collide.
+      */
+    private[kyo] def decodeConsoleApiCalled(wire: ConsoleApiCalledWire, t0Ms: Long)(using
+        Frame
+    ): Browser.ConsoleMessage < Abort[BrowserReadException] =
+        val levelE: Browser.ConsoleLevel < Abort[BrowserReadException] = wire.`type` match
+            case "log"     => Browser.ConsoleLevel.Log
+            case "info"    => Browser.ConsoleLevel.Info
+            case "warning" => Browser.ConsoleLevel.Warn
+            case "error"   => Browser.ConsoleLevel.Error
+            case "debug"   => Browser.ConsoleLevel.Debug
+            case "trace"   => Browser.ConsoleLevel.Debug
+            case "dir"     => Browser.ConsoleLevel.Log
+            case "dirxml"  => Browser.ConsoleLevel.Log
+            case "table"   => Browser.ConsoleLevel.Log
+            case "assert"  => Browser.ConsoleLevel.Error
+            case structural @ ("count" | "countReset" | "timeEnd" | "startGroup" | "startGroupCollapsed" | "endGroup" | "clear" |
+                "profile" | "profileEnd") =>
+                Abort.fail(BrowserProtocolErrorException.decodeFailure(
+                    "recordConsole",
+                    s"unmapped structural console type '$structural'"
+                ))
+            case other =>
+                Abort.fail(BrowserProtocolErrorException.decodeFailure("recordConsole", s"unknown console type '$other'"))
+        levelE.map { lv =>
+            val text = wire.args.flatMap(a => a.value.orElse(a.description).toChunk).mkString(" ")
+            val location = wire.stackTrace.flatMap(st =>
+                Maybe.fromOption(st.callFrames.headOption).flatMap(cf => cf.url.map(u => u + ":" + cf.lineNumber.getOrElse(0)))
+            )
+            Browser.ConsoleMessage(lv, text, location, computeOffsetMs(wire.timestamp, t0Ms))
+        }
+    end decodeConsoleApiCalled
+
+    /** Converts a CDP event `timestamp` (milliseconds since epoch when present) into an offset relative to the recording baseline `t0Ms`.
+      * An absent timestamp yields `0L`.
+      */
+    private def computeOffsetMs(ts: Maybe[Double], t0Ms: Long) =
+        ts match
+            case Present(v) => math.round(v) - t0Ms
+            case Absent     => 0L
 
     /** Auto-handles JavaScript dialogs (alert, confirm, prompt, beforeunload) opened during the body's execution.
       *
@@ -3126,6 +3179,123 @@ object Browser:
                     case _ => Absent
             case _ => Absent
     end parseDownloadEvent
+
+    // --- Console recording ---
+
+    /** Bounded capacity for the per-tab console-event channel exposed via [[onConsole]] and [[recordConsole]]. Sized to ride out a short
+      * consumer stall without dropping events; the channel drops the oldest event on overflow.
+      */
+    private val consoleChannelCapacity: Int = 256
+
+    /** Subscribes `f` to every console message Chrome emits during `action`, mirroring [[onDownload]] in shape.
+      *
+      * Two CDP sources feed `f`: `Runtime.consoleAPICalled` (every `console.*` call) and `Runtime.exceptionThrown` (uncaught page errors,
+      * surfaced as a `ConsoleLevel.Error` message). A `consoleAPICalled` whose CDP `type` is one of the 8 structural variants aborts inside
+      * [[decodeConsoleApiCalled]]; that abort is recovered to a dropped event here so it never reaches the reader fiber. This recorder does
+      * NOT settle: it records the page exactly as it logs.
+      *
+      * Implementation: events flow from the CDP reader through a per-session dispatcher onto a bounded `Channel[ConsoleMessage]`; a forked
+      * drainer fiber takes events off the channel and applies `f`, isolating `f`'s effect row `S` from the dispatcher's `Sync`-only value
+      * type. The channel and drainer fiber are bound to an internal `Scope.run`, so teardown (dispatcher restore + channel close) fires when
+      * `action` completes (success, failure, OR interruption); the caller's effect row does NOT carry `Scope`. The handler is registered
+      * BEFORE `action` runs, so console output inside `action` is not missed.
+      */
+    def onConsole[A, S](f: Browser.ConsoleMessage => Unit < (Browser & S))(
+        action: A < (Browser & Async & Abort[BrowserReadException] & S)
+    )(using
+        Frame,
+        Isolate[S, Sync, S]
+    ): A < (Browser & Async & Abort[BrowserReadException] & S) =
+        Env.use[BrowserTab] { tab =>
+            val client = tab.client
+            val sidKey = tab.sessionId.value
+            Clock.now.map { t0 =>
+                val t0Ms = t0.toJava.toEpochMilli
+                // Bounded unscoped channel; closed explicitly via `Scope.ensure` inside the inner `Scope.run` so the effect row stays free
+                // of `Scope` while teardown is still bound to the body's lifetime.
+                Channel.initUnscoped[Browser.ConsoleMessage](consoleChannelCapacity).map { channel =>
+                    val handler: CdpEvent.Generic => Unit < Sync = ev =>
+                        consoleEventToMessage(ev, t0Ms).map {
+                            case Present(msg) =>
+                                // Best-effort offer: a full channel (drainer slow) or a closed channel (scope tearing down) drops the
+                                // event rather than blocking the CDP reader fiber. Abort[Closed] is swallowed.
+                                Abort.run[Closed](channel.offer(msg)).unit
+                            case Absent => Kyo.unit
+                        }
+                    client.consoleEventDispatchers.getAndUpdate(_.update(sidKey, handler)).map { previousMap =>
+                        val restoreDispatcher = client.consoleEventDispatchers.getAndUpdate { m =>
+                            previousMap.get(sidKey) match
+                                case Present(prev) => m.update(sidKey, prev)
+                                case Absent        => m.remove(sidKey)
+                        }.unit
+                        Scope.run {
+                            Scope.ensure(restoreDispatcher).andThen(Scope.ensure(channel.close.unit)).andThen {
+                                Fiber.init {
+                                    Abort.run[Closed](channel.stream().foreach(msg => Env.run(tab)(f(msg)))).unit
+                                }.andThen(action)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    end onConsole
+
+    /** Captures every [[ConsoleMessage]] Chrome emits during `body` into an in-memory [[Chunk]]. Returns a pair `(messages, result)` where
+      * `messages` is the arrival-ordered chunk of every console entry the page produced and `result` is the value `body` produced.
+      *
+      * Use this instead of [[onConsole]] when the test only needs to inspect the messages after the body completes; no manual `AtomicRef` or
+      * `Channel` bookkeeping is required. Implemented in terms of [[onConsole]] with a capture handler that appends each message to an
+      * internal `AtomicRef[Chunk]`; the drainer fiber inside [[onConsole]] is single-fiber per session, so arrival order is preserved.
+      */
+    def recordConsole[A, S](body: A < (Browser & Async & Abort[BrowserReadException] & S))(using
+        Frame,
+        Isolate[S, Sync, S]
+    ): (Chunk[Browser.ConsoleMessage], A) < (Browser & Async & Abort[BrowserReadException] & S) =
+        AtomicRef.init(Chunk.empty[Browser.ConsoleMessage]).map { collected =>
+            val captureHandler: Browser.ConsoleMessage => Unit < Sync =
+                msg => collected.updateAndGet(_.append(msg)).unit
+            onConsole(captureHandler)(body).map { result =>
+                collected.get.map(messages => (messages, result))
+            }
+        }
+    end recordConsole
+
+    /** Decodes a [[CdpEvent.Generic]] console event into a typed [[Browser.ConsoleMessage]] for the recorder handler. Reuses the wire-level
+      * [[kyo.internal.CdpClient.parseConsoleEvent]] decoder: a `Left` is a `Runtime.consoleAPICalled` mapped through
+      * [[decodeConsoleApiCalled]] (a structural-type abort recovers to `Absent` so the handler drops it), a `Right` is a
+      * `Runtime.exceptionThrown` surfaced as a `ConsoleLevel.Error` message at its `url:line`. Returns `Absent` for any non-console event or
+      * decode failure; never aborts.
+      */
+    private def consoleEventToMessage(ev: CdpEvent.Generic, t0Ms: Long)(using
+        Frame
+    ): Maybe[Browser.ConsoleMessage] < Sync =
+        CdpClient.parseConsoleEvent(ev) match
+            case Present(Left(consoleWire)) =>
+                Abort.run(decodeConsoleApiCalled(consoleWire, t0Ms)).map {
+                    case Result.Success(msg) => Present(msg)
+                    case _                   => Absent
+                }
+            case Present(Right(exWire)) =>
+                val d = exWire.exceptionDetails
+                // CDP reports `text` as the bare "Uncaught" prefix and carries the real error message in
+                // `exception.description`; join them so the message is meaningful.
+                val text = d.exception.flatMap(_.description) match
+                    case Present(desc) => d.text + " " + desc
+                    case Absent        => d.text
+                // Prefer the top-level `url:line`; fall back to the first stack frame when the throw carries no url.
+                val topFrame = d.stackTrace.flatMap(st => Maybe.fromOption(st.callFrames.headOption))
+                val location =
+                    d.url.map(u => u + ":" + d.lineNumber.getOrElse(0))
+                        .orElse(topFrame.flatMap(cf => cf.url.map(u => u + ":" + cf.lineNumber.getOrElse(0))))
+                Present(Browser.ConsoleMessage(
+                    Browser.ConsoleLevel.Error,
+                    text,
+                    location,
+                    computeOffsetMs(exWire.timestamp, t0Ms)
+                ))
+            case Absent => Absent
+    end consoleEventToMessage
 
     // --- Screencast ---
 
@@ -3762,21 +3932,25 @@ object Browser:
         properties: Dict[String, String]
     ) derives Schema, CanEqual
 
-    /** A single entry captured by the page-side `console.log` / `console.warn` / `console.error` override and returned by
-      * [[Browser.consoleLogs]].
+    /** A single console entry captured during a [[Browser.recordConsole]] body or drained by [[Browser.consoleLogs]].
       *
-      * `level` distinguishes log / warn / error without resorting to prefix smuggling in the message; `timestamp` is wall-clock at emit time
-      * (derived from page-side `Date.now()`).
+      * `level` distinguishes the five console severities without prefix smuggling in the text; `text` is the joined argument string;
+      * `location` is the originating `url:line` when the source carried a stack frame, else `Absent`; `offsetMs` is the milliseconds from
+      * the recording start (or buffer baseline for the drain path) to the moment the entry was emitted.
       */
     final case class ConsoleMessage(
         level: ConsoleLevel,
-        message: String,
-        timestamp: Instant
+        text: String,
+        location: Maybe[String],
+        offsetMs: Long
     ) derives Schema, CanEqual
 
-    /** Level enum for [[ConsoleMessage]]. Mirrors the three `console.*` overrides installed by [[kyo.internal.BrowserTabSetup]]. */
+    /** Level enum for [[ConsoleMessage]]. The five severities mirror the `console.*` overrides installed by
+      * [[kyo.internal.BrowserTabSetup]] (`debug`, `info`, `log`, `warn`, `error`) and the CDP `Runtime.consoleAPICalled` types folded onto
+      * them.
+      */
     enum ConsoleLevel derives Schema, CanEqual:
-        case Log, Warn, Error
+        case Log, Info, Warn, Error, Debug
 
     /** A single JavaScript dialog event captured by [[Browser.withDialogs.recorded]].
       *

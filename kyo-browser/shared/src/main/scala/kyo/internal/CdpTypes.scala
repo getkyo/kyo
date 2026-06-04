@@ -310,6 +310,7 @@ final private[kyo] case class ExceptionDetailsWire(
     text: String,
     url: Maybe[String] = Absent,
     lineNumber: Maybe[Int] = Absent,
+    stackTrace: Maybe[StackTraceWire] = Absent,
     exception: Maybe[RemoteObjectValue] = Absent
 ) derives Schema
 final private[kyo] case class ExceptionThrownWire(timestamp: Maybe[Double] = Absent, exceptionDetails: ExceptionDetailsWire) derives Schema

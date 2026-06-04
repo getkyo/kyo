@@ -177,12 +177,19 @@ private[kyo] object BrowserTabSetup:
         """(() => {
             window.__kyoConsoleInstalled = true;
             window.__kyoConsoleLogs = [];
+            window.__kyoConsoleT0 = Date.now();
             const origLog = console.log;
+            const origInfo = console.info;
             const origWarn = console.warn;
             const origError = console.error;
+            const origDebug = console.debug;
             console.log = function() {
                 window.__kyoConsoleLogs.push({ level: 'log', message: Array.from(arguments).join(' '), timestamp: Date.now() });
                 origLog.apply(console, arguments);
+            };
+            console.info = function() {
+                window.__kyoConsoleLogs.push({ level: 'info', message: Array.from(arguments).join(' '), timestamp: Date.now() });
+                origInfo.apply(console, arguments);
             };
             console.warn = function() {
                 window.__kyoConsoleLogs.push({ level: 'warn', message: Array.from(arguments).join(' '), timestamp: Date.now() });
@@ -191,6 +198,10 @@ private[kyo] object BrowserTabSetup:
             console.error = function() {
                 window.__kyoConsoleLogs.push({ level: 'error', message: Array.from(arguments).join(' '), timestamp: Date.now() });
                 origError.apply(console, arguments);
+            };
+            console.debug = function() {
+                window.__kyoConsoleLogs.push({ level: 'debug', message: Array.from(arguments).join(' '), timestamp: Date.now() });
+                origDebug.apply(console, arguments);
             };
             return 'ok';
         })()"""
