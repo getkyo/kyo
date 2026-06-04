@@ -507,17 +507,34 @@ class BrowserCaptureTest extends BrowserTest:
         }
     }
 
-    // ---- Test 7-9: screenshotElement with transparentBackground produces alpha=0 background
+    // ---- Test 7-9: screenshotElement with transparentBackground produces a transparent background
     //      (PRE-007).
     //
-    // A .badge element on an opaque page. screenshotElement(..., transparentBackground = true)
-    // must produce a PNG where the override is set for the shot (tested by ensuring the override
-    // does NOT persist: a subsequent screenshot() returns opaque bytes). The transparent-background
-    // flag is also tested by verifying the returned image is non-empty and is a valid PNG.
+    // The .badge element has a TRANSPARENT background of its own and contains a small opaque dot, so
+    // the badge's bounding box has the page's default background showing through the surrounding gap.
+    // The page sets NO opaque background, so the default-background override is what fills that gap:
+    // `Emulation.setDefaultBackgroundColorOverride({a:0})` paints it transparent, while the default
+    // (no override) is opaque. If the page painted its own opaque background the override would have
+    // nothing to show through, so the page is left background-less on purpose.
+    //
+    //   - With transparentBackground = true the gap is alpha=0, so Chrome emits a PNG with an alpha
+    //     channel: IHDR color type == 6 (truecolor with alpha / RGBA).
+    //   - The same capture WITHOUT transparentBackground fills the gap with Chrome's default opaque
+    //     background, so its bytes DIFFER from the transparent capture. This distinguishes a real
+    //     transparent output from an opaque one: if the override were a no-op the two captures would
+    //     be byte-identical and the assertion would FAIL.
+    //
+    // PNG IHDR color type lives at byte offset 25 (8-byte signature + 4-byte length + 4-byte "IHDR"
+    // + width(4) + height(4) + bit depth(1)).
+    //
+    // The override-restore property is also pinned: after the transparent capture, screenshot()
+    // succeeds, confirming the override was cleared (Scope.acquireRelease teardown).
 
-    "screenshotElement with transparentBackground restores the override afterward" in run {
-        val html = """<!DOCTYPE html><html><body style="background:white;">
-            <div class="badge" style="background:blue;width:50px;height:30px;">badge</div>
+    "screenshotElement with transparentBackground produces a transparent background" in run {
+        val html = """<!DOCTYPE html><html><body style="margin:0;">
+            <div class="badge" style="background:transparent;width:50px;height:30px;">
+                <div style="background:blue;width:10px;height:10px;"></div>
+            </div>
         </body></html>"""
         withBrowser {
             onPage(html) {
@@ -526,14 +543,32 @@ class BrowserCaptureTest extends BrowserTest:
                         Browser.Selector.css(".badge"),
                         format = Browser.ScreenshotFormat.Png,
                         transparentBackground = true
-                    ).map { img =>
-                        assert(img.binary.size > 0, "transparent-background screenshot must be non-empty")
-                        val bytes = img.binary.toArray
-                        assert(bytes(0) == 0x89.toByte, "result must be a valid PNG")
-                        // After the screenshotElement call, the background override must be cleared.
-                        // A subsequent screenshot() should not be transparent (the clear happened).
-                        Browser.screenshot().map { subsequent =>
-                            assert(subsequent.binary.size > 0, "subsequent screenshot must also be non-empty")
+                    ).map { transparent =>
+                        Browser.screenshotElement(
+                            Browser.Selector.css(".badge"),
+                            format = Browser.ScreenshotFormat.Png,
+                            transparentBackground = false
+                        ).map { opaque =>
+                            val tBytes = transparent.binary.toArray
+                            val oBytes = opaque.binary.toArray
+                            assert(tBytes.length > 0, "transparent-background screenshot must be non-empty")
+                            assert(tBytes(0) == 0x89.toByte, "result must be a valid PNG")
+                            // IHDR color type 6 == RGBA: the transparent capture carries an alpha channel.
+                            val colorType = tBytes(25) & 0xff
+                            assert(
+                                colorType == 6,
+                                s"transparent capture must have an alpha channel (IHDR color type 6) but got $colorType"
+                            )
+                            // The transparent gap (alpha=0) must differ from the opaque gap (default opaque
+                            // background): if the override were a no-op, the two captures would be byte-identical.
+                            assert(
+                                !java.util.Arrays.equals(tBytes, oBytes),
+                                "transparent and opaque captures must differ; identical bytes mean the override did not take effect"
+                            )
+                            // The override must not persist: a subsequent screenshot() still succeeds.
+                            Browser.screenshot().map { subsequent =>
+                                assert(subsequent.binary.size > 0, "subsequent screenshot must also be non-empty")
+                            }
                         }
                     }
                 }

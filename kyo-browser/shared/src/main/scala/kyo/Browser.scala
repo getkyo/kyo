@@ -2084,6 +2084,9 @@ object Browser:
         transparentBackground: Boolean = false
     )(using Frame): Image < (Browser & Abort[BrowserReadException]) =
         val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
+        // AUTO-WAIT: the retry resolves the element and waits until its box is stable, returning the resolved clip box.
+        // The hold-still capture then runs ONCE outside the retry, threading that stable box through `.map`, so a capture
+        // failure never re-enters the retry channel.
         Actionability.withRetry {
             // Resolve, box-stable check (two samples ~16 ms apart, agree within 1 px), then scroll into view and re-read the post-scroll rect.
             // found=false means the element does not exist (triggers BrowserElementNotFoundException for retry).
@@ -2101,17 +2104,7 @@ object Browser:
             })()""").map { result =>
                 Json.decode[ElementClipWire](result) match
                     case Result.Success(w) if w.ok =>
-                        val clip = ScreenshotClip(w.x, w.y, w.width, w.height, scale = 1.0)
-                        withTransparentBackground(transparentBackground) {
-                            HoldStill.withHoldStill {
-                                Env.use[BrowserTab] { tab =>
-                                    CdpBackend.captureScreenshot(
-                                        tab.session,
-                                        ScreenshotParams(format, screenshotQuality(format, quality), clip = Present(clip))
-                                    ).map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
-                                }
-                            }
-                        }
+                        ScreenshotClip(w.x, w.y, w.width, w.height, scale = 1.0)
                     case Result.Success(w) if !w.found =>
                         Abort.fail(BrowserElementNotFoundException(selectorNodeDescription(Selector.toNode(selector))))
                     case _ =>
@@ -2123,6 +2116,18 @@ object Browser:
                                 )
                             )
                         )
+            }
+        }.map { clip =>
+            // Capture ONCE with the resolved (actionable, ok) clip box, outside the retry.
+            withTransparentBackground(transparentBackground) {
+                HoldStill.withHoldStill {
+                    Env.use[BrowserTab] { tab =>
+                        CdpBackend.captureScreenshot(
+                            tab.session,
+                            ScreenshotParams(format, screenshotQuality(format, quality), clip = Present(clip))
+                        ).map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
+                    }
+                }
             }
         }
     end screenshotElement
