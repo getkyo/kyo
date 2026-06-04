@@ -3249,7 +3249,9 @@ object Browser:
             navigationGraceWindow = 300.millis,
             stabilitySampleInterval = 4.millis,
             defaultActionTimeout = 8.seconds,
-            defaultAssertionTimeout = 8.seconds
+            defaultAssertionTimeout = 8.seconds,
+            captureHoldStillTimeout = 1.second,
+            captureHoldStillInterval = 50.millis
         )
 
     end SessionConfig
@@ -3282,6 +3284,11 @@ object Browser:
       *   [[retrySchedule]].
       * @param defaultAssertionTimeout
       *   total time budget for a single assertion. Defaults to 8 seconds, the `maxDuration` of the default [[retrySchedule]].
+      * @param captureHoldStillTimeout
+      *   total best-effort bound for the two-identical-frames hold-still loop per capture. On timeout the last frame is returned; the loop
+      *   never aborts. Default 1 second.
+      * @param captureHoldStillInterval
+      *   inter-capture pacing delay in the two-identical-frames hold-still loop. Default 50 milliseconds.
       *
       * @see
       *   [[Browser.withConfig]]: install a session config for a scope
@@ -3302,7 +3309,9 @@ object Browser:
         navigationGraceWindow: Duration,
         stabilitySampleInterval: Duration,
         defaultActionTimeout: Duration,
-        defaultAssertionTimeout: Duration
+        defaultAssertionTimeout: Duration,
+        captureHoldStillTimeout: Duration,
+        captureHoldStillInterval: Duration
     ):
         /** Returns a copy with the [[retrySchedule]] set to `v`. */
         def retrySchedule(v: Schedule): SessionConfig = copy(retrySchedule = v)
@@ -3345,6 +3354,12 @@ object Browser:
 
         /** Returns a copy with the [[defaultAssertionTimeout]] set to `v`. */
         def defaultAssertionTimeout(v: Duration): SessionConfig = copy(defaultAssertionTimeout = v)
+
+        /** Returns a copy with the [[captureHoldStillTimeout]] set to `v` (total best-effort hold-still bound per capture). */
+        def captureHoldStillTimeout(v: Duration): SessionConfig = copy(captureHoldStillTimeout = v)
+
+        /** Returns a copy with the [[captureHoldStillInterval]] set to `v` (inter-capture pacing in the two-identical-frames loop). */
+        def captureHoldStillInterval(v: Duration): SessionConfig = copy(captureHoldStillInterval = v)
     end SessionConfig
 
     // CanEqual on SessionConfig powers the "explicit non-default session overrides; default inherits outer Local" gate inside
