@@ -49,13 +49,11 @@ class SelfTestsRunner extends AsyncFreeSpec with NonImplicitAssertions:
         }
     }
 
-    "RunnerSelfTest runs through kyo-test with 0 failures" in {
-        TestRunner.runToFuture(classOf[kyo.RunnerSelfTest]).map { report =>
-            assert(report.failed == 0, s"RunnerSelfTest had ${report.failed} failures; passed=${report.passed}")
-            assert(report.passed > 0, s"RunnerSelfTest had no passing tests")
-            succeed
-        }
-    }
+    // RunnerSelfTest is now a raw ScalaTest suite (AsyncFreeSpec): it tests TestRunner.runReport OFF the
+    // process-global pool, so awaiting runReport (which submits the sub-suite's leaves to the same global pool)
+    // never re-enters the pool. sbt's ScalaTest runner discovers and runs it directly, so it is no longer driven
+    // through TestRunner.runToFuture here (that path requires a kyo.test.TestBase, which RunnerSelfTest no longer
+    // is). TestApiSelfTest above remains a kyo.test.Test and is still dogfooded through the runner.
 
     // ── Leaf-7: suite-level config override disables no-assertion check suite-wide ───────────
 

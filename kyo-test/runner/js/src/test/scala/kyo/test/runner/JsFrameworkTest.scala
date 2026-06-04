@@ -128,9 +128,9 @@ class JsFrameworkTest extends AsyncFunSuite with NonImplicitAssertions:
         }
     }
 
-    // ── Test 4: parallelism > 1 is silently sequential ───────────────────────────────────────────
+    // ── Test 4: parallelism > 1 is accepted and all leaves run (JS) ────────────────────────────
 
-    test("parallelism > 1 is silently sequential") {
+    test("parallelism > 1 is accepted and all leaves run") {
         runTask(classOf[JsNextParallelSuite], "--parallel=4").map { evts =>
             assert(evts.size == 3): Unit
             assert(evts.forall(_.status() eq Status.Success)): Unit

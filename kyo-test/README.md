@@ -529,12 +529,11 @@ The command-line entry point (`kyo.test.runner.Cli`) takes flags that map onto t
 
 | Flag | Effect |
 |------|--------|
-| `--parallel=N` | Concurrency: `0` = auto, `1` = sequential, `N` caps at N workers |
+| `--parallel=N` | Concurrency: `1` = within-suite sequential, `0` (auto) or `N > 1` = parallel (the global pool sets the real degree) |
 | `--randomize` / `--randomize=SEED` | Shuffle leaf order (time-seeded, or a fixed seed to reproduce) |
 | `--filter=GLOB` | Include only leaves whose dot-joined path matches GLOB (repeatable) |
 | `--tag=NAME` / `--exclude-tag=NAME` | Include / exclude leaves by tag (repeatable) |
 | `--reporter=VALUE` | Add a reporter: `console`, `tap`, `tap:PATH`, `junit-xml:PATH` (comma-separated or repeatable) |
-| `--halt-on-failure` | Stop after the first leaf failure |
 | `--verbose` / `--quiet` | Raise / lower console detail |
 | `--count` / `--list` | Discovery only: report the leaf count, or print every leaf's full path; no body runs |
 | `--help` | Print usage |
@@ -554,12 +553,11 @@ val config: RunConfig =
         .parallelism(4)
         .filter(TestFilter(pathInclude = Chunk("transfers.*"), tagsExclude = Set("slow")))
         .verbosity(Verbosity.Quiet)
-        .haltOnFailure(true)
 ```
 
 `TestFilter` selects leaves: `pathInclude`/`pathExclude` are globs against the dot-joined leaf path, `tagsInclude`/`tagsExclude` are exact tag names. Includes act as allow-lists; excludes apply after. `TestFilter.empty` runs everything. `Verbosity` is `Quiet` / `Normal` / `Verbose`. Two `RunConfig` flags toggle discovery-only modes: `countOnly` reports the leaf count without running bodies, and `listOnly` additionally prints every leaf path (implying count-only). `strictStructure` turns on strict leaf-name-path validation, rejecting duplicate or structurally invalid paths at registration time.
 
-> **Note:** `parallelism = 0` means auto (`max(1, Async.defaultConcurrency)`), `1` means fully sequential, and `N` caps at N. On Scala Native the runner ALWAYS runs sequentially regardless of the requested value, because concurrent exception unwinding crashes libunwind.
+> **Note:** `parallelism = 1` means within-suite sequential (the suite's leaves run one at a time); `0` (the default) and any `N > 1` mean parallel: leaves are pushed to the process-global pool and the pool's `globalK` bound sets the real degree of concurrency; `N > 1` is no longer a per-suite cap. On Scala Native `globalK = 1`, so all leaves run sequentially regardless of the requested value.
 
 ### Outcomes and counters
 

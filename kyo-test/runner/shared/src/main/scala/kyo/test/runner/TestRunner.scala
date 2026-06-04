@@ -9,7 +9,6 @@ import kyo.Frame
 import kyo.Kyo
 import kyo.Local
 import kyo.Maybe
-import kyo.Meter
 import kyo.Result
 import kyo.Retry
 import kyo.Scope
@@ -34,6 +33,7 @@ import kyo.test.internal.TestContext
 import kyo.test.runner.ConsoleReporter
 import kyo.test.runner.internal.Glob
 import kyo.test.runner.internal.Instantiate
+import kyo.test.runner.internal.LeafPool
 import kyo.test.runner.internal.Randomize
 import scala.concurrent.Future
 
@@ -41,12 +41,13 @@ import scala.concurrent.Future
   *
   * The ENTIRE run, discovery AND execution, is one Kyo computation. Discovery is a synchronous `Sync` walk (per RI-008 discovery is
   * inherently sequential): each probe allocates its own [[TestContext]], instantiates the suite single-threaded, and reads the synchronous
-  * `peekRegisteredLeaf` / `peekWasGroup` accessors. Execution fans out via `Async.foreach(leaves, concurrency = Int.MaxValue)` bounded by
-  * `Meter.initSemaphore(K)` as the sole concurrency bound (the worker pool is unbounded so every leaf gets a worker fiber, K hold permits,
-  * the rest suspend on the Meter's promise). Each leaf runs under a per-leaf `Scope.run` (Scope is fiber-shared, so per-leaf `Scope.run`
-  * bounds resource lifetime to leaf end), an optional `Async.timeout`, an optional `Retry`, and an `Abort.run[Throwable]` boundary that
-  * routes a thrown `AssertionFailed` / `TestCancelled` / `Timeout` into a `TestResult`. Halt-on-failure aborts the fan-out (real fiber
-  * interruption). The ONLY `Future` is produced once, at the sbt edge, by `Fiber#toFuture`.
+  * `peekRegisteredLeaf` / `peekWasGroup` accessors. Execution fans out through the process-global
+  * `kyo.test.runner.internal.LeafPool`: each leaf's `Chunk[(Chunk[String], TestResult)] < Async` computation is submitted via
+  * `LeafPool.submit` and the suite awaits the returned promises in INPUT ORDER. The pool drains its bounded channel with `LeafPool.globalK` detached worker fibers, so total
+  * concurrent leaf execution is bounded across ALL suites in the process (not per suite). Each leaf runs under a per-leaf `Scope.run`
+  * (Scope is fiber-shared, so per-leaf `Scope.run` bounds resource lifetime to leaf end), the per-leaf `Async.timeout` and `Retry`
+  * decorators when present, and an `Abort.run[Throwable]` boundary that routes a thrown `AssertionFailed` / `TestCancelled` / `Timeout`
+  * into a `TestResult`. The ONLY `Future` is produced once, at the sbt edge, by `Fiber#toFuture`.
   *
   * The shared report / reporter / filter types under `kyo.test.*` are reused as-is.
   *
@@ -100,19 +101,11 @@ object TestRunner:
             className = suite.getName,
             expectedLeafCount = Maybe.empty
         )
-        // K is the sole concurrency bound, keyed off the effective parallelism sentinel: 0 means auto (the runner substitutes
-        // math.max(1, Async.defaultConcurrency)); any value >= 1 is honored verbatim (so parallelism = 1 is a genuine sequential
-        // run). The max(1, ...) floor is the mandatory K=0 guard (Meter.initSemaphore has no internal guard; K=0 would deadlock).
-        // Native always runs strictly sequentially (K = 1), regardless of the requested parallelism: Scala Native is effectively
-        // single-threaded (so K > 1 yields no real parallelism) AND concurrent exception unwinding crashes its libunwind ("invalid
-        // compact unwind encoding" -> SIGABRT). This enforces the parallelism = 1 intent the Native task already documents.
-        val K =
-            if kyo.internal.Platform.isNative then 1
-            else if effectiveConfig.parallelism <= 0 then math.max(1, Async.defaultConcurrency)
-            else math.max(1, effectiveConfig.parallelism)
-
+        // Under the process-global pool there is no per-suite K. The meaningful run-start figure is the pool's
+        // global bound, LeafPool.globalK (Q-002 resolution): reporting the suite's requested parallelism would
+        // mislead, since the pool, not the suite, sets the real degree of concurrency.
         if !effectiveConfig.countOnly then
-            reporter.onRunStart(kyo.test.RunInfo(suiteCount = 1, parallelism = K))
+            reporter.onRunStart(kyo.test.RunInfo(suiteCount = 1, parallelism = LeafPool.globalK))
             reporter.onSuiteStart(suiteInfo)
         val suiteStart = java.lang.System.nanoTime()
 
@@ -148,63 +141,45 @@ object TestRunner:
 
                     (ordered, hasFocus, cursorMap)
                 }.flatMap { case (ordered, hasFocus, cursorMap) =>
-                    // Completed-leaf accumulator, read when a HaltSignal cancels the fan-out so the partial results survive. The only
-                    // shared concurrent state in the run; per the Atomic-not-Var rule it is a concurrent queue, not a `var`.
-                    val completed = new java.util.concurrent.ConcurrentLinkedQueue[(Chunk[String], TestResult)]()
+                    // Build one submittable leaf-computation per leaf. The reporter callbacks fire INSIDE this
+                    // computation (on the pool worker) at REAL leaf start/finish (more accurate than fire-at-fork).
+                    def leafComp(path: Chunk[String], builderOpt: Maybe[TestBuilder]): Chunk[(Chunk[String], TestResult)] < Async =
+                        val rawBuilder = builderOpt.getOrElse(TestBuilder(path.lastMaybe.getOrElse("")))
+                        val builder =
+                            rawBuilder.timeout match
+                                case Maybe.Absent if effectiveConfig.timeout != Duration.Infinity =>
+                                    rawBuilder.copy(timeout = Maybe(effectiveConfig.timeout))
+                                case _ => rawBuilder
+                        val leafInfo = LeafInfo(suiteInfo.name, path, builder.tags)
+                        val cursor   = cursorMap.getOrElse(path, Chunk.empty)
+                        Sync.defer(reporter.onLeafStart(leafInfo)).andThen(
+                            runLeaf(suite, cursor, path, builder, hasFocus, effectiveConfig.failOnNoAssertion)
+                        ).map { entries =>
+                            entries.headMaybe match
+                                case Maybe.Present((_, result)) => reporter.onLeafComplete(leafInfo, result)
+                                case Maybe.Absent               => ()
+                            entries
+                        }
+                    end leafComp
 
-                    // The fan-out: every leaf gets a worker fiber (unbounded pool), gated by the Meter so at most K run at once.
-                    // The Meter introduces `Scope` (semaphore lifecycle) and `Abort[Closed]` (Closed <: Throwable, folds into the
-                    // pipeline's Abort[Throwable]); both are already in the pipeline row.
-                    val fanout: Chunk[(Chunk[String], TestResult)] < (Async & Abort[HaltSignal.type] & Abort[Throwable] & Scope) =
-                        Meter.initSemaphore(K).flatMap { meter =>
-                            Async.foreach(ordered, concurrency = Int.MaxValue) { case (path, builderOpt) =>
-                                val rawBuilder = builderOpt.getOrElse(TestBuilder(path.lastMaybe.getOrElse("")))
-                                val builder =
-                                    rawBuilder.timeout match
-                                        case Maybe.Absent if effectiveConfig.timeout != Duration.Infinity =>
-                                            rawBuilder.copy(timeout = Maybe(effectiveConfig.timeout))
-                                        case _ => rawBuilder
-                                val leafInfo = LeafInfo(suiteInfo.name, path, builder.tags)
-                                val cursor   = cursorMap.getOrElse(path, Chunk.empty)
-                                reporter.onLeafStart(leafInfo)
-                                meter.run(Sync.defer(runLeaf(
-                                    suite,
-                                    cursor,
-                                    path,
-                                    builder,
-                                    hasFocus,
-                                    effectiveConfig.failOnNoAssertion
-                                ))).map { entries =>
-                                    entries.headMaybe match
-                                        case Maybe.Present((_, result)) => reporter.onLeafComplete(leafInfo, result)
-                                        case Maybe.Absent               => ()
-                                    entries.foreach(completed.add)
-                                    // Halt-on-failure: raise HaltSignal as soon as a failing leaf completes, so Async.foreach
-                                    // cancels its in-flight sibling worker fibers (real interruption, not a flag poll).
-                                    if effectiveConfig.haltOnFailure && entries.exists { case (_, r) => isHaltingFailure(r) } then
-                                        Abort.fail(HaltSignal)
-                                    else entries
-                                }
+                    // Fan out via the global pool. Sequential (parallelism == 1): push-await-each in a serial
+                    // Kyo.foreach so at most one of THIS suite's leaves is in the pool at a time (within-suite
+                    // ordering preserved). Parallel (otherwise): push ALL leaves (backpressured by the channel),
+                    // then await all promises in INPUT ORDER.
+                    val results: Chunk[(Chunk[String], TestResult)] < (Async & Abort[Throwable] & Scope) =
+                        if effectiveConfig.parallelism == 1 then
+                            Kyo.foreach(ordered) { case (path, builderOpt) =>
+                                LeafPool.submit(leafComp(path, builderOpt)).map(_.get)
                             }.map(_.foldLeft(Chunk.empty[(Chunk[String], TestResult)])(_ ++ _))
-                        }
+                        else
+                            Kyo.foreach(ordered) { case (path, builderOpt) =>
+                                LeafPool.submit(leafComp(path, builderOpt))
+                            }.flatMap { promises =>
+                                Kyo.foreach(promises)(_.get)
+                                    .map(_.foldLeft(Chunk.empty[(Chunk[String], TestResult)])(_ ++ _))
+                            }
 
-                    val haltAware: Chunk[(Chunk[String], TestResult)] < (Async & Abort[Throwable] & Scope) =
-                        Abort.run[HaltSignal.type](fanout).map {
-                            case Result.Success(results)    => results
-                            case Result.Failure(HaltSignal) =>
-                                // The in-flight siblings were interrupted by the foreach cancellation. Assemble the completed entries
-                                // (drained from the accumulator) and pad any leaf with no recorded result as Skipped.
-                                val done = drainQueue(completed)
-                                val seen = done.map(_._1).toSet
-                                val padded =
-                                    ordered.collect { case (p, _) if !seen.contains(p) => (p, TestResult.Skipped("halted: prior failure")) }
-                                done.concat(padded)
-                            case panic: Result.Panic =>
-                                java.lang.System.err.println(s"[kyo-test] unexpected panic during halt: ${panic.exception}")
-                                drainQueue(completed)
-                        }
-
-                    haltAware.map { leaf =>
+                    results.map { leaf =>
                         val duration = Duration.fromNanos(java.lang.System.nanoTime() - suiteStart)
                         // After-leaf leaks: a fiber that asserted AFTER its leaf was scored hit the CLOSED branch of
                         // AssertScope.record, which (besides the stderr warning) enqueued into the process-global collector.
@@ -500,30 +475,6 @@ object TestRunner:
                         java.lang.System.err.println(s"[kyo-test] unexpected panic in leaf: $t")
                         TestResult.Failed(t.toString, Maybe(t), elapsed)
     end resultToTestResult
-
-    // ── Halt-on-failure ───────────────────────────────────────────────────────────────────────
-
-    /** The halt-on-failure abort payload. A dedicated sentinel (not a user `Throwable`) so `Abort.run[HaltSignal]` catches only the
-      * runner's halt and never collides with a leaf's own `Abort[Throwable]` failure.
-      */
-    private[runner] case object HaltSignal
-
-    private def isHaltingFailure(r: TestResult): Boolean =
-        r match
-            case _: TestResult.Failed    => true
-            case _: TestResult.Cancelled => true
-            case _: TestResult.TimedOut  => true
-            case _                       => false
-
-    /** Drain a concurrent queue into a `Chunk`, preserving FIFO completion order. */
-    private def drainQueue(q: java.util.concurrent.ConcurrentLinkedQueue[(Chunk[String], TestResult)]): Chunk[(Chunk[String], TestResult)] =
-        val buf = scala.collection.mutable.ListBuffer.empty[(Chunk[String], TestResult)]
-        var e   = q.poll()
-        while e != null do
-            buf += e
-            e = q.poll()
-        Chunk.from(buf)
-    end drainQueue
 
     // ── Filtering ─────────────────────────────────────────────────────────────────────────────
 

@@ -60,6 +60,17 @@ class ArgsTest extends kyo.test.Test[Any]:
         end match
     }
 
+    // ── Test 4b: removed --halt-on-failure flag is now an unknown argument (Q-003) ────────────
+
+    "test-4b: --halt-on-failure returns Result.Error(\"unknown argument: '--halt-on-failure'\")" in {
+        // After the haltOnFailure removal, --halt-on-failure is no longer a recognized flag; it falls through to the
+        // unknown-argument branch. Asserted behaviorally via the parser's return value (no reflection, no source-parsing).
+        assert(
+            Args.parse(Array("--halt-on-failure")) ==
+                Args.Result.Error("unknown argument: '--halt-on-failure'")
+        ): Unit
+    }
+
     // ── Test 5: empty args returns Ok(Parsed(RunConfig(), Chunk.empty)) ──────────────────────
 
     "test-5: empty args returns Ok(Parsed(RunConfig(), empty reporter, empty positional))" in {

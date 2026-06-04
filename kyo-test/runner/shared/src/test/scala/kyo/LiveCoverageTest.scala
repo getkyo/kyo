@@ -10,7 +10,12 @@ import kyo.test.TestBuilder
 import kyo.test.TestFilter
 import kyo.test.TestResult
 import kyo.test.internal.TestBase
+import kyo.test.runner.TestExecutionContext
 import kyo.test.runner.TestRunner
+import org.scalatest.NonImplicitAssertions
+import org.scalatest.freespec.AsyncFreeSpec
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 
 // ── Fixture suites (private object so classOf[...] resolves via reflection; extend TestBase[Any]
 //    directly so sbt does NOT auto-discover them as real suites). ────────────────────────────────
@@ -58,6 +63,22 @@ private object LiveCoverageFixtures:
         "only-js".onlyJs in succeed
     end OnlyPlatformSuite
 
+    // ── 4c. platform filter carries decorators forward ────────────────────────────────────────
+    // The DSL (`.onlyJvm`, `.tagged`) is in scope only inside a TestBase body, so the builder-metadata
+    // assertion lives in this fixture leaf (where the chained decorator actually executes). The leaf
+    // passes iff the PlatformTestBuilder preserves the underlying builder's tags and name; a regression
+    // makes the leaf fail, surfacing as report.failed == 1 in the off-pool caller below.
+
+    class ChainedDecoratorSuite extends TestBase[Any]:
+        "chained-decorator-preserves-metadata" in Sync.defer {
+            val taggedBuilder: PlatformTestBuilder[PlatformSet.OnlyJvm] = "x".onlyJvm.tagged("slow")
+            (taggedBuilder.builder.tags, taggedBuilder.builder.name)
+        }.map { case (tags, name) =>
+            assert(tags == Set("slow"))
+            assert(name == "x")
+        }
+    end ChainedDecoratorSuite
+
     // ── 5. flaky ──────────────────────────────────────────────────────────────────────────────
 
     val flakyCounter: AtomicInteger = new AtomicInteger(0)
@@ -69,6 +90,20 @@ private object LiveCoverageFixtures:
             else succeed
         }
     end FlakySuite
+
+    // ── 5b. flaky builder metadata ────────────────────────────────────────────────────────────
+    // As with the chained-decorator fixture, the `.flaky` String DSL is only in scope inside a TestBase
+    // body, so the builder-metadata assertion lives in this fixture leaf.
+
+    class FlakyMetadataSuite extends TestBase[Any]:
+        "flaky-builder-metadata" in Sync.defer {
+            val builder: TestBuilder = "x".flaky
+            (builder.tags.contains("flaky"), builder.retrySchedule.isDefined)
+        }.map { case (hasFlakyTag, hasRetrySchedule) =>
+            assert(hasFlakyTag)
+            assert(hasRetrySchedule)
+        }
+    end FlakyMetadataSuite
 
     // ── 6. handle ─────────────────────────────────────────────────────────────────────────────
 
@@ -148,17 +183,42 @@ private object LiveCoverageFixtures:
 
 end LiveCoverageFixtures
 
-/** Live-path execution tests for kyo-test runner behaviors.
+/** Live-path execution tests for kyo-test-runner behaviors.
   *
-  * Each leaf exercises a feature through TestRunner.runReport and asserts on the produced TestReport, NOT on builder metadata.
+  * Raw ScalaTest (`AsyncFreeSpec with NonImplicitAssertions`), mirroring `RunnerSelfTest`/`LeafPoolTest`: each test
+  * body runs OFF the process-global LeafPool and discharges its `runReport` computation to a `Future` via the same
+  * single sbt-edge conversion the runner uses (`Scope.run(...).handle(Fiber.initUnscoped).map(_.toFuture)`). Running
+  * off-pool is required: a `kyo.test.Test` body would itself occupy a pool worker, so awaiting `runReport` (which
+  * submits the sub-suite's leaves to the SAME global pool) from that worker re-enters the pool and deadlocks when
+  * workers are exhausted (always on Native globalK=1; under load on JVM). Off-pool, the awaiting body holds no worker,
+  * the sub-suite's leaves get all globalK workers, and there is no re-entrancy on any platform.
+  *
+  * Each leaf exercises a runner feature through `TestRunner.runReport` and asserts on the produced `TestReport`, NOT
+  * on builder metadata. The two builder-metadata checks (chained-decorator preservation, flaky metadata) run inside
+  * `TestBase` fixtures (where the String DSL is in scope) and are surfaced here as their report's pass/fail.
   */
-class LiveCoverageTest extends kyo.test.Test[Any]:
+class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
+
+    implicit override val executionContext: ExecutionContext = TestExecutionContext.executionContext
+
+    /** Discharge a runner computation to a `Future`, off the global pool. The single sbt-edge conversion the runner
+      * itself uses: handle `Scope`, fork the computation onto a fresh (non-pool) fiber, and convert to a `Future`.
+      * The body of every test below runs through this, so no test body is ever a pool worker.
+      */
+    private def discharge[A](comp: A < (Async & Abort[Throwable] & Scope))(using Frame): Future[A] =
+        val asFuture: Future[A] < Sync =
+            Scope.run(comp).handle(Fiber.initUnscoped).map(_.toFuture)
+        // Unsafe: the test-edge boundary, identical to TestRunner.runToFuture's sbt-edge bridge. Discharging the
+        // terminal Sync to the produced Future is the single sanctioned conversion; everything upstream is pure Kyo.
+        import kyo.AllowUnsafe.embrace.danger
+        Sync.Unsafe.evalOrThrow(asFuture)
+    end discharge
 
     // ── 1a. repeat: body runs N times ────────────────────────────────────────────────────────
 
     "repeat: body runs exactly N times and passes" in {
         LiveCoverageFixtures.repeatCounter.set(0)
-        TestRunner.runReport(classOf[LiveCoverageFixtures.RepeatSuite]).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.RepeatSuite])).map { report =>
             assert(report.passed == 1)
             assert(
                 LiveCoverageFixtures.repeatCounter.get() == 3,
@@ -171,7 +231,7 @@ class LiveCoverageTest extends kyo.test.Test[Any]:
 
     "repeat: fail-fast stops at the failing iteration" in {
         LiveCoverageFixtures.rfCounter.set(0)
-        TestRunner.runReport(classOf[LiveCoverageFixtures.RepeatFailFastSuite]).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.RepeatFailFastSuite])).map { report =>
             assert(report.failed == 1)
             assert(
                 LiveCoverageFixtures.rfCounter.get() == 3,
@@ -183,7 +243,7 @@ class LiveCoverageTest extends kyo.test.Test[Any]:
     // ── 2. focus ──────────────────────────────────────────────────────────────────────────────
 
     "focus: focused leaf passes; plain leaves are skipped" in {
-        TestRunner.runReport(classOf[LiveCoverageFixtures.FocusSuite]).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.FocusSuite])).map { report =>
             assert(report.passed == 1)
             assert(report.skipped == 2)
         }
@@ -195,7 +255,7 @@ class LiveCoverageTest extends kyo.test.Test[Any]:
 
     "tag filter: tagsExclude removes matching leaves from the report" in {
         val config = RunConfig.default.copy(filter = TestFilter(tagsExclude = Set("slow")))
-        TestRunner.runReport(classOf[LiveCoverageFixtures.TagSuite], config).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.TagSuite], config)).map { report =>
             assert(report.totalLeaves == 1)
             assert(report.passed == 1)
         }
@@ -208,7 +268,7 @@ class LiveCoverageTest extends kyo.test.Test[Any]:
     // This is the new compile-time-exclusion behavior that replaced the old runtime registerSkipped.
 
     "platform filter: js-only leaf is compile-excluded off JS" in {
-        TestRunner.runReport(classOf[LiveCoverageFixtures.PlatformSuite]).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.PlatformSuite])).map { report =>
             if Platform.isJS then
                 assert(report.totalLeaves == 1, s"JS: expected totalLeaves==1 but got $report")
                 assert(report.passed == 1, s"JS: expected passed==1 but got $report")
@@ -222,7 +282,7 @@ class LiveCoverageTest extends kyo.test.Test[Any]:
     // ── 4b. onlyX platform filter: onlyJs leaf is compile-excluded off JS ─────────────────────
 
     "onlyX platform filter: onlyJs leaf is compile-excluded off JS" in {
-        TestRunner.runReport(classOf[LiveCoverageFixtures.OnlyPlatformSuite]).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.OnlyPlatformSuite])).map { report =>
             if Platform.isJS then
                 assert(report.totalLeaves == 1, s"JS: expected totalLeaves==1 but got $report")
                 assert(report.passed == 1, s"JS: expected passed==1 but got $report")
@@ -235,18 +295,21 @@ class LiveCoverageTest extends kyo.test.Test[Any]:
     // ── 4c. platform filter carries decorators forward ────────────────────────────────────────
     // A decorator chained after the filter (`.onlyJvm.tagged(...)`) produces a PlatformTestBuilder
     // whose phantom P is preserved, so the underlying TestBuilder metadata still flows to the gate.
+    // The metadata assertion runs inside ChainedDecoratorSuite (the DSL is only in scope in a TestBase
+    // body); a regression there makes that leaf fail, which surfaces here as report.failed == 1.
 
     "platform filter: chained decorator preserves builder metadata" in {
-        val taggedBuilder: PlatformTestBuilder[PlatformSet.OnlyJvm] = "x".onlyJvm.tagged("slow")
-        assert(taggedBuilder.builder.tags == Set("slow"))
-        assert(taggedBuilder.builder.name == "x")
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.ChainedDecoratorSuite])).map { report =>
+            assert(report.passed == 1, s"expected the chained-decorator metadata leaf to pass but got $report")
+            assert(report.failed == 0, s"expected no failed leaves but got $report")
+        }
     }
 
     // ── 5a. flaky: retries until passing ─────────────────────────────────────────────────────
 
     "flaky: retries up to 4 attempts then passes" in {
         LiveCoverageFixtures.flakyCounter.set(0)
-        TestRunner.runReport(classOf[LiveCoverageFixtures.FlakySuite]).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.FlakySuite])).map { report =>
             assert(report.passed == 1)
             assert(
                 LiveCoverageFixtures.flakyCounter.get() == 4,
@@ -256,17 +319,20 @@ class LiveCoverageTest extends kyo.test.Test[Any]:
     }
 
     // ── 5b. flaky builder metadata ────────────────────────────────────────────────────────────
+    // The `.flaky` builder-metadata assertion runs inside FlakyMetadataSuite (the DSL is only in scope
+    // in a TestBase body); a regression there makes that leaf fail, surfacing here as report.failed == 1.
 
     "flaky: builder has flaky tag and retrySchedule Present" in {
-        val builder: TestBuilder = "x".flaky
-        assert(builder.tags.contains("flaky"))
-        assert(builder.retrySchedule.isDefined)
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.FlakyMetadataSuite])).map { report =>
+            assert(report.passed == 1, s"expected the flaky metadata leaf to pass but got $report")
+            assert(report.failed == 0, s"expected no failed leaves but got $report")
+        }
     }
 
     // ── 6. handle ─────────────────────────────────────────────────────────────────────────────
 
     "handle: leaf discharging Env[Int] via .handle runs to Passed" in {
-        TestRunner.runReport(classOf[LiveCoverageFixtures.HandleSuite]).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.HandleSuite])).map { report =>
             assert(report.passed == 1)
         }
     }
@@ -274,7 +340,7 @@ class LiveCoverageTest extends kyo.test.Test[Any]:
     // ── 7. typeCheck suite macros ─────────────────────────────────────────────────────────────
 
     "typeCheck/typeCheckFailure suite macros execute and pass" in {
-        TestRunner.runReport(classOf[LiveCoverageFixtures.TypeCheckSuite]).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.TypeCheckSuite])).map { report =>
             assert(report.passed == 2)
         }
     }
@@ -282,7 +348,7 @@ class LiveCoverageTest extends kyo.test.Test[Any]:
     // ── 8a. pendingUntilFixed: still-failing body reports Pending ─────────────────────────────
 
     "pendingUntilFixed: still-failing body reports Pending" in {
-        TestRunner.runReport(classOf[LiveCoverageFixtures.PufStillFailingSuite]).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.PufStillFailingSuite])).map { report =>
             assert(report.pending == 1)
         }
     }
@@ -290,7 +356,7 @@ class LiveCoverageTest extends kyo.test.Test[Any]:
     // ── 8b. pendingUntilFixed: now-passing body reports Failed with tripwire message ───────────
 
     "pendingUntilFixed: now-passing body reports Failed with remove-marker message" in {
-        TestRunner.runReport(classOf[LiveCoverageFixtures.PufNowPassingSuite]).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.PufNowPassingSuite])).map { report =>
             assert(report.failed == 1)
             val (_, result) = report.suiteReports.head.leafResults.head
             result match
@@ -309,7 +375,7 @@ class LiveCoverageTest extends kyo.test.Test[Any]:
 
     "assertEventually: polls until condition holds and passes" in {
         LiveCoverageFixtures.evCounter.set(0)
-        TestRunner.runReport(classOf[LiveCoverageFixtures.EventuallySuite]).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.EventuallySuite])).map { report =>
             assert(report.passed == 1)
         }
     }
@@ -320,7 +386,7 @@ class LiveCoverageTest extends kyo.test.Test[Any]:
         // On JS/Native the timeout timer may not race the body in the same way as JVM, but the
         // assertEventually loop runs forever with a 10ms poll; even on JS the timeout fires and
         // the test framework surfaces a TimedOut result.
-        TestRunner.runReport(classOf[LiveCoverageFixtures.EventuallyTimeoutSuite]).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.EventuallyTimeoutSuite])).map { report =>
             assert(report.timedOut == 1, s"expected timedOut==1 but got $report")
         }
     }
@@ -329,7 +395,7 @@ class LiveCoverageTest extends kyo.test.Test[Any]:
 
     "ignore: leaf reports Ignored and body does not run" in {
         LiveCoverageFixtures.ignoreCounter.set(0)
-        TestRunner.runReport(classOf[LiveCoverageFixtures.IgnoreSuite]).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.IgnoreSuite])).map { report =>
             assert(report.ignored == 1, s"expected ignored==1 but got $report")
             assert(
                 LiveCoverageFixtures.ignoreCounter.get() == 0,
@@ -342,7 +408,7 @@ class LiveCoverageTest extends kyo.test.Test[Any]:
 
     "pending: leaf reports Pending and body does not run" in {
         LiveCoverageFixtures.pendingCounter.set(0)
-        TestRunner.runReport(classOf[LiveCoverageFixtures.PendingSuite]).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.PendingSuite])).map { report =>
             assert(report.pending == 1, s"expected pending==1 but got $report")
             assert(
                 LiveCoverageFixtures.pendingCounter.get() == 0,
@@ -355,7 +421,7 @@ class LiveCoverageTest extends kyo.test.Test[Any]:
 
     "only(false): leaf reports Skipped and body does not run" in {
         LiveCoverageFixtures.onlyCounter.set(0)
-        TestRunner.runReport(classOf[LiveCoverageFixtures.OnlyFalseSuite]).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.OnlyFalseSuite])).map { report =>
             assert(report.skipped == 1, s"expected skipped==1 but got $report")
             assert(
                 LiveCoverageFixtures.onlyCounter.get() == 0,
@@ -368,7 +434,7 @@ class LiveCoverageTest extends kyo.test.Test[Any]:
 
     "retry+repeat: retry(1).times(2) with first-attempt-fails body runs 4 times total and passes" in {
         LiveCoverageFixtures.retryRepeatCounter.set(0)
-        TestRunner.runReport(classOf[LiveCoverageFixtures.RetryRepeatSuite]).map { report =>
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.RetryRepeatSuite])).map { report =>
             assert(report.passed == 1, s"expected passed==1 but got $report")
             assert(
                 LiveCoverageFixtures.retryRepeatCounter.get() == 4,

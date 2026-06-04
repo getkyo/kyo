@@ -165,6 +165,7 @@ final case class SuiteInfo(name: String, className: String, expectedLeafCount: M
   * @param suiteCount
   *   the number of suite classes scheduled to run
   * @param parallelism
-  *   the maximum number of suites executing concurrently (from [[RunConfig.parallelism]])
+  *   the global pool's concurrency bound (globalK) in effect for this run, as reported from [[RunConfig.parallelism]]; 1 means
+  *   within-suite sequential, 0 and any N > 1 mean parallel
   */
 final case class RunInfo(suiteCount: Int, parallelism: Int) derives CanEqual

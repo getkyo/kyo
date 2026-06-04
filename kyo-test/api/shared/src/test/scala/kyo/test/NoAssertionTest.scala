@@ -127,7 +127,6 @@ class NoAssertionTest extends AsyncFreeSpec with NonImplicitAssertions:
         // copy-helper changes only the failOnNoAssertion field
         assert(disabled.parallelism == default.parallelism)
         assert(disabled.timeout == default.timeout)
-        assert(disabled.haltOnFailure == default.haltOnFailure)
         Future.successful(succeed)
     }
 

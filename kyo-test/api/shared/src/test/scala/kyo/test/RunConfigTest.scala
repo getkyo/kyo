@@ -59,7 +59,6 @@ class RunConfigTest extends AnyFunSuite with NonImplicitAssertions:
         val disabled = base.failOnNoAssertion(false)
         assert(disabled.parallelism == base.parallelism)
         assert(disabled.timeout == base.timeout)
-        assert(disabled.haltOnFailure == base.haltOnFailure)
         assert(disabled.countOnly == base.countOnly)
         assert(disabled.listOnly == base.listOnly)
     }

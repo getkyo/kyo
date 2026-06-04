@@ -16,14 +16,13 @@ import kyo.Maybe
   * @param filter
   *   path/tag/class filter applied before any leaf runs; `TestFilter.empty` runs everything
   * @param parallelism
-  *   maximum number of suites/leaves executed concurrently; 0 (the default) means auto = math.max(1, Async.defaultConcurrency); 1 means
-  *   fully sequential; N caps concurrency at N.
+  *   selects sequential vs parallel execution under the process-global leaf pool; 1 means within-suite sequential (this suite's leaves run
+  *   one at a time in the global pool); 0 (the default) and any N > 1 mean parallel (the suite pushes all its leaves to the pool, whose
+  *   process-global `globalK` bound sets the real degree of concurrency). N > 1 is NO LONGER a per-suite cap.
   * @param timeout
   *   maximum duration for each leaf; `Duration.Infinity` means no timeout (default)
   * @param randomize
   *   when `Present`, shuffles leaf execution order using the given seed for reproducibility; `Absent` preserves declaration order
-  * @param haltOnFailure
-  *   when `true`, the runner stops after the first leaf failure is recorded
   * @param strictStructure
   *   when `true`, the runner validates that each leaf's observed name path during execution matches the path captured during discovery; on
   *   mismatch the leaf's result is replaced with `TestResult.Cancelled("structural drift detected: …")` instead of accepting the
@@ -49,7 +48,6 @@ final case class RunConfig(
     parallelism: Int = 0,
     timeout: Duration = Duration.Infinity,
     randomize: Maybe[Long] = Maybe.empty,
-    haltOnFailure: Boolean = false,
     strictStructure: Boolean = false,
     countOnly: Boolean = false,
     listOnly: Boolean = false,
@@ -65,7 +63,9 @@ final case class RunConfig(
     /** Returns a copy with the given leaf filter. */
     def filter(filter: TestFilter): RunConfig = copy(filter = filter)
 
-    /** Returns a copy with the given parallelism (0 = auto, 1 = sequential, N = capped at N). */
+    /** Returns a copy with the given parallelism. Under the process-global leaf pool: 1 = within-suite sequential; 0 (auto) and N > 1 =
+      * parallel (the pool's globalK bound sets the real degree; N > 1 is not a per-suite cap).
+      */
     def parallelism(parallelism: Int): RunConfig = copy(parallelism = parallelism)
 
     /** Returns a copy that runs fully sequentially (parallelism = 1). */
@@ -76,9 +76,6 @@ final case class RunConfig(
 
     /** Returns a copy that shuffles leaf order using the given seed. */
     def randomize(seed: Long): RunConfig = copy(randomize = Maybe(seed))
-
-    /** Returns a copy with the given halt-on-first-failure setting. */
-    def haltOnFailure(haltOnFailure: Boolean): RunConfig = copy(haltOnFailure = haltOnFailure)
 
     /** Returns a copy with the given strict leaf-name-path validation setting. */
     def strictStructure(strictStructure: Boolean): RunConfig = copy(strictStructure = strictStructure)
@@ -104,7 +101,7 @@ end RunConfig
 
 object RunConfig:
     /** Default run configuration: parallelism 0 (auto), absent reporter (runner substitutes ConsoleReporter), normal verbosity, no filter,
-      * no randomization, no halt-on-failure, no strict-structure validation.
+      * no randomization, no strict-structure validation.
       */
     val default: RunConfig = RunConfig()
 end RunConfig

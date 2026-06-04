@@ -24,7 +24,6 @@ import scala.annotation.tailrec
   *   - `--tag=NAME`: include only leaves tagged NAME (repeatable)
   *   - `--exclude-tag=NAME`: exclude leaves tagged NAME (repeatable)
   *   - `--reporter=VALUE`: add a reporter (comma-separated or repeatable); `console`, `tap`, `junit-xml:PATH`
-  *   - `--halt-on-failure`: stop after the first leaf failure
   *   - `--verbose`: emit per-leaf start/complete lines in verbose mode
   *   - `--quiet`: suppress per-leaf lines, show only failures and summary
   *   - `--count`: discovery only; report the leaf count without executing any leaf body
@@ -79,7 +78,6 @@ private[runner] object Args:
             pathIncludes: Chunk[String],
             tagsInclude: Set[String],
             tagsExclude: Set[String],
-            haltOnFailure: Boolean,
             verbosity: Verbosity,
             countOnly: Boolean,
             listOnly: Boolean,
@@ -93,7 +91,6 @@ private[runner] object Args:
             pathIncludes = Chunk.empty,
             tagsInclude = Set.empty,
             tagsExclude = Set.empty,
-            haltOnFailure = false,
             verbosity = Verbosity.Normal,
             countOnly = false,
             listOnly = false,
@@ -115,7 +112,6 @@ private[runner] object Args:
                             ),
                             parallelism = acc.parallelism,
                             randomize = acc.randomize,
-                            haltOnFailure = acc.haltOnFailure,
                             verbosity = acc.verbosity,
                             countOnly = acc.countOnly || acc.listOnly,
                             listOnly = acc.listOnly
@@ -129,8 +125,6 @@ private[runner] object Args:
                     case Maybe.Absent =>
                         if arg == "--help" || arg == "-h" then
                             Result.Help
-                        else if arg == "--halt-on-failure" then
-                            parseLoop(rest, acc.copy(haltOnFailure = true), Maybe.empty)
                         else if arg == "--verbose" then
                             parseLoop(rest, acc.copy(verbosity = Verbosity.Verbose), Maybe.empty)
                         else if arg == "--quiet" then
@@ -224,14 +218,13 @@ private[runner] object Args:
         """|Usage: kyo-test [options]
            |
            |Options:
-           |  --parallel=N            Run leaves with up to N concurrent workers (default: 0 = auto)
+           |  --parallel=N            Parallelism: 1 = within-suite sequential; 0 (default) or N>1 = parallel, bounded by the runner's global pool (N>1 is not a per-suite cap)
            |  --randomize             Randomize leaf execution order (uses current time as seed)
            |  --randomize=SEED        Randomize with a specific seed for reproducibility
            |  --filter=GLOB           Include only leaves whose path matches GLOB (repeatable)
            |  --tag=NAME              Include only leaves tagged NAME (repeatable)
            |  --exclude-tag=NAME      Exclude leaves tagged NAME (repeatable)
            |  --reporter=VALUE        Add a reporter: console, tap, junit-xml:PATH (comma-separated or repeatable)
-           |  --halt-on-failure       Stop after the first leaf failure
            |  --verbose               Print per-leaf start lines (verbose output)
            |  --quiet                 Suppress per-leaf pass/skip/pending lines; show only failures + summary
            |  --count                 Discovery only: enumerate and report the leaf count without executing any leaf body
