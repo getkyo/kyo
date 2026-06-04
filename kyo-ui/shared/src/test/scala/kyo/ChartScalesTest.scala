@@ -93,4 +93,20 @@ class ChartScalesTest extends Test:
         assert(leaks.isEmpty, s"ChartScales public methods must not return internal.Scale, but found: $leaks")
     }
 
+    // ---- Leaf 25: ScaleKind.Linear carries the actual fitted domain, not (0.0, 0.0) ----
+
+    "toSvgWithScales: y-axis kind is ScaleKind.Linear with actual fitted domain, not (0.0, 0.0)" in {
+        // y values span 10.0..90.0; nice-ticking over that range yields nLo=10.0, nHi=90.0.
+        val rows    = Chunk(PRow(0.0, 10.0), PRow(5.0, 90.0), PRow(10.0, 50.0))
+        val spec    = UI.chart(rows)(point(x = _.x, y = _.y))
+        val (_, sc) = spec.toSvgWithScales
+        sc.y.kind match
+            case ScaleKind.Linear(lo, hi) =>
+                assert(lo != 0.0 || hi != 0.0, s"y-axis ScaleKind.Linear must not be the (0.0, 0.0) placeholder")
+                assert(lo <= 10.0, s"fitted domain lo must be <= data min 10.0, got $lo")
+                assert(hi >= 90.0, s"fitted domain hi must be >= data max 90.0, got $hi")
+            case other => fail(s"Expected ScaleKind.Linear but got $other")
+        end match
+    }
+
 end ChartScalesTest

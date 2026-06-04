@@ -2828,7 +2828,7 @@ object UI:
             private def kindOf(scale: kyo.internal.Scale): ScaleKind = scale match
                 case _: kyo.internal.Scale.Band    => ScaleKind.Band
                 case _: kyo.internal.Scale.Log     => ScaleKind.Log
-                case _: kyo.internal.Scale.Linear  => ScaleKind.Linear(0.0, 0.0)
+                case s: kyo.internal.Scale.Linear  => ScaleKind.Linear(s.domainMin, s.domainMax)
                 case _: kyo.internal.Scale.Time    => ScaleKind.Time
                 case _: kyo.internal.Scale.Ordinal => ScaleKind.Ordinal
                 case _: kyo.internal.Scale.Symlog  => ScaleKind.Symlog
