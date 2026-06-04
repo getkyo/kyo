@@ -47,8 +47,21 @@ class CdpClientDecoderTest extends kyo.Test:
         makeDialogFixtures.map { (handlers, queue) =>
             AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty).map { dispatchers =>
                 AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty).map { downloadDispatchers =>
-                    AtomicRef.init[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]](Dict.empty).map { recorders =>
-                        CdpClient.decodeCdpMessage(wire, handlers, queue, dispatchers, downloadDispatchers, recorders)
+                    AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty).map { screencastDispatchers =>
+                        AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty).map { consoleDispatchers =>
+                            AtomicRef.init[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]](Dict.empty).map { recorders =>
+                                CdpClient.decodeCdpMessage(
+                                    wire,
+                                    handlers,
+                                    queue,
+                                    dispatchers,
+                                    downloadDispatchers,
+                                    screencastDispatchers,
+                                    consoleDispatchers,
+                                    recorders
+                                )
+                            }
+                        }
                     }
                 }
             }

@@ -32,6 +32,8 @@ final class CdpClient private[kyo] (
     private[kyo] val drainSignal: AtomicRef[Fiber.Promise[Unit, Any]],
     private[kyo] val frameEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
     private[kyo] val downloadEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
+    private[kyo] val screencastEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
+    private[kyo] val consoleEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
     private[kyo] val dialogRecorders: AtomicRef[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]],
     private[kyo] val lastEvaluateParams: AtomicRef[Maybe[String]],
     private[kyo] val cdpMeter: Meter,
@@ -128,6 +130,8 @@ final class CdpClient private[kyo] (
             drainSignal,
             frameEventDispatchers,
             downloadEventDispatchers,
+            screencastEventDispatchers,
+            consoleEventDispatchers,
             dialogRecorders,
             lastEvaluateParams,
             cdpMeter,
@@ -291,6 +295,14 @@ object CdpClient:
             // cross-talk. Dispatch is ADDITIVE: events continue to flow through the events channel
             // via the whitelist branch so internal consumers (`session.exchange.events`) keep working.
             downloadEventDispatchers <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
+            // Per-connection registry for `Page.screencastFrame` handlers installed by screencast
+            // subscribers. Keyed by CDP session ID. Dispatch is mutually exclusive: a registered
+            // handler consumes the event (returns Skip); no handler pushes to exchange.events.
+            screencastEventDispatchers <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
+            // Per-connection registry for `Runtime.consoleAPICalled` and `Runtime.exceptionThrown`
+            // handlers. Keyed by CDP session ID. Same mutually-exclusive dispatch semantics as
+            // screencastEventDispatchers.
+            consoleEventDispatchers <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
             // Per-session dialog recorders installed by `Browser.withDialogs.recorded`. Keyed by CDP session ID so
             // concurrent tabs do not cross-talk. Each entry holds an `AtomicRef[Chunk[DialogEvent]]` updated in
             // arrival order by the CDP reader fiber after the auto-handler decision is made.
@@ -306,6 +318,8 @@ object CdpClient:
                         dialogQueue,
                         frameEventDispatchers,
                         downloadEventDispatchers,
+                        screencastEventDispatchers,
+                        consoleEventDispatchers,
                         dialogRecorders
                     )
             )
@@ -360,6 +374,8 @@ object CdpClient:
             drainSignal,
             frameEventDispatchers,
             downloadEventDispatchers,
+            screencastEventDispatchers,
+            consoleEventDispatchers,
             dialogRecorders,
             lastEvaluateParams,
             cdpMeter,
@@ -374,10 +390,68 @@ object CdpClient:
       */
     private[kyo] val eventWhitelist: Set[String] = Set(
         "Page.downloadWillBegin",
-        "Page.downloadProgress"
+        "Page.downloadProgress",
+        "Page.screencastFrame",
+        "Runtime.consoleAPICalled",
+        "Runtime.exceptionThrown"
     )
 
     private[kyo] def isWhitelistedEvent(method: String): Boolean = eventWhitelist.contains(method)
+
+    /** Routes `ev` to the per-session handler when one is registered for `sid`, returning `Skip` so the event is not also pushed. When no
+      * handler is registered (or `sid` is `Absent`), pushes the event to `exchange.events` for any subscribed consumer. Mirrors the
+      * semantics of the prior inlined download-routing block exactly.
+      *
+      * The handler type `CdpEvent.Generic => Unit < Sync` requires callers to resolve all effects (including `Abort[Closed]` from a closed
+      * backing channel) before storing the handler in the map. `dispatchOrPush` therefore stays `< Sync` with no `Abort` in its own effect
+      * row; the handler is responsible for swallowing `Abort[Closed]` internally via `Abort.run[Closed](...).unit`.
+      */
+    private def dispatchOrPush(
+        dispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
+        sid: Maybe[SessionId],
+        ev: CdpEvent.Generic
+    )(using Frame): Exchange.Message[Int, String, CdpEvent] < Sync =
+        dispatchers.use { d =>
+            sid match
+                case Present(s) =>
+                    d.get(s.value) match
+                        case Present(handler) => handler(ev).andThen(Exchange.Message.Skip)
+                        case Absent           => Exchange.Message.Push(ev)
+                case Absent => Exchange.Message.Push(ev)
+        }
+
+    /** Decodes a `Page.screencastFrame` event into a `(ScreencastFrameWire, sessionId: Int)` pair. Returns `Absent` on a wrong-method event
+      * or any decode failure. The decoder is `Maybe`-returning and never aborts; decode failures are treated as unknown frames.
+      *
+      * The caller (registered by the screencast subscriber) issues `Page.screencastFrameAck(sessionId)` from inside the handler body after
+      * decoding, keeping Chrome delivering subsequent frames.
+      */
+    private[kyo] def parseScreencastFrame(ev: CdpEvent.Generic)(using Frame): Maybe[(ScreencastFrameWire, Int)] =
+        ev.method match
+            case "Page.screencastFrame" =>
+                Json.decode[CdpEventParams[ScreencastFrameWire]](ev.paramsJson) match
+                    case Result.Success(env) => Present((env.params, env.params.sessionId))
+                    case _                   => Absent
+            case _ => Absent
+
+    /** Decodes a `Runtime.consoleAPICalled` or `Runtime.exceptionThrown` event. Returns `Absent` on a wrong-method event or any decode
+      * failure. The decoder is `Maybe`-returning and never aborts.
+      *
+      * The return type discriminates between the two CDP event shapes using `Either`: `Left` carries `ConsoleApiCalledWire` and `Right`
+      * carries `ExceptionThrownWire`. This discriminator is internal to the routing layer; the console-event subscriber (installed later)
+      * unwraps it to produce `ConsoleMessage` values.
+      */
+    private[kyo] def parseConsoleEvent(ev: CdpEvent.Generic)(using Frame): Maybe[Either[ConsoleApiCalledWire, ExceptionThrownWire]] =
+        ev.method match
+            case "Runtime.consoleAPICalled" =>
+                Json.decode[CdpEventParams[ConsoleApiCalledWire]](ev.paramsJson) match
+                    case Result.Success(env) => Present(Left(env.params))
+                    case _                   => Absent
+            case "Runtime.exceptionThrown" =>
+                Json.decode[CdpEventParams[ExceptionThrownWire]](ev.paramsJson) match
+                    case Result.Success(env) => Present(Right(env.params))
+                    case _                   => Absent
+            case _ => Absent
 
     /** Decodes a CDP wire message and routes it.
       *
@@ -401,6 +475,8 @@ object CdpClient:
         dialogQueue: Channel[(Boolean, String, Maybe[SessionId])],
         frameEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
         downloadEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
+        screencastEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
+        consoleEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
         dialogRecorders: AtomicRef[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]]
     )(using Frame): Exchange.Message[Int, String, CdpEvent] < Sync =
         // The dispatcher peeks `{id, method, sessionId, error}` via [[CdpWireMessage]] for routing; the method-
@@ -457,35 +533,20 @@ object CdpClient:
                                             case Absent => Kyo.unit
                                     }.andThen(Exchange.Message.Skip)
                                 else if isWhitelistedEvent(method) then
-                                    // Whitelisted download events route via the per-session dispatcher when one is
-                                    // registered (Browser.onDownload subscriber). When NO dispatcher is registered
-                                    // (or the event is non-download), the event is pushed to `exchange.events` so
-                                    // internal consumers (via `session.exchange.events`) can observe it.
+                                    // Whitelisted events route via the per-session dispatcher when one is registered.
+                                    // Each domain has its own dispatcher map; events not matching any dispatcher are
+                                    // pushed to exchange.events so internal consumers can observe them.
                                     //
-                                    // Mutually exclusive routing: pushing to `exchange.events` regardless would
-                                    // stockpile events in a bounded channel (default capacity 16) when no internal
-                                    // consumer drains. Once full, the CDP reader fiber parks (backpressure), and
-                                    // subsequent download events for ANY tab are blocked from being decoded,
-                                    // including the terminal `state="completed"` Progress that downstream code
-                                    // (Browser.onDownload's collectEvents) awaits. Concurrent tabs each generate
-                                    // their own streams of WillBegin and Progress events; without a dispatcher to
-                                    // consume them, events accumulate across tabs until the channel saturates and
-                                    // the reader stops draining.
+                                    // Mutually exclusive routing: a registered dispatcher consumes the event (Skip)
+                                    // so the same event is never both dispatched and pushed. This prevents unbounded
+                                    // accumulation in the bounded events channel when no consumer is subscribed.
                                     val ev = CdpEvent.Generic(method, paramsStr, sid)
                                     if method == "Page.downloadWillBegin" || method == "Page.downloadProgress" then
-                                        downloadEventDispatchers.use { dispatchers =>
-                                            sid match
-                                                case Present(s) =>
-                                                    dispatchers.get(s.value) match
-                                                        case Present(handler) =>
-                                                            // Dispatcher consumed the event; do NOT also push.
-                                                            handler(ev).andThen(Exchange.Message.Skip)
-                                                        case Absent =>
-                                                            // No dispatcher: push so `exchange.events` consumers see it.
-                                                            Exchange.Message.Push(ev)
-                                                case Absent =>
-                                                    Exchange.Message.Push(ev)
-                                        }
+                                        dispatchOrPush(downloadEventDispatchers, sid, ev)
+                                    else if method == "Page.screencastFrame" then
+                                        dispatchOrPush(screencastEventDispatchers, sid, ev)
+                                    else if method == "Runtime.consoleAPICalled" || method == "Runtime.exceptionThrown" then
+                                        dispatchOrPush(consoleEventDispatchers, sid, ev)
                                     else
                                         Exchange.Message.Push(ev)
                                     end if
