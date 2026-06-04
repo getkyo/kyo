@@ -36,7 +36,7 @@ object ColdLoadProfile:
         times
     end bench
 
-    private def runSync[A](v: => A < (Async & Scope & Abort[TastyError]))(using AllowUnsafe, Frame): A =
+    private def runSync[A](v: => A < (Async & Abort[TastyError]))(using AllowUnsafe, Frame): A =
         KyoApp.Unsafe.runAndBlock(Duration.Infinity)(Abort.run[TastyError](v).map {
             case Result.Success(a)   => a
             case Result.Failure(err) => throw new RuntimeException(s"ColdLoadProfile failed: $err")
@@ -87,8 +87,8 @@ object ColdLoadProfile:
 
         val times = bench("W11 cold-load kyo-bench (enumerate top-level classes)", warmupIter, measureIter):
             val _ = runSync:
-                Scope.run:
-                    Tasty.Classpath.init(Seq(root)).map(_.topLevelClasses.size)
+                Tasty.withClasspath(Seq(root)):
+                    Tasty.classpath.map(_.topLevelClasses.size)
 
         java.lang.System.out.println()
 
@@ -96,8 +96,8 @@ object ColdLoadProfile:
         val tmpDir = Files.createTempDirectory("kyo-tasty-profile").toString
         val snapshotTimes = bench("W11b cold-load kyo-bench + snapshot write", warmupIter, measureIter):
             val _ = runSync:
-                Scope.run:
-                    Tasty.Classpath.initCached(Seq(root), tmpDir).map(_.topLevelClasses.size)
+                Tasty.withClasspath(Seq(root), Maybe.Present(tmpDir)):
+                    Tasty.classpath.map(_.topLevelClasses.size)
 
         java.lang.System.out.println()
         java.lang.System.out.println("=== Summary ===")

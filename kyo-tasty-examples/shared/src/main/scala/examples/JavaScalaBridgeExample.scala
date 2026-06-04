@@ -7,7 +7,8 @@ import kyo.Tasty.*
   *
   * Java symbols carry `Flag.JavaDefined` and have `javaSpecific` populated; Scala symbols don't. Otherwise the surface is identical.
   *
-  * Updated for v3 Phase 3: findClass, parents, and declarations are now pure values.
+  * Updated for carry A8: Tasty.withClasspath replaces Classpath.initCached. declarations uses declarationIds;
+  * fullName uses Tasty.fullName (effectful); parent types use parentTypes directly.
   */
 object JavaScalaBridgeExample:
 
@@ -18,28 +19,30 @@ object JavaScalaBridgeExample:
         members: Chunk[String]
     )
 
-    def summarize(fqn: String)(using Frame): Maybe[ClassSummary] < (Sync & Async & Abort[TastyError] & Scope) =
+    def summarize(fqn: String)(using Frame): Maybe[ClassSummary] < (Sync & Async & Abort[TastyError]) =
         // Unsafe: Symbol accessors require AllowUnsafe; embraced here at the example app boundary (§839 case 3).
         import AllowUnsafe.embrace.danger
-        for
-            cp <- Tasty.Classpath.initCached(Seq("."), cacheDir = ".kyo-tasty-cache")
-            given Classpath = cp
-        yield cp.findClass(fqn) match
-            case Absent => Absent
-            case Present(cls) =>
-                val parents = cls.parents
-                val decls   = cls.declarations
-                Present(ClassSummary(
-                    name = cls.fullName.asString,
-                    isJava = cls.isJava,
-                    parents = parents.map(_.show),
-                    members = decls.map(_.name.asString)
-                ))
-        end for
+        Tasty.withClasspath(Seq("."), Maybe.Present(".kyo-tasty-cache")):
+            for
+                cp <- Tasty.classpath
+                result <- cp.findClass(fqn) match
+                    case Absent => Sync.defer(Maybe.Absent)
+                    case Present(cls) =>
+                        cp.fullName(cls).map: fullNameVal =>
+                            given Classpath = cp
+                            val parents     = cls.parentTypes.map(_.toString)
+                            val decls       = cls.declarationIds.map(cp.symbol)
+                            Present(ClassSummary(
+                                name = fullNameVal.asString,
+                                isJava = cls.isJava,
+                                parents = parents,
+                                members = decls.map(_.name.asString)
+                            ))
+            yield result
     end summarize
 
     /** Compare a Java class and its Scala counterpart side-by-side. */
-    def compare(javaFqn: String, scalaFqn: String)(using Frame): String < (Sync & Async & Abort[TastyError] & Scope) =
+    def compare(javaFqn: String, scalaFqn: String)(using Frame): String < (Sync & Async & Abort[TastyError]) =
         for
             javaSummary  <- summarize(javaFqn)
             scalaSummary <- summarize(scalaFqn)

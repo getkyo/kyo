@@ -6,8 +6,8 @@ import sbt.Keys._
 /** sbt plugin that generates a kyo-tasty snapshot at compile time by forking a JVM.
   *
   * The forked JVM runs [[io.getkyo.tasty.sbt.runner.SnapshotRunner]] with the project's compile classpath and writes a
-  * `.krfl` snapshot to [[tastySnapshotDir]]. Subsequent calls to `Tasty.Classpath.initCached` on the same classpath
-  * find the snapshot on the first stat check instead of paying the full cold-load cost.
+  * `.krfl` snapshot to [[tastySnapshotDir]]. Subsequent calls to `Tasty.withClasspath` with a `cacheDir` pointing at
+  * [[tastySnapshotDir]] find the snapshot on the first stat check instead of paying the full cold-load cost.
   *
   * Enable on a project with:
   * {{{

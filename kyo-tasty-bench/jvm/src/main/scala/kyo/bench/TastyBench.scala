@@ -141,7 +141,7 @@ object TastyBench:
                 s"$cacheDir/${DigestComputer.toHexString(benchDigest)}.krfl"
 
     /** Run an effect from the bench main, blocking until completion. Panics on failure. */
-    private def runSync[A](v: => A < (Async & Scope & Abort[TastyError]))(using AllowUnsafe, Frame): A =
+    private def runSync[A](v: => A < (Sync & Async & Scope & Abort[TastyError]))(using AllowUnsafe, Frame): A =
         KyoApp.Unsafe.runAndBlock(Duration.Infinity)(Abort.run[TastyError](v).map {
             case Result.Success(a)   => a
             case Result.Failure(err) => throw new RuntimeException(s"Bench failed: $err")
@@ -280,7 +280,7 @@ object TastyBench:
         // Workload 5: declarations enumeration on a class with declared members.
         bench("W5 declarations enumeration (PlainClass)", warmupIter, measureIter):
             val count = warmCp.findClass("kyo.fixtures.PlainClass") match
-                case Present(sym) => sym.declarations.size
+                case Present(sym) => sym.declarationIds.map(warmCp.symbol).size
                 case Absent       => 0
             val _ = count
 
@@ -291,7 +291,7 @@ object TastyBench:
             val tops  = warmCp.topLevelClasses
             var total = 0
             for cls <- tops do
-                val decls = cls.declarations
+                val decls = cls.declarationIds.map(warmCp.symbol)
                 total += decls.count(_.kind == Tasty.SymbolKind.Method)
                 if cls.kind == Tasty.SymbolKind.Method then total += 1
             end for
@@ -306,7 +306,7 @@ object TastyBench:
             var result = ""
             var found  = false
             for cls <- tops if !found do
-                for sym <- cls.declarations if !found do
+                for sym <- cls.declarationIds.map(warmCp.symbol) if !found do
                     if sym.kind == Tasty.SymbolKind.Method then
                         val sig  = sym.name.asString
                         val doc  = sym.scaladoc.getOrElse("")
@@ -325,16 +325,17 @@ object TastyBench:
         bench("W10 find-references-shaped (body decode + tree walk)", warmupIter, measureIter):
             val targetName = "apply"
             val total = runSync:
-                val tops = warmCp.topLevelClasses
-                val methods: Chunk[Tasty.Symbol.Method] =
-                    tops.flatMap(_.declarations).collect:
-                        case m: Tasty.Symbol.Method => m
-                val counts: Chunk[Int] < Sync =
-                    Kyo.foreach(methods): (m: Tasty.Symbol.Method) =>
-                        Abort.run[TastyError](m.bodyTree).map:
-                            case Result.Success(Maybe.Present(tree)) => countTreeRefs(tree, targetName)
-                            case _                                   => 0
-                counts.map(_.foldLeft(0)(_ + _))
+                Tasty.withClasspath(warmCp):
+                    val tops = warmCp.topLevelClasses
+                    val methods: Chunk[Tasty.Symbol.Method] =
+                        tops.flatMap(_.declarationIds.map(warmCp.symbol)).collect:
+                            case m: Tasty.Symbol.Method => m
+                    val counts: Chunk[Int] < (Sync & Abort[TastyError]) =
+                        Kyo.foreach(methods): (m: Tasty.Symbol.Method) =>
+                            Tasty.bodyTree(m).map:
+                                case Maybe.Present(tree) => countTreeRefs(tree, targetName)
+                                case Maybe.Absent        => 0
+                    counts.map(_.foldLeft(0)(_ + _))
             val _ = total
 
         java.lang.System.out.println(s"  (body decode + recursive Tree walk for name references)")

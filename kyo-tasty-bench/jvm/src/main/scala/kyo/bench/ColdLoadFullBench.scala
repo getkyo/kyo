@@ -56,7 +56,7 @@ object ColdLoadFullBench:
         times
     end bench
 
-    private def runSync[A](v: => A < (Async & Scope & Abort[TastyError]))(using AllowUnsafe, Frame): A =
+    private def runSync[A](v: => A < (Async & Abort[TastyError]))(using AllowUnsafe, Frame): A =
         KyoApp.Unsafe.runAndBlock(Duration.Infinity)(Abort.run[TastyError](v).map {
             case Result.Success(a)   => a
             case Result.Failure(err) => throw new RuntimeException(s"ColdLoadFullBench failed: $err")
@@ -146,8 +146,8 @@ object ColdLoadFullBench:
         java.lang.System.out.println("=== W11-full: cold-load full classpath (no snapshot) ===")
         val times = bench("W11-full cold-load (full classpath)", warmupIter, measureIter):
             val _ = runSync:
-                Scope.run:
-                    Tasty.Classpath.init(allRoots).map(_.topLevelClasses.size)
+                Tasty.withClasspath(allRoots):
+                    Tasty.classpath.map(_.topLevelClasses.size)
 
         java.lang.System.out.println()
 
@@ -156,8 +156,8 @@ object ColdLoadFullBench:
         val tmpDir = Files.createTempDirectory("kyo-tasty-full-profile").toString
         val snapshotTimes = bench("W11b-full cold-load + snapshot (full classpath)", warmupIter, measureIter):
             val _ = runSync:
-                Scope.run:
-                    Tasty.Classpath.initCached(allRoots, tmpDir).map(_.topLevelClasses.size)
+                Tasty.withClasspath(allRoots, Maybe.Present(tmpDir)):
+                    Tasty.classpath.map(_.topLevelClasses.size)
 
         java.lang.System.out.println()
         java.lang.System.out.println("=== Summary ===")
