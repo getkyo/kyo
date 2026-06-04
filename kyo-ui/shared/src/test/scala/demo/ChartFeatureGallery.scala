@@ -20,7 +20,7 @@ import kyo.UI.mark.*
   *
   * `ChartFeatureGallery.app` is the page value; `ChartFeatureGalleryShot` serves it and captures a PNG.
   */
-object ChartFeatureGallery:
+object ChartFeatureGallery extends KyoApp:
 
     // ---- domain ----
 
@@ -60,12 +60,12 @@ object ChartFeatureGallery:
     /** 1. Numeric color channel + sequential gradient (cool to warm).
       *
       * Uses a `point` mark: its per-row fills are the concrete interpolated colors of the sequential
-      * scale (low at the data minimum, high at the maximum). `size` scales the dots so the gradient is
-      * easy to read across the heat magnitude.
+      * scale (low at the data minimum, high at the maximum). One gradient legend, with min/mid/max value
+      * labels, keeps the single feature (sequential color) clear and uncluttered.
       */
     val sequentialColor: Svg.Root =
         UI.chart(readings)(
-            point(x = _.month, y = _.value, color = _.heat, size = _.heat)
+            point(x = _.month, y = _.value, color = _.heat)
         )
             .yScale(_.withNice(true))
             .yAxis(_.left.grid.ticks(4))
@@ -179,6 +179,17 @@ object ChartFeatureGallery:
                 chartCell("6. Accessibility (title + desc)", accessible)
             )
         )
+
+    run {
+        val port = args.headMaybe.flatMap(s => Maybe.fromOption(s.toIntOption)).getOrElse(0)
+        for
+            handlers <- UI.runHandlers("/")(app)
+            server   <- HttpServer.init(port, "localhost")(handlers*)
+            _        <- Console.printLine(s"ChartFeatureGallery running on http://localhost:${server.port}/")
+            _        <- server.await
+        yield ()
+        end for
+    }
 end ChartFeatureGallery
 
 /** Serves `ChartFeatureGallery.app` in-process and writes `chart-features.png`.

@@ -22,7 +22,7 @@ import scala.language.implicitConversions
   * `ChartReactiveScales.app` builds the page (allocating the signal and starting the fiber);
   * `ChartReactiveScalesShot` captures `reactive-scales-1.png` (before the tick) and `reactive-scales-2.png` (after).
   */
-object ChartReactiveScales:
+object ChartReactiveScales extends KyoApp:
 
     // ---- domain ----
 
@@ -185,6 +185,17 @@ object ChartReactiveScales:
                 chartCell("3. Scale readback overlay (target rule at y=70px)", overlayChart)
             )
         )
+
+    run {
+        val port = args.headMaybe.flatMap(s => Maybe.fromOption(s.toIntOption)).getOrElse(0)
+        for
+            handlers <- UI.runHandlers("/")(app)
+            server   <- HttpServer.init(port, "localhost")(handlers*)
+            _        <- Console.printLine(s"ChartReactiveScales running on http://localhost:${server.port}/")
+            _        <- server.await
+        yield ()
+        end for
+    }
 end ChartReactiveScales
 
 /** Serves `ChartReactiveScales.app` and captures TWO frames so the reactive morph is visible:
