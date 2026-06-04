@@ -49,13 +49,13 @@ class TestClasspaths2Test extends kyo.Test:
     // Leaf 3 (Phase 2.01): standard-classpath-includes-stdlib-kyodata-kyotasty
     // Given: a fresh JVM
     // When: loading TestClasspaths2.standardRoots via withClasspath
-    // Then: cp.symbols.size >= 79,000 (probe-001.log line 13934 baseline 79,567) and cp.errors.size == 0
+    // Then: cp.symbols.size >= 81,000 (RI-008 measured 81569) and cp.errors.size == 0
     // Pins: HARD RULE 1 (real-classpath fixture)
     "standard-classpath-includes-stdlib-kyodata-kyotasty" in run {
         TestClasspaths.withClasspath(TestClasspaths2.standardRoots)(Tasty.classpath).map: cp =>
             assert(
-                cp.symbols.size >= 79000,
-                s"Expected >= 79,000 symbols (baseline 79,567), found ${cp.symbols.size}"
+                cp.symbols.size >= 81000,
+                s"Expected >= 81,000 symbols (RI-008 measured 81569), found ${cp.symbols.size}"
             )
             assert(
                 cp.errors.isEmpty,

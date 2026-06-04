@@ -89,10 +89,12 @@ class SealedFidelityTest extends Test:
     // INV-007 leaf 3 (Phase 07): every-sealed-class-has-permits
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: filtering cp.allClassLike.filter(_.isSealed) and checking permittedSubclasses.nonEmpty
-    // Then: post-fix >= 50% of sealed classes have permittedSubclasses populated (conservative threshold that holds for any classpath)
+    // Then: post-fix >= 85% of sealed classes have permittedSubclasses populated. RI-005 measured 96.64% on JVM standard
+    // classpath (115/119 sealed classes). Embedded fixtures (JS/Native) are 100%: all fixture sealed hierarchies
+    // (Animal, Vehicle, SealedBase, Color, Shape) have permits. The 85% floor holds on all three platforms.
     // Pins: INV-007 invariant
     // Cross-platform: embedded fixtures include Animal, Vehicle, SealedBase, Color, Shape; all sealed and have permits.
-    "INV-007 (Phase 07): >= 50% of sealed classes have permittedSubclasses populated" in run {
+    "INV-007 (Phase 07): >= 85% of sealed classes have permittedSubclasses populated" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val sealedClasses = cp.allClassLike.filter(_.isSealed)
             val total         = sealedClasses.size
@@ -105,8 +107,8 @@ class SealedFidelityTest extends Test:
             )
             val pct = withPermits.toDouble / total.toDouble * 100.0
             assert(
-                pct >= 50.0,
-                s"Only ${withPermits}/${total} (${pct.toInt}%) of sealed classes have permittedSubclasses populated; expected >= 50%"
+                pct >= 85.0,
+                s"Only ${withPermits}/${total} (${pct.toInt}%) of sealed classes have permittedSubclasses populated; expected >= 85% (RI-005 measured 96.64% on JVM 2026-06-04)"
             )
             succeed
     }

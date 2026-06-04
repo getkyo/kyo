@@ -137,12 +137,12 @@ class ClasspathBodyMemoTest extends Test:
                         case Some(sym) =>
                             Tasty.bindingLocal.let(Maybe.Present(binding1)):
                                 Tasty.bodyTree(sym).map: _ =>
-                                    // After one decode in binding1, bodyMemo has size >= 1.
+                                    // After one decode in binding1, bodyMemo has exactly 1 entry (the symbol decoded).
                                     val ctx1      = binding1.decodeCtx.get
                                     val memoSize1 = ctx1.bodyMemo.size()
                                     assert(
-                                        memoSize1 >= 1,
-                                        s"Expected DecodeContext bodyMemo to have at least 1 entry after decode, got $memoSize1"
+                                        memoSize1 == 1,
+                                        s"Expected DecodeContext bodyMemo to have exactly 1 entry after one decode, got $memoSize1"
                                     )
                                     // A fresh second DecodeContext (as would be created by a second withClasspath call) starts at 0.
                                     val ctx2      = DecodeContext.fresh()

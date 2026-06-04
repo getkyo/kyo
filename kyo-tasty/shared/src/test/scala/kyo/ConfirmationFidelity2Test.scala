@@ -195,13 +195,13 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // JVM-only (exception condition 3: test asserts JVM-specific behavior): the assertion pins cold-init wall-time
     //   on a 79,567-symbol stdlib classpath, a perf characteristic of the JVM real-classpath loader. The embedded
     //   fixture set holds ~150 symbols; a <5000ms bound there is vacuous (typical load is <500ms).
-    "F-A1-009 leaf 7 (Phase 2.09): standard 79,567-symbol classpath cold-init median < 5,000 ms" taggedAs jvmOnly in run {
+    "F-A1-009 leaf 7 (Phase 2.09): standard 81,569-symbol classpath cold-init median < 5,000 ms" taggedAs jvmOnly in run {
         val roots = TestClasspaths2.standardRoots
         def timedLoad: Long < (Async & Abort[TastyError]) =
             val start = java.lang.System.nanoTime()
             TestClasspaths.withClasspath(roots)(Tasty.classpath).map: cp =>
                 val elapsed = (java.lang.System.nanoTime() - start) / 1_000_000L
-                assert(cp.symbols.size >= 79000, s"Expected >= 79,000 symbols; got ${cp.symbols.size}")
+                assert(cp.symbols.size >= 81000, s"Expected >= 81,000 symbols (RI-008 measured 81569); got ${cp.symbols.size}")
                 elapsed
         end timedLoad
         timedLoad.flatMap: t1 =>

@@ -402,7 +402,7 @@ class QueryApiTest extends Test:
                     throw t
     }
 
-    // Test 32: 1 corrupt file among valid files; topLevelClasses from valid file present; errors.size >= 1
+    // Test 32: 1 corrupt file among valid files; topLevelClasses from valid file present; errors.size == 1
     "Phase B interruption: valid files decoded; 1 error accumulated for corrupt file" in run {
         val src = MemoryFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
@@ -413,7 +413,8 @@ class QueryApiTest extends Test:
                     (cp.topLevelClasses, cp.errors)
             ).map:
                 case Result.Success((classes, errs)) =>
-                    assert(errs.size >= 1, s"Expected at least 1 error for corrupt file, got: ${errs.size}")
+                    // Exact: exactly 1 corrupt file was loaded; exactly 1 error must be accumulated. Measured 2026-06-04.
+                    assert(errs.size == 1, s"Expected exactly 1 error for the 1 corrupt file, got: ${errs.size}")
                     assert(classes.nonEmpty, s"Expected valid classes to be present, got empty")
                 case Result.Failure(e) =>
                     fail(s"Unexpected top-level failure: $e")

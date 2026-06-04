@@ -40,16 +40,16 @@ class TestClasspathsJsTest extends Test:
     // Leaf 2: js-symbols-non-empty
     // Given: the embedded TASTy fixtures.
     // When: calling cp.symbols.
-    // Then: size > 0 (includes methods, vals, classes).
-    // Pins: F-F-001 (JS parity, broader symbol check).
+    // Then: size == 1010 (exact count for the full embedded fixture set including Java fixture).
+    // Pins: F-F-001 (JS parity, broader symbol check); Q-025 RI-008 measured 2026-06-04.
     "js-symbols-non-empty: cp.symbols non-empty from embedded fixtures" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            // The fixture set loads 70+ TASTy files, each contributing classes plus their members.
-            // Asserting a strict lower bound (>= 70 symbols, i.e. one per file) is a meaningful
-            // check that decoding produced more than a single root package symbol.
+            // Exact count: the embedded fixture set (all kyo.fixtures.Embedded.* files including
+            // JavaSimpleFixture added in Phase 08) produces exactly 1010 symbols. This is
+            // deterministic because MemoryFileSource loads fixed compiled bytes. Q-025 RI-008 measured 2026-06-04.
             assert(
-                cp.symbols.size >= 70,
-                s"Expected cp.symbols.size >= 70 (one per fixture TASTy file) but got ${cp.symbols.size}"
+                cp.symbols.size == 1010,
+                s"Expected cp.symbols.size == 1010 (Q-025 RI-008 measured 2026-06-04) but got ${cp.symbols.size}"
             )
             succeed
     }

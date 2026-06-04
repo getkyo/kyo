@@ -98,10 +98,10 @@ class TypeArenaTest extends Test:
         arena.intern(recFull)
         val canon = TypeArena.canonical()
         arena.merge(canon)
-        // After merging the Rec(RecThis(rec)) cycle, the canonical arena must contain at least 2 distinct
-        // interned types: the outer Rec and the inner sentinel Named (the RecThis is a back-reference that
-        // shares the outer Rec slot). Re-interning the same recFull must yield a structurally equal Type.
-        assert(canon.values.size >= 2, s"Expected at least 2 interned nodes after Rec/RecThis merge but got ${canon.values.size}")
+        // After merging the Rec(RecThis(rec)) cycle, the canonical arena must contain exactly 2 distinct
+        // interned types: the outer Rec and the inner Named sentinel (RecThis is a back-reference sharing
+        // the outer Rec slot; it does not produce an additional canonical node). Measured 2026-06-04.
+        assert(canon.values.size == 2, s"Expected exactly 2 interned nodes after Rec/RecThis merge but got ${canon.values.size}")
         val interned = canon.intern(recFull)
         assert(interned == recFull, "Re-interning recFull must yield a structurally equal type")
     }

@@ -133,14 +133,16 @@ class SteeringTargetUseCaseTest extends Test:
     // ── Leaf 176: fluent-Methods-typed ────────────────────────────────────────
     // Given: same fixture
     // When: bind val ms: Chunk[Tasty.Symbol.Method] = c.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method])
-    // Then: compiles; ms.size >= 1
-    "Leaf 176: c.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method]) returns Chunk[Symbol.Method] with size >= 1" in run {
+    // Then: compiles; ms.size == 1 (buildFixture declares exactly one method "foo" in class A)
+    "Leaf 176: c.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method]) returns Chunk[Symbol.Method] with size == 1" in run {
         buildFixture.map: cp =>
             cp.findClass("pkg.A") match
                 case Maybe.Present(c) =>
                     val ms =
                         c.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method]).asInstanceOf[Chunk[Tasty.Symbol.Method]]
-                    assert(ms.length >= 1, s"Expected at least 1 method, got ${ms.length}")
+                    // Exact: buildFixture declares pkg.A with declarationIds=[SymbolId(2)=foo, SymbolId(3)=x].
+                    // Filtering for Method yields exactly [foo]. Measured structurally 2026-06-04.
+                    assert(ms.length == 1, s"Expected exactly 1 method (foo), got ${ms.length}")
                     succeed
                 case Maybe.Absent => fail("pkg.A must be Present")
             end match
