@@ -27,8 +27,8 @@ final class TypeArena:
       * Called single-threaded in Phase C. After this call, every type that was in `this` arena has a corresponding canonical entry in
       * `canonical`.
       *
-      * The algorithm follows the pseudocode in DESIGN.md section 9: it recurses structurally into each type, uses an `inProgress` map as a
-      * cycle-break placeholder, and inserts the interned result into `canonical`.
+      * The algorithm recurses structurally into each type, uses an `inProgress` map as a cycle-break placeholder, and inserts the interned
+      * result into `canonical`.
       */
     def merge(canonical: TypeArena): Unit =
         val inProgress = new mutable.HashMap[TypeKey, Tasty.Type]()

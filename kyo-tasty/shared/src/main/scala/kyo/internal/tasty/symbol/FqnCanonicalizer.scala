@@ -3,7 +3,7 @@ package kyo.internal.tasty.symbol
 /** Converts JVM binary names (with '/' separators and '$' for nesting) to dotted fully-qualified names using the InnerClasses attribute
   * table.
   *
-  * Protocol (DESIGN.md §11, PHASE-5b-PREP.md §2.2):
+  * Protocol:
   *   - Top-level class: binary name with '/' replaced by '.', '$' preserved literally.
   *   - Anonymous/local class (outerBinaryName == "" or innerSimpleName == ""): preserve '$' form.
   *   - Named inner class: recursively resolve outer, then append '.' + innerSimpleName.
