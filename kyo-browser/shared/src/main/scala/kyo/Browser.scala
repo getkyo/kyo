@@ -1875,7 +1875,7 @@ object Browser:
         Env.use[BrowserTab] { tab =>
             // Cache write FIRST, then issue the CDP call. If the CDP call fails, the cache reflects intent;
             // the reverse order would risk a permanently-stale cache on a missed update following a successful CDP call.
-            tab.viewportOverride.set(Present((width, height))).andThen(
+            tab.viewportOverride.set(Present(BrowserTab.ViewportOverride(width, height, 1.0))).andThen(
                 CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(width, height))
             )
         }
@@ -1891,7 +1891,7 @@ object Browser:
             )
         }
 
-    /** Scoped form of [[setViewport]]: applies the `width × height` override for the duration of `body`, then clears the override on body
+    /** Scoped form of [[setViewport]]: applies the `width x height` override for the duration of `body`, then clears the override on body
       * exit (success, failure, or interruption).
       *
       * Use this instead of `setViewport(w, h).andThen(...)` when you want the override bounded to a specific block. Composes naturally with
@@ -1908,14 +1908,14 @@ object Browser:
             Scope.run {
                 tab.viewportOverride.get.map { prior =>
                     Scope.acquireRelease(
-                        tab.viewportOverride.set(Present((width, height))).andThen(
+                        tab.viewportOverride.set(Present(BrowserTab.ViewportOverride(width, height, 1.0))).andThen(
                             CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(width, height))
                         )
                     ) { _ =>
                         tab.viewportOverride.set(prior).andThen(
                             prior match
-                                case Present((w, h)) =>
-                                    CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(w, h))
+                                case Present(vo) =>
+                                    CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(vo.width, vo.height))
                                 case Absent =>
                                     CdpBackend.clearDeviceMetricsOverride(tab.session)
                         )

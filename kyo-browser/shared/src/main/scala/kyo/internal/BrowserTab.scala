@@ -25,7 +25,7 @@ final private[kyo] class BrowserTab(
     val rootFrameId: AtomicRef[Maybe[FrameId]],
     val consoleCaptureRegistered: AtomicBoolean,
     val responseTrackerRegistered: AtomicBoolean,
-    val viewportOverride: AtomicRef[Maybe[(Int, Int)]],
+    val viewportOverride: AtomicRef[Maybe[BrowserTab.ViewportOverride]],
     val downloadPolicy: AtomicRef[Maybe[(Browser.DownloadBehavior, Maybe[String])]]
 ):
     /** Session-scoped CDP client. Every interaction path issues CDP commands against this tab's specific session; capturing the
@@ -33,6 +33,18 @@ final private[kyo] class BrowserTab(
       * at every CDP call site.
       */
     val session: CdpClient = client.withSession(sessionId)
+end BrowserTab
+
+/** Companion for [[BrowserTab]], holding nested types shared across the internal module. */
+private[kyo] object BrowserTab:
+    /** Cached per-tab viewport override carrying the device-scale-factor (DPR).
+      *
+      * Stored in the per-tab `viewportOverride: AtomicRef[Maybe[ViewportOverride]]`. A value
+      * of `Absent` means no active override (natural viewport). `dpr` defaults to `1.0` for
+      * the no-DPR-override case. Widened in Phase 1; consumed by `setViewport`/`withViewport`
+      * in Phase 8.
+      */
+    final case class ViewportOverride(width: Int, height: Int, dpr: Double) derives CanEqual
 end BrowserTab
 
 /** All tab-attachment plumbing lives here; `Browser.scala` retains only the `Env[BrowserTab]` binding.
@@ -60,7 +72,7 @@ private[kyo] object BrowserTabSetup:
             rootRef          <- AtomicRef.init[Maybe[FrameId]](Absent)
             consoleRegister  <- AtomicBoolean.init(false)
             responseRegister <- AtomicBoolean.init(false)
-            viewportRef      <- AtomicRef.init[Maybe[(Int, Int)]](Absent)
+            viewportRef      <- AtomicRef.init[Maybe[BrowserTab.ViewportOverride]](Absent)
             downloadRef      <- AtomicRef.init[Maybe[(Browser.DownloadBehavior, Maybe[String])]](Absent)
         yield new BrowserTab(
             targetId,

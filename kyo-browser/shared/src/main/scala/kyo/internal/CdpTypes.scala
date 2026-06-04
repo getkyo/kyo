@@ -266,7 +266,53 @@ final private[kyo] case class GetPropertiesResult(
 ) derives Schema
 
 /** Emulation domain. */
-final private[kyo] case class ViewportParams(width: Int, height: Int, deviceScaleFactor: Int = 1, mobile: Boolean = false) derives Schema
+final private[kyo] case class ViewportParams(width: Int, height: Int, deviceScaleFactor: Double = 1.0, mobile: Boolean = false)
+    derives Schema
+
+// Emulation media + background-color override
+final private[kyo] case class EmulatedMediaFeature(name: String, value: String) derives Schema
+final private[kyo] case class SetEmulatedMediaParams(media: Maybe[String] = Absent, features: Maybe[Seq[EmulatedMediaFeature]] = Absent)
+    derives Schema
+final private[kyo] case class RgbaColor(r: Int, g: Int, b: Int, a: Maybe[Double] = Absent) derives Schema
+final private[kyo] case class SetDefaultBackgroundColorOverrideParams(color: Maybe[RgbaColor] = Absent) derives Schema
+
+// Screencast (Page domain)
+final private[kyo] case class StartScreencastParams(
+    format: Maybe[String] = Absent,
+    quality: Maybe[Int] = Absent,
+    everyNthFrame: Maybe[Int] = Absent
+) derives Schema
+final private[kyo] case class ScreencastFrameAckParams(sessionId: Int) derives Schema
+final private[kyo] case class ScreencastFrameMetadata(
+    scrollOffsetX: Double,
+    scrollOffsetY: Double,
+    timestamp: Maybe[Double] = Absent,
+    offsetTop: Maybe[Double] = Absent,
+    pageScaleFactor: Maybe[Double] = Absent,
+    deviceWidth: Maybe[Double] = Absent,
+    deviceHeight: Maybe[Double] = Absent
+) derives Schema
+final private[kyo] case class ScreencastFrameWire(data: String, metadata: ScreencastFrameMetadata, sessionId: Int) derives Schema
+
+// Runtime console events
+final private[kyo] case class RemoteObjectValue(`type`: String, value: Maybe[String] = Absent, description: Maybe[String] = Absent)
+    derives Schema
+final private[kyo] case class CallFrameWire(url: Maybe[String] = Absent, lineNumber: Maybe[Int] = Absent, columnNumber: Maybe[Int] = Absent)
+    derives Schema
+final private[kyo] case class StackTraceWire(callFrames: Seq[CallFrameWire] = Nil) derives Schema
+final private[kyo] case class ConsoleApiCalledWire(
+    `type`: String,
+    args: Seq[RemoteObjectValue] = Nil,
+    timestamp: Maybe[Double] = Absent,
+    stackTrace: Maybe[StackTraceWire] = Absent
+) derives Schema
+final private[kyo] case class ExceptionDetailsWire(
+    text: String,
+    url: Maybe[String] = Absent,
+    lineNumber: Maybe[Int] = Absent,
+    exception: Maybe[RemoteObjectValue] = Absent
+) derives Schema
+final private[kyo] case class ExceptionThrownWire(timestamp: Maybe[Double] = Absent, exceptionDetails: ExceptionDetailsWire) derives Schema
 
 /** `Emulation.setFocusEmulationEnabled`: makes Chrome treat the page as if the tab were the system-focused window. Without this,
   * programmatic `el.focus()` calls update `document.activeElement` but do NOT dispatch focus/blur DOM events; framework listeners (kyo-ui,
@@ -280,7 +326,9 @@ final private[kyo] case class ScreenshotClip(x: Double, y: Double, width: Double
 final private[kyo] case class ScreenshotParams(
     format: Browser.ScreenshotFormat = Browser.ScreenshotFormat.Png,
     quality: Maybe[Int] = Absent,
-    clip: Maybe[ScreenshotClip] = Absent
+    clip: Maybe[ScreenshotClip] = Absent,
+    captureBeyondViewport: Maybe[Boolean] = Absent,
+    fromSurface: Maybe[Boolean] = Absent
 ) derives Schema
 final private[kyo] case class ScreenshotResult(data: String) derives Schema
 

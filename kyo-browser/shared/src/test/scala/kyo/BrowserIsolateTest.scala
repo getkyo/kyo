@@ -688,7 +688,7 @@ class BrowserIsolateTest extends BrowserTest:
                     root     <- AtomicRef.init[Maybe[FrameId]](Absent)
                     console  <- AtomicBoolean.init(false)
                     response <- AtomicBoolean.init(false)
-                    viewport <- AtomicRef.init[Maybe[(Int, Int)]](Absent)
+                    viewport <- AtomicRef.init[Maybe[BrowserTab.ViewportOverride]](Absent)
                     download <- AtomicRef.init[Maybe[(Browser.DownloadBehavior, Maybe[String])]](Absent)
                     tab = new BrowserTab(
                         TargetId("t-test"),
@@ -703,8 +703,8 @@ class BrowserIsolateTest extends BrowserTest:
                         download
                     )
                 yield tab.browserContextId match
-                    case Present(id) => fail(s"Expected Absent but got Present($id)")
-                    case Absent      => succeed
+                    case Present(_) => fail("Expected Absent but got Present")
+                    case Absent     => succeed
                 end for
             }
         }
