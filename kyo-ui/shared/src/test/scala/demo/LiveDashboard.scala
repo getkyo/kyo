@@ -16,7 +16,7 @@ import scala.language.implicitConversions
   *   - Throughput: a bar chart over a `Signal[Chunk[Endpoint]]` with a FIXED y-domain so the axis never jumps and the
   *     bars animate to new heights.
   *   - Latency: one line mark split by a `series` color channel (p50 / p99) over a FIXED-LENGTH rolling window
-  *     (24 slots, t-23..t0); each tick shifts values left and appends the newest at t0, so the path structure is
+  *     (31 slots, t-30..t0); each tick shifts values left and appends the newest at t0, so the path structure is
   *     constant and the lines morph smoothly. The color channel gives the chart a two-entry legend.
   *   - Status: a stacked bar (2xx/4xx/5xx per endpoint) grouped by status code, colored by monitoring convention
   *     (2xx green, 4xx amber, 5xx red) via a `colorScale`.
@@ -38,13 +38,13 @@ object LiveDashboard extends KyoApp:
     /** Requests/second for one endpoint. */
     case class Endpoint(name: String, rps: Double) derives CanEqual
 
-    /** One slot of the rolling latency window in long form: `t` is the relative index (-23..0), `series` is
+    /** One slot of the rolling latency window in long form: `t` is the relative index (-30..0), `series` is
       * "p50" or "p99", and `ms` is the latency in milliseconds. Long form lets a single line mark split into
       * one line per series via a `color` channel, so the chart layer derives a two-entry legend.
       */
     case class LatPoint(t: Int, series: String, ms: Double) derives CanEqual
 
-    /** One slot of the rolling error-rate window: `t` is the relative index (-23..0), `pct` is the error
+    /** One slot of the rolling error-rate window: `t` is the relative index (-30..0), `pct` is the error
       * percentage at that tick.
       */
     case class ErrPoint(t: Int, pct: Double) derives CanEqual
@@ -55,9 +55,9 @@ object LiveDashboard extends KyoApp:
     // ---- fixed layout / domain constants ----
 
     private val endpointNames: Chunk[String] = Chunk("/login", "/feed", "/search", "/cart", "/checkout")
-    private val window: Int                  = 24
+    private val window: Int                  = 31
 
-    private val rpsMax: Double = 1200.0 // fixed throughput y-domain so the axis never jumps
+    private val rpsMax: Double = 1000.0 // fixed throughput y-domain so the axis never jumps (tick-aligned: 0/500/1000)
     private val latMax: Double = 400.0  // fixed latency y-domain (ms)
 
     // ---- pure RNG (linear congruential; seed threaded through the loop, no var) ----
@@ -89,16 +89,16 @@ object LiveDashboard extends KyoApp:
             Endpoint("/checkout", 180.0)
         )
 
-    /** Latency window in long form: each of the 24 slots contributes one p50 row and one p99 row. */
+    /** Latency window in long form: each of the 31 slots contributes one p50 row and one p99 row. */
     private val initLatency: Chunk[LatPoint] =
         Chunk.from((0 until window).flatMap { i =>
-            val t = i - (window - 1) // -23 .. 0
+            val t = i - (window - 1) // -30 .. 0
             Chunk(LatPoint(t, "p50", 60.0), LatPoint(t, "p99", 140.0))
         })
 
     private val initErr: Chunk[ErrPoint] =
         Chunk.from((0 until window).map { i =>
-            val t = i - (window - 1) // -23 .. 0
+            val t = i - (window - 1) // -30 .. 0
             ErrPoint(t, 1.0)
         })
 
@@ -123,7 +123,7 @@ object LiveDashboard extends KyoApp:
     /** Shift the latency window left by one slot and append a freshly-walked newest p50/p99 pair at t0.
       *
       * Operates on the long-form chunk: the newest pair is derived from the current t0 rows, then every
-      * slot's two rows are re-indexed to -23..0 after dropping the oldest slot.
+      * slot's two rows are re-indexed to -30..0 after dropping the oldest slot.
       */
     private def stepLatency(seed: Long, cur: Chunk[LatPoint]): (Long, Chunk[LatPoint]) =
         val lastP50   = cur.filter(_.series == "p50").lastMaybe.map(_.ms).getOrElse(60.0)
@@ -132,7 +132,7 @@ object LiveDashboard extends KyoApp:
         val (s2, d99) = delta(s1, 28.0)
         val newP50    = clamp(lastP50 + d50, 20.0, latMax * 0.6)
         val newP99    = clamp(math.max(lastP99 + d99, newP50 + 20.0), newP50 + 20.0, latMax)
-        // Reconstruct the per-slot p50/p99 series, drop the oldest slot, append the newest, re-index to -23..0.
+        // Reconstruct the per-slot p50/p99 series, drop the oldest slot, append the newest, re-index to -30..0.
         val p50s = cur.filter(_.series == "p50").map(_.ms).drop(1).append(newP50)
         val p99s = cur.filter(_.series == "p99").map(_.ms).drop(1).append(newP99)
         val rebuilt = Chunk.from((0 until window).flatMap { i =>
@@ -313,7 +313,7 @@ object LiveDashboard extends KyoApp:
                 .size(chartW, chartH)
                 .toSvg
 
-            // Latency lines over the fixed 24-slot rolling window: one line per series via the color channel,
+            // Latency lines over the fixed 31-slot rolling window: one line per series via the color channel,
             // so the layer derives a p50/p99 legend. Cyan p50 and amber p99 stay distinct from the bars.
             latencyChart = UI.chart(latency)(line(x = _.t, y = _.ms, color = _.series))
                 .yAxis(_.left.grid.ticks(4))
@@ -350,7 +350,7 @@ object LiveDashboard extends KyoApp:
             errorChart = UI.chart(errRate)(line(x = _.t, y = _.pct))
                 .yAxis(_.left.grid.ticks(4))
                 .xAxis(_.bottom.format(timeAxisLabel))
-                .yScale(_.linear(0.0, 10.0))
+                .yScale(_.withNice(true))
                 .theme(_.dark)
                 .animate(_.ease(400.millis))
                 .size(chartW, chartH)
