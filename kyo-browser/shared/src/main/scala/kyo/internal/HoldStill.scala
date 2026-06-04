@@ -50,27 +50,32 @@ private[kyo] object HoldStill:
       */
     private[kyo] def frameHash(img: Image): Int = img.hashCode
 
+    /** Injects the freeze `<style>`, tagging it with a unique `data-kyo-token` minted from an in-page monotonic sequence, and returns
+      * that token. The matching [[removeFreezeStyleJs]] removes only the node carrying the returned token rather than a shared global
+      * slot, so nested or interleaved freezes each lift exactly their own style node: an inner freeze's teardown cannot leave the outer
+      * freeze stuck (a leaked page-wide `animation-play-state: paused`).
+      */
     private[kyo] val freezeStyleJs: String =
         """(() => {
             const s = document.createElement('style');
+            const token = String((window.__kyoOverlayToken = (window.__kyoOverlayToken || 0) + 1));
             s.setAttribute('data-kyo-internal', 'freeze');
+            s.setAttribute('data-kyo-token', token);
             s.textContent = [
                 '*, *::before, *::after { animation-play-state: paused !important; transition: none !important; }',
                 'input, textarea, [contenteditable] { caret-color: transparent !important; }'
             ].join(' ');
             document.head.appendChild(s);
-            window.__kyoFreezeStyle = s;
-            return 'frozen';
+            return token;
         })()"""
 
-    private[kyo] val removeFreezeStyleJs: String =
-        """(() => {
-            if (window.__kyoFreezeStyle) {
-                document.head.removeChild(window.__kyoFreezeStyle);
-                delete window.__kyoFreezeStyle;
-            }
+    private[kyo] def removeFreezeStyleJs(token: String): String =
+        val escaped = JsStringUtil.escapeJsString(token)
+        s"""(() => {
+            document.querySelectorAll('[data-kyo-token="$escaped"]').forEach(n => n.remove());
             return 'unfrozen';
         })()"""
+    end removeFreezeStyleJs
 
     /** Awaits `document.fonts.ready` via an async promise eval (`evalJsAwaiting`, not `evalJs`,
       * since the expression returns a Promise). Wrapped in try/catch so a page without a fonts API
@@ -92,8 +97,8 @@ private[kyo] object HoldStill:
             BrowserEval.evalJsAwaiting(fontsReadyJs).andThen {
                 Browser.use { tab =>
                     Scope.run {
-                        Scope.acquireRelease(BrowserEval.evalJs(freezeStyleJs).unit) { _ =>
-                            Browser.releaseHook(tab)(BrowserEval.evalJs(removeFreezeStyleJs).unit)
+                        Scope.acquireRelease(BrowserEval.evalJs(freezeStyleJs)) { token =>
+                            Browser.releaseHook(tab)(BrowserEval.evalJs(removeFreezeStyleJs(token)).unit)
                         }.andThen(body)
                     }
                 }

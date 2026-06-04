@@ -161,4 +161,47 @@ class BrowserEmulationTest extends BrowserTest:
         }
     }
 
+    // Test 8: nested withHighlights each tear down exactly their own overlay (token-scoped removal).
+    //
+    // withHighlights takes a body, so withHighlights(outer) { withHighlights(inner) { ... } } type-checks
+    // and is the supported LIFO composition. Each invocation tags its container with a unique token and
+    // removes only that container. The nest asserts, via the same eval path the code uses:
+    //   - inside the inner body: BOTH overlay containers present (2 [data-kyo-internal="highlights"]),
+    //   - after the inner scope exits but still inside the outer body: the OUTER overlay is STILL present
+    //     (exactly 1 [data-kyo-internal="highlights"]); the inner exit did not clobber it,
+    //   - after the outer scope exits: ZERO [data-kyo-internal] nodes remain (no leak).
+    // Under the old single-global-slot model the inner exit deleted the slot and the outer overlay leaked.
+    "nested withHighlights each remove only their own overlay and leave no leak" in run {
+        withBrowser {
+            onPage("<html><body><div id='a'>A</div><div id='b'>B</div></body></html>") {
+                val highlightsCount = "String(document.querySelectorAll('[data-kyo-internal=\"highlights\"]').length)"
+                Browser.withHighlights(Span(Browser.Annotation(Browser.Selector.css("#a")))) {
+                    Browser.withHighlights(Span(Browser.Annotation(Browser.Selector.css("#b")))) {
+                        Browser.eval(highlightsCount)
+                    }.map { countInsideInner =>
+                        // Inner scope has exited here; still inside the outer body.
+                        Browser.eval(highlightsCount).map { countAfterInner =>
+                            (countInsideInner, countAfterInner)
+                        }
+                    }
+                }.map { case (countInsideInner, countAfterInner) =>
+                    Browser.eval("String(document.querySelectorAll('[data-kyo-internal]').length)").map { countAfterOuter =>
+                        assert(
+                            countInsideInner == "2",
+                            s"expected BOTH overlays present inside the inner body but got $countInsideInner highlights containers"
+                        )
+                        assert(
+                            countAfterInner == "1",
+                            s"expected the OUTER overlay still present after the inner scope exits but got $countAfterInner highlights containers"
+                        )
+                        assert(
+                            countAfterOuter == "0",
+                            s"expected ZERO data-kyo-internal nodes after the outer scope exits but got $countAfterOuter (overlay leaked)"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
 end BrowserEmulationTest

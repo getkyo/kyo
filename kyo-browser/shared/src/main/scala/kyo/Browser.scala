@@ -2085,6 +2085,9 @@ object Browser:
       * settlement-transparent `data-kyo-internal` subtree. Aborts `BrowserCaptureLimitExceededException` when `marks.size > maxMarks`. The
       * settle gate runs BEFORE mark injection (via `HoldStill.withFrozenPage`) so the marks overlay mutation does not reset quiescence;
       * marks are injected exactly once inside the frozen scope and removed via `Scope.acquireRelease`.
+      *
+      * The injected container carries a unique `data-kyo-token` minted by the inject eval, and the removal targets only the node bearing
+      * that token rather than a shared global slot, so concurrent same-tab captures each tear down exactly their own overlay.
       */
     def screenshotMarks(
         marks: Chunk[Browser.ElementInfo],
@@ -2097,7 +2100,9 @@ object Browser:
             val badges = marks.zipWithIndex.map((m, i) => s"""{x:${m.bounds.x},y:${m.bounds.y},n:${i + 1}}""").mkString("[", ",", "]")
             val injectJs = s"""(() => {
                 const root = document.createElement('div');
+                const token = String((window.__kyoOverlayToken = (window.__kyoOverlayToken || 0) + 1));
                 root.setAttribute('data-kyo-internal', 'marks');
+                root.setAttribute('data-kyo-token', token);
                 root.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647;';
                 for (const b of $badges) {
                     const d = document.createElement('div');
@@ -2106,17 +2111,18 @@ object Browser:
                     d.style.cssText = 'position:absolute;left:'+(b.x+2)+'px;top:'+(b.y+2)+'px;background:#d00;color:#fff;font:12px sans-serif;padding:1px 4px;border-radius:3px;';
                     root.appendChild(d);
                 }
-                document.body.appendChild(root); window.__kyoMarks = root; return 'marked';
+                document.body.appendChild(root); return token;
             })()"""
-            val removeJs =
-                "(() => { if (window.__kyoMarks) { document.body.removeChild(window.__kyoMarks); delete window.__kyoMarks; } return 'unmarked'; })()"
+            def removeJs(token: String) =
+                val escaped = JsStringUtil.escapeJsString(token)
+                s"""(() => { document.querySelectorAll('[data-kyo-token="$escaped"]').forEach(n => n.remove()); return 'unmarked'; })()"""
             // Settle BEFORE injecting marks: withFrozenPage runs settleForCapture + fonts.ready + freeze injection before entering the body.
             // Mark injection inside the frozen scope ensures the quiescence gate has already passed when the overlay mutation fires.
             HoldStill.withFrozenPage {
                 Browser.use { tab =>
                     Scope.run {
-                        Scope.acquireRelease(BrowserEval.evalJs(injectJs).unit) { _ =>
-                            Browser.releaseHook(tab)(BrowserEval.evalJs(removeJs).unit)
+                        Scope.acquireRelease(BrowserEval.evalJs(injectJs)) { token =>
+                            Browser.releaseHook(tab)(BrowserEval.evalJs(removeJs(token)).unit)
                         }.andThen {
                             HoldStill.holdStillFrame {
                                 CdpBackend.captureScreenshot(
@@ -2318,7 +2324,11 @@ object Browser:
       * `body` stays transparent to them. Each annotation resolves its element via the same selector machinery the rest of the API
       * uses; an annotation whose selector matches nothing is skipped. The inject eval completes before `body` runs, so screenshots
       * taken inside `body` include the overlays. The container is removed via `Scope.acquireRelease` inside an inner `Scope.run`, so
-      * the removal fires on success, failure, AND interruption; the removal eval is idempotent.
+      * the removal fires on success, failure, AND interruption.
+      *
+      * Each invocation tags its container with a unique `data-kyo-token` minted by the inject eval (an in-page monotonic sequence) and
+      * removes ONLY the node carrying that token, never a shared global slot. Nested or interleaved `withHighlights` blocks therefore
+      * each tear down exactly their own overlay: an inner block's exit cannot make the outer block's removal a no-op.
       */
     def withHighlights[A, S](annotations: Span[Browser.Annotation])(body: A < (Browser & S))(using
         Frame
@@ -2331,7 +2341,9 @@ object Browser:
         }.mkString("[", ",", "]")
         val injectJs = s"""(() => {
             const root = document.createElement('div');
+            const token = String((window.__kyoOverlayToken = (window.__kyoOverlayToken || 0) + 1));
             root.setAttribute('data-kyo-internal', 'highlights');
+            root.setAttribute('data-kyo-token', token);
             root.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483646;';
             for (const a of $specs) {
                 const el = a.sel(); if (!el) continue;
@@ -2349,20 +2361,19 @@ object Browser:
                 root.appendChild(box);
             }
             document.body.appendChild(root);
-            window.__kyoHighlights = root;
-            return 'highlighted';
+            return token;
         })()"""
-        val removeJs = """(() => {
-            if (window.__kyoHighlights) {
-                document.body.removeChild(window.__kyoHighlights);
-                delete window.__kyoHighlights;
-            }
+        def removeJs(token: String) =
+            val escaped = JsStringUtil.escapeJsString(token)
+            s"""(() => {
+            document.querySelectorAll('[data-kyo-token="$escaped"]').forEach(n => n.remove());
             return 'unhighlighted';
         })()"""
+        end removeJs
         Env.use[BrowserTab] { tab =>
             Scope.run {
-                Scope.acquireRelease(BrowserEval.evalJs(injectJs).unit)(_ =>
-                    releaseHook(tab)(BrowserEval.evalJs(removeJs).unit)
+                Scope.acquireRelease(BrowserEval.evalJs(injectJs))(token =>
+                    releaseHook(tab)(BrowserEval.evalJs(removeJs(token)).unit)
                 ).andThen(body)
             }
         }

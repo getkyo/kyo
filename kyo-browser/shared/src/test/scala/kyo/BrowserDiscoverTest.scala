@@ -169,16 +169,14 @@ class BrowserDiscoverTest extends BrowserTest:
     // ---- Test 7-11: screenshotMarks overlays numbered badges and is settlement-transparent
     //      (INV-003 consumer, PRE-009, Q-006).
     //
-    // A page with 3 buttons. Arm a MutationObserver that counts childList mutations on body into
-    // window.__kyoMutCount. Issue screenshotMarks on the buttons. Assert:
+    // A page with 3 buttons. Issue screenshotMarks on the buttons. Assert:
     //   (a) returns a non-empty PNG,
-    //   (b) the marks overlay is gone afterward (window.__kyoMarks === undefined),
-    //   (c) the overlay was injected exactly once (the Scope.acquireRelease fires once).
+    //   (b) the marks overlay node is gone afterward (zero [data-kyo-internal="marks"] nodes).
     //
-    // The mutation count assertion is NOT used here because the marks childList mutation targets
-    // document.body, which is untagged, so the MutationObserver filter does not suppress it and
-    // the count increments for a correct impl. The behavioral test focuses on (a) non-empty image,
-    // (b) teardown, and (c) marks absent after the call.
+    // The marks node is removed by its unique token, so the actual DOM node count is the teardown
+    // witness. The mutation count assertion is NOT used here because the marks childList mutation
+    // targets document.body, which is untagged, so the MutationObserver filter does not suppress it
+    // and the count increments for a correct impl.
 
     "screenshotMarks overlays numbered badges and removes them afterward" in run {
         val html = """<!DOCTYPE html><html><body style="margin:0;padding:0;">
@@ -195,14 +193,42 @@ class BrowserDiscoverTest extends BrowserTest:
                             assert(img.binary.size > 0, "screenshotMarks must return non-empty bytes")
                             val bytes = img.binary.toArray
                             assert(bytes(0) == 0x89.toByte && bytes(1) == 'P'.toByte, "result must be a valid PNG")
-                            // Overlay must be removed after the call.
-                            Browser.eval("String(window.__kyoMarks === undefined)").map { undefinedStr =>
-                                assert(
-                                    undefinedStr == "true",
-                                    s"marks overlay must be removed after screenshotMarks but got: $undefinedStr"
-                                )
-                                Browser.eval("String(document.querySelectorAll('[data-kyo-internal=\"marks\"]').length)").map { countStr =>
-                                    assert(countStr == "0", s"no data-kyo-internal=marks node should remain but got count: $countStr")
+                            // Overlay node must be removed after the call.
+                            Browser.eval("String(document.querySelectorAll('[data-kyo-internal=\"marks\"]').length)").map { countStr =>
+                                assert(countStr == "0", s"no data-kyo-internal=marks node should remain but got count: $countStr")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- screenshotMarks called twice in sequence leaves zero mark nodes (token-scoped teardown).
+    //
+    // Two back-to-back screenshotMarks calls each inject their own token-tagged overlay and tear
+    // down exactly that overlay. Under the old single-global-slot model a second call would clobber
+    // the slot the first call reads back; the per-token removal makes each call self-contained.
+    // After both calls, zero [data-kyo-internal] nodes (marks or otherwise) may remain.
+
+    "screenshotMarks called twice leaves zero mark nodes" in run {
+        val html = """<!DOCTYPE html><html><body style="margin:0;padding:0;">
+            <button id="b1" style="position:absolute;left:10px;top:10px;width:80px;height:30px;">One</button>
+            <button id="b2" style="position:absolute;left:10px;top:50px;width:80px;height:30px;">Two</button>
+        </body></html>"""
+        withBrowser {
+            onPage(html) {
+                Browser.withConfig(_.captureHoldStillTimeout(500.millis).captureHoldStillInterval(50.millis)) {
+                    Browser.elements(Browser.Selector.css("button")).map { elems =>
+                        Browser.screenshotMarks(elems).map { first =>
+                            assert(first.binary.size > 0, "first screenshotMarks must return non-empty bytes")
+                            Browser.screenshotMarks(elems).map { second =>
+                                assert(second.binary.size > 0, "second screenshotMarks must return non-empty bytes")
+                                Browser.eval("String(document.querySelectorAll('[data-kyo-internal]').length)").map { countStr =>
+                                    assert(
+                                        countStr == "0",
+                                        s"no data-kyo-internal node should remain after two screenshotMarks calls but got count: $countStr"
+                                    )
                                 }
                             }
                         }

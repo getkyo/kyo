@@ -142,12 +142,12 @@ class BrowserCaptureTest extends BrowserTest:
     //      INV-003 consumer).
     //
     // After HoldStill.withHoldStill returns:
-    //   - window.__kyoFreezeStyle === undefined  (true)
     //   - document.querySelectorAll('style[data-kyo-internal]').length === 0  (0)
     //
     // The injection-during guarantee is covered by Test 1 and Test 2 converging correctly (if the
     // freeze style were not injected, animations would not pause and the convergence behavior would
-    // differ). The explicit teardown assertion here pins PRE-009.
+    // differ). The explicit teardown assertion here pins PRE-009: the removal targets the freeze
+    // node by its unique token, so the actual DOM node count is the correctness witness.
 
     "the freeze stylesheet is injected during capture and removed on exit" in run {
         val html = """<!DOCTYPE html><html><body><div>test</div></body></html>"""
@@ -156,18 +156,57 @@ class BrowserCaptureTest extends BrowserTest:
                 HoldStill.withHoldStill {
                     rawCapture
                 }.andThen {
-                    // After withHoldStill returns, the freeze style must be gone.
-                    Browser.eval("window.__kyoFreezeStyle === undefined").map { undefinedResult =>
-                        assert(
-                            undefinedResult == "true",
-                            s"window.__kyoFreezeStyle must be undefined after withHoldStill; got: $undefinedResult"
-                        )
-                        Browser.eval("String(document.querySelectorAll('style[data-kyo-internal]').length)").map {
-                            styleCount =>
+                    // After withHoldStill returns, the freeze style node must be gone.
+                    Browser.eval("String(document.querySelectorAll('style[data-kyo-internal]').length)").map {
+                        styleCount =>
+                            assert(
+                                styleCount == "0",
+                                s"no style[data-kyo-internal] should remain after withHoldStill; got count: $styleCount"
+                            )
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Nested hold-still: a freeze nested inside another freeze tears down both, leaving the
+    //      page unfrozen (no stuck animation-play-state: paused).
+    //
+    // The freeze style is removed by its unique token, so an inner freeze's scope exit removes only
+    // the inner node and cannot clobber the outer node's teardown. This composition (a hold-still
+    // capture inside an outer frozen scope) is the supported nesting two callers compose; under the
+    // old single-global-slot model the inner exit deleted the slot and the outer freeze leaked,
+    // freezing the page permanently. After the outer scope exits:
+    //   - document.querySelectorAll('style[data-kyo-internal]').length === 0  (no stuck freeze)
+    //   - getComputedStyle(document.body).animationPlayState is NOT stuck 'paused'.
+
+    "nested hold-still freezes tear down both and leave the page unfrozen" in run {
+        val html = """<!DOCTYPE html><html><head><style>
+            @keyframes spin { from { opacity: 1; } to { opacity: 0.5; } }
+            body { animation: spin 1s linear infinite; }
+        </style></head><body><div id="content">nested</div></body></html>"""
+        withBrowser {
+            onPage(html) {
+                Browser.withConfig(_.captureHoldStillTimeout(400.millis).captureHoldStillInterval(50.millis)) {
+                    // Outer freeze wraps an inner hold-still capture (which freezes again): a genuine nest.
+                    HoldStill.withFrozenPage {
+                        HoldStill.withHoldStill {
+                            rawCapture
+                        }
+                    }.andThen {
+                        // Both freeze style nodes must be gone after the outer scope exits.
+                        Browser.eval("String(document.querySelectorAll('style[data-kyo-internal]').length)").map { freezeCount =>
+                            assert(
+                                freezeCount == "0",
+                                s"no freeze style[data-kyo-internal] should remain after nested hold-still; got count: $freezeCount"
+                            )
+                            // The page must not be stuck paused: a leaked freeze would force 'paused' page-wide.
+                            Browser.eval("getComputedStyle(document.body).animationPlayState").map { playState =>
                                 assert(
-                                    styleCount == "0",
-                                    s"no style[data-kyo-internal] should remain after withHoldStill; got count: $styleCount"
+                                    playState != "paused",
+                                    s"page animation-play-state must not be stuck 'paused' after nested hold-still; got: $playState"
                                 )
+                            }
                         }
                     }
                 }
@@ -199,11 +238,11 @@ class BrowserCaptureTest extends BrowserTest:
                     }.map { result =>
                         result match
                             case Result.Success(img) =>
-                                // Convergence succeeded: verify cleanup too (freeze style gone).
-                                Browser.eval("window.__kyoFreezeStyle === undefined").map { r =>
+                                // Convergence succeeded: verify cleanup too (freeze style node gone).
+                                Browser.eval("String(document.querySelectorAll('style[data-kyo-internal]').length)").map { r =>
                                     assert(
-                                        r == "true",
-                                        s"freeze style must be removed after convergence; got: $r"
+                                        r == "0",
+                                        s"freeze style must be removed after convergence; got count: $r"
                                     )
                                     // Verify the returned Image is non-empty.
                                     assert(
