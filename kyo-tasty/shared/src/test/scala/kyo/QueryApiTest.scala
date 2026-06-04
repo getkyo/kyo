@@ -100,11 +100,10 @@ class QueryApiTest extends Test:
     end openFixtureClasspath
 
     // Test 1: fromPickles(Seq.empty) succeeds; findClass("anything") returns Absent
-    "fromPickles(Seq.empty) succeeds and findClass returns Absent" in run {
-        Scope.run:
-            Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
-                val result = cp.findClass("some.Class")
-                assert(result == Maybe.Absent)
+    "withPickles(Chunk.empty) succeeds and findClass returns Absent" in run {
+        Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
+            val result = cp.findClass("some.Class")
+            assert(result == Maybe.Absent)
     }
 
     // Test 2: cp.findClass on fixture classpath returns Present(sym) with kind == Class
@@ -627,9 +626,7 @@ class QueryApiTest extends Test:
     "Phase 3: Java classfile symbol parents, typeParams, declarations are accessible" in run {
         val bytes = kyo.fixtures.Embedded.arrayRecordClass
         Abort.run[TastyError]:
-            ClassfileUnpickler.read(bytes, new TypeArena).flatMap: cr =>
-                Tasty.Classpath.fromPickles(Seq.empty).map: miniCp =>
-                    cr
+            ClassfileUnpickler.read(bytes, new TypeArena)
         .flatMap:
             case Result.Success(cr) =>
                 val parents    = cr.parents
@@ -755,7 +752,7 @@ class QueryApiTest extends Test:
             case Result.Failure(e) => Kyo.lift(fail(s"Unexpected failure: $e"))
             case Result.Panic(t)   => throw t
             case Result.Success(sym) =>
-                Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
+                Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
                     given Tasty.Classpath = cp
                     val companion         = sym.companion
                     assert(companion == Maybe.Absent, s"Expected Absent companion on empty classpath but got $companion")
@@ -853,9 +850,7 @@ class QueryApiTest extends Test:
     "Phase 5: Java classfile field declaredType returns Array type for int[] values" in run {
         val bytes = kyo.fixtures.Embedded.arrayRecordClass
         Abort.run[TastyError]:
-            ClassfileUnpickler.read(bytes, new TypeArena).flatMap: cr =>
-                Tasty.Classpath.fromPickles(Seq.empty).map: miniCp =>
-                    cr
+            ClassfileUnpickler.read(bytes, new TypeArena)
         .flatMap:
             case Result.Success(cr) =>
                 val valuesOpt = cr.symbols.find(s => s.name.asString == "values")

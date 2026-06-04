@@ -24,7 +24,7 @@ class TestClasspathsNativeTest extends Test:
     // Then: the resulting Classpath has at least one class-like symbol.
     // Pins: F-F-001 (Native parity).
     "native-embedded-fixture-loads: allClassLike non-empty from embedded fixtures" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             // The fixture set adds 70+ TASTy files (see TestClasspaths.withClasspath). The exact total
             // count is fragile against decoder changes, so we assert specific class-likes are findable
             // by FQN: PlainClass, SomeTrait, BaseClass, and ChildClass must all be present.
@@ -44,7 +44,7 @@ class TestClasspathsNativeTest extends Test:
     // Then: size > 0 (includes methods, vals, classes).
     // Pins: F-F-001 (Native parity, broader symbol check).
     "native-symbols-non-empty: cp.symbols non-empty from embedded fixtures" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             // The fixture set loads 70+ TASTy files, each contributing classes plus their members.
             // Asserting a strict lower bound (>= 70 symbols, i.e. one per file) is a meaningful
             // check that decoding produced more than a single root package symbol.
@@ -73,7 +73,7 @@ class TestClasspathsNativeTest extends Test:
     // Then: cp.errors is empty (no parse errors on valid fixture bytes).
     // Pins: F-F-001 (correctness check beyond existence).
     "native-no-classpath-errors: no errors loading well-formed embedded fixtures" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             assert(
                 cp.errors.isEmpty,
                 s"Expected no classpath errors but got ${cp.errors.size}"
@@ -89,7 +89,7 @@ class TestClasspathsNativeTest extends Test:
     //   This leaf pins that Symbol.EnumCase is decoded and round-trips correctly on Native (Phase 13 + 15).
     // Pins: F-E-007 on Native (Symbol.EnumCase class-form from Phase 13, tightened in Phase 15 with Shape fixture).
     "native-enum-case-symbol-kind: shapeTasty produces Symbol.EnumCase instances" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val enumCaseSymbols = cp.symbols.filter(_.isInstanceOf[Tasty.Symbol.EnumCase])
             assert(
                 enumCaseSymbols.size > 0,
@@ -104,7 +104,7 @@ class TestClasspathsNativeTest extends Test:
     // Then: both kyo.fixtures.BaseClass and kyo.fixtures.ChildClass are findable by FQN.
     // Pins: cross-file TYPEREFpkg resolution from Phase 13, verified on Native.
     "native-cross-file-resolution: BaseClass and ChildClass both resolve by FQN" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val baseResult  = cp.findClassLike("kyo.fixtures.BaseClass")
             val childResult = cp.findClassLike("kyo.fixtures.ChildClass")
             assert(baseResult.isDefined, "Expected kyo.fixtures.BaseClass to be findable by FQN")

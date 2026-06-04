@@ -101,7 +101,7 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     // Then: non-zero count (at least the embedded fixtures compile and decode)
     // Pins: HARD RULE 11 cross-platform parity; Phase 2.10 leaf 1
     "Phase-2.10 (HARD RULE 11): embedded-fixture classpath produces non-zero symbol count on all platforms" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             assert(
                 cp.symbols.size > 0,
                 s"Expected > 0 symbols from embedded-fixture classpath on all platforms; got ${cp.symbols.size}"

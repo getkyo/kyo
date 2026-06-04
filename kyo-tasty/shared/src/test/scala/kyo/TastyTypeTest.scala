@@ -13,7 +13,7 @@ class TastyTypeTest extends Test with TastyTestSupport:
     // plan: phase-05; Type.show now requires (using cp: Classpath).
     // Named(id) renders as "Named(<id>)" until Phase 09 wires cp.symbol(id).name.
     "Type.show for Applied(scala.List, scala.Int) returns a non-empty string" in run {
-        Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
+        Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             val listType          = makeNamed("scala.List")
             val intType           = makeNamed("scala.Int")

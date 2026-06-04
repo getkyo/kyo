@@ -1,6 +1,8 @@
 package kyo
 
+import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
+import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.FileSource
 import scala.collection.mutable
 
@@ -53,10 +55,11 @@ class TastyEffectRowTest extends Test:
 
     end MemoryFileSource
 
-    private def openSomeObjectCp(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
+    private def openSomeObjectCp(using Frame): Binding < (Sync & Async & Scope & Abort[TastyError]) =
         val src = MemoryFileSource()
         src.add("root/SomeObject.tasty", kyo.fixtures.Embedded.someObjectTasty)
-        ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
+        ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
+            Binding(cp, Maybe.Present(DecodeContext.fresh()))
     end openSomeObjectCp
 
     // ── Leaf 6: Symbol.body delegates to cp.decodeBody (reference equality via memoization) ─
@@ -70,10 +73,11 @@ class TastyEffectRowTest extends Test:
     // subsequent calls, producing the same object reference.
     //
     // Pins: INV-005 (body delegates to Classpath.decodeBody) + INV-004 (bodyMemo memoization).
-    "Leaf 6: Symbol.body and cp.decodeBody return the same Tree instance via bodyMemo" in run {
+    "Leaf 6: Symbol.body and Tasty.bodyTree return the same Tree instance via bodyMemo" in run {
         Scope.run:
             Abort.run[TastyError](
-                openSomeObjectCp.flatMap: cp =>
+                openSomeObjectCp.flatMap: binding =>
+                    val cp      = binding.cp
                     val allSyms = cp.symbols
                     val valSym = allSyms.find(s =>
                         (s match
@@ -85,19 +89,20 @@ class TastyEffectRowTest extends Test:
                         case None =>
                             Kyo.lift(fail("fixture missing Val with body; test cannot proceed"))
                         case Some(sym) =>
-                            for
-                                viaMethod <- cp.bodyTree(sym)
-                                viaDirect <- cp.bodyTree(sym)
-                            yield
-                                assert(viaMethod.isDefined, "cp.decodeBody must return Present")
-                                assert(viaDirect.isDefined, "cp.decodeBody must return Present")
-                                // Phase 06: bodyMemo memoizes the result; both calls return the SAME Tree instance.
-                                assert(
-                                    viaMethod.get.asInstanceOf[AnyRef] eq viaDirect.get.asInstanceOf[AnyRef],
-                                    s"cp.decodeBody calls must return the same Tree instance (bodyMemo memoization); " +
-                                        s"got different instances of ${viaMethod.get.getClass.getSimpleName}"
-                                )
-                                succeed
+                            Tasty.bindingLocal.let(Maybe.Present(binding)):
+                                for
+                                    viaMethod <- Tasty.bodyTree(sym)
+                                    viaDirect <- Tasty.bodyTree(sym)
+                                yield
+                                    assert(viaMethod.isDefined, "Tasty.bodyTree must return Present")
+                                    assert(viaDirect.isDefined, "Tasty.bodyTree must return Present")
+                                    // bodyMemo in DecodeContext memoizes the result; both calls return the SAME Tree instance.
+                                    assert(
+                                        viaMethod.get.asInstanceOf[AnyRef] eq viaDirect.get.asInstanceOf[AnyRef],
+                                        s"Tasty.bodyTree calls must return the same Tree instance (bodyMemo memoization); " +
+                                            s"got different instances of ${viaMethod.get.getClass.getSimpleName}"
+                                    )
+                                    succeed
                     end match
             ).map:
                 case Result.Success(a) => a

@@ -49,7 +49,7 @@ class TastyAnnotationTest extends Test with TastyTestSupport:
 
     // Phase 08 Test 2: case-class unapply matches (annotationType, arguments).
     "Annotation case class unapply matches (annotationType, arguments)" in run {
-        Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
+        Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             val deprecatedType    = makeNamed("scala.deprecated")
             val a                 = Tasty.Annotation(deprecatedType, Chunk.empty)

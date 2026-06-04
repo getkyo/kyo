@@ -5,6 +5,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import kyo.internal.TestClasspaths
+import kyo.internal.tasty.query.ClasspathOrchestrator
+import kyo.internal.tasty.query.PlatformFileSource
 import scala.jdk.CollectionConverters.*
 
 /** JVM-only property tests: walk all kyo-* classpath directories from the JVM test classpath and decode each as an independent single-root
@@ -26,11 +28,12 @@ class TastyPropertyJvmTest extends Test:
     // Walk all kyo-* classpath directories; load each as an independent classpath; assert no unknown tags.
     "PROP-003: sampled kyo-* classpath directories decode without UnknownTagInPosition" in run {
         val roots = discoverKyoClasspathRoots
+        val src   = PlatformFileSource.get
         def go(remaining: List[String], violations: List[String]): List[String] < (Async & Scope & Abort[TastyError]) =
             remaining match
                 case Nil => violations
                 case root :: rest =>
-                    Tasty.Classpath.init(Seq(root), Tasty.ErrorMode.SoftFail).flatMap: cp =>
+                    ClasspathOrchestrator.init(Seq(root), Tasty.ErrorMode.SoftFail, src, 1).flatMap: cp =>
                         val errs = cp.errors.collect:
                             case TastyError.UnknownTagInPosition(tag, pos) => s"$root: tag=$tag pos=$pos"
                         go(rest, violations ++ errs)

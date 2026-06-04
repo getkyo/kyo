@@ -273,23 +273,27 @@ class DecoderFidelity5Phase02Test extends Test:
                 case Result.Panic(t)   => throw t
     }
 
-    // P02.4: F-W2-14 -- cp.copy resets bodyMemo (contract-pinning test)
-    // Given: a Classpath that may have populated bodyMemo from prior decodeBody calls
-    // When: cp.copy(...) is called via the package-private copyWithErrors helper
-    // Then: the resulting Classpath has bodyMemoSize == 0
-    // Pins: F-W2-14, INV-004
-    "P02.4 F-W2-14: cp.copy resets bodyMemo to empty (INV-004 contract pin)" in run {
+    // P02.4: F-W2-14 -- cp.copy produces a structurally equal classpath (bodyMemo moved to DecodeContext)
+    // Given: a Classpath cp produced by ClasspathOrchestrator.init
+    // When: Tasty.Classpath.copyWithErrors(cp, cp.errors) is called
+    // Then: the resulting Classpath equals the original (bodyMemo is NOT part of Classpath since Phase 05)
+    // Pins: F-W2-14, INV-004 (bodyMemo is in DecodeContext, not Classpath; copy is structurally equal)
+    "P02.4 F-W2-14: cp.copy produces structurally equal classpath (bodyMemo moved to DecodeContext)" in run {
         Scope.run:
             Abort.run[TastyError]:
                 val src = MemSrc()
                 src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
                 ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
                     // Tasty.Classpath.copyWithErrors calls cp.copy(errors = ...) internally.
-                    // bodyMemo is NOT a constructor parameter so every copy produces a fresh empty memo.
+                    // bodyMemo is NOT a constructor parameter and moved to DecodeContext in Phase 05.
                     val copied = Tasty.Classpath.copyWithErrors(cp, cp.errors)
                     assert(
-                        copied.bodyMemoSize == 0,
-                        s"Expected bodyMemoSize == 0 after cp.copy but got ${copied.bodyMemoSize}"
+                        copied == cp,
+                        s"Expected cp.copy with same errors to produce a structurally equal Classpath"
+                    )
+                    assert(
+                        copied.symbols.size == cp.symbols.size,
+                        s"Expected copied.symbols.size == ${cp.symbols.size} but got ${copied.symbols.size}"
                     )
                     succeed
             .map:

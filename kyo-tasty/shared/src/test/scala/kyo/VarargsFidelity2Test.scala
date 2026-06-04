@@ -26,7 +26,7 @@ class VarargsFidelity2Test extends Fidelity2TestBase:
     // Then: post-fix at least one such parameter exists with Type.Repeated declaredType
     // Pins: F-A2-013 + INV-105-DF2
     "F-A2-013 leaf 1 (Phase 2.06): at least one apply or concat method parameter has Type.Repeated type" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             val targetNames       = Set("apply", "concat")
             val repeatedTargetParams = cp.allParameters.filter: p =>
@@ -50,7 +50,7 @@ class VarargsFidelity2Test extends Fidelity2TestBase:
     // Then: at least one method with a Type.Repeated parameter
     // Pins: F-A2-013
     "F-A2-013 leaf 2 (Phase 2.06): at least one method has a Type.Repeated parameter" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             val repeatedParams    = cp.allParameters.filter((p: Tasty.Symbol.Parameter) => p.declaredType.isInstanceOf[Tasty.Type.Repeated])
             assert(
@@ -69,7 +69,7 @@ class VarargsFidelity2Test extends Fidelity2TestBase:
     // Then: count > 0; before fix == 0 (probe-001.log line 39897 baseline: 0)
     // Pins: F-A2-013
     "F-A2-013 leaf 3 (Phase 2.06): stdlib/embedded repeated-parameter count grows from 0 to > 0" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val repeatedCount = cp.allParameters.count((p: Tasty.Symbol.Parameter) => p.declaredType.isInstanceOf[Tasty.Type.Repeated])
             assert(
                 repeatedCount > 0,
@@ -86,7 +86,7 @@ class VarargsFidelity2Test extends Fidelity2TestBase:
     // Then: post-fix count > 0; before fix exactly 0 (probe-001.log line 39897: repeatedParameters.count : 0)
     // Pins: INV-105-DF2 producer; F-A2-013
     "INV-105-DF2 leaf 4 (Phase 2.06): repeated-parameter count > 0 (cold path)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val repeatedCount = cp.allParameters.count((p: Tasty.Symbol.Parameter) => p.declaredType.isInstanceOf[Tasty.Type.Repeated])
             assert(
                 repeatedCount > 0,
@@ -103,7 +103,7 @@ class VarargsFidelity2Test extends Fidelity2TestBase:
     // Then: zero divergence (flag and type shape are consistent)
     // Pins: F-A2-013 + INV-005 consistency
     "F-A2-013 leaf 5 (Phase 2.06): isRepeated=true implies Type.Repeated declaredType on all parameters" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var violations    = 0
             var totalRepeated = 0
             cp.allParameters.foreach: p =>

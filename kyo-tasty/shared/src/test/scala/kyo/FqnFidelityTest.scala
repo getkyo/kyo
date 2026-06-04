@@ -29,7 +29,7 @@ class FqnFidelityTest extends Test:
     // Pins: INV-002 producer (F-I-001)
     // Cross-platform: invariant "no doubled segments" holds for any classpath after the fix; passes on embedded fixtures.
     "F-I-001 (Phase 02): fqnIndex contains no doubled-package-segment keys" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val doubled = cp.indices.byFqn.keys.filter: k =>
                 k.contains("scala.scala") || k.contains("kyo.kyo") || k.startsWith("<empty>.")
             assert(
@@ -47,7 +47,7 @@ class FqnFidelityTest extends Test:
     // Cross-platform: kyo.fixtures.PlainClass is in the embedded fixture set on all platforms.
     "F-I-001 (Phase 02): cp.findClassLike(kyo.fixtures.PlainClass) returns Present" in run {
         import Tasty.Name.asString
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClassLike("kyo.fixtures.PlainClass") match
                 case Present(sym) =>
                     assert(
@@ -74,7 +74,7 @@ class FqnFidelityTest extends Test:
     // Pins: F-I-001, F-A-008
     // Cross-platform: both fixture classes are in the embedded fixture set on all platforms.
     "F-I-001 / F-A-008 (Phase 02): cp.findClassLike(kyo.fixtures.SomeCaseClass) and cp.findClassLike(kyo.fixtures.SomeTrait) return Present" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val caseClassResult = cp.findClassLike("kyo.fixtures.SomeCaseClass")
             val traitResult     = cp.findClassLike("kyo.fixtures.SomeTrait")
             val caseClassKeys   = cp.indices.byFqn.keys.filter(_.contains("SomeCaseClass")).toSeq.sorted.take(3)
@@ -149,7 +149,7 @@ class FqnFidelityTest extends Test:
     // Pins: F-I-006 (HARD RULE 8: source FQN must resolve)
     // Cross-platform: kyo.fixtures.SomeObject is in the embedded fixture set on all platforms.
     "F-I-006 (Phase 09): cp.findSymbol(kyo.fixtures.SomeObject) returns Present(Symbol.Object)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findSymbol("kyo.fixtures.SomeObject") match
                 case Present(sym: Tasty.Symbol.Object) =>
                     succeed
@@ -177,7 +177,7 @@ class FqnFidelityTest extends Test:
     // Pins: F-I-006 layer-don't-restrict (HARD RULE 4)
     // Cross-platform: kyo.fixtures.SomeObject is in the embedded fixture set on all platforms.
     "F-I-006 (Phase 09): cp.findSymbol(kyo.fixtures.SomeObject$) still returns Present (binary key preserved)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findSymbol("kyo.fixtures.SomeObject$") match
                 case Present(_) =>
                     succeed
@@ -195,7 +195,7 @@ class FqnFidelityTest extends Test:
     // Pins: F-I-006 identity contract (HARD RULE 8 + HARD RULE 7)
     // Cross-platform: kyo.fixtures.SomeObject is in the embedded fixture set on all platforms.
     "F-I-006 (Phase 09): kyo.fixtures.SomeObject and kyo.fixtures.SomeObject$ resolve to the same Symbol id" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val sourceLookup = cp.findSymbol("kyo.fixtures.SomeObject")
             val binaryLookup = cp.findSymbol("kyo.fixtures.SomeObject$")
             (sourceLookup, binaryLookup) match
@@ -233,7 +233,7 @@ class FqnFidelityTest extends Test:
     // Pins: F-I-006 negative case (no false positives from dual-index writes)
     // Cross-platform: "nonexistent.Type Absent" holds for any classpath; negative assertion is universal.
     "F-I-006 (Phase 09): cp.findSymbol(nonexistent.Type) and cp.findSymbol(nonexistent.Type$) return Absent" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val r1 = cp.findSymbol("nonexistent.Type")
             val r2 = cp.findSymbol("nonexistent.Type$")
             assert(

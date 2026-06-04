@@ -148,7 +148,7 @@ class DecoderFidelity5ExplorationTest extends Test:
 
     // Leaf 6: cp.findClass("") on a embedded classpath returns Absent, no exception.
     "DF5 leaf 6: findClass empty string returns Absent, no exception" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val result = cp.findClass("")
             assert(
                 result == Maybe.Absent,
@@ -159,7 +159,7 @@ class DecoderFidelity5ExplorationTest extends Test:
 
     // Leaf 7: cp.findClass("a" * 1000) returns Absent, no exception.
     "DF5 leaf 7: findClass very-long FQN returns Absent, no exception" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val longFqn = "a" * 1000
             val result  = cp.findClass(longFqn)
             assert(
@@ -171,7 +171,7 @@ class DecoderFidelity5ExplorationTest extends Test:
 
     // Leaf 8: cp.findClass(null) is handled gracefully (Absent or specific error; NOT NPE).
     "DF5 leaf 8: findClass(null) returns Absent or specific error, no NPE" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var threw: Option[Throwable]          = None
             var result: Maybe[Tasty.Symbol.Class] = Maybe.Absent
             try
@@ -194,10 +194,8 @@ class DecoderFidelity5ExplorationTest extends Test:
     // Leaf 9: After Scope.run closes the scope, the Classpath value (immutable) is still
     // safely readable without panic.
     "DF5 leaf 9: Classpath remains safely readable after enclosing Scope completes" in run {
-        Scope.run(
-            Abort.run[TastyError](
-                TestClasspaths.withClasspath()
-            )
+        Abort.run[TastyError](
+            TestClasspaths.withClasspath()(Tasty.classpath)
         ).flatMap: result =>
             result match
                 case Result.Failure(e) =>
@@ -252,7 +250,7 @@ class DecoderFidelity5ExplorationTest extends Test:
     // Leaf 11: Snapshot file truncated at size/2.
     // Build a valid snapshot, truncate it, attempt to read: expect clean error.
     "DF5 leaf 11: truncated KRFL snapshot produces clean error, no panic" in run {
-        TestClasspaths.withClasspath().flatMap: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             val digest    = Array[Byte](0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x44.toByte)
             val fullBytes = SnapshotWriter.serializeToBytes(cp, digest)
             val halfBytes = fullBytes.take(fullBytes.length / 2)
@@ -294,7 +292,7 @@ class DecoderFidelity5ExplorationTest extends Test:
     // Leaf 13: Load the embedded classpath, find the Symbol.Class with the most methods.
     // Verify all methods decode correctly: no Named(-1) in declaredType.
     "DF5 leaf 13: class with most methods decodes all methods without Named(-1)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             import kyo.Tasty.SymbolId.value as idVal
             val classWithMostMethods = cp.allClassLike.toIndexedSeq.maxByOption: cl =>
@@ -330,7 +328,7 @@ class DecoderFidelity5ExplorationTest extends Test:
 
     // Leaf 14: Find the method with the most type parameters; verify all decode.
     "DF5 leaf 14: method with most type params decodes all type params without sentinel" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             import kyo.Tasty.SymbolId.value as idVal
             val allMethods   = cp.allMethods
@@ -354,7 +352,7 @@ class DecoderFidelity5ExplorationTest extends Test:
     // Leaf 15: Find the method with the deepest declaredType nesting.
     // Verify no StackOverflowError during depth measurement.
     "DF5 leaf 15: deepest declaredType nesting causes no StackOverflowError" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             import kyo.Tasty.SymbolId.value as idVal
             var maxDepth      = 0

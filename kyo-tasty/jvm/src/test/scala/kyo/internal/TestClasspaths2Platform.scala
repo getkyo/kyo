@@ -53,9 +53,12 @@ private[kyo] object TestClasspaths2Platform:
     )(using Frame): (Array[Byte], Array[Byte]) < (Async & Scope & Abort[TastyError]) =
         TestClasspaths2Jvm.twoColdInits(roots)
 
-    /** Load a classpath that includes kyo-core (for ContextFunction coverage). JVM only. */
-    def withKyoCoreClasspath(using Frame): Tasty.Classpath < (Async & Scope & Abort[TastyError]) =
-        TestClasspaths.withClasspath(TestClasspaths.standardWithKyoCore)
+    /** Load a classpath that includes kyo-core (for ContextFunction coverage). JVM only.
+      *
+      * Effect row is Async & Abort[TastyError] (Scope is consumed internally by withClasspath).
+      */
+    def withKyoCoreClasspath(using Frame): Tasty.Classpath < (Async & Abort[TastyError]) =
+        TestClasspaths.withClasspath(TestClasspaths.standardWithKyoCore)(Tasty.classpath)
 
     /** Count "in pending" occurrences in all *Fidelity2Test.scala files under shared/src/test. JVM only. */
     def pendingLeafCount: Int =

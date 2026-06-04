@@ -23,8 +23,7 @@ class MethodSignatureFidelityTest extends Test:
     // Cross-platform: the fraction check holds for any classpath. When total == 0, 0.0 < 0.5 holds; when > 0, fixture
     //   methods have real return types after the fix.
     "F-A-001 / INV-005 (Phase 04): no method declaredType resolves to Named(SymbolId(-1))" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map { classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val scalaOnlyMethods = classpath.allMethods.filter(!_.isJava)
             val total            = scalaOnlyMethods.size
             val sentinelMethods = scalaOnlyMethods.flatMap(_.declaredType.toList).filter {
@@ -49,8 +48,7 @@ class MethodSignatureFidelityTest extends Test:
     // Pins: F-A-003
     // Cross-platform: embedded fixtures provide methods (methodWithDefaults, compute, etc.) that exercise type decoding.
     "F-A-003 (Phase 04): classpath Scala methods have at least one non-sentinel declared type" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map { classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val methodsWithNonSentinelTypes = classpath.allMethods
                 .filter(!_.isJava)
                 .flatMap(_.declaredType.toList)
@@ -75,8 +73,7 @@ class MethodSignatureFidelityTest extends Test:
     // Cross-platform: property "decoder produces non-sentinel types" holds for any classpath. Threshold lowered from 100 to 1 because
     // the fix property is "types exist", not "exactly 100+ types exist"; embedded fixtures provide enough methods to exercise the path.
     "F-A-004 (Phase 04): at least one Scala method has a non-sentinel declared type (decoder fix)" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map { classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val scalaMethodsWithRealTypes = classpath.allMethods
                 .filter(!_.isJava)
                 .flatMap(_.declaredType.toList)
@@ -101,8 +98,7 @@ class MethodSignatureFidelityTest extends Test:
     // Pins: F-A-005
     // Cross-platform: invariant holds for any classpath size; vacuously passes on embedded (no ThisType in small fixtures).
     "F-A-005 (Phase 04): every Type.ThisType resolves to a real Class/Trait/Object symbol" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map { classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             var badThisCount   = 0
             var totalThisCount = 0
             classpath.allMethods.foreach { method =>
@@ -139,8 +135,7 @@ class MethodSignatureFidelityTest extends Test:
     // Pins: F-A-007
     // Cross-platform: invariant "no rec@ placeholder names" holds for any classpath after the fix.
     "F-A-007 (Phase 04): no symbols with name starting rec@ in cp.symbols" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map { classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             import Tasty.Name.asString
             val recAtSymbols = classpath.symbols.filter(_.name.asString.startsWith("rec@"))
             assert(
@@ -161,8 +156,7 @@ class MethodSignatureFidelityTest extends Test:
     // Cross-platform: invariant "sentinel count < 11" holds for any classpath after the Phase 04 fix. On JVM it exercises
     // the stdlib sentinel-count reduction; on JS/Native it passes with embedded fixtures (usually 0 or 1 sentinel names).
     "INV-012 partial (Phase 04): SymbolId(-1) sentinel count decreased from Phase 01 baseline" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map { classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             import Tasty.Name.asString
             val sentinelNames   = classpath.symbols.filter(_.id.value == -1).map(_.name.asString).toSet
             val phase01Baseline = 11
@@ -183,8 +177,7 @@ class MethodSignatureFidelityTest extends Test:
     // Pins: F-A-001 (preservation of param names through the lambda walk)
     // Cross-platform: kyo.fixtures.SomeCaseClass is in the embedded fixture set on all platforms.
     "F-A-001 (Phase 04): kyo.fixtures.SomeCaseClass methods have non-sentinel declaredType" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map { classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val caseClassMaybe = classpath.findSymbol("kyo.fixtures.SomeCaseClass")
             assert(caseClassMaybe.isDefined, "kyo.fixtures.SomeCaseClass not found in classpath")
             val methods = caseClassMaybe.get.declarations(using classpath)
@@ -211,8 +204,7 @@ class MethodSignatureFidelityTest extends Test:
     // Pins: regression PIN around the nullary path in the new readDefDefReturnType
     // Cross-platform: kyo.fixtures.SomeTrait is in the embedded fixture set on all platforms.
     "regression PIN (Phase 04): kyo.fixtures.SomeTrait.compute.declaredType is not Named(SymbolId(-1))" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map { classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val traitMaybe = classpath.findSymbol("kyo.fixtures.SomeTrait")
             assert(traitMaybe.isDefined, "kyo.fixtures.SomeTrait not found in classpath")
             val computeMaybe = traitMaybe.get.findDeclaredMember("compute")(using classpath)
@@ -245,8 +237,7 @@ class MethodSignatureFidelityTest extends Test:
     // Pins: F-I-004 plus F-A-001 partial
     // Cross-platform: GenericBox[A] in embedded fixtures produces Type.Applied; assertion "size > 0" holds on all platforms.
     "F-I-004 / F-A-001 (Phase 03): APPLIEDtpt-encoded return type decodes to Type.Applied" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val allDeclaredTypes = classpath.symbols.flatMap: sym =>
                 sym match
                     case s: Tasty.Symbol.Method => s.declaredType.toList
@@ -279,7 +270,7 @@ class MethodSignatureFidelityTest extends Test:
     // Pins: Q-004 (findConcreteClass layered addition; Phase 10 early delivery per prep.md)
     // Cross-platform: kyo.fixtures.SealedBase (abstract) and ConcreteA (concrete) are in the embedded fixture set on all platforms.
     "Q-004 (Phase 10): findConcreteClass excludes abstract classes while findClass remains permissive" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             assert(
                 cp.findConcreteClass("kyo.fixtures.SealedBase").isEmpty,
                 "findConcreteClass(\"kyo.fixtures.SealedBase\") returned Present; SealedBase is abstract and should be excluded"
@@ -302,7 +293,7 @@ class MethodSignatureFidelityTest extends Test:
     // Pins: F-G-004, F-G-005
     // Cross-platform: assertion allows totalClasses==0 fallback; embedded fixtures with parentTypes populated satisfy >= 50%.
     "F-G-004 / Q-005 (Phase 13): Q-005 parent injection improves non-empty parentTypes coverage" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val allClassLike = cp.allClassLike
             val totalClasses = allClassLike.size
             val withParents  = allClassLike.count(_.parentTypes.nonEmpty)
@@ -322,7 +313,7 @@ class MethodSignatureFidelityTest extends Test:
     // Pins: F-G-005
     // Cross-platform: kyo.fixtures.ChildClass is in the embedded fixture set on all platforms.
     "F-G-005 / Q-005 (Phase 13): kyo.fixtures.ChildClass.parentTypes is non-empty (extends BaseClass)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClassLike("kyo.fixtures.ChildClass") match
                 case Maybe.Present(childSym) =>
                     assert(
@@ -341,7 +332,7 @@ class MethodSignatureFidelityTest extends Test:
     // Pins: F-A-005 + Phase 13 cross-file enhancement
     // Cross-platform: invariant passes vacuously when no ThisType in embedded fixtures; holds for any classpath size.
     "Phase 13: ThisType resolution quality maintained (badFraction <= 0.5)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var badCount   = 0
             var totalCount = 0
             cp.allMethods.foreach: method =>

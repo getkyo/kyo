@@ -61,7 +61,7 @@ class ClasspathModulesAggregatorTest extends Test:
     // When: cp.modules
     // Then: returns an empty Chunk
     "ClasspathModulesAggregatorTest: modules returns empty Chunk when no modules are loaded" in run {
-        Tasty.Classpath.fromPickles(Nil).map: cp =>
+        Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
             assert(cp.modules.isEmpty, s"Expected empty modules but got ${cp.modules.length}")
             succeed
     }

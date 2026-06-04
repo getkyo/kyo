@@ -40,7 +40,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // Pins: F-A1-001
     // Cross-platform: Tasty.Classpath.init(Seq.empty) works on all platforms (no filesystem needed).
     "F-A1-001 leaf 1 (Phase 2.09): empty classpath init returns 0 symbols, 0 errors" in run {
-        Tasty.Classpath.init(Seq.empty).map: cp =>
+        Tasty.withClasspath(Seq.empty)(Tasty.classpath).map: cp =>
             assert(cp.symbols.size == 0, s"Expected 0 symbols on empty classpath; got ${cp.symbols.size}")
             assert(cp.errors.size == 0, s"Expected 0 errors on empty classpath; got ${cp.errors.size}")
             succeed
@@ -58,7 +58,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     //   scala-library given count. Scala-library cannot be loaded as a TASTy classpath on JS/Native;
     //   the embedded fixture set contains no `given` instances, so the count would always be 0 there.
     "F-A2-004 leaf 2 (Phase 2.09): allSymbols.count(isGiven) ~= 493 baseline on standard classpath" taggedAs jvmOnly in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val count = cp.symbols.count(_.isGiven)
             assert(
                 count >= 534 && count <= 564,
@@ -80,8 +80,8 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
         val cacheDir = TestClasspaths2.createTempDir("kyo-df2-concurrent-writers")
         val roots    = TestClasspaths2.standardRoots
         Async.zip(
-            Tasty.Classpath.initCached(roots, cacheDir),
-            Tasty.Classpath.initCached(roots, cacheDir)
+            Tasty.withClasspath(roots, Maybe.Present(cacheDir))(Tasty.classpath),
+            Tasty.withClasspath(roots, Maybe.Present(cacheDir))(Tasty.classpath)
         ).map: (cp1, cp2) =>
             val krflFiles = TestClasspaths2.listFilesWithSuffix(cacheDir, ".krfl")
             assert(
@@ -197,9 +197,9 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     //   fixture set holds ~150 symbols; a <5000ms bound there is vacuous (typical load is <500ms).
     "F-A1-009 leaf 7 (Phase 2.09): standard 79,567-symbol classpath cold-init median < 5,000 ms" taggedAs jvmOnly in run {
         val roots = TestClasspaths2.standardRoots
-        def timedLoad: Long < (Async & Scope & Abort[TastyError]) =
+        def timedLoad: Long < (Async & Abort[TastyError]) =
             val start = java.lang.System.nanoTime()
-            TestClasspaths.withClasspath(roots).map: cp =>
+            TestClasspaths.withClasspath(roots)(Tasty.classpath).map: cp =>
                 val elapsed = (java.lang.System.nanoTime() - start) / 1_000_000L
                 assert(cp.symbols.size >= 79000, s"Expected >= 79,000 symbols; got ${cp.symbols.size}")
                 elapsed
@@ -243,7 +243,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     //   no Java sources (only Scala-compiled classes); a Java fixture would require adding .java sources to
     //   kyo-tasty-fixtures and a separate build step to emit Java classfile bytes for the embedded set.
     "F-A1-OPEN leaf 9 (Phase 2.09): Java-defined symbols present in standard classpath (java interop guard)" taggedAs jvmOnly in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val javaCount = cp.symbols.count(_.isJava)
             assert(
                 javaCount > 0,

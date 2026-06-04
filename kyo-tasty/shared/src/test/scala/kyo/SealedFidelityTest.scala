@@ -21,7 +21,7 @@ class SealedFidelityTest extends Test:
     // Pins: INV-007 producer (F-I-003)
     // Cross-platform: kyo.fixtures.Animal is in the embedded fixture set on all platforms.
     "F-I-003 / INV-007 (Phase 07): kyo.fixtures.Animal.permittedSubclasses contains Dog and Cat" in run {
-        TestClasspaths.withClasspath().flatMap: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             cp.findClassLike("kyo.fixtures.Animal") match
                 case Present(animalSym) =>
                     val children = animalSym.permittedSubclasses(using cp)
@@ -51,7 +51,7 @@ class SealedFidelityTest extends Test:
     // Pins: INV-007 (F-I-003)
     // Cross-platform: kyo.fixtures.Vehicle is in the embedded fixture set on all platforms.
     "F-I-003 / INV-007 (Phase 07): kyo.fixtures.Vehicle.permittedSubclasses contains Car and Bike" in run {
-        TestClasspaths.withClasspath().flatMap: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             cp.findClassLike("kyo.fixtures.Vehicle") match
                 case Present(sym) =>
                     val children = sym.permittedSubclasses(using cp)
@@ -81,7 +81,7 @@ class SealedFidelityTest extends Test:
     // Pins: INV-007 invariant
     // Cross-platform: embedded fixtures include Animal, Vehicle, SealedBase, Color, Shape; all sealed and have permits.
     "INV-007 (Phase 07): >= 50% of sealed classes have permittedSubclasses populated" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val sealedClasses = cp.allClassLike.filter(_.isSealed)
             val total         = sealedClasses.size
             assert(total > 0, s"No sealed classes found on classpath; fixtures must include at least Animal, Vehicle, SealedBase")
@@ -101,7 +101,7 @@ class SealedFidelityTest extends Test:
     // Pins: F-I-003 negative case (HARD RULE 2: no fabricated Child entries for non-sealed classes)
     // Cross-platform: kyo.fixtures.NonSealedMarker is in the embedded fixture set on all platforms.
     "F-I-003 (Phase 07): non-sealed class permittedSubclasses returns empty Chunk" in run {
-        TestClasspaths.withClasspath().flatMap: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             cp.findClass("kyo.fixtures.NonSealedMarker") match
                 case Present(s) =>
                     assert(
@@ -130,7 +130,7 @@ class SealedFidelityTest extends Test:
     // Cross-platform: embedded Color (Red/Green/Blue value-form) and Shape (Circle/Square/Rectangle class-form)
     //   provide EnumCase symbols on JS/Native. The leaf succeeds vacuously when enumCases.isEmpty.
     "F-E-007 (Phase 13): enum-case symbols pattern-match as Symbol.EnumCase" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val enumCases = cp.symbols.filter(_.kind == Tasty.SymbolKind.EnumCase)
             if enumCases.isEmpty then
                 succeed

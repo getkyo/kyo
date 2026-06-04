@@ -52,7 +52,7 @@ class TypePolishTest extends Test:
     // When: Tasty.typeSymbol(t)
     // Then: returns Maybe.Absent (head is not Named)
     "Leaf 156: symbol returns Absent for non-Named types" in run {
-        Tasty.Classpath.fromPickles(Nil).map: cp =>
+        Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             val t                 = Tasty.Type.Function(Chunk.empty, Tasty.Type.Named(SymbolId(5)), false)
             assert(!Tasty.typeSymbol(t).isDefined, "symbol must return Absent for non-Named type")

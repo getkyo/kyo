@@ -64,7 +64,7 @@ class QueryFindTest extends Test:
 
     // Leaf 10: aggregators on empty Classpath return Chunk.empty
     "Leaf 10: aggregators on empty Classpath return Chunk.empty" in run {
-        Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
+        Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             assert(Tasty.allClassLike.isEmpty, "allClassLike on empty cp must be empty")
             assert(Tasty.allMethods.isEmpty, "allMethods on empty cp must be empty")

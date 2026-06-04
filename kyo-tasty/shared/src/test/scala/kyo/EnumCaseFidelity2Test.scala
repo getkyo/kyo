@@ -40,7 +40,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     // Then: post-fix count > 0; before fix count is 0 (value-form cases were Symbol.Val)
     // Pins: F-A2-010
     "F-A2-010 (Phase 2.06): classpath has at least one EnumCase child (value-form or class-form)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val enumCases = cp.symbols.count(_.isInstanceOf[Tasty.Symbol.EnumCase])
             assert(
                 enumCases > 0,
@@ -58,7 +58,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     // Note: on JS/Native the embedded fixture set has Color (value-form) and Shape (class-form).
     // Pins: INV-105-DF2 producer; F-A2-010
     "INV-105-DF2 (Phase 2.06): every enum class has at least one EnumCase child" in run {
-        TestClasspaths.withClasspath().flatMap: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             given Tasty.Classpath = cp
 
             val enums = cp.allClassLike.filter(e => e.isEnum && !e.isInstanceOf[Tasty.Symbol.EnumCase]).toList
@@ -93,7 +93,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     //       on JS/Native: embedded fixtures contribute Color (3 value-form) + Shape (3 class-form) = 6 minimum
     // Pins: F-A2-010
     "F-A2-010 (Phase 2.06): total EnumCase count > 0 after reclassification (at least embedded Color + Shape cases)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val enumCaseCount = cp.symbols.count(_.isInstanceOf[Tasty.Symbol.EnumCase])
             assert(
                 enumCaseCount > 0,
@@ -113,7 +113,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     //   Color.Red/Green/Blue are definitively value-form and their owner should always be Color$.
     // Pins: F-A2-010
     "F-A2-010 (Phase 2.06): Color value-form EnumCase owner is the companion Object" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
 
             // Look for value-form enum cases from known enums:
@@ -154,7 +154,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     // Then: permittedSubclasses contains EnumCase symbols (regression guard for Phase 15 fix)
     // Pins: F-A2-010 (HARD RULE 4 layered preservation)
     "F-A2-010 (Phase 2.06): class-form EnumCase still correctly classified (Shape or TastyError)" in run {
-        TestClasspaths.withClasspath().flatMap: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             given Tasty.Classpath = cp
 
             // Try kyo.TastyError first (JVM), fall back to kyo.fixtures.Shape (JS/Native)
@@ -241,7 +241,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     //   contributes Color (value-form: up to 3) and Shape (class-form: up to 3). The exact count on JS/Native
     //   may differ from 6 due to companion-object decoding specifics; the invariant is non-zero.
     "Phase-2.10 (HARD RULE 12): embedded fixture EnumCase count > 0 on all platforms" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val count = cp.symbols.count(_.isInstanceOf[Tasty.Symbol.EnumCase])
             assert(
                 count > 0,

@@ -1,7 +1,9 @@
 package kyo
 
 import kyo.internal.tasty.binary.Utf8
+import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
+import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.PlatformFileSource
 import kyo.internal.tasty.query.PlatformModuleOps
 import kyo.internal.tasty.query.TastyStat
@@ -43,7 +45,7 @@ object Tasty:
       * Outside of `object Tasty`, callers cannot construct a SymbolId from a raw Int.
       *
       * Two SymbolId values produced by the same Classpath compare equal via `==` iff they refer to the same Symbol. SymbolId values are NOT
-      * stable across distinct Classpath instances (different `Classpath.init` calls produce independent id spaces).
+      * stable across distinct Classpath instances (different `Tasty.withClasspath` calls produce independent id spaces).
       */
     opaque type SymbolId = Int
 
@@ -401,7 +403,7 @@ object Tasty:
 
     /** Controls error handling during classpath open.
       *
-      * Passed to `Classpath.init` (and its cached variant) to select between a tolerant load and an early
+      * Passed to `Tasty.withClasspath` (and the cached variant) to select between a tolerant load and an early
       * abort. The mode only governs decode errors found while walking the classpath; missing entries that
       * surface later (an FQN that resolves to no symbol, a subtype check that touches an unresolved parent)
       * are reported through their own return shapes (`Maybe`, `SubtypeVerdict.Unknown`) regardless of mode.
@@ -762,7 +764,7 @@ object Tasty:
       * carry a `Constant` value.
       *
       * **Hash-consing.** During Classpath construction every `Type` is interned through a `TypeArena`; after Pass C
-      * all surviving `Type` values are canonical within `Classpath.canonical`. Structurally equal types produced at
+      * all surviving `Type` values are structurally deduplicated. Structurally equal types produced at
       * different decode sites share the same reference, so reference equality is sound for cache keys. Construction
       * of an off-arena `Type` (for example, a synthetic `Named(id)` built by user code) is allowed but will not
       * benefit from interning.
@@ -1567,7 +1569,7 @@ object Tasty:
     /** Sealed-trait root of the typed Symbol hierarchy. Every symbol is one of 14 final case classes; pattern matching is exhaustive under
       * `-Xfatal-warnings`.
       *
-      * Constructed by `ClasspathOrchestrator.materializeSymbols` during Pass C of `Classpath.init`. After construction, every field is
+      * Constructed by `ClasspathOrchestrator.materializeSymbols` during Pass C of classpath loading. After construction, every field is
       * immutable. Cross-symbol references use `SymbolId` (an opaque Int) rather than direct `Symbol` pointers to avoid case-class cycles.
       *
       * Resolution methods (`owner`, `fullName`, `binaryName`, etc.) require a `Classpath` in scope and are pure data accessors with no
@@ -1871,8 +1873,8 @@ object Tasty:
         def membersByKind(k: SymbolKind)(using cp: Classpath): Chunk[Symbol] =
             declarations.filter(_.kind == k)
 
-        def bodyTree(using frame: Frame, cp: Classpath): Maybe[Tree] < (Sync & Abort[TastyError]) =
-            cp.bodyTree(this)
+        def bodyTree(using frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
+            Tasty.bodyTree(this)
 
     end Symbol
 
@@ -2309,8 +2311,8 @@ object Tasty:
     /** In-memory TASTy pickle: header UUID, format version, and raw `.tasty` bytes.
       *
       * A `Pickle` is the smallest input unit the classpath loader accepts: one `.tasty` file decoded into
-      * its header and body. `Classpath.fromPickles` and `Classpath.fromPicklesWithSymbols` accept a `Chunk`
-      * of `Pickle` values for tests and out-of-band classpath construction; the standard `Classpath.init`
+      * its header and body. `Tasty.withPickles` and `Classpath.fromPicklesWithSymbols` accept a `Chunk`
+      * of `Pickle` values for tests and out-of-band classpath construction; the standard `Tasty.withClasspath`
       * path reads pickles from files / JARs and never exposes them to user code. `bytes` is the unmodified
       * `.tasty` payload (header included), captured as a `Span[Byte]` so the loader can slice subsections
       * without copying.
@@ -2331,22 +2333,100 @@ object Tasty:
         def show: String = s"Pickle($uuid v${version.show} ${bytes.size}B)"
     end Pickle
 
+    // ── Binding local and entry points ─────────────────────────────────────
+
+    /** Thread-local binding that carries the active Classpath and optional DecodeContext.
+      *
+      * Set by `withClasspath`, `withPickles`, and (in Phase 06) the lazy module-level fallback.
+      * Query operations on object Tasty read this local to obtain the classpath.
+      *
+      * private[kyo]: accessible within package kyo and kyo.* sub-packages only.
+      */
+    private[kyo] val bindingLocal: Local[Maybe[Binding]] = Local.init(Maybe.Absent)
+
+    /** Phase 05 stub: empty binding used when no withClasspath scope is active.
+      *
+      * Phase 06 replaces this with PlatformFallback.initFallback (JVM: java.class.path cold-load;
+      * JS/Native: Binding.empty). The lazy val ensures the empty binding is allocated at most once
+      * and that lazy init occurs inside an effect boundary via Sync.defer in the classpath accessor.
+      */
+    private lazy val current: Binding = Binding.empty
+
+    /** Get the current Classpath from the active binding, falling back to the module-level stub.
+      *
+      * Returns `Classpath.empty` when called outside a `withClasspath` scope (Phase 05 behavior;
+      * Phase 06 replaces the stub with a real JVM classpath).
+      *
+      * Effect row: Sync, because reading the lazy val `current` may trigger initialization.
+      */
+    def classpath(using Frame): Classpath < Sync =
+        bindingLocal.use: mbind =>
+            Sync.defer(mbind.getOrElse(current).cp)
+
+    /** Bind a fresh Classpath loaded from `roots` and run `f` in that scope.
+      *
+      * Loads the classpath from the given file-system roots using `ErrorMode.SoftFail`. When
+      * `cacheDir` is `Present(dir)`, attempts to read a snapshot from `dir` first; on a miss,
+      * cold-loads and writes the snapshot before returning. Resources (mmap arenas, JAR handles)
+      * are released when the scope exits via the internal `Scope.run`.
+      *
+      * Effect row: `A < (Async & Abort[TastyError] & S)` -- `Scope` is consumed internally.
+      */
+    def withClasspath[A, S](
+        roots: Seq[String],
+        cacheDir: Maybe[String] = Maybe.Absent
+    )(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
+        Scope.run:
+            ClasspathOrchestrator.coldLoadBinding(roots, ErrorMode.SoftFail, cacheDir).map: binding =>
+                bindingLocal.let(Maybe.Present(binding))(f)
+
+    /** Bind a pre-existing (deserialized) Classpath and run `f` in that scope.
+      *
+      * No filesystem access, no Scope overhead. The bound Binding carries no DecodeContext so
+      * `Tasty.bodyTree` returns `Maybe.Absent` for every symbol inside `f`.
+      *
+      * Effect row: `A < S` -- identical to `f`'s row.
+      */
+    def withClasspath[A, S](cp: Classpath)(f: => A < S)(using Frame): A < S =
+        bindingLocal.let(Maybe.Present(Binding(cp, Maybe.Absent)))(f)
+
+    /** Bind a Classpath decoded from in-memory pickles and run `f` in that scope.
+      *
+      * Decodes the pickles sequentially using an in-memory FileSource. The resulting Binding carries
+      * a fresh DecodeContext so `Tasty.bodyTree` can decode body bytes on demand.
+      *
+      * Effect row: `A < (Sync & Abort[TastyError] & S)` -- no `Async` because no parallel decode.
+      */
+    def withPickles[A, S](pickles: Chunk[Pickle])(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
+        Scope.run:
+            ClasspathOrchestrator.loadPickles(pickles).map: binding =>
+                bindingLocal.let(Maybe.Present(binding))(f)
+
+    /** Delete snapshot files in `cacheDir` whose modification time is older than `maxAge`.
+      *
+      * Delegates to `Tasty.Snapshot.evictOlderThan`. Only deletes `*.krfl` files; does not recurse.
+      * INV-009 site-4: the underlying file-deletion logic uses AllowUnsafe via the FileSource.
+      */
+    def evictOlderThan(cacheDir: String, maxAge: Duration)(using Frame): Unit < (Sync & Abort[TastyError]) =
+        Snapshot.evictOlderThan(cacheDir, maxAge)
+
     // ── Classpath ───────────────────────────────────────────────────────────
 
     /** Immutable snapshot of a fully-loaded TASTy classpath.
       *
       * All fields are plain immutable values populated once during `init` and never mutated. Reading any
-      * field after `init` returns is a pure operation with no effect row and no `AllowUnsafe`. The sole
-      * exception is `bodyTree`, which decodes AST bytes on demand and carries `Sync & Abort[TastyError]`.
+      * field after `init` returns is a pure operation with no effect row and no `AllowUnsafe`.
       *
-      * Pure data: no methods except `symbol(id)`, which is a direct array lookup. All query operations
-      * live on `object Tasty.*` and accept an explicit `(using cp: Classpath)`.
+      * Pure data: no mutable state. Body decoding (bodyTree) is now on `object Tasty` and reads
+      * the body memo from the `DecodeContext` carried by the active `Binding` in `bindingLocal`.
+      *
+      * All query operations live on `object Tasty.*` and accept an explicit `(using cp: Classpath)`.
       *
       * `derives Schema, CanEqual`: Schema derivation is available after `object Classpath` closes (see
       * `given schemaClasspath` below), once `Classpath.Indices` is in scope.
       *
-      * Instances are obtained via `Classpath.init`, `Classpath.initCached`, `Classpath.fromPickles`,
-      * `Classpath.fromPicklesWithSymbols`, or constructed directly from the case class for tests.
+      * Instances are obtained via `Tasty.withClasspath`, `Tasty.withPickles`, or constructed directly
+      * from the case class for tests.
       */
     final case class Classpath(
         symbols: Chunk[Symbol],
@@ -2355,12 +2435,6 @@ object Tasty:
         modules: Chunk[ModuleDescriptor],
         rootSymbolId: SymbolId
     ):
-        // bodyMemo is a private body field (not a constructor param) so it is excluded from
-        // equals/hashCode/copy/unapply. A cp.copy(...) call produces a new Classpath with a fresh
-        // empty memo; this is correct because memoized results are an optimization, not observable state.
-        // Unsafe: ConcurrentHashMap used for thread-safe lazy body decoding (INV-009 site-3).
-        private val bodyMemo: java.util.concurrent.ConcurrentHashMap[SymbolId, Result[TastyError, Tree]] =
-            new java.util.concurrent.ConcurrentHashMap()
 
         private def symbolsOfKind[A <: Symbol](k: SymbolKind): Chunk[A] =
             if symbols.isEmpty then Chunk.empty
@@ -2396,8 +2470,8 @@ object Tasty:
 
         /** Look up any symbol by fully-qualified dotted name.
           *
-          * Pure O(1) lookup in the immutable fqnIndex. Returns `Absent` if the FQN is not registered. For typed lookups that narrow to a
-          * specific subtype, use `findClass`, `findTrait`, `findObject`, `findClassLike`, or `findPackage`.
+          * Pure O(1) lookup in the immutable `indices.byFqn` map. Returns `Absent` if the FQN is not registered. For typed lookups that
+          * narrow to a specific subtype, use `findClass`, `findTrait`, `findObject`, `findClassLike`, or `findPackage`.
           *
           * Null safety: a `null` `fqn` argument resolves to `Maybe.Absent` (Scala Map.get(null) returns None). No NPE is raised.
           * Defensive null checks in call sites are unnecessary.
@@ -2409,8 +2483,8 @@ object Tasty:
 
         /** Look up a class symbol by fully-qualified dotted name.
           *
-          * Pure O(1) lookup in the immutable fqnIndex. Returns `Absent` if the FQN is not registered or resolves to a non-Class symbol
-          * (e.g., a Trait or Object). Use `findClassLike` to match any class-like symbol regardless of subtype.
+          * Pure O(1) lookup in the immutable `indices.byFqn` map. Returns `Absent` if the FQN is not registered or resolves to a non-Class
+          * symbol (e.g., a Trait or Object). Use `findClassLike` to match any class-like symbol regardless of subtype.
           *
           * Includes sealed abstract classes (e.g. `scala.Option`); use `findConcreteClass` to restrict to non-abstract classes.
           *
@@ -2450,7 +2524,7 @@ object Tasty:
         /** Count of type references that could not be resolved to a final SymbolId after all resolution passes.
           *
           * Nonzero values indicate cross-file TYPEREFsymbol targets not found in the loaded classpath
-          * (e.g., JDK types when no JDK roots are passed to Classpath.init). This metric provides
+          * (e.g., JDK types when no JDK roots are passed to `Tasty.withClasspath`). This metric provides
           * visibility into how many Named(-1) sentinels remain in parentTypes after the cross-file
           * resolution pass.
           *
@@ -2551,10 +2625,9 @@ object Tasty:
           *
           * Returns an empty Chunk when no match is found.
           *
-          * Performance: O(1) lookup via an internal name index built lazily on first access.
-          * The index maps interned `Name` values to `Chunk[Symbol.Class]`. Subsequent calls on the same
-          * `Classpath` instance are O(1). The index is NOT preserved by `cp.copy(...)`; copying rebuilds
-          * it lazily on the next `findClassesByName` call of the new Classpath.
+          * Performance: O(1) lookup via `indices.bySimpleName`, a pre-built simple-name to SymbolId-chunk
+          * index populated during classpath construction. The index is part of the immutable `Indices`
+          * case class and is preserved across `cp.copy(...)` calls that do not replace the `indices` field.
           */
         def findClassesByName(simpleName: String): Chunk[Symbol.Class] =
             indices.bySimpleName.getOrElse(simpleName, Chunk.empty).flatMap: id =>
@@ -2727,37 +2800,37 @@ object Tasty:
                     case _                   => ()
                 b.result()
 
-        /** All Method symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        /** All Method symbols in the classpath. O(n) scan over `symbols`. */
         def allMethods: Chunk[Symbol.Method] = symbolsOfKind(SymbolKind.Method)
 
-        /** All Val symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        /** All Val symbols in the classpath. O(n) scan over `symbols`. */
         def allVals: Chunk[Symbol.Val] = symbolsOfKind(SymbolKind.Val)
 
-        /** All Var symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        /** All Var symbols in the classpath. O(n) scan over `symbols`. */
         def allVars: Chunk[Symbol.Var] = symbolsOfKind(SymbolKind.Var)
 
-        /** All Field symbols (Java-level) in the classpath. O(1) lookup via `symbolsByKind`. */
+        /** All Field symbols (Java-level) in the classpath. O(n) scan over `symbols`. */
         def allFields: Chunk[Symbol.Field] = symbolsOfKind(SymbolKind.Field)
 
-        /** All TypeAlias symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        /** All TypeAlias symbols in the classpath. O(n) scan over `symbols`. */
         def allTypeAliases: Chunk[Symbol.TypeAlias] = symbolsOfKind(SymbolKind.TypeAlias)
 
-        /** All OpaqueType symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        /** All OpaqueType symbols in the classpath. O(n) scan over `symbols`. */
         def allOpaqueTypes: Chunk[Symbol.OpaqueType] = symbolsOfKind(SymbolKind.OpaqueType)
 
-        /** All AbstractType symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        /** All AbstractType symbols in the classpath. O(n) scan over `symbols`. */
         def allAbstractTypes: Chunk[Symbol.AbstractType] = symbolsOfKind(SymbolKind.AbstractType)
 
-        /** All TypeParam symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        /** All TypeParam symbols in the classpath. O(n) scan over `symbols`. */
         def allTypeParams: Chunk[Symbol.TypeParam] = symbolsOfKind(SymbolKind.TypeParam)
 
-        /** All Parameter symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        /** All Parameter symbols in the classpath. O(n) scan over `symbols`. */
         def allParameters: Chunk[Symbol.Parameter] = symbolsOfKind(SymbolKind.Parameter)
 
-        /** All Package symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        /** All Package symbols in the classpath. O(n) scan over `symbols`. */
         def allPackages: Chunk[Symbol.Package] = symbolsOfKind(SymbolKind.Package)
 
-        /** All Unresolved symbols in the classpath. O(1) lookup via `symbolsByKind`. */
+        /** All Unresolved symbols in the classpath. O(n) scan over `symbols`. */
         def allUnresolved: Chunk[Symbol.Unresolved] = symbolsOfKind(SymbolKind.Unresolved)
 
         /** All symbols carrying the Scala or Java annotation whose fully-qualified name is `annotationFqn`.
@@ -2875,66 +2948,6 @@ object Tasty:
             val parts = go(sym, 0, Nil)
             (parts.mkString("."): Name)
         end fullNameUnsafe
-
-        /** Decode the body bytes of `sym` into a `Tree`, memoizing the result.
-          *
-          * Returns `Absent` for symbols whose `bodyRecord` slot is `Absent` (Package, Java, and symbols without an AST body slice). Fails
-          * with `TastyError.MalformedSection` on corrupt body bytes.
-          *
-          * Memoization: the first call for a given `sym` decodes the bytes and stores the result (success or failure) in `bodyMemo`. All
-          * subsequent calls for the same `sym` return the stored result without re-decoding. The memo is keyed by `sym.id` (SymbolId) and
-          * is per-Classpath instance; `cp.copy(...)` produces a fresh memo.
-          *
-          * Called by `Symbol.bodyTree(using frame, cp)`. INV-010: AllowUnsafe does not appear on this signature.
-          */
-        def bodyTree(sym: Symbol)(using Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
-            val maybeBody: Maybe[SymbolBody] = sym match
-                case c: Symbol.Class  => c.body
-                case t: Symbol.Trait  => t.body
-                case o: Symbol.Object => o.body
-                case m: Symbol.Method => m.body
-                case v: Symbol.Val    => v.body
-                case w: Symbol.Var    => w.body
-                case _                => Maybe.Absent
-            maybeBody match
-                case Maybe.Absent => Sync.defer(Maybe.Absent)
-                case Maybe.Present(blob) =>
-                    Sync.Unsafe.defer:
-                        val cached = bodyMemo.get(sym.id)
-                        if cached != null then
-                            cached match
-                                case Result.Success(t) => Maybe(t)
-                                case Result.Failure(e) => Abort.fail(e)
-                                case Result.Panic(t)   => throw t
-                        else
-                            val result: Result[TastyError, Tree] =
-                                try
-                                    val syms = symbols
-                                    Result.Success(kyo.internal.tasty.reader.TreeUnpickler.decodeSync(
-                                        blob,
-                                        sym,
-                                        idx => if idx >= 0 && idx < syms.size then syms(idx) else sym
-                                    ))
-                                catch
-                                    case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
-                                        Result.Failure(TastyError.MalformedSection("ASTs", ex.getMessage, ex.byteOffset))
-                                    case _: ArrayIndexOutOfBoundsException =>
-                                        Result.Failure(TastyError.MalformedSection("ASTs", "truncated body", 0L))
-                                    case _: IllegalStateException =>
-                                        // F-W2-2: mmap arena closed before bodyTree ran; documented contract is ClasspathClosed.
-                                        Result.Failure(TastyError.ClasspathClosed(s"bodyTree(sym.id=${sym.id.value})"))
-                            bodyMemo.put(sym.id, result)
-                            result match
-                                case Result.Success(t) => Maybe(t)
-                                case Result.Failure(e) => Abort.fail(e)
-                                case Result.Panic(t)   => throw t
-                            end match
-                        end if
-            end match
-        end bodyTree
-
-        /** Package-private memo size for test verification. NOT part of the public API. */
-        private[kyo] def bodyMemoSize: Int = bodyMemo.size()
 
         /** All direct `ClassLike` subclasses of `sym` (one hop, from the subclass index).
           *
@@ -3072,48 +3085,6 @@ object Tasty:
         /** Schema for Classpath.Indices. Placed here (after symbolIdMapSchema is defined) so Map[SymbolId, V] fields resolve. */
         given schemaIndices: Schema[Indices] = Schema.derived
 
-        /** Init a classpath from directory/file roots using `ErrorMode.SoftFail` (errors accumulate in `cp.errors`).
-          *
-          * Effect row rationale:
-          *   - `Async`: parallel per-file decode across the workgroup (subsumes Sync).
-          *   - `Scope`: registers a finalizer that closes JAR pools and mmap arenas on scope exit.
-          *   - `Abort[TastyError]`: fatal errors (classpath build state, snapshot mismatch).
-          *
-          * One-arg variant: delegates to the canonical two-arg form with `ErrorMode.SoftFail`.
-          */
-        def init(roots: Seq[String])(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
-            init(roots, ErrorMode.SoftFail)
-
-        /** Init a classpath from directory/file roots with the given `ErrorMode`.
-          *
-          * Effect row rationale:
-          *   - `Async`: parallel per-file decode across the workgroup (subsumes Sync).
-          *   - `Scope`: registers a finalizer that closes JAR pools and mmap arenas on scope exit.
-          *   - `Abort[TastyError]`: fatal errors (classpath build state, snapshot mismatch).
-          *
-          * `ErrorMode.SoftFail`: decode errors accumulate in `cp.errors`; classpath is returned. `ErrorMode.FailFast`: any decode error
-          * immediately raises `Abort[TastyError]`.
-          */
-        def init(roots: Seq[String], mode: ErrorMode)(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
-            initImpl(roots, mode)
-
-        /** Initialize a classpath and pass it to `f`, returning `f`'s result.
-          *
-          * Mirrors the `init`/`initWith` pattern used elsewhere in Kyo: the classpath is built via `init(roots)`, then `f` runs with it as
-          * its first argument. Scope semantics are inherited from `init`; the classpath remains open for the duration of `f` and is closed
-          * when the enclosing `Scope` exits.
-          */
-        def initWith[A, S](roots: Seq[String])(f: Classpath => A < S)(using Frame): A < (Async & Scope & Abort[TastyError] & S) =
-            init(roots).map(f)
-
-        /** Initialize a classpath, run `f` with it, and discard the classpath when `f` completes.
-          *
-          * Equivalent to `Scope.run(initWith(roots)(f))`: the classpath is created inside a fresh scope so that finalizers (JAR pool
-          * closures, mmap arena releases) fire as soon as `f` returns, instead of leaking into the caller's scope.
-          */
-        def use[A, S](roots: Seq[String])(f: Classpath => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
-            Scope.run(initWith(roots)(f))
-
         /** Init the classpath and additionally pre-load JDK `module-info.class` entries from the JDK module image.
           *
           * Opt-in JDK auto-discovery. On JVM, reads module-info.class files for all JDK modules from the `jrt:/`
@@ -3121,7 +3092,7 @@ object Tasty:
           * call, `cp.findModule("java.base")` and other JDK modules resolve. On Scala.js and Scala Native, `jrt:/` is not available;
           * this method fails with `TastyError.UnsupportedPlatform`.
           *
-          * Effect row: identical to `init` (Async + Scope + Abort[TastyError]).
+          * Effect row: Async + Scope + Abort[TastyError].
           */
         def initWithPlatformModules(roots: Seq[String])(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
             initWithPlatformModulesFiltered(roots, Set.empty)
@@ -3147,7 +3118,7 @@ object Tasty:
             // the for-comprehension cannot pick up the proof implicitly.
             Sync.Unsafe.defer(kyo.internal.tasty.query.PlatformModuleOps.listJdkClassFiles(moduleFilter)).map: jdkClassFiles =>
                 for
-                    cp         <- init(jdkClassFiles.toSeq ++ roots, ErrorMode.SoftFail)
+                    cp         <- initImpl(jdkClassFiles.toSeq ++ roots, ErrorMode.SoftFail)
                     jdkModules <- PlatformModuleOps.readJdkModuleDescriptors
                 yield
                     val newModulesIndex = cp.indices.modulesIndex ++ jdkModules
@@ -3158,63 +3129,6 @@ object Tasty:
                     )
                 end for
         end initWithPlatformModulesFiltered
-
-        /** Init a classpath from directory/file roots, using a snapshot cache in `cacheDir`.
-          *
-          * On a cache hit (digest match), deserializes the snapshot directly. On a miss, initializes normally then writes a new snapshot.
-          *
-          * Effect row rationale:
-          *   - `Sync`: file I/O for snapshot read/write plus JAR, classfile, and TASTy reads on a cache miss.
-          *   - `Async`: parallel per-file decode on a cache miss.
-          *   - `Scope`: registers a finalizer that closes JAR pools and mmap arenas on scope exit.
-          *   - `Abort[TastyError]`: fatal errors (snapshot mismatch, classpath build failures).
-          */
-        def initCached(roots: Seq[String], cacheDir: String)(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
-            initCachedImpl(roots, cacheDir)
-
-        /** Create a classpath from pre-parsed in-memory pickles.
-          *
-          * Each `Pickle`'s `.bytes` are treated as a TASTy file. Pickles are decoded sequentially using the same pipeline as `init`, but
-          * without filesystem access. The effect row matches `init` because decoding uses the same parallel pipeline.
-          *
-          * An empty `pickles` sequence returns an empty `Classpath` with no symbols and no errors.
-          *
-          * Each
-          * pickle's bytes are decoded and merged into the returned classpath.
-          */
-        def fromPickles(pickles: Seq[Pickle])(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
-            if pickles.isEmpty then
-                // Empty pickles: build an empty Classpath without touching the orchestrator pipeline.
-                ClasspathOrchestrator.init(Seq.empty, ErrorMode.SoftFail, PlatformFileSource.get, concurrency = 1)
-            else
-                // Build synthetic paths for each pickle so ClasspathOrchestrator can route them.
-                val indexed: Seq[(String, Array[Byte])] =
-                    pickles.zipWithIndex.map: (p, i) =>
-                        (s"pickle://${p.uuid.replace(':', '_')}/$i.tasty", p.bytes.toArray)
-                val roots                              = indexed.map(_._1)
-                val bytesMap: Map[String, Array[Byte]] = indexed.toMap
-                // In-memory FileSource backed by the pickle byte arrays.
-                val source = new kyo.internal.tasty.query.FileSource:
-                    def read(path: String)(using Frame): Array[Byte] < (Sync & Abort[TastyError]) =
-                        bytesMap.get(path) match
-                            case Some(b) => Sync.defer(b)
-                            case None    => Abort.fail(TastyError.FileNotFound(path))
-                    def write(path: String, bytes: Array[Byte])(using Frame): Unit < (Sync & Abort[TastyError]) =
-                        Abort.fail(TastyError.SnapshotIoError("fromPickles source is read-only"))
-                    def rename(from: String, to: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
-                        Abort.fail(TastyError.SnapshotIoError("fromPickles source is read-only"))
-                    def mkdirs(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
-                        Abort.fail(TastyError.SnapshotIoError("fromPickles source is read-only"))
-                    def list(dir: String, suffixes: Chunk[String])(using Frame): Chunk[String] < (Sync & Abort[TastyError]) =
-                        // Each pickle path is itself the "root" so list is not used by the orchestrator in single-file mode.
-                        Sync.defer(Chunk.empty[String])
-                    def exists(path: String)(using Frame): Boolean < Sync =
-                        Sync.defer(bytesMap.contains(path))
-                    def stat(path: String)(using Frame): kyo.internal.tasty.query.FileSource.FileStat < (Sync & Abort[TastyError]) =
-                        bytesMap.get(path) match
-                            case Some(b) => Sync.defer(kyo.internal.tasty.query.FileSource.FileStat(mtimeMs = 0L, size = b.length.toLong))
-                            case None    => Abort.fail(TastyError.FileNotFound(path))
-                ClasspathOrchestrator.init(roots, ErrorMode.SoftFail, source, concurrency = 1)
 
         /** Create a test-only classpath from a pre-built symbols array.
           *
@@ -3370,13 +3284,13 @@ object Tasty:
 
     // ── Snapshot management ─────────────────────────────────────────────────
 
-    /** Snapshot cache management utilities for the `Classpath.initCached` path.
+    /** Snapshot cache management utilities for the `Tasty.withClasspath(roots, cacheDir)` path.
       *
-      * `initCached` writes a binary snapshot file (extension `.krfl`) keyed by a digest of the input roots,
-      * so repeat opens of the same classpath restore the in-memory state without re-decoding the underlying
-      * `.tasty` / `.class` files. Over time the cache directory accumulates snapshots for roots that are no
-      * longer relevant (different commits, different sbt projects, transient builds); this companion exposes
-      * the maintenance operations a long-running process needs.
+      * `withClasspath(roots, Present(cacheDir))` writes a binary snapshot file (extension `.krfl`) keyed by a
+      * digest of the input roots, so repeat opens of the same classpath restore the in-memory state without
+      * re-decoding the underlying `.tasty` / `.class` files. Over time the cache directory accumulates snapshots
+      * for roots that are no longer relevant (different commits, different sbt projects, transient builds);
+      * this companion exposes the maintenance operations a long-running process needs.
       *
       * **Eviction.** `evictOlderThan(cacheDir, maxAge)` deletes any `*.krfl` file in `cacheDir` whose
       * modification time is older than `maxAge`, returning silently. It does not recurse, and it does not look
@@ -3384,7 +3298,7 @@ object Tasty:
       * because it touches the disk; expect `SnapshotIoError` when the directory cannot be read.
       *
       * **What lives elsewhere.** The snapshot read / write path is internal; the only public surface for
-      * snapshot files is `Classpath.initCached` (writes on miss, reads on hit) and this object (eviction).
+      * snapshot files is `Tasty.withClasspath` (writes on miss, reads on hit) and this object (eviction).
       * Errors produced by the snapshot path are all in `TastyError` (`SnapshotFormatError`,
       * `SnapshotVersionMismatch`, `SnapshotIoError`, `DigestMismatch`).
       */
@@ -3450,7 +3364,7 @@ object Tasty:
     // ── Tasty.* query operations ────────────────────────────────────────────
     // These operations wrap the corresponding Classpath.* methods and accept
     // an explicit (using cp: Classpath) context. Phase 06 will switch them to
-    // read from a Local-bound binding; for Phase 03 explicit cp is required.
+    // read from a Local-bound binding via bindingLocal.use.
 
     /** Look up a class symbol by FQN. Returns Absent when not found. */
     def findClass(fqn: String)(using cp: Classpath): Maybe[Symbol.Class] =
@@ -3663,9 +3577,72 @@ object Tasty:
     def symbolsAnnotatedWith(fqn: String)(using frame: Frame, cp: Classpath): Chunk[Symbol] < Sync =
         cp.symbolsAnnotatedWith(fqn)
 
-    /** Decode the body tree of sym. Returns Absent for symbols without a body or decode context. */
-    def bodyTree(sym: Symbol)(using frame: Frame, cp: Classpath): Maybe[Tree] < (Sync & Abort[TastyError]) =
-        cp.bodyTree(sym)
+    /** Decode the body tree of sym, memoizing the result in the active DecodeContext.
+      *
+      * Returns `Absent` for symbols whose `bodyRecord` slot is `Absent` (Package, Java, and symbols without an AST
+      * body slice), and also returns `Absent` when called outside a `withClasspath(roots,...)` or `withPickles`
+      * scope (i.e. when `bindingLocal` holds a `Binding` with no `DecodeContext`).
+      *
+      * Memoization: the first call for a given `sym` decodes the bytes and stores the result (success or failure)
+      * in the `DecodeContext`'s `bodyMemo`. All subsequent calls for the same `sym` return the stored result
+      * without re-decoding. The memo is keyed by `sym.id` (SymbolId) and is per-`withClasspath` invocation;
+      * a second `withClasspath` call produces a fresh `DecodeContext` with an empty memo.
+      *
+      * INV-009 site-3: `AllowUnsafe` is confined to `Sync.Unsafe.defer`; it does not appear on this signature.
+      * INV-010: the top-level signature does not carry `AllowUnsafe`.
+      */
+    def bodyTree(sym: Symbol)(using frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
+        val maybeBody: Maybe[SymbolBody] = sym match
+            case c: Symbol.Class  => c.body
+            case t: Symbol.Trait  => t.body
+            case o: Symbol.Object => o.body
+            case m: Symbol.Method => m.body
+            case v: Symbol.Val    => v.body
+            case w: Symbol.Var    => w.body
+            case _                => Maybe.Absent
+        maybeBody match
+            case Maybe.Absent => Sync.defer(Maybe.Absent)
+            case Maybe.Present(blob) =>
+                bindingLocal.use: mbind =>
+                    val maybeCtx = mbind.flatMap(_.decodeCtx)
+                    if maybeCtx.isEmpty then Sync.defer(Maybe.Absent)
+                    else
+                        val ctx = maybeCtx.get
+                        val cp  = mbind.get.cp
+                        Sync.Unsafe.defer:
+                            val cached = ctx.bodyMemo.get(sym.id)
+                            if cached != null then
+                                cached match
+                                    case Result.Success(t) => Maybe(t)
+                                    case Result.Failure(e) => Abort.fail(e)
+                                    case Result.Panic(t)   => throw t
+                            else
+                                val result: Result[TastyError, Tree] =
+                                    try
+                                        val syms = cp.symbols
+                                        Result.Success(kyo.internal.tasty.reader.TreeUnpickler.decodeSync(
+                                            blob,
+                                            sym,
+                                            idx => if idx >= 0 && idx < syms.size then syms(idx) else sym
+                                        ))
+                                    catch
+                                        case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
+                                            Result.Failure(TastyError.MalformedSection("ASTs", ex.getMessage, ex.byteOffset))
+                                        case _: ArrayIndexOutOfBoundsException =>
+                                            Result.Failure(TastyError.MalformedSection("ASTs", "truncated body", 0L))
+                                        case _: IllegalStateException =>
+                                            // F-W2-2: mmap arena closed before bodyTree ran; documented contract is ClasspathClosed.
+                                            Result.Failure(TastyError.ClasspathClosed(s"bodyTree(sym.id=${sym.id.value})"))
+                                ctx.bodyMemo.put(sym.id, result)
+                                result match
+                                    case Result.Success(t) => Maybe(t)
+                                    case Result.Failure(e) => Abort.fail(e)
+                                    case Result.Panic(t)   => throw t
+                                end match
+                            end if
+                    end if
+        end match
+    end bodyTree
 
     /** Resolve the symbol referenced by a Type.Named. Returns Absent for other Type shapes. */
     def typeSymbol(tpe: Type)(using cp: Classpath): Maybe[Symbol] = tpe match

@@ -89,7 +89,7 @@ class DifferentialTastyTest extends Test:
             info("DIFF-001: kyo-tasty-fixtures not found on test classpath; skipping differential check")
             Kyo.lift(succeed)
         else
-            TestClasspaths.withClasspath(fixtureRoots).map: kyoCp =>
+            TestClasspaths.withClasspath(fixtureRoots)(Tasty.classpath).map: kyoCp =>
                 val kyoFqns = kyoFqnSet(kyoCp)
 
                 // Reuse the cached Context to avoid a second blocking NIO scan in the same JVM.
@@ -139,7 +139,7 @@ class DifferentialTastyTest extends Test:
     // surfaces and the ratio should be close to 1.0.
     "DIFF-002: kyo-tasty top-level class count is within 20% of tasty-query count on standard classpath" in run {
         val roots = TestClasspaths.standard
-        TestClasspaths.withClasspath(roots).map: kyoCp =>
+        TestClasspaths.withClasspath(roots)(Tasty.classpath).map: kyoCp =>
             // Count non-Object top-level ClassLike symbols (equivalent to tasty-query's !endsWith("$") filter).
             val kyoCountAll   = kyoCp.topLevelClasses.size
             val kyoCountNoObj = kyoCp.topLevelClasses.count(!_.isInstanceOf[Tasty.Symbol.Object])
@@ -174,7 +174,7 @@ class DifferentialTastyTest extends Test:
             info("DIFF-003: kyo-tasty-fixtures not found on test classpath; skipping")
             Kyo.lift(succeed)
         else
-            TestClasspaths.withClasspath(fixtureRoots).map: kyoCp =>
+            TestClasspaths.withClasspath(fixtureRoots)(Tasty.classpath).map: kyoCp =>
                 val kyoCount = kyoCp.topLevelClasses.size
 
                 // Reuse the cached Context (same root set as DIFF-001) to avoid a third blocking NIO scan.
@@ -194,7 +194,7 @@ class DifferentialTastyTest extends Test:
             info("DIFF-004: kyo-tasty-fixtures not found on test classpath; skipping")
             Kyo.lift(succeed)
         else
-            TestClasspaths.withClasspath(fixtureRoots).map: kyoCp =>
+            TestClasspaths.withClasspath(fixtureRoots)(Tasty.classpath).map: kyoCp =>
                 // Classes that extend something other than AnyRef should have parentTypes.
                 // ChildClass extends BaseClass, so it must have non-empty parents.
                 val childClassFqn = "kyo.fixtures.ChildClass"

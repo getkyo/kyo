@@ -25,7 +25,7 @@ class OpaqueTypeFidelityTest extends Test:
     // Cross-platform: kyo.fixtures.Micros is in the embedded fixture set (OpaqueFixture.scala) on all platforms.
     "F-E-001 / INV-006 (Phase 06): cp.findSymbol(kyo.fixtures.Micros) returns Present(Symbol.OpaqueType)" in run {
         import Tasty.Name.asString
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findSymbol("kyo.fixtures.Micros") match
                 case Present(sym: Tasty.Symbol.OpaqueType) =>
                     assert(
@@ -56,7 +56,7 @@ class OpaqueTypeFidelityTest extends Test:
     // Cross-platform: both Micros and Millis are in the embedded fixture set (OpaqueFixture.scala) on all platforms.
     "F-E-002 (Phase 06): cp.findSymbol(kyo.fixtures.Micros) and kyo.fixtures.Millis return Present(Symbol.OpaqueType)" in run {
         import Tasty.Name.asString
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val microsSym  = cp.findSymbol("kyo.fixtures.Micros")
             val millisSym  = cp.findSymbol("kyo.fixtures.Millis")
             val microsKeys = cp.indices.byFqn.keys.filter(k => k.contains("Micros")).toSeq.sorted.take(5)
@@ -81,7 +81,7 @@ class OpaqueTypeFidelityTest extends Test:
     // Pins: Q-003 dual-index contract (HARD RULE 4: layer-don't-restrict)
     // Cross-platform: OpaqueFixture is in the embedded fixture set on all platforms.
     "Q-003 (Phase 06): opaque type is findable via its binary FQN kyo.fixtures.OpaqueFixture$package$.Micros" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             // The source FQN must resolve to OpaqueType (this is the primary pin).
             val sourceResult = cp.findSymbol("kyo.fixtures.Micros")
             assert(
@@ -109,7 +109,7 @@ class OpaqueTypeFidelityTest extends Test:
     // Cross-platform: Micros is in the embedded fixture set (OpaqueFixture.scala) on all platforms.
     "INV-006 (Phase 06): kyo.fixtures.Micros symbol is Symbol.OpaqueType, not Symbol.Val" in run {
         import Tasty.Name.asString
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val microsSym = cp.findSymbol("kyo.fixtures.Micros")
             assert(
                 microsSym.exists(_.isInstanceOf[Tasty.Symbol.OpaqueType]),

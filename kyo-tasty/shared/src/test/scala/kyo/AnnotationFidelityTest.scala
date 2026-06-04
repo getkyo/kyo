@@ -34,16 +34,16 @@ class AnnotationFidelityTest extends Test:
     // Cross-platform: threshold lowered from >= 5 to >= 1. The property is "deprecated symbols found";
     //   embedded AnnotatedFixture provides 2 @deprecated symbols (AnnotatedFixtureDeprecated, deprecatedTopLevel).
     "F-G-001 / INV-004 (Phase 05): cp.symbolsAnnotatedWith(scala.deprecated).size >= 1" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.flatMap: classpath =>
-            classpath.symbolsAnnotatedWith("scala.deprecated").map: annotated =>
-                assert(
-                    annotated.size >= 1,
-                    s"Expected >= 1 symbol annotated with scala.deprecated but found ${annotated.size}. " +
-                        s"Embedded fixtures include AnnotatedFixture with @deprecated symbols. " +
-                        s"If this fails, check that AnnotatedFixture TASTy bytes are in Embedded.scala and TestClasspaths loads them."
-                )
-                succeed
+        TestClasspaths.withClasspath():
+            Tasty.classpath.flatMap: classpath =>
+                classpath.symbolsAnnotatedWith("scala.deprecated").map: annotated =>
+                    assert(
+                        annotated.size >= 1,
+                        s"Expected >= 1 symbol annotated with scala.deprecated but found ${annotated.size}. " +
+                            s"Embedded fixtures include AnnotatedFixture with @deprecated symbols. " +
+                            s"If this fails, check that AnnotatedFixture TASTy bytes are in Embedded.scala and TestClasspaths loads them."
+                    )
+                    succeed
     }
 
     // F-G-001 leaf 2 (Phase 05): tailrec-found
@@ -60,14 +60,14 @@ class AnnotationFidelityTest extends Test:
     //   classpath so the addr resolves to a real SymbolId. JS/Native cannot supply scala-library as a TASTy
     //   classpath; the proper fix is TYPEREFsymbol cross-file FQN tracking, a non-trivial decoder refactor.
     "F-G-001 (Phase 05): cp.symbolsAnnotatedWith(scala.annotation.tailrec).size >= 1" taggedAs jvmOnly in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.flatMap: classpath =>
-            classpath.symbolsAnnotatedWith("scala.annotation.tailrec").map: annotated =>
-                assert(
-                    annotated.size >= 1,
-                    s"Expected >= 1 symbol annotated with scala.annotation.tailrec but found ${annotated.size}"
-                )
-                succeed
+        TestClasspaths.withClasspath():
+            Tasty.classpath.flatMap: classpath =>
+                classpath.symbolsAnnotatedWith("scala.annotation.tailrec").map: annotated =>
+                    assert(
+                        annotated.size >= 1,
+                        s"Expected >= 1 symbol annotated with scala.annotation.tailrec but found ${annotated.size}"
+                    )
+                    succeed
     }
 
     // F-G-001 leaf 3 (Phase 05): annotation-tycon-preserved
@@ -78,17 +78,17 @@ class AnnotationFidelityTest extends Test:
     // Pins: F-G-001
     // Cross-platform: embedded AnnotatedFixture provides @deprecated symbols for JS/Native.
     "F-G-001 (Phase 05): a @deprecated symbol carries annotation with correct tycon FQN" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.flatMap: classpath =>
-            classpath.symbolsAnnotatedWith("scala.deprecated").flatMap: annotated =>
-                assert(annotated.nonEmpty, "Expected at least one @deprecated symbol (embedded AnnotatedFixture has 2)")
-                val sym = annotated.head
-                Tasty.hasAnnotation(sym, "scala.deprecated")(using summon[Frame], classpath).map: has =>
-                    assert(
-                        has,
-                        s"Symbol ${sym.name.asString} should report hasAnnotation(scala.deprecated)"
-                    )
-                    succeed
+        TestClasspaths.withClasspath():
+            Tasty.classpath.flatMap: classpath =>
+                classpath.symbolsAnnotatedWith("scala.deprecated").flatMap: annotated =>
+                    assert(annotated.nonEmpty, "Expected at least one @deprecated symbol (embedded AnnotatedFixture has 2)")
+                    val sym = annotated.head
+                    Tasty.hasAnnotation(sym, "scala.deprecated")(using summon[Frame], classpath).map: has =>
+                        assert(
+                            has,
+                            s"Symbol ${sym.name.asString} should report hasAnnotation(scala.deprecated)"
+                        )
+                        succeed
     }
 
     // F-B-006 / F-G-001 leaf 4 (Phase 05): inline-annotation-tree-decoded
@@ -100,16 +100,16 @@ class AnnotationFidelityTest extends Test:
     // Pins: F-B-006 unification with F-G-001
     // Cross-platform: AnnotatedFixtureMethods.countDown (@tailrec) and annotatedWithUnused (@unused) are annotated.
     "F-B-006 (Phase 05): an @inline method carries a decodable annotation args tree" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
-            val methodsWithAnnotations = classpath.symbols.collect:
-                case m: Tasty.Symbol.Method if m.annotations.nonEmpty => m
-            assert(
-                methodsWithAnnotations.nonEmpty,
-                "Expected at least one method with annotations after Phase 05 fix; found zero. " +
-                    "Embedded AnnotatedFixtureMethods has @tailrec countDown and @unused annotatedWithUnused."
-            )
-            succeed
+        TestClasspaths.withClasspath():
+            Tasty.classpath.map: classpath =>
+                val methodsWithAnnotations = classpath.symbols.collect:
+                    case m: Tasty.Symbol.Method if m.annotations.nonEmpty => m
+                assert(
+                    methodsWithAnnotations.nonEmpty,
+                    "Expected at least one method with annotations after Phase 05 fix; found zero. " +
+                        "Embedded AnnotatedFixtureMethods has @tailrec countDown and @unused annotatedWithUnused."
+                )
+                succeed
     }
 
     // CARRY-3 leaf 5 (decoder-fidelity-3 Phase 3.02): annotation-warm-load-cold-parity

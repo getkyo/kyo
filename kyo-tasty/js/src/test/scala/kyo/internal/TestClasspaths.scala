@@ -2,7 +2,9 @@ package kyo.internal
 
 import kyo.*
 import kyo.internal.MemoryFileSource
+import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
+import kyo.internal.tasty.query.DecodeContext
 
 /** JS-side cross-platform fixture helper.
   *
@@ -24,12 +26,13 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
   */
 private[kyo] object TestClasspaths:
 
-    /** Build a `Tasty.Classpath` from the embedded TASTy fixtures.
+    /** Run `f` in a fresh classpath scope built from the embedded TASTy fixtures.
       *
-      * Returns a Kyo effect that initialises the classpath within the surrounding `Sync & Async & Scope & Abort[TastyError]` context. Call
-      * inside a `run { ... }` test body. The `roots` parameter is ignored on JS (no filesystem); embedded fixtures are always used.
+      * Builds the classpath from an in-memory MemoryFileSource, installs the Binding in `Tasty.bindingLocal`,
+      * and runs `f` in that scope. Call inside a `run { ... }` test body. The `roots` parameter is ignored on
+      * JS (no filesystem); embedded fixtures are always used.
       */
-    def withClasspath(roots: Seq[String] = Seq.empty)(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
+    def withClasspath[A, S](roots: Seq[String] = Seq.empty)(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
         val src = MemoryFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
         // Companion .class alongside .tasty so cp.findClass populates javaMetadata cross-platform (F-G-002).
@@ -121,7 +124,10 @@ private[kyo] object TestClasspaths:
         src.add("root/PortedBug80UsesRawAware.tasty", kyo.fixtures.Embedded.portedBug80UsesRawAwareTasty)
         src.add("root/PortedBugFixture$package.tasty", kyo.fixtures.Embedded.portedBugFixturePackageTasty)
         src.add("root/portedBug71Outer/portedBug71Inner/Marker.tasty", kyo.fixtures.Embedded.portedBug71InnerMarkerTasty)
-        ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
+        Scope.run:
+            ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
+                val binding = Binding(cp, Maybe.Present(DecodeContext.fresh()))
+                Tasty.bindingLocal.let(Maybe.Present(binding))(f)
     end withClasspath
 
 end TestClasspaths

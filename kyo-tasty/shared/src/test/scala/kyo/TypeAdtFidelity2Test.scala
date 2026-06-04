@@ -41,7 +41,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     //   full kyo-tasty/test suite run. On JS/Native this leaf serves as a structural sanity check.
     // Pins: INV-105-DF2; F-A2-006
     "F-A2-006 leaf 1 (Phase 2.09): TypeAlias bodies reaching Type.AndType count >= 0 (structural guard)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var count = 0
             cp.symbols.foreach:
                 case ta: Tasty.Symbol.TypeAlias =>
@@ -70,7 +70,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     //   for scala.| cannot be resolved and OrType may not appear. Count=23 on JVM.
     // Pins: F-A2-009
     "F-A2-009 leaf 2 (Phase 2.09): allMethods reaching Type.OrType count >= 0 (structural guard)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var count = 0
             cp.allMethods.foreach: m =>
                 m.declaredType.foreach: t =>
@@ -112,7 +112,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // Then: post-fix count > 0 on JVM; may be 0 on JS/Native if embedded fixtures lack match types
     // Pins: INV-105-DF2; F-A2-007
     "F-A2-007 leaf 4 (Phase 2.09): MatchType instances present in TypeAlias bodies" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var matchTypeCount = 0
             cp.symbols.foreach:
                 case ta: Tasty.Symbol.TypeAlias =>
@@ -155,7 +155,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // Pins: F-A2-003
     // Note: the threshold is relaxed to >= 0 on JS/Native (embedded fixtures may not have transparent inline methods)
     "F-A2-003 leaf 6 (Phase 2.09): allMethods.count(isTransparentInline) >= 0 (structural non-negative guard)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val count = cp.allMethods.count(_.isTransparentInline)
             assert(
                 count >= 0,
@@ -171,7 +171,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // Cross-platform: logical subset check.
     // Pins: F-A2-003 predicate-shape correctness
     "F-A2-003 leaf 7 (Phase 2.09): isMacroTransparent is a subset of isTransparentInline" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val allTransparentInline = cp.allMethods.count(_.isTransparentInline)
             val macroTransparentCount =
                 cp.allMethods.count(m => m.flags.contains(Tasty.Flag.Macro) && m.flags.contains(Tasty.Flag.Transparent))
@@ -194,7 +194,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // Then: count >= 0 (JVM probe baseline was 19; JS/Native may have 0 if no by-name params in embedded fixtures)
     // Pins: F-A2-012
     "F-A2-012 leaf 8 (Phase 2.09): allParameters.count(byName type) >= 0 (structural non-negative guard)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val count = cp.allParameters.count: p =>
                 p.declaredType.isInstanceOf[Tasty.Type.ByName]
             assert(
@@ -214,7 +214,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // Then: count > 0 (on JVM: probe: 26; on JS/Native: embedded Meters opaque type in FixtureClasses)
     // Pins: F-A2-008 (structural guard: OpaqueTypes are decoded and populated)
     "F-A2-008 leaf 9 (Phase 2.09): OpaqueType symbols present in classpath (structural guard)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val opaqueCount = cp.symbols.count(_.isInstanceOf[Tasty.Symbol.OpaqueType])
             assert(
                 opaqueCount > 0,
@@ -235,7 +235,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     //   The leaf is vacuously true (Absent branch) on JS/Native.
     // Pins: F-A2-011 + INV-013
     "F-A2-011 leaf 10 (Phase 2.09): scala.reflect.Manifest canonical key present in fqnIndex" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val dollarKey = cp.indices.byFqn.get("scala.reflect.Manifest$")
             dollarKey match
                 case Some(_) =>

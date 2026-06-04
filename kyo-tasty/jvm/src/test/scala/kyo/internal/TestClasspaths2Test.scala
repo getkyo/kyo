@@ -52,7 +52,7 @@ class TestClasspaths2Test extends kyo.Test:
     // Then: cp.symbols.size >= 79,000 (probe-001.log line 13934 baseline 79,567) and cp.errors.size == 0
     // Pins: HARD RULE 1 (real-classpath fixture)
     "standard-classpath-includes-stdlib-kyodata-kyotasty" in run {
-        TestClasspaths.withClasspath(TestClasspaths2.standardRoots).map: cp =>
+        TestClasspaths.withClasspath(TestClasspaths2.standardRoots)(Tasty.classpath).map: cp =>
             assert(
                 cp.symbols.size >= 79000,
                 s"Expected >= 79,000 symbols (baseline 79,567), found ${cp.symbols.size}"

@@ -96,14 +96,14 @@ private[kyo] object TestClasspaths:
     /** A broader combo that adds kyo-core to the standard set, enabling ContextFunctionN coverage. */
     lazy val standardWithKyoCore: Seq[String] = standard ++ kyoCore
 
-    /** Load a `Tasty.Classpath` from the given roots using `ErrorMode.SoftFail`.
+    /** Run `f` in a fresh classpath scope loaded from `roots` using `ErrorMode.SoftFail`.
       *
-      * Returns a Kyo effect that initialises the classpath within the surrounding `Async & Scope & Abort[TastyError]` context. Call inside
-      * a `run { ... }` test body.
+      * Delegates to `Tasty.withClasspath`, which handles `Scope.run` internally. Call inside a `run { ... }` test
+      * body. Inside `f`, use `Tasty.*` query operations; they read the active binding from `Tasty.bindingLocal`.
       *
       * The `withClasspath` name is the canonical pattern that every `*FidelityTest.scala` uses (INV-001 TDD-real-classpath discipline).
       */
-    def withClasspath(roots: Seq[String] = standard)(using Frame): Tasty.Classpath < (Async & Scope & Abort[TastyError]) =
-        Tasty.Classpath.init(roots, Tasty.ErrorMode.SoftFail)
+    def withClasspath[A, S](roots: Seq[String] = standard)(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
+        Tasty.withClasspath(roots)(f)
 
 end TestClasspaths

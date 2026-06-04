@@ -24,8 +24,7 @@ class RealClasspathFidelityTest extends Test:
     // Pins: INV-003
     // Cross-platform: the no-unknown-tag guard holds for any classpath; passes on embedded fixtures.
     "INV-003 (Phase 03): zero unknown-TASTy-tag warnings on a clean real-classpath load" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val errorMsgs        = classpath.errors.map(_.toString)
             val unknownTagErrors = errorMsgs.filter(_.contains("unknown TASTy type tag"))
             assert(
@@ -51,8 +50,7 @@ class RealClasspathFidelityTest extends Test:
     // Pins: F-I-004 (dispatch correctness)
     // Cross-platform: embedded GenericBox fixture produces Type.Applied; invariant holds for any classpath.
     "F-I-004 (Phase 03): TPT tags dispatch to tree-decoder producing real Type values" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val allTypes = classpath.symbols.flatMap: sym =>
                 sym match
                     case s: Tasty.Symbol.Method => s.declaredType.toList
@@ -77,8 +75,7 @@ class RealClasspathFidelityTest extends Test:
     // Pins: HARD RULE 2 enforcement (no silent unknown-tag fallback)
     // Cross-platform: "no TypeUnpickler errors" is universal for any valid classpath.
     "HARD RULE 2 (Phase 03): TypeUnpickler throws on unhandled tag instead of silently continuing" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val typeUnpicklerErrors = classpath.errors.filter(_.toString.contains("TypeUnpickler"))
             assert(
                 typeUnpicklerErrors.isEmpty,
@@ -94,8 +91,7 @@ class RealClasspathFidelityTest extends Test:
     // Pins: INV-009
     // Cross-platform: the zero-error invariant holds for any valid classpath.
     "INV-009 (Phase 08): cp.errors.size == 0 on real-classpath load" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             assert(
                 classpath.errors.isEmpty,
                 s"Expected 0 errors after varint 9-byte expansion, got ${classpath.errors.size}:\n" +
@@ -111,8 +107,7 @@ class RealClasspathFidelityTest extends Test:
     // Pins: INV-012
     // Cross-platform: sentinel count is 0 on embedded fixtures; < 3 on real stdlib. Both satisfy <= 3.
     "INV-012 (Phase 11): SymbolId(-1) sentinel name set size <= 3 on real classpath" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString
             val sentinelNames = classpath.symbols.filter(_.id.value == -1).map(_.name.asString).toSet
             assert(

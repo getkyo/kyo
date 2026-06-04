@@ -3,6 +3,8 @@ package kyo
 import kyo.internal.Fidelity2TestBase
 import kyo.internal.TestClasspaths
 import kyo.internal.TestClasspaths2
+import kyo.internal.tasty.query.ClasspathOrchestrator
+import kyo.internal.tasty.query.PlatformFileSource
 
 /** UNTESTED axis resolution tests for decoder-fidelity-2 campaign Phase 2.09.
   *
@@ -37,7 +39,7 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     // Cross-platform: uses TestClasspaths.withClasspath() which works on all platforms; passes unconditionally
     // (dependent types may not appear in embedded fixtures but the test is informational).
     "F-A2-OPEN-DEP leaf 10 (Phase 2.09): dependent function types decode with result type referencing parameter" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             var dependentFound    = false
             cp.allMethods.foreach: m =>
@@ -76,10 +78,12 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     //   detection pins same-FQN-different-version collision, which requires real version-divergent stdlib jars; no
     //   embedded-fixture equivalent exists.
     "F-A1-OPEN-MULTI leaf 12 (Phase 2.09): multi-version stdlib FailFast init aborts with FqnCollisionError" taggedAs jvmOnly in run {
-        val multiRoots = TestClasspaths2.multiVersionStdlibRoots
-        Abort.run[TastyError](
-            Tasty.Classpath.init(multiRoots, Tasty.ErrorMode.FailFast)
-        ).map: result =>
+        val multiRoots  = TestClasspaths2.multiVersionStdlibRoots
+        val src         = PlatformFileSource.get
+        val concurrency = java.lang.Runtime.getRuntime.availableProcessors().max(1)
+        Scope.run(Abort.run[TastyError](
+            ClasspathOrchestrator.init(multiRoots, Tasty.ErrorMode.FailFast, src, concurrency)
+        )).map: result =>
             result match
                 case Result.Failure(_: TastyError.FqnCollisionError) =>
                     succeed
@@ -104,7 +108,7 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     //   F-G-002 covers the companion-.class merge cross-platform via PlainClass.class; this leaf specifically pins
     //   Java-defined (not Scala-companion) classfile decode coverage.
     "F-A3-OPEN-AP leaf 13 (Phase 2.09): Java classfile decoding path active in standard classpath (AP structural guard)" taggedAs jvmOnly in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val javaCount = cp.symbols.count(_.isJava)
             assert(
                 javaCount > 0,
@@ -126,7 +130,7 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     // Delegates to TestClasspaths2.runConcurrentReaderWriterTest to avoid JVM-specific imports in shared.
     "F-A4-OPEN-RW leaf 14 (Phase 2.09): concurrent snapshot reader+writer: reader sees pre- or post-write, not corrupt" taggedAs jvmOnly in run {
         val digest = Array[Byte](0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57)
-        TestClasspaths.withClasspath().flatMap: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             Sync.defer:
                 TestClasspaths2.createTempDir("kyo-df2-rw-test")
             .flatMap: tmpDir =>

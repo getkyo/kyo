@@ -164,7 +164,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     // Then: aborts with TastyError.NotFound('non.existent.fqn')
     // Pins: INV-103-DF2; F-A5-001 (NotFound wired via requireSymbol; unified with kind-specific requireX)
     "F-A5-001 leaf 5 (Phase 2.08): requireSymbol raises NotFound for absent FQN" in run {
-        kyo.internal.TestClasspaths.withClasspath().flatMap: cp =>
+        kyo.internal.TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             given Tasty.Classpath = cp
             Abort.run[TastyError](cp.requireSymbol("non.existent.fqn.abc.xyz")).map: result =>
                 result match
@@ -188,7 +188,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     // Then: returns the corresponding Symbol (no abort)
     // Pins: requireSymbol happy path
     "Phase 2.08 leaf 6 (requireSymbol happy path): requireSymbol returns symbol for present FQN" in run {
-        kyo.internal.TestClasspaths.withClasspath().flatMap: cp =>
+        kyo.internal.TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             given Tasty.Classpath = cp
             // Find any real FQN from the loaded classpath
             val anyFqn = cp.indices.byFqn.keys.headOption.getOrElse("PlainClass")

@@ -145,9 +145,7 @@ class PositionsUnpicklerTest extends Test:
         val classBytes = kyo.fixtures.Embedded.arrayRecordClass
         val arena      = new TypeArena
         Abort.run[TastyError]:
-            ClassfileUnpickler.read(classBytes, arena).flatMap: result =>
-                Tasty.Classpath.fromPickles(Seq.empty).map: miniCp =>
-                    result
+            ClassfileUnpickler.read(classBytes, arena)
         .map:
             case Result.Success(result) =>
                 assert(

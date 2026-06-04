@@ -16,7 +16,7 @@ class TastyPropertyTest extends Test:
 
     // Leaf 1: embedded fixture .tasty files decode with zero unknown-tag errors
     "PROP-001: embedded fixture .tasty files decode with zero UnknownTagInPosition errors" in run {
-        kyo.internal.TestClasspaths.withClasspath().map: cp =>
+        kyo.internal.TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val unknownTag = cp.errors.collect:
                 case TastyError.UnknownTagInPosition(tag, pos) =>
                     s"tag=$tag position=$pos"
@@ -29,7 +29,7 @@ class TastyPropertyTest extends Test:
 
     // Leaf 2: embedded fixture: zero Named(-1) in allMethods declaredType
     "PROP-002: embedded fixture: zero Named(-1) in allMethods declaredType" in run {
-        kyo.internal.TestClasspaths.withClasspath().map: cp =>
+        kyo.internal.TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             import kyo.Tasty.SymbolId.value as idValue
             var sentinelCount   = 0
             val sampleViolators = new scala.collection.mutable.ArrayBuffer[String]()

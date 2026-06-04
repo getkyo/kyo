@@ -107,7 +107,7 @@ class TastyErrorTest extends Test:
     "SymbolNotFound carries fqn field and empty classpath lookup returns Absent" in run {
         val err: TastyError.SymbolNotFound = TastyError.SymbolNotFound("missing.X")
         assert(err.fqn == "missing.X", s"Expected fqn 'missing.X' but got: ${err.fqn}")
-        Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
+        Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
             val result = cp.findClass("missing.X")
             result match
                 case Maybe.Absent =>
@@ -125,7 +125,7 @@ class TastyErrorTest extends Test:
     //        This distinguishes a caller programming error (empty input) from a genuine not-found result.
     // Pins:  F-W2-17.
     "requireClass empty string raises InvalidFqn not NotFound" in run {
-        Tasty.Classpath.fromPickles(Seq.empty).flatMap: cp =>
+        Tasty.withPickles(Chunk.empty)(Tasty.classpath).flatMap: cp =>
             Abort.run[TastyError](cp.requireClass("")).map: result =>
                 result match
                     case Result.Failure(TastyError.InvalidFqn("", r)) =>

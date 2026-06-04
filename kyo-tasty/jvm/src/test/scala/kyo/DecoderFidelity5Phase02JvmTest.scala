@@ -1,7 +1,9 @@
 package kyo
 
 import kyo.Tasty.SymbolId
+import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
+import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.PlatformFileSource
 import kyo.internal.tasty.snapshot.DigestComputer
@@ -155,29 +157,32 @@ class DecoderFidelity5Phase02JvmTest extends Test:
                         case Result.Success(pair) => pair
                         case Result.Failure(e)    => throw new RuntimeException(s"mmap load failed: $e")
                         case Result.Panic(t)      => throw t
-            // Step 3: Scope has exited. Call decodeBody. Exercises the post-Scope path.
+            // Step 3: Scope has exited. Call Tasty.bodyTree via a fresh binding with a fresh DecodeContext.
+            // The mmap arena is closed; body bytes in warmCp are zeroed (Array.empty), so decode must fail.
             symAndCp.flatMap: (sym, warmCp) =>
-                Abort.run[TastyError](warmCp.bodyTree(sym)).map: result =>
-                    result match
-                        case Result.Failure(TastyError.MalformedSection(_, reason, _)) =>
-                            assert(
-                                reason.contains("body bytes not available"),
-                                s"Expected 'body bytes not available' in MalformedSection reason; got: '$reason'"
-                            )
-                            succeed
-                        case Result.Failure(TastyError.ClasspathClosed(_)) =>
-                            // Also acceptable: arena accessed post-close raises ClasspathClosed.
-                            succeed
-                        case Result.Success(Maybe.Present(_)) =>
-                            // If the body was cached before Scope exit, success is acceptable.
-                            succeed
-                        case Result.Success(Maybe.Absent) =>
-                            // Symbol had no body: test is inconclusive but not a failure.
-                            succeed
-                        case Result.Failure(other) =>
-                            fail(s"Unexpected TastyError from post-Scope decodeBody: $other")
-                        case Result.Panic(t) =>
-                            fail(s"Unexpected panic from post-Scope decodeBody: ${t.getMessage}")
+                val postScopeBinding = Binding(warmCp, Maybe.Present(DecodeContext.fresh()))
+                Tasty.bindingLocal.let(Maybe.Present(postScopeBinding)):
+                    Abort.run[TastyError](Tasty.bodyTree(sym)).map: result =>
+                        result match
+                            case Result.Failure(TastyError.MalformedSection(_, reason, _)) =>
+                                assert(
+                                    reason.contains("body bytes not available"),
+                                    s"Expected 'body bytes not available' in MalformedSection reason; got: '$reason'"
+                                )
+                                succeed
+                            case Result.Failure(TastyError.ClasspathClosed(_)) =>
+                                // Also acceptable: arena accessed post-close raises ClasspathClosed.
+                                succeed
+                            case Result.Success(Maybe.Present(_)) =>
+                                // If the body was cached before Scope exit, success is acceptable.
+                                succeed
+                            case Result.Success(Maybe.Absent) =>
+                                // Symbol had no body: test is inconclusive but not a failure.
+                                succeed
+                            case Result.Failure(other) =>
+                                fail(s"Unexpected TastyError from post-Scope decodeBody: $other")
+                            case Result.Panic(t) =>
+                                fail(s"Unexpected panic from post-Scope decodeBody: ${t.getMessage}")
     }
 
     // P02.7 (JVM-only): F-W2-30/31 via mmap -- subclassIndex and companionIndex populated on mmap warm load

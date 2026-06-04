@@ -3,6 +3,8 @@ package kyo.internal
 import java.io.File
 import java.nio.file.Paths
 import kyo.*
+import kyo.internal.tasty.query.ClasspathOrchestrator
+import kyo.internal.tasty.query.PlatformFileSource
 
 /** JVM-only classpath fixtures for kyo-tasty decoder-fidelity-2 tests.
   *
@@ -68,7 +70,7 @@ private[kyo] object TestClasspaths2Jvm:
             def error(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit = ()
         end sinkLogger
         Log.let(Log(sinkLogger)) {
-            TestClasspaths.withClasspath(standardRoots).map: cp =>
+            TestClasspaths.withClasspath(standardRoots)(Tasty.classpath).map: cp =>
                 (cp, TestClasspaths2.WarningSink(bufRef.get().toSeq))
         }
     end loadStandardWithSink
@@ -77,7 +79,7 @@ private[kyo] object TestClasspaths2Jvm:
     def standardWithSnapshot(
         roots: Seq[String] = standardRoots
     )(using Frame): (Tasty.Classpath, Tasty.Classpath) < (Async & Scope & Abort[TastyError]) =
-        TestClasspaths.withClasspath(roots).flatMap: coldCp =>
+        TestClasspaths.withClasspath(roots)(Tasty.classpath).flatMap: coldCp =>
             Sync.defer:
                 java.nio.file.Files.createTempDirectory("kyo-df2-snapshot").toString
             .flatMap: tmpDir =>
@@ -125,10 +127,16 @@ private[kyo] object TestClasspaths2Jvm:
     def collisionRoots: Seq[String] = TestClasspaths.kyoTasty ++ TestClasspaths.kyoTasty
 
     def withCollisionClasspath(using Frame): Tasty.Classpath < (Async & Scope & Abort[TastyError]) =
-        Tasty.Classpath.init(collisionRoots, Tasty.ErrorMode.SoftFail)
+        val src         = PlatformFileSource.get
+        val concurrency = java.lang.Runtime.getRuntime.availableProcessors().max(1)
+        ClasspathOrchestrator.init(collisionRoots, Tasty.ErrorMode.SoftFail, src, concurrency)
+    end withCollisionClasspath
 
     def withCollisionClasspathFailFast(using Frame): Tasty.Classpath < (Async & Scope & Abort[TastyError]) =
-        Tasty.Classpath.init(collisionRoots, Tasty.ErrorMode.FailFast)
+        val src         = PlatformFileSource.get
+        val concurrency = java.lang.Runtime.getRuntime.availableProcessors().max(1)
+        ClasspathOrchestrator.init(collisionRoots, Tasty.ErrorMode.FailFast, src, concurrency)
+    end withCollisionClasspathFailFast
 
     private def writeTempFile(name: String, bytes: Array[Byte]): String =
         val dir  = java.nio.file.Files.createTempDirectory("kyo-df2-fixture")

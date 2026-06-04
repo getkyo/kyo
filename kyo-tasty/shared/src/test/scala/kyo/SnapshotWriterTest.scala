@@ -107,7 +107,7 @@ class SnapshotWriterTest extends Test:
     // Regression guard for F-A4-OPEN-IDEMPOTENT (decoder-fidelity-2 carry-over).
     // Cross-platform: uses embedded fixtures so it runs on JVM, JS, and Native.
     "CARRY-1 cold-vs-cold: two same-run serializations of the same classpath are byte-equal" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val digest = Array[Byte](0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67)
             val a      = SnapshotWriter.serializeToBytes(cp, digest)
             val b      = SnapshotWriter.serializeToBytes(cp, digest)

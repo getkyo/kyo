@@ -1,6 +1,8 @@
 package kyo
 
+import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
+import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.PlatformFileSource
 import kyo.internal.tasty.snapshot.DigestComputer
@@ -808,9 +810,9 @@ class SnapshotRoundTripTest extends Test:
     //
     // Snapshot-loaded body bytes lack the name table and type context from the original TASTy
     // section, so actual tree decode produces MalformedSection. The failure IS memoized: after
-    // one decodeBody call, bodyMemoSize == 1, confirming the per-instance memo works correctly.
-    // Uses bodyMemoSize (private[kyo] on Tasty.Classpath) to verify memoization.
-    "snapshot body decode invokes decodeBody and memoizes result (bodyMemoSize == 1 after call)" in run {
+    // one decodeBody call, the DecodeContext bodyMemo has size 1, confirming the per-invocation memo works.
+    // Uses DecodeContext (via Tasty.bindingLocal) to verify memoization.
+    "snapshot body decode invokes Tasty.bodyTree and memoizes result in DecodeContext (size == 1 after call)" in run {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0xd0.toByte, 0xd1.toByte, 0xd2.toByte, 0xd3.toByte, 0xd4.toByte, 0xd5.toByte, 0xd6.toByte, 0xd7.toByte)
         Scope.run:
@@ -836,14 +838,18 @@ class SnapshotRoundTripTest extends Test:
                             )
             ).flatMap:
                 case Result.Success((warmCp: Tasty.Classpath, Some(sym: Tasty.Symbol))) =>
-                    // Before decodeBody: bodyMemoSize must be 0.
-                    assert(warmCp.bodyMemoSize == 0, s"bodyMemo must be empty before any decodeBody call, got ${warmCp.bodyMemoSize}")
-                    // Call decodeBody; snapshot bodies lack the name table so decode may fail,
-                    // but the result (success or failure) must be memoized.
-                    Abort.run[TastyError](warmCp.bodyTree(sym)).map: _ =>
-                        // After decodeBody: bodyMemoSize must be 1 regardless of decode outcome.
-                        val memoSize = warmCp.bodyMemoSize
-                        assert(memoSize == 1, s"bodyMemo must have exactly 1 entry after first decodeBody call, got $memoSize")
+                    // Create a fresh DecodeContext and install it in bindingLocal.
+                    val ctx     = DecodeContext.fresh()
+                    val binding = Binding(warmCp, Maybe.Present(ctx))
+                    // Before decodeBody: bodyMemo must be 0.
+                    assert(ctx.bodyMemo.size() == 0, s"bodyMemo must be empty before any Tasty.bodyTree call, got ${ctx.bodyMemo.size()}")
+                    // Call Tasty.bodyTree inside the binding scope; snapshot bodies lack the name table so decode may fail,
+                    // but the result (success or failure) must be memoized in the DecodeContext.
+                    Tasty.bindingLocal.let(Maybe.Present(binding)):
+                        Abort.run[TastyError](Tasty.bodyTree(sym)).map: _ =>
+                            // After bodyTree: bodyMemo must have exactly 1 entry regardless of decode outcome.
+                            val memoSize = ctx.bodyMemo.size()
+                            assert(memoSize == 1, s"bodyMemo must have exactly 1 entry after first Tasty.bodyTree call, got $memoSize")
                 case Result.Success((_, None)) =>
                     fail("No body-bearing symbol found in warm classpath; fixture must have at least one body")
                 case Result.Failure(e) =>

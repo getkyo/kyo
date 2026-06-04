@@ -80,8 +80,11 @@ private[kyo] object TestClasspaths2:
     /** Bytes for a KRFL file with minorVersion=3 (JVM only). */
     def v3FormatKrflBytes: Array[Byte] = TestClasspaths2Platform.v3FormatKrflBytes
 
-    /** Load a classpath that includes kyo-core for ContextFunction coverage (JVM only). */
-    def withKyoCoreClasspath(using Frame): Tasty.Classpath < (Async & Scope & Abort[TastyError]) =
+    /** Load a classpath that includes kyo-core for ContextFunction coverage (JVM only).
+      *
+      * Effect row is Async & Abort[TastyError] (Scope is consumed internally by withClasspath).
+      */
+    def withKyoCoreClasspath(using Frame): Tasty.Classpath < (Async & Abort[TastyError]) =
         TestClasspaths2Platform.withKyoCoreClasspath
 
     /** Count "in pending" occurrences in all Fidelity2Test.scala files under shared/src/test (JVM only). */
@@ -118,7 +121,7 @@ private[kyo] object TestClasspaths2:
       * including JVM) instead of the real stdlib classpath. Captures warn() messages emitted during decode so callers
       * can assert on unknown-tag counts. Works on JVM, JS, and Native.
       */
-    def loadEmbeddedWithSink(using Frame): (Tasty.Classpath, WarningSink) < (Sync & Async & Scope & Abort[TastyError]) =
+    def loadEmbeddedWithSink(using Frame): (Tasty.Classpath, WarningSink) < (Sync & Async & Abort[TastyError]) =
         import AllowUnsafe.embrace.danger
         val bufRef = AtomicRef.Unsafe.init(Chunk.empty[String])
         val sinkLogger: Log.Unsafe = new Log.Unsafe:
@@ -137,7 +140,7 @@ private[kyo] object TestClasspaths2:
             def error(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit = ()
         end sinkLogger
         Log.let(Log(sinkLogger)) {
-            TestClasspaths.withClasspath().map: cp =>
+            TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
                 (cp, WarningSink(bufRef.get().toSeq))
         }
     end loadEmbeddedWithSink
@@ -149,8 +152,8 @@ private[kyo] object TestClasspaths2:
       * suitable for testing snapshot round-trip correctness on any platform; for tests requiring the full real stdlib classpath use
       * `TestClasspaths2.standardWithSnapshot` (JVM only).
       */
-    def withSnapshotInMemory()(using Frame): (Tasty.Classpath, Tasty.Classpath) < (Sync & Async & Scope & Abort[TastyError]) =
-        TestClasspaths.withClasspath().flatMap: coldCp =>
+    def withSnapshotInMemory()(using Frame): (Tasty.Classpath, Tasty.Classpath) < (Sync & Async & Abort[TastyError]) =
+        TestClasspaths.withClasspath()(Tasty.classpath).flatMap: coldCp =>
             Sync.defer:
                 val digest       = Array[Byte](0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37)
                 val snapshotPath = "mem-snapshot/snapshot.krfl"

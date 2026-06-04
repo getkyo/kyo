@@ -77,7 +77,7 @@ class TypeSymbolIdTest extends Test:
       * both calls compile and resolve to the enum member. Pins: INV-009 (member methods on owned types).
       */
     "isSubtypeOf and show are member methods, not extensions" in run {
-        Tasty.Classpath.fromPickles(Seq.empty).map: cp =>
+        Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             val t: Tasty.Type     = Tasty.Type.Named(SymbolId(0))
             val other: Tasty.Type = Tasty.Type.Named(SymbolId(1))

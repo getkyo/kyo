@@ -35,7 +35,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // Cross-platform (Phase 2.13): ContextFunctionFixture embedded in fixture set.
     // Pins: F-A2-005 + INV-105-DF2
     "F-A2-005 (Phase 2.05): classpath symbols have at least one ContextFunction in their types" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
 
             def walkType(t: Tasty.Type): Int =
@@ -74,7 +74,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // Cross-platform (Phase 2.13): ContextFunctionFixture embedded.
     // Pins: F-A2-005
     "F-A2-005 (Phase 2.05): classpath parameters have at least one ContextFunction type" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var paramCtxFnCount = 0
             cp.symbols.foreach: sym =>
                 sym match
@@ -96,7 +96,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // Cross-platform (Phase 2.13): ContextFunctionFixture embedded.
     // Pins: INV-105-DF2 producer; F-A2-005
     "INV-105-DF2 (Phase 2.05): classpath has positive ContextFunction count across all symbol types" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var total = 0
             cp.symbols.foreach: sym =>
                 sym match
@@ -123,7 +123,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // Cross-platform (Phase 2.13): ContextFunctionFixture embedded.
     // Pins: HARD RULE 4 layered preservation
     "HARD RULE 4 (Phase 2.05): no symbol has Function(_, _, true) in its type" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var violations = 0
             cp.symbols.foreach: sym =>
                 sym match
@@ -156,7 +156,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // Cross-platform: uses pure ADT construction; works on JS/Native.
     // Pins: HARD RULE 4
     "HARD RULE 4 (Phase 2.05): Type.Function pattern does not match Type.ContextFunction" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val cfType = Tasty.Type.ContextFunction(
                 Chunk(Tasty.Type.Named(SymbolId(0))),
                 Tasty.Type.Named(SymbolId(1))
@@ -191,7 +191,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // Cross-platform: uses pure ADT construction + show; works on JS/Native.
     // Pins: show-format consistency
     "show (Phase 2.05): Type.ContextFunction.show uses ?=> arrow" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             val paramType         = Tasty.Type.Named(SymbolId(0))
             val resultType        = Tasty.Type.Named(SymbolId(0))

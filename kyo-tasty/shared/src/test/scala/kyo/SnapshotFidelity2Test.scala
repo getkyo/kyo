@@ -49,7 +49,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
     // in the JVM stdlib. On JS/Native the embedded fixtures don't have scala.Predef$; the leaf produces succeed (Absent branch).
     // Pins: F-A4-001 (OQ-003)
     "F-A4-001 (Phase 2.02): cold.findSymbol('scala.Predef$') resolves via binary-alias fqnIndex entry" in run {
-        TestClasspaths.withClasspath().map: cold =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cold =>
             cold.findSymbol("scala.Predef$") match
                 case Absent =>
                     // scala.Predef$ not present in embedded fixture set (JS/Native) or classpath variant; acceptable

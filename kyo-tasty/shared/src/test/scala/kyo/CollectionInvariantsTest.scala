@@ -25,8 +25,7 @@ class CollectionInvariantsTest extends Test:
     // Pins: INV-008 producer (F-G-006)
     // Cross-platform: invariant holds for any classpath size.
     "F-G-006 / INV-008 (Phase 11): cp.allClassLike.size >= cp.topLevelClasses.size" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val allSz = classpath.allClassLike.size
             val topSz = classpath.topLevelClasses.size
             assert(
@@ -44,8 +43,7 @@ class CollectionInvariantsTest extends Test:
     // Pins: F-G-006
     // Cross-platform: subset invariant holds for any classpath.
     "F-G-006 (Phase 11): cp.topLevelClasses is a subset of cp.allClassLike" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val allSet = classpath.allClassLike.toSet
             val topSet = classpath.topLevelClasses.toSet
             assert(
@@ -64,8 +62,7 @@ class CollectionInvariantsTest extends Test:
     // Cross-platform: invariant "isGiven excludes parameters" holds vacuously when no given symbols exist in embedded
     // fixtures, and holds by construction on JVM. Either way the assertion passes on all platforms.
     "F-E-004 (Phase 11): isGiven returns false for Symbol.Parameter (using-clause params excluded)" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val givenSyms   = classpath.symbols.filter(_.isGiven)
             val paramGivens = givenSyms.filter(_.isInstanceOf[Tasty.Symbol.Parameter])
             assert(
@@ -85,8 +82,7 @@ class CollectionInvariantsTest extends Test:
     // Cross-platform: invariant "isMacro excludes synthetic" holds for any classpath. On JVM it covers stdlib enum-case
     // synthetics; on JS/Native the Color/Shape enum-case synthetics from embedded fixtures exercise the same predicate.
     "F-E-006 (Phase 11): isMacro returns false for enum-case synthetic methods" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val macroSyms       = classpath.symbols.filter(_.isMacro)
             val syntheticMacros = macroSyms.filter(_.flags.contains(Tasty.Flag.Synthetic))
             assert(
@@ -113,8 +109,7 @@ class CollectionInvariantsTest extends Test:
     // Pins: F-E-005 regression
     // Cross-platform: kyo.fixtures.Meters in FixtureClasses$package has `extension (m: Meters) def value: Double`.
     "F-E-005 regression PIN (Phase 11): extension methods are found via isExtension on embedded fixtures" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString
             val extensions = classpath.symbols.filter(_.isExtension)
             assert(
@@ -141,8 +136,7 @@ class CollectionInvariantsTest extends Test:
     //   "root/PlainClass.tasty" in JS/Native TestClasspaths; ClasspathOrchestrator.readAndDecodeTastyFile
     //   speculatively reads the companion via source.exists/source.read and merges javaMetadata.
     "F-G-002 (Phase 11): at least one class has javaMetadata Present after .class companion merge" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val withMeta = classpath.allClassLike.filter(_.javaMetadata.isDefined)
             assert(
                 withMeta.nonEmpty,
@@ -160,8 +154,7 @@ class CollectionInvariantsTest extends Test:
     // Pins: INV-012 completion (F-G-007)
     // Cross-platform: the sentinel-count invariant holds for any correctly-decoded classpath; embedded fixtures produce 0 or 1 sentinel names.
     "INV-012 (Phase 11): SymbolId(-1) sentinel count is <= 3 after Phase 11 cleanup" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString
             val sentinelNames = classpath.symbols.filter(_.id.value == -1).map(_.name.asString).toSet
             assert(

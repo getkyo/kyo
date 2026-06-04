@@ -1,7 +1,9 @@
 package kyo
 
 import kyo.Tasty.SymbolId
+import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
+import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.FileSource
 import scala.collection.mutable
 
@@ -47,6 +49,12 @@ class ValVarBodyTreeTest extends Test:
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end openSomeObjectCp
 
+    // Helper: open classpath as a Binding with DecodeContext so Tasty.bodyTree works.
+    private def openSomeObjectBinding(using Frame): Binding < (Sync & Async & Scope & Abort[TastyError]) =
+        openSomeObjectCp.map: cp =>
+            Binding(cp, Maybe.Present(DecodeContext.fresh()))
+    end openSomeObjectBinding
+
     // ── Leaf 79: val-bodyTree ─────────────────────────────────────────────────
     // Given: a loaded SomeObject classpath containing a Val with body bytes
     // When: run v.bodyTree
@@ -55,7 +63,8 @@ class ValVarBodyTreeTest extends Test:
     "Leaf 79: val-bodyTree: Val.bodyTree returns Present(Tree) for a val with body" in run {
         Scope.run:
             Abort.run[TastyError](
-                openSomeObjectCp.flatMap: cp =>
+                openSomeObjectBinding.flatMap: binding =>
+                    val cp = binding.cp
                     val valOpt = cp.symbols.find(s =>
                         s match
                             case v: Tasty.Symbol.Val => v.body.isDefined
@@ -66,11 +75,11 @@ class ValVarBodyTreeTest extends Test:
                             // SomeObject.tasty has a val with body in the fixture; if not found, inconclusive.
                             Kyo.lift(succeed)
                         case Some(sym) =>
-                            val v                 = sym.asInstanceOf[Tasty.Symbol.Val]
-                            given Tasty.Classpath = cp
-                            v.bodyTree.map: result =>
-                                assert(result.isDefined, "Val.bodyTree must return Present for a val with a body")
-                                succeed
+                            val v = sym.asInstanceOf[Tasty.Symbol.Val]
+                            Tasty.bindingLocal.let(Maybe.Present(binding)):
+                                v.bodyTree.map: result =>
+                                    assert(result.isDefined, "Val.bodyTree must return Present for a val with a body")
+                                    succeed
                     end match
             ).map:
                 case Result.Success(r) => r
@@ -86,7 +95,8 @@ class ValVarBodyTreeTest extends Test:
     "Leaf 80: var-bodyTree: Var.bodyTree returns Present(Tree) for a var with body" in run {
         Scope.run:
             Abort.run[TastyError](
-                openSomeObjectCp.flatMap: cp =>
+                openSomeObjectBinding.flatMap: binding =>
+                    val cp = binding.cp
                     val varOpt = cp.symbols.find(s =>
                         s match
                             case v: Tasty.Symbol.Var => v.body.isDefined
@@ -94,8 +104,10 @@ class ValVarBodyTreeTest extends Test:
                     )
                     varOpt match
                         case None =>
-                            // SomeObject.tasty may not have a Var with body; use synthetic fallback.
-                            // Verify that a Var with Absent body returns Absent (same as leaf 78 for Method).
+                            // SomeObject.tasty may not have a Var with body.
+                            // Verify that a Var with Absent body returns Absent.
+                            // Use withClasspath(cp) which gives Binding(cp, Maybe.Absent) -- no DecodeContext.
+                            // bodyTree returns Absent for any symbol when no DecodeContext is present.
                             val varSym = Tasty.Symbol.Var(
                                 SymbolId(1),
                                 Tasty.Name("y"),
@@ -107,17 +119,17 @@ class ValVarBodyTreeTest extends Test:
                                 Chunk.empty,
                                 Maybe.Absent
                             )
-                            Tasty.Classpath.fromPicklesWithSymbols(Chunk(varSym)).flatMap: cp2 =>
-                                given Tasty.Classpath = cp2
+                            // varSym.body is Absent, so Tasty.bodyTree returns Absent immediately without checking DecodeContext.
+                            Tasty.bindingLocal.let(Maybe.Present(binding)):
                                 varSym.bodyTree.map: result =>
-                                    assert(!result.isDefined, "Var.bodyTree must return Absent when body is Absent")
+                                    assert(!result.isDefined, "Var.bodyTree must return Absent when body field is Absent")
                                     succeed
                         case Some(sym) =>
-                            val v                 = sym.asInstanceOf[Tasty.Symbol.Var]
-                            given Tasty.Classpath = cp
-                            v.bodyTree.map: result =>
-                                assert(result.isDefined, "Var.bodyTree must return Present for a var with a body")
-                                succeed
+                            val v = sym.asInstanceOf[Tasty.Symbol.Var]
+                            Tasty.bindingLocal.let(Maybe.Present(binding)):
+                                v.bodyTree.map: result =>
+                                    assert(result.isDefined, "Var.bodyTree must return Present for a var with a body")
+                                    succeed
                     end match
             ).map:
                 case Result.Success(r) => r
@@ -127,8 +139,8 @@ class ValVarBodyTreeTest extends Test:
 
     // ── Leaf 81b (companion to leaf 81): Val.bodyTree effect row ─────────────
     // Given: val e: Maybe[Tree] < (Sync & Abort[TastyError]) = v.bodyTree
-    // When: compile
-    // Then: compiles; no other effect
+    // When: compile inside bindingLocal.let(Present(Binding(cp, Present(ctx))))
+    // Then: compiles; no other effect; runtime result is Success
     // Pins: INV-010
     "Leaf 81b: Val.bodyTree effect row is exactly (Sync & Abort[TastyError]) -- compile check" in run {
         val valSym = Tasty.Symbol.Val(
@@ -143,13 +155,16 @@ class ValVarBodyTreeTest extends Test:
             Maybe.Absent
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(valSym)).flatMap: cp =>
-            given Tasty.Classpath = cp
-            // This binding must compile with the exact effect row from the design.
-            val e: Maybe[Tasty.Tree] < (Sync & Abort[TastyError]) = valSym.bodyTree
-            Abort.run[TastyError](e).map:
-                case Result.Success(_) => succeed
-                case Result.Failure(e) => fail(s"Unexpected error: $e")
-                case Result.Panic(t)   => throw t
+            // Install a binding WITH a DecodeContext so valSym.bodyTree exercises the full code path.
+            // The static type annotation confirms the effect row is exactly (Sync & Abort[TastyError]).
+            val binding = Binding(cp, Maybe.Present(DecodeContext.fresh()))
+            Tasty.bindingLocal.let(Maybe.Present(binding)):
+                // This binding must compile with the exact effect row from the design.
+                val e: Maybe[Tasty.Tree] < (Sync & Abort[TastyError]) = valSym.bodyTree
+                Abort.run[TastyError](e).map:
+                    case Result.Success(_) => succeed
+                    case Result.Failure(e) => fail(s"Unexpected error: $e")
+                    case Result.Panic(t)   => throw t
     }
 
 end ValVarBodyTreeTest

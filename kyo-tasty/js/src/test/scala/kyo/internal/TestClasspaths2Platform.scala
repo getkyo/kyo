@@ -49,7 +49,7 @@ private[kyo] object TestClasspaths2Platform:
     )(using Frame): (Array[Byte], Array[Byte]) < (Async & Scope & Abort[TastyError]) =
         throw new UnsupportedOperationException("JVM-only: twoColdInits")
 
-    def withKyoCoreClasspath(using Frame): Tasty.Classpath < (Async & Scope & Abort[TastyError]) =
+    def withKyoCoreClasspath(using Frame): Tasty.Classpath < (Async & Abort[TastyError]) =
         throw new UnsupportedOperationException("JVM-only: withKyoCoreClasspath")
 
     def pendingLeafCount: Int = throw new UnsupportedOperationException("JVM-only: pendingLeafCount")

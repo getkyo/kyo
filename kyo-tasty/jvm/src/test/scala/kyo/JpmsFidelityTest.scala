@@ -65,7 +65,7 @@ class JpmsFidelityTest extends Test:
     // Pins: HARD RULE 4 (helper preserves init contract)
     "Phase 10 HARD RULE 4: initWithPlatformModules merges user roots with JDK modules" in run {
         // Verify baseline: TestClasspaths.withClasspath still works (INV-001 anchor requirement).
-        TestClasspaths.withClasspath().flatMap: baseCp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).flatMap: baseCp =>
             assert(baseCp.findClassLike("kyo.Tasty").isDefined, "baseline withClasspath: kyo.Tasty not found")
             Tasty.Classpath.initWithPlatformModules(TestClasspaths.standard).map: cp =>
                 cp.findClassLike("kyo.Tasty") match

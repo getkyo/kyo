@@ -27,7 +27,7 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
     // On JS/Native: scala.Tuple is not in the embedded fixture set; the leaf produces succeed (Absent branch).
     // Pins: INV-005 (strengthened); F-A2-002
     "F-A2-002 (Phase 2.01): scala.Tuple.splitAt declaredType contains no Named(-1)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             cp.findSymbol("scala.Tuple") match
                 case Absent =>
@@ -62,7 +62,7 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
     // On JS/Native: scala.Tuple is not in the embedded fixture set; the leaf produces succeed (Absent branch).
     // Pins: INV-005 (strengthened); F-A2-002
     "F-A2-002 (Phase 2.01): scala.Tuple.++ declaredType contains no Named(-1)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             cp.findSymbol("scala.Tuple") match
                 case Absent =>
@@ -98,7 +98,7 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
     // On JS/Native: allMethods from embedded fixtures is a small set; the sentinel count must still be 0.
     // Pins: INV-005 (strengthened); F-A2-002
     "INV-005 (Phase 2.01): all-stdlib-methods have zero Named(-1) in declaredType" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var sentinelCount   = 0
             val sampleViolators = new scala.collection.mutable.ArrayBuffer[String]()
             cp.allMethods.foreach: m =>
@@ -127,7 +127,7 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
     //   this leaf verifies the show function works without panicking and produces a deterministic non-empty result.
     // Pins: HARD RULE 11 cross-platform ADT fidelity; Phase 2.10 leaf 3
     "Phase-2.10 (HARD RULE 11): cp.allMethods.headOption.declaredType.show is non-empty on all platforms" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             cp.allMethods.headOption match
                 case None =>

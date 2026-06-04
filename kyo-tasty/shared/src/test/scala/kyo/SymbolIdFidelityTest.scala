@@ -23,8 +23,7 @@ class SymbolIdFidelityTest extends Test:
     // Pins: INV-012 partial (F-G-007 partial)
     // Cross-platform: invariant "count < 11" holds for any classpath; embedded fixtures have 0 sentinels.
     "INV-012 partial (Phase 04): SymbolId(-1) sentinel name-set size decreased from Phase 01 baseline" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString
             val sentinelNames   = classpath.symbols.filter(_.id.value == -1).map(_.name.asString).toSet
             val phase01Baseline = 11
@@ -44,8 +43,7 @@ class SymbolIdFidelityTest extends Test:
     // Pins: INV-012 completion (F-G-007)
     // Cross-platform: invariant "count <= 3" holds for any classpath; embedded fixtures have 0 which satisfies <= 3.
     "INV-012 (Phase 11): SymbolId(-1) sentinel name-set size <= 3 on real classpath" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString
             val sentinelNames = classpath.symbols.filter(_.id.value == -1).map(_.name.asString).toSet
             assert(
@@ -64,8 +62,7 @@ class SymbolIdFidelityTest extends Test:
     // Pins: F-G-007 (all fabricated-name categories eliminated)
     // Cross-platform: invariant "no fabricated names" holds for any classpath; passes trivially on embedded fixtures too.
     "F-G-007 (Phase 11): no fabricated type-decode placeholder names remain in cp.symbols" in run {
-        val cp = TestClasspaths.withClasspath()
-        cp.map: classpath =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString
             val allNames = classpath.symbols.map(_.name.asString)
             val fabricated = allNames.filter: n =>
@@ -92,7 +89,7 @@ class SymbolIdFidelityTest extends Test:
     // Pins: Phase 13 sub-target 3
     // Cross-platform: "count >= 0" is a non-negative structural guard that trivially holds on any classpath.
     "Phase 13: cp.unresolvedTypeReferenceCount is bounded (cross-file resolution reduces sentinel count)" in run {
-        TestClasspaths.withClasspath().map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val count = cp.unresolvedTypeReferenceCount
             assert(count >= 0, "unresolvedTypeReferenceCount must be non-negative")
             succeed

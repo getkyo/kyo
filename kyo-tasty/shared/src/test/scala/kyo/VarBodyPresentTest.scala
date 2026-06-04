@@ -1,6 +1,8 @@
 package kyo
 
+import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
+import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.FileSource
 import scala.collection.mutable
 
@@ -51,6 +53,7 @@ class VarBodyPresentTest extends Test:
         Scope.run:
             Abort.run[TastyError](
                 openFixtureClassesCp.flatMap: cp =>
+                    val binding = Binding(cp, Maybe.Present(DecodeContext.fresh()))
                     val varWithBodyOpt = cp.symbols.collectFirst:
                         case v: Tasty.Symbol.Var if v.body.isDefined => v
                     varWithBodyOpt match
@@ -59,13 +62,13 @@ class VarBodyPresentTest extends Test:
                             // If not found, the test is inconclusive rather than failing.
                             Kyo.lift(succeed)
                         case Some(v) =>
-                            given Tasty.Classpath = cp
-                            v.bodyTree.map: result =>
-                                assert(
-                                    result.isDefined,
-                                    s"Var.bodyTree must return Present for var '${v.name.asString}' which has body bytes"
-                                )
-                                succeed
+                            Tasty.bindingLocal.let(Maybe.Present(binding)):
+                                v.bodyTree.map: result =>
+                                    assert(
+                                        result.isDefined,
+                                        s"Var.bodyTree must return Present for var '${v.name.asString}' which has body bytes"
+                                    )
+                                    succeed
                     end match
             ).map:
                 case Result.Success(r) => r

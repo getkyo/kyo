@@ -157,7 +157,7 @@ object ClasspathOrchestrator:
       *
       * Roots may be directories containing `.tasty` files or individual `.tasty` files.
       *
-      * Missing-root contract per `Tasty.Classpath.init` scaladoc:
+      * Missing-root contract per `Tasty.ErrorMode` scaladoc:
       *   - `ErrorMode.FailFast`: a missing root immediately raises `Abort[TastyError.FileNotFound]`.
       *   - `ErrorMode.SoftFail`: a missing root accumulates `TastyError.FileNotFound` in `cp.errors` and initialization continues with the
       *     remaining valid roots. An all-missing classpath returns an empty `Classpath` with one error per missing root.
@@ -1802,5 +1802,97 @@ object ClasspathOrchestrator:
         val platSrc = kyo.internal.tasty.query.PlatformFileSource.get
         finalizeMerge(state, platSrc, Tasty.ErrorMode.FailFast)
     end triggerClasspathBuildingForTest
+
+    /** Load a Binding by cold-loading from roots with optional dev-cache support.
+      *
+      * When cacheDir is Absent, performs a full cold load via the existing ClasspathOrchestrator.init
+      * pipeline and wraps the result in a Binding with a fresh DecodeContext.
+      *
+      * When cacheDir is Present(dir), attempts to read a snapshot from dir using the same
+      * digest/lookup/write logic as Tasty.Classpath.initCachedImpl. On a cache hit the snapshot
+      * classpath is returned wrapped in a Binding with a fresh DecodeContext. On a miss, cold-loads
+      * then writes the snapshot before returning.
+      *
+      * The DecodeContext is always fresh per call; body memos are never shared across invocations.
+      */
+    private[kyo] def coldLoadBinding(
+        roots: Seq[String],
+        mode: Tasty.ErrorMode,
+        cacheDir: Maybe[String]
+    )(using Frame): Binding < (Sync & Async & Scope & Abort[TastyError]) =
+        val source      = PlatformFileSource.get
+        val concurrency = java.lang.Runtime.getRuntime.availableProcessors().max(1)
+        cacheDir match
+            case Maybe.Absent =>
+                init(roots, mode, source, concurrency).map: cp =>
+                    Binding(cp, Maybe.Present(DecodeContext.fresh()))
+            case Maybe.Present(dir) =>
+                import kyo.internal.tasty.snapshot.DigestComputer as SnapshotDigest
+                import kyo.internal.tasty.snapshot.SnapshotReader
+                import kyo.internal.tasty.snapshot.SnapshotWriter
+                Abort.run[TastyError](SnapshotDigest.compute(roots, source)).flatMap:
+                    case Result.Failure(_) | Result.Panic(_) =>
+                        // Digest failed (e.g. browser platform): fall through to cold load.
+                        init(roots, mode, source, concurrency).map: cp =>
+                            Binding(cp, Maybe.Present(DecodeContext.fresh()))
+                    case Result.Success(digest) =>
+                        val hexDigest    = SnapshotDigest.toHexString(digest)
+                        val snapshotPath = s"$dir/$hexDigest.krfl"
+                        source.exists(snapshotPath).flatMap: exists =>
+                            if exists then
+                                Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath, source)).flatMap:
+                                    case Result.Success(cp) =>
+                                        Binding(cp, Maybe.Present(DecodeContext.fresh()))
+                                    case Result.Failure(_) | Result.Panic(_) =>
+                                        // Snapshot unreadable; fall through to cold load.
+                                        init(roots, mode, source, concurrency).map: cp =>
+                                            Binding(cp, Maybe.Present(DecodeContext.fresh()))
+                            else
+                                init(roots, mode, source, concurrency).flatMap: cp =>
+                                    Abort.run[TastyError](SnapshotWriter.write(cp, dir, digest, source)).andThen:
+                                        Binding(cp, Maybe.Present(DecodeContext.fresh()))
+        end match
+    end coldLoadBinding
+
+    /** Load a Binding from in-memory pickles.
+      *
+      * Used by Tasty.withPickles; returns a Binding with a fresh DecodeContext.
+      * Pickles are decoded sequentially using an in-memory FileSource backed by the pickle byte arrays.
+      * withPickles uses this method; the resulting DecodeContext allows Tasty.bodyTree to decode
+      * body bytes on demand when the pickle bytes are still in memory.
+      */
+    private[kyo] def loadPickles(
+        pickles: Chunk[Tasty.Pickle]
+    )(using Frame): Binding < (Sync & Async & Scope & Abort[TastyError]) =
+        if pickles.isEmpty then
+            Sync.defer(Binding(Tasty.Classpath.empty, Maybe.Present(DecodeContext.fresh())))
+        else
+            val indexed: Seq[(String, Array[Byte])] =
+                pickles.toSeq.zipWithIndex.map: (p, i) =>
+                    (s"pickle://${p.uuid.replace(':', '_')}/$i.tasty", p.bytes.toArray)
+            val roots                              = indexed.map(_._1)
+            val bytesMap: Map[String, Array[Byte]] = indexed.toMap
+            val source = new FileSource:
+                def read(path: String)(using Frame): Array[Byte] < (Sync & Abort[TastyError]) =
+                    bytesMap.get(path) match
+                        case Some(b) => Sync.defer(b)
+                        case None    => Abort.fail(TastyError.FileNotFound(path))
+                def write(path: String, bytes: Array[Byte])(using Frame): Unit < (Sync & Abort[TastyError]) =
+                    Abort.fail(TastyError.SnapshotIoError("loadPickles source is read-only"))
+                def rename(from: String, to: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
+                    Abort.fail(TastyError.SnapshotIoError("loadPickles source is read-only"))
+                def mkdirs(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
+                    Abort.fail(TastyError.SnapshotIoError("loadPickles source is read-only"))
+                def list(dir: String, suffixes: Chunk[String])(using Frame): Chunk[String] < (Sync & Abort[TastyError]) =
+                    Sync.defer(Chunk.empty[String])
+                def exists(path: String)(using Frame): Boolean < Sync =
+                    Sync.defer(bytesMap.contains(path))
+                def stat(path: String)(using Frame): FileSource.FileStat < (Sync & Abort[TastyError]) =
+                    bytesMap.get(path) match
+                        case Some(b) => Sync.defer(FileSource.FileStat(mtimeMs = 0L, size = b.length.toLong))
+                        case None    => Abort.fail(TastyError.FileNotFound(path))
+            init(roots, Tasty.ErrorMode.SoftFail, source, concurrency = 1).map: cp =>
+                Binding(cp, Maybe.Present(DecodeContext.fresh()))
+    end loadPickles
 
 end ClasspathOrchestrator

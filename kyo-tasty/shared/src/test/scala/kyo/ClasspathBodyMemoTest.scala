@@ -1,7 +1,9 @@
 package kyo
 
 import kyo.Tasty.SymbolId
+import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
+import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.FileSource
 import scala.collection.mutable
 
@@ -52,6 +54,12 @@ class ClasspathBodyMemoTest extends Test:
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, makeSomeObjectSource(), 1)
     end openSomeObjectCp
 
+    // Helper: open classpath as a Binding with a fresh DecodeContext so Tasty.bodyTree works.
+    private def openSomeObjectBinding(using Frame): Binding < (Sync & Async & Scope & Abort[TastyError]) =
+        openSomeObjectCp.map: cp =>
+            Binding(cp, Maybe.Present(DecodeContext.fresh()))
+    end openSomeObjectBinding
+
     // ── Leaf 2: bodyMemo excluded from equality ───────────────────────────────
 
     // Given: a Classpath cp that has memoized at least one body decode.
@@ -69,7 +77,8 @@ class ClasspathBodyMemoTest extends Test:
     "Leaf 2: bodyMemo excluded from case-class equality" in run {
         Scope.run:
             Abort.run[TastyError](
-                openSomeObjectCp.flatMap: cp =>
+                openSomeObjectBinding.flatMap: binding =>
+                    val cp = binding.cp
                     val symOpt = cp.symbols.find(s =>
                         (s match
                             case v: Tasty.Symbol.Val => v.body.isDefined;
@@ -81,17 +90,21 @@ class ClasspathBodyMemoTest extends Test:
                             // No body symbols; still verify reflexivity and hashCode stability.
                             Kyo.lift:
                                 assert(cp == cp, "Classpath must equal itself (reflexivity)")
-                                assert(cp.hashCode == cp.hashCode, "hashCode must be stable (bodyMemo excluded)")
+                                assert(cp.hashCode == cp.hashCode, "hashCode must be stable (bodyMemo is in DecodeContext, not Classpath)")
                                 succeed
                         case Some(sym) =>
-                            cp.bodyTree(sym).map: _ =>
-                                // After memoization, the classpath must still equal itself.
-                                assert(cp == cp, "Classpath must equal itself after bodyMemo is populated")
-                                assert(cp.hashCode == cp.hashCode, "hashCode must be stable after bodyMemo is populated")
-                                // A copy with identical fields (same 11 params, same canonical) is equal.
-                                val cpCopy = Tasty.Classpath.copyWithErrors(cp, cp.errors)
-                                assert(cp == cpCopy, "cp.copy with identical fields must equal original (bodyMemo excluded from equality)")
-                                succeed
+                            Tasty.bindingLocal.let(Maybe.Present(binding)):
+                                Tasty.bodyTree(sym).map: _ =>
+                                    // After memoization in DecodeContext, the classpath must still equal itself.
+                                    assert(cp == cp, "Classpath must equal itself after bodyMemo is populated in DecodeContext")
+                                    assert(cp.hashCode == cp.hashCode, "hashCode must be stable (bodyMemo is in DecodeContext)")
+                                    // A copy with identical fields is equal (bodyMemo is in DecodeContext, not in Classpath).
+                                    val cpCopy = Tasty.Classpath.copyWithErrors(cp, cp.errors)
+                                    assert(
+                                        cp == cpCopy,
+                                        "cp.copy with identical fields must equal original (bodyMemo is in DecodeContext, not Classpath)"
+                                    )
+                                    succeed
                     end match
             ).map:
                 case Result.Success(r) => r
@@ -99,17 +112,18 @@ class ClasspathBodyMemoTest extends Test:
                 case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 3: cp.copy produces fresh empty bodyMemo ─────────────────────────
+    // ── Leaf 3: each withClasspath invocation produces a fresh empty DecodeContext ─
 
-    // Given: a Classpath cp; call cp.decodeBody on some symbol to populate bodyMemo.
-    // When: cp2 = cp.copy(errors = Chunk.empty).
-    // Then: cp2's internal bodyMemo is a different (fresh) ConcurrentHashMap with size 0.
-    //       Verified by calling cp2.bodyMemoSize (package-private test hook).
-    // Pins: INV-004.
-    "Leaf 3: cp.copy produces fresh empty bodyMemo" in run {
+    // Given: a Classpath cp inside a withClasspath scope; call Tasty.bodyTree on some symbol.
+    // When: a second fresh Binding is created with DecodeContext.fresh().
+    // Then: the second DecodeContext's bodyMemo starts at size 0 (independent of the first).
+    // Pins: INV-004 (bodyMemo is per-DecodeContext, not per-Classpath; each withClasspath call
+    //   creates a fresh DecodeContext with an empty memo).
+    "Leaf 3: each withClasspath invocation produces a fresh empty DecodeContext bodyMemo" in run {
         Scope.run:
             Abort.run[TastyError](
-                openSomeObjectCp.flatMap: cp =>
+                openSomeObjectBinding.flatMap: binding1 =>
+                    val cp = binding1.cp
                     val symOpt = cp.symbols.find(s =>
                         (s match
                             case v: Tasty.Symbol.Val => v.body.isDefined;
@@ -121,16 +135,20 @@ class ClasspathBodyMemoTest extends Test:
                             // No body symbols; test is inconclusive but not failed.
                             Kyo.lift(succeed)
                         case Some(sym) =>
-                            cp.bodyTree(sym).map: _ =>
-                                // After one decode, bodyMemo has size >= 1.
-                                val memoSizeBefore = cp.bodyMemoSize
-                                assert(memoSizeBefore >= 1, s"Expected bodyMemo to have at least 1 entry after decode, got $memoSizeBefore")
-                                // Copy the classpath using the package-private test helper (copy is private[Tasty]).
-                                val cp2 = Tasty.Classpath.copyWithErrors(cp, Chunk.empty)
-                                // The copy's bodyMemo must be fresh (size 0).
-                                val memoSizeCopy = cp2.bodyMemoSize
-                                assert(memoSizeCopy == 0, s"Expected cp.copy to produce a fresh empty bodyMemo (size 0), got $memoSizeCopy")
-                                succeed
+                            Tasty.bindingLocal.let(Maybe.Present(binding1)):
+                                Tasty.bodyTree(sym).map: _ =>
+                                    // After one decode in binding1, bodyMemo has size >= 1.
+                                    val ctx1      = binding1.decodeCtx.get
+                                    val memoSize1 = ctx1.bodyMemo.size()
+                                    assert(
+                                        memoSize1 >= 1,
+                                        s"Expected DecodeContext bodyMemo to have at least 1 entry after decode, got $memoSize1"
+                                    )
+                                    // A fresh second DecodeContext (as would be created by a second withClasspath call) starts at 0.
+                                    val ctx2      = DecodeContext.fresh()
+                                    val memoSize2 = ctx2.bodyMemo.size()
+                                    assert(memoSize2 == 0, s"Expected fresh DecodeContext bodyMemo size 0, got $memoSize2")
+                                    succeed
                     end match
             ).map:
                 case Result.Success(r) => r
@@ -147,10 +165,11 @@ class ClasspathBodyMemoTest extends Test:
     //       returned a fresh decode, it would be a DIFFERENT Tree instance since Symbol instances
     //       with id=-1 use identity equality).
     // Pins: INV-003 + INV-004 (memoization via bodyMemo).
-    "Leaf 4: decodeBody memoizes within a single Classpath (reference equality)" in run {
+    "Leaf 4: Tasty.bodyTree memoizes within a single DecodeContext (reference equality)" in run {
         Scope.run:
             Abort.run[TastyError](
-                openSomeObjectCp.flatMap: cp =>
+                openSomeObjectBinding.flatMap: binding =>
+                    val cp = binding.cp
                     val symOpt = cp.symbols.find(s =>
                         (s match
                             case v: Tasty.Symbol.Val => v.body.isDefined;
@@ -162,18 +181,19 @@ class ClasspathBodyMemoTest extends Test:
                             // No body symbols; test is inconclusive but not failed.
                             Kyo.lift(succeed)
                         case Some(sym) =>
-                            for
-                                result1 <- cp.bodyTree(sym)
-                                result2 <- cp.bodyTree(sym)
-                            yield
-                                assert(result1.isDefined, "First decodeBody call must return Present")
-                                assert(result2.isDefined, "Second decodeBody call must return Present")
-                                // Memoization: both calls must return the SAME Tree instance.
-                                assert(
-                                    result1.get.asInstanceOf[AnyRef] eq result2.get.asInstanceOf[AnyRef],
-                                    "Both decodeBody calls on the same sym must return the same Tree instance (bodyMemo memoization)"
-                                )
-                                succeed
+                            Tasty.bindingLocal.let(Maybe.Present(binding)):
+                                for
+                                    result1 <- Tasty.bodyTree(sym)
+                                    result2 <- Tasty.bodyTree(sym)
+                                yield
+                                    assert(result1.isDefined, "First Tasty.bodyTree call must return Present")
+                                    assert(result2.isDefined, "Second Tasty.bodyTree call must return Present")
+                                    // Memoization in DecodeContext: both calls must return the SAME Tree instance.
+                                    assert(
+                                        result1.get.asInstanceOf[AnyRef] eq result2.get.asInstanceOf[AnyRef],
+                                        "Both Tasty.bodyTree calls on the same sym must return the same Tree instance (bodyMemo in DecodeContext)"
+                                    )
+                                    succeed
                     end match
             ).map:
                 case Result.Success(r) => r

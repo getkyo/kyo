@@ -34,7 +34,7 @@ class TestClasspathsTest extends kyo.Test:
     // Pins: HARD RULE 1 graceful soft-fail
     "soft-fail mode surfaces a diagnostic error for non-existent paths" in run {
         val nonExistent = Seq("/no/such/path/does-not-exist.jar")
-        Abort.run[TastyError](TestClasspaths.withClasspath(nonExistent)).map:
+        Abort.run[TastyError](TestClasspaths.withClasspath(nonExistent)(Tasty.classpath)).map:
             case Result.Success(cp) =>
                 // Some implementations accumulate the error in cp.errors rather than aborting.
                 assert(
@@ -61,12 +61,12 @@ class TestClasspathsTest extends kyo.Test:
     "withClasspath loads successfully on two consecutive invocations" in run {
         val roots = TestClasspaths.standard
         val t0    = java.lang.System.currentTimeMillis()
-        TestClasspaths.withClasspath(roots).map: cp1 =>
+        TestClasspaths.withClasspath(roots)(Tasty.classpath).map: cp1 =>
             val elapsed1 = java.lang.System.currentTimeMillis() - t0
             assert(elapsed1 >= 0, "first load elapsed should be non-negative")
             assert(cp1.symbols.length > 0, "first load should produce symbols")
             val t1 = java.lang.System.currentTimeMillis()
-            TestClasspaths.withClasspath(roots).map: cp2 =>
+            TestClasspaths.withClasspath(roots)(Tasty.classpath).map: cp2 =>
                 val elapsed2 = java.lang.System.currentTimeMillis() - t1
                 assert(elapsed2 >= 0, "second load elapsed should be non-negative")
                 assert(cp2.symbols.length > 0, "second load should produce symbols")
