@@ -268,6 +268,14 @@ private[kyo] object ChartLower:
         loop(0, Absent)
     end foldExtent
 
+    // Unsafe (row/channel erasure invariant, covers all ~50 asInstanceOf[A] and Channel[A, Any] casts
+    // in this file): `DataSource[A]` and each `Mark.*[A, ...]` are constructed from the same concrete
+    // row type `A` as `rows: Chunk[A]`.  The GADT match arms (e.g. `m: Mark.Bar[A, ?, ?]`) prove
+    // the mark carries the same `A`, so `r.asInstanceOf[A]` simply re-narrows a type that was erased
+    // to `Any` at the typed-mark boundary and is `A` by construction; it cannot fail at runtime.
+    // Likewise, `colorCh.asInstanceOf[Channel[A, Any]]` recovers the concrete element type from a
+    // `Channel[?, ?]` that was widened during pattern-match erasure; the cast is total.
+
     /** Collect x-extent across all marks' x channels for the given rows. */
     private def xExtent[A](rows: Chunk[A], marks: Chunk[Mark[A]]): Maybe[Extent] =
         @scala.annotation.tailrec
@@ -1534,8 +1542,9 @@ private[kyo] object ChartLower:
             mark match
                 case m: Mark.Bar[A, ?, ?] =>
                     spec match
-                        case Present(s) => lowerBar(rows, m, layout, xs, ys, markColor, s, internalHoverRef).asInstanceOf[Chunk[UI]]
-                        case Absent     => lowerBar(rows, m, layout, xs, ys, markColor).asInstanceOf[Chunk[UI]]
+                        case Present(s) =>
+                            lowerBar(rows, m, layout, xs, ys, markColor, Present(s), internalHoverRef).asInstanceOf[Chunk[UI]]
+                        case Absent => lowerBar(rows, m, layout, xs, ys, markColor).asInstanceOf[Chunk[UI]]
                 case m: Mark.Line[A, ?, ?] =>
                     spec match
                         case Present(s) =>
@@ -1594,18 +1603,17 @@ private[kyo] object ChartLower:
         xs: Scale,
         ys: Scale,
         defaultColor: Style.Color,
-        spec: ChartSpec[A] = null.asInstanceOf[ChartSpec[A]],
+        spec: Maybe[ChartSpec[A]] = Absent,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
-        val specMaybe: Maybe[ChartSpec[A]] = if spec != null then Present(spec) else Absent
-        val highlight                      = resolveHighlight(specMaybe)
+        val highlight = resolveHighlight(spec)
         mark.stack.group match
             case Present(_) =>
-                lowerBarStacked(rows, mark, layout, xs, ys, specMaybe)
+                lowerBarStacked(rows, mark, layout, xs, ys, spec)
             case Absent =>
                 mark.color match
                     case Absent =>
-                        lowerBarSimple(rows, mark, layout, xs, ys, defaultColor, specMaybe, internalHoverRef, highlight)
+                        lowerBarSimple(rows, mark, layout, xs, ys, defaultColor, spec, internalHoverRef, highlight)
                     case Present(colorCh) =>
                         lowerBarGrouped(
                             rows,
@@ -1614,7 +1622,7 @@ private[kyo] object ChartLower:
                             layout,
                             xs,
                             ys,
-                            specMaybe,
+                            spec,
                             internalHoverRef,
                             highlight
                         )
@@ -3266,6 +3274,9 @@ private[kyo] object ChartLower:
         ysR: Maybe[Scale],
         stateRef: AtomicRef.Unsafe[TransState[A]]
     )(using Frame): Svg.G =
+        // Unsafe: stateRef is chart-private and its writes are serialized by the reactive engine's
+        // single-threaded emission model; reading it synchronously here (pure SVG projection, no
+        // suspension) is sound and carries no concurrent-write hazard.
         import AllowUnsafe.embrace.danger
         val t            = stateRef.get()
         val animOk       = spec.animateCfg.enabled
@@ -3302,7 +3313,7 @@ private[kyo] object ChartLower:
                         // Area path: same declarative SMIL `d` morph discipline as line.
                         val (elems, geom) = lowerAreaWithTransitions(rows, m, layout, xs, ys, markColor, spec, fromGeom, accGeom, markIdx)
                         (accElems ++ elems, geom)
-                    case m: Mark.Bar[A, ?, ?]  => (accElems ++ lowerBar(rows, m, layout, xs, ys, markColor, spec), accGeom)
+                    case m: Mark.Bar[A, ?, ?]  => (accElems ++ lowerBar(rows, m, layout, xs, ys, markColor, Present(spec)), accGeom)
                     case m: Mark.Line[A, ?, ?] => (accElems ++ lowerLine(rows, m, layout, xs, ys, markColor), accGeom)
                     case m: Mark.Area[A, ?, ?] => (accElems ++ lowerArea(rows, m, layout, xs, ys, markColor), accGeom)
                     case m: Mark.Point[A, ?, ?] =>

@@ -25,7 +25,8 @@ private[kyo] object ChartFoundations:
 
     /** Builds the identity key for a raw category value. */
     def categoryKey(raw: Any): CatKey =
-        // Use eq null (reference equality) to safely handle the null case without NPE
+        // Unsafe: total widening of the erased `Any` to `AnyRef` solely for a reference-identity
+        // null check (`eq null`); the cast never fails and the value is never dereferenced as AnyRef.
         if raw.asInstanceOf[AnyRef] eq null then CatKey(null, null)
         else CatKey(raw.getClass, raw)
 
