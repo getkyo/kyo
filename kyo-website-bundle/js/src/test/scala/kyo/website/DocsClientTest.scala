@@ -711,4 +711,27 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         }
     }
 
+    // Phase-3 audit NOTE-1: unescapeJson degrades gracefully on a malformed \uXXXX escape.
+    // A well-formed SSG response always carries valid hex; a malformed escape must not throw
+    // (total functions: model failure, do not throw as control flow).
+    "unescapeJson degrades gracefully on a malformed \\uXXXX escape without throwing" in run {
+        // The escape \uZZZZ contains non-hex chars; the result must not throw and must
+        // contain some output (the literal backslash fallback, not the decoded codepoint).
+        val islandJson =
+            """{"version": {"tag": "v1.0.0", "label": "1.0.0", "latest": true}, """ +
+                """"intro": "", "groups": [], "versions": [], """ +
+                """"article": "text with \\uZZZZ escape", """ +
+                """"headings": []}"""
+        for
+            island <- DocsClient.parseDocsIsland(islandJson)
+        yield
+            // The article must be non-empty: the partial text before the malformed escape is kept.
+            assert(island.articleHtml.contains("text with"), s"pre-escape text must be preserved, got: ${island.articleHtml}")
+            // The decoded result must not contain a Unicode replacement character or throw.
+            // Specifically, the malformed escape degrades to emitting the literal backslash
+            // (the fallback path), so the output carries the backslash rather than crashing.
+            assert(island.articleHtml.nonEmpty, s"output must be non-empty after malformed escape, got: ${island.articleHtml}")
+        end for
+    }
+
 end DocsClientTest

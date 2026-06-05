@@ -131,6 +131,7 @@ object DocsMarkdownRender:
                         val heading       = DocsMarkdown.Heading(level, stripInlineMarkdown(text), slug)
                         val prose         = new mutable.ArrayBuffer[String]()
                         var j             = i + 1
+                        // isInstanceOf is used here for the loop guard; a match-inversion would be less readable.
                         while j < blocks.length && !blocks(j).isInstanceOf[Block.Heading] do
                             blocks(j) match
                                 case Block.Paragraph(t)  => prose += stripInlineMarkdown(t)

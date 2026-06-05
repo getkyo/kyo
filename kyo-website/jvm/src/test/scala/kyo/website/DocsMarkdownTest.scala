@@ -841,6 +841,25 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
+    // ---- Phase-2 audit NOTE-1: sectionSnippets excludes RawEmbed from the snippet ----
+
+    "sectionSnippets excludes a RawEmbed block from the snippet" in run {
+        // A section whose only following block is a raw HTML embed yields an empty snippet.
+        // The embed content must not appear in the snippet (RawEmbed is excluded, same as Fence).
+        val embedContent = """<img src="kyo.png" width="200" alt="Kyo">"""
+        val source       = s"## Overview\n$embedContent\n"
+        for snippets <- DocsMarkdownRender.sectionSnippets(source, 160)
+        yield
+            assert(snippets.size == 1, s"expected 1 pair: $snippets")
+            val (heading, snippet) = snippets(0)
+            assert(heading.text == "Overview", s"heading text must be Overview: $heading")
+            assert(heading.slug == "overview", s"heading slug must be overview: $heading")
+            assert(!snippet.contains("kyo.png"), s"RawEmbed content must not appear in snippet: $snippet")
+            assert(!snippet.contains("<img"), s"raw HTML must not appear in snippet: $snippet")
+            assert(snippet == "", s"snippet must be empty when only block after heading is a RawEmbed: $snippet")
+        end for
+    }
+
     // ---- Phase-2 leaf 7: sectionSnippets returns one pair per heading in document order ----
 
     "sectionSnippets returns one pair per heading in document order with slugs matching parseArticle" in run {

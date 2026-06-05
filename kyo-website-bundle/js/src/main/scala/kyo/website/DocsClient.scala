@@ -472,8 +472,16 @@ object DocsClient:
                         case 'f'  => sb.append('\f'); i += 2
                         case 'u' if i + 5 < s.length =>
                             val hex = s.substring(i + 2, i + 6)
-                            sb.append(Integer.parseInt(hex, 16).toChar)
-                            i += 6
+                            // Degrade gracefully on a malformed \uXXXX escape: emit the literal
+                            // backslash + 'u' rather than throwing NumberFormatException.
+                            try
+                                sb.append(Integer.parseInt(hex, 16).toChar)
+                                i += 6
+                            catch
+                                case _: NumberFormatException =>
+                                    sb.append('\\')
+                                    i += 1
+                            end try
                         case other => sb.append(other); i += 2
                     end match
                 else

@@ -260,23 +260,23 @@ object WebsiteStyles:
                     .hover(_.color(_.variable("ink")).borderColor(_.variable("faint")))
             )
             .rule(
-                Selector.data("kyo-dropdown-options"),
+                Selector.cls("ver").descendant(Selector.data("kyo-dropdown-options")),
                 Style.column.position(_.dropdown).gap(2.px)
-                    .minWidth(140.px)
+                    .minWidth(140.px).maxHeight(320.px).overflowY(_.auto)
                     .margin(4.px, 0.px, 0.px, 0.px)
                     .bg(_.variable("surface")).border(1.px, _.variable("line")).rounded(8.px)
                     .padding(4.px)
                     .shadow(0.px, 12.px, 32.px, 0.px, Color.rgba(20, 20, 15, 0.14))
             )
             .rule(
-                Selector.data("kyo-dropdown-opt"),
+                Selector.cls("ver").descendant(Selector.data("kyo-dropdown-opt")),
                 Style.row.align(_.center)
                     .padding(6.px, 10.px).rounded(6.px).cursor(_.pointer)
                     .color(_.variable("ink"))
                     .hover(_.bg(_.variable("accent-ghost")))
             )
             .rule(
-                Selector.data("kyo-dropdown-hl", "true"),
+                Selector.cls("ver").descendant(Selector.data("kyo-dropdown-hl", "true")),
                 Style.bg(_.variable("accent-ghost"))
             )
     end landingChrome
@@ -1131,7 +1131,13 @@ object WebsiteStyles:
                     // intact; flexShrink(0) keeps the pill + CTA from being squeezed below their text.
                     .rule("right", Style.width(Length.Pct(100)).margin(0.px, 0.px, 8.px, 0.px).gap(8.px).align(_.center))
                     .rule("search-input", Style.flexGrow(1.0).minWidth(0.px).padding(7.px, 10.px))
-                    .rule("ver", Style.flexShrink(0.0).padding(7.px, 8.px).gap(4.px))
+                    .rule("ver", Style.flexShrink(0.0))
+                    // The trigger button (not the .ver wrapper) carries the pill padding; retarget the
+                    // narrow-viewport shrink onto it so the pill actually shrinks on small screens.
+                    .rule(
+                        Selector.cls("ver").descendant(Selector.data("kyo-dropdown-trigger")),
+                        Style.padding(7.px, 8.px).gap(4.px)
+                    )
                     .rule("btn", Style.flexShrink(0.0).padding(9.px, 14.px).textWrap(_.noWrap))
                     .rule("btn-ghost", Style.displayNone)
             )
