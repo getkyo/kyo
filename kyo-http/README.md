@@ -669,7 +669,7 @@ They can be attached at several levels:
 HttpClient.withConfig(
     HttpClientConfig()
         .baseUrl("https://api.example.com")
-        .filter(HttpFilter.client.bearerAuth(token))
+        .filter(HttpFilter.client.bearerAuth("secret-token"))
 ) {
     HttpClient.getText("/users")
 }
@@ -677,8 +677,8 @@ HttpClient.withConfig(
 
 ```scala
 // Temporary policy scoped to one computation
-HttpClient.withFilter(HttpFilter.client.addHeader("X-Request-Id", requestId)) {
-    HttpClient.postJson[CreateUser]("/users", body)
+HttpClient.withFilter(HttpFilter.client.addHeader("X-Request-Id", "request-123")) {
+    HttpClient.postJson[User]("/users", CreateUser("Alice", "alice@example.com"))
 }
 ```
 
@@ -686,7 +686,7 @@ HttpClient.withFilter(HttpFilter.client.addHeader("X-Request-Id", requestId)) {
 // Endpoint-specific policy attached to a typed route
 val route = HttpRoute
     .getText("/users")
-    .filter(HttpFilter.client.bearerAuth(token))
+    .filter(HttpFilter.client.bearerAuth("secret-token"))
 ```
 
 The client-side composition order is ServiceLoader filters, config filters, scoped filters, then route filters. Built-in client filters:
