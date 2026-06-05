@@ -5,6 +5,7 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.PlatformFileSource
+import kyo.internal.tasty.query.TastyState
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotFormat
 import kyo.internal.tasty.snapshot.SnapshotReader
@@ -845,7 +846,7 @@ class SnapshotRoundTripTest extends Test:
                     assert(ctx.bodyMemo.size() == 0, s"bodyMemo must be empty before any Tasty.bodyTree call, got ${ctx.bodyMemo.size()}")
                     // Call Tasty.bodyTree inside the binding scope; snapshot bodies lack the name table so decode may fail,
                     // but the result (success or failure) must be memoized in the DecodeContext.
-                    Tasty.bindingLocal.let(Maybe.Present(binding)):
+                    TastyState.bindingLocal.let(Maybe.Present(binding)):
                         Abort.run[TastyError](Tasty.bodyTree(sym)).map: _ =>
                             // After bodyTree: bodyMemo must have exactly 1 entry regardless of decode outcome.
                             val memoSize = ctx.bodyMemo.size()

@@ -17,6 +17,7 @@ import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 import kyo.internal.tasty.symbol.SymbolDescriptor
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.symbol.TypedSymbolFactory
 import kyo.internal.tasty.type_.TypeArena
 import kyo.stats.Attributes
@@ -447,17 +448,17 @@ object ClasspathOrchestrator:
                 end for
 
                 for (fqn, sym) <- fr.fqns do
-                    val indexKey = if sym.kind == Tasty.SymbolKind.Object && !fqn.endsWith("$") then fqn + "$" else fqn
+                    val indexKey = if sym.kind == SymbolKind.Object && !fqn.endsWith("$") then fqn + "$" else fqn
                     val existing = state.fqnIndex.get(indexKey)
                     val shouldStore = existing match
                         case None => true
                         case Some(prev) =>
-                            val prevIsStructural = prev.kind == Tasty.SymbolKind.Class ||
-                                prev.kind == Tasty.SymbolKind.Trait || prev.kind == Tasty.SymbolKind.Object ||
-                                prev.kind == Tasty.SymbolKind.EnumCase
-                            val newIsStructural = sym.kind == Tasty.SymbolKind.Class ||
-                                sym.kind == Tasty.SymbolKind.Trait || sym.kind == Tasty.SymbolKind.Object ||
-                                sym.kind == Tasty.SymbolKind.EnumCase
+                            val prevIsStructural = prev.kind == SymbolKind.Class ||
+                                prev.kind == SymbolKind.Trait || prev.kind == SymbolKind.Object ||
+                                prev.kind == SymbolKind.EnumCase
+                            val newIsStructural = sym.kind == SymbolKind.Class ||
+                                sym.kind == SymbolKind.Trait || sym.kind == SymbolKind.Object ||
+                                sym.kind == SymbolKind.EnumCase
                             newIsStructural || !prevIsStructural
                     // F-A1-008: record a collision when a new structural symbol of the SAME KIND overwrites a
                     // different structural symbol. Both must be structural (Class/Trait/Object/EnumCase), must be
@@ -472,12 +473,12 @@ object ClasspathOrchestrator:
                     // two jars both defining "com.example.Foo" as a Class).
                     existing match
                         case Some(prev) if (prev ne sym) && (prev.kind == sym.kind) =>
-                            val prevIsStructural = prev.kind == Tasty.SymbolKind.Class ||
-                                prev.kind == Tasty.SymbolKind.Trait || prev.kind == Tasty.SymbolKind.Object ||
-                                prev.kind == Tasty.SymbolKind.EnumCase
-                            val newIsStructural = sym.kind == Tasty.SymbolKind.Class ||
-                                sym.kind == Tasty.SymbolKind.Trait || sym.kind == Tasty.SymbolKind.Object ||
-                                sym.kind == Tasty.SymbolKind.EnumCase
+                            val prevIsStructural = prev.kind == SymbolKind.Class ||
+                                prev.kind == SymbolKind.Trait || prev.kind == SymbolKind.Object ||
+                                prev.kind == SymbolKind.EnumCase
+                            val newIsStructural = sym.kind == SymbolKind.Class ||
+                                sym.kind == SymbolKind.Trait || sym.kind == SymbolKind.Object ||
+                                sym.kind == SymbolKind.EnumCase
                             if prevIsStructural && newIsStructural then
                                 val buf = state.collisions.getOrElseUpdate(indexKey, mutable.ArrayBuffer(prev))
                                 discard(buf += sym)
@@ -498,16 +499,16 @@ object ClasspathOrchestrator:
                                 case Some(prev) =>
                                     // Structural symbols (Class, Trait, Object, EnumCase, OpaqueType) win
                                     // over non-structural entries; but do not overwrite another structural entry.
-                                    val prevIsStructural = prev.kind == Tasty.SymbolKind.Class ||
-                                        prev.kind == Tasty.SymbolKind.Trait ||
-                                        prev.kind == Tasty.SymbolKind.Object ||
-                                        prev.kind == Tasty.SymbolKind.EnumCase ||
-                                        prev.kind == Tasty.SymbolKind.OpaqueType
-                                    val newIsStructural = sym.kind == Tasty.SymbolKind.Class ||
-                                        sym.kind == Tasty.SymbolKind.Trait ||
-                                        sym.kind == Tasty.SymbolKind.Object ||
-                                        sym.kind == Tasty.SymbolKind.EnumCase ||
-                                        sym.kind == Tasty.SymbolKind.OpaqueType
+                                    val prevIsStructural = prev.kind == SymbolKind.Class ||
+                                        prev.kind == SymbolKind.Trait ||
+                                        prev.kind == SymbolKind.Object ||
+                                        prev.kind == SymbolKind.EnumCase ||
+                                        prev.kind == SymbolKind.OpaqueType
+                                    val newIsStructural = sym.kind == SymbolKind.Class ||
+                                        sym.kind == SymbolKind.Trait ||
+                                        sym.kind == SymbolKind.Object ||
+                                        sym.kind == SymbolKind.EnumCase ||
+                                        sym.kind == SymbolKind.OpaqueType
                                     newIsStructural && !prevIsStructural
                             if storeSource then state.fqnIndex(sourceFqn) = sym
                         end if
@@ -516,11 +517,11 @@ object ClasspathOrchestrator:
                         state.allSyms += sym
                         discard(state.allSymsSet.add(sym))
                     sym.kind match
-                        case Tasty.SymbolKind.Package =>
+                        case SymbolKind.Package =>
                             state.packages += sym
                             state.packageIndex(fqn) = sym
-                        case Tasty.SymbolKind.Class | Tasty.SymbolKind.Trait | Tasty.SymbolKind.Object |
-                            Tasty.SymbolKind.EnumCase =>
+                        case SymbolKind.Class | SymbolKind.Trait | SymbolKind.Object |
+                            SymbolKind.EnumCase =>
                             state.topLevelCls += sym
                         case _ =>
                             ()
@@ -622,15 +623,15 @@ object ClasspathOrchestrator:
                         val adjustedKind =
                             if partialSym.flags.contains(Tasty.Flag.Enum) &&
                                 partialSym.flags.contains(Tasty.Flag.Case) &&
-                                (partialSym.kind == Tasty.SymbolKind.Class
+                                (partialSym.kind == SymbolKind.Class
                                     && !partialSym.flags.contains(Tasty.Flag.Module)
-                                    || partialSym.kind == Tasty.SymbolKind.Val)
-                            then Tasty.SymbolKind.EnumCase
-                            else if partialSym.kind == Tasty.SymbolKind.Field &&
+                                    || partialSym.kind == SymbolKind.Val)
+                            then SymbolKind.EnumCase
+                            else if partialSym.kind == SymbolKind.Field &&
                                 partialSym.flags.contains(Tasty.Flag.Enum) &&
                                 partialSym.flags.contains(Tasty.Flag.JavaDefined) &&
                                 partialSym.flags.contains(Tasty.Flag.Static)
-                            then Tasty.SymbolKind.EnumCase
+                            then SymbolKind.EnumCase
                             else partialSym.kind
                         descs(i) = new SymbolDescriptor(
                             id = id,
@@ -820,8 +821,8 @@ object ClasspathOrchestrator:
                         fr.childrenByOwner.forEach { (sym, children) =>
                             val idx = symbolIdMap.getOrDefault(sym, -1)
                             if idx >= 0 && idx < count then
-                                val typeParams   = children.filter(_.kind == Tasty.SymbolKind.TypeParam)
-                                val declarations = children.filter(_.kind != Tasty.SymbolKind.TypeParam)
+                                val typeParams   = children.filter(_.kind == SymbolKind.TypeParam)
+                                val declarations = children.filter(_.kind != SymbolKind.TypeParam)
                                 descs(idx).typeParamIds = typeParams.map(c => symbolIdMap.getOrDefault(c, -1)).filter(_ >= 0)
                                 descs(idx).declarationIds = declarations.map(c => symbolIdMap.getOrDefault(c, -1)).filter(_ >= 0)
                             end if
@@ -850,7 +851,7 @@ object ClasspathOrchestrator:
                     i = 0
                     for sym <- allPartial do
                         val d = descs(i)
-                        if sym.kind == Tasty.SymbolKind.OpaqueType && d.typeParamIds.nonEmpty then
+                        if sym.kind == SymbolKind.OpaqueType && d.typeParamIds.nonEmpty then
                             d.declaredType match
                                 case Maybe.Present(tl: Tasty.Type.TypeLambda) =>
                                     val tpIds     = d.typeParamIds
@@ -877,8 +878,8 @@ object ClasspathOrchestrator:
                     for sym <- allPartial do
                         if descs(i).declaredType.isEmpty then
                             val k = sym.kind
-                            if k == Tasty.SymbolKind.Class || k == Tasty.SymbolKind.Trait
-                                || k == Tasty.SymbolKind.Object || k == Tasty.SymbolKind.EnumCase
+                            if k == SymbolKind.Class || k == SymbolKind.Trait
+                                || k == SymbolKind.Object || k == SymbolKind.EnumCase
                             then
                                 descs(i).declaredType = Maybe(Tasty.Type.Named(SymbolId(i)))
                             end if
@@ -1064,7 +1065,7 @@ object ClasspathOrchestrator:
                         state.fqnIndex.get(fqn) match
                             case Some(p) =>
                                 val rawId = symbolIdMap.getOrDefault(p, -1)
-                                if rawId >= 0 && rawId < count && descs(rawId).kind == Tasty.SymbolKind.Val then
+                                if rawId >= 0 && rawId < count && descs(rawId).kind == SymbolKind.Val then
                                     state.fqnIndex.get(fqn + "$") match
                                         case Some(p2) =>
                                             val moduleId = symbolIdMap.getOrDefault(p2, -1)
@@ -1131,8 +1132,8 @@ object ClasspathOrchestrator:
                     while permitIdx < count do
                         val desc = descs(permitIdx)
                         val k    = desc.kind
-                        if k == Tasty.SymbolKind.Class || k == Tasty.SymbolKind.Trait
-                            || k == Tasty.SymbolKind.EnumCase
+                        if k == SymbolKind.Class || k == SymbolKind.Trait
+                            || k == SymbolKind.EnumCase
                         then
                             val anns = desc.annotations
                             if anns.nonEmpty then
@@ -1257,7 +1258,7 @@ object ClasspathOrchestrator:
                     while qIdx < count do
                         val desc = descs(qIdx)
                         val k    = desc.kind
-                        if (k == Tasty.SymbolKind.Class || k == Tasty.SymbolKind.Trait || k == Tasty.SymbolKind.EnumCase) &&
+                        if (k == SymbolKind.Class || k == SymbolKind.Trait || k == SymbolKind.EnumCase) &&
                             desc.parentTypes.isEmpty
                         then
                             val fqn = idToFqnForPermits.get(qIdx)
@@ -1460,11 +1461,11 @@ object ClasspathOrchestrator:
             val fqn = idToFqn.get(s.id.value)
             if fqn != null then
                 val companionFqn =
-                    if s.kind == Tasty.SymbolKind.Class || s.kind == Tasty.SymbolKind.Trait
-                        || s.kind == Tasty.SymbolKind.EnumCase
+                    if s.kind == SymbolKind.Class || s.kind == SymbolKind.Trait
+                        || s.kind == SymbolKind.EnumCase
                     then
                         fqn + "$"
-                    else if s.kind == Tasty.SymbolKind.Object then
+                    else if s.kind == SymbolKind.Object then
                         if fqn.endsWith("$") then fqn.dropRight(1) else fqn
                     else null
                 if companionFqn != null then
@@ -1738,7 +1739,7 @@ object ClasspathOrchestrator:
             // in a single Name field. Walking further up through package owners would re-prepend the
             // individual package segments that are already embedded in that flat name, doubling them.
             // Stop here: the flat name is the entire package prefix for this symbol.
-            if cur.kind == Tasty.SymbolKind.Package then done = true
+            if cur.kind == SymbolKind.Package then done = true
             else cur = ownerBySymbol.get(cur)
         end while
         parts.filter(_.nonEmpty).mkString(".")
@@ -1765,7 +1766,7 @@ object ClasspathOrchestrator:
         var cached = _sentinelUnresolvedCached
         if cached == null then
             cached = InternalSymbol.makeSymbol(
-                Tasty.SymbolKind.Unresolved,
+                SymbolKind.Unresolved,
                 Tasty.Flags.empty,
                 Tasty.Name("<unresolved>")
             )
@@ -1790,7 +1791,7 @@ object ClasspathOrchestrator:
         // This simulates the invariant-violation scenario: fqnIndex references a symbol object that
         // was never registered in the merge pipeline's allSyms accumulator.
         val ghost = kyo.internal.tasty.symbol.Symbol.makeSymbol(
-            Tasty.SymbolKind.Class,
+            SymbolKind.Class,
             Tasty.Flags.empty,
             Tasty.Name("GhostClass")
         )

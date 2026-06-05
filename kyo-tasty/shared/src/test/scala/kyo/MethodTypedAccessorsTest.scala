@@ -5,6 +5,7 @@ import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.FileSource
+import kyo.internal.tasty.query.TastyState
 import scala.collection.mutable
 
 /** Plan-mandated tests for Phase 04 (leaves 70-78, 81, 84): Method typed resolution accessors.
@@ -249,7 +250,7 @@ class MethodTypedAccessorsTest extends Test:
                             Kyo.lift(succeed)
                         case Some(sym) =>
                             val m = sym.asInstanceOf[Tasty.Symbol.Method]
-                            Tasty.bindingLocal.let(Maybe.Present(binding)):
+                            TastyState.bindingLocal.let(Maybe.Present(binding)):
                                 // Static type check: bodyTree must return Maybe[Tree] < (Sync & Abort[TastyError])
                                 val effect: Maybe[Tasty.Tree] < (Sync & Abort[TastyError]) = Tasty.bodyTree(m)
                                 effect.map: result =>
@@ -274,7 +275,7 @@ class MethodTypedAccessorsTest extends Test:
             // The method's body field is Absent, so bodyTree must return Absent via the body-empty branch,
             // not via the binding-empty short-circuit.
             val binding = Binding(cp, Maybe.Present(DecodeContext.fresh()))
-            Tasty.bindingLocal.let(Maybe.Present(binding)):
+            TastyState.bindingLocal.let(Maybe.Present(binding)):
                 Abort.run[TastyError](Tasty.bodyTree(method)).map:
                     case Result.Success(result) =>
                         assert(!result.isDefined, "bodyTree must return Absent when method body field is Absent")
@@ -296,7 +297,7 @@ class MethodTypedAccessorsTest extends Test:
             // Install a binding WITH a DecodeContext so bodyTree exercises the full code path.
             // The static type annotation confirms the effect row is exactly (Sync & Abort[TastyError]).
             val binding = Binding(cp, Maybe.Present(DecodeContext.fresh()))
-            Tasty.bindingLocal.let(Maybe.Present(binding)):
+            TastyState.bindingLocal.let(Maybe.Present(binding)):
                 // The binding below must compile with the exact effect row.
                 val e: Maybe[Tasty.Tree] < (Sync & Abort[TastyError]) = Tasty.bodyTree(method)
                 Abort.run[TastyError](e).map:

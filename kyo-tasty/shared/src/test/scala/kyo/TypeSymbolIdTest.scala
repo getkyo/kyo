@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Tasty.SymbolId
+import kyo.internal.tasty.symbol.SymbolKind
 
 /** Phase 05 plan tests for Type ADT SymbolId migration.
   *
@@ -44,7 +45,7 @@ class TypeSymbolIdTest extends Test:
                 case Tasty.Type.Named(id) =>
                     val resolved = cp.symbol(id)
                     assert(
-                        resolved.kind == Tasty.SymbolKind.Unresolved,
+                        resolved.kind == SymbolKind.Unresolved,
                         s"Expected kind=Unresolved but got ${resolved.kind}"
                     )
                 case other =>

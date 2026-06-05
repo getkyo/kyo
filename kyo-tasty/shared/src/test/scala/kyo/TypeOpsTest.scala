@@ -1,7 +1,7 @@
 package kyo
-
 import AllowUnsafe.embrace.danger
 import kyo.Tasty.SymbolId
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeOps
 
 /** Tests for TypeOps smart constructors.
@@ -17,7 +17,7 @@ class TypeOpsTest extends Test:
     private def makeNamedSym(fqn: String): Tasty.Type.Named =
         // plan: phase-05; Symbol.make returns id = SymbolId(-1); Named(id) is a structural value.
         val leafName = fqn.split("\\.").last
-        val sym      = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(leafName))
+        val sym      = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(leafName))
         Tasty.Type.Named(sym.id)
     end makeNamedSym
 

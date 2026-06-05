@@ -6,6 +6,7 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.PlatformFileSource
+import kyo.internal.tasty.query.TastyState
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
@@ -161,7 +162,7 @@ class DecoderFidelity5Phase02JvmTest extends Test:
             // The mmap arena is closed; body bytes in warmCp are zeroed (Array.empty), so decode must fail.
             symAndCp.flatMap: (sym, warmCp) =>
                 val postScopeBinding = Binding(warmCp, Maybe.Present(DecodeContext.fresh()))
-                Tasty.bindingLocal.let(Maybe.Present(postScopeBinding)):
+                TastyState.bindingLocal.let(Maybe.Present(postScopeBinding)):
                     Abort.run[TastyError](Tasty.bodyTree(sym)).map: result =>
                         result match
                             case Result.Failure(TastyError.MalformedSection(_, reason, _)) =>

@@ -5,6 +5,7 @@ import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.DecodeContext
+import kyo.internal.tasty.query.TastyState
 
 /** JS-side cross-platform fixture helper.
   *
@@ -131,7 +132,7 @@ private[kyo] object TestClasspaths:
         Scope.run:
             ClasspathOrchestrator.init(Seq("root", "kyo/fixtures/JavaSimpleFixture.class"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
                 val binding = Binding(cp, Maybe.Present(DecodeContext.fresh()))
-                Tasty.bindingLocal.let(Maybe.Present(binding))(f)
+                TastyState.bindingLocal.let(Maybe.Present(binding))(f)
     end withClasspath
 
 end TestClasspaths

@@ -3,6 +3,7 @@ package kyo.internal.tasty.classfile
 import kyo.*
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.symbol.Symbol as SymbolFactory
+import kyo.internal.tasty.symbol.SymbolKind
 
 /** Decodes RuntimeVisibleAnnotations and RuntimeInvisibleAnnotations attribute bodies into Tasty.JavaAnnotation values.
   *
@@ -190,7 +191,7 @@ object JavaAnnotationUnpickler:
     private def descriptorToUnresolvedSymbol(descriptor: String)(using AllowUnsafe): Tasty.Symbol =
         val fqn = descriptorToFqn(descriptor)
         SymbolFactory.makeSymbol(
-            Tasty.SymbolKind.Unresolved,
+            SymbolKind.Unresolved,
             Tasty.Flags.empty,
             Tasty.Name(fqn)
         )

@@ -1,4 +1,5 @@
 package kyo
+import kyo.internal.tasty.symbol.SymbolKind
 
 /** Tests for Tasty.Annotation public API surface after Phase 08 (pure case class with eager arguments).
   *
@@ -71,7 +72,7 @@ class TastyAnnotationTest extends Test with TastyTestSupport:
     // INV-006: arguments is a plain Chunk[Tree] field; no effect row needed.
     "Annotation with a non-empty arguments chunk holds the trees as a plain field" in run {
         import AllowUnsafe.embrace.danger
-        val sym  = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Foo"))
+        val sym  = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Foo"))
         val tree = Tasty.Tree.Literal(Tasty.Constant.UnitConst)
         val a    = Tasty.Annotation(Tasty.Type.Named(sym.id), Chunk(tree))
         assert(

@@ -3,7 +3,7 @@ package kyo.internal.tasty.symbol
 import kyo.*
 import kyo.Tasty
 import kyo.Tasty.SymbolId
-import kyo.Tasty.SymbolKind
+// SymbolKind is in the same package (kyo.internal.tasty.symbol); no import needed
 
 /** Canonical factory that converts a fully-populated SymbolDescriptor into the matching typed Symbol subtype.
   *

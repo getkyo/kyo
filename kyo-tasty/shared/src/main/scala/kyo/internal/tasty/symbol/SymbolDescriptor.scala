@@ -14,7 +14,7 @@ import kyo.Tasty.SymbolBody
   */
 final private[kyo] class SymbolDescriptor(
     var id: Int,
-    var kind: Tasty.SymbolKind,
+    var kind: SymbolKind,
     var flags: Tasty.Flags,
     var name: Tasty.Name,
     var ownerId: Int,

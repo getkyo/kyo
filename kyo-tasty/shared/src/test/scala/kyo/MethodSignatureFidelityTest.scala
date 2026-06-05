@@ -1,6 +1,6 @@
 package kyo
-
 import kyo.internal.TestClasspaths
+import kyo.internal.tasty.symbol.SymbolKind
 
 /** Fidelity tests for Method.declaredType, paramLists, and return type correctness.
   *
@@ -108,9 +108,9 @@ class MethodSignatureFidelityTest extends Test:
                             case Tasty.Type.ThisType(id) =>
                                 totalThisCount += 1
                                 val sym = classpath.symbol(id)
-                                val isClassLike = sym.kind == Tasty.SymbolKind.Class ||
-                                    sym.kind == Tasty.SymbolKind.Trait ||
-                                    sym.kind == Tasty.SymbolKind.Object
+                                val isClassLike = sym.kind == SymbolKind.Class ||
+                                    sym.kind == SymbolKind.Trait ||
+                                    sym.kind == SymbolKind.Object
                                 if !isClassLike then badThisCount += 1
                             case _ => ()
                     }
@@ -344,9 +344,9 @@ class MethodSignatureFidelityTest extends Test:
                         case Tasty.Type.ThisType(id) =>
                             totalCount += 1
                             val sym = cp.symbol(id)
-                            val isClassLike = sym.kind == Tasty.SymbolKind.Class ||
-                                sym.kind == Tasty.SymbolKind.Trait ||
-                                sym.kind == Tasty.SymbolKind.Object
+                            val isClassLike = sym.kind == SymbolKind.Class ||
+                                sym.kind == SymbolKind.Trait ||
+                                sym.kind == SymbolKind.Object
                             if !isClassLike then badCount += 1
                         case _ => ()
             val badFraction = if totalCount > 0 then badCount.toDouble / totalCount else 0.0

@@ -1,7 +1,7 @@
 package kyo
-
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
+import kyo.internal.tasty.symbol.SymbolKind
 import scala.collection.mutable
 
 /** Plan-mandated tests for Phase 02 (leaves 25-38): verify that ClasspathOrchestrator's Pass C produces the correct typed Symbol subtypes.
@@ -112,7 +112,7 @@ class ClasspathTypedSymbolsTest extends Test:
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
-                Kyo.lift(cp.symbols.filter(_.kind == Tasty.SymbolKind.Method))).map:
+                Kyo.lift(cp.symbols.filter(_.kind == SymbolKind.Method))).map:
                 case Result.Success(methods) if methods.nonEmpty =>
                     val allTyped = methods.forall(_.isInstanceOf[Tasty.Symbol.Method])
                     assert(
@@ -134,7 +134,7 @@ class ClasspathTypedSymbolsTest extends Test:
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
-                Kyo.lift(cp.symbols.filter(_.kind == Tasty.SymbolKind.Val))).map:
+                Kyo.lift(cp.symbols.filter(_.kind == SymbolKind.Val))).map:
                 case Result.Success(vals) if vals.nonEmpty =>
                     val allTyped = vals.forall(_.isInstanceOf[Tasty.Symbol.Val])
                     assert(allTyped, s"Expected Symbol.Val for all Val-kind symbols")
@@ -153,7 +153,7 @@ class ClasspathTypedSymbolsTest extends Test:
         )
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
-                Kyo.lift(cp.symbols.filter(_.kind == Tasty.SymbolKind.Var))).map:
+                Kyo.lift(cp.symbols.filter(_.kind == SymbolKind.Var))).map:
                 case Result.Success(vars) if vars.nonEmpty =>
                     val allTyped = vars.forall(_.isInstanceOf[Tasty.Symbol.Var])
                     assert(allTyped, s"Expected Symbol.Var for all Var-kind symbols")
@@ -174,7 +174,7 @@ class ClasspathTypedSymbolsTest extends Test:
         val src2 = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src2).flatMap: cp =>
-                Kyo.lift(cp.symbols.filter(_.kind == Tasty.SymbolKind.Field))).map:
+                Kyo.lift(cp.symbols.filter(_.kind == SymbolKind.Field))).map:
                 case Result.Success(fields) if fields.nonEmpty =>
                     val allTyped = fields.forall(_.isInstanceOf[Tasty.Symbol.Field])
                     assert(allTyped, "Expected Symbol.Field for all Field-kind symbols")
@@ -193,7 +193,7 @@ class ClasspathTypedSymbolsTest extends Test:
         )
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
-                Kyo.lift(cp.symbols.filter(_.kind == Tasty.SymbolKind.TypeAlias))).map:
+                Kyo.lift(cp.symbols.filter(_.kind == SymbolKind.TypeAlias))).map:
                 case Result.Success(aliases) if aliases.nonEmpty =>
                     val allTyped = aliases.forall(_.isInstanceOf[Tasty.Symbol.TypeAlias])
                     assert(allTyped, "Expected Symbol.TypeAlias for all TypeAlias-kind symbols")
@@ -209,7 +209,7 @@ class ClasspathTypedSymbolsTest extends Test:
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
-                Kyo.lift(cp.symbols.filter(_.kind == Tasty.SymbolKind.OpaqueType))).map:
+                Kyo.lift(cp.symbols.filter(_.kind == SymbolKind.OpaqueType))).map:
                 case Result.Success(opaques) if opaques.nonEmpty =>
                     val allTyped = opaques.forall(_.isInstanceOf[Tasty.Symbol.OpaqueType])
                     assert(allTyped, "Expected Symbol.OpaqueType for all OpaqueType-kind symbols")
@@ -225,7 +225,7 @@ class ClasspathTypedSymbolsTest extends Test:
         val src = fixtureWith("SomeTrait.tasty" -> kyo.fixtures.Embedded.someTraitTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
-                Kyo.lift(cp.symbols.filter(_.kind == Tasty.SymbolKind.AbstractType))).map:
+                Kyo.lift(cp.symbols.filter(_.kind == SymbolKind.AbstractType))).map:
                 case Result.Success(abs) if abs.nonEmpty =>
                     val allTyped = abs.forall(_.isInstanceOf[Tasty.Symbol.AbstractType])
                     assert(allTyped, "Expected Symbol.AbstractType for all AbstractType-kind symbols")
@@ -242,7 +242,7 @@ class ClasspathTypedSymbolsTest extends Test:
         val src = fixtureWith("GenericBox.tasty" -> kyo.fixtures.Embedded.genericBoxTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
-                Kyo.lift(cp.symbols.filter(_.kind == Tasty.SymbolKind.TypeParam))).map:
+                Kyo.lift(cp.symbols.filter(_.kind == SymbolKind.TypeParam))).map:
                 case Result.Success(tps) if tps.nonEmpty =>
                     val allTyped = tps.forall(_.isInstanceOf[Tasty.Symbol.TypeParam])
                     assert(
@@ -261,7 +261,7 @@ class ClasspathTypedSymbolsTest extends Test:
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
-                Kyo.lift(cp.symbols.filter(_.kind == Tasty.SymbolKind.Parameter))).map:
+                Kyo.lift(cp.symbols.filter(_.kind == SymbolKind.Parameter))).map:
                 case Result.Success(params) if params.nonEmpty =>
                     val allTyped = params.forall(_.isInstanceOf[Tasty.Symbol.Parameter])
                     assert(allTyped, "Expected Symbol.Parameter for all Parameter-kind symbols")

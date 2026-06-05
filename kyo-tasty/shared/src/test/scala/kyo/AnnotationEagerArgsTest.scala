@@ -3,6 +3,7 @@ package kyo
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TypeUnpickler
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 
@@ -19,7 +20,7 @@ class AnnotationEagerArgsTest extends Test:
     import AllowUnsafe.embrace.danger
 
     private def makeSym(name: String): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(name))
+        Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(name))
 
     private def encodeNat(n: Int): Array[Byte] =
         if n < 128 then Array((n | 0x80).toByte)

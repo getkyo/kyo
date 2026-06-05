@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.internal.TestClasspaths
+import kyo.internal.tasty.symbol.SymbolKind
 
 /** Fidelity tests for permittedSubclasses populated from @scala.annotation.internal.Child annotations.
   *
@@ -150,7 +151,7 @@ class SealedFidelityTest extends Test:
     //   provide EnumCase symbols on JS/Native. The leaf succeeds vacuously when enumCases.isEmpty.
     "F-E-007 (Phase 13): enum-case symbols pattern-match as Symbol.EnumCase" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            val enumCases = cp.symbols.filter(_.kind == Tasty.SymbolKind.EnumCase)
+            val enumCases = cp.symbols.filter(_.kind == SymbolKind.EnumCase)
             if enumCases.isEmpty then
                 succeed
             else

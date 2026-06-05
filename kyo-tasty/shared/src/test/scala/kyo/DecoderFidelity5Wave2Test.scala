@@ -3,6 +3,7 @@ package kyo
 import kyo.internal.MemoryFileSource
 import kyo.internal.TestClasspaths
 import kyo.internal.tasty.query.ClasspathOrchestrator
+import kyo.internal.tasty.query.TastyState
 import kyo.internal.tasty.snapshot.SnapshotFormat
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
@@ -548,7 +549,7 @@ class DecoderFidelity5Wave2Test extends Test:
                     case Some(sym) =>
                         Tasty.bodyTree(sym).flatMap: _ =>
                             // bodyMemo now lives in DecodeContext, accessible via bindingLocal.
-                            Tasty.bindingLocal.use: mbind =>
+                            TastyState.bindingLocal.use: mbind =>
                                 val ctx = mbind.flatMap(_.decodeCtx)
                                 if ctx.isEmpty then Sync.defer(succeed)
                                 else

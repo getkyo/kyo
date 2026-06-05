@@ -4,7 +4,7 @@ import kyo.*
 
 /** JVM fallback: cold-load java.class.path exactly once.
   *
-  * INV-009 site-2: the AllowUnsafe boundary is bounded to this object. The lazy val Tasty.current
+  * INV-009 site-2: the AllowUnsafe boundary is bounded to this object. The lazy val TastyState.global
   * calls initFallback at most once per JVM process; the result is cached in the lazy val.
   *
   * If loading fails for any reason (empty classpath, IO error, timeout), the fallback returns

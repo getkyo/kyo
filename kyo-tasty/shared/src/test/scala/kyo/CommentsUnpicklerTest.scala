@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileUnpickler
 import kyo.internal.tasty.reader.CommentsUnpickler
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 
@@ -52,7 +53,7 @@ class CommentsUnpicklerTest extends Test:
     private def makeTestSymbol(nameStr: String): Tasty.Symbol =
         import AllowUnsafe.embrace.danger
         Tasty.Symbol.makePlaceholder(
-            Tasty.SymbolKind.Class,
+            SymbolKind.Class,
             Tasty.Flags.empty,
             Tasty.Name(nameStr)
         )

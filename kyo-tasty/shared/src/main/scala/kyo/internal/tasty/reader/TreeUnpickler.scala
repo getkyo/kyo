@@ -4,6 +4,7 @@ import kyo.*
 import kyo.Tasty.Name.asString
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 import scala.collection.mutable
@@ -121,7 +122,7 @@ object TreeUnpickler:
         end: Int,
         ctx: DecodeCtx
     )(using AllowUnsafe): Tasty.Tree =
-        import Tasty.SymbolKind.*
+        import SymbolKind.*
         sym.kind match
             case Val | Var | Field | Parameter =>
                 // Slice: declared_type rhs_tree? modifier*
@@ -1316,7 +1317,7 @@ object TreeUnpickler:
 
     private def makeUnresolvedSym(name: String)(using AllowUnsafe): Tasty.Symbol =
         InternalSymbol.makeSymbol(
-            Tasty.SymbolKind.Unresolved,
+            SymbolKind.Unresolved,
             Tasty.Flags.empty,
             Tasty.Name(name)
         )
@@ -1499,7 +1500,7 @@ object TreeUnpickler:
                     val nameRef = view.readNat()
                     val symName = session.names(nameRef)
                     val sym = InternalSymbol.makeSymbol(
-                        Tasty.SymbolKind.TypeParam,
+                        SymbolKind.TypeParam,
                         Tasty.Flags.empty,
                         symName
                     )

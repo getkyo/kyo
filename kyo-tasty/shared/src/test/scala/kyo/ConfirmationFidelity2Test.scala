@@ -3,6 +3,7 @@ package kyo
 import kyo.internal.Fidelity2TestBase
 import kyo.internal.TestClasspaths
 import kyo.internal.TestClasspaths2
+import kyo.internal.tasty.query.TastyState
 
 /** Confirmation pin tests for decoder-fidelity-2 campaign Phase 2.09.
   *
@@ -263,7 +264,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
         Scope.run:
             ClasspathOrchestrator.init(Seq("kyo/fixtures/JavaSimpleFixture.class"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
                 val binding = Binding(cp, Maybe.Present(DecodeContext.fresh()))
-                Tasty.bindingLocal.let(Maybe.Present(binding)):
+                TastyState.bindingLocal.let(Maybe.Present(binding)):
                     Tasty.findClass("kyo.fixtures.JavaSimpleFixture").map:
                         case Maybe.Present(c) =>
                             assert(c.isJava, "JavaSimpleFixture must have isJava (Flag.JavaDefined set by ClassfileUnpickler)")

@@ -5,6 +5,7 @@ import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.FileSource
+import kyo.internal.tasty.query.TastyState
 import scala.collection.mutable
 
 /** Plan-mandated tests for Phase 04 (leaves 79-80): Tasty.bodyTree(Val) and Tasty.bodyTree(Var) accessors.
@@ -76,7 +77,7 @@ class ValVarBodyTreeTest extends Test:
                             Kyo.lift(succeed)
                         case Some(sym) =>
                             val v = sym.asInstanceOf[Tasty.Symbol.Val]
-                            Tasty.bindingLocal.let(Maybe.Present(binding)):
+                            TastyState.bindingLocal.let(Maybe.Present(binding)):
                                 Tasty.bodyTree(v).map: result =>
                                     assert(result.isDefined, "Tasty.bodyTree(Val) must return Present for a val with a body")
                                     succeed
@@ -120,13 +121,13 @@ class ValVarBodyTreeTest extends Test:
                                 Maybe.Absent
                             )
                             // varSym.body is Absent, so Tasty.bodyTree(Tasty) returns Absent immediately without checking DecodeContext.
-                            Tasty.bindingLocal.let(Maybe.Present(binding)):
+                            TastyState.bindingLocal.let(Maybe.Present(binding)):
                                 Tasty.bodyTree(varSym).map: result =>
                                     assert(!result.isDefined, "Tasty.bodyTree(Var) must return Absent when body field is Absent")
                                     succeed
                         case Some(sym) =>
                             val v = sym.asInstanceOf[Tasty.Symbol.Var]
-                            Tasty.bindingLocal.let(Maybe.Present(binding)):
+                            TastyState.bindingLocal.let(Maybe.Present(binding)):
                                 Tasty.bodyTree(v).map: result =>
                                     assert(result.isDefined, "Tasty.bodyTree(Var) must return Present for a var with a body")
                                     succeed
@@ -158,7 +159,7 @@ class ValVarBodyTreeTest extends Test:
             // Install a binding WITH a DecodeContext so Tasty.bodyTree(valSym) exercises the full code path.
             // The static type annotation confirms the effect row is exactly (Sync & Abort[TastyError]).
             val binding = Binding(cp, Maybe.Present(DecodeContext.fresh()))
-            Tasty.bindingLocal.let(Maybe.Present(binding)):
+            TastyState.bindingLocal.let(Maybe.Present(binding)):
                 // This binding must compile with the exact effect row from the design.
                 val e: Maybe[Tasty.Tree] < (Sync & Abort[TastyError]) = Tasty.bodyTree(valSym)
                 Abort.run[TastyError](e).map:

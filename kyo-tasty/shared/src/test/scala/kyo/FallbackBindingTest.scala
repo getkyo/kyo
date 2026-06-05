@@ -1,8 +1,9 @@
 package kyo
 
 import kyo.internal.TestClasspaths
+import kyo.internal.tasty.query.TastyState
 
-/** Phase 06 plan leaves 1-8: module-level lazy fallback Tasty.current.
+/** Phase 06 plan leaves 1-8: module-level lazy fallback TastyState.global.
   *
   * Leaf 1: JVM fallback yields non-empty Classpath (jvmOnly).
   * Leaf 2: JS fallback yields empty Classpath (jsOnly).
@@ -55,18 +56,18 @@ class FallbackBindingTest extends Test:
     }
 
     // ── Leaf 4: lazy init runs exactly once per JVM process ───────────────────
-    // Given: two sequential calls to Tasty.classpath outside any withClasspath scope.
-    // When: both calls read the Classpath.
+    // Given: two sequential calls to TastyState.global outside any withClasspath scope.
+    // When: both calls read the Binding.
     // Then: the underlying Binding reference is the same object (lazy val initialized once).
-    // Rationale: Tasty.current is a lazy val; both reads get the same Binding instance (eq holds).
+    // Rationale: TastyState.global is a lazy val; both reads get the same Binding instance (eq holds).
     // Pins: item 32 lazy-once semantics.
     // JVM only: JS/Native fallback always returns Binding.empty (static); the eq check is trivially true
     //           but has no observable "init" meaning. Test is gated jvmOnly for semantic clarity.
-    "Leaf 4: Tasty.current lazy val is initialized at most once (reference equality)" in runJVM {
-        // Access current twice; both must return the same object reference.
-        val b1 = Tasty.current
-        val b2 = Tasty.current
-        assert(b1 eq b2, "Tasty.current must return the same Binding instance on every access (lazy val)")
+    "Leaf 4: TastyState.global lazy val is initialized at most once (reference equality)" in runJVM {
+        // Access global twice; both must return the same object reference.
+        val b1 = TastyState.global
+        val b2 = TastyState.global
+        assert(b1 eq b2, "TastyState.global must return the same Binding instance on every access (lazy val)")
         succeed
     }
 

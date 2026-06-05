@@ -8,6 +8,7 @@ import kyo.internal.tasty.symbol.Flags as FlagsHelper
 import kyo.internal.tasty.symbol.FqnCanonicalizer
 import kyo.internal.tasty.symbol.Symbol as SymbolFactory
 import kyo.internal.tasty.symbol.SymbolDescriptor
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.symbol.TypedSymbolFactory
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
@@ -106,7 +107,7 @@ object ClassfileUnpickler:
     private def makeUnresolvedSymbol(binaryName: String, accessFlags: Int)(using AllowUnsafe): Tasty.Symbol =
         val simpleName = binaryName.split("[./]").last
         SymbolFactory.makeSymbol(
-            Tasty.SymbolKind.Unresolved,
+            SymbolKind.Unresolved,
             Tasty.Flags(Tasty.Flag.JavaDefined),
             Tasty.Name(simpleName)
         )
@@ -114,7 +115,7 @@ object ClassfileUnpickler:
 
     private def unresolvedType(binaryName: String)(using AllowUnsafe): Tasty.Type =
         val sym = SymbolFactory.makeSymbol(
-            Tasty.SymbolKind.Unresolved,
+            SymbolKind.Unresolved,
             Tasty.Flags(Tasty.Flag.JavaDefined),
             Tasty.Name(binaryName.replace('/', '.'))
         )
@@ -1004,8 +1005,8 @@ object ClassfileUnpickler:
         val isRecord     = classAttrs.hasRecord
 
         val kind =
-            if isInterface || isAnnotation then Tasty.SymbolKind.Trait
-            else Tasty.SymbolKind.Class
+            if isInterface || isAnnotation then SymbolKind.Trait
+            else SymbolKind.Class
 
         val baseFlags   = FlagsHelper.fromJvmAccessFlags(accessFlags)
         val javaDefined = Tasty.Flags(Tasty.Flag.JavaDefined)
@@ -1297,7 +1298,7 @@ object ClassfileUnpickler:
                 // Nested inner class: recurse
                 val grandParent = buildPackageOwnerChain(outerOuterBinaryName, innerTable)
                 SymbolFactory.makeSymbol(
-                    Tasty.SymbolKind.Class,
+                    SymbolKind.Class,
                     Tasty.Flags(Tasty.Flag.JavaDefined),
                     Tasty.Name(outerSimpleName)
                 )
@@ -1307,7 +1308,7 @@ object ClassfileUnpickler:
                 val className = segments.last
                 val pkgSymbol = buildPackageSymbol(segments.dropRight(1))
                 SymbolFactory.makeSymbol(
-                    Tasty.SymbolKind.Class,
+                    SymbolKind.Class,
                     Tasty.Flags(Tasty.Flag.JavaDefined),
                     Tasty.Name(className)
                 )
@@ -1326,7 +1327,7 @@ object ClassfileUnpickler:
             var i                 = 0
             while i < segments.length do
                 cur = SymbolFactory.makeSymbol(
-                    Tasty.SymbolKind.Package,
+                    SymbolKind.Package,
                     Tasty.Flags(Tasty.Flag.JavaDefined),
                     Tasty.Name(segments(i))
                 )
@@ -1351,7 +1352,7 @@ object ClassfileUnpickler:
                     val enclosingName  = enclosingFqn.split("\\.").last
                     val enclosingOwner = buildPackageOwnerChain(enclosingBinaryName, innerTable)
                     val enclosingClassSym = SymbolFactory.makeSymbol(
-                        Tasty.SymbolKind.Unresolved,
+                        SymbolKind.Unresolved,
                         Tasty.Flags(Tasty.Flag.JavaDefined),
                         Tasty.Name(enclosingName)
                     )
@@ -1439,7 +1440,7 @@ object ClassfileUnpickler:
 
     private def primType(fqn: String)(using AllowUnsafe): Tasty.Type =
         val sym = SymbolFactory.makeSymbol(
-            Tasty.SymbolKind.Class,
+            SymbolKind.Class,
             Tasty.Flags(Tasty.Flag.JavaDefined),
             Tasty.Name(fqn.split("\\.").last)
         )
@@ -1506,10 +1507,10 @@ object ClassfileUnpickler:
             val isFinal     = (accessFlags & ClassfileFormat.ACC_FINAL) != 0
 
             val kind =
-                if isMethod then Tasty.SymbolKind.Method
-                else if isStatic then Tasty.SymbolKind.Field
-                else if isFinal then Tasty.SymbolKind.Val
-                else Tasty.SymbolKind.Var
+                if isMethod then SymbolKind.Method
+                else if isStatic then SymbolKind.Field
+                else if isFinal then SymbolKind.Val
+                else SymbolKind.Var
 
             val baseFlags   = FlagsHelper.fromJvmAccessFlags(accessFlags)
             val javaDefined = Tasty.Flags(Tasty.Flag.JavaDefined)
@@ -1579,7 +1580,7 @@ object ClassfileUnpickler:
         else
             pool.classRef(idxs(i)).map: binaryName =>
                 val exSym = SymbolFactory.makeSymbol(
-                    Tasty.SymbolKind.Unresolved,
+                    SymbolKind.Unresolved,
                     Tasty.Flags(Tasty.Flag.JavaDefined),
                     Tasty.Name(binaryName.replace('/', '.'))
                 )

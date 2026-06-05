@@ -11,6 +11,7 @@ import kyo.internal.tasty.reader.SectionIndex
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
 import kyo.internal.tasty.reader.TypeUnpickler
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 
@@ -105,7 +106,7 @@ class UnifiedModelTest extends Test:
             Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).flatMap: cp =>
                 Kyo.lift(cp.packages)).map:
                 case Result.Success(pkgs) =>
-                    assert(pkgs.forall(_.kind == Tasty.SymbolKind.Package), "Expected all packages to have kind Package")
+                    assert(pkgs.forall(_.kind == SymbolKind.Package), "Expected all packages to have kind Package")
                 case Result.Failure(e) => fail(s"Unexpected failure: $e")
                 case Result.Panic(t)   => throw t
     }
@@ -117,11 +118,11 @@ class UnifiedModelTest extends Test:
     "SymbolKind.Class appears for Java class and Scala class" in run {
         readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map: javaResult =>
             assert(
-                javaResult.classSymbol.kind == Tasty.SymbolKind.Class,
+                javaResult.classSymbol.kind == SymbolKind.Class,
                 s"Expected Class for ThrowsFixture classfile, got ${javaResult.classSymbol.kind}"
             )
             tastySymbols("PlainClass.tasty").map: tastyResult =>
-                val scalaClass = tastyResult.symbols.find(_.kind == Tasty.SymbolKind.Class)
+                val scalaClass = tastyResult.symbols.find(_.kind == SymbolKind.Class)
                 assert(
                     scalaClass.isDefined,
                     s"Expected Class symbol in PlainClass.tasty; kinds: ${tastyResult.symbols.map(_.kind).mkString(", ")}"
@@ -152,11 +153,11 @@ class UnifiedModelTest extends Test:
         val ifaceBytes = buf.toByteArray
         readClassBytes(ifaceBytes).map: javaResult =>
             assert(
-                javaResult.classSymbol.kind == Tasty.SymbolKind.Trait,
+                javaResult.classSymbol.kind == SymbolKind.Trait,
                 s"Expected Trait for synthetic interface, got ${javaResult.classSymbol.kind}"
             )
             tastySymbols("SomeTrait.tasty").map: tastyResult =>
-                val scalaTrait = tastyResult.symbols.find(_.kind == Tasty.SymbolKind.Trait)
+                val scalaTrait = tastyResult.symbols.find(_.kind == SymbolKind.Trait)
                 assert(
                     scalaTrait.isDefined,
                     s"Expected Trait symbol in SomeTrait.tasty; kinds: ${tastyResult.symbols.map(_.kind).mkString(", ")}"
@@ -170,18 +171,18 @@ class UnifiedModelTest extends Test:
     "SymbolKind.Object appears only for Scala object; no Java symbol has Object kind" in run {
         readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map: javaObjectResult =>
             assert(
-                javaObjectResult.classSymbol.kind != Tasty.SymbolKind.Object,
+                javaObjectResult.classSymbol.kind != SymbolKind.Object,
                 "ThrowsFixture classfile should have kind=Class, not Object"
             )
             readClassBytes(kyo.fixtures.Embedded.pointRecordClass).map: javaPointResult =>
                 val javaSyms        = javaPointResult.classSymbol :: javaPointResult.symbols.toList
-                val javaObjectKinds = javaSyms.filter(_.kind == Tasty.SymbolKind.Object)
+                val javaObjectKinds = javaSyms.filter(_.kind == SymbolKind.Object)
                 assert(
                     javaObjectKinds.isEmpty,
                     s"Expected no Java symbols with kind=Object in PointRecord, found: ${javaObjectKinds.map(_.name.asString).mkString(", ")}"
                 )
                 tastySymbols("SomeObject.tasty").map: tastyResult =>
-                    val scalaObject = tastyResult.symbols.find(_.kind == Tasty.SymbolKind.Object)
+                    val scalaObject = tastyResult.symbols.find(_.kind == SymbolKind.Object)
                     assert(
                         scalaObject.isDefined,
                         s"Expected Object symbol in SomeObject.tasty; kinds: ${tastyResult.symbols.map(_.kind).distinct.mkString(", ")}"
@@ -195,7 +196,7 @@ class UnifiedModelTest extends Test:
     "TypeAlias, OpaqueType, AbstractType appear only in TASTy-sourced symbols" in run {
         readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map: javaResult =>
             val allJavaSyms    = javaResult.classSymbol :: javaResult.symbols.toList
-            val scalaOnlyKinds = Set(Tasty.SymbolKind.TypeAlias, Tasty.SymbolKind.OpaqueType, Tasty.SymbolKind.AbstractType)
+            val scalaOnlyKinds = Set(SymbolKind.TypeAlias, SymbolKind.OpaqueType, SymbolKind.AbstractType)
             val badJavaSyms    = allJavaSyms.filter(s => scalaOnlyKinds.contains(s.kind))
             assert(
                 badJavaSyms.isEmpty,
@@ -204,20 +205,20 @@ class UnifiedModelTest extends Test:
 
             tastySymbols("FixtureClasses$package.tasty").map: tastyResult =>
                 val allTastySyms = tastyResult.symbols
-                val hasTypeAlias = allTastySyms.exists(_.kind == Tasty.SymbolKind.TypeAlias)
+                val hasTypeAlias = allTastySyms.exists(_.kind == SymbolKind.TypeAlias)
                 assert(
                     hasTypeAlias,
                     s"Expected TypeAlias in FixtureClasses package; kinds: ${allTastySyms.map(_.kind).distinct.mkString(", ")}"
                 )
 
-                val hasOpaque = allTastySyms.exists(_.kind == Tasty.SymbolKind.OpaqueType)
+                val hasOpaque = allTastySyms.exists(_.kind == SymbolKind.OpaqueType)
                 assert(
                     hasOpaque,
                     s"Expected OpaqueType in FixtureClasses package; kinds: ${allTastySyms.map(_.kind).distinct.mkString(", ")}"
                 )
 
                 tastySymbols("Container.tasty").map: containerResult =>
-                    val hasAbstract = containerResult.symbols.exists(_.kind == Tasty.SymbolKind.AbstractType)
+                    val hasAbstract = containerResult.symbols.exists(_.kind == SymbolKind.AbstractType)
                     assert(
                         hasAbstract,
                         s"Expected AbstractType in Container.tasty; kinds: ${containerResult.symbols.map(_.kind).distinct.mkString(", ")}"
@@ -260,7 +261,7 @@ class UnifiedModelTest extends Test:
     "a Scala case class decoded from TASTy has flags.contains(Flag.Case)" in run {
         tastySymbols("SomeCaseClass.tasty").map: result =>
             val caseClass = result.symbols.find: sym =>
-                sym.kind == Tasty.SymbolKind.Class && sym.flags.contains(Tasty.Flag.Case)
+                sym.kind == SymbolKind.Class && sym.flags.contains(Tasty.Flag.Case)
             assert(
                 caseClass.isDefined,
                 s"Expected a Class symbol with Flag.Case in SomeCaseClass.tasty; symbols: ${result.symbols.map(s =>
@@ -282,14 +283,14 @@ class UnifiedModelTest extends Test:
     //   Var: inline synthetic class with non-final field
     //   Object, Package, TypeAlias, OpaqueType, AbstractType, TypeParam, Parameter: TASTy fixtures
     "full SymbolKind matrix: each non-Unresolved kind has at least one symbol in fixtures" in run {
-        def kindsFromClassResult(r: ClassfileResult): Set[Tasty.SymbolKind] =
-            val buf = scala.collection.mutable.Set[Tasty.SymbolKind]()
+        def kindsFromClassResult(r: ClassfileResult): Set[SymbolKind] =
+            val buf = scala.collection.mutable.Set[SymbolKind]()
             buf += r.classSymbol.kind
             r.symbols.toList.foreach(s => buf += s.kind)
             buf.toSet
         end kindsFromClassResult
 
-        def kindsFromTastyResult(r: AstUnpickler.Pass1Result): Set[Tasty.SymbolKind] =
+        def kindsFromTastyResult(r: AstUnpickler.Pass1Result): Set[SymbolKind] =
             r.symbols.toList.map(_.kind).toSet
 
         def makeSyntheticBytes(
@@ -352,7 +353,7 @@ class UnifiedModelTest extends Test:
             genericRes   <- tastySymbols("GenericBox.tasty")
             plainRes     <- tastySymbols("PlainClass.tasty")
         yield
-            val foundKinds: Set[Tasty.SymbolKind] =
+            val foundKinds: Set[SymbolKind] =
                 kindsFromClassResult(throwRes) ++
                     kindsFromClassResult(ifaceRes) ++
                     kindsFromClassResult(pointRes) ++
@@ -364,20 +365,20 @@ class UnifiedModelTest extends Test:
                     kindsFromTastyResult(genericRes) ++
                     kindsFromTastyResult(plainRes)
 
-            val expectedKinds = Set[Tasty.SymbolKind](
-                Tasty.SymbolKind.Package,
-                Tasty.SymbolKind.Class,
-                Tasty.SymbolKind.Trait,
-                Tasty.SymbolKind.Object,
-                Tasty.SymbolKind.Method,
-                Tasty.SymbolKind.Field,
-                Tasty.SymbolKind.Val,
-                Tasty.SymbolKind.Var,
-                Tasty.SymbolKind.TypeAlias,
-                Tasty.SymbolKind.OpaqueType,
-                Tasty.SymbolKind.AbstractType,
-                Tasty.SymbolKind.TypeParam,
-                Tasty.SymbolKind.Parameter
+            val expectedKinds = Set[SymbolKind](
+                SymbolKind.Package,
+                SymbolKind.Class,
+                SymbolKind.Trait,
+                SymbolKind.Object,
+                SymbolKind.Method,
+                SymbolKind.Field,
+                SymbolKind.Val,
+                SymbolKind.Var,
+                SymbolKind.TypeAlias,
+                SymbolKind.OpaqueType,
+                SymbolKind.AbstractType,
+                SymbolKind.TypeParam,
+                SymbolKind.Parameter
             )
             val missing = expectedKinds -- foundKinds
             assert(missing.isEmpty, s"Missing SymbolKind coverage: $missing. Found: $foundKinds")
@@ -403,7 +404,7 @@ class UnifiedModelTest extends Test:
 
     // Test 19: CLASSconst with a known TYPEREFdirect decodes to ConstantType(ClassConst(Named(sym))).
     "CLASSconst with TYPEREFdirect decodes to ConstantType(ClassConst(Named(stringSym)))" in run {
-        val stringSym  = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("java.lang.String"))
+        val stringSym  = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("java.lang.String"))
         val stringAddr = 10
         val addrMap    = IntMap(stringAddr -> stringSym)
         // CLASSconst (92) is category 3: tag + sub-type.

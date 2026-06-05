@@ -1,7 +1,7 @@
 package kyo
-
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
+import kyo.internal.tasty.symbol.SymbolKind
 import scala.collection.mutable
 
 /** Tests for Phase 3: streaming pipeline via Channels.
@@ -93,7 +93,7 @@ class ClasspathOrchestratorPipelineTest extends Test:
                 cp.findClass("kyo.fixtures.PlainClass")).map:
                 case Result.Success(Present(sym)) =>
                     assert(
-                        sym.kind == Tasty.SymbolKind.Class || sym.kind == Tasty.SymbolKind.Trait,
+                        sym.kind == SymbolKind.Class || sym.kind == SymbolKind.Trait,
                         s"Expected Class or Trait kind, got: ${sym.kind}"
                     )
                 case Result.Success(Absent) =>

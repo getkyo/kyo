@@ -1,9 +1,9 @@
 package kyo
-
 import kyo.Tasty.SymbolId
 import kyo.internal.tasty.classfile.ClassfileUnpickler
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
@@ -112,7 +112,7 @@ class QueryApiTest extends Test:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass")).map:
                 case Result.Success(Present(sym)) =>
-                    assert(sym.kind == Tasty.SymbolKind.Class)
+                    assert(sym.kind == SymbolKind.Class)
                 case Result.Success(Absent) =>
                     fail("Expected Present(sym) but got Absent")
                 case Result.Failure(e) =>
@@ -142,7 +142,7 @@ class QueryApiTest extends Test:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 cp.findPackage("kyo.fixtures")).map:
                 case Result.Success(Present(pkg)) =>
-                    assert(pkg.kind == Tasty.SymbolKind.Package)
+                    assert(pkg.kind == SymbolKind.Package)
                 case Result.Success(Absent) =>
                     // Package symbols depend on unpickler emitting package nodes; allow Absent if not emitted
                     succeed
@@ -223,10 +223,10 @@ class QueryApiTest extends Test:
     "direct filter to Method kind returns only method symbols" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
-                Sync.defer(cp.symbols.filter(_.kind == Tasty.SymbolKind.Method))).map:
+                Sync.defer(cp.symbols.filter(_.kind == SymbolKind.Method))).map:
                 case Result.Success(syms) =>
                     assert(
-                        syms.forall(_.kind == Tasty.SymbolKind.Method),
+                        syms.forall(_.kind == SymbolKind.Method),
                         s"Some symbols are not Method kind"
                     )
                 case Result.Failure(e) =>
@@ -676,7 +676,7 @@ class QueryApiTest extends Test:
                         Abort.fail(TastyError.NotImplemented("SomeCaseClass not found"))).map:
                 case Result.Success(Present(compSym)) =>
                     assert(
-                        compSym.kind == Tasty.SymbolKind.Object,
+                        compSym.kind == SymbolKind.Object,
                         s"Expected companion kind Object but got ${compSym.kind}"
                     )
                 case Result.Success(Absent) =>
@@ -697,7 +697,7 @@ class QueryApiTest extends Test:
                         Kyo.lift(cp.companion(objSym))
                     case Absent =>
                         // Some TASTy encodings register the object without "$"; try topLevelClasses.
-                        val objSym = cp.topLevelClasses.find(_.kind == Tasty.SymbolKind.Object)
+                        val objSym = cp.topLevelClasses.find(_.kind == SymbolKind.Object)
                         objSym match
                             case Some(s) =>
                                 Kyo.lift(cp.companion(s))
@@ -705,7 +705,7 @@ class QueryApiTest extends Test:
                                 Abort.fail(TastyError.NotImplemented("SomeCaseClass$ not found in fqnIndex"))).map:
                 case Result.Success(Present(compSym)) =>
                     assert(
-                        compSym.kind == Tasty.SymbolKind.Class,
+                        compSym.kind == SymbolKind.Class,
                         s"Expected companion kind Class but got ${compSym.kind}"
                     )
                 case Result.Success(Absent) =>
@@ -802,7 +802,7 @@ class QueryApiTest extends Test:
                         val declIds = symDeclarationIds(traitSym)
                         val allSym  = cp.symbols
                         val computeOpt = declIds.map(id => allSym(id.value)).find(s =>
-                            s.name.asString == "compute" && s.kind == Tasty.SymbolKind.Method
+                            s.name.asString == "compute" && s.kind == SymbolKind.Method
                         )
                         computeOpt match
                             case None =>
@@ -931,7 +931,7 @@ class QueryApiTest extends Test:
                 cp.findClass("kyo.fixtures.PlainClass")).map:
                 case Result.Success(Present(sym)) =>
                     assert(
-                        sym.kind == Tasty.SymbolKind.Class,
+                        sym.kind == SymbolKind.Class,
                         s"Expected Class kind for kyo.fixtures.PlainClass but got ${sym.kind}"
                     )
                 case Result.Success(Absent) =>

@@ -7,6 +7,7 @@ import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 import kyo.internal.tasty.symbol.SymbolDescriptor
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.symbol.TypedSymbolFactory
 import scala.collection.mutable
 
@@ -1112,10 +1113,10 @@ object SnapshotReader:
                 if fqn.nonEmpty then
                     fqnIndex(fqn) = sym
                     sym.kind match
-                        case Tasty.SymbolKind.Package =>
+                        case SymbolKind.Package =>
                             packages += sym
                             packageIndex(fqn) = sym
-                        case Tasty.SymbolKind.Class | Tasty.SymbolKind.Trait | Tasty.SymbolKind.Object =>
+                        case SymbolKind.Class | SymbolKind.Trait | SymbolKind.Object =>
                             topLevelCls += sym
                         case _ =>
                             ()
@@ -1431,10 +1432,10 @@ object SnapshotReader:
                 if fqn.nonEmpty then
                     fqnIndex(fqn) = sym
                     sym.kind match
-                        case Tasty.SymbolKind.Package =>
+                        case SymbolKind.Package =>
                             packages += sym
                             packageIndex(fqn) = sym
-                        case Tasty.SymbolKind.Class | Tasty.SymbolKind.Trait | Tasty.SymbolKind.Object =>
+                        case SymbolKind.Class | SymbolKind.Trait | SymbolKind.Object =>
                             topLevelCls += sym
                         case _ =>
                             ()
@@ -1583,8 +1584,8 @@ object SnapshotReader:
     end readErrors
 
     /** Convert SymbolKind ordinal integer to enum case. */
-    private def kindFromOrd(ord: Int): Tasty.SymbolKind =
-        import Tasty.SymbolKind.*
+    private def kindFromOrd(ord: Int): SymbolKind =
+        import SymbolKind.*
         ord match
             case 0  => Package
             case 1  => Class

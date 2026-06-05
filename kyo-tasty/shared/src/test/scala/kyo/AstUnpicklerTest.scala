@@ -8,6 +8,7 @@ import kyo.internal.tasty.reader.NameUnpickler
 import kyo.internal.tasty.reader.SectionIndex
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 import scala.collection.mutable
@@ -76,7 +77,7 @@ class AstUnpicklerTest extends Test:
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
                 case Result.Success(r) =>
-                    assert(r.symbols.exists(_.kind == Tasty.SymbolKind.Class))
+                    assert(r.symbols.exists(_.kind == SymbolKind.Class))
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
                 case Result.Panic(t) =>
@@ -90,7 +91,7 @@ class AstUnpicklerTest extends Test:
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
                 case Result.Success(r) =>
-                    val found = r.symbols.find(s => s.name.asString == "PlainClass" && s.kind == Tasty.SymbolKind.Class)
+                    val found = r.symbols.find(s => s.name.asString == "PlainClass" && s.kind == SymbolKind.Class)
                     assert(
                         found.isDefined,
                         s"No symbol named PlainClass with kind Class. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
@@ -108,7 +109,7 @@ class AstUnpicklerTest extends Test:
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
                 case Result.Success(r) =>
-                    val found = r.symbols.find(_.kind == Tasty.SymbolKind.Method)
+                    val found = r.symbols.find(_.kind == SymbolKind.Method)
                     assert(
                         found.isDefined,
                         s"No Method symbol found. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
@@ -127,7 +128,7 @@ class AstUnpicklerTest extends Test:
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
                 case Result.Success(r) =>
-                    val found = r.symbols.find(s => s.name.asString == "value" && s.kind == Tasty.SymbolKind.Val)
+                    val found = r.symbols.find(s => s.name.asString == "value" && s.kind == SymbolKind.Val)
                     assert(
                         found.isDefined,
                         s"No Val symbol named 'value'. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
@@ -145,7 +146,7 @@ class AstUnpicklerTest extends Test:
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
                 case Result.Success(r) =>
-                    val found = r.symbols.find(s => s.name.asString == "SomeTrait" && s.kind == Tasty.SymbolKind.Trait)
+                    val found = r.symbols.find(s => s.name.asString == "SomeTrait" && s.kind == SymbolKind.Trait)
                     assert(
                         found.isDefined,
                         s"No Trait symbol named 'SomeTrait'. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
@@ -164,7 +165,7 @@ class AstUnpicklerTest extends Test:
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
                 case Result.Success(r) =>
-                    val found = r.symbols.find(_.kind == Tasty.SymbolKind.Object)
+                    val found = r.symbols.find(_.kind == SymbolKind.Object)
                     assert(
                         found.isDefined,
                         s"No Object symbol. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
@@ -224,7 +225,7 @@ class AstUnpicklerTest extends Test:
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
                 case Result.Success(r) =>
-                    val found = r.symbols.find(s => s.name.asString == "A" && s.kind == Tasty.SymbolKind.TypeParam)
+                    val found = r.symbols.find(s => s.name.asString == "A" && s.kind == SymbolKind.TypeParam)
                     assert(
                         found.isDefined,
                         s"No TypeParam symbol named 'A'. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
@@ -243,8 +244,8 @@ class AstUnpicklerTest extends Test:
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
                 case Result.Success(r) =>
-                    val classSymOpt  = r.symbols.find(s => s.name.asString == "PlainClass" && s.kind == Tasty.SymbolKind.Class)
-                    val methodSymOpt = r.symbols.find(s => s.kind == Tasty.SymbolKind.Method)
+                    val classSymOpt  = r.symbols.find(s => s.name.asString == "PlainClass" && s.kind == SymbolKind.Class)
+                    val methodSymOpt = r.symbols.find(s => s.kind == SymbolKind.Method)
                     assert(classSymOpt.isDefined, "No PlainClass symbol")
                     assert(methodSymOpt.isDefined, "No Method symbol")
                     val classSym  = classSymOpt.get
@@ -271,7 +272,7 @@ class AstUnpicklerTest extends Test:
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
                 case Result.Success(r) =>
-                    val innerOpt = r.symbols.find(s => s.name.asString == "Inner" && s.kind == Tasty.SymbolKind.Class)
+                    val innerOpt = r.symbols.find(s => s.name.asString == "Inner" && s.kind == SymbolKind.Class)
                     assert(
                         innerOpt.isDefined,
                         s"No symbol named 'Inner'. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
@@ -297,7 +298,7 @@ class AstUnpicklerTest extends Test:
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
                 case Result.Success(r) =>
-                    val methodOpt = r.symbols.find(_.kind == Tasty.SymbolKind.Method)
+                    val methodOpt = r.symbols.find(_.kind == SymbolKind.Method)
                     assert(methodOpt.isDefined, "No Method symbol found")
                     val method   = methodOpt.get
                     val bodyData = r.bodyDataByAddr.get(method)
@@ -327,14 +328,14 @@ class AstUnpicklerTest extends Test:
             result match
                 case Result.Success(r) =>
                     // Find the TypeParam 'A' symbol in the symbols list.
-                    val aOpt = r.symbols.find(s => s.name.asString == "A" && s.kind == Tasty.SymbolKind.TypeParam)
+                    val aOpt = r.symbols.find(s => s.name.asString == "A" && s.kind == SymbolKind.TypeParam)
                     assert(
                         aOpt.isDefined,
                         s"No TypeParam A symbol. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
                     )
                     // Find the addr key for A in addrMap (addr-keyed lookup, not values scan).
                     val aAddr = r.addrMap.find { case (_, sym) =>
-                        sym.name.asString == "A" && sym.kind == Tasty.SymbolKind.TypeParam
+                        sym.name.asString == "A" && sym.kind == SymbolKind.TypeParam
                     }.map(_._1)
                     assert(
                         aAddr.isDefined,
@@ -349,7 +350,7 @@ class AstUnpicklerTest extends Test:
                         s"addrMap(${aAddr.get}).name expected 'A' but was '${looked.name.asString}'"
                     )
                     assert(
-                        looked.kind == Tasty.SymbolKind.TypeParam,
+                        looked.kind == SymbolKind.TypeParam,
                         s"addrMap(${aAddr.get}).kind expected TypeParam but was ${looked.kind}"
                     )
                 case Result.Failure(e) =>
@@ -370,7 +371,7 @@ class AstUnpicklerTest extends Test:
                 case Result.Success(r) =>
                     // Phase 07: UnresolvedRef mechanism deleted; cross-file refs resolved via fqnIndex at Pass C.
                     // Verify that parent types are non-empty (the cross-file reference path was decoded).
-                    val classSym = r.symbols.find(_.kind == Tasty.SymbolKind.Class)
+                    val classSym = r.symbols.find(_.kind == SymbolKind.Class)
                     assert(
                         classSym.isDefined,
                         s"Expected at least one Class symbol in PlainClass.tasty"
@@ -391,7 +392,7 @@ class AstUnpicklerTest extends Test:
         Abort.run[TastyError](runPass1WithArena(bytes, arena)).map { result =>
             result match
                 case Result.Success(r) =>
-                    val classSym = r.symbols.find(_.kind == Tasty.SymbolKind.Class)
+                    val classSym = r.symbols.find(_.kind == SymbolKind.Class)
                     assert(
                         classSym.isDefined,
                         s"SomeCaseClass.tasty should have at least one Class symbol"
@@ -417,7 +418,7 @@ class AstUnpicklerTest extends Test:
         Abort.run[TastyError](runPass1WithArena(bytes, arena)).map { result =>
             result match
                 case Result.Success(r) =>
-                    val classSymOpt = r.symbols.find(s => s.name.asString == "PlainClass" && s.kind == Tasty.SymbolKind.Class)
+                    val classSymOpt = r.symbols.find(s => s.name.asString == "PlainClass" && s.kind == SymbolKind.Class)
                     assert(
                         classSymOpt.isDefined,
                         s"No PlainClass symbol found. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
@@ -448,7 +449,7 @@ class AstUnpicklerTest extends Test:
         Abort.run[TastyError](runPass1WithArena(bytes, arena)).map { result =>
             result match
                 case Result.Success(r) =>
-                    val classSymOpt = r.symbols.find(s => s.name.asString == "PlainClass" && s.kind == Tasty.SymbolKind.Class)
+                    val classSymOpt = r.symbols.find(s => s.name.asString == "PlainClass" && s.kind == SymbolKind.Class)
                     assert(
                         classSymOpt.isDefined,
                         s"No PlainClass symbol found. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
@@ -516,7 +517,7 @@ class AstUnpicklerTest extends Test:
         Abort.run[TastyError](runPass1WithArena(bytes, arena)).map { result =>
             result match
                 case Result.Success(r) =>
-                    val computeOpt = r.symbols.find(s => s.name.asString == "compute" && s.kind == Tasty.SymbolKind.Method)
+                    val computeOpt = r.symbols.find(s => s.name.asString == "compute" && s.kind == SymbolKind.Method)
                     assert(
                         computeOpt.isDefined,
                         s"No 'compute' method symbol in SomeTrait. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
@@ -595,7 +596,7 @@ class AstUnpicklerTest extends Test:
                     val typeByH: java.util.IdentityHashMap[Tasty.Symbol, Tasty.Type]              = r.typeBySymbol
                     assert(addrMapH.nonEmpty, "addrMap should be non-empty for GenericBox.tasty")
                     val aOpt = addrMapH.find { case (_, sym) =>
-                        sym.name.asString == "A" && sym.kind == Tasty.SymbolKind.TypeParam
+                        sym.name.asString == "A" && sym.kind == SymbolKind.TypeParam
                     }
                     assert(aOpt.isDefined, "addrMap should contain the TypeParam A symbol")
                     assert(parentsByH != null, "parentsBySymbol should not be null")
@@ -620,7 +621,7 @@ class AstUnpicklerTest extends Test:
                     val am = r.addrMap
                     assert(am.nonEmpty, "Pass1Result.addrMap should be non-empty after pass1")
                     val foundPlainClass = am.values.exists(s =>
-                        s.name.asString == "PlainClass" && s.kind == Tasty.SymbolKind.Class
+                        s.name.asString == "PlainClass" && s.kind == SymbolKind.Class
                     )
                     assert(foundPlainClass, "Pass1Result.addrMap should contain the PlainClass symbol")
                 case Result.Failure(e) =>

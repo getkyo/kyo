@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.internal.tasty.symbol.DeclarationTable
+import kyo.internal.tasty.symbol.SymbolKind
 
 /** Tests for DeclarationTable: flat-array vs HashMap cutover, and AtomicRef CAS-swap visibility.
   *
@@ -12,7 +13,7 @@ class DeclarationTableTest extends Test:
         // plan: phase-02 bridge; Symbol.make creates a partial Symbol with just kind/flags/name.
         import AllowUnsafe.embrace.danger
         Tasty.Symbol.makePlaceholder(
-            Tasty.SymbolKind.Val,
+            SymbolKind.Val,
             Tasty.Flags.empty,
             Tasty.Name(nameStr)
         )

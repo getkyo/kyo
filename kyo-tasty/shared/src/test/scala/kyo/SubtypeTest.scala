@@ -1,4 +1,5 @@
 package kyo
+import kyo.internal.tasty.symbol.SymbolKind
 
 // plan: phase-05; migrated from Symbol references to SymbolId in Named/TypeLambda.
 
@@ -71,7 +72,7 @@ class SubtypeTest extends Test:
         val maxId = syms.foldLeft(-1)((m, s) => math.max(m, s.id.value))
         val arr   = new Array[Tasty.Symbol](maxId + 1)
         // Fill with sentinel first
-        val sentinel = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("<sentinel>"))
+        val sentinel = Tasty.Symbol.makePlaceholder(SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("<sentinel>"))
         var fi       = 0
         while fi <= maxId do
             arr(fi) = sentinel

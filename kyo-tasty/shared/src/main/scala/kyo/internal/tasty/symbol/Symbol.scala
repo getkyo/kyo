@@ -23,7 +23,7 @@ private[kyo] object Symbol:
       * returned object. Pass C will create fresh fully-populated Symbols from SymbolDescriptors and replace the classpath contents.
       */
     def makeSymbol(
-        kind: Tasty.SymbolKind,
+        kind: SymbolKind,
         flags: Tasty.Flags,
         name: Tasty.Name
     ): Tasty.Symbol =

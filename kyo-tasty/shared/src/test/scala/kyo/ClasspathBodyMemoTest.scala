@@ -5,6 +5,7 @@ import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.FileSource
+import kyo.internal.tasty.query.TastyState
 import scala.collection.mutable
 
 /** Phase 06 plan-mandated tests pinning the Classpath bodyMemo contract.
@@ -93,7 +94,7 @@ class ClasspathBodyMemoTest extends Test:
                                 assert(cp.hashCode == cp.hashCode, "hashCode must be stable (bodyMemo is in DecodeContext, not Classpath)")
                                 succeed
                         case Some(sym) =>
-                            Tasty.bindingLocal.let(Maybe.Present(binding)):
+                            TastyState.bindingLocal.let(Maybe.Present(binding)):
                                 Tasty.bodyTree(sym).map: _ =>
                                     // After memoization in DecodeContext, the classpath must still equal itself.
                                     assert(cp == cp, "Classpath must equal itself after bodyMemo is populated in DecodeContext")
@@ -135,7 +136,7 @@ class ClasspathBodyMemoTest extends Test:
                             // No body symbols; test is inconclusive but not failed.
                             Kyo.lift(succeed)
                         case Some(sym) =>
-                            Tasty.bindingLocal.let(Maybe.Present(binding1)):
+                            TastyState.bindingLocal.let(Maybe.Present(binding1)):
                                 Tasty.bodyTree(sym).map: _ =>
                                     // After one decode in binding1, bodyMemo has exactly 1 entry (the symbol decoded).
                                     val ctx1      = binding1.decodeCtx.get
@@ -181,7 +182,7 @@ class ClasspathBodyMemoTest extends Test:
                             // No body symbols; test is inconclusive but not failed.
                             Kyo.lift(succeed)
                         case Some(sym) =>
-                            Tasty.bindingLocal.let(Maybe.Present(binding)):
+                            TastyState.bindingLocal.let(Maybe.Present(binding)):
                                 for
                                     result1 <- Tasty.bodyTree(sym)
                                     result2 <- Tasty.bodyTree(sym)

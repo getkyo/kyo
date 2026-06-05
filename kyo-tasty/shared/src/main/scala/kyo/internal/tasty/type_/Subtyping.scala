@@ -2,6 +2,7 @@ package kyo.internal.tasty.type_
 
 import kyo.*
 import kyo.Tasty.SymbolId
+import kyo.internal.tasty.symbol.SymbolKind
 
 /** Subtype checking for `Tasty.Type` values.
   *
@@ -104,7 +105,7 @@ object Subtyping:
                                         val baseSymOpt: Maybe[Tasty.Symbol] = subBase match
                                             case Tasty.Type.Named(id) =>
                                                 val s = cp.symbol(id)
-                                                if s.kind == Tasty.SymbolKind.Unresolved then Maybe.Absent else Maybe(s)
+                                                if s.kind == SymbolKind.Unresolved then Maybe.Absent else Maybe(s)
                                             case _ => Maybe.Absent
                                         checkAppliedArgs(subArgs, supArgs, baseSymOpt, cp, budget)
                                     end if

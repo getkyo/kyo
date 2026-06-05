@@ -4,6 +4,7 @@ import kyo.*
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.symbol.Flags as InternalFlags
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.symbol.SymbolKind as InternalSymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
@@ -149,7 +150,7 @@ object AstUnpickler:
 
         // Synthetic root: a Package symbol with empty name; owns itself (self-referential sentinel).
         val rootName: Tasty.Name = Tasty.Name("")
-        val root                 = InternalSymbol.makeSymbol(Tasty.SymbolKind.Package, Tasty.Flags.empty, rootName)
+        val root                 = InternalSymbol.makeSymbol(SymbolKind.Package, Tasty.Flags.empty, rootName)
         ownerStack.append(root)
         allSymbols += root
 
@@ -262,7 +263,7 @@ object AstUnpickler:
                     val pkgName   = extractPackageName(view, names)
                     val owner     = currentOwner(ownerStack)
                     val bodyStart = view.positionInt
-                    val sym       = InternalSymbol.makeSymbol(Tasty.SymbolKind.Package, Tasty.Flags.empty, pkgName)
+                    val sym       = InternalSymbol.makeSymbol(SymbolKind.Package, Tasty.Flags.empty, pkgName)
                     ownerBySymbol.put(sym, owner)
                     bodyDataByAddr.put(sym, (bodyStart, Math.toIntExact(payloadEnd)))
                     addrMap(nodeAddr) = sym
@@ -326,7 +327,7 @@ object AstUnpickler:
                     val payloadBody         = view.position
                     val (flagBits, defAnns) = scanForwardAndCollectFlags(view, payloadEnd, typeSession, sectionOffset, sectionBytes)
                     val flags               = Tasty.Flags.fromBits(flagBits)
-                    val sym                 = InternalSymbol.makeSymbol(Tasty.SymbolKind.Method, flags, symName)
+                    val sym                 = InternalSymbol.makeSymbol(SymbolKind.Method, flags, symName)
                     ownerBySymbol.put(sym, owner)
                     bodyDataByAddr.put(sym, (Math.toIntExact(payloadBody), Math.toIntExact(payloadEnd)))
                     addrMap(nodeAddr) = sym
@@ -496,7 +497,7 @@ object AstUnpickler:
                     val tpBounds           = decodeOneTypeIfPresent(view, payloadEnd, typeSession, sectionOffset)
                     val (flagBits, tpAnns) = readModifiers(view, payloadEnd, typeSession, sectionOffset, sectionBytes)
                     val flags              = Tasty.Flags.fromBits(flagBits)
-                    val sym                = InternalSymbol.makeSymbol(Tasty.SymbolKind.TypeParam, flags, symName)
+                    val sym                = InternalSymbol.makeSymbol(SymbolKind.TypeParam, flags, symName)
                     ownerBySymbol.put(sym, owner)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
@@ -522,7 +523,7 @@ object AstUnpickler:
                     val paramTpe              = decodeOneTypeIfPresent(view, payloadEnd, typeSession, sectionOffset)
                     val (flagBits, paramAnns) = scanForwardAndCollectFlags(view, payloadEnd, typeSession, sectionOffset, sectionBytes)
                     val flags                 = Tasty.Flags.fromBits(flagBits)
-                    val sym                   = InternalSymbol.makeSymbol(Tasty.SymbolKind.Parameter, flags, symName)
+                    val sym                   = InternalSymbol.makeSymbol(SymbolKind.Parameter, flags, symName)
                     ownerBySymbol.put(sym, owner)
                     addrMap(nodeAddr) = sym
                     allSymbols += sym

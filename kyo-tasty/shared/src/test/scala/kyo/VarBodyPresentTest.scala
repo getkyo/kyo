@@ -4,6 +4,7 @@ import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.FileSource
+import kyo.internal.tasty.query.TastyState
 import scala.collection.mutable
 
 /** Phase 08 followup for W-04-02: exercises the Present path of `Tasty.bodyTree(Var)`.
@@ -62,7 +63,7 @@ class VarBodyPresentTest extends Test:
                             // If not found, the test is inconclusive rather than failing.
                             Kyo.lift(succeed)
                         case Some(v) =>
-                            Tasty.bindingLocal.let(Maybe.Present(binding)):
+                            TastyState.bindingLocal.let(Maybe.Present(binding)):
                                 Tasty.bodyTree(v).map: result =>
                                     assert(
                                         result.isDefined,

@@ -3,6 +3,7 @@ package kyo.internal.tasty.reader
 import kyo.*
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import kyo.internal.tasty.type_.TypeOps
 import scala.collection.immutable.IntMap
@@ -57,7 +58,7 @@ object TypeUnpickler:
         // Unsafe: module-level sentinel; InternalSymbol.makeSymbol requires AllowUnsafe (§839 case 3).
         import AllowUnsafe.embrace.danger
         InternalSymbol.makeSymbol(
-            Tasty.SymbolKind.Unresolved,
+            SymbolKind.Unresolved,
             Tasty.Flags.empty,
             Tasty.Name("$$MatchCase")
         )
@@ -74,7 +75,7 @@ object TypeUnpickler:
         // Unsafe: module-level sentinel; InternalSymbol.makeSymbol requires AllowUnsafe (§839 case 3).
         import AllowUnsafe.embrace.danger
         InternalSymbol.makeSymbol(
-            Tasty.SymbolKind.Unresolved,
+            SymbolKind.Unresolved,
             Tasty.Flags.empty,
             Tasty.Name("<unresolved>")
         )
@@ -92,7 +93,7 @@ object TypeUnpickler:
         // Unsafe: module-level sentinel; InternalSymbol.makeSymbol requires AllowUnsafe (§839 case 3).
         import AllowUnsafe.embrace.danger
         InternalSymbol.makeSymbol(
-            Tasty.SymbolKind.Unresolved,
+            SymbolKind.Unresolved,
             Tasty.Flags.empty,
             Tasty.Name("<rec-placeholder>")
         )
@@ -353,7 +354,7 @@ object TypeUnpickler:
 
     private def makeUnresolvedSym(fqn: String)(using AllowUnsafe): Tasty.Symbol =
         InternalSymbol.makeSymbol(
-            Tasty.SymbolKind.Unresolved,
+            SymbolKind.Unresolved,
             Tasty.Flags.empty,
             Tasty.Name(fqn)
         )
@@ -550,9 +551,9 @@ object TypeUnpickler:
                                 val enclosingPair = s.ownerStack.reverseIterator
                                     .zip(s.ownerAddrStack.reverseIterator)
                                     .find { case (sym, _) =>
-                                        sym.kind == Tasty.SymbolKind.Class ||
-                                        sym.kind == Tasty.SymbolKind.Trait ||
-                                        sym.kind == Tasty.SymbolKind.Object
+                                        sym.kind == SymbolKind.Class ||
+                                        sym.kind == SymbolKind.Trait ||
+                                        sym.kind == SymbolKind.Object
                                     }
                                 enclosingPair match
                                     case Some((_, addr)) =>
@@ -961,7 +962,7 @@ object TypeUnpickler:
                     val nameRef = view.readNat()
                     val symName = nameAt(ctx.names, nameRef)
                     val sym = InternalSymbol.makeSymbol(
-                        Tasty.SymbolKind.TypeParam,
+                        SymbolKind.TypeParam,
                         Tasty.Flags.empty,
                         symName
                     )
@@ -1148,7 +1149,7 @@ object TypeUnpickler:
                 case Some(existingSym) => existingSym
                 case None =>
                     InternalSymbol.makeSymbol(
-                        Tasty.SymbolKind.TypeParam,
+                        SymbolKind.TypeParam,
                         Tasty.Flags.empty,
                         symName
                     )
@@ -1189,7 +1190,7 @@ object TypeUnpickler:
                     case Some(existingSym) => existingSym
                     case None =>
                         InternalSymbol.makeSymbol(
-                            Tasty.SymbolKind.Parameter,
+                            SymbolKind.Parameter,
                             Tasty.Flags.empty,
                             symName
                         )

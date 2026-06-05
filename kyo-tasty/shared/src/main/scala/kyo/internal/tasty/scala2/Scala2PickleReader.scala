@@ -3,6 +3,7 @@ package kyo.internal.tasty.scala2
 import kyo.*
 import kyo.internal.tasty.symbol.Symbol as SymbolFactory
 import kyo.internal.tasty.symbol.SymbolDescriptor
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.symbol.TypedSymbolFactory
 import kyo.internal.tasty.type_.TypeArena
 
@@ -281,7 +282,7 @@ object Scala2PickleReader:
         if c.remaining > 0 then c.skipNat() // ownerRef
         val rawFlags = if c.remaining > 0 then c.readLongNat() else 0L
         val flags    = baseFlags.union(pickleFlags2TastyFlags(rawFlags))
-        makePickleSym(Tasty.SymbolKind.Class, flags, symName)
+        makePickleSym(SymbolKind.Class, flags, symName)
     end decodeClassSym
 
     /** MODULEsym data layout: nameRef(nat) ownerRef(nat) flags(longNat) infoRef(nat) */
@@ -297,7 +298,7 @@ object Scala2PickleReader:
         if c.remaining > 0 then c.skipNat() // ownerRef
         val rawFlags = if c.remaining > 0 then c.readLongNat() else 0L
         val flags    = baseFlags.union(pickleFlags2TastyFlags(rawFlags)).union(Tasty.Flags(Tasty.Flag.Module))
-        makePickleSym(Tasty.SymbolKind.Object, flags, symName)
+        makePickleSym(SymbolKind.Object, flags, symName)
     end decodeModuleSym
 
     /** VALsym data layout: nameRef(nat) ownerRef(nat) flags(longNat) [privateWithinRef(nat)] infoRef(nat)
@@ -323,9 +324,9 @@ object Scala2PickleReader:
         // METHOD flag in Scala 2 pickle is bit 18 (0x40000)
         val isMethod = (rawFlags & METH_FLAG) != 0
         val kind =
-            if isMethod then Tasty.SymbolKind.Method
-            else if (rawFlags & FINAL_FLAG) != 0 then Tasty.SymbolKind.Val
-            else Tasty.SymbolKind.Field
+            if isMethod then SymbolKind.Method
+            else if (rawFlags & FINAL_FLAG) != 0 then SymbolKind.Val
+            else SymbolKind.Field
         // declaredType for method placeholder set via makePickleSymWithType.
         // Self-referential Type.Named(sym) is approximated with Absent.
         makePickleSym(kind, flags, symName)
@@ -354,9 +355,9 @@ object Scala2PickleReader:
         val flags    = baseFlags.union(pickleFlags2TastyFlags(rawFlags))
         // declaredType is set at construction time via makePickleSymWithType.
         // Use a placeholder stringSym (declaredType = Absent default).
-        val stringSym = makePickleSym(Tasty.SymbolKind.Class, baseFlags, "String")
+        val stringSym = makePickleSym(SymbolKind.Class, baseFlags, "String")
         val sym = makePickleSymWithType(
-            Tasty.SymbolKind.TypeAlias,
+            SymbolKind.TypeAlias,
             flags,
             symName,
             kyo.Maybe(Tasty.Type.Named(stringSym.id))
@@ -377,7 +378,7 @@ object Scala2PickleReader:
         if c.remaining > 0 then c.skipNat() // ownerRef
         val rawFlags = if c.remaining > 0 then c.readLongNat() else 0L
         val flags    = baseFlags.union(pickleFlags2TastyFlags(rawFlags))
-        makePickleSym(Tasty.SymbolKind.AbstractType, flags, symName)
+        makePickleSym(SymbolKind.AbstractType, flags, symName)
     end decodeTypeSym
 
     /** EXTref data layout: nameRef(nat) [ownerRef(nat)]
@@ -400,7 +401,7 @@ object Scala2PickleReader:
         val ownerFqn    = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries, Set.empty[Int])).filter(_.nonEmpty)
         val fqn         = ownerFqn.fold(symName)(q => q + "." + symName)
         // declaredType=Absent (Named(sym) self-ref approximation).
-        makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn)
+        makePickleSym(SymbolKind.Unresolved, baseFlags, fqn)
     end decodeExtRef
 
     /** EXTMODCLASSref data layout: nameRef(nat) [ownerRef(nat)]
@@ -423,7 +424,7 @@ object Scala2PickleReader:
         val ownerFqn        = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries, Set.empty[Int])).filter(_.nonEmpty)
         val fqn             = ownerFqn.fold(moduleClassName)(q => q + "." + moduleClassName)
         // declaredType=Absent (Named(sym) self-ref approximation).
-        makePickleSym(Tasty.SymbolKind.Unresolved, baseFlags, fqn)
+        makePickleSym(SymbolKind.Unresolved, baseFlags, fqn)
     end decodeExtModClassRef
 
     /** Resolve the FQN string for an EXTref or EXTMODCLASSref owner entry index.
@@ -472,7 +473,7 @@ object Scala2PickleReader:
     private def buildAnyRefParent()(using AllowUnsafe): Tasty.Type =
         // declaredType=Absent (Named(sym) self-ref approximation).
         val anyRefSym = SymbolFactory.makeSymbol(
-            Tasty.SymbolKind.Class,
+            SymbolKind.Class,
             Tasty.Flags(Tasty.Flag.Scala2, Tasty.Flag.JavaDefined),
             Tasty.Name("AnyRef")
         )
@@ -480,7 +481,7 @@ object Scala2PickleReader:
     end buildAnyRefParent
 
     private def makePickleSym(
-        kind: Tasty.SymbolKind,
+        kind: SymbolKind,
         flags: Tasty.Flags,
         name: String
     )(using AllowUnsafe): Tasty.Symbol =
@@ -489,7 +490,7 @@ object Scala2PickleReader:
 
     /** Variant of makePickleSym with a specified declaredType. */
     private def makePickleSymWithType(
-        kind: Tasty.SymbolKind,
+        kind: SymbolKind,
         flags: Tasty.Flags,
         name: String,
         declaredType: kyo.Maybe[Tasty.Type]

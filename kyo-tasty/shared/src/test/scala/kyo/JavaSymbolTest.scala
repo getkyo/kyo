@@ -1,5 +1,4 @@
 package kyo
-
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileResult
 import kyo.internal.tasty.classfile.ClassfileUnpickler
@@ -9,6 +8,7 @@ import kyo.internal.tasty.reader.NameUnpickler
 import kyo.internal.tasty.reader.SectionIndex
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 
 /** Phase 5b tests for the unified Java symbol surface.
@@ -83,7 +83,7 @@ class JavaSymbolTest extends Test:
                     AstUnpickler.readPass1(astView, names, attrs, arena)
                 case Absent =>
                     Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found", 0L))
-        yield result.symbols.find(_.kind == Tasty.SymbolKind.Class).getOrElse(result.rootSymbol)
+        yield result.symbols.find(_.kind == SymbolKind.Class).getOrElse(result.rootSymbol)
         end for
     end firstClassSymbolFromTasty
 
@@ -292,7 +292,7 @@ class JavaSymbolTest extends Test:
         val bytes = kyo.fixtures.Embedded.throwsFixtureClass
         readClass(bytes).map: result =>
             val methodsWithThrows = result.symbols.filter: sym =>
-                sym.kind == Tasty.SymbolKind.Method &&
+                sym.kind == SymbolKind.Method &&
                     symJavaMetadata(sym).map(_.throwsTypes.nonEmpty).getOrElse(false)
             assert(
                 methodsWithThrows.nonEmpty,

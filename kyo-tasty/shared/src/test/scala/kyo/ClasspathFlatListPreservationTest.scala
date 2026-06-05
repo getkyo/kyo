@@ -2,6 +2,7 @@ package kyo
 
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
+import kyo.internal.tasty.symbol.SymbolKind
 import scala.collection.mutable
 
 /** Plan-mandated tests for Phase 02 (leaves 41-42): verify that cp.symbols still returns all symbols as Chunk[Symbol].
@@ -46,7 +47,7 @@ class ClasspathFlatListPreservationTest extends Test:
             Abort.run[TastyError](openFixtureCp.flatMap: cp =>
                 Kyo.lift:
                     val all    = cp.symbols
-                    val byKind = Tasty.SymbolKind.values.foldLeft(0)((acc, k) => acc + all.count(_.kind == k))
+                    val byKind = SymbolKind.values.foldLeft(0)((acc, k) => acc + all.count(_.kind == k))
                     (all.length, byKind)).map:
                 case Result.Success((total, byKind)) =>
                     assert(total == byKind, s"cp.symbols.size ($total) != sum of per-kind counts ($byKind)")

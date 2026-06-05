@@ -7,9 +7,11 @@ import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.PlatformFileSource
 import kyo.internal.tasty.query.PlatformModuleOps
 import kyo.internal.tasty.query.TastyStat
+import kyo.internal.tasty.query.TastyState
 import kyo.internal.tasty.snapshot.DigestComputer as SnapshotDigest
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.stats.Attributes
 import scala.collection.immutable.IntMap
 
@@ -387,17 +389,6 @@ object Tasty:
         @scala.annotation.targetName("flagShow")
         def show: String = Flag.name(flag)
     end extension
-
-    // ── Symbol kinds (internal only) ────────────────────────────────────────
-    // SymbolKind is kept as private[kyo] for the snapshot wire format
-    // (SnapshotWriter uses sym.kind.ordinal.toByte as the discriminator byte).
-    // It is NOT part of the public API surface. User code should use sealed
-    // pattern matching on Symbol subtypes instead.
-    private[kyo] enum SymbolKind derives CanEqual:
-        case Package, Class, Trait, Object, Method, Field, Val, Var,
-            TypeAlias, OpaqueType, AbstractType, TypeParam, Parameter,
-            EnumCase, Unresolved
-    end SymbolKind
 
     // ── Error mode ───────────────────────────────────────────────────────────
 
@@ -2156,33 +2147,15 @@ object Tasty:
 
     // ── Binding local and entry points ─────────────────────────────────────
 
-    /** Thread-local binding that carries the active Classpath and optional DecodeContext.
-      *
-      * Set by `withClasspath`, `withPickles`, and the lazy module-level fallback.
-      * Query operations on object Tasty read this local to obtain the classpath.
-      *
-      * private[kyo]: accessible within package kyo and kyo.* sub-packages only.
-      */
-    private[kyo] val bindingLocal: Local[Maybe[Binding]] = Local.init(Maybe.Absent)
-
-    /** Module-level lazy fallback binding.
-      *
-      * INV-009 site-2: on JVM, cold-loads java.class.path exactly once per process.
-      * On JS and Native, returns Binding.empty (no classpath enumeration available).
-      * The lazy val ensures initialization runs at most once. The AllowUnsafe boundary
-      * is confined to PlatformFallback.initFallback on each platform.
-      */
-    private[kyo] lazy val current: Binding = kyo.internal.tasty.query.PlatformFallback.initFallback
-
     /** Get the current Classpath from the active binding, falling back to the module-level JVM classpath.
       *
       * Returns the JVM classpath stub when called outside a `withClasspath` scope.
       *
-      * Effect row: Sync, because reading the lazy val `current` may trigger initialization.
+      * Effect row: Sync, because reading the lazy val TastyState.global may trigger initialization.
       */
     def classpath(using Frame): Classpath < Sync =
-        bindingLocal.use: mbind =>
-            Sync.defer(mbind.getOrElse(current).cp)
+        TastyState.bindingLocal.use: mbind =>
+            Sync.defer(mbind.getOrElse(TastyState.global).cp)
 
     /** Bind a fresh Classpath loaded from `roots` and run `f` in that scope.
       *
@@ -2203,7 +2176,7 @@ object Tasty:
     )(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
         Scope.run:
             ClasspathOrchestrator.coldLoadBinding(roots, ErrorMode.SoftFail, cacheDir).map: binding =>
-                bindingLocal.let(Maybe.Present(binding))(f)
+                TastyState.bindingLocal.let(Maybe.Present(binding))(f)
 
     /** Bind a pre-existing (deserialized) Classpath and run `f` in that scope.
       *
@@ -2213,7 +2186,7 @@ object Tasty:
       * Effect row: `A < S` -- identical to `f`'s row.
       */
     def withClasspath[A, S](cp: Classpath)(f: => A < S)(using Frame): A < S =
-        bindingLocal.let(Maybe.Present(Binding(cp, Maybe.Absent)))(f)
+        TastyState.bindingLocal.let(Maybe.Present(Binding(cp, Maybe.Absent)))(f)
 
     /** Bind a Classpath decoded from in-memory pickles and run `f` in that scope.
       *
@@ -2229,7 +2202,7 @@ object Tasty:
     def withPickles[A, S](pickles: Chunk[Pickle])(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
         Scope.run:
             ClasspathOrchestrator.loadPickles(pickles).map: binding =>
-                bindingLocal.let(Maybe.Present(binding))(f)
+                TastyState.bindingLocal.let(Maybe.Present(binding))(f)
 
     /** Delete snapshot files in `cacheDir` whose modification time is older than `maxAge`.
       *
@@ -2247,7 +2220,7 @@ object Tasty:
       * field after `init` returns is a pure operation with no effect row and no `AllowUnsafe`.
       *
       * Pure data: no mutable state. Body decoding (bodyTree) is now on `object Tasty` and reads
-      * the body memo from the `DecodeContext` carried by the active `Binding` in `bindingLocal`.
+      * the body memo from the `DecodeContext` carried by the active `Binding` in `TastyState.bindingLocal`.
       *
       * All query operations live on `object Tasty.*` and accept an explicit `(using cp: Classpath)`.
       *
@@ -2899,6 +2872,28 @@ object Tasty:
                     diagnostics == i.diagnostics
                 case _ => false
             end equals
+
+            // Override hashCode so that structurally-equal Indices instances produce the same hash.
+            // The auto-generated case-class hashCode mixes each Dict's reference-based hashCode, which
+            // violates the equals/hashCode contract established by the equals override above (WARN-1 fix).
+            // XOR-based fold over (key, value) pairs is used for each Dict field because XOR is commutative
+            // and iteration order over Dict is not guaranteed to be stable.
+            override def hashCode(): Int =
+                def dictHash[K, V](d: Dict[K, V]): Int =
+                    d.foldLeft(0)((h, k, v) => h ^ (k.hashCode * 31 + v.hashCode))
+                var h = 1
+                h = 31 * h + dictHash(byFqn)
+                h = 31 * h + dictHash(bySimpleName)
+                h = 31 * h + dictHash(packageIndex)
+                h = 31 * h + dictHash(subclassIndex)
+                h = 31 * h + dictHash(companionIndex)
+                h = 31 * h + dictHash(modulesIndex)
+                h = 31 * h + topLevelClassIds.hashCode
+                h = 31 * h + packageIds.hashCode
+                h = 31 * h + dictHash(unresolvedFqnByNegId)
+                h = 31 * h + diagnostics.hashCode
+                h
+            end hashCode
         end Indices
 
         object Indices:
@@ -3216,8 +3211,8 @@ object Tasty:
     end Snapshot
 
     // ── Tasty.* query operations ────────────────────────────────────────────
-    // All query operations read the active binding from bindingLocal. They carry
-    // < Sync in their effect row because the lazy fallback Tasty.current may trigger
+    // All query operations read the active binding from TastyState.bindingLocal. They carry
+    // < Sync in their effect row because the lazy fallback TastyState.global may trigger
     // initialization on the first call (INV-009 site-2).
 
     /** Look up a class symbol by FQN. Returns Absent when not found. */
@@ -3426,10 +3421,6 @@ object Tasty:
                 case _               => Maybe.Absent
             ).map(_.map(cp.symbol)).getOrElse(Chunk.empty)
 
-    /** Return declared members of sym matching the given SymbolKind. */
-    def membersByKind(sym: Symbol, kind: SymbolKind)(using Frame): Chunk[Symbol] < Sync =
-        declarations(sym).map(_.filter(_.kind == kind))
-
     /** Direct parent ClassLike symbols of a ClassLike. */
     def parents(cl: Symbol.ClassLike)(using Frame): Chunk[Symbol] < Sync =
         classpath.map: cp =>
@@ -3521,7 +3512,7 @@ object Tasty:
       *
       * Returns `Absent` for symbols whose `bodyRecord` slot is `Absent` (Package, Java, and symbols without an AST
       * body slice), and also returns `Absent` when called outside a `withClasspath(roots,...)` or `withPickles`
-      * scope (i.e. when `bindingLocal` holds a `Binding` with no `DecodeContext`).
+      * scope (i.e. when `TastyState.bindingLocal` holds a `Binding` with no `DecodeContext`).
       *
       * Memoization: the first call for a given `sym` decodes the bytes and stores the result (success or failure)
       * in the `DecodeContext`'s `bodyMemo`. All subsequent calls for the same `sym` return the stored result
@@ -3543,7 +3534,7 @@ object Tasty:
         maybeBody match
             case Maybe.Absent => Maybe.Absent
             case Maybe.Present(blob) =>
-                bindingLocal.use: mbind =>
+                TastyState.bindingLocal.use: mbind =>
                     val maybeCtx = mbind.flatMap(_.decodeCtx)
                     if maybeCtx.isEmpty then Maybe.Absent
                     else

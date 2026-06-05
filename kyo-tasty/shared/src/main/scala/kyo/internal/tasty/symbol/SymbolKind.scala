@@ -3,6 +3,21 @@ package kyo.internal.tasty.symbol
 import kyo.Tasty
 import kyo.internal.tasty.reader.TastyFormat
 
+/** Canonical SymbolKind enum.
+  *
+  * Ordinal values are written to snapshot byte streams by SnapshotWriter (sym.kind.ordinal.toByte) and
+  * decoded by SnapshotReader.kindFromOrd. The ordinal-to-case mapping must never change:
+  * Package=0, Class=1, Trait=2, Object=3, Method=4, Field=5, Val=6, Var=7,
+  * TypeAlias=8, OpaqueType=9, AbstractType=10, TypeParam=11, Parameter=12, EnumCase=13, Unresolved=14.
+  *
+  * User code should pattern-match on Symbol subtypes rather than on SymbolKind directly.
+  */
+private[kyo] enum SymbolKind derives CanEqual:
+    case Package, Class, Trait, Object, Method, Field, Val, Var,
+        TypeAlias, OpaqueType, AbstractType, TypeParam, Parameter,
+        EnumCase, Unresolved
+end SymbolKind
+
 /** TASTy-tag-to-SymbolKind mapping.
   *
   * TYPEDEF discrimination: TYPEDEF is shared between class-like definitions (where the sub-tree after NameRef is TEMPLATE=156) and
@@ -19,15 +34,15 @@ object SymbolKind:
       *   - OBJECT (bit for Flag.Module): Object
       *   - else: Class
       */
-    def fromTypedefTemplateFlags(flags: Long): Tasty.SymbolKind =
-        if (flags & Tasty.Flag.bits(Tasty.Flag.Trait)) != 0L then Tasty.SymbolKind.Trait
-        else if (flags & Tasty.Flag.bits(Tasty.Flag.Module)) != 0L then Tasty.SymbolKind.Object
+    def fromTypedefTemplateFlags(flags: Long): SymbolKind =
+        if (flags & Tasty.Flag.bits(Tasty.Flag.Trait)) != 0L then SymbolKind.Trait
+        else if (flags & Tasty.Flag.bits(Tasty.Flag.Module)) != 0L then SymbolKind.Object
         else if (flags & Tasty.Flag.bits(Tasty.Flag.Enum)) != 0L && (flags & Tasty.Flag.bits(Tasty.Flag.Case)) != 0L then
             // F-E-007: enum-case classes carry both the Enum and Case flags.
             // Enum-case OBJECTS additionally carry Module; the Module branch above handles those,
             // ensuring only class-form enum cases (no Module flag) reach this branch.
-            Tasty.SymbolKind.EnumCase
-        else Tasty.SymbolKind.Class
+            SymbolKind.EnumCase
+        else SymbolKind.Class
 
     /** Resolve SymbolKind from a TYPEDEF modifier flags bitmask and the sub-tree tag, where the caller has confirmed the TYPEDEF payload
       * does NOT contain a TEMPLATE (type-level definition). Discriminants (checked in order):
@@ -36,13 +51,13 @@ object SymbolKind:
       *     emits TYPEBOUNDS or TYPEBOUNDStpt for abstract type members; the ABSTRACT (Deferred) modifier may or may not be present.
       *   - else: TypeAlias
       */
-    def fromTypedefTypeFlagsAndBody(flags: Long, bodyTag: Int): Tasty.SymbolKind =
-        if (flags & Tasty.Flag.bits(Tasty.Flag.Opaque)) != 0L then Tasty.SymbolKind.OpaqueType
+    def fromTypedefTypeFlagsAndBody(flags: Long, bodyTag: Int): SymbolKind =
+        if (flags & Tasty.Flag.bits(Tasty.Flag.Opaque)) != 0L then SymbolKind.OpaqueType
         else if (flags & Tasty.Flag.bits(Tasty.Flag.Abstract)) != 0L
             || bodyTag == TastyFormat.TYPEBOUNDS
             || bodyTag == TastyFormat.TYPEBOUNDStpt
-        then Tasty.SymbolKind.AbstractType
-        else Tasty.SymbolKind.TypeAlias
+        then SymbolKind.AbstractType
+        else SymbolKind.TypeAlias
 
     /** Resolve SymbolKind from a TYPEDEF modifier flags bitmask, where the caller has confirmed the TYPEDEF payload does NOT contain a
       * TEMPLATE (type-level definition). Discriminants:
@@ -52,30 +67,30 @@ object SymbolKind:
       *
       * Prefer fromTypedefTypeFlagsAndBody when the sub-tree tag is available, for more reliable AbstractType detection.
       */
-    def fromTypedefTypeFlags(flags: Long): Tasty.SymbolKind =
-        if (flags & Tasty.Flag.bits(Tasty.Flag.Opaque)) != 0L then Tasty.SymbolKind.OpaqueType
-        else if (flags & Tasty.Flag.bits(Tasty.Flag.Abstract)) != 0L then Tasty.SymbolKind.AbstractType
-        else Tasty.SymbolKind.TypeAlias
+    def fromTypedefTypeFlags(flags: Long): SymbolKind =
+        if (flags & Tasty.Flag.bits(Tasty.Flag.Opaque)) != 0L then SymbolKind.OpaqueType
+        else if (flags & Tasty.Flag.bits(Tasty.Flag.Abstract)) != 0L then SymbolKind.AbstractType
+        else SymbolKind.TypeAlias
 
     /** Map a VALDEF modifier flags bitmask to Val or Var. */
-    def fromValdefFlags(flags: Long): Tasty.SymbolKind =
-        if (flags & Tasty.Flag.bits(Tasty.Flag.Mutable)) != 0L then Tasty.SymbolKind.Var
-        else Tasty.SymbolKind.Val
+    def fromValdefFlags(flags: Long): SymbolKind =
+        if (flags & Tasty.Flag.bits(Tasty.Flag.Mutable)) != 0L then SymbolKind.Var
+        else SymbolKind.Val
 
     /** Dispatch entry point mandated by plan line 196. Maps an AST tag and collected modifier flags to a SymbolKind. TYPEDEF with a
       * TEMPLATE body must have been detected and split by the caller (AstUnpickler) before calling this; pass the flags from the
       * appropriate helper accordingly.
       */
-    def fromTagAndFlags(tag: Int, flags: Long): Tasty.SymbolKind =
+    def fromTagAndFlags(tag: Int, flags: Long): SymbolKind =
         import TastyFormat.*
         tag match
-            case PACKAGE   => Tasty.SymbolKind.Package
+            case PACKAGE   => SymbolKind.Package
             case TYPEDEF   => fromTypedefTypeFlags(flags)
             case VALDEF    => fromValdefFlags(flags)
-            case DEFDEF    => Tasty.SymbolKind.Method
-            case TYPEPARAM => Tasty.SymbolKind.TypeParam
-            case PARAM     => Tasty.SymbolKind.Parameter
-            case _         => Tasty.SymbolKind.Unresolved
+            case DEFDEF    => SymbolKind.Method
+            case TYPEPARAM => SymbolKind.TypeParam
+            case PARAM     => SymbolKind.Parameter
+            case _         => SymbolKind.Unresolved
         end match
     end fromTagAndFlags
 

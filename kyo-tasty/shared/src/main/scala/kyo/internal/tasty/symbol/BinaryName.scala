@@ -39,7 +39,7 @@ private[kyo] object BinaryName:
             else
                 val ownerKind = owner.kind
                 val sep =
-                    if ownerKind == Tasty.SymbolKind.Package then "/"
+                    if ownerKind == SymbolKind.Package then "/"
                     else "$"
                 buildSegments(owner, cp, sep :: nameStr :: suffix)
             end if

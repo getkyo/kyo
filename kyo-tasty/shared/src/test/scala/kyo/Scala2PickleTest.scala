@@ -1,9 +1,9 @@
 package kyo
-
 import kyo.Tasty.SymbolId
 import kyo.internal.tasty.classfile.ClassfileUnpickler
 import kyo.internal.tasty.scala2.Scala2PickleReader
 import kyo.internal.tasty.scala2.Scala2PickleResult
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 
 /** Tests for Phase 10: Scala 2 pickle reader.
@@ -116,12 +116,12 @@ class Scala2PickleTest extends Test:
         val classEntry  = entry(Scala2PickleReader.CLASSsym, symData(0, 0, Scala2PickleReader.CASE_FLAG))
         val pickleBytes = buildPickle(nameEntry, classEntry)
         readPickleDirect(pickleBytes).map: result =>
-            val classSyms = result.symbols.filter(_.kind == Tasty.SymbolKind.Class)
+            val classSyms = result.symbols.filter(_.kind == SymbolKind.Class)
             assert(classSyms.nonEmpty, "Expected at least one Class symbol")
             val caseClass = classSyms.find(_.flags.contains(Tasty.Flag.Case))
             assert(caseClass.isDefined, s"Expected a Class symbol with Flag.Case; flags: ${classSyms.map(_.flags.bits).mkString(", ")}")
             val sym = caseClass.get
-            assert(sym.kind == Tasty.SymbolKind.Class, s"Expected kind=Class, got ${sym.kind}")
+            assert(sym.kind == SymbolKind.Class, s"Expected kind=Class, got ${sym.kind}")
             assert(sym.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2")
     }
 
@@ -135,7 +135,7 @@ class Scala2PickleTest extends Test:
         val methodEntry = entry(Scala2PickleReader.VALsym, symData(0, 0, Scala2PickleReader.METH_FLAG))
         val pickleBytes = buildPickle(nameEntry, methodEntry)
         readPickleDirect(pickleBytes).map: result =>
-            val methods = result.symbols.filter(_.kind == Tasty.SymbolKind.Method)
+            val methods = result.symbols.filter(_.kind == SymbolKind.Method)
             assert(methods.nonEmpty, "Expected at least one Method symbol")
             val method = methods.head
             assert(method.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2")
@@ -164,10 +164,10 @@ class Scala2PickleTest extends Test:
         val aliasEntry  = entry(Scala2PickleReader.ALIASsym, symData(0, 0, 0L))
         val pickleBytes = buildPickle(nameEntry, aliasEntry)
         readPickleDirect(pickleBytes).map: result =>
-            val aliases = result.symbols.filter(_.kind == Tasty.SymbolKind.TypeAlias)
+            val aliases = result.symbols.filter(_.kind == SymbolKind.TypeAlias)
             assert(aliases.nonEmpty, "Expected at least one TypeAlias symbol")
             val alias = aliases.head
-            assert(alias.kind == Tasty.SymbolKind.TypeAlias, s"Expected TypeAlias, got ${alias.kind}")
+            assert(alias.kind == SymbolKind.TypeAlias, s"Expected TypeAlias, got ${alias.kind}")
             assert(alias.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2")
             // plan: phase-05; Named(id) no longer carries a Symbol name directly; name check deferred to Phase 09.
             (alias match
@@ -263,7 +263,7 @@ class Scala2PickleTest extends Test:
         val fooExtEntry    = entry(Scala2PickleReader.EXTref, nat(2) ++ nat(1)) // nameRef=2, ownerRef=1
         val pickleBytes    = buildPickle(ownerNameEntry, ownerExtEntry, fooNameEntry, fooExtEntry)
         readPickleDirect(pickleBytes).map: result =>
-            val unresolved = result.symbols.filter(_.kind == Tasty.SymbolKind.Unresolved)
+            val unresolved = result.symbols.filter(_.kind == SymbolKind.Unresolved)
             assert(unresolved.nonEmpty, s"Expected Unresolved symbols; got kinds: ${result.symbols.map(_.kind).mkString(", ")}")
             val fooSym = unresolved.find(_.name.asString == "com.example.Foo")
             assert(fooSym.isDefined, s"Expected symbol with FQN 'com.example.Foo'; got: ${unresolved.map(_.name.asString).mkString(", ")}")
@@ -286,7 +286,7 @@ class Scala2PickleTest extends Test:
         val fooModEntry    = entry(Scala2PickleReader.EXTMODCLASSref, nat(2) ++ nat(1))
         val pickleBytes    = buildPickle(ownerNameEntry, ownerExtEntry, fooNameEntry, fooModEntry)
         readPickleDirect(pickleBytes).map: result =>
-            val unresolved = result.symbols.filter(_.kind == Tasty.SymbolKind.Unresolved)
+            val unresolved = result.symbols.filter(_.kind == SymbolKind.Unresolved)
             assert(unresolved.nonEmpty, s"Expected Unresolved symbols; got kinds: ${result.symbols.map(_.kind).mkString(", ")}")
             val modSym = unresolved.find(_.name.asString == "com.example.Foo$")
             assert(
@@ -317,7 +317,7 @@ class Scala2PickleTest extends Test:
         val cyclicExtRef = entry(Scala2PickleReader.EXTref, nat(0) ++ nat(1)) // nameRef=0, ownerRef=1 (self)
         val pickleBytes  = buildPickle(fooNameEntry, cyclicExtRef)
         readPickleDirect(pickleBytes).map: result =>
-            val unresolved = result.symbols.filter(_.kind == Tasty.SymbolKind.Unresolved)
+            val unresolved = result.symbols.filter(_.kind == SymbolKind.Unresolved)
             assert(unresolved.nonEmpty, s"Expected at least one Unresolved symbol; got: ${result.symbols.map(_.kind).mkString(", ")}")
             // The cycle is detected after one recursion step; the FQN is finite (not an infinite string).
             // Concretely it resolves to "Foo.Foo" (owner "Foo" prepended once before cycle cutoff).

@@ -4,6 +4,7 @@ import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.DecodeContext
+import kyo.internal.tasty.query.TastyState
 
 /** Phase 03 plan leaves 22-23: Tasty.bodyTree.
   *
@@ -24,7 +25,7 @@ class BodyTreeTest extends Test:
             Abort.run[TastyError](
                 ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).flatMap: cp =>
                     val binding = Binding(cp, Maybe.Present(DecodeContext.fresh()))
-                    Tasty.bindingLocal.let(Maybe.Present(binding)):
+                    TastyState.bindingLocal.let(Maybe.Present(binding)):
                         // Find any method that likely has a body (SomeObject.foo or similar)
                         val methodOpt = cp.allMethods.toSeq.find(m => !m.isAbstract)
                         methodOpt match

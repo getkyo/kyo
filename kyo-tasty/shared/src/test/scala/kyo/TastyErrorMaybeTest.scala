@@ -6,6 +6,7 @@ import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TreeUnpickler
 import kyo.internal.tasty.snapshot.SnapshotFormat
 import kyo.internal.tasty.snapshot.SnapshotReader
+import kyo.internal.tasty.symbol.SymbolKind
 import scala.collection.immutable.IntMap
 import scala.collection.mutable
 
@@ -283,7 +284,7 @@ class TastyErrorMaybeTest extends Test:
         val sectionBytes: Array[Byte] = Array(unknownCat2Tag, natZero)
 
         val sym = Tasty.Symbol.makePlaceholder(
-            Tasty.SymbolKind.Unresolved,
+            SymbolKind.Unresolved,
             Tasty.Flags.empty,
             Tasty.Name("testSym")
         )

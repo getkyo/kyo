@@ -2,6 +2,7 @@ package kyo
 
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
+import kyo.internal.tasty.symbol.SymbolKind
 import scala.collection.mutable
 
 /** Tests for Symbol accessors after Phase 02a (INV-001).
@@ -142,7 +143,7 @@ class TastySymbolTest extends Test:
                         Abort.fail(TastyError.NotImplemented("SomeCaseClass not found"))).map:
                 case Result.Success(Present(compSym)) =>
                     assert(
-                        compSym.kind == Tasty.SymbolKind.Object,
+                        compSym.kind == SymbolKind.Object,
                         s"Expected companion kind Object but got ${compSym.kind}"
                     )
                 case Result.Success(Absent) =>
@@ -157,16 +158,16 @@ class TastySymbolTest extends Test:
 
     // plan: phase-02 bridge; helpers use Symbol.make(kind, flags, name) - owner no longer stored on Symbol.
     private def makeRoot(): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Package, Tasty.Flags.empty, Tasty.Name(""))
+        Tasty.Symbol.makePlaceholder(SymbolKind.Package, Tasty.Flags.empty, Tasty.Name(""))
 
     private def makePkg(name: String, owner: Tasty.Symbol): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Package, Tasty.Flags.empty, Tasty.Name(name))
+        Tasty.Symbol.makePlaceholder(SymbolKind.Package, Tasty.Flags.empty, Tasty.Name(name))
 
     private def makeClass(name: String, owner: Tasty.Symbol): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(name))
+        Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(name))
 
     private def makeModule(name: String, owner: Tasty.Symbol): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Object, Tasty.Flags(Tasty.Flag.Module), Tasty.Name(name))
+        Tasty.Symbol.makePlaceholder(SymbolKind.Object, Tasty.Flags(Tasty.Flag.Module), Tasty.Name(name))
 
     // Test 1 (INV: T1, kyo.internal.tasty.symbol.BinaryName.compute(Symbol, cp)): nested Scala class produces JVM binary name with '$' separator.
     // Given: synthetic Symbol tree com.example.Outer.Inner where Outer and Inner have SymbolKind.Class.
@@ -272,11 +273,11 @@ class TastySymbolTest extends Test:
     // plan: phase-02 update; Symbol.make now takes (kind, flags, name) only. sym.owner removed.
     "Symbol.make produces Symbol with correct kind and name" in {
         val sym = Tasty.Symbol.makePlaceholder(
-            Tasty.SymbolKind.Class,
+            SymbolKind.Class,
             Tasty.Flags.empty,
             Tasty.Name("Foo")
         )
-        assert(sym.kind == Tasty.SymbolKind.Class, s"Expected kind Class but got ${sym.kind}")
+        assert(sym.kind == SymbolKind.Class, s"Expected kind Class but got ${sym.kind}")
         assert(sym.name.asString == "Foo", s"Expected name 'Foo' but got '${sym.name.asString}'")
     }
 
@@ -472,14 +473,14 @@ class TastySymbolTest extends Test:
     // Pins: T1 (kind accessor coverage).
     "Symbol.kind returns the kind passed to Symbol.make" in {
         val root = makeRoot()
-        val kindCases: List[(String, Tasty.SymbolKind)] = List(
-            ("ClassSym", Tasty.SymbolKind.Class),
-            ("TraitSym", Tasty.SymbolKind.Trait),
-            ("ObjSym", Tasty.SymbolKind.Object),
-            ("MethodSym", Tasty.SymbolKind.Method),
-            ("FieldSym", Tasty.SymbolKind.Field),
-            ("ValSym", Tasty.SymbolKind.Val),
-            ("VarSym", Tasty.SymbolKind.Var)
+        val kindCases: List[(String, SymbolKind)] = List(
+            ("ClassSym", SymbolKind.Class),
+            ("TraitSym", SymbolKind.Trait),
+            ("ObjSym", SymbolKind.Object),
+            ("MethodSym", SymbolKind.Method),
+            ("FieldSym", SymbolKind.Field),
+            ("ValSym", SymbolKind.Val),
+            ("VarSym", SymbolKind.Var)
         )
         val mismatches = kindCases.flatMap { (name, expectedKind) =>
             // plan: phase-02 bridge; Symbol.make(kind, flags, name).

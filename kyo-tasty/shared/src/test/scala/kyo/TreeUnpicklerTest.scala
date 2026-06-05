@@ -1,5 +1,4 @@
 package kyo
-
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
@@ -10,6 +9,7 @@ import kyo.internal.tasty.reader.SectionIndex
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
 import kyo.internal.tasty.reader.TreeUnpickler
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
@@ -76,7 +76,7 @@ class TreeUnpicklerTest extends Test:
 
     /** Dummy symbolLookup for Phase 02 tree decode (addrMap is empty; this is never called). */
     private val dummyLookup: Int => Tasty.Symbol =
-        _ => Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("unresolved"))
+        _ => Tasty.Symbol.makePlaceholder(SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("unresolved"))
 
     private def runPass1(bytes: Array[Byte])(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
         val view  = ByteView(bytes)
@@ -133,7 +133,7 @@ class TreeUnpicklerTest extends Test:
     "Test 1: body of SomeObject.value decodes to top-level Literal/Block/Typed/ValDef containing IntConst(42)" in run {
         Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.someObjectTasty)).map:
             case Result.Success(pass1) =>
-                val valueSym = pass1.symbols.find(s => s.name.asString == "value" && s.kind == Tasty.SymbolKind.Val)
+                val valueSym = pass1.symbols.find(s => s.name.asString == "value" && s.kind == SymbolKind.Val)
                 valueSym match
                     case None =>
                         fail(
@@ -190,7 +190,7 @@ class TreeUnpicklerTest extends Test:
         Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.someObjectTasty)).map:
             case Result.Success(pass1) =>
                 import AllowUnsafe.embrace.danger
-                val methodSyms = pass1.symbols.filter(_.kind == Tasty.SymbolKind.Method)
+                val methodSyms = pass1.symbols.filter(_.kind == SymbolKind.Method)
                 val decodedBodies = methodSyms.flatMap: sym =>
                     symbolBody(sym, pass1) match
                         case Present(body) => Chunk(sym -> TreeUnpickler.decodeSync(body, sym, dummyLookup))
@@ -313,7 +313,7 @@ class TreeUnpicklerTest extends Test:
     "Test 8: a 1-byte truncated body slice does not cause an unhandled exception" in run {
         Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.someObjectTasty)).map:
             case Result.Success(pass1) =>
-                val valueSym = pass1.symbols.find(s => s.name.asString == "value" && s.kind == Tasty.SymbolKind.Val)
+                val valueSym = pass1.symbols.find(s => s.name.asString == "value" && s.kind == SymbolKind.Val)
                 valueSym match
                     case None =>
                         succeed
@@ -344,7 +344,7 @@ class TreeUnpicklerTest extends Test:
     "Test 9: two consecutive _bodyOnce.get() calls return the same Tree reference" in run {
         Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.someObjectTasty)).map:
             case Result.Success(pass1) =>
-                val valueSym = pass1.symbols.find(s => s.name.asString == "value" && s.kind == Tasty.SymbolKind.Val)
+                val valueSym = pass1.symbols.find(s => s.name.asString == "value" && s.kind == SymbolKind.Val)
                 valueSym match
                     case None =>
                         succeed
@@ -391,7 +391,7 @@ class TreeUnpicklerTest extends Test:
     "Phase17-A: UNITconst pickle decodes to Literal(UnitConst)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val sym     = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Int"))
+        val sym     = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Int"))
         val names   = Array(Tasty.Name("scala"))
         val addrMap = IntMap(1 -> sym)
         val pickle  = Array(TastyFormat.UNITconst.toByte)
@@ -406,7 +406,7 @@ class TreeUnpicklerTest extends Test:
     // Test B (INV-006): Annotation with an empty arguments chunk (empty pickle case) holds Chunk.empty.
     // Phase 08: empty annotation pickle path produces an empty chunk directly in ANNOTATEDtype.
     "Phase17-B: Annotation with an empty arguments chunk holds Chunk.empty" in {
-        val sym = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Foo"))
+        val sym = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Foo"))
         val ann = Tasty.Annotation(Tasty.Type.Named(sym.id), Chunk.empty)
         assert(ann.arguments.isEmpty, s"Expected empty arguments but got ${ann.arguments}")
         succeed
@@ -520,8 +520,8 @@ class TreeUnpicklerTest extends Test:
     "Phase18c-1: APPLIEDtype decodes tycon + one arg into Tree.AppliedType" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val listSym = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("List"))
-        val intSym  = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Int"))
+        val listSym = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("List"))
+        val intSym  = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Int"))
         val names   = Array(Tasty.Name("scala"))
         val addrMap = IntMap(1 -> listSym, 2 -> intSym)
         // APPLIEDtype(161=0xA1) Length(4=0x84) TERMREFdirect(62=0x3E) nat(1)=0x81 TERMREFdirect(62=0x3E) nat(2)=0x82
@@ -554,7 +554,7 @@ class TreeUnpicklerTest extends Test:
     "Phase18c-2: MATCHtype with 2 case nodes decodes into Tree.MatchType with cases.length==2" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        def makeSym(n: String) = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(n))
+        def makeSym(n: String) = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(n))
         val boundSym           = makeSym("Bound")
         val scrutSym           = makeSym("Scrut")
         val case1Sym           = makeSym("Case1")
@@ -610,8 +610,8 @@ class TreeUnpicklerTest extends Test:
     "Phase18d-2: SELECTin with nameRef + qual + owner decodes to Tree.SelectIn" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        val listSym  = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("List"))
-        val scalaSym = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("scala"))
+        val listSym  = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("List"))
+        val scalaSym = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("scala"))
         val names    = Array(Tasty.Name("map"))
         val addrMap  = IntMap(1 -> listSym, 2 -> scalaSym)
         val pickle = Array[Byte](
@@ -652,7 +652,7 @@ class TreeUnpicklerTest extends Test:
         Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.someObjectTasty)).map:
             case Result.Success(pass1) =>
                 import AllowUnsafe.embrace.danger
-                val valueSym = pass1.symbols.find(s => s.name.asString == "value" && s.kind == Tasty.SymbolKind.Val)
+                val valueSym = pass1.symbols.find(s => s.name.asString == "value" && s.kind == SymbolKind.Val)
                 valueSym match
                     case None =>
                         succeed
@@ -682,7 +682,7 @@ class TreeUnpicklerTest extends Test:
     "Phase18e-2: APPLY with fun + 2 args decodes to Tree.Apply with fun and 2-element args chunk" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        def makeSym(n: String) = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Method, Tasty.Flags.empty, Tasty.Name(n))
+        def makeSym(n: String) = Tasty.Symbol.makePlaceholder(SymbolKind.Method, Tasty.Flags.empty, Tasty.Name(n))
         val fnSym              = makeSym("fn")
         val arg1Sym            = makeSym("arg1")
         val arg2Sym            = makeSym("arg2")

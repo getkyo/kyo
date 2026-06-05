@@ -1,6 +1,6 @@
 package kyo
-
 import kyo.Tasty.SymbolId
+import kyo.internal.tasty.symbol.SymbolKind
 
 /** Phase 02 plan-mandated tests for the Symbol pure case class skeleton.
   *
@@ -61,7 +61,7 @@ class SymbolCaseClassTest extends Test:
             parentTypes = Chunk(Tasty.Type.Named(makeTestSymbol(id = 1, name = "AnyRef").id))
         )
         assert(sym.id == SymbolId(7), s"id: ${sym.id}")
-        assert(sym.kind == Tasty.SymbolKind.Class, s"kind: ${sym.kind}")
+        assert(sym.kind == SymbolKind.Class, s"kind: ${sym.kind}")
         assert(sym.flags.contains(Tasty.Flag.Final), s"flags: ${sym.flags.bits}")
         assert(sym.name.asString == "Bar", s"name: ${sym.name.asString}")
         assert(sym.ownerId == SymbolId(3), s"ownerId: ${sym.ownerId}")

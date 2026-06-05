@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Tasty.SymbolId
+import kyo.internal.tasty.symbol.SymbolKind
 
 /** Phase 04 plan-mandated tests for the pure-data Symbol flag and kind predicates.
   *
@@ -18,7 +19,7 @@ class SymbolPredicateTest extends Test:
     // ── Fixture ─────────────────────────────────────────────────────────────
 
     private def makeSymbol(
-        kind: Tasty.SymbolKind = Tasty.SymbolKind.Class,
+        kind: SymbolKind = SymbolKind.Class,
         flags: Tasty.Flags = Tasty.Flags.empty
     ): Tasty.Symbol =
         Tasty.Symbol.makePlaceholder(kind, flags, Tasty.Name("TestSym")) match
@@ -113,10 +114,10 @@ class SymbolPredicateTest extends Test:
         assert(sym.isOpen, "isOpen")
         assert(sym.isTransparent, "isTransparent")
         // isMacro requires Symbol.Method && !Flag.Synthetic (F-E-006 fix); test with a Method that has Flag.Macro but not Synthetic.
-        val macroMethodSym = makeSymbol(kind = Tasty.SymbolKind.Method, flags = flagsOf(Tasty.Flag.Macro))
+        val macroMethodSym = makeSymbol(kind = SymbolKind.Method, flags = flagsOf(Tasty.Flag.Macro))
         assert(macroMethodSym.isMacro, "isMacro: Method + Flag.Macro without Synthetic must return true")
         assert(!sym.isMacro, "isMacro: non-Method symbol with Flag.Macro must return false (kind check)")
-        val syntheticMacroSym = makeSymbol(kind = Tasty.SymbolKind.Method, flags = flagsOf(Tasty.Flag.Macro, Tasty.Flag.Synthetic))
+        val syntheticMacroSym = makeSymbol(kind = SymbolKind.Method, flags = flagsOf(Tasty.Flag.Macro, Tasty.Flag.Synthetic))
         assert(!syntheticMacroSym.isMacro, "isMacro: Method + Flag.Macro + Flag.Synthetic must return false (F-E-006)")
         assert(sym.isSynthetic, "isSynthetic")
         assert(sym.isArtifact, "isArtifact")
@@ -161,27 +162,27 @@ class SymbolPredicateTest extends Test:
     // Then: isTrait = true, isClass = false, isClassLike = true (composite includes trait).
     // Pins: INV-005.
     "Leaf 2: single-kind discriminator equality" in {
-        val traitSym = makeSymbol(kind = Tasty.SymbolKind.Trait)
+        val traitSym = makeSymbol(kind = SymbolKind.Trait)
         assert(traitSym.isInstanceOf[Tasty.Symbol.Trait], "isTrait must be true for SymbolKind.Trait")
         assert(!traitSym.isInstanceOf[Tasty.Symbol.Class], "isClass must be false for SymbolKind.Trait")
         assert(traitSym.isInstanceOf[Tasty.Symbol.ClassLike], "isClassLike must be true for SymbolKind.Trait")
 
         // Verify every single-kind discriminator for its matching kind.
-        val cases: Seq[(Tasty.SymbolKind, Tasty.Symbol => Boolean, String)] = Seq(
-            (Tasty.SymbolKind.Package, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Package], "isPackage"),
-            (Tasty.SymbolKind.Class, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Class], "isClass"),
-            (Tasty.SymbolKind.Trait, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Trait], "isTrait"),
-            (Tasty.SymbolKind.Object, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Object], "isObject"),
-            (Tasty.SymbolKind.Method, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Method], "isMethod"),
-            (Tasty.SymbolKind.Field, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Field], "isField"),
-            (Tasty.SymbolKind.Val, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Val], "isVal"),
-            (Tasty.SymbolKind.Var, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Var], "isVar"),
-            (Tasty.SymbolKind.TypeAlias, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.TypeAlias], "isTypeAlias"),
-            (Tasty.SymbolKind.OpaqueType, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.OpaqueType], "isOpaqueType"),
-            (Tasty.SymbolKind.AbstractType, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.AbstractType], "isAbstractType"),
-            (Tasty.SymbolKind.TypeParam, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.TypeParam], "isTypeParam"),
-            (Tasty.SymbolKind.Parameter, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Parameter], "isParameter"),
-            (Tasty.SymbolKind.Unresolved, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Unresolved], "isUnresolved")
+        val cases: Seq[(SymbolKind, Tasty.Symbol => Boolean, String)] = Seq(
+            (SymbolKind.Package, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Package], "isPackage"),
+            (SymbolKind.Class, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Class], "isClass"),
+            (SymbolKind.Trait, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Trait], "isTrait"),
+            (SymbolKind.Object, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Object], "isObject"),
+            (SymbolKind.Method, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Method], "isMethod"),
+            (SymbolKind.Field, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Field], "isField"),
+            (SymbolKind.Val, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Val], "isVal"),
+            (SymbolKind.Var, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Var], "isVar"),
+            (SymbolKind.TypeAlias, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.TypeAlias], "isTypeAlias"),
+            (SymbolKind.OpaqueType, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.OpaqueType], "isOpaqueType"),
+            (SymbolKind.AbstractType, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.AbstractType], "isAbstractType"),
+            (SymbolKind.TypeParam, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.TypeParam], "isTypeParam"),
+            (SymbolKind.Parameter, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Parameter], "isParameter"),
+            (SymbolKind.Unresolved, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Unresolved], "isUnresolved")
         )
         for (expectedKind, predicate, name) <- cases do
             val s = makeSymbol(kind = expectedKind)
@@ -202,7 +203,7 @@ class SymbolPredicateTest extends Test:
     // Then: returns true.
     // Pins: INV-005 (composite predicate semantics).
     "Leaf 3: composite kind predicates compose correctly" in {
-        val caseSym = makeSymbol(kind = Tasty.SymbolKind.Class, flags = flagsOf(Tasty.Flag.Case))
+        val caseSym = makeSymbol(kind = SymbolKind.Class, flags = flagsOf(Tasty.Flag.Case))
         assert(
             caseSym.isInstanceOf[Tasty.Symbol.Class] && caseSym.flags.contains(Tasty.Flag.Case),
             "isCaseClass must be true for Class + Case"
@@ -212,7 +213,7 @@ class SymbolPredicateTest extends Test:
             "isCaseObject must be false for Class + Case (not Object)"
         )
 
-        val caseObjSym = makeSymbol(kind = Tasty.SymbolKind.Object, flags = flagsOf(Tasty.Flag.Case))
+        val caseObjSym = makeSymbol(kind = SymbolKind.Object, flags = flagsOf(Tasty.Flag.Case))
         assert(
             caseObjSym.isInstanceOf[Tasty.Symbol.Object] && caseObjSym.flags.contains(Tasty.Flag.Case),
             "isCaseObject must be true for Object + Case"
@@ -223,21 +224,21 @@ class SymbolPredicateTest extends Test:
         )
 
         // isClassLike: Class, Trait, Object all qualify.
-        val classSym  = makeSymbol(kind = Tasty.SymbolKind.Class)
-        val traitSym  = makeSymbol(kind = Tasty.SymbolKind.Trait)
-        val objectSym = makeSymbol(kind = Tasty.SymbolKind.Object)
-        val methodSym = makeSymbol(kind = Tasty.SymbolKind.Method)
+        val classSym  = makeSymbol(kind = SymbolKind.Class)
+        val traitSym  = makeSymbol(kind = SymbolKind.Trait)
+        val objectSym = makeSymbol(kind = SymbolKind.Object)
+        val methodSym = makeSymbol(kind = SymbolKind.Method)
         assert(classSym.isInstanceOf[Tasty.Symbol.ClassLike], "isClassLike: Class")
         assert(traitSym.isInstanceOf[Tasty.Symbol.ClassLike], "isClassLike: Trait")
         assert(objectSym.isInstanceOf[Tasty.Symbol.ClassLike], "isClassLike: Object")
         assert(!methodSym.isInstanceOf[Tasty.Symbol.ClassLike], "isClassLike: Method should be false")
 
         // isTypeLike: TypeAlias, OpaqueType, AbstractType, TypeParam.
-        val typeAliasSym    = makeSymbol(kind = Tasty.SymbolKind.TypeAlias)
-        val opaqueTypeSym   = makeSymbol(kind = Tasty.SymbolKind.OpaqueType)
-        val abstractTypeSym = makeSymbol(kind = Tasty.SymbolKind.AbstractType)
-        val typeParamSym    = makeSymbol(kind = Tasty.SymbolKind.TypeParam)
-        val valSym          = makeSymbol(kind = Tasty.SymbolKind.Val)
+        val typeAliasSym    = makeSymbol(kind = SymbolKind.TypeAlias)
+        val opaqueTypeSym   = makeSymbol(kind = SymbolKind.OpaqueType)
+        val abstractTypeSym = makeSymbol(kind = SymbolKind.AbstractType)
+        val typeParamSym    = makeSymbol(kind = SymbolKind.TypeParam)
+        val valSym          = makeSymbol(kind = SymbolKind.Val)
         assert(
             typeAliasSym.isInstanceOf[Tasty.Symbol.TypeAlias] || typeAliasSym.isInstanceOf[
                 Tasty.Symbol.OpaqueType
@@ -270,9 +271,9 @@ class SymbolPredicateTest extends Test:
         )
 
         // isTerm: Method, Val, Var, Field, Parameter.
-        val varSym   = makeSymbol(kind = Tasty.SymbolKind.Var)
-        val fieldSym = makeSymbol(kind = Tasty.SymbolKind.Field)
-        val paramSym = makeSymbol(kind = Tasty.SymbolKind.Parameter)
+        val varSym   = makeSymbol(kind = SymbolKind.Var)
+        val fieldSym = makeSymbol(kind = SymbolKind.Field)
+        val paramSym = makeSymbol(kind = SymbolKind.Parameter)
         assert(
             methodSym.isInstanceOf[Tasty.Symbol.Method] || methodSym.isInstanceOf[Tasty.Symbol.Val] || methodSym.isInstanceOf[
                 Tasty.Symbol.Var

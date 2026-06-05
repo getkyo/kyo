@@ -99,7 +99,7 @@ private[kyo] object TestClasspaths:
     /** Run `f` in a fresh classpath scope loaded from `roots` using `ErrorMode.SoftFail`.
       *
       * Delegates to `Tasty.withClasspath`, which handles `Scope.run` internally. Call inside a `run { ... }` test
-      * body. Inside `f`, use `Tasty.*` query operations; they read the active binding from `Tasty.bindingLocal`.
+      * body. Inside `f`, use `Tasty.*` query operations; they read the active binding from `TastyState.bindingLocal`.
       *
       * The `withClasspath` name is the canonical pattern that every `*FidelityTest.scala` uses (INV-001 TDD-real-classpath discipline).
       */

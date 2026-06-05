@@ -5,6 +5,7 @@ import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.DecodeContext
+import kyo.internal.tasty.query.TastyState
 
 /** Native-side cross-platform fixture helper.
   *
@@ -28,7 +29,7 @@ private[kyo] object TestClasspaths:
 
     /** Run `f` in a fresh classpath scope built from the embedded TASTy fixtures.
       *
-      * Builds the classpath from an in-memory MemoryFileSource, installs the Binding in `Tasty.bindingLocal`,
+      * Builds the classpath from an in-memory MemoryFileSource, installs the Binding in `TastyState.bindingLocal`,
       * and runs `f` in that scope. Call inside a `run { ... }` test body. The `roots` parameter is ignored on
       * Native (no filesystem); embedded fixtures are always used.
       */
@@ -131,7 +132,7 @@ private[kyo] object TestClasspaths:
         Scope.run:
             ClasspathOrchestrator.init(Seq("root", "kyo/fixtures/JavaSimpleFixture.class"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
                 val binding = Binding(cp, Maybe.Present(DecodeContext.fresh()))
-                Tasty.bindingLocal.let(Maybe.Present(binding))(f)
+                TastyState.bindingLocal.let(Maybe.Present(binding))(f)
     end withClasspath
 
 end TestClasspaths

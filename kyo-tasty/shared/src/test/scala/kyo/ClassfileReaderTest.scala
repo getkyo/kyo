@@ -1,5 +1,4 @@
 package kyo
-
 import kyo.internal.Platform
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileResult
@@ -10,6 +9,7 @@ import kyo.internal.tasty.reader.NameUnpickler
 import kyo.internal.tasty.reader.SectionIndex
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 
 /** Tests for ClassfileUnpickler using JDK classfiles.
@@ -66,7 +66,7 @@ class ClassfileReaderTest extends Test:
                     AstUnpickler.readPass1(astView, names, attrs, arena)
                 case Absent =>
                     Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found", 0L))
-        yield result.symbols.find(_.kind == Tasty.SymbolKind.Class).getOrElse(result.rootSymbol)
+        yield result.symbols.find(_.kind == SymbolKind.Class).getOrElse(result.rootSymbol)
         end for
     end firstClassSymbolFromTasty
 
@@ -78,7 +78,7 @@ class ClassfileReaderTest extends Test:
     "reading a Java classfile produces kind=Class and flags.contains(JavaDefined)" in run {
         ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena).map: result =>
             val sym = result.classSymbol
-            assert(sym.kind == Tasty.SymbolKind.Class, s"Expected Class kind, got ${sym.kind}")
+            assert(sym.kind == SymbolKind.Class, s"Expected Class kind, got ${sym.kind}")
             assert(sym.name.asString.nonEmpty, s"Expected non-empty class name, got empty string")
             assert(sym.flags.contains(Tasty.Flag.JavaDefined), "Expected JavaDefined flag")
     }
@@ -90,7 +90,7 @@ class ClassfileReaderTest extends Test:
     // ThrowsFixture declares throwsMethod and normalMethod; the shape assertion (method symbols present) is equivalent.
     "reading a Java classfile: declarations contain Method symbols" in run {
         ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena).map: result =>
-            val methods = result.symbols.filter(s => s.kind == Tasty.SymbolKind.Method)
+            val methods = result.symbols.filter(s => s.kind == SymbolKind.Method)
             assert(methods.nonEmpty, s"Expected at least one Method symbol in ThrowsFixture; got none")
             val methodNames = methods.map(_.name.asString).toSeq
             assert(
@@ -123,7 +123,7 @@ class ClassfileReaderTest extends Test:
             assert(sym.name.asString == "ArrayList", s"Expected 'ArrayList', got '${sym.name.asString}'")
             assert(sym.flags.contains(Tasty.Flag.JavaDefined))
             assert(result.typeParams.nonEmpty, s"Expected at least one typeParam in ArrayList (generic class), got empty")
-            val badKind = result.typeParams.find(_.kind != Tasty.SymbolKind.TypeParam)
+            val badKind = result.typeParams.find(_.kind != SymbolKind.TypeParam)
             assert(
                 badKind.isEmpty,
                 s"Expected all typeParams to have TypeParam kind; bad: ${badKind.map(tp => tp.name.asString + ":" + tp.kind)}"
@@ -168,7 +168,7 @@ class ClassfileReaderTest extends Test:
         val bytes = buf.toByteArray
         ClassfileUnpickler.read(bytes, new TypeArena).map: result =>
             val sym = result.classSymbol
-            assert(sym.kind == Tasty.SymbolKind.Trait, s"Expected Trait for interface classfile, got ${sym.kind}")
+            assert(sym.kind == SymbolKind.Trait, s"Expected Trait for interface classfile, got ${sym.kind}")
     }
 
     // -------------------------------------------------------------------------
@@ -242,7 +242,7 @@ class ClassfileReaderTest extends Test:
         val bytes = buf.toByteArray
         ClassfileUnpickler.read(bytes, new TypeArena).map: result =>
             val staticFields = result.symbols.filter: s =>
-                s.kind == Tasty.SymbolKind.Field && s.flags.contains(Tasty.Flag.JavaDefined)
+                s.kind == SymbolKind.Field && s.flags.contains(Tasty.Flag.JavaDefined)
             assert(
                 staticFields.nonEmpty,
                 s"Expected at least one static field in synthetic classfile; symbols=${result.symbols.map(s =>
@@ -258,7 +258,7 @@ class ClassfileReaderTest extends Test:
     // Java record component fields are private final, which decodes as Val.
     "a final non-static field produces kind=Val" in run {
         ClassfileUnpickler.read(kyo.fixtures.Embedded.pointRecordClass, new TypeArena).map: result =>
-            val valFields = result.symbols.filter(_.kind == Tasty.SymbolKind.Val)
+            val valFields = result.symbols.filter(_.kind == SymbolKind.Val)
             assert(
                 valFields.nonEmpty,
                 s"Expected Val fields in PointRecord (record fields are final), got kinds: ${result.symbols.map(_.kind).mkString(", ")}"
@@ -302,7 +302,7 @@ class ClassfileReaderTest extends Test:
         writeShort(0); writeShort(0)                                    // 0 methods, 0 class attrs
         val bytes = buf.toByteArray
         ClassfileUnpickler.read(bytes, new TypeArena).map: result =>
-            val varFields = result.symbols.filter(_.kind == Tasty.SymbolKind.Var)
+            val varFields = result.symbols.filter(_.kind == SymbolKind.Var)
             assert(
                 varFields.nonEmpty,
                 s"Expected Var fields in synthetic non-final classfile, got: ${result.symbols.map(s => s.name.asString + ":" + s.kind).mkString(", ")}"
@@ -355,7 +355,7 @@ class ClassfileReaderTest extends Test:
         // FileInputStream constructor throws IOException
         readClass("java/io/FileInputStream.class").map: result =>
             val methodsWithThrows = result.symbols.filter: sym =>
-                sym.kind == Tasty.SymbolKind.Method &&
+                sym.kind == SymbolKind.Method &&
                     symJavaMetadata(sym).map(_.throwsTypes.nonEmpty).getOrElse(false)
             assert(
                 methodsWithThrows.nonEmpty,
@@ -443,7 +443,7 @@ class ClassfileReaderTest extends Test:
         // java.lang.module.ModuleDescriptor$Requires$Modifier has MethodParameters in its constructor
         readClass("java/lang/module/ModuleDescriptor$Requires$Modifier.class").map: result =>
             val methodsWithParams = result.symbols.filter: sym =>
-                sym.kind == Tasty.SymbolKind.Method &&
+                sym.kind == SymbolKind.Method &&
                     symJavaMetadata(sym).exists(_.paramNames.nonEmpty)
             assert(
                 methodsWithParams.nonEmpty,

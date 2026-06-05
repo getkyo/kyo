@@ -3,6 +3,7 @@ package kyo
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TypeUnpickler
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 import scala.collection.mutable
@@ -34,7 +35,7 @@ class TypeUnpicklerTest extends Test:
     private def makeArena(): TypeArena = TypeArena.canonical()
 
     // plan: phase-02 bridge; Symbol.make(kind, flags, name).
-    private def makeSym(name: String, kind: Tasty.SymbolKind = Tasty.SymbolKind.Class): Tasty.Symbol =
+    private def makeSym(name: String, kind: SymbolKind = SymbolKind.Class): Tasty.Symbol =
         Tasty.Symbol.makePlaceholder(kind, Tasty.Flags.empty, Tasty.Name(name))
 
     /** Encode an unsigned Nat in dotty's TASTy big-endian base-128 format.
@@ -212,7 +213,7 @@ class TypeUnpicklerTest extends Test:
 
     // Test 17: decoding TYPELAMBDAtype returns TypeLambda(params, body) with params.size == 1.
     "decoding TYPELAMBDAtype with one param returns TypeLambda with params.size == 1" in run {
-        val paramSym   = makeSym("A", Tasty.SymbolKind.TypeParam)
+        val paramSym   = makeSym("A", SymbolKind.TypeParam)
         val resultSym  = makeSym("Int")
         val paramAddr  = 5
         val resultAddr = 10
@@ -444,7 +445,7 @@ class TypeUnpicklerTest extends Test:
             case other             => fail(s"Expected Tasty.Type.Rec(...) but got $other")
         // Also verify TypeArena merge handles Rec/RecThis without overflow.
         val arena    = makeArena()
-        val sentinel = Tasty.Symbol.makePlaceholder(Tasty.SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("s"))
+        val sentinel = Tasty.Symbol.makePlaceholder(SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("s"))
         val rec      = Tasty.Type.Rec(Tasty.Type.Named(sentinel.id))
         val recThis  = Tasty.Type.RecThis(rec)
         arena.intern(rec)

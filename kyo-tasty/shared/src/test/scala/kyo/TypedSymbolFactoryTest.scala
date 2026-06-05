@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Tasty.SymbolId
 import kyo.internal.tasty.symbol.SymbolDescriptor
+import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.symbol.TypedSymbolFactory
 
 /** Plan-mandated tests for TypedSymbolFactory (leaves 47-51).
@@ -14,7 +15,7 @@ class TypedSymbolFactoryTest extends Test:
 
     private def makeDesc(
         id: Int,
-        kind: Tasty.SymbolKind,
+        kind: SymbolKind,
         flags: Tasty.Flags = Tasty.Flags.empty,
         name: String = "T",
         ownerId: Int = -1
@@ -42,7 +43,7 @@ class TypedSymbolFactoryTest extends Test:
     // Then: Symbol.Class id=1
     // Pins: INV-004
     "dispatch-on-kind-class: from(d) with kind=Class returns Symbol.Class with id=1" in {
-        val d   = makeDesc(id = 1, kind = Tasty.SymbolKind.Class, name = "Foo")
+        val d   = makeDesc(id = 1, kind = SymbolKind.Class, name = "Foo")
         val sym = TypedSymbolFactory.from(d)
         sym match
             case c: Tasty.Symbol.Class =>
@@ -50,7 +51,7 @@ class TypedSymbolFactoryTest extends Test:
             case other => fail(s"Expected Symbol.Class but got ${other.getClass.getSimpleName}")
         end match
         assert(sym.id == SymbolId(1), s"Expected id=SymbolId(1) but got ${sym.id}")
-        assert(sym.kind == Tasty.SymbolKind.Class, s"Expected kind=Class but got ${sym.kind}")
+        assert(sym.kind == SymbolKind.Class, s"Expected kind=Class but got ${sym.kind}")
     }
 
     // Leaf 48: dispatch-on-kind-method-paramlists
@@ -59,7 +60,7 @@ class TypedSymbolFactoryTest extends Test:
     // Then: Symbol.Method; paramListIds==Chunk(Chunk(SymbolId(10), SymbolId(11)))
     // Pins: INV-004, INV-002
     "dispatch-on-kind-method-paramlists: paramListIds propagated correctly" in {
-        val d = makeDesc(id = 5, kind = Tasty.SymbolKind.Method, name = "foo")
+        val d = makeDesc(id = 5, kind = SymbolKind.Method, name = "foo")
         d.paramListIds = Chunk(Chunk(10, 11))
         val sym = TypedSymbolFactory.from(d)
         sym match
@@ -79,7 +80,7 @@ class TypedSymbolFactoryTest extends Test:
     // Pins: INV-009
     "dispatch-on-kind-typeparam-variance: Covariant flag produces Variance.Covariant" in {
         val coFlags = Tasty.Flags(Tasty.Flag.CoVariant)
-        val d       = makeDesc(id = 7, kind = Tasty.SymbolKind.TypeParam, flags = coFlags, name = "A")
+        val d       = makeDesc(id = 7, kind = SymbolKind.TypeParam, flags = coFlags, name = "A")
         val sym     = TypedSymbolFactory.from(d)
         sym match
             case tp: Tasty.Symbol.TypeParam =>
@@ -94,7 +95,7 @@ class TypedSymbolFactoryTest extends Test:
     // Then: Symbol.Package; memberIds==Chunk(SymbolId(1), SymbolId(2), SymbolId(3))
     // Pins: INV-002
     "dispatch-on-kind-package: declarationIds become memberIds" in {
-        val d = makeDesc(id = 0, kind = Tasty.SymbolKind.Package, name = "p")
+        val d = makeDesc(id = 0, kind = SymbolKind.Package, name = "p")
         d.declarationIds = Chunk(1, 2, 3)
         val sym = TypedSymbolFactory.from(d)
         sym match
@@ -110,7 +111,7 @@ class TypedSymbolFactoryTest extends Test:
     // Then: Symbol.Unresolved id=SymbolId(-1)
     // Pins: INV-004
     "dispatch-on-kind-unresolved-id-minus-one: Symbol.Unresolved id=SymbolId(-1)" in {
-        val d   = makeDesc(id = -1, kind = Tasty.SymbolKind.Unresolved, name = "<unresolved>")
+        val d   = makeDesc(id = -1, kind = SymbolKind.Unresolved, name = "<unresolved>")
         val sym = TypedSymbolFactory.from(d)
         sym match
             case u: Tasty.Symbol.Unresolved =>

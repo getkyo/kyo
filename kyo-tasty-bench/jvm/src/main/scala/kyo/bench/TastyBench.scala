@@ -10,6 +10,7 @@ import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
+import kyo.internal.tasty.symbol.SymbolKind
 import scala.collection.mutable
 import scala.jdk.CollectionConverters.*
 
@@ -292,8 +293,8 @@ object TastyBench:
             var total = 0
             for cls <- tops do
                 val decls = cls.declarationIds.map(warmCp.symbol)
-                total += decls.count(_.kind == Tasty.SymbolKind.Method)
-                if cls.kind == Tasty.SymbolKind.Method then total += 1
+                total += decls.count(_.kind == SymbolKind.Method)
+                if cls.kind == SymbolKind.Method then total += 1
             end for
 
         java.lang.System.out.println(s"  (pure for-comp over Symbol accessors, no effect threading)")
@@ -307,7 +308,7 @@ object TastyBench:
             var found  = false
             for cls <- tops if !found do
                 for sym <- cls.declarationIds.map(warmCp.symbol) if !found do
-                    if sym.kind == Tasty.SymbolKind.Method then
+                    if sym.kind == SymbolKind.Method then
                         val sig  = sym.name.asString
                         val doc  = sym.scaladoc.getOrElse("")
                         val kind = sym.kind.toString

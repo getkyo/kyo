@@ -1,8 +1,8 @@
 package kyo
-
 import kyo.internal.Fidelity2TestBase
 import kyo.internal.TestClasspaths
 import kyo.internal.TestClasspaths2
+import kyo.internal.tasty.symbol.SymbolKind
 
 /** Fidelity tests for Symbol.EnumCase reclassification (F-A2-010).
   *
@@ -34,7 +34,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     import Tasty.Name.asString
 
     // Leaf 1 (Phase 2.06): scala-compiletime-ops-enums-have-cases
-    // Given: standard classpath (on JVM: includes kyo-tasty which defines kyo.Tasty.SymbolKind, a value-form enum;
+    // Given: standard classpath (on JVM: includes kyo-tasty which defines kyo.SymbolKind, a value-form enum;
     //         on JS/Native: embedded fixtures include Color with Red/Green/Blue value-form enum cases)
     // When: collecting any EnumCase symbols from the classpath
     // Then: post-fix count > 0; before fix count is 0 (value-form cases were Symbol.Val)
@@ -46,7 +46,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
                 enumCases > 0,
                 s"Expected at least 1 EnumCase symbol after Phase 2.06 fix. " +
                     s"Total symbols: ${cp.symbols.size}. " +
-                    s"On JVM: kyo.Tasty.SymbolKind enum cases expected. On JS/Native: Color.Red/Green/Blue expected."
+                    s"On JVM: kyo.SymbolKind enum cases expected. On JS/Native: Color.Red/Green/Blue expected."
             )
             succeed
     }
@@ -121,7 +121,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
 
             // Look for value-form enum cases from known enums:
-            // - kyo.Tasty.SymbolKind (on JVM real classpath from kyo-tasty jar)
+            // - kyo.SymbolKind (on JVM real classpath from kyo-tasty jar)
             // - kyo.fixtures.Color (on JS/Native embedded fixtures)
             // Both are pure value-form enums with Object companions.
             val knownEnumNames = Set("SymbolKind", "Color")

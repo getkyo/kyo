@@ -4,6 +4,7 @@ import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.FileSource
+import kyo.internal.tasty.query.TastyState
 import scala.collection.mutable
 
 /** Phase 04 plan-mandated tests pinning the effect-row contract for Symbol.
@@ -89,7 +90,7 @@ class TastyEffectRowTest extends Test:
                         case None =>
                             Kyo.lift(fail("fixture missing Val with body; test cannot proceed"))
                         case Some(sym) =>
-                            Tasty.bindingLocal.let(Maybe.Present(binding)):
+                            TastyState.bindingLocal.let(Maybe.Present(binding)):
                                 for
                                     viaMethod <- Tasty.bodyTree(sym)
                                     viaDirect <- Tasty.bodyTree(sym)
