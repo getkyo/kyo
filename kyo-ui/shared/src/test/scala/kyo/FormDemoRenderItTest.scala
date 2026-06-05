@@ -101,7 +101,7 @@ class FormDemoRenderItTest extends UITest:
         withUI(app) {
             for
                 _ <- Browser.assertText(Selector.id("r0"), "row0")
-                _ <- Browser.scrollTo(Selector.id("r150"))
+                _ <- Browser.scrollToElement(Selector.id("r150"))
                 _ <- Browser.assertVisible(Selector.id("r150"))
                 _ <- Browser.assertText(Selector.id("r150"), "row150")
             yield succeed

@@ -19,7 +19,7 @@ object Shot extends KyoApp:
             for
                 _   <- Browser.goto(url)
                 _   <- Async.sleep(settle.millis)
-                img <- Browser.screenshot(width, height)
+                img <- Browser.screenshotRegion(0, 0, width, height)
                 _   <- img.writeFileBinary(out)
                 _   <- Console.printLine(s"wrote $out (${width}x$height)")
             yield ()

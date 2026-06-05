@@ -49,7 +49,7 @@ object Drive extends KyoApp:
                     val parts = rest.split('|')
                     val w     = if parts.length > 1 then parts(1).toInt else 1100
                     val h     = if parts.length > 2 then parts(2).toInt else 800
-                    Browser.screenshot(w, h).map(_.writeFileBinary(parts(0)))
+                    Browser.screenshotRegion(0, 0, w, h).map(_.writeFileBinary(parts(0)))
                         .andThen(Console.printLine(s"wrote ${parts(0)}"))
                 case _ =>
                     Console.printLine(s"unknown step: $step")
