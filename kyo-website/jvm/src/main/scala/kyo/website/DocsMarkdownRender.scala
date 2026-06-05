@@ -4,6 +4,8 @@ package kyo.website
 import kyo.*
 import kyo.UI.*
 import scala.collection.mutable
+import scala.meta.*
+import scala.meta.tokens.Token as MetaToken
 
 /** JVM-only Markdown transpiler and syntax highlighter for the kyo docs site.
   *
@@ -749,6 +751,30 @@ object DocsMarkdownRender:
 
     // ---- syntax-highlighting tokenizer ----
 
+    /** Token kinds for scalameta-backed Scala highlighting. Each case maps to one CSS class in
+      * `WebsiteStyles.docsTokens`. The closed set is defined by `design/02-public-api.md` note 4;
+      * the `cssClass` accessor is the single source of truth for the class name string (INV-006).
+      */
+    enum TokenKind derives CanEqual:
+        case Keyword
+        case Str
+        case Comment
+        case Number
+        case Type
+        case Interpolation
+        case Annotation
+        case Operator
+        def cssClass: String = this match
+            case Keyword       => "tok-keyword"
+            case Str           => "tok-string"
+            case Comment       => "tok-comment"
+            case Number        => "tok-number"
+            case Type          => "tok-type"
+            case Interpolation => "tok-interpolation"
+            case Annotation    => "tok-annotation"
+            case Operator      => "tok-operator"
+    end TokenKind
+
     /** Shared scala/sbt/bash tokenizer that emits `.tok-*` UI.span runs for keyword/string/comment
       * tokens and plain `UI.text` for the rest. The classes are styled by `WebsiteStyles.sheet`.
       *
@@ -756,121 +782,93 @@ object DocsMarkdownRender:
       */
     private def highlight(lang: String, body: String)(using Frame): UI =
         lang match
-            case "scala" | "sbt" => tokenizeScala(body)
+            case "scala" | "sbt" => highlightScala(body)
             case "bash" | "sh"   => tokenizeBash(body)
             case _               => Ast.Text(body)
     end highlight
 
-    private def tokenizeScala(body: String)(using Frame): UI =
-        val keywords = Set(
-            "def",
-            "val",
-            "var",
-            "class",
-            "object",
-            "trait",
-            "extends",
-            "with",
-            "import",
-            "if",
-            "else",
-            "for",
-            "yield",
-            "match",
-            "case",
-            "return",
-            "sealed",
-            "final",
-            "abstract",
-            "override",
-            "new",
-            "type",
-            "package",
-            "given",
-            "using",
-            "inline",
-            "opaque",
-            "enum",
-            "end",
-            "then",
-            "throws",
-            "lazy",
-            "private",
-            "protected",
-            "true",
-            "false",
-            "null",
-            "this",
-            "super"
-        )
-        val sbtOps = Set(":=", "+=", "++=", "%%", "%")
+    /** Tokenize a Scala/SBT snippet using scalameta and emit `tok-*` UI.span nodes. On a lex error
+      * (`Tokenized.Error`) the whole body degrades to a single `Ast.Text` leaf (INV-008). All token
+      * `.text` values are emitted (including trivia), so the output is byte-preserving.
+      *
+      * A `foldLeft` threads `prev` (the last non-trivia token) as accumulator state for the one-token
+      * lookback in `classify` (INV-G2). No mutable state escapes the method.
+      *
+      * @param body
+      *   The raw source text of the fenced code block.
+      */
+    private def highlightScala(body: String)(using Frame): UI =
+        dialects.Scala3(body).tokenize match
+            case _: Tokenized.Error => Ast.Text(body)
+            case Tokenized.Success(tokens) =>
+                val (spans, _) = tokens.foldLeft((Chunk.empty[UI], Maybe.empty[MetaToken])) {
+                    case ((acc, prev), tok) =>
+                        val span = classify(tok, prev) match
+                            case Present(kind) => UI.span.cssClass(kind.cssClass)(Ast.Text(tok.text))
+                            case Absent        => Ast.Text(tok.text)
+                        val nextPrev = if isTrivia(tok) then prev else Present(tok)
+                        (acc.append(span), nextPrev)
+                }
+                UI.fragment(spans.toSeq*)
+    end highlightScala
 
-        val tokens = new mutable.ArrayBuffer[UI]()
-        val src    = body
-        var pos    = 0
+    // Returns true for whitespace and BOF/EOF tokens; these are emitted as plain Ast.Text
+    // and do NOT update the prev lookback so that `@ main` (space between them) still
+    // classifies `main` as Annotation.
+    private def isTrivia(tok: MetaToken): Boolean = tok match
+        case _: MetaToken.HSpace | _: MetaToken.Space | _: MetaToken.Tab | _: MetaToken.CR |
+            _: MetaToken.LF | _: MetaToken.FF | _: MetaToken.EOL |
+            _: MetaToken.BOF | _: MetaToken.EOF => true
+        case _ => false
 
-        while pos < src.length do
-            val ch = src.charAt(pos)
+    // Classifier: maps a scalameta MetaToken to a TokenKind, or Absent for structural/plain tokens.
+    // Arms are ordered from most-specific to least-specific; the At-annotation arm fires before
+    // the Type heuristic so `@Deprecated` reads as Annotation, not Type.
+    private def classify(tok: MetaToken, prev: Maybe[MetaToken]): Maybe[TokenKind] = tok match
+        case _: MetaToken.Comment => Present(TokenKind.Comment)
+        case _: MetaToken.Constant.Int | _: MetaToken.Constant.Long |
+            _: MetaToken.Constant.Float | _: MetaToken.Constant.Double =>
+            Present(TokenKind.Number)
+        case _: MetaToken.Constant.String | _: MetaToken.Constant.Char |
+            _: MetaToken.Constant.Symbol =>
+            Present(TokenKind.Str)
+        case _: MetaToken.Interpolation.Id => Present(TokenKind.Interpolation)
+        case _: MetaToken.Interpolation.Start | _: MetaToken.Interpolation.Part |
+            _: MetaToken.Interpolation.End => Present(TokenKind.Str)
+        case _: MetaToken.Interpolation.SpliceStart | _: MetaToken.Interpolation.SpliceEnd =>
+            Present(TokenKind.Operator)
+        case _: MetaToken.At      => Present(TokenKind.Annotation)
+        case _: MetaToken.Keyword => Present(TokenKind.Keyword)
+        case _: MetaToken.Colon | _: MetaToken.Equals | _: MetaToken.RightArrow |
+            _: MetaToken.FunctionArrow | _: MetaToken.Underscore | _: MetaToken.Hash |
+            _: MetaToken.Subtype | _: MetaToken.Supertype =>
+            Present(TokenKind.Operator)
+        case id: MetaToken.Ident if isOperatorIdent(id.text) => Present(TokenKind.Operator)
+        case id: MetaToken.Ident if prev.exists { case _: MetaToken.At => true; case _ => false } =>
+            Present(TokenKind.Annotation)
+        case id: MetaToken.Ident if isTypeIdent(id.text, prev) => Present(TokenKind.Type)
+        case _                                                 => Absent
 
-            if pos + 2 < src.length && src.startsWith("\"\"\"", pos) then
-                val end      = src.indexOf("\"\"\"", pos + 3)
-                val closeEnd = if end >= 0 then end + 3 else src.length
-                tokens += UI.span.cssClass("tok-string")(Ast.Text(src.substring(pos, closeEnd)))
-                pos = closeEnd
-            else if pos + 1 < src.length && src.charAt(pos) == '/' && src.charAt(pos + 1) == '/' then
-                val end      = src.indexOf('\n', pos)
-                val closeEnd = if end >= 0 then end else src.length
-                tokens += UI.span.cssClass("tok-comment")(Ast.Text(src.substring(pos, closeEnd)))
-                pos = closeEnd
-            else if pos + 1 < src.length && src.charAt(pos) == '/' && src.charAt(pos + 1) == '*' then
-                val end      = src.indexOf("*/", pos + 2)
-                val closeEnd = if end >= 0 then end + 2 else src.length
-                tokens += UI.span.cssClass("tok-comment")(Ast.Text(src.substring(pos, closeEnd)))
-                pos = closeEnd
-            else if ch == '"' then
-                var p2 = pos + 1
-                while p2 < src.length && src.charAt(p2) != '"' && src.charAt(p2) != '\n' do
-                    if src.charAt(p2) == '\\' then p2 += 1
-                    p2 += 1
-                end while
-                val closeEnd = if p2 < src.length then p2 + 1 else src.length
-                tokens += UI.span.cssClass("tok-string")(Ast.Text(src.substring(pos, closeEnd)))
-                pos = closeEnd
-            else if sbtOps.exists(op => src.startsWith(op, pos)) then
-                val op = sbtOps.filter(op => src.startsWith(op, pos)).maxBy(_.length)
-                tokens += UI.span.cssClass("tok-keyword")(Ast.Text(op))
-                pos += op.length
-            else if ch.isLetter || ch == '_' then
-                val start = pos
-                while pos < src.length && (src.charAt(pos).isLetterOrDigit || src.charAt(pos) == '_') do
-                    pos += 1
-                val word = src.substring(start, pos)
-                if keywords.contains(word) then
-                    tokens += UI.span.cssClass("tok-keyword")(Ast.Text(word))
-                else
-                    tokens += Ast.Text(word)
-                end if
-            else
-                val start = pos
-                while pos < src.length &&
-                    src.charAt(pos) != '"' &&
-                    src.charAt(pos) != '/' &&
-                    !src.charAt(pos).isLetter &&
-                    src.charAt(pos) != '_' &&
-                    !sbtOps.exists(op => src.startsWith(op, pos))
-                do
-                    pos += 1
-                end while
-                // Forward-progress guard: a stop char that no specific branch consumed (a lone `/`,
-                // a `:`/`+`/`%` that is not a full sbt operator) would leave `pos` unmoved and loop
-                // forever. Emit it as one literal char and advance.
-                if pos == start then pos += 1
-                tokens += Ast.Text(src.substring(start, pos))
-            end if
-        end while
+    // Returns true when the ident text is a symbolic operator (starts with a non-letter,
+    // non-underscore, non-backtick character, e.g. `+`, `:=`, `%%`).
+    private def isOperatorIdent(text: String): Boolean =
+        text.nonEmpty && !(Character.isLetter(text.head) || text.head == '_' || text.head == '`')
 
-        UI.fragment(tokens.toSeq*)
-    end tokenizeScala
+    // Returns true when `text` should be classified as a Type in a Scala snippet.
+    // Arm (a): first character is uppercase (e.g. Option, Int, MyClass).
+    // Arm (b): the preceding non-trivia token is a type-context token (after `:`, `extends`,
+    // `<:`, `>:`, `new`, `with`, `[`, or `type`), covering lowercase type aliases and parameters.
+    // The lookback is satisfied only for non-symbolic alphanumeric idents (symbolic idents are
+    // dispatched to Operator before this method is called).
+    private def isTypeIdent(text: String, prev: Maybe[MetaToken]): Boolean =
+        if text.nonEmpty && Character.isUpperCase(text.head) then true
+        else
+            prev.exists {
+                case _: MetaToken.Colon | _: MetaToken.KwExtends | _: MetaToken.Subtype |
+                    _: MetaToken.Supertype | _: MetaToken.KwNew | _: MetaToken.KwWith |
+                    _: MetaToken.LeftBracket | _: MetaToken.KwType => true
+                case _ => false
+            }
 
     private def tokenizeBash(body: String)(using Frame): UI =
         val keywords = Set(

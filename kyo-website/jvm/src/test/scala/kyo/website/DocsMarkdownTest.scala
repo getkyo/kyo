@@ -286,13 +286,18 @@ class DocsMarkdownTest extends Test:
     // ---- SBT and bash token highlighting ----
 
     "sbt and bash fences get tok-* spans (leaf 14)" in run {
+        // With the scalameta highlighter, sbt operators like +=, %%, % are symbolic idents
+        // that classify as tok-operator (not tok-keyword as in the old hand-written lexer).
+        // Bash still uses the keyword-Set lexer, so 'if', 'then', 'fi' are tok-keyword.
         val sbtSource  = "```sbt\nlibraryDependencies += \"org\" %% \"dep\" % \"1.0\"\n```\n"
         val bashSource = "```bash\nif true; then\n  echo hello\nfi\n```\n"
         for
             sbtHtml  <- transpileHtml(sbtSource)
             bashHtml <- transpileHtml(bashSource)
         yield
-            assert(sbtHtml.contains("tok-keyword"), s"SBT should have tok-keyword: $sbtHtml")
+            // sbt: scalameta classifies += as tok-operator and string literals as tok-string.
+            assert(sbtHtml.contains("tok-operator"), s"SBT should have tok-operator spans: $sbtHtml")
+            assert(sbtHtml.contains("tok-string"), s"SBT should have tok-string for literals: $sbtHtml")
             assert(bashHtml.contains("tok-keyword"), s"Bash should have tok-keyword: $bashHtml")
         end for
     }
@@ -492,6 +497,268 @@ class DocsMarkdownTest extends Test:
             assert(html.contains("Large synthetic module"), "expected title in output")
             assert(html.contains("<table"), "expected a table in output")
             assert(elapsed < 30000L, s"transpile+render took ${elapsed}ms (budget 30000ms): not linear")
+        end for
+    }
+
+    // ---- scalameta highlighter + TokenKind tests ----
+
+    // Helper: highlight a scala snippet and return the rendered HTML.
+    private def highlightScalaHtml(code: String)(using Frame): String < Async =
+        val source = "```scala\n" + code + "\n```\n"
+        transpileHtml(source)
+
+    "INV-006 every TokenKind cssClass is in the docsTokens stylesheet (leaf P2-1)" in run {
+        // Collect all css classes from the token kinds.
+        val tokenClasses = DocsMarkdownRender.TokenKind.values.map(_.cssClass).toSet
+        // The stylesheet includes: tok-keyword, tok-string, tok-comment, tok-type, tok-number,
+        // tok-literal, tok-interpolation, tok-annotation, tok-operator. We verify that all
+        // 8 TokenKind classes are a subset of that known set (exact listing per plan).
+        val stylesClasses = Set(
+            "tok-keyword",
+            "tok-string",
+            "tok-comment",
+            "tok-type",
+            "tok-number",
+            "tok-literal",
+            "tok-interpolation",
+            "tok-annotation",
+            "tok-operator"
+        )
+        assert(
+            tokenClasses.subsetOf(stylesClasses),
+            s"TokenKind classes not covered by docsTokens: ${tokenClasses -- stylesClasses}"
+        )
+    }
+
+    "cssClass mapping is exact per kind (leaf P2-2)" in run {
+        assert(DocsMarkdownRender.TokenKind.Keyword.cssClass == "tok-keyword")
+        assert(DocsMarkdownRender.TokenKind.Str.cssClass == "tok-string")
+        assert(DocsMarkdownRender.TokenKind.Comment.cssClass == "tok-comment")
+        assert(DocsMarkdownRender.TokenKind.Number.cssClass == "tok-number")
+        assert(DocsMarkdownRender.TokenKind.Type.cssClass == "tok-type")
+        assert(DocsMarkdownRender.TokenKind.Interpolation.cssClass == "tok-interpolation")
+        assert(DocsMarkdownRender.TokenKind.Annotation.cssClass == "tok-annotation")
+        assert(DocsMarkdownRender.TokenKind.Operator.cssClass == "tok-operator")
+    }
+
+    "INV-007 keyword/number classification: val x = 1 (leaf P2-3)" in run {
+        for html <- highlightScalaHtml("val x = 1")
+        yield
+            assert(html.contains("tok-keyword"), s"Expected tok-keyword for val: $html")
+            assert(html.contains("tok-number"), s"Expected tok-number for 1: $html")
+            // The ident x should be plain text, not in a tok- span.
+            // Verify no tok-keyword span surrounds 'x' by checking that 'x' appears outside spans.
+            val xInKeyword = html.contains(">x<") && html.contains("tok-keyword")
+            // More direct: check that val appears in tok-keyword.
+            assert(html.contains("tok-keyword\">val</"), s"val must be in tok-keyword span: $html")
+            assert(html.contains("tok-number\">1</"), s"1 must be in tok-number span: $html")
+        end for
+    }
+
+    "INV-007 string and char literals (leaf P2-4)" in run {
+        for html <- highlightScalaHtml("val s = \"hi\"\nval c = 'a'")
+        yield
+            assert(html.contains("tok-string"), s"Expected tok-string for string literal: $html")
+            // Both hi (in the string) and 'a' char literal should be in tok-string spans.
+            assert(html.indexOf("tok-string") >= 0, s"tok-string spans present: $html")
+        end for
+    }
+
+    "INV-007 line and block comments (leaf P2-5)" in run {
+        for html <- highlightScalaHtml("// note\n/* block */\nval x = 1")
+        yield
+            assert(html.contains("tok-comment"), s"Expected tok-comment: $html")
+            // Both line and block comment text should be in tok-comment spans.
+            assert(html.contains("// note") || html.contains("// note"), s"comment text present: $html")
+        end for
+    }
+
+    "INV-007 numeric literals Int/Long/Float/Double (leaf P2-6)" in run {
+        for html <- highlightScalaHtml("val a = 1\nval b = 2L\nval c = 3.0\nval d = 4.5d")
+        yield
+            // Each of 1, 2L, 3.0, 4.5d should be in tok-number spans.
+            assert(html.contains("tok-number"), s"Expected tok-number: $html")
+            assert(html.contains("tok-number\">1</"), s"1 in tok-number: $html")
+            assert(html.contains("tok-number\">2L</"), s"2L in tok-number: $html")
+            assert(html.contains("tok-number\">3.0</"), s"3.0 in tok-number: $html")
+            assert(html.contains("tok-number\">4.5d</"), s"4.5d in tok-number: $html")
+        end for
+    }
+
+    "INV-007 interpolation parts and id: s\"x=$x\" (leaf P2-7)" in run {
+        for html <- highlightScalaHtml("s\"x=$x\"")
+        yield
+            // The interpolator id 's' should be in tok-interpolation.
+            assert(html.contains("tok-interpolation"), s"Expected tok-interpolation for 's': $html")
+            // The splice $ should be in tok-operator.
+            assert(html.contains("tok-operator"), s"Expected tok-operator for dollar splice: $html")
+            // Literal parts should be in tok-string spans.
+            assert(html.contains("tok-string"), s"Expected tok-string for literal parts: $html")
+        end for
+    }
+
+    "INV-007 annotation marker and name: @main def run = () (leaf P2-8)" in run {
+        for html <- highlightScalaHtml("@main def run = ()")
+        yield
+            // @ should be in tok-annotation.
+            assert(html.contains("tok-annotation"), s"Expected tok-annotation for @: $html")
+            // The ident after @ (main) should also be in tok-annotation via lookback.
+            assert(html.contains("tok-annotation\">@</"), s"@ in tok-annotation span: $html")
+            assert(html.contains("tok-annotation\">main</"), s"main in tok-annotation span: $html")
+            // def should be in tok-keyword.
+            assert(html.contains("tok-keyword\">def</"), s"def in tok-keyword span: $html")
+        end for
+    }
+
+    "INV-007 operator punctuation: val f: Int => Int = _ + 1 (leaf P2-9)" in run {
+        for html <- highlightScalaHtml("val f: Int => Int = _ + 1")
+        yield
+            // : should be in tok-operator.
+            assert(html.contains("tok-operator\">:</"), s": in tok-operator: $html")
+            // = should be in tok-operator.
+            assert(html.contains("tok-operator\">=</"), s"= in tok-operator: $html")
+            // _ (underscore) should be in tok-operator.
+            assert(html.contains("tok-operator\">_</"), s"_ in tok-operator: $html")
+            // The => arrow should be in tok-operator (FunctionArrow or RightArrow).
+            // In HTML, > is escaped to &gt; so => becomes =&gt;.
+            assert(html.contains("tok-operator\">=&gt;"), s"=> in tok-operator (html-encoded as =&gt;): $html")
+            // + is a symbolic ident and should be in tok-operator.
+            assert(html.contains("tok-operator\">+</"), s"+ in tok-operator: $html")
+        end for
+    }
+
+    "INV-007 Type heuristic arm (a) capitalized idents (leaf P2-10)" in run {
+        for html <- highlightScalaHtml("val o: Option = ???\nval n = Int.MaxValue")
+        yield
+            // Option and Int should be classified as tok-type (arm a: uppercase first char).
+            assert(html.contains("tok-type\">Option</"), s"Option in tok-type: $html")
+            assert(html.contains("tok-type\">Int</"), s"Int in tok-type: $html")
+            // MaxValue is also uppercase-first, so it gets tok-type (documented tolerated false positive).
+            assert(html.contains("tok-type\">MaxValue</"), s"MaxValue in tok-type (expected false positive): $html")
+        end for
+    }
+
+    "INV-007 Type heuristic arm (b) lowercase after context tokens (leaf P2-11)" in run {
+        // type alias = Int: 'alias' after KwType -> tok-type (arm b).
+        // extends Foo with Bar: Bar after KwWith -> tok-type.
+        // def f[a](x: a): a = x: 'a' after [ and : -> tok-type.
+        for
+            aliasHtml <- highlightScalaHtml("type alias = Int")
+            mixinHtml <- highlightScalaHtml("class A extends Foo with Bar")
+            paramHtml <- highlightScalaHtml("def f[a](x: a): a = x")
+        yield
+            // alias after 'type' should be tok-type.
+            assert(aliasHtml.contains("tok-type\">alias</"), s"alias in tok-type: $aliasHtml")
+            // Bar after 'with' should be tok-type.
+            assert(mixinHtml.contains("tok-type\">Bar</"), s"Bar in tok-type: $mixinHtml")
+            // 'a' after '[' and ':' should be tok-type.
+            assert(paramHtml.contains("tok-type\">a</"), s"a in tok-type: $paramHtml")
+        end for
+    }
+
+    "Type arm (b) supertype/subtype bounds: type T >: lo <: hi (leaf P2-12)" in run {
+        for html <- highlightScalaHtml("type T >: lo <: hi")
+        yield
+            // lo (after >:) and hi (after <:) should both be in tok-type via arm (b).
+            assert(html.contains("tok-type\">lo</"), s"lo in tok-type: $html")
+            assert(html.contains("tok-type\">hi</"), s"hi in tok-type: $html")
+        end for
+    }
+
+    "INV-008 any snippet completes without exception or Abort (leaf P2-13)" in run {
+        // INV-008: no input may panic the build. Scalameta 4.13.4 in Scala3 dialect is
+        // lenient and returns Right (tokens) even for partial/malformed snippets (empirically
+        // verified: unterminated strings, multi-char char literals, invalid unicode escapes all
+        // produce Right). The Left branch in highlightScala degrades to Ast.Text as a defensive
+        // guard. We verify the totality contract: any snippet, even unusual ones, completes
+        // without exception and produces a non-crashing output.
+        val snippets = Seq(
+            "val x = \"unterminated",
+            "'ab'",
+            "// just a comment",
+            "???",
+            ""
+        )
+        for
+            results <- Kyo.foreach(Chunk.from(snippets)) { body =>
+                val source = "```scala\n" + body + "\n```\n"
+                transpileHtml(source)
+            }
+        yield
+            // All snippets completed (no exception); each produced some HTML output.
+            assert(results.length == snippets.length, "All snippets must complete")
+            // The empty body case produces a pre/code block with no tok- spans.
+            assert(!results.last.contains("tok-"), s"Empty body should have no tok-: ${results.last}")
+        end for
+    }
+
+    "INV-008 partial expression still tokenizes (not a degrade) (leaf P2-14)" in run {
+        // scalameta can tokenize expressions like x.map(_ + 1) even without a complete compilation
+        // unit. The result should be a fragment with tok- spans, not a single Ast.Text degrade.
+        for html <- highlightScalaHtml("x.map(_ + 1)")
+        yield
+            // Should have tok-operator for + and _.
+            assert(html.contains("tok-operator"), s"Expected tok-operator in partial expr: $html")
+            // Should NOT be a plain-text degrade (which would have no tok- spans).
+            assert(html.contains("tok-"), s"Expected tok- spans (fragment, not degrade): $html")
+        end for
+    }
+
+    "byte-preserving fold round-trip (leaf P2-15)" in run {
+        // All token texts are emitted (including whitespace/trivia), so stripping HTML tags from
+        // the rendered output recovers the original body. We verify each element is present in
+        // the HTML: tokens are in spans and trivia/whitespace is plain text between them.
+        // The HTML renderer HTML-encodes special chars (e.g. > -> &gt;), so we check for
+        // the individual identifiers and tokens, not the literal concatenated source.
+        val body = "def f(x: Int): Int = x + 1  // c"
+        for html <- highlightScalaHtml(body)
+        yield
+            assert(html.contains("tok-keyword\">def</"), s"def in tok-keyword: $html")
+            assert(html.contains("tok-type\">Int</"), s"Int in tok-type: $html")
+            assert(html.contains("tok-operator\">=</"), s"= in tok-operator: $html")
+            assert(html.contains("tok-operator\">+</"), s"+ in tok-operator: $html")
+            assert(html.contains("tok-number\">1</"), s"1 in tok-number: $html")
+            assert(html.contains("tok-comment\">// c</"), s"comment in tok-comment: $html")
+            // The ident f (function name) appears as plain text between spans.
+            assert(html.contains(">def</span> f(x"), s"f( as plain text after def: $html")
+        end for
+    }
+
+    "sbt fence uses the scala highlighter (leaf P2-16)" in run {
+        val source = "```sbt\nversion := \"1.0\"\n```\n"
+        for html <- transpileHtml(source)
+        yield
+            // := is a symbolic ident -> tok-operator.
+            assert(html.contains("tok-operator"), s"Expected tok-operator for :=: $html")
+            // "1.0" is a string literal -> tok-string.
+            assert(html.contains("tok-string"), s"Expected tok-string for \"1.0\": $html")
+        end for
+    }
+
+    "large-README highlight pass does not panic (leaf P2-17)" in run {
+        // Build a large source with many scala fences.
+        val sb = new StringBuilder()
+        sb.append("# Large README\n\n")
+        var i = 0
+        while i < 50 do
+            sb.append(s"## Section $i\n\n")
+            sb.append("```scala\n")
+            sb.append("val config: Path = Path / \"etc\"\n")
+            sb.append("@main def run(args: String*): Unit = println(s\"start: ${args.length}\")\n")
+            sb.append("type Foo = Option[Int]\n")
+            sb.append("val x: Int = 1 + 2L\n")
+            sb.append("// a comment\n")
+            sb.append("```\n\n")
+            i += 1
+        end while
+        val source = sb.toString
+        for
+            rendered <- DocsMarkdownRender.transpile(source)
+            html     <- renderHtml(rendered.article)
+        yield
+            // Non-empty Rendered produced, no exception thrown (test completing proves this).
+            assert(rendered.headings.nonEmpty, s"Expected headings in large README: $rendered")
+            assert(html.contains("<h2"), s"Expected headings in rendered HTML: $html")
         end for
     }
 

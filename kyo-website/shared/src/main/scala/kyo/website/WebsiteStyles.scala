@@ -1080,6 +1080,9 @@ object WebsiteStyles:
             .rule("tok-type", Style.color(hex("#82AAFF")))
             .rule("tok-number", Style.color(hex("#F78C6C")))
             .rule("tok-literal", Style.color(hex("#FF5370")))
+            .rule("tok-interpolation", Style.color(hex("#89DDFF")))
+            .rule("tok-annotation", Style.color(hex("#FFCB6B")))
+            .rule("tok-operator", Style.color(hex("#89DDFF")))
     end docsTokens
 
     // ---- Responsive breakpoints ----
