@@ -2145,17 +2145,7 @@ object Tasty:
         def show: String = s"Pickle($uuid v${version.show} ${bytes.size}B)"
     end Pickle
 
-    // ── Binding local and entry points ─────────────────────────────────────
-
-    /** Get the current Classpath from the active binding, falling back to the module-level JVM classpath.
-      *
-      * Returns the JVM classpath stub when called outside a `withClasspath` scope.
-      *
-      * Effect row: Sync, because reading the lazy val TastyState.global may trigger initialization.
-      */
-    def classpath(using Frame): Classpath < Sync =
-        TastyState.bindingLocal.use: mbind =>
-            Sync.defer(mbind.getOrElse(TastyState.global).cp)
+    // ── Suspend / create ───────────────────────────────────────────────────
 
     /** Bind a fresh Classpath loaded from `roots` and run `f` in that scope.
       *
@@ -2211,6 +2201,18 @@ object Tasty:
       */
     def evictOlderThan(cacheDir: String, maxAge: Duration)(using Frame): Unit < (Sync & Abort[TastyError]) =
         Snapshot.evictOlderThan(cacheDir, maxAge)
+
+    // ── Access ─────────────────────────────────────────────────────────────
+
+    /** Get the current Classpath from the active binding, falling back to the module-level JVM classpath.
+      *
+      * Returns the JVM classpath stub when called outside a `withClasspath` scope.
+      *
+      * Effect row: Sync, because reading the lazy val TastyState.global may trigger initialization.
+      */
+    def classpath(using Frame): Classpath < Sync =
+        TastyState.bindingLocal.use: mbind =>
+            Sync.defer(mbind.getOrElse(TastyState.global).cp)
 
     // ── Classpath ───────────────────────────────────────────────────────────
 
@@ -3118,19 +3120,6 @@ object Tasty:
     /** CanEqual[Classpath, Classpath] derived after the companion closes; same placement rationale as schemaClasspath. */
     given canEqualClasspath: CanEqual[Classpath, Classpath] = CanEqual.canEqualAny
 
-    // ── FQN helper ──────────────────────────────────────────────────────────
-
-    /** Expand to the fully-qualified dotted name of `A` at compile time via the `Tag` machinery.
-      *
-      * Use when the type is known statically and the caller wants the FQN string for a `findClass` / `requireClass`
-      * lookup without spelling out the literal. `classFqn[example.Circle]` evaluates to `"example.Circle"`;
-      * `classFqn[scala.collection.immutable.List]` evaluates to `"scala.collection.immutable.List"`.
-      *
-      * The dotted form matches what `Classpath.findClass`, `findClassLike`, and `findSymbol` accept; the JVM
-      * binary form (`example/Circle$Inner`) is reachable through `Classpath.findClassByBinary` instead.
-      */
-    def classFqn[A](using t: Tag[A]): String = t.show
-
     // ── Snapshot management ─────────────────────────────────────────────────
 
     /** Snapshot cache management utilities for the `Tasty.withClasspath(roots, cacheDir)` path.
@@ -3214,6 +3203,17 @@ object Tasty:
     // All query operations read the active binding from TastyState.bindingLocal. They carry
     // < Sync in their effect row because the lazy fallback TastyState.global may trigger
     // initialization on the first call (INV-009 site-2).
+
+    /** Expand to the fully-qualified dotted name of `A` at compile time via the `Tag` machinery.
+      *
+      * Use when the type is known statically and the caller wants the FQN string for a `findClass` / `requireClass`
+      * lookup without spelling out the literal. `classFqn[example.Circle]` evaluates to `"example.Circle"`;
+      * `classFqn[scala.collection.immutable.List]` evaluates to `"scala.collection.immutable.List"`.
+      *
+      * The dotted form matches what `Classpath.findClass`, `findClassLike`, and `findSymbol` accept; the JVM
+      * binary form (`example/Circle$Inner`) is reachable through `Classpath.findClassByBinary` instead.
+      */
+    def classFqn[A](using t: Tag[A]): String = t.show
 
     /** Look up a class symbol by FQN. Returns Absent when not found. */
     def findClass(fqn: String)(using Frame): Maybe[Symbol.Class] < Sync =
