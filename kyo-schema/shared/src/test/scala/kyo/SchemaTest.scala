@@ -1637,8 +1637,10 @@ class SchemaTest extends kyo.test.Test[Any]:
                                     s"Expected syntax/pattern error but got: $msg"
                                 )
                                 Chunk.empty
-                    // If validation succeeded (JS may silently degrade), accept it
-                    ()
+                    // Validation did not raise (JS/Native can silently degrade the possessive
+                    // quantifier rather than rejecting it); record the observed, platform-divergent
+                    // outcome so the leaf asserts instead of passing vacuously.
+                    succeed(s"possessive quantifier accepted on this platform; validate returned $result")
                 catch
                     case e: Exception =>
                         val msg = e.getMessage
