@@ -111,7 +111,14 @@ private[kyo] object DomBackend:
                     if scalajs.js.typeOf(dyn.setSelectionRange) == "function" then
                         try
                             val _ = dyn.setSelectionRange(s, e)
-                        catch case _: scalajs.js.JavaScriptException => ()
+                        catch
+                            // setSelectionRange throws InvalidStateError on input types that do not
+                            // support text selection (e.g. email, number). Mirrors HtmlRenderer.clientJs:583:
+                            // `catch(e){if(e.name!=='InvalidStateError')throw e;}`. Re-throw any other
+                            // JS exception so genuine failures are not silently dropped.
+                            case ex: scalajs.js.JavaScriptException
+                                if ex.exception.asInstanceOf[scalajs.js.Dynamic].name.asInstanceOf[String] == "InvalidStateError" =>
+                                ()
                     end if
                 case _ => ()
             end match

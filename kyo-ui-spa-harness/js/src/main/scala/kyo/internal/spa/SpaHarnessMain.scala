@@ -371,12 +371,24 @@ object SpaHarnessMain:
                     end for
                 }
         )
-        // 9. Reactive value-bound input keeps focus and caret across keystrokes (JS mount path).
-        // Mounts UI.input.value(ref).id("focus-input") via UI.runMount, focuses it, drives
-        // k->ky->kyo by writing .value + dispatching a real input event mirrored into the ref.
-        // Returns "<activeElement.id>:<selectionStart>".
-        // Pre-fix: "body:null" (outerHTML replace destroys the focused input, focus falls to body).
-        // Post-fix: "focus-input:3".
+        // 9. Reactive value-bound input keeps focus and caret across a reactive re-render (JS mount
+        // path). Mounts UI.input.value(ref).id("focus-input") via UI.runMount, establishes the typed
+        // pre-replace state in one shot (value="kyo", focus, caret at 3), then fires EXACTLY ONE
+        // reactive re-render via ref.set("kyo"), which drives LocalExchange.onChange -> the
+        // `el.outerHTML = finalHtml` replace that detaches the focused input. After the replace it
+        // deterministically waits on DOM node identity (the new input node is a DIFFERENT node, or the
+        // old node has been detached) so the observation reads the POST-replace state, then returns
+        // "<activeElement.id>:<selectionStart>".
+        //
+        // The scenario is sensitive to the DomBackend focus restore by construction: it never calls
+        // setSelectionRange or focus AFTER the replace (Chrome's setSelectionRange auto-focuses an
+        // unfocused input, which previously masked the defect), and it waits for the destructive
+        // replace to settle on node identity (not on `.value`, which is preserved on the new node and
+        // never observes the post-replace focus state).
+        // Without the DomBackend focus restore: the new input is not focused, document.activeElement is
+        // document.body (id=""), selectionStart is not a number -> ":null". Assertion fails.
+        // With the fix: restoreFocus runs inside onChange after the replace, refocusing the new input
+        // and restoring caret 3 -> "focus-input:3". Assertion passes.
         UITestEntry.register(
             "runmount.reactive.input.focus",
             () =>
@@ -394,14 +406,28 @@ object SpaHarnessMain:
                             val _ = dom.document.body.appendChild(c)
                         }
                         _ <- Fiber.initUnscoped(Scope.run(UI.runMount(ui, s"#$target")))
-                        _ <- pollValue("focus-input", "", 100)
-                        _ <- Sync.defer {
+                        // Wait for the input to exist (non-null node poll), not a value-poll: the
+                        // mounted input renders with value="" so a value-poll would race the mount.
+                        _ <- pollExists("focus-input", 100)
+                        // Establish the typed pre-replace state in one shot: value, focus, caret at 3.
+                        // This setSelectionRange is BEFORE the replace, so it is legitimate user-state
+                        // setup, not masking. Capture the original node so the settle below can detect
+                        // the outerHTML replace by node identity.
+                        oldNode <- Sync.defer {
                             val el = dom.document.getElementById("focus-input").asInstanceOf[dom.html.Input]
-                            if el != null then el.focus()
+                            el.value = "kyo"
+                            el.focus()
+                            el.setSelectionRange(3, 3)
+                            el: dom.Node
                         }
-                        _ <- typeChar("focus-input", "k", ref)
-                        _ <- typeChar("focus-input", "ky", ref)
-                        _ <- typeChar("focus-input", "kyo", ref)
+                        // Fire EXACTLY ONE reactive re-render. ref.set triggers LocalExchange.onChange,
+                        // which runs `el.outerHTML = finalHtml`, detaching the focused input. No focus
+                        // or setSelectionRange call follows this point.
+                        _ <- ref.set("kyo")
+                        // Deterministically wait for the replace to COMPLETE by polling on node
+                        // identity, not value: the new input carries the same value but is a different
+                        // DOM node, so only node identity proves the destructive replace landed.
+                        _ <- pollReplaced("focus-input", oldNode, 100)
                         out <- Sync.defer {
                             val ae = dom.document.activeElement
                             val id = if ae != null then ae.id else "null"
@@ -438,44 +464,43 @@ object SpaHarnessMain:
         }
     end pollText
 
-    /** Write `text` into the input with the given `id`, position the caret at the end, dispatch a
-      * bubbling `input` event so kyo-ui's capture-phase delegation fires the `UIEvent.Input` path,
-      * then mirror the value into `ref` as a deterministic settle. Polls until the DOM `.value`
-      * matches `text` before returning so the reactive re-render completes before the next step.
+    /** Poll until `getElementById(id)` is a non-null node, or `attempts` 20ms ticks elapse. A non-null
+      * poll (not a value-poll) is the correct mount-ready signal for a value-bound input that renders
+      * with value="": the element appears in the DOM before any reactive update, and a value-poll would
+      * race the mount. Returns on exhaustion so a never-mounted element surfaces downstream as a wrong
+      * observation rather than an opaque timeout.
       */
-    private def typeChar(id: String, text: String, ref: SignalRef[String])(using Frame): Unit < (Async & Abort[Throwable]) =
-        for
-            _ <- Sync.defer {
-                val el = dom.document.getElementById(id).asInstanceOf[dom.html.Input]
-                if el != null then
-                    el.value = text
-                    val len = text.length
-                    el.setSelectionRange(len, len)
-                    val _ = el.dispatchEvent(new dom.Event("input"))
-                end if
-            }
-            _ <- ref.set(text)
-            _ <- pollValue(id, text, 100)
-        yield ()
-    end typeChar
-
-    /** Poll `getElementById(id).value` until it equals `expected` or `attempts` 20ms ticks elapse, whichever comes first.
-      * Returns on exhaustion so the scenario surfaces a wrong-value assertion rather than an opaque timeout.
-      * A null (absent) element is treated as not-yet-ready, not as empty string, so the poll waits even when `expected == ""`.
-      */
-    private def pollValue(id: String, expected: String, attempts: Int)(using Frame): Unit < Async =
+    private def pollExists(id: String, attempts: Int)(using Frame): Unit < Async =
         Loop(0) { n =>
             if n >= attempts then Loop.done(())
             else
-                Sync.defer {
-                    val el = dom.document.getElementById(id).asInstanceOf[dom.html.Input]
-                    el != null && el.value == expected
-                }.map { found =>
+                Sync.defer(dom.document.getElementById(id) != null).map { found =>
                     if found then Loop.done(())
                     else Async.sleep(20.millis).andThen(Loop.continue(n + 1))
                 }
         }
-    end pollValue
+    end pollExists
+
+    /** Poll until the reactive `outerHTML` replace has landed, signalled by DOM node IDENTITY: the
+      * current `getElementById(id)` is a DIFFERENT node than `oldNode`, OR `oldNode` has been detached
+      * (`oldNode.parentNode == null`). Node identity is the only reliable settle here: the new input
+      * carries the same `.value`, so a value-poll would return immediately and observe the PRE-replace
+      * focus state, masking the post-replace focus loss the test must detect. Returns on exhaustion so
+      * a replace that never lands surfaces as a wrong observation rather than an opaque timeout.
+      */
+    private def pollReplaced(id: String, oldNode: dom.Node, attempts: Int)(using Frame): Unit < Async =
+        Loop(0) { n =>
+            if n >= attempts then Loop.done(())
+            else
+                Sync.defer {
+                    val current: dom.Node = dom.document.getElementById(id)
+                    (current != null && (current ne oldNode)) || oldNode.parentNode == null
+                }.map { replaced =>
+                    if replaced then Loop.done(())
+                    else Async.sleep(20.millis).andThen(Loop.continue(n + 1))
+                }
+        }
+    end pollReplaced
 
     /** Insert an `<a href={href}>label</a>` into `document.body` and return it. The href is set via JS-property assignment so the
       * browser parses it into `pathname`/`search` etc.
