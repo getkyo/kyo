@@ -31,7 +31,7 @@ object SnapshotWriter:
       * @param cp
       *   the fully-loaded classpath to snapshot
       * @param digest
-      *   8-byte xxh3 digest of the inputs (from DigestComputer)
+      *   8-byte xxh64-custom digest of the inputs (from DigestComputer)
       */
     private[kyo] def serializeToBytes(cp: Tasty.Classpath, digest: Array[Byte]): Array[Byte] =
         serialize(cp, digest)
@@ -43,7 +43,7 @@ object SnapshotWriter:
       * @param cacheDir
       *   directory where the snapshot file is written
       * @param digest
-      *   8-byte xxh3 digest of the inputs (from DigestComputer)
+      *   8-byte xxh64-custom digest of the inputs (from DigestComputer)
       * @param source
       *   FileSource used to create the cache directory if needed and to write the snapshot
       */

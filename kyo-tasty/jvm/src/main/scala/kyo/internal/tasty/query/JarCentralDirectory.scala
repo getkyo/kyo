@@ -125,6 +125,9 @@ private[kyo] object JarCentralDirectory:
       * Used by DigestComputer to walk the central directory for content-addressed digest computation (INV-003). Returns ALL entries (no
       * suffix filter); directories are excluded. Runs synchronously under AllowUnsafe; no Scope or Sync effect required.
       *
+      * Propagates IOException on missing or corrupt jar files: the caller (PlatformDigest.digestForJarRoot on JVM) must handle it.
+      * Swallowing IOException here would cause digestForJar(Chunk.empty) == 0L, producing silent false-positive cache hits (BLOCKER-1).
+      *
       * Unsafe: synchronous JAR CEN walk via RandomAccessFile; bounded to this call site; no Scope required.
       */
     private[kyo] def read(jarPath: String)(using AllowUnsafe): Chunk[JarEntry] =
@@ -132,15 +135,20 @@ private[kyo] object JarCentralDirectory:
         try
             raf = new RandomAccessFile(jarPath, "r")
             val fileLen = raf.length()
-            if fileLen == 0 then Chunk.empty
+            if fileLen == 0 then
+                throw new java.io.IOException(s"$jarPath: empty file")
             else
                 val (eocdOffset, eocdBuf)     = findEocd(jarPath, raf, fileLen)
                 val (totalEntries, cenOffset) = readCenLocation(jarPath, raf, fileLen, eocdOffset, eocdBuf)
 
-                if cenOffset < 0 || cenOffset >= fileLen then Chunk.empty
+                if cenOffset < 0 || cenOffset >= fileLen then
+                    throw new java.io.IOException(s"$jarPath: CEN offset $cenOffset out of range [0, $fileLen)")
                 else
                     val cenSizeLong = (eocdOffset - cenOffset).max(0L)
-                    if cenSizeLong > Int.MaxValue then Chunk.empty
+                    if cenSizeLong > Int.MaxValue then
+                        throw new java.io.IOException(
+                            s"$jarPath: central directory size $cenSizeLong exceeds 2GB"
+                        )
                     else
                         val cenSize = cenSizeLong.toInt
                         val cenBuf  = new Array[Byte](cenSize)
@@ -151,7 +159,7 @@ private[kyo] object JarCentralDirectory:
                 end if
             end if
         catch
-            case _: TastyErrorWrapper | _: java.io.IOException => Chunk.empty
+            case e: TastyErrorWrapper => throw new java.io.IOException(e.error.toString, e)
         finally
             if raf != null then
                 try raf.close()

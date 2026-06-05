@@ -11,7 +11,7 @@ package kyo.internal.tasty.snapshot
   * | version  M.m.0.0 | 4 bytes (major, minor, 0, 0 as bytes)
   * | flags            | 8 bytes (bit 0: byte order, 0=LE)
   * +------------------+
-  * | inputDigest      | 8 bytes (xxh3 64-bit over jar CEN (name, CRC32) walk; item 25 / Q-009 RI-001, little-endian)
+  * | inputDigest      | 8 bytes (xxh64-custom 64-bit over jar CEN (name, CRC32) walk; item 25 / Q-009 RI-001, little-endian)
   * | reserved         | 8 bytes (zero-padded)
   * +------------------+
   * | sectionCount     | 4 bytes (little-endian)
@@ -64,7 +64,7 @@ package kyo.internal.tasty.snapshot
   *     correct permittedSubclassIds / annotations / javaMetadata; a minor=3 snapshot must trigger cold re-decode.
   *   - Patch bump: format-stable.
   *
-  * Digest algorithm: xxh3 64-bit over jar central-directory (name, CRC32) walk on JVM; path-hash fallback on JS/Native (non-cryptographic; sufficient for cache-invalidation; content-addressed per INV-003). See `DigestComputer`.
+  * Digest algorithm: xxh64-custom 64-bit over jar central-directory (name, CRC32) walk on JVM (content-addressed; INV-003); path-hash fallback on JS/Native (not content-addressed for in-place jar mutation; see PlatformDigest). See `DigestComputer`.
   *
   * Atomic-rename concurrent write strategy: write to `${digest}-${pid}-${nonce}.krfl`, fsync, rename to `${digest}.krfl`. Two concurrent
   * writers produce identical tmp files (decode is deterministic) and both attempt rename. The last rename wins; no corruption.

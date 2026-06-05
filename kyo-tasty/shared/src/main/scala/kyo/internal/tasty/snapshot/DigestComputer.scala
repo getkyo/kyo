@@ -3,18 +3,22 @@ package kyo.internal.tasty.snapshot
 import kyo.*
 import kyo.internal.tasty.query.FileSource
 
-/** xxh3-64 content-addressed digest computation for classpath cache invalidation.
+/** xxh64-based custom 64-bit content hash for classpath cache invalidation.
   *
-  * Replaces the prior FNV-1a 64-bit mtime+size computation with an xxh3 walk over the JAR central directory (CEN) CRC32 values. This makes
-  * the digest stable across machine boundaries and mtime-only copies (INV-003).
+  * Replaces the prior FNV-1a 64-bit mtime+size computation with an xxh64-custom walk over the JAR central directory (CEN) CRC32
+  * values. This makes the digest stable across machine boundaries and mtime-only copies (INV-003).
+  *
+  * Algorithm note: the implementation uses xxh64 prime constants (0x9E3779B185EBCA87, etc.) with a bespoke per-entry mix loop.
+  * This is NOT the full xxh3 streaming algorithm; it is a custom 64-bit hash built from xxh64 primes. Future improvement: replace
+  * with a conforming xxh3-64 implementation for interoperability. Tracked as a future improvement.
   *
   * `compute`: hashes jar roots via CEN-CRC walk (JVM) or path-hash fallback (JS/Native); directory and jrt:/ roots use per-file
   * mtime+size as before. `computeParanoid`: hashes sorted (path, content) tuples.
   *
   * Per-platform jar digest source:
-  *   - JVM: xxh3 over sorted (name, CRC32) tuples from the JAR central directory (via JarCentralDirectory.read)
-  *   - Native: path-based xxh3 fallback (RandomAccessFile unavailable in the shared snapshot path)
-  *   - JS-Node: path-based xxh3 fallback (same reason)
+  *   - JVM: xxh64-custom hash over sorted (name, CRC32) tuples from the JAR central directory (via JarCentralDirectory.read)
+  *   - Native: path-based xxh64-custom fallback (RandomAccessFile unavailable in the shared snapshot path; not content-addressed)
+  *   - JS-Node: path-based xxh64-custom fallback (same reason; not content-addressed for in-place jar mutation)
   *   - JS-browser: openCached returns Abort.fail(TastyError.FileNotFound("browser: use fromPickles")) before any digest computation
   */
 object DigestComputer:
@@ -31,7 +35,9 @@ object DigestComputer:
       */
     final case class JarDigestEntry(name: String, crc32: Long)
 
-    // xxh3 64-bit primes (PKWARE hash spec; hex to avoid signed-Long overflow in decimal literals)
+    // xxh64 prime constants (from the xxHash specification; hex to avoid signed-Long overflow in decimal literals).
+    // Note: PKWARE APPNOTE.TXT 4.3.12 defines the CEN+16 CRC32 field layout used elsewhere; these prime values
+    // are from the xxHash algorithm by Yann Collet, not from PKWARE.
     private val xxh3Prime641: Long = 0x9e3779b185ebca87L
     private val xxh3Prime642: Long = 0xc2b2ae3d27d4eb4fL
     private val xxh3Prime643: Long = 0x165667b19e3779f9L
@@ -45,7 +51,7 @@ object DigestComputer:
         val a = (h ^ (h >>> 37)) * xxh3Prime643
         a ^ (a >>> 32)
 
-    /** Compute an xxh3-64 content-addressed digest of a Chunk of JAR central-directory entries.
+    /** Compute an xxh64-custom 64-bit content-addressed digest of a Chunk of JAR central-directory entries.
       *
       * Entries are sorted by name before mixing so that the digest is invariant under the order in which the JAR writer emitted the CEN
       * records (including fat-jar duplicate names). Each entry contributes its UTF-8 name bytes and its CRC32 field; mtime and disk path are
@@ -88,9 +94,9 @@ object DigestComputer:
 
     /** Path-hash fallback for platforms that cannot walk the JAR CEN.
       *
-      * Called by JS/Native PlatformDigest.digestForJarRoot. Mixes the UTF-8 jar path bytes to produce a deterministic value. Not
-      * content-addressed across machine boundaries, but deterministic within a run. Tests on JS/Native should verify determinism (same input
-      * twice), not cross-machine stability.
+      * Called by JS/Native PlatformDigest.digestForJarRoot. Mixes the UTF-8 jar path bytes using the xxh64-custom hash to produce a
+      * deterministic value. Not content-addressed: in-place jar mutation (same path, different bytes) will NOT change the digest.
+      * Tests on JS/Native should verify determinism (same input twice), not cross-machine or content stability.
       */
     private[kyo] def digestForJarFallback(jarPath: String): Long =
         val pathBytes = jarPath.getBytes(java.nio.charset.StandardCharsets.UTF_8)
@@ -104,11 +110,11 @@ object DigestComputer:
         xxh3Avalanche(acc)
     end digestForJarFallback
 
-    /** Compute a 64-bit digest of sorted (path, mtime, size) tuples from the given roots.
+    /** Compute a 64-bit digest of sorted (path, digestValue, 0L) tuples from the given roots.
       *
       * For jar roots on JVM, hashes the JAR CEN entries (name, CRC32) via PlatformDigest.digestForJarRoot (content-addressed; INV-003). For
-      * jar roots on JS/Native, falls back to mtime+size. For `jrt:/` roots and directory roots, retains the per-file enumeration via
-      * `source.list` and `source.stat`.
+      * jar roots on JS/Native, falls back to a path-only hash (not content-addressed for in-place jar mutation). For `jrt:/` roots and
+      * directory roots, retains the per-file enumeration via `source.list` and `source.stat` (mtime + size).
       *
       * Deterministic: same input files and metadata always produce the same 8-byte result. The digest is returned as an 8-byte little-endian
       * array.
@@ -164,9 +170,10 @@ object DigestComputer:
 
     /** Collect (path, digestLong, 0L) for all roots, branching by root type.
       *
-      * Jar roots on JVM contribute one triple (jarPath, digestLong, 0L) via PlatformDigest.digestForJarRoot. Jar roots on JS/Native use
-      * mtime+size. jrt:/ roots and directory roots contribute one triple per .tasty file via source.stat. All triples are collected into one
-      * flat sequence; the caller sorts globally before hashing.
+      * Jar roots on JVM contribute one triple (jarPath, cenDigest, 0L) via PlatformDigest.digestForJarRoot (content-addressed).
+      * Jar roots on JS/Native contribute (jarPath, pathHash, 0L) via the path-only fallback (not content-addressed for in-place mutation).
+      * jrt:/ roots and directory roots contribute one triple per .tasty file via source.stat. All triples are collected into one flat
+      * sequence; the caller sorts globally before hashing.
       */
     private def collectAllStats(
         roots: Seq[String],
@@ -176,9 +183,15 @@ object DigestComputer:
             if root.startsWith("jrt:/") then
                 collectStats(Seq(root), source)
             else if root.toLowerCase.endsWith(".jar") then
+                // IOException from PlatformDigest.digestForJarRoot (JVM: missing/corrupt jar) is
+                // converted to TastyError.MalformedSection to prevent silent 0L digest (BLOCKER-1 fix).
                 Sync.defer:
-                    val jarDigest = PlatformDigest.digestForJarRoot(root)
-                    Seq((root, jarDigest, 0L))
+                    try
+                        val jarDigest = PlatformDigest.digestForJarRoot(root)
+                        Seq((root, jarDigest, 0L))
+                    catch
+                        case e: java.io.IOException =>
+                            Abort.fail(TastyError.MalformedSection("jar-digest", s"$root: ${e.getMessage}", 0L))
             else
                 collectStats(Seq(root), source)
         .map(_.flatten.toSeq)

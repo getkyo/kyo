@@ -21,17 +21,17 @@ object SnapshotReader:
 
     /** Read a snapshot from `path` and return a fully-constructed `Tasty.Classpath`.
       *
-      * Digest verification (F-W2-21 fix): when `expectedDigest` is provided, the 8-byte FNV-1a hash embedded at bytes 16-23 of the
-      * snapshot header is compared against the expected value. A mismatch raises `TastyError.DigestMismatch`. Pass `None` (the default) to
-      * skip this check (e.g., for trusted pre-warmed caches). `Tasty.withClasspath(roots, Present(cacheDir))` already provides
-      * digest-based selection via the filename, so it does not need to pass an `expectedDigest` here.
+      * Digest verification (F-W2-21 fix): when `expectedDigest` is provided, the 8-byte xxh64-custom hash embedded at bytes 16-23 of
+      * the snapshot header is compared against the expected value. A mismatch raises `TastyError.DigestMismatch`. Pass `None` (the
+      * default) to skip this check (e.g., for trusted pre-warmed caches). `Tasty.withClasspath(roots, Present(cacheDir))` already
+      * provides digest-based selection via the filename, so it does not need to pass an `expectedDigest` here.
       *
       * @param path
       *   absolute path to the `.krfl` file
       * @param source
       *   FileSource for reading the bytes
       * @param expectedDigest
-      *   optional expected 8-byte FNV-1a digest; when Some, the embedded digest is verified before deserialization
+      *   optional expected 8-byte xxh64-custom digest; when Some, the embedded digest is verified before deserialization
       */
     def read(
         path: String,

@@ -154,9 +154,9 @@ enum TastyError derives CanEqual:
 
     /** The embedded `inputDigest` in a KRFL snapshot file does not match the caller-supplied expected digest.
       *
-      * Raised by `SnapshotReader.read` (and `readMapped`) when `verifyDigest = true` and the 8-byte FNV-1a hash stored at bytes 16-23 in
-      * the snapshot header does not equal `expected`. This signals that the snapshot was written for a different set of inputs than the ones
-      * the caller presented (stale cache, hash collision, or corrupt file).
+      * Raised by `SnapshotReader.read` (and `readMapped`) when `verifyDigest = true` and the 8-byte xxh64-custom hash stored at bytes
+      * 16-23 in the snapshot header does not equal `expected`. This signals that the snapshot was written for a different set of inputs
+      * than the ones the caller presented (stale cache, hash collision, or corrupt file).
       *
       * `expected` is the hex-encoded digest the caller expected. `actual` is the hex-encoded digest read from the snapshot.
       */
