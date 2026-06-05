@@ -84,7 +84,7 @@ class ChoiceTest extends Test:
         end try
     }
 
-    "large number of suspensions" taggedAs notNative in pendingUntilFixed {
+    "large number of suspensions" taggedAs (notNative, notWasm) in pendingUntilFixed {
         // https://github.com/getkyo/kyo/issues/208
         var v = Choice.eval(1)
         for _ <- 0 until 100000 do

@@ -120,10 +120,12 @@ object KyoDoctestPlugin extends AutoPlugin {
     import autoImport._
 
     // Sub-directory names produced by sbt-crossproject for non-JVM platforms.
-    // The doctest task forks a JVM and would crash on scala-native or scala-js
-    // compiled .class files (UndefinedBehaviorError, NoClassDefFoundError),
-    // so the aggregate skips these.
-    private val nonJvmCrossDirs = Set("native", "js")
+    // The doctest task forks a JVM and would crash on scala-native, scala-js, or
+    // scala-js/WebAssembly compiled .class files (UndefinedBehaviorError,
+    // NoClassDefFoundError, "native JS type called on the JVM"), so the aggregate
+    // skips these. "wasm" is the Scala.js WebAssembly backend
+    // (WasmPlatform.identifier), in the same JVM-incompatible category as "js".
+    private val nonJvmCrossDirs = Set("native", "js", "wasm")
 
     private def projectsWithDoctest(state: State): Seq[ProjectRef] = {
         val structure = Project.extract(state).structure
