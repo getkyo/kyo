@@ -161,6 +161,8 @@ class TastyErrorMaybeTest extends Test:
                 case TastyError.UnknownTagInPosition(t, p)     => writeInt(t); writeStr(p)
                 case TastyError.InvalidFqn(fqn, reason)        => writeStr(fqn); writeStr(reason)
                 case TastyError.DigestMismatch(exp, act)       => writeStr(exp); writeStr(act)
+                // Phase 11 wire-format note: UnhandledSubtypingCase is not yet serializable; write no fields.
+                case TastyError.UnhandledSubtypingCase(_, _, _, _) => ()
             end match
         end for
         baos.toByteArray

@@ -27,13 +27,22 @@ end Binding
   * The bodyMemo field is a ConcurrentHashMap keyed by SymbolId. Each withClasspath
   * invocation creates a fresh DecodeContext so body memos are never shared across calls.
   * Unsafe: ConcurrentHashMap used for thread-safe lazy body decoding (INV-009 site-3).
+  *
+  * The subtypingErrors field accumulates TastyError.UnhandledSubtypingCase diagnostics
+  * produced during isSubtypeOf calls within a live withClasspath scope. It is not
+  * synchronised: isSubtypeOf runs inside a single Sync.defer block, so concurrency is
+  * not a concern (unlike bodyMemo which is accessed from concurrent fiber pools).
   */
 final private[kyo] class DecodeContext(
-    val bodyMemo: java.util.concurrent.ConcurrentHashMap[SymbolId, Result[TastyError, Tree]]
+    val bodyMemo: java.util.concurrent.ConcurrentHashMap[SymbolId, Result[TastyError, Tree]],
+    val subtypingErrors: scala.collection.mutable.ArrayBuffer[TastyError]
 )
 
 private[kyo] object DecodeContext:
     def fresh(): DecodeContext =
-        // Unsafe: ConcurrentHashMap allocation at a Binding construction site (INV-009 site-1 / site-3).
-        new DecodeContext(new java.util.concurrent.ConcurrentHashMap())
+        // Unsafe: allocations at a Binding construction site (INV-009 site-1 / site-3).
+        new DecodeContext(
+            new java.util.concurrent.ConcurrentHashMap(),
+            new scala.collection.mutable.ArrayBuffer()
+        )
 end DecodeContext

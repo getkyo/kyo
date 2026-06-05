@@ -161,4 +161,19 @@ enum TastyError derives CanEqual:
       * `expected` is the hex-encoded digest the caller expected. `actual` is the hex-encoded digest read from the snapshot.
       */
     case DigestMismatch(expected: String, actual: String)
+
+    /** A parent-walk shape not covered by the Subtyping engine's matcher was encountered.
+      *
+      * Accumulated in `decodeCtx.subtypingErrors` when `Tasty.isSubtypeOf` encounters a parent whose
+      * TASTy type shape is not `Named(id)` or `Applied(Named(id), _)`. The verdict becomes `Indeterminate`
+      * for the affected check; this error is a diagnostic, not a hard failure. `shape` is the short label
+      * of the unhandled constructor (e.g. "Applied(TermRef,_)"); `lhs` and `rhs` carry the actual type
+      * values; `file` is the TASTy file the symbol was loaded from (currently "<unknown>" because Subtyping
+      * does not have file-name access; Phase 08+ may fill this in).
+      *
+      * Note: this variant is produced at runtime during `isSubtypeOf` calls, not during classpath loading.
+      * It is NOT serialised to the KRFL snapshot format in this release (Phase 11 will add wire-format
+      * support when the snapshot minor version is bumped from 10 to 11).
+      */
+    case UnhandledSubtypingCase(shape: String, lhs: kyo.Tasty.Type, rhs: kyo.Tasty.Type, file: String)
 end TastyError

@@ -2,6 +2,7 @@ package kyo.internal.tasty.type_
 
 import kyo.*
 import kyo.Tasty.SymbolId
+import kyo.TastyError
 import kyo.internal.tasty.symbol.SymbolKind
 
 /** Subtype checking for `Tasty.Type` values.
@@ -16,13 +17,13 @@ import kyo.internal.tasty.symbol.SymbolKind
   *   - `T <: OrType(L, R)` iff `T <: L` or `T <: R`.
   *   - `TypeLambda` structural alpha-equivalence (params renamed to positional indices before comparison).
   *   - `Wildcard(lo, hi) <: Wildcard(lo', hi')` iff `lo' <: lo` (contravariant lower) and `hi <: hi'` (covariant upper).
-  *   - `Rec` unfolds one level per unfolding step. Budget: 64 steps. If exhausted, returns `Unknown`.
+  *   - `Rec` unfolds one level per unfolding step. Budget: 64 steps. If exhausted, returns `Indeterminate`.
   *   - `Nothing <: T` for all `T` (bottom type).
   *
   * Three-way verdict:
   *
-  * Results are `Tasty.SubtypeVerdict`: `Sub` (relation holds), `NotSub` (relation does not hold), or `Unknown` (budget exhausted or parent
-  * chain absent from the classpath). Callers should pattern-match all three cases; the idiomatic migration shape is
+  * Results are `Tasty.SubtypeVerdict`: `Sub` (relation holds), `NotSub` (relation does not hold), or `Indeterminate` (budget exhausted or
+  * parent chain absent from the classpath). Callers should pattern-match all three cases; the idiomatic migration shape is
   * `if v == SubtypeVerdict.Sub then ...`.
   *
   * Depth budget for Rec:
@@ -30,8 +31,8 @@ import kyo.internal.tasty.symbol.SymbolKind
   * A `Rec` type carries a recursive back-reference (`RecThis`) that points to itself. Naive structural equality/subtyping over `Rec` would
   * diverge. We defend against this by threading a `budget: Int` parameter through the recursion. Each time a `Rec` node is unfolded (i.e.,
   * `RecThis` references inside its body are substituted with the `Rec` node itself for the next comparison step), the budget decrements by 1.
-  * When the budget reaches 0, `isSubtype` returns `Unknown` immediately without further recursion. Budget starts at 64 per top-level call,
-  * so even a maximally-nested Rec type will terminate. The caller (`Type.isSubtypeOf`) always starts with `budget = 64`.
+  * When the budget reaches 0, `isSubtype` returns `Indeterminate` immediately without further recursion. Budget starts at 64 per top-level
+  * call, so even a maximally-nested Rec type will terminate. The caller (`Type.isSubtypeOf`) always starts with `budget = 64`.
   *
   * The budget applies only to Rec unfolding, not to structural recursion depth over other ADT cases.
   *
@@ -58,24 +59,32 @@ object Subtyping:
       * @param cp
       *   classpath for parent-chain resolution (accessed via pure reads on immutable post-open Symbol._parents slots)
       * @param budget
-      *   remaining Rec-unfolding steps; 0 means return Unknown
+      *   remaining Rec-unfolding steps; 0 means return Indeterminate
+      * @param errAcc
+      *   nullable accumulator for TastyError.UnhandledSubtypingCase diagnostics; null means no accumulation
       */
-    def isSubtype(sub: Tasty.Type, sup: Tasty.Type, cp: Tasty.Classpath, budget: Int): SubtypeVerdict =
-        if budget <= 0 then Unknown
+    def isSubtype(
+        sub: Tasty.Type,
+        sup: Tasty.Type,
+        cp: Tasty.Classpath,
+        budget: Int,
+        errAcc: scala.collection.mutable.ArrayBuffer[TastyError]
+    ): SubtypeVerdict =
+        if budget <= 0 then Indeterminate
         else
             // Any is supertype of everything
             sup match
                 case Tasty.Type.Named(supId) if { import Tasty.Name.asString; cp.symbol(supId).name.asString == AnyName } =>
                     Sub
-                // T <: OrType(L, R): Sub if either side is Sub; NotSub only if both are NotSub; else Unknown
+                // T <: OrType(L, R): Sub if either side is Sub; NotSub only if both are NotSub; else Indeterminate
                 case Tasty.Type.OrType(supLeft, supRight) =>
-                    val leftVerdict = isSubtype(sub, supLeft, cp, budget)
+                    val leftVerdict = isSubtype(sub, supLeft, cp, budget, errAcc)
                     if leftVerdict == Sub then Sub
                     else
-                        val rightVerdict = isSubtype(sub, supRight, cp, budget)
+                        val rightVerdict = isSubtype(sub, supRight, cp, budget, errAcc)
                         if rightVerdict == Sub then Sub
                         else if leftVerdict == NotSub && rightVerdict == NotSub then NotSub
-                        else Unknown
+                        else Indeterminate
                     end if
                 case _ =>
                     sub match
@@ -88,7 +97,7 @@ object Subtyping:
                             sup match
                                 case Tasty.Type.Named(supId) =>
                                     if subId == supId then Sub
-                                    else isNamedSubNamed(subId, supId, cp, budget)
+                                    else isNamedSubNamed(subId, supId, cp, budget, errAcc)
                                 case _ =>
                                     NotSub
 
@@ -96,9 +105,9 @@ object Subtyping:
                         case Tasty.Type.Applied(subBase, subArgs) =>
                             sup match
                                 case Tasty.Type.Applied(supBase, supArgs) =>
-                                    val baseVerdict = isSubtype(subBase, supBase, cp, budget)
+                                    val baseVerdict = isSubtype(subBase, supBase, cp, budget, errAcc)
                                     if baseVerdict != Sub then
-                                        if baseVerdict == Unknown then Unknown else NotSub
+                                        if baseVerdict == Indeterminate then Indeterminate else NotSub
                                     else if subArgs.length != supArgs.length then NotSub
                                     else
                                         // Resolve base symbol for variance lookup; available since Phase 09.
@@ -107,20 +116,20 @@ object Subtyping:
                                                 val s = cp.symbol(id)
                                                 if s.kind == SymbolKind.Unresolved then Maybe.Absent else Maybe(s)
                                             case _ => Maybe.Absent
-                                        checkAppliedArgs(subArgs, supArgs, baseSymOpt, cp, budget)
+                                        checkAppliedArgs(subArgs, supArgs, baseSymOpt, cp, budget, errAcc)
                                     end if
                                 case _ =>
                                     NotSub
 
-                        // AndType(L, R) <: T: Sub if either side is Sub; NotSub only if both are NotSub; else Unknown
+                        // AndType(L, R) <: T: Sub if either side is Sub; NotSub only if both are NotSub; else Indeterminate
                         case Tasty.Type.AndType(left, right) =>
-                            val leftVerdict = isSubtype(left, sup, cp, budget)
+                            val leftVerdict = isSubtype(left, sup, cp, budget, errAcc)
                             if leftVerdict == Sub then Sub
                             else
-                                val rightVerdict = isSubtype(right, sup, cp, budget)
+                                val rightVerdict = isSubtype(right, sup, cp, budget, errAcc)
                                 if rightVerdict == Sub then Sub
                                 else if leftVerdict == NotSub && rightVerdict == NotSub then NotSub
-                                else Unknown
+                                else Indeterminate
                             end if
 
                         // TypeLambda: alpha-equivalence
@@ -143,8 +152,8 @@ object Subtyping:
                                 case Tasty.Type.Wildcard(supLo, supHi) =>
                                     // Contravariant lower, covariant upper
                                     combineAnd(
-                                        isSubtype(supLo, subLo, cp, budget),
-                                        isSubtype(subHi, supHi, cp, budget)
+                                        isSubtype(supLo, subLo, cp, budget, errAcc),
+                                        isSubtype(subHi, supHi, cp, budget, errAcc)
                                     )
                                 case _ =>
                                     NotSub
@@ -155,27 +164,27 @@ object Subtyping:
                                 case Tasty.Type.Rec(supParent) =>
                                     val subUnfolded = substituteRecThis(subParent, sub)
                                     val supUnfolded = substituteRecThis(supParent, sup)
-                                    isSubtype(subUnfolded, supUnfolded, cp, budget - 1)
+                                    isSubtype(subUnfolded, supUnfolded, cp, budget - 1, errAcc)
                                 case _ =>
                                     val subUnfolded = substituteRecThis(subParent, sub)
-                                    isSubtype(subUnfolded, sup, cp, budget - 1)
+                                    isSubtype(subUnfolded, sup, cp, budget - 1, errAcc)
 
                         case _ =>
                             NotSub
         end if
     end isSubtype
 
-    /** Combine two verdicts with AND semantics: Sub iff both Sub; NotSub if either NotSub; else Unknown. */
+    /** Combine two verdicts with AND semantics: Sub iff both Sub; NotSub if either NotSub; else Indeterminate. */
     private def combineAnd(a: SubtypeVerdict, b: SubtypeVerdict): SubtypeVerdict =
         if a == Sub && b == Sub then Sub
         else if a == NotSub || b == NotSub then NotSub
-        else Unknown
+        else Indeterminate
 
-    /** Combine two verdicts with OR semantics: Sub if either Sub; NotSub if both NotSub; else Unknown. */
+    /** Combine two verdicts with OR semantics: Sub if either Sub; NotSub if both NotSub; else Indeterminate. */
     private def combineOr(a: SubtypeVerdict, b: SubtypeVerdict): SubtypeVerdict =
         if a == Sub || b == Sub then Sub
         else if a == NotSub && b == NotSub then NotSub
-        else Unknown
+        else Indeterminate
 
     /** Check `Named(subId) <: Named(supId)` by walking the sub symbol's transitive parent chain.
       *
@@ -185,12 +194,13 @@ object Subtyping:
         subId: SymbolId,
         supId: SymbolId,
         cp: Tasty.Classpath,
-        budget: Int
+        budget: Int,
+        errAcc: scala.collection.mutable.ArrayBuffer[TastyError]
     ): SubtypeVerdict =
         val parents = cp.symbol(subId) match
             case c: Tasty.Symbol.ClassLike => c.parentTypes
             case _                         => Chunk.empty[Tasty.Type]
-        checkParents(parents, supId, cp, budget)
+        checkParents(parents, supId, cp, budget, errAcc)
     end isNamedSubNamed
 
     /** Check if `supId` appears directly in the given parent list or transitively in any parent's parents. */
@@ -198,7 +208,8 @@ object Subtyping:
         parents: Chunk[Tasty.Type],
         supId: SymbolId,
         cp: Tasty.Classpath,
-        budget: Int
+        budget: Int,
+        errAcc: scala.collection.mutable.ArrayBuffer[TastyError]
     ): SubtypeVerdict =
         if parents.isEmpty then NotSub
         else
@@ -206,27 +217,37 @@ object Subtyping:
                 case Tasty.Type.Named(parentId) =>
                     if parentId == supId then Sub
                     else
-                        val transitiveVerdict = isNamedSubNamed(parentId, supId, cp, budget)
+                        val transitiveVerdict = isNamedSubNamed(parentId, supId, cp, budget, errAcc)
                         if transitiveVerdict == Sub then Sub
                         else
-                            val tailVerdict = checkParents(parents.tail, supId, cp, budget)
+                            val tailVerdict = checkParents(parents.tail, supId, cp, budget, errAcc)
                             if tailVerdict == Sub then Sub
-                            else if transitiveVerdict == Unknown || tailVerdict == Unknown then Unknown
+                            else if transitiveVerdict == Indeterminate || tailVerdict == Indeterminate then Indeterminate
                             else NotSub
                         end if
                 case Tasty.Type.Applied(Tasty.Type.Named(parentId), _) =>
                     if parentId == supId then Sub
                     else
-                        val transitiveVerdict = isNamedSubNamed(parentId, supId, cp, budget)
+                        val transitiveVerdict = isNamedSubNamed(parentId, supId, cp, budget, errAcc)
                         if transitiveVerdict == Sub then Sub
                         else
-                            val tailVerdict = checkParents(parents.tail, supId, cp, budget)
+                            val tailVerdict = checkParents(parents.tail, supId, cp, budget, errAcc)
                             if tailVerdict == Sub then Sub
-                            else if transitiveVerdict == Unknown || tailVerdict == Unknown then Unknown
+                            else if transitiveVerdict == Indeterminate || tailVerdict == Indeterminate then Indeterminate
                             else NotSub
                         end if
-                case _ =>
-                    checkParents(parents.tail, supId, cp, budget)
+                case other =>
+                    // Cat 7: unhandled parent shape. Record diagnostic if accumulator is present.
+                    if errAcc != null then
+                        errAcc += TastyError.UnhandledSubtypingCase(
+                            shape = shapeName(other),
+                            lhs = other,
+                            rhs = Tasty.Type.Named(supId),
+                            file = "<unknown>"
+                        )
+                    end if
+                    val tailVerdict = checkParents(parents.tail, supId, cp, budget, errAcc)
+                    if tailVerdict == Sub then Sub else Indeterminate
 
     /** Variance-respecting argument check for Applied types.
       *
@@ -238,7 +259,8 @@ object Subtyping:
         supArgs: Chunk[Tasty.Type],
         baseSymOpt: Maybe[Tasty.Symbol],
         cp: Tasty.Classpath,
-        budget: Int
+        budget: Int,
+        errAcc: scala.collection.mutable.ArrayBuffer[TastyError]
     ): SubtypeVerdict =
         val typeParamsOpt: Maybe[Chunk[Tasty.Symbol]] = baseSymOpt.flatMap: baseSym =>
             val tps = (baseSym match
@@ -249,7 +271,7 @@ object Subtyping:
                 case _                           => Chunk.empty
             ).map(cp.symbol)
             if tps.nonEmpty then Maybe(tps) else Maybe.Absent
-        checkArgPairs(subArgs, supArgs, typeParamsOpt, 0, cp, budget)
+        checkArgPairs(subArgs, supArgs, typeParamsOpt, 0, cp, budget, errAcc)
     end checkAppliedArgs
 
     private def checkArgPairs(
@@ -258,7 +280,8 @@ object Subtyping:
         typeParamsOpt: Maybe[Chunk[Tasty.Symbol]],
         idx: Int,
         cp: Tasty.Classpath,
-        budget: Int
+        budget: Int,
+        errAcc: scala.collection.mutable.ArrayBuffer[TastyError]
     ): SubtypeVerdict =
         if idx >= subArgs.length then Sub
         else
@@ -275,22 +298,37 @@ object Subtyping:
             val variance = varianceOpt.getOrElse(0)
             val argVerdict: SubtypeVerdict =
                 if variance == 1 then
-                    isSubtype(subArg, supArg, cp, budget) // covariant
+                    isSubtype(subArg, supArg, cp, budget, errAcc) // covariant
                 else if variance == -1 then
-                    isSubtype(supArg, subArg, cp, budget) // contravariant
+                    isSubtype(supArg, subArg, cp, budget, errAcc) // contravariant
                 else
                     // invariant: both directions
-                    combineAnd(isSubtype(subArg, supArg, cp, budget), isSubtype(supArg, subArg, cp, budget))
+                    combineAnd(
+                        isSubtype(subArg, supArg, cp, budget, errAcc),
+                        isSubtype(supArg, subArg, cp, budget, errAcc)
+                    )
             argVerdict match
                 case Sub =>
-                    checkArgPairs(subArgs, supArgs, typeParamsOpt, idx + 1, cp, budget)
+                    checkArgPairs(subArgs, supArgs, typeParamsOpt, idx + 1, cp, budget, errAcc)
                 case NotSub =>
                     NotSub
-                case Unknown =>
-                    // Check remaining pairs but propagate Unknown if no NotSub found
-                    val restVerdict = checkArgPairs(subArgs, supArgs, typeParamsOpt, idx + 1, cp, budget)
-                    if restVerdict == NotSub then NotSub else Unknown
+                case Indeterminate =>
+                    // Check remaining pairs but propagate Indeterminate if no NotSub found
+                    val restVerdict = checkArgPairs(subArgs, supArgs, typeParamsOpt, idx + 1, cp, budget, errAcc)
+                    if restVerdict == NotSub then NotSub else Indeterminate
             end match
+
+    /** Produce a short human-readable label for a Type constructor, used in UnhandledSubtypingCase diagnostics. */
+    private def shapeName(t: Tasty.Type): String = t match
+        case _: Tasty.Type.TermRef                        => "TermRef"
+        case _: Tasty.Type.TypeRef                        => "TypeRef"
+        case Tasty.Type.Applied(_: Tasty.Type.TermRef, _) => "Applied(TermRef,_)"
+        case _: Tasty.Type.Applied                        => "Applied"
+        case _: Tasty.Type.AndType                        => "AndType"
+        case _: Tasty.Type.OrType                         => "OrType"
+        case _: Tasty.Type.Annotated                      => "Annotated"
+        case _: Tasty.Type.Rec                            => "Rec"
+        case _                                            => t.getClass.getSimpleName
 
     /** Structural alpha-equivalence for TypeLambda: rename params to positional de Bruijn-like indices.
       *

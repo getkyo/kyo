@@ -88,7 +88,7 @@ class TypeSymbolIdTest extends Test:
                 assert(
                     verdict == Tasty.SubtypeVerdict.Sub ||
                         verdict == Tasty.SubtypeVerdict.NotSub ||
-                        verdict == Tasty.SubtypeVerdict.Unknown,
+                        verdict == Tasty.SubtypeVerdict.Indeterminate,
                     s"isSubtypeOf returned an unexpected verdict: $verdict"
                 )
                 assert(showResult.nonEmpty, s"show returned empty string")

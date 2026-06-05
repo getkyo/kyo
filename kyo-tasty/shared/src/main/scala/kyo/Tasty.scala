@@ -397,7 +397,7 @@ object Tasty:
       * Passed to `Tasty.withClasspath` (and the cached variant) to select between a tolerant load and an early
       * abort. The mode only governs decode errors found while walking the classpath; missing entries that
       * surface later (an FQN that resolves to no symbol, a subtype check that touches an unresolved parent)
-      * are reported through their own return shapes (`Maybe`, `SubtypeVerdict.Unknown`) regardless of mode.
+      * are reported through their own return shapes (`Maybe`, `SubtypeVerdict.Indeterminate`) regardless of mode.
       *
       *   - `SoftFail`: decode errors accumulate in `cp.errors`; the classpath is returned regardless and
       *     all subsequent queries operate on the best-effort symbol set. Use this for IDE / tooling paths
@@ -414,23 +414,23 @@ object Tasty:
 
     // ── Subtype verdict ──────────────────────────────────────────────────────
 
-    /** Three-way result of a subtype check.
+    /** Three-valued lattice for the result of a subtype check.
       *
-      * Returned by `Type.isSubtypeOf` to encode the difference between "decided no" and "could not decide".
-      * Subtype resolution walks the parent chain of `Type.Named` references through the classpath; the
-      * classpath may not contain every transitive parent (typical when a host application links against a
-      * subset of the runtime libraries), so the check is partial by construction.
+      * `Sub` and `NotSub` are the definitive verdicts; `Indeterminate` covers
+      * the case where the check could not decide (recursion-budget exhaustion
+      * or an irreducible `Or` / `And` shape with mixed `Sub` / `NotSub`
+      * children). It is never a "branch we forgot" hole: unhandled
+      * parent-walk shapes route through `TastyError.UnhandledSubtypingCase`
+      * accumulated in `cp.errors`, NOT into `Indeterminate`.
       *
-      *   - `Sub`: the subtype relation definitively holds (`t <: other`).
-      *   - `NotSub`: the subtype relation definitively does not hold.
-      *   - `Unknown`: the check could not reach a definitive verdict (recursion budget exhausted, or a
-      *     parent chain referenced an `Unresolved` symbol not present in the loaded classpath). Treat
-      *     `Unknown` as "neither yes nor no"; do not collapse it to either side.
+      * Lattice math:
+      *   combineAnd:   any NotSub -> NotSub; any Indeterminate & no NotSub -> Indeterminate; all Sub -> Sub.
+      *   combineOr:    any Sub -> Sub; any Indeterminate & no Sub -> Indeterminate; all NotSub -> NotSub.
       *
-      * Equality is structural via `derives CanEqual`.
+      * Pierce TAPL ch.26 ; semi-decidability of F-bounded recursion.
       */
-    enum SubtypeVerdict derives CanEqual:
-        case Sub, NotSub, Unknown
+    enum SubtypeVerdict derives Schema, CanEqual:
+        case Sub, NotSub, Indeterminate
     end SubtypeVerdict
 
     // ── Constants and annotations ───────────────────────────────────────────
@@ -2428,13 +2428,15 @@ object Tasty:
 
     /** Bind a pre-existing (deserialized) Classpath and run `f` in that scope.
       *
-      * No filesystem access, no Scope overhead. The bound Binding carries no DecodeContext so
-      * `Tasty.bodyTree` returns `Maybe.Absent` for every symbol inside `f`.
+      * No filesystem access, no Scope overhead. The bound Binding carries a fresh DecodeContext so
+      * that `Tasty.isSubtypeOf` can accumulate `TastyError.UnhandledSubtypingCase` diagnostics.
+      * `Tasty.bodyTree` returns `Maybe.Absent` for every symbol inside `f` because the DecodeContext
+      * carries no body source handle.
       *
       * Effect row: `A < S` -- identical to `f`'s row.
       */
     def withClasspath[A, S](cp: Classpath)(f: => A < S)(using Frame): A < S =
-        TastyState.bindingLocal.let(Maybe.Present(Binding(cp, Maybe.Absent)))(f)
+        TastyState.bindingLocal.let(Maybe.Present(Binding(cp, Maybe.Present(DecodeContext.fresh()))))(f)
 
     /** Bind a Classpath decoded from in-memory pickles and run `f` in that scope.
       *
@@ -3840,9 +3842,19 @@ object Tasty:
                 case Type.Named(id) => Maybe(cp.symbol(id))
                 case _              => Maybe.Absent
 
-    /** Structural subtype check. Returns Sub, NotSub, or Unknown. */
+    /** Structural subtype check. Returns Sub, NotSub, or Indeterminate.
+      *
+      * Unhandled parent-walk shapes accumulate as TastyError.UnhandledSubtypingCase
+      * in decodeCtx.subtypingErrors (accessible via TastyState.bindingLocal inside a
+      * withClasspath scope). The verdict signature stays pure (no Abort[TastyError] row);
+      * diagnostics use the error channel.
+      */
     def isSubtypeOf(tpe: Type, other: Type)(using Frame): SubtypeVerdict < Sync =
-        classpath.map(cp => kyo.internal.tasty.type_.Subtyping.isSubtype(tpe, other, cp, budget = 64))
+        TastyState.bindingLocal.use: mbind =>
+            val binding = mbind.getOrElse(TastyState.global)
+            val cp      = binding.cp
+            val errAcc  = binding.decodeCtx.map(_.subtypingErrors).getOrElse(null)
+            Sync.defer(kyo.internal.tasty.type_.Subtyping.isSubtype(tpe, other, cp, budget = 64, errAcc))
 
     /** Human-readable rendering of a Type. Resolves Named ids to symbol names via the Classpath. */
     def typeShow(tpe: Type)(using Frame): String < Sync =

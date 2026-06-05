@@ -211,7 +211,7 @@ class SubtypeTest extends Test:
                     assert(
                         result == Tasty.SubtypeVerdict.Sub ||
                             result == Tasty.SubtypeVerdict.NotSub ||
-                            result == Tasty.SubtypeVerdict.Unknown
+                            result == Tasty.SubtypeVerdict.Indeterminate
                     )
                     succeed
     }
@@ -242,21 +242,21 @@ class SubtypeTest extends Test:
                 Tasty.isSubtypeOf(stringType, intType).map(v => assert(v == Tasty.SubtypeVerdict.NotSub))
     }
 
-    // Test 12: budget=0 forces Unknown (simulates deep Rec exhaustion without building 66 unfoldings)
-    "budget exhaustion returns Unknown" in run {
+    // Test 12: budget=0 forces Indeterminate (simulates deep Rec exhaustion without building 66 unfoldings)
+    "budget exhaustion returns Indeterminate" in run {
         nextId = 0
         val stringSym  = makeSym("java.lang.String")
         val intSym     = makeSym("scala.Int")
         val stringType = Tasty.Type.Named(stringSym.id)
         val intType    = Tasty.Type.Named(intSym.id)
         makeTestClasspath(Chunk(stringSym, intSym)).map: cp =>
-            val result = kyo.internal.tasty.type_.Subtyping.isSubtype(stringType, intType, cp, budget = 0)
-            assert(result == Tasty.SubtypeVerdict.Unknown)
+            val result = kyo.internal.tasty.type_.Subtyping.isSubtype(stringType, intType, cp, budget = 0, null)
+            assert(result == Tasty.SubtypeVerdict.Indeterminate)
             succeed
     }
 
     // Test 14 (Phase 15 steering note): real deeply-nested Rec type exhausts default budget.
-    "real 66-deep Rec chain exhausts default budget=64 and returns Unknown" in run {
+    "real 66-deep Rec chain exhausts default budget=64 and returns Indeterminate" in run {
         nextId = 0
         val leafSym          = makeSym("RecBudgetLeaf")
         val leaf: Tasty.Type = Tasty.Type.Named(leafSym.id)
@@ -270,8 +270,8 @@ class SubtypeTest extends Test:
             Tasty.withClasspath(cp):
                 Tasty.isSubtypeOf(t, t).map: result =>
                     assert(
-                        result == Tasty.SubtypeVerdict.Unknown,
-                        s"Expected Unknown from real 66-deep Rec chain (budget=64) but got $result"
+                        result == Tasty.SubtypeVerdict.Indeterminate,
+                        s"Expected Indeterminate from real 66-deep Rec chain (budget=64) but got $result"
                     )
                     succeed
     }

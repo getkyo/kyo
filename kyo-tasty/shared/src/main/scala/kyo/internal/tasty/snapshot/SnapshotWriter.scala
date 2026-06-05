@@ -537,7 +537,11 @@ object SnapshotWriter:
                 case TastyError.UnsupportedPlatform(feature)           => writeStr(feature)
                 case TastyError.UnknownTagInPosition(tag, pos)         => writeInt(tag); writeStr(pos)
                 case TastyError.InvalidFqn(fqn, reason)                => writeStr(fqn); writeStr(reason)
-                case TastyError.DigestMismatch(expected, actual)       => writeStr(expected); writeStr(actual)
+                case TastyError.DigestMismatch(exp, act)               => writeStr(exp); writeStr(act)
+                // Phase 11 wire-format note: UnhandledSubtypingCase carries Tasty.Type fields that are not
+                // yet encodable in the snapshot format. Write no fields; the reader maps the unknown tag
+                // string to TastyError.NotImplemented for forward-compat until Phase 11 adds the encoding.
+                case TastyError.UnhandledSubtypingCase(_, _, _, _) => ()
             end match
         end for
         baos.toByteArray
