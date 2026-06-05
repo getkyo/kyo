@@ -12,13 +12,13 @@ class DocsMarkdownTest extends Test:
     // Helper: transpile and render to HTML in one step.
     private def transpileHtml(source: String)(using Frame): String < Async =
         for
-            rendered <- DocsMarkdown.transpile(source)
+            rendered <- DocsMarkdownRender.transpile(source)
             html     <- renderHtml(rendered.article)
         yield html
 
     // Helper: just transpile and return Rendered.
-    private def transpile(source: String)(using Frame): DocsMarkdown.Rendered < Sync =
-        DocsMarkdown.transpile(source)
+    private def transpile(source: String)(using Frame): DocsMarkdownRender.Rendered < Sync =
+        DocsMarkdownRender.transpile(source)
 
     // ---- GFM pipe table ----
 
@@ -344,7 +344,7 @@ class DocsMarkdownTest extends Test:
 
     "empty source returns UI.empty and Chunk.empty headings (leaf 18)" in run {
         for rendered <- transpile("")
-        yield assert(rendered == DocsMarkdown.Rendered(UI.empty, Chunk.empty))
+        yield assert(rendered == DocsMarkdownRender.Rendered(UI.empty, Chunk.empty))
         end for
     }
 
@@ -484,7 +484,7 @@ class DocsMarkdownTest extends Test:
 
         val start = java.lang.System.nanoTime()
         for
-            rendered <- DocsMarkdown.transpile(source)
+            rendered <- DocsMarkdownRender.transpile(source)
             html     <- renderHtml(rendered.article)
         yield
             val elapsed = (java.lang.System.nanoTime() - start) / 1000000L

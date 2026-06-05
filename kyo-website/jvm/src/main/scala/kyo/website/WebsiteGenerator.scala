@@ -182,7 +182,7 @@ object WebsiteGenerator:
             // article), so the page is real content: SEO-indexable, with its OWN heading outline driving
             // the rail's Overview sections. The raw `content.intro` is written as the route's content.md
             // so the bundle fetches and re-transpiles it exactly like a module page (D6/INV-009).
-            rendered   <- DocsMarkdown.transpile(c.intro)
+            rendered   <- DocsMarkdownRender.transpile(c.intro)
             fixedRoute <- Signal.initRef(route)
             // The SSG emits one fully-loaded static page per route, so content is never mid-load:
             // `contentLoading` is constant false and the prev/next pager renders exactly as the bundle's
@@ -207,7 +207,7 @@ object WebsiteGenerator:
     )(using Frame): Unit < (Async & Abort[WebsiteException]) =
         val route = s"/$prefix/${module.slug}/"
         for
-            rendered   <- DocsMarkdown.transpile(module.readme)
+            rendered   <- DocsMarkdownRender.transpile(module.readme)
             fixedRoute <- Signal.initRef(route)
             // Constant-false `contentLoading`: a static SSG page is always loaded (see emitIntroPage).
             body <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(rendered.headings), rendered.article, Signal.initConst(false))
@@ -348,7 +348,7 @@ object WebsiteGenerator:
             entries <- Kyo.foreach(modules.toSeq.zipWithIndex) { case (m, i) =>
                 val prev = if i > 0 then Present(modules(i - 1).slug) else Absent
                 val next = if i < modules.size - 1 then Present(modules(i + 1).slug) else Absent
-                DocsMarkdown.transpile(m.readme).map(r => manifestEntry(m, prev, next, r.headings))
+                DocsMarkdownRender.transpile(m.readme).map(r => manifestEntry(m, prev, next, r.headings))
             }
             json = if entries.isEmpty then "[]" else entries.mkString("[\n", ",\n", "\n]")
             _ <- writeString(s"$prefix/manifest.json", outDir / prefix / "manifest.json", json)

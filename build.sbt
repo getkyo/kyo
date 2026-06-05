@@ -1302,6 +1302,15 @@ lazy val `kyo-website` =
         .settings(`kyo-settings`)
         .settings(publish / skip := true)
         .disablePlugins(MimaPlugin)
+        .jvmSettings(
+            // scalameta tokenizers: JVM-only build-time Scala highlighter; must not reach the JS
+            // link classpath (D2). WebsiteBuildGraphTest Guard A enforces this placement.
+            // The exclude on sourcecode resolves the _2.13 vs _3 cross-version conflict that arises
+            // because scalameta_3 transitively pulls in trees_2.13 -> common_2.13 -> sourcecode_2.13
+            // while the rest of the project uses sourcecode_3.
+            libraryDependencies += ("org.scalameta" %% "scalameta" % "4.13.4")
+                .exclude("com.lihaoyi", "sourcecode_2.13")
+        )
         .jsSettings(
             `js-settings`,
             // The content model shares WebsiteContent with the JVM generator, whose path.read pulls in

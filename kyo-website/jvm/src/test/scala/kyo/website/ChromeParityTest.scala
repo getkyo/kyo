@@ -71,7 +71,7 @@ class ChromeParityTest extends Test:
         // now that the outline lives inside the rail (no separate right TOC pane).
         val src = "# kyo-core\n\n## Scope\n\nSome text.\n"
         for
-            rendered <- DocsMarkdown.transpile(src)
+            rendered <- DocsMarkdownRender.transpile(src)
             route    <- Signal.initRef[String](docsHomeRoute)
             reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
             // SSG and the bundle's first paint are both fully loaded: contentLoading is constant false,
@@ -108,7 +108,7 @@ class ChromeParityTest extends Test:
         // that overview article + its rail sections identically (hydration parity at the intro route).
         val intro = "## Introduction\n\nKyo is a toolkit.\n\n## Coming from ZIO\n\nNotes.\n"
         for
-            rendered <- DocsMarkdown.transpile(intro)
+            rendered <- DocsMarkdownRender.transpile(intro)
             route    <- Signal.initRef[String]("/latest/")
             reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
             // Constant-false contentLoading: see the docs-route parity leaf above.
@@ -178,7 +178,7 @@ class ChromeParityTest extends Test:
     "docs body SSG runRenderPage contains data-kyo-reactive wrapping article (INV-003, leaf 13)" in run {
         val src = "## Scope\n\nSome text.\n"
         for
-            rendered <- DocsMarkdown.transpile(src)
+            rendered <- DocsMarkdownRender.transpile(src)
             route    <- Signal.initRef[String]("/latest/kyo-core/")
             reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
             view <- DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), reactive, Signal.initConst(false))
@@ -193,7 +193,7 @@ class ChromeParityTest extends Test:
     "article is a UI subtree not a raw-HTML string at article-body level (leaf 13b)" in run {
         val src = "## Scope\n\nSome text.\n"
         for
-            rendered <- DocsMarkdown.transpile(src)
+            rendered <- DocsMarkdownRender.transpile(src)
         yield
             // The article field must be a real UI AST node (not a RawHtml for the whole body)
             rendered.article match
@@ -209,8 +209,8 @@ class ChromeParityTest extends Test:
     "same Markdown gives byte-identical article in two runRenderPage calls (leaf 13c)" in run {
         val src = "## Scope\n\n- item one\n- item two\n"
         for
-            rendered1 <- DocsMarkdown.transpile(src)
-            rendered2 <- DocsMarkdown.transpile(src)
+            rendered1 <- DocsMarkdownRender.transpile(src)
+            rendered2 <- DocsMarkdownRender.transpile(src)
             html1     <- UI.runRenderPage(testHead)(rendered1.article).take(1).run.map(_.headMaybe.getOrElse(""))
             html2     <- UI.runRenderPage(testHead)(rendered2.article).take(1).run.map(_.headMaybe.getOrElse(""))
         yield assert(

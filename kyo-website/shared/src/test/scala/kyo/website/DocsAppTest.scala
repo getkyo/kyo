@@ -191,10 +191,11 @@ class DocsAppTest extends Test:
     // Leaf 5: content area is route-reactive (INV-005/INV-013)
     "content area is route-reactive INV-013 (leaf 5)" in run {
         for
-            route    <- fixedRoute("/latest/kyo-core/")
-            rendered <- DocsMarkdown.transpile("## Scope\n")
-            // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render
-            reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
+            route <- fixedRoute("/latest/kyo-core/")
+            // DocsMarkdown.transpile is JVM-only after the split; use a constructed UI article
+            // so this shared leaf stays cross-platform (steering constraint 6, INV-G6).
+            article  = UI.h2.id("scope")(UI.Ast.Text("Scope"))
+            reactive = UI.Ast.Reactive(route.map(_ => article))
             html <- this.rendered(emptyContent(), route, Chunk.empty, reactive)
         yield
             assert(html.contains("data-kyo-reactive"), s"data-kyo-reactive not found in HTML: $html")

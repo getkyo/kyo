@@ -140,15 +140,29 @@ class WebsiteStylesCoverageTest extends Test:
             DocsMarkdown.Heading(3, "Deep", "deep"),
             DocsMarkdown.Heading(4, "Deeper", "deeper")
         )
+        // DocsMarkdown.transpile is JVM-only after the split; use a constructed UI article
+        // so this shared test stays cross-platform (steering constraint 6, INV-G6).
+        // The constructed article includes all prose-hook classes so the coverage assertion
+        // and the non-vacuousness assertion remain meaningful.
+        val article2 = UI.fragment(
+            UI.h1.id("top")(UI.Ast.Text("Top")),
+            UI.h2.id("mid")(UI.Ast.Text("Mid")),
+            UI.h3.id("deep")(UI.Ast.Text("Deep")),
+            UI.h4.id("deeper")(UI.Ast.Text("Deeper")),
+            UI.p(UI.span.cssClass("md-strong")(UI.Ast.Text("bold"))),
+            UI.div.cssClass("callout callout-note")(UI.p(UI.Ast.Text("a note"))),
+            UI.div.cssClass("callout callout-caution")(UI.p(UI.Ast.Text("a caution"))),
+            UI.div.cssClass("blockquote")(UI.p(UI.Ast.Text("a blockquote"))),
+            UI.pre(UI.code(UI.span.cssClass("tok-keyword")(UI.Ast.Text("val"))))
+        )
         for
-            route    <- Signal.initRef[String]("/v0.9.0/kyo-core/")
-            rendered <- DocsMarkdown.transpile(article)
+            route <- Signal.initRef[String]("/v0.9.0/kyo-core/")
             body <- DocsApp.body(
                 content,
                 "v0.9.0",
                 route,
                 Signal.initConst(toc),
-                rendered.article,
+                article2,
                 Signal.initConst(false)
             )
             view <- shell("/v0.9.0/kyo-core/", body)
