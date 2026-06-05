@@ -953,6 +953,70 @@ private[kyo] object ChartLower:
         end match
     end buildYAxis
 
+    /** Map a configured `TextAnchor` to the SVG text-anchor token.
+      *
+      * Used by `tickLabel` and by `buildXAxis` when setting the anchor on x tick labels.
+      * Callers that need a side-default anchor (e.g. `buildYAxis`) resolve it before calling
+      * `tickLabel`, passing the already-resolved `Svg.TextAnchor` directly.
+      */
+    private def toSvgAnchor(a: TextAnchor): Svg.TextAnchor =
+        a match
+            case TextAnchor.Start  => Svg.TextAnchor.Start
+            case TextAnchor.Middle => Svg.TextAnchor.Middle
+            case TextAnchor.End    => Svg.TextAnchor.End
+
+    /** Apply theme font family and font size to an Svg.Text element when the theme sets them.
+      *
+      * A no-op when both `theme.fontFamily` and `theme.fontSize` are `Absent`; output is
+      * byte-identical to today in that case. Called from `tickLabel` and directly from axis-title
+      * and legend-text sites (which are not rotated and are not passed through `tickLabel`).
+      */
+    private def withFont(theme: Theme, t: Svg.Text): Svg.Text =
+        val t1 = theme.fontFamily.fold(t)(f => t.fontFamily(f))
+        theme.fontSize.fold(t1)(px => t1.fontSize(Svg.SvgLength.Px(px)))
+
+    /** Apply theme font, configured anchor, and configured rotation to a tick-label text element.
+      *
+      * Builds an `Svg.text` at `(x, y)` for `labelStr`, fills it with `chrome`, sets
+      * `dominantBaseline`, applies `theme.fontFamily`/`theme.fontSize` when set (via `withFont`),
+      * sets `anchor` as the SVG text-anchor, and rotates about `(x, y)` when `cfg.tickRotation !=
+      * 0.0`. This is the single tick-label chrome path shared by `buildXAxis` and (in P8) `buildYAxis`
+      * so the two axes cannot drift.
+      *
+      * `anchor` is CALLER-RESOLVED: `buildXAxis` passes `toSvgAnchor(cfg.tickAnchor)`; `buildYAxis`
+      * passes its side-default (`Svg.TextAnchor.End` for left, `Svg.TextAnchor.Start` for right)
+      * unless the user set `cfg.tickAnchor` explicitly (the P8 override logic). This design keeps the
+      * helper anchor-agnostic and avoids the helper reading `cfg` for a side-dependent default it
+      * cannot know.
+      *
+      * `baseline` is also caller-supplied: x-axis uses `Svg.DominantBaseline.Hanging` (label below
+      * the tick mark); y-axis uses `Svg.DominantBaseline.Middle` (label beside the tick mark).
+      */
+    private def tickLabel(
+        x: Double,
+        y: Double,
+        labelStr: String,
+        chrome: Style.Color,
+        baseline: Svg.DominantBaseline,
+        anchor: Svg.TextAnchor,
+        cfg: AxisConfig,
+        theme: Theme
+    )(using Frame): Svg.SvgElement =
+        val base: Svg.Text =
+            withFont(
+                theme,
+                Svg.text
+                    .x(x)
+                    .y(y)
+                    .textAnchor(anchor)
+                    .dominantBaseline(baseline)
+                    .fill(Svg.Paint.Color(chrome))
+            ).apply(labelStr)
+        if cfg.tickRotation != 0.0 then
+            base.transform(Svg.Transform.Rotate(cfg.tickRotation, Present(x), Present(y)))
+        else base
+    end tickLabel
+
     /** Build the x-axis: tick marks and tick labels along the bottom. */
     private def buildXAxis(
         layout: Layout,
@@ -965,16 +1029,6 @@ private[kyo] object ChartLower:
         val chrome  = axisChromeColor(theme)
         val gridCol = gridlineColor(theme)
         val labelY  = axisY + TickLen + 4.0
-        // D17: map the configured tick anchor to the SVG text-anchor token.
-        val svgAnchor = cfg.tickAnchor match
-            case TextAnchor.Start  => Svg.TextAnchor.Start
-            case TextAnchor.Middle => Svg.TextAnchor.Middle
-            case TextAnchor.End    => Svg.TextAnchor.End
-
-        // D25: optional theme font on tick labels.
-        def withFont(t: Svg.Text): Svg.Text =
-            val t1 = theme.fontFamily.fold(t)(f => t.fontFamily(f))
-            theme.fontSize.fold(t1)(px => t1.fontSize(Svg.SvgLength.Px(px)))
 
         @scala.annotation.tailrec
         def loop(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
@@ -1002,21 +1056,20 @@ private[kyo] object ChartLower:
                 val xLabelStr = cfg.tickFormat match
                     case Present(f) => f(tick.value)
                     case Absent     => tick.label
-                val tickLabelBase: Svg.Text =
-                    withFont(
-                        Svg.text
-                            .x(px)
-                            .y(labelY)
-                            .textAnchor(svgAnchor)
-                            .dominantBaseline(Svg.DominantBaseline.Hanging)
-                            .fill(Svg.Paint.Color(chrome))
-                    ).apply(xLabelStr)
-                // D17: rotate the label about its anchor point when a rotation is configured.
-                val tickLabel: Svg.SvgElement =
-                    if cfg.tickRotation != 0.0 then
-                        tickLabelBase.transform(Svg.Transform.Rotate(cfg.tickRotation, Present(px), Present(labelY)))
-                    else tickLabelBase
-                loop(i + 1, withGrid.append(tickMark).append(tickLabel))
+                // D17: map cfg.tickAnchor to the SVG token and build the tick label element with
+                // font, anchor, and optional rotation applied via the shared tickLabel helper.
+                val tickLabelElem: Svg.SvgElement =
+                    tickLabel(
+                        px,
+                        labelY,
+                        xLabelStr,
+                        chrome,
+                        Svg.DominantBaseline.Hanging,
+                        toSvgAnchor(cfg.tickAnchor),
+                        cfg,
+                        theme
+                    )
+                loop(i + 1, withGrid.append(tickMark).append(tickLabelElem))
         val base = loop(0, Chunk.empty)
         // axis label
         cfg.axisLabel match
