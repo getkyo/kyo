@@ -483,27 +483,24 @@ object Tasty:
 
     /** Source position attached to a TASTy symbol.
       *
-      * Carried by `Symbol.position: Maybe[Position]`. `Absent` for classfile-sourced symbols and for
+      * Carried by `Symbol.sourcePosition: Maybe[Position]`. `Absent` for classfile-sourced symbols and for
       * TASTy symbols loaded from a file without a Positions section; otherwise populated from the TASTy
       * Positions table during classpath open. Positions point at the symbol's declaration site, not at
       * every reference to it. There is no per-tree positional information; the public model deliberately
       * stops at the symbol level.
       *
-      * `sourceFile` is the file name from the Attributes section (if present), exactly as recorded in the
-      * pickle (no path normalisation). `line` and `column` are 1-based (line 1 is the first line of the
-      * file; column 1 is the first character of the line). A column of 0 is possible when the underlying
-      * TASTy entry carried no column information.
+      * `sourceFile` is the file name from the Attributes section, exactly as recorded in the pickle
+      * (no path normalisation). A `Position` is only constructed when the SOURCEFILE attribute is present;
+      * absence of source information is represented by `Symbol.sourcePosition == Maybe.Absent`, not by a
+      * sentinel string inside this case class. `line` and `column` are 1-based (line 1 is the first line
+      * of the file; column 1 is the first character of the line). A column of 0 is possible when the
+      * underlying TASTy entry carried no column information.
       *
       * Equality is structural across all three fields (case class auto-generation).
       */
-    final case class Position(sourceFile: Maybe[String], line: Int, column: Int) derives Schema, CanEqual:
-        /** Human-readable representation: `file:line:column`, or `<unknown>:line:column` when `sourceFile` is absent. */
-        def show: String =
-            val file = sourceFile match
-                case Maybe.Present(f) => f
-                case Maybe.Absent     => "<unknown>"
-            s"$file:$line:$column"
-        end show
+    final case class Position(sourceFile: String, line: Int, column: Int) derives Schema, CanEqual:
+        /** Human-readable representation: `file:line:column`. */
+        def show: String = s"$sourceFile:$line:$column"
     end Position
 
     /** A Scala annotation as it appears on a `Type.Annotated` (and, indirectly, on a `Symbol`).

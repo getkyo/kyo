@@ -34,12 +34,20 @@ object PositionsUnpickler:
 
     /** Read the Positions section payload from `view` and return a map from symbol to Tasty.Position.
       *
+      * When `sourceFile` is `Maybe.Absent`, position production is skipped entirely: an empty map is returned without error.
+      * This matches the behavior of pre-Scala-3.3 TASTy files and files compiled without the Attributes SOURCEFILE attribute
+      * (source path only available via SOURCE entries in the Positions stream, which kyo-tasty does not resolve). Symbols in
+      * those files stay with `sourcePosition == Maybe.Absent`.
+      *
+      * A hard-fail error (via `Abort`) is emitted when the Positions section bytes are structurally corrupt (e.g., truncated
+      * mid-entry).
+      *
       * @param view
       *   ByteView positioned at the start of the Positions section payload. `view.remaining` covers the full section.
       * @param addrMap
       *   Map from TASTy byte address to symbol (from Pass1Result.addrMap). Entries whose address is not in this map are skipped.
       * @param sourceFile
-      *   The source file name from the Attributes section, if available. Included in all Position values produced.
+      *   The source file name from the Attributes section, if available. Absent skips position production.
       */
     def read(
         view: ByteView,
@@ -67,6 +75,20 @@ object PositionsUnpickler:
     )(using AllowUnsafe): Map[Tasty.Symbol, Tasty.Position] =
         // An empty section has no data at all; return an empty map immediately without trying to read.
         if view.remaining == 0 then return Map.empty
+
+        // When the Attributes section did not record a SOURCEFILE, we cannot associate positions with a
+        // file name (this happens for TASTy compiled without the Attributes SOURCEFILE attribute, e.g. some
+        // pre-Scala-3.3 compiler outputs and certain synthetic files). Skip Position production: every
+        // symbol's sourcePosition stays Absent. This is not a malformed-section error; it is a legitimate
+        // encoding where the source path is only carried by SOURCE entries inside the Positions stream,
+        // which kyo-tasty does not resolve (they require walking the TASTy NameTable). No error is emitted.
+        sourceFile match
+            case Maybe.Absent     => return Map.empty
+            case Maybe.Present(_) => ()
+        end match
+
+        val sf = sourceFile.get
+
         // Read lineSizes: first a Nat giving the number of lines, then one Nat per line giving chars on that line (not counting '\n').
         val numLines  = view.readNat()
         val lineSizes = new Array[Int](numLines)
@@ -120,7 +142,7 @@ object PositionsUnpickler:
                 addrMap.get(curIndex) match
                     case Some(sym) =>
                         val (line, col) = offsetToLineCol(curStart, lineStarts)
-                        builder += (sym -> Tasty.Position(sourceFile, line, col))
+                        builder += (sym -> Tasty.Position(sf, line, col))
                     case None => () // sub-expression node or unmapped address; skip
                 end match
             end if

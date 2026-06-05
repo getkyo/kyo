@@ -19,12 +19,12 @@ class CaseClassConsistencyTest extends Test:
     }
 
     "Position is a case class with copy" in {
-        val p1 = Tasty.Position(Maybe("Foo.scala"), 10, 5)
+        val p1 = Tasty.Position("Foo.scala", 10, 5)
         val p3 = p1.copy(line = 11)
         assert(p1.line == 10)
         assert(p3.line == 11)
         // structural equality via equals (Scala case class auto-generates equals)
-        val p2: Any = Tasty.Position(Maybe("Foo.scala"), 10, 5)
+        val p2: Any = Tasty.Position("Foo.scala", 10, 5)
         assert(p1.equals(p2), "Position equality failed")
     }
 

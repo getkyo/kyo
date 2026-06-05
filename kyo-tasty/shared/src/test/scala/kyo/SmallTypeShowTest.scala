@@ -10,19 +10,20 @@ import kyo.Tasty.SymbolId
 class SmallTypeShowTest extends Test:
 
     // ── Leaf 165: position-show ───────────────────────────────────────────────
-    // Given: Position(Maybe.Present("Foo.scala"), 10, 5)
+    // Given: Position("Foo.scala", 10, 5)
     // When: p.show
     // Then: returns "Foo.scala:10:5"
     "Leaf 165: Position.show returns file:line:column" in run {
-        val p = Tasty.Position(Maybe("Foo.scala"), 10, 5)
+        val p = Tasty.Position("Foo.scala", 10, 5)
         assert(p.show == "Foo.scala:10:5", s"Expected 'Foo.scala:10:5', got '${p.show}'")
         succeed
     }
 
-    // Absent file case
-    "Leaf 165b: Position.show uses <unknown> when sourceFile is Absent" in run {
-        val p = Tasty.Position(Maybe.Absent, 3, 1)
-        assert(p.show == "<unknown>:3:1", s"Expected '<unknown>:3:1', got '${p.show}'")
+    // sourceFile is always a String now; the absence of a position is represented by Symbol.sourcePosition == Absent,
+    // not by a sentinel string. The 165b test verified the old '<unknown>' sentinel, which no longer exists.
+    "Leaf 165b: Position.show with a custom sourceFile string" in run {
+        val p = Tasty.Position("synthetic.scala", 3, 1)
+        assert(p.show == "synthetic.scala:3:1", s"Expected 'synthetic.scala:3:1', got '${p.show}'")
         succeed
     }
 

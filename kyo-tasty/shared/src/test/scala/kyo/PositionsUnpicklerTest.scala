@@ -67,7 +67,7 @@ class PositionsUnpicklerTest extends Test:
     //   line 3: chars 17-37, lineStarts[2]=17
     // The class definition at offset 17 => line 3, column 1.
     // addrMap has {5 -> sym} so header = (5<<3)|4 = 44 (addrDelta=5, hasStart=true), start_delta=17.
-    "PositionsUnpickler: class at line 3 column 1 returns Present(Position(Foo.scala, 3, 1))" in run {
+    "PositionsUnpickler: class at line 3 column 1 returns Position(Foo.scala, 3, 1)" in run {
         val sym     = makeTestSymbol("Foo")
         val addrMap = IntMap(5 -> sym)
         // LinesSizes: numLines=3, sizes=[10,5,20]
@@ -86,7 +86,7 @@ class PositionsUnpicklerTest extends Test:
                 assert(result.size == 1, s"Expected 1 position entry but got ${result.size}")
                 assert(result.contains(sym), "Expected sym to have a position entry")
                 val pos = result(sym)
-                assert(pos.sourceFile == Present("Foo.scala"), s"Expected sourceFile=Present(Foo.scala) but got ${pos.sourceFile}")
+                assert(pos.sourceFile == "Foo.scala", s"Expected sourceFile=Foo.scala but got ${pos.sourceFile}")
                 assert(pos.line == 3, s"Expected line=3 but got ${pos.line}")
                 assert(pos.column == 1, s"Expected column=1 but got ${pos.column}")
             case Result.Failure(e) =>
@@ -126,7 +126,8 @@ class PositionsUnpicklerTest extends Test:
         val sym     = makeTestSymbol("Truncated")
         val addrMap = IntMap(1 -> sym)
         val view    = ByteView(payload)
-        Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Absent)).map:
+        // Use Present sourceFile so the truncation error is triggered, not the absent-SOURCEFILE silent skip.
+        Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Present("test.scala"))).map:
             case Result.Success(result) =>
                 fail(s"Expected MalformedSection failure but got success with ${result.size} entries")
             case Result.Failure(TastyError.MalformedSection("Positions", _, _)) =>
@@ -188,7 +189,8 @@ class PositionsUnpicklerTest extends Test:
             encInt(11)  // start_delta = 11 => curStart=13 => line 2, col 3
         )
         val view = ByteView(payload)
-        Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Absent)).map:
+        // Use Present sourceFile so the position entries are built, not the absent-SOURCEFILE silent skip.
+        Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Present("test.scala"))).map:
             case Result.Success(result) =>
                 assert(result.size == 2, s"Expected 2 entries but got ${result.size}")
                 assert(result.contains(symAlpha), "Expected symAlpha to have a position entry")
@@ -302,8 +304,8 @@ class PositionsUnpicklerTest extends Test:
                         s"sym$i expected column=1 but got ${pos.column}"
                     )
                     assert(
-                        pos.sourceFile == Present("scale-test.scala"),
-                        s"sym$i expected sourceFile=Present(scale-test.scala) but got ${pos.sourceFile}"
+                        pos.sourceFile == "scale-test.scala",
+                        s"sym$i expected sourceFile=scale-test.scala but got ${pos.sourceFile}"
                     )
                 end for
                 succeed
@@ -340,7 +342,8 @@ class PositionsUnpicklerTest extends Test:
             // No Assoc entries needed; overflow happens during lineStarts construction
         )
         val view = ByteView(payload)
-        Abort.run[TastyError](PositionsUnpickler.read(view, IntMap.empty, Absent)).map:
+        // Use Present sourceFile so the overflow check is reached, not the absent-SOURCEFILE silent skip.
+        Abort.run[TastyError](PositionsUnpickler.read(view, IntMap.empty, Present("test.scala"))).map:
             case Result.Success(result) =>
                 fail(s"Expected MalformedSection for overflow but got success with ${result.size} entries")
             case Result.Failure(TastyError.MalformedSection("Positions", reason, _)) =>
@@ -413,7 +416,8 @@ class PositionsUnpicklerTest extends Test:
         val sym     = makeTestSymbol("B9Baseline")
         val addrMap = IntMap(1 -> sym)
         val view    = ByteView(payload)
-        Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Absent)).map:
+        // Use Present sourceFile so position entries are built, not the absent-SOURCEFILE silent skip.
+        Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Present("test.scala"))).map:
             case Result.Success(result) =>
                 // Verify the read succeeded; the position of sym at offset 0 should be line 1, col 1
                 assert(result.contains(sym), "Expected sym to have a position entry")
@@ -473,7 +477,8 @@ class PositionsUnpicklerTest extends Test:
         val sym     = makeTestSymbol("B9LineStarts10")
         val addrMap = IntMap(1 -> sym)
         val view    = ByteView(payload)
-        Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Absent)).map:
+        // Use Present sourceFile so position entries are built, not the absent-SOURCEFILE silent skip.
+        Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Present("test.scala"))).map:
             case Result.Success(result) =>
                 assert(result.contains(sym), "Expected sym to have a position entry")
                 val pos = result(sym)
