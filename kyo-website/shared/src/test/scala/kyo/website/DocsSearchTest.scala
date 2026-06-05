@@ -152,4 +152,103 @@ class DocsSearchTest extends Test:
         assert(proseHits.size == 1, s"Prose term should match, got: $proseHits")
     }
 
+    // Leaf 8: within the title band, exact title match ranks above prefix title match
+    "within the title band exact match ranks above prefix match (leaf 8)" in run {
+        val modules = Chunk(
+            mkModule("kyo-core", "Effects", "kyo-core", ""),
+            mkModule("kyo", "Foundation", "kyo", "")
+        )
+        val idx  = DocsSearch.headingIndex("latest", modules, _ => Chunk.empty)
+        val hits = DocsSearch.filter(idx, "kyo")
+        assert(hits.size == 2, s"Both titles match 'kyo', got: $hits")
+        // "kyo" is an exact match (matchClass 3); "kyo-core" is a prefix match (matchClass 2)
+        assert(hits(0).slug == "kyo", s"Exact match must rank first, got: ${hits(0).slug}")
+        assert(hits(1).slug == "kyo-core", s"Prefix match must rank second, got: ${hits(1).slug}")
+    }
+
+    // Leaf 9: within the heading band, a higher matchClass heading hit ranks above a lower one
+    // (levelWeight=0 per Decision 1; ordering is matchClass-driven, not level-driven)
+    "within the heading band higher matchClass ranks above lower matchClass (leaf 9)" in run {
+        val modules = Chunk(mkModule("kyo-core", "Effects", "kyo-core", ""))
+        val headings = Map(
+            "kyo-core" -> Chunk(
+                // "fibers and forks" is a prefix match on query "fibers" (matchClass 2)
+                DocsSearch.Heading("fibers and forks", "fibers-and-forks"),
+                // "fibers" is an exact match on query "fibers" (matchClass 3); placed second in doc order
+                DocsSearch.Heading("fibers", "fibers")
+            )
+        )
+        val idx  = DocsSearch.headingIndex("latest", modules, s => headings.getOrElse(s, Chunk.empty))
+        val hits = DocsSearch.filter(idx, "fibers")
+        assert(hits.size == 2, s"Both headings match 'fibers', got: $hits")
+        // "fibers" is an exact match; "fibers and forks" is a prefix match. Exact ranks first
+        // even though "fibers and forks" appears first in document order.
+        assert(hits(0).sub == Present("fibers"), s"Exact heading match must rank first, got: ${hits(0).sub}")
+        assert(hits(1).sub == Present("fibers and forks"), s"Prefix heading match must rank second, got: ${hits(1).sub}")
+    }
+
+    // Leaf 10: per-heading hits rank above prose-fallback hits in the heading band, regardless of
+    // matchClass. The filter uses an isProse discriminator (0 for per-heading, 1 for prose-fallback)
+    // as the highest-priority component of the heading-band sort key, so ALL per-heading hits sort
+    // before ALL prose-fallback hits. This property is independent of matchClass and document order.
+    //
+    // Fixture: the prose entry (kyo-beta, idx 0) is placed FIRST in document order AND given an exact
+    // match (matchClass 3) on query "fibers". The per-heading entry (kyo-alpha, idx 1) is placed
+    // SECOND in document order AND its heading "fibers overview" only prefix-matches "fibers"
+    // (matchClass 2). Without the isProse tier, the uniform sort key (-matchClass, ..., entryIndex, ...)
+    // would produce [kyo-beta (class 3), kyo-alpha (class 2)] because -3 < -2. With the isProse tier
+    // the key is (isProse, -matchClass, ...) so kyo-alpha (isProse=0) sorts before kyo-beta
+    // (isProse=1) regardless of matchClass. The assertion [kyo-alpha, kyo-beta] FAILS under the old
+    // uniform-key filter and PASSES only with the isProse tier.
+    "heading-band: per-heading hit ranks above prose-fallback hit regardless of matchClass (leaf 10)" in run {
+        // kyo-beta (idx 0): no headings; text "fibers" matches query "fibers" exactly (matchClass 3).
+        // kyo-alpha (idx 1): heading "fibers overview" prefix-matches query "fibers" (matchClass 2).
+        // Neither title matches "fibers", so both entries go to the heading/text band.
+        // Without isProse tier: key = (-matchClass, ...) => kyo-beta (-3) sorts before kyo-alpha (-2).
+        // With isProse tier:    key = (isProse, -matchClass, ...) => kyo-alpha (0, -2, ...) sorts before
+        //                       kyo-beta (1, -3, ...) because 0 < 1.
+        val betaEntry = DocsSearch.Entry("kyo-beta", "kyo-beta", "Foundation", "latest", "fibers", Chunk.empty)
+        val alphaEntry =
+            DocsSearch.Entry(
+                "kyo-alpha",
+                "kyo-alpha",
+                "Effects",
+                "latest",
+                "fibers overview",
+                Chunk(DocsSearch.Heading("fibers overview", "fibers-overview"))
+            )
+        // kyo-beta is document-index 0 (earlier), kyo-alpha is document-index 1 (later).
+        val idx  = DocsSearch.Index(Chunk(betaEntry, alphaEntry))
+        val hits = DocsSearch.filter(idx, "fibers")
+        assert(hits.size == 2, s"Both should match 'fibers', got: $hits")
+        // kyo-alpha (per-heading, matchClass 2, idx 1) must rank BEFORE kyo-beta (prose, matchClass 3, idx 0).
+        // This order is WRONG under uniform -matchClass key (3 > 2) and WRONG under document order (beta=0 < alpha=1).
+        // Only the isProse tier (0 < 1) produces this order. Fails under the old filter.
+        assert(
+            hits(0).slug == "kyo-alpha",
+            s"Per-heading hit must rank first despite lower matchClass and higher doc index, got: ${hits(0).slug}"
+        )
+        assert(hits(0).sub == Present("fibers overview"), s"kyo-alpha must carry heading sub-label, got: ${hits(0).sub}")
+        assert(hits(1).slug == "kyo-beta", s"Prose-fallback hit must rank last, got: ${hits(1).slug}")
+        assert(hits(1).sub == Absent, s"kyo-beta prose hit must have no sub-label, got: ${hits(1).sub}")
+    }
+
+    // Leaf 11: filter is deterministic (same input produces same output)
+    "filter is deterministic (leaf 11)" in run {
+        val modules = Chunk(
+            mkModule("kyo-core", "Effects", "kyo-core", ""),
+            mkModule("kyo-data", "Foundation", "kyo-data", ""),
+            mkModule("kyo-stream", "Apps", "kyo-stream", "")
+        )
+        val headings = Map(
+            "kyo-core" -> Chunk(DocsSearch.Heading("kyo streaming", "kyo-streaming")),
+            "kyo-data" -> Chunk.empty
+        )
+        val idx   = DocsSearch.headingIndex("latest", modules, s => headings.getOrElse(s, Chunk.empty))
+        val hits1 = DocsSearch.filter(idx, "kyo")
+        val hits2 = DocsSearch.filter(idx, "kyo")
+        assert(hits1 == hits2, s"filter must be deterministic: first call $hits1, second call $hits2")
+        assert(hits1.nonEmpty, "filter must yield at least one hit for query 'kyo'")
+    }
+
 end DocsSearchTest

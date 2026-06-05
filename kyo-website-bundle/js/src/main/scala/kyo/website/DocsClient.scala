@@ -88,7 +88,8 @@ object DocsClient:
       * reader on an older version gets the heading index built from THAT version's `toc`, not the
       * latest version's. Building the heading index from the latest manifest while stamping hits with
       * the old prefix would produce `/<oldPrefix>/<slug>/#<latestSlug>` fragments that land nowhere
-      * (AF-8). The caller (`WebsiteBundleMain.loadSearchIndex`) already knows its active prefix.
+      * (AF-8). The caller (`WebsiteBundleMain.build`, via the eager fetch fiber) already knows its
+      * active prefix.
       *
       * @param activePrefix
       *   The physical tree prefix whose `manifest.json` to fetch (`latest` or a version tag).
@@ -325,6 +326,58 @@ object DocsClient:
             slug <- extractString(obj, "slug")
         yield DocsSearch.Heading(text, slug)
     end parseHeading
+
+    /** Parse a `search-index.json` body into a [[Chunk]] of [[DocsSearch.Entry]] values.
+      *
+      * Total and degrade-not-fail: a non-array body yields `Chunk.empty`; an element missing a
+      * required field (`slug`, `title`, or `group`) is dropped via `Maybe`-per-field
+      * for-comprehension; a malformed element degrades to a smaller index rather than crashing.
+      * Returned entries have `prefix = ""` (stamped by [[fetchSearchIndex]] via `.copy`).
+      *
+      * @param json
+      *   The raw JSON body of a `search-index.json` file.
+      * @return
+      *   Parsed entries, possibly empty on any malformed input, wrapped in `Sync`.
+      */
+    private[website] def parseSearchIndex(json: String)(using Frame): Chunk[DocsSearch.Entry] < Sync =
+        Sync.defer {
+            val items = splitJsonArray(json)
+            Chunk.from(items.flatMap(parseSearchEntry))
+        }
+    end parseSearchIndex
+
+    private def parseSearchEntry(obj: String): Maybe[DocsSearch.Entry] =
+        for
+            slug  <- extractString(obj, "slug")
+            title <- extractString(obj, "title")
+            group <- extractString(obj, "group")
+        yield
+            val sectionsArray = extractArray(obj, "sections").getOrElse("[]")
+            val sectionObjs   = splitJsonArray(sectionsArray)
+            val headings      = Chunk.from(sectionObjs.flatMap(parseHeading))
+            val snippets      = sectionObjs.flatMap(s => extractString(s, "snippet"))
+            val text          = (headings.map(_.text).toSeq ++ snippets).mkString(" ")
+            DocsSearch.Entry(slug, title, group, "", text, headings)
+    end parseSearchEntry
+
+    /** Fetch and parse the `search-index.json` for the given active prefix.
+      *
+      * GETs `/$activePrefix/search-index.json`, parses the body via [[parseSearchIndex]], then stamps
+      * each entry's `prefix` field with `activePrefix` via `.copy`. The row is `< Async` with no
+      * `Abort` widening: an HTTP or network failure surfaces on the `Async` channel as a
+      * `RuntimeException`, so the caller can wrap with `Abort.run[Throwable](Abort.catching(...))` to
+      * degrade gracefully without widening this method's row.
+      *
+      * @param activePrefix
+      *   The physical tree prefix whose `search-index.json` to fetch (`latest` or a version tag).
+      * @return
+      *   The parsed [[DocsSearch.Index]] with prefix-stamped entries, wrapped in `Async`.
+      */
+    def fetchSearchIndex(activePrefix: String)(using Frame): DocsSearch.Index < Async =
+        fetch(s"/$activePrefix/search-index.json")
+            .map(parseSearchIndex)
+            .map(entries => DocsSearch.Index(entries.map(_.copy(prefix = activePrefix))))
+    end fetchSearchIndex
 
     private def parseModule(obj: String): Maybe[WebsiteModule] =
         for

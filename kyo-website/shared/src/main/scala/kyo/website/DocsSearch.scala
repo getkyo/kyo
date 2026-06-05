@@ -146,12 +146,17 @@ object DocsSearch:
       * The query is split on whitespace and all matching is case-insensitive substring. A blank or
       * whitespace-only query yields an empty [[Chunk]].
       *
-      *   - Entries where ALL query words appear in the title are emitted first, as a single hit each
-      *     whose route is the module page `/<prefix>/<slug>/`.
+      *   - Entries where ALL query words appear in the title are emitted first, ranked within the
+      *     title band by match quality (exact match, then prefix match, then word-boundary match,
+      *     then substring match), with entry document order as the tie-break.
       *   - Then, for entries that did NOT match by title, each section heading where ALL query words
-      *     appear emits one hit whose route is `/<prefix>/<slug>/#<heading-slug>` and whose `sub` is
-      *     the heading text. A module with no headings but whose joined `text` matches emits a single
-      *     module-page hit (the prose-index fallback), preserving the prose [[index]] behaviour.
+      *     appear emits one hit ranked within the heading band by match quality, then heading document
+      *     order. A module with no headings but whose joined `text` matches emits a single module-page
+      *     hit (the prose-index fallback, ranked lowest in the heading band).
+      *
+      * The two-band order (all title hits before all heading/text hits) is never crossed by the
+      * within-band ranking. The function is pure and deterministic: the same input always produces
+      * the same output, so the dropdown and keyboard nav always agree.
       *
       * @param index
       *   The index to search.
@@ -163,24 +168,33 @@ object DocsSearch:
     def filter(index: DocsSearch.Index, query: String): Chunk[DocsSearch.Hit] =
         if query.isBlank then Chunk.empty
         else
-            val words = query.trim.toLowerCase.split("\\s+").toSeq
-            val titleHits = index.entries.collect {
-                case e if matches(e.title.toLowerCase, words) =>
-                    Hit(e.slug, e.title, moduleRoute(e), Absent)
-            }
-            val headingHits = index.entries.flatMap { e =>
-                if matches(e.title.toLowerCase, words) then Chunk.empty
-                else if e.headings.isEmpty then
-                    // Prose-index fallback: no per-heading anchors, so emit a single module-page hit
-                    // when the entry's text matches.
-                    if matches(e.text.toLowerCase, words) then Chunk(Hit(e.slug, e.title, moduleRoute(e), Absent))
-                    else Chunk.empty
-                else
-                    e.headings.collect {
-                        case h if matches(h.text.toLowerCase, words) =>
-                            Hit(e.slug, e.title, s"${moduleRoute(e)}#${h.slug}", Present(h.text))
-                    }
-            }
+            val q     = query.trim.toLowerCase
+            val words = q.split("\\s+").toSeq
+            val titleHits =
+                index.entries.zipWithIndex.collect {
+                    case (e, idx) if matches(e.title.toLowerCase, words) =>
+                        val key = (-matchClass(e.title.toLowerCase, q, words), 0, idx, 0)
+                        (key, Hit(e.slug, e.title, moduleRoute(e), Absent))
+                }.sortBy(_._1).map(_._2)
+            val headingScored =
+                index.entries.zipWithIndex.flatMap { case (e, idx) =>
+                    if matches(e.title.toLowerCase, words) then Chunk.empty
+                    else if e.headings.isEmpty then
+                        // Prose-index fallback: no per-heading anchors, so emit a single module-page hit
+                        // when the entry's text matches. isProse=1 ensures all per-heading hits rank first.
+                        if matches(e.text.toLowerCase, words) then
+                            val key = (1, -matchClass(e.text.toLowerCase, q, words), 0, idx, 0)
+                            Chunk((key, Hit(e.slug, e.title, moduleRoute(e), Absent)))
+                        else Chunk.empty
+                    else
+                        e.headings.zipWithIndex.collect {
+                            case (h, hidx) if matches(h.text.toLowerCase, words) =>
+                                // isProse=0 ensures per-heading hits sort before any prose-fallback hit.
+                                val key = (0, -matchClass(h.text.toLowerCase, q, words), -levelWeight(e, h), idx, hidx)
+                                (key, Hit(e.slug, e.title, s"${moduleRoute(e)}#${h.slug}", Present(h.text)))
+                        }
+                }
+            val headingHits = headingScored.sortBy(_._1).map(_._2)
             titleHits ++ headingHits
         end if
     end filter
@@ -208,5 +222,28 @@ object DocsSearch:
 
     private def matches(haystack: String, words: Seq[String]): Boolean =
         words.forall(w => haystack.contains(w))
+
+    private def matchClass(candidate: String, fullQuery: String, words: Seq[String]): Int =
+        if candidate == fullQuery then 3
+        else if candidate.startsWith(fullQuery) then 2
+        else if words.exists(w => atWordBoundary(candidate, w)) then 1
+        else 0
+
+    private def atWordBoundary(candidate: String, word: String): Boolean =
+        var from = candidate.indexOf(word)
+        while from >= 0 do
+            val before = if from == 0 then ' ' else candidate.charAt(from - 1)
+            if !before.isLetterOrDigit then return true
+            from = candidate.indexOf(word, from + 1)
+        end while
+        false
+    end atWordBoundary
+
+    // DocsSearch.Heading is FROZEN without a level field (spec 3). levelWeight degenerates to 0
+    // because Heading carries only text and slug; no level is available at filter time.
+    // The heading-band sort key (isProse, -matchClass, -levelWeight, entryIndex, headingDocIndex)
+    // therefore uses the prose discriminator, match quality, and document order only.
+    // See phases/phase-03/decisions.md Decision 1.
+    private def levelWeight(e: Entry, h: Heading): Int = 0
 
 end DocsSearch

@@ -512,4 +512,203 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         }
     }
 
+    // Leaf 12: parseSearchIndex on a well-formed body yields the expected entries
+    "parseSearchIndex on a well-formed body yields the expected entries (leaf 12)" in run {
+        val body =
+            """[{"slug":"kyo-core","title":"kyo-core","group":"Effects","sections":[""" +
+                """{"level":2,"text":"Fibers and forks","slug":"fibers-and-forks","snippet":"Fibers are lightweight threads."},""" +
+                """{"level":3,"text":"Interruption","slug":"interruption","snippet":"Interrupt a fiber."}""" +
+                """]}]"""
+        for
+            entries <- DocsClient.parseSearchIndex(body)
+        yield
+            assert(entries.size == 1, s"Expected 1 entry, got: ${entries.size}")
+            val e = entries(0)
+            assert(e.slug == "kyo-core", s"slug: ${e.slug}")
+            assert(e.title == "kyo-core", s"title: ${e.title}")
+            assert(e.group == "Effects", s"group: ${e.group}")
+            assert(e.prefix == "", s"prefix must be empty (stamped later by fetchSearchIndex), got: ${e.prefix}")
+            assert(
+                e.headings == Chunk(
+                    DocsSearch.Heading("Fibers and forks", "fibers-and-forks"),
+                    DocsSearch.Heading("Interruption", "interruption")
+                ),
+                s"headings must carry text+slug from sections, got: ${e.headings}"
+            )
+            assert(e.text.contains("Fibers and forks"), s"text must include section text, got: ${e.text}")
+            assert(e.text.contains("Fibers are lightweight threads."), s"text must include snippet, got: ${e.text}")
+            assert(e.text.contains("Interruption"), s"text must include second section text, got: ${e.text}")
+            assert(e.text.contains("Interrupt a fiber."), s"text must include second snippet, got: ${e.text}")
+        end for
+    }
+
+    // Leaf 13: parseSearchIndex on a non-array or empty body yields Chunk.empty
+    "parseSearchIndex on a non-array or empty body yields Chunk.empty (leaf 13)" in run {
+        for
+            r1 <- DocsClient.parseSearchIndex("not-json")
+            r2 <- DocsClient.parseSearchIndex("")
+            r3 <- DocsClient.parseSearchIndex("{}")
+        yield
+            assert(r1 == Chunk.empty, s"non-array must yield Chunk.empty, got: $r1")
+            assert(r2 == Chunk.empty, s"empty string must yield Chunk.empty, got: $r2")
+            assert(r3 == Chunk.empty, s"object (not array) must yield Chunk.empty, got: $r3")
+        end for
+    }
+
+    // Leaf 14: parseSearchIndex drops a malformed element, keeps the well-formed one
+    "parseSearchIndex drops malformed element and keeps well-formed one (leaf 14)" in run {
+        // First element is well-formed; second is missing the required slug field.
+        val body =
+            """[""" +
+                """{"slug":"kyo-core","title":"kyo-core","group":"Effects","sections":[]},""" +
+                """{"title":"no-slug-here","group":"Effects","sections":[]}""" +
+                """]"""
+        for
+            entries <- DocsClient.parseSearchIndex(body)
+        yield
+            assert(entries.size == 1, s"Only the well-formed entry must survive, got: ${entries.size}")
+            assert(entries(0).slug == "kyo-core", s"Well-formed entry slug, got: ${entries(0).slug}")
+        end for
+    }
+
+    // Leaf 15: emit/parse round-trip (the schema Phase 2 emits parses back to the expected entries)
+    "emit/parse round-trip parses the schema Phase 2 emits (leaf 15)" in run {
+        // Fixture in the exact schema writeSearchIndex produces:
+        // {"slug","title","group","sections":[{"level","text","slug","snippet"}]}
+        val body =
+            """[{"slug": "kyo-core", "title": "kyo-core", "group": "Effects", "sections": [""" +
+                """{"level": 2, "text": "Fibers and forks", "slug": "fibers-and-forks", "snippet": "Fibers are lightweight threads."}""" +
+                """]}]"""
+        for
+            entries <- DocsClient.parseSearchIndex(body)
+        yield
+            assert(entries.size == 1, s"Round-trip must yield 1 entry, got: ${entries.size}")
+            val e = entries(0)
+            assert(e.slug == "kyo-core", s"round-trip slug: ${e.slug}")
+            assert(e.title == "kyo-core", s"round-trip title: ${e.title}")
+            assert(e.group == "Effects", s"round-trip group: ${e.group}")
+            assert(
+                e.headings(0) == DocsSearch.Heading("Fibers and forks", "fibers-and-forks"),
+                s"round-trip heading text+slug: ${e.headings(0)}"
+            )
+            assert(
+                e.text.contains("Fibers and forks"),
+                s"round-trip text must contain section text, got: ${e.text}"
+            )
+            assert(
+                e.text.contains("Fibers are lightweight threads."),
+                s"round-trip text must contain snippet, got: ${e.text}"
+            )
+        end for
+    }
+
+    // Leaf 16: fetchSearchIndex GETs the active-prefix file, stamps the prefix, stays < Async with no Abort
+    "fetchSearchIndex GETs active-prefix file and stamps prefix (leaf 16)" in run {
+        val body =
+            """[{"slug":"kyo-core","title":"kyo-core","group":"Effects","sections":[]}]"""
+        withFetch(Map("/v0.9.0/search-index.json" -> body)) {
+            for
+                idx <- DocsClient.fetchSearchIndex("v0.9.0")
+            yield
+                assert(idx.entries.size == 1, s"Expected 1 entry, got: ${idx.entries.size}")
+                assert(
+                    idx.entries(0).prefix == "v0.9.0",
+                    s"fetchSearchIndex must stamp the prefix, got: ${idx.entries(0).prefix}"
+                )
+                assert(idx.entries(0).slug == "kyo-core", s"entry slug: ${idx.entries(0).slug}")
+            end for
+        }
+    }
+
+    // Leaf 16 (failure path): fetchSearchIndex failure surfaces as non-Success via Abort.run
+    // (validates the caller's degrade pattern used in build())
+    "fetchSearchIndex failure surfaces as non-Success result (leaf 16 degrade)" in run {
+        withFetch[Assertion](Map.empty) {
+            Abort.run[Throwable](
+                Abort.catching[Throwable](DocsClient.fetchSearchIndex("v0.9.0"))
+            ).map { result =>
+                result match
+                    case Result.Failure(_) | Result.Panic(_) =>
+                        succeed
+                    case Result.Success(idx) =>
+                        fail(s"Expected failure for unstubbed URL, got index with ${idx.entries.size} entries")
+                end match
+            }
+        }
+    }
+
+    // Leaf 13/14 totality: a heading-less module emits sections [] and parses to an entry with
+    // empty headings and empty text (exercises the sections-absent degrade path for parseSearchIndex)
+    "parseSearchIndex handles a module with empty sections array (sections totality)" in run {
+        val body =
+            """[{"slug":"kyo-prelude","title":"kyo-prelude","group":"Effects","sections":[]}]"""
+        for
+            entries <- DocsClient.parseSearchIndex(body)
+        yield
+            assert(entries.size == 1, s"Heading-less module must yield 1 entry, got: ${entries.size}")
+            val e = entries(0)
+            assert(e.slug == "kyo-prelude", s"slug: ${e.slug}")
+            assert(e.headings == Chunk.empty, s"headings must be empty for no sections, got: ${e.headings}")
+            assert(e.text == "", s"text must be empty for no sections, got: '${e.text}'")
+        end for
+    }
+
+    // Leaf 17 (success path): refreshSearchIndex upgrades the SignalRef from the title-only seed
+    // to the full heading+prose index when the fetch succeeds. The assertion FAILS if the ref was
+    // not upgraded (i.e. searchIndex.set(idx) was not called on the success arm).
+    "refreshSearchIndex upgrades the searchIndex ref on successful fetch (leaf 17 success)" in run {
+        // Build the title-only seed: one module, no headings.
+        val modules       = Chunk(WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true)))
+        val content       = WebsiteContent("", Chunk(WebsiteContent.Group("Effects", modules)), WebsiteVersion("v0.9.0", "0.9.0", false))
+        val titleOnlySeed = DocsSearch.headingIndex("v0.9.0", modules, _ => Chunk.empty)
+        // The stub search-index.json body carries a section heading not present in the title-only seed.
+        val searchIndexBody =
+            """[{"slug":"kyo-core","title":"kyo-core","group":"Effects","sections":[""" +
+                """{"level":2,"text":"Fibers and forks","slug":"fibers-and-forks","snippet":"Fibers are lightweight."}""" +
+                """]}]"""
+        withFetch(Map("/v0.9.0/search-index.json" -> searchIndexBody)) {
+            for
+                searchIndex <- Signal.initRef(titleOnlySeed)
+                _           <- WebsiteBundleMain.refreshSearchIndex(searchIndex, "v0.9.0")
+                upgraded    <- searchIndex.get
+            yield
+                // The title-only seed has no headings; the upgraded index must carry the fetched heading.
+                assert(
+                    titleOnlySeed.entries(0).headings == Chunk.empty,
+                    s"seed must have no headings (pre-condition), got: ${titleOnlySeed.entries(0).headings}"
+                )
+                assert(upgraded.entries.size == 1, s"upgraded index must have 1 entry, got: ${upgraded.entries.size}")
+                assert(
+                    upgraded.entries(0).headings == Chunk(DocsSearch.Heading("Fibers and forks", "fibers-and-forks")),
+                    s"upgraded index must carry the fetched heading, got: ${upgraded.entries(0).headings}"
+                )
+                assert(
+                    upgraded.entries(0).prefix == "v0.9.0",
+                    s"upgraded entries must carry the active prefix, got: ${upgraded.entries(0).prefix}"
+                )
+            end for
+        }
+    }
+
+    // Leaf 17 (failure/degrade path): refreshSearchIndex leaves the SignalRef unchanged when the
+    // fetch fails. The assertion FAILS if the failure was not gracefully degraded (i.e. the ref was
+    // cleared or overwritten with an empty/wrong index instead of retaining the seed).
+    "refreshSearchIndex retains the title-only seed when the fetch fails (leaf 17 degrade)" in run {
+        // Build the title-only seed: one module, no headings.
+        val modules       = Chunk(WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true)))
+        val titleOnlySeed = DocsSearch.headingIndex("v0.9.0", modules, _ => Chunk.empty)
+        // Empty stub map: any fetch throws, simulating a network or HTTP error.
+        withFetch(Map.empty) {
+            for
+                searchIndex <- Signal.initRef(titleOnlySeed)
+                _           <- WebsiteBundleMain.refreshSearchIndex(searchIndex, "v0.9.0")
+                retained    <- searchIndex.get
+            yield assert(
+                retained == titleOnlySeed,
+                s"ref must retain the title-only seed on fetch failure, got: $retained"
+            )
+            end for
+        }
+    }
+
 end DocsClientTest

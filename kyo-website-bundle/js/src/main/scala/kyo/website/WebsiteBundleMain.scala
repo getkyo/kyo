@@ -49,11 +49,6 @@ object WebsiteBundleMain:
     private def seedArticleCache(route: String, article: DocsClient.Article): Unit =
         articleCache(route) = article
 
-    // Guards the one-shot heading-index fetch: the manifest `toc` is fetched at most once, on the
-    // first search-box focus, and cached into `searchIndex`. Re-focus reuses the loaded index.
-    // Unsafe: mutable module-level flag in a JS bundle; the single-threaded JS event loop is safe.
-    private var searchIndexLoaded: Boolean = false
-
     /** Read the SSG-seeded docs island from the DOM.
       *
       * The SSG writes a `<script id="docs-island" type="application/json">` element whose text
@@ -157,8 +152,10 @@ object WebsiteBundleMain:
             queryRef    <- Signal.initRef("")
             // Seed the search index with a title-only index built synchronously from the boot island
             // (titles/slugs/groups), so the very first keystroke already matches module titles without
-            // waiting on a fetch. The heading-aware index loads lazily on first focus (onSearchFocus).
+            // waiting on a fetch. The heading-aware index is fetched eagerly on build and upgrades
+            // searchIndex on success; a fetch failure leaves the title-only seed in place.
             searchIndex <- Signal.initRef(titleIndex(island.content, prefix))
+            _           <- Fiber.initUnscoped(refreshSearchIndex(searchIndex, prefix))
             _ <- navFiber(route, knownPrefixes, knownSlugs, island, content, articleRef, tocRef, loadingRef, landingBody, docsBody)
             view <- SiteApp.view(
                 versions,
@@ -170,7 +167,7 @@ object WebsiteBundleMain:
                 // scroll to the hash so an Enter on a heading hit lands on the section even when the
                 // module page is already loaded (the nav fiber does not re-fire for a same-route push).
                 target => UILocation.push(target).andThen(scrollToHash()),
-                loadSearchIndex(island.content, prefix, searchIndex),
+                Kyo.unit, // onSearchFocus no-op (Q-003); eager fetch makes focus-triggered loading unnecessary
                 content
             )
         yield view
@@ -178,38 +175,33 @@ object WebsiteBundleMain:
     end build
 
     /** Build a title-only search index synchronously from the boot island: one entry per module
-      * (title/slug/group) under `prefix`, with no headings yet. Used as the immediate index so search
-      * works on the first keystroke; [[loadSearchIndex]] upgrades it with section headings on focus.
+      * (title/slug/group) under `prefix`, with no headings yet. Used as the immediate synchronous
+      * seed so search works on the first keystroke; the eager fetch fiber upgrades it with section
+      * headings once the network request lands.
       */
     private def titleIndex(content: WebsiteContent, prefix: String): DocsSearch.Index =
         val modules = content.groups.flatMap(_.modules)
         DocsSearch.headingIndex(prefix, modules, _ => Chunk.empty)
     end titleIndex
 
-    /** Lazily fetch the version manifest `toc` once (on the first search focus) and upgrade
-      * `searchIndex` to the heading-aware index, so heading matches surface a `#<slug>` anchor. The
-      * fetch runs inside the search fiber (it never blocks initial load), is guarded by
-      * `searchIndexLoaded` so it runs at most once, and degrades gracefully: a fetch failure leaves
-      * the title-only index in place rather than throwing into the console.
+    /** Attempt to fetch the full heading-aware search index and upgrade the ref on success.
+      *
+      * Fetches `/$activePrefix/search-index.json` via [[DocsClient.fetchSearchIndex]]. On success,
+      * calls `searchIndex.set(idx)` to upgrade the ref from the title-only seed to the heading+prose
+      * index. On any failure (network error, non-2xx, parse error), leaves the ref unchanged so the
+      * title-only seed remains in place (graceful degrade). The effect row is `< Async` with no
+      * `Abort` widening, matching the `Fiber.initUnscoped` call site in [[build]].
+      *
+      * Exposed `private[website]` so the eager-wiring path can be tested directly without a full DOM
+      * `build()` mount (the test stubs `DocsClient.fetchFn`, seeds a `SignalRef`, calls this method,
+      * and asserts the ref upgraded or retained the seed).
       */
-    private def loadSearchIndex(
-        content: WebsiteContent,
-        prefix: String,
-        searchIndex: SignalRef[DocsSearch.Index]
-    )(using Frame): Unit < Async =
-        if searchIndexLoaded then Kyo.unit
-        else
-            searchIndexLoaded = true
-            val modules = content.groups.flatMap(_.modules)
-            Abort.run[Throwable](Abort.catching[Throwable](DocsClient.routeTable(prefix))).map {
-                case Result.Success(table) =>
-                    searchIndex.set(DocsSearch.headingIndex(prefix, modules, s => table.headingsBySlug.getOrElse(s, Chunk.empty)))
-                case Result.Failure(_) | Result.Panic(_) =>
-                    // Leave the title-only index in place; search still works on titles.
-                    Kyo.unit
-            }
-        end if
-    end loadSearchIndex
+    private[website] def refreshSearchIndex(searchIndex: SignalRef[DocsSearch.Index], activePrefix: String)(using Frame): Unit < Async =
+        Abort.run[Throwable](Abort.catching[Throwable](DocsClient.fetchSearchIndex(activePrefix))).map {
+            case Result.Success(idx)                 => searchIndex.set(idx)
+            case Result.Failure(_) | Result.Panic(_) => Kyo.unit // keep the title-only seed (graceful degrade)
+        }
+    end refreshSearchIndex
 
     /** Derive the set of known physical tree prefixes from the seeded island and the versions list.
       *
