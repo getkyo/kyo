@@ -266,8 +266,10 @@ private[kyo] object UnsafeServerDispatch:
         parser: Http1Parser
     )(using AllowUnsafe, Frame): Unit =
         val headers = HttpHeaders.fromPacked(request.headersAsPacked)
-        val path    = request.pathAsString
-        val conn    = new ChannelBackedStream(streamCtx.inbound, streamCtx.outbound)
+        val path = request.queryRawString match
+            case Present(query) => s"${request.pathAsString}?$query"
+            case Absent         => request.pathAsString
+        val conn = new ChannelBackedStream(streamCtx.inbound, streamCtx.outbound)
         discard(IOTask(
             Abort.run[Any](
                 WebSocketCodec.acceptUpgrade(conn, headers, wsHandler.wsConfig).andThen {

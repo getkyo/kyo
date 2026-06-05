@@ -15,6 +15,7 @@ import kyo.internal.client.HttpClientBackend
   *   - `HttpClient.let(client) { ... }` — install a specific client instance for the duration
   *   - `HttpClient.withConfig(_.timeout(10.seconds)) { ... }` — transform the config (stacks with the current config)
   *   - `HttpClient.withConfig(config) { ... }` — replace the config entirely (discards current config)
+  *   - `HttpClient.withFilter(filter) { ... }`: add a scoped client filter for outgoing requests
   *
   * The request lifecycle chains through `retryWith → redirectsWith → timeoutWith → poolWith`, each layer wrapping the next. Retries only
   * activate when a `Schedule` is set in the config. Redirects follow up to `maxRedirects` hops and switch to GET on 303 See Other per RFC
@@ -49,7 +50,8 @@ object HttpClient:
         initUnsafe(HttpPlatformTransport.transport, 100, 60.seconds)
     end defaultClient
 
-    private val local: Local[(HttpClient, HttpClientConfig)] = Local.init((defaultClient, HttpClientConfig()))
+    private val local: Local[(HttpClient, HttpClientConfig, HttpFilter.Passthrough[Nothing])] =
+        Local.init((defaultClient, HttpClientConfig(), HttpFilter.noop))
 
     // Cached non-generic routes — avoids per-request allocation for convenience methods.
     private val routeGetText      = HttpRoute.getText("")
@@ -78,8 +80,8 @@ object HttpClient:
         )(
             f: HttpResponse[Out] => A < (Async & Abort[HttpException])
         )(using Frame): A < (Async & Abort[HttpException]) =
-            local.use { (_, config) =>
-                self.sendWithConfig(route, request, config)(f)
+            local.use { (_, config, filter) =>
+                self.sendWithConfig(route, request, config, filter)(f)
             }
 
         /** Closes the client with a grace period for in-flight requests. */
@@ -100,27 +102,35 @@ object HttpClient:
 
     /** Sets the client instance for all `HttpClient` calls within the given computation. The current config is preserved. */
     def let[A, S](client: HttpClient)(v: A < S)(using Frame): A < S =
-        local.use { (_, config) => local.let((client, config))(v) }
+        local.use { (_, config, filter) => local.let((client, config, filter))(v) }
 
     /** Accesses the current client. */
     def use[A, S](f: HttpClient => A < S)(using Frame): A < S =
-        local.use { (client, _) => f(client) }
+        local.use { (client, _, _) => f(client) }
 
     /** Transforms the current client for the given computation. */
     def update[A, S](f: HttpClient => HttpClient)(v: A < S)(using Frame): A < S =
-        local.use { (client, config) => local.let((f(client), config))(v) }
+        local.use { (client, config, filter) => local.let((f(client), config, filter))(v) }
 
     /** Applies a config transformation for all `HttpClient` calls within the given computation. Stacks with the current config —
       * `withConfig(_.timeout(5.seconds)) { withConfig(_.retry(schedule)) { ... } }` results in a config with both timeout and retry set.
       */
     def withConfig[A, S](f: HttpClientConfig => HttpClientConfig)(v: A < S)(using Frame): A < S =
-        local.use { (client, config) => local.let((client, f(config)))(v) }
+        local.use { (client, config, filter) => local.let((client, f(config), filter))(v) }
 
     /** Replaces the config entirely for all `HttpClient` calls within the given computation. Unlike the function overload, this does not
       * stack — it discards the current config.
       */
     def withConfig[A, S](config: HttpClientConfig)(v: A < S)(using Frame): A < S =
-        local.use { (client, _) => local.let((client, config))(v) }
+        local.use { (client, _, filter) => local.let((client, config, filter))(v) }
+
+    /** Applies a client filter for all `HttpClient` calls within the given computation. Stacks with the current scoped filter. */
+    def withFilter[A, S](filter: HttpFilter.Passthrough[Nothing])(v: A < S)(using Frame): A < S =
+        local.use { (client, config, current) => local.let((client, config, current.andThen(filter)))(v) }
+
+    /** Applies multiple client filters for all `HttpClient` calls within the given computation. */
+    def withFilters[A, S](filters: Seq[HttpFilter.Passthrough[Nothing]])(v: A < S)(using Frame): A < S =
+        withFilter(filters.foldLeft(HttpFilter.noop: HttpFilter.Passthrough[Nothing])(_.andThen(_)))(v)
 
     // --- Factory methods ---
 
@@ -741,13 +751,19 @@ object HttpClient:
     )(
         f: HttpWebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
-        local.use { (client, clientConfig) =>
+        local.use { (client, clientConfig, filter) =>
             val resolved = clientConfig.baseUrl match
                 case Present(base) if !url.contains("://") =>
                     base.toString.stripSuffix("/") + url
                 case _ => url
             Abort.get(HttpUrl.parse(resolved)).map(parsed =>
-                client.connectWebSocket(parsed, resolveHeaders(headers), config, clientConfig.connectTimeout)(f)
+                client.connectWebSocket(
+                    parsed,
+                    resolveHeaders(headers),
+                    config,
+                    clientConfig.connectTimeout,
+                    clientConfig.clientFilter.andThen(filter)
+                )(f)
             )
         }
 
@@ -761,8 +777,8 @@ object HttpClient:
     def webSocket[A, S](url: HttpUrl, headers: HttpHeaders, config: HttpWebSocket.Config)(
         f: HttpWebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
-        local.use { (client, clientConfig) =>
-            client.connectWebSocket(url, headers, config, clientConfig.connectTimeout)(f)
+        local.use { (client, clientConfig, filter) =>
+            client.connectWebSocket(url, headers, config, clientConfig.connectTimeout, clientConfig.clientFilter.andThen(filter))(f)
         }
 
     // ==================== Raw connection methods ====================
@@ -777,7 +793,7 @@ object HttpClient:
         body: Span[Byte] = Span.empty,
         headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty
     )(using Frame): HttpRawConnection < (Async & Abort[HttpException] & Scope) =
-        local.use { (client, clientConfig) =>
+        local.use { (client, clientConfig, _) =>
             resolveUrl(url).map(parsed =>
                 client.connectRaw(parsed, method, body, resolveHeaders(headers), clientConfig.connectTimeout)
             )
@@ -820,9 +836,9 @@ object HttpClient:
     )(
         extract: HttpResponse[Out] => A
     )(using Frame): A < (Async & Abort[HttpException]) =
-        local.use { (client, config) =>
+        local.use { (client, config, filter) =>
             val req = HttpRequest(route.method, applyQuery(url, query), headers, Record.empty)
-            client.sendWithConfig(route, req, config) { resp =>
+            client.sendWithConfig(route, req, config, filter) { resp =>
                 if !resp.status.isSuccess then
                     resp.rawBody match
                         case Present(b) => Abort.fail(HttpStatusException(resp.status, route.method.name, url.baseUrl, b))
@@ -840,9 +856,9 @@ object HttpClient:
     )(
         extract: HttpResponse[Out] => A
     )(using Frame): A < (Async & Abort[HttpException]) =
-        local.use { (client, config) =>
+        local.use { (client, config, filter) =>
             val req = HttpRequest(route.method, applyQuery(url, query), headers, Record.empty).addField("body", body)
-            client.sendWithConfig(route, req, config) { resp =>
+            client.sendWithConfig(route, req, config, filter) { resp =>
                 if !resp.status.isSuccess then
                     resp.rawBody match
                         case Present(b) => Abort.fail(HttpStatusException(resp.status, route.method.name, url.baseUrl, b))
@@ -859,9 +875,9 @@ object HttpClient:
     )(
         extract: HttpResponse[Out] => A
     )(using Frame): A < (Async & Abort[HttpException]) =
-        local.use { (client, config) =>
+        local.use { (client, config, filter) =>
             val req = HttpRequest(route.method, applyQuery(url, query), headers, Record.empty)
-            client.sendWithConfig(route, req, config)(extract)
+            client.sendWithConfig(route, req, config, filter)(extract)
         }
 
     private def sendUrl[B, Out, A](
@@ -873,9 +889,9 @@ object HttpClient:
     )(
         extract: HttpResponse[Out] => A
     )(using Frame): A < (Async & Abort[HttpException]) =
-        local.use { (client, config) =>
+        local.use { (client, config, filter) =>
             val req = HttpRequest(route.method, applyQuery(url, query), headers, Record.empty).addField("body", body)
-            client.sendWithConfig(route, req, config)(extract)
+            client.sendWithConfig(route, req, config, filter)(extract)
         }
 
     // --- Private implementation ---

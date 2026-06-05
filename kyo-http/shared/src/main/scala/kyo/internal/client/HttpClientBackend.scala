@@ -530,7 +530,8 @@ final private[kyo] class HttpClientBackend[Handle] private (
         url: HttpUrl,
         headers: HttpHeaders,
         config: HttpWebSocket.Config,
-        connectTimeout: Duration = Duration.Infinity
+        connectTimeout: Duration = Duration.Infinity,
+        clientFilter: HttpFilter.Passthrough[Nothing] = HttpFilter.noop
     )(
         f: HttpWebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
@@ -551,7 +552,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
             else Async.timeout(connectTimeout)(connect)
         Abort.runWith[Closed | Timeout](timed) {
             case Result.Success(connection) =>
-                runWsSessionWith(connection, url, headers, config)(f)
+                runWsSessionWith(connection, url, headers, config, clientFilter)(f)
             case Result.Failure(_: Timeout) =>
                 Abort.fail(HttpConnectTimeoutException(eh, ep, connectTimeout))
             case Result.Failure(closed: Closed) =>
@@ -700,19 +701,46 @@ final private[kyo] class HttpClientBackend[Handle] private (
         connection: Connection[Handle],
         url: HttpUrl,
         headers: HttpHeaders,
-        config: HttpWebSocket.Config
+        config: HttpWebSocket.Config,
+        clientFilter: HttpFilter.Passthrough[Nothing]
     )(
         f: HttpWebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
         val transportStream = new ConnectionBackedStream(connection)
+        val path = url.rawQuery match
+            case Present(q) => s"${url.path}?$q"
+            case Absent     => url.path
         Sync.ensure {
             Sync.Unsafe.defer {
                 connection.close()
             }
         } {
-            WebSocketCodec.requestUpgradeWith(transportStream, url.host, url.path, headers, config) { wsStream =>
-                serveWebSocketWith(transportStream, wsStream, config)(f)
-            }
+            val filter = HttpFilter.Factory.composedClient.andThen(clientFilter)
+            if filter.eq(HttpFilter.noop) then
+                WebSocketCodec.requestUpgradeWith(transportStream, url.host, path, headers, config) { wsStream =>
+                    serveWebSocketWith(transportStream, wsStream, config)(f)
+                }
+            else
+                val request = HttpRequest(HttpMethod.GET, url, headers, Record.empty)
+                filter[Any, "body" ~ A, HttpException](
+                    request,
+                    (filteredReq: HttpRequest[Any]) =>
+                        val filteredPath = filteredReq.url.rawQuery match
+                            case Present(q) => s"${filteredReq.url.path}?$q"
+                            case Absent     => filteredReq.url.path
+                        WebSocketCodec.requestUpgradeWith(
+                            transportStream,
+                            filteredReq.url.host,
+                            filteredPath,
+                            filteredReq.headers,
+                            config
+                        ) { wsStream =>
+                            serveWebSocketWith(transportStream, wsStream, config)(f).map { result =>
+                                HttpResponse(HttpStatus.SwitchingProtocols).addField("body", result)
+                            }
+                        }.asInstanceOf[HttpResponse["body" ~ A] < (Async & Abort[HttpException | HttpResponse.Halt])]
+                ).map(_.fields.body).asInstanceOf[A < (S & Async & Abort[HttpException])]
+            end if
         }
     end runWsSessionWith
 
@@ -828,7 +856,8 @@ final private[kyo] class HttpClientBackend[Handle] private (
     def sendWithConfig[In, Out, A](
         route: HttpRoute[In, Out, Any],
         request: HttpRequest[In],
-        config: HttpClientConfig
+        config: HttpClientConfig,
+        scopedFilter: HttpFilter.Passthrough[Nothing] = HttpFilter.noop
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
@@ -836,20 +865,21 @@ final private[kyo] class HttpClientBackend[Handle] private (
             case Present(base) if request.url.scheme.isEmpty =>
                 request.copy(url = HttpUrl(base.scheme, base.host, base.port, request.url.path, request.url.rawQuery))
             case _ => request
-        retryWith(route, resolved, config)(f)
+        retryWith(route, resolved, config, scopedFilter)(f)
     end sendWithConfig
 
     private def retryWith[In, Out, A](
         route: HttpRoute[In, Out, Any],
         request: HttpRequest[In],
-        config: HttpClientConfig
+        config: HttpClientConfig,
+        scopedFilter: HttpFilter.Passthrough[Nothing]
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
         config.retrySchedule match
             case Present(schedule) =>
                 def loop(remaining: Schedule): A < (Async & Abort[HttpException]) =
-                    timeoutWith(route, request, config) { res =>
+                    timeoutWith(route, request, config, scopedFilter) { res =>
                         if !config.retryOn(res.status) then f(res)
                         else
                             Clock.nowWith { now =>
@@ -861,20 +891,21 @@ final private[kyo] class HttpClientBackend[Handle] private (
                     }
                 loop(schedule)
             case Absent =>
-                timeoutWith(route, request, config)(f)
+                timeoutWith(route, request, config, scopedFilter)(f)
     end retryWith
 
     private def timeoutWith[In, Out, A](
         route: HttpRoute[In, Out, Any],
         request: HttpRequest[In],
-        config: HttpClientConfig
+        config: HttpClientConfig,
+        scopedFilter: HttpFilter.Passthrough[Nothing]
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
         // Apply redirect-aware callback wrapping
         if config.followRedirects then
             def loop(req: HttpRequest[In], count: Int, chain: Chunk[String]): A < (Async & Abort[HttpException]) =
-                val inner = poolWith(route, req, config) { res =>
+                val inner = poolWith(route, req, config, scopedFilter) { res =>
                     if !res.status.isRedirect then f(res)
                     else if count >= config.maxRedirects then
                         Abort.fail(HttpRedirectLoopException(count, req.method.name, req.url.baseUrl, chain))
@@ -906,7 +937,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
             end loop
             loop(request, 0, Chunk.empty)
         else
-            val inner = poolWith(route, request, config)(f)
+            val inner = poolWith(route, request, config, scopedFilter)(f)
             if config.timeout == Duration.Infinity then inner
             else
                 Async.timeoutWithError(
@@ -969,14 +1000,15 @@ final private[kyo] class HttpClientBackend[Handle] private (
     private def poolWith[In, Out, A](
         route: HttpRoute[In, Out, Any],
         request: HttpRequest[In],
-        config: HttpClientConfig
+        config: HttpClientConfig,
+        scopedFilter: HttpFilter.Passthrough[Nothing]
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
         // Client-side filters (e.g. basicAuth, bearerAuth) are Passthrough — they transform the request
         // and forward next's result unchanged.
         // Auto-discovered filters (e.g. W3C trace context from kyo-stats-otlp) are composed first.
-        val clientFilter = HttpFilter.Factory.composedClient
+        val clientFilter = HttpFilter.Factory.composedClient.andThen(config.clientFilter).andThen(scopedFilter)
         val routeFilter  = route.filter
         if (clientFilter eq HttpFilter.noop) && (routeFilter eq HttpFilter.noop) then
             // Fast path: no filters configured — call impl directly without filter closure

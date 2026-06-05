@@ -1362,6 +1362,42 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
             }.unit
         }
 
+        "webSocket applies config and scoped filters to handshake".notNative in {
+            val handler = HttpHandler.webSocket("ws/filter") { (req, ws) =>
+                val config = req.headers.get("X-Config").getOrElse("missing-config")
+                val scoped = req.headers.get("X-Scoped").getOrElse("missing-scoped")
+                ws.put(HttpWebSocket.Payload.Text(s"$config/$scoped")).andThen {
+                    Abort.run[Closed](ws.take()).unit
+                }
+            }
+            withWsServer(handler) { url =>
+                HttpClient.withConfig(
+                    HttpClientConfig()
+                        .filter(HttpFilter.client.addHeader("X-Config", "config"))
+                ) {
+                    HttpClient.withFilter(HttpFilter.client.addHeader("X-Scoped", "scoped")) {
+                        HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/filter") { ws =>
+                            ws.take().map(f => discard(assert(f == HttpWebSocket.Payload.Text("config/scoped"))))
+                        }
+                    }
+                }
+            }.andThen(succeed)
+        }
+
+        "webSocket preserves query string in handshake path".notNative in {
+            val handler = HttpHandler.webSocket("ws/query") { (req, ws) =>
+                val token = req.query("token").getOrElse("missing")
+                ws.put(HttpWebSocket.Payload.Text(token)).andThen {
+                    Abort.run[Closed](ws.take()).unit
+                }
+            }
+            withWsServer(handler) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/query?token=abc") { ws =>
+                    ws.take().map(f => discard(assert(f == HttpWebSocket.Payload.Text("abc"))))
+                }
+            }.andThen(succeed)
+        }
+
         "webSocket respects connectTimeout config".notNative in {
             // 192.0.2.0/24 is TEST-NET-1 (RFC 5737) — routable but no host responds,
             // so a TCP connect will hang until timeout rather than fail immediately.

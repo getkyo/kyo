@@ -661,9 +661,39 @@ HttpServer.init(
 
 #### Client Filters
 
-Filters also work on the client side, attaching to typed routes to add authentication or custom headers to outgoing requests.
+Filters also work on the client side, adding authentication, request IDs, logging, tracing, metrics, or custom headers to outgoing requests.
+They can be attached at several levels:
 
-Built-in client filters: `bearerAuth(token)`, `basicAuth(username, password)`, `addHeader(name, value)`, and `logging`.
+```scala
+// Reusable policy carried by HttpClientConfig
+HttpClient.withConfig(
+    HttpClientConfig()
+        .baseUrl("https://api.example.com")
+        .filter(HttpFilter.client.bearerAuth(token))
+) {
+    HttpClient.getText("/users")
+}
+```
+
+```scala
+// Temporary policy scoped to one computation
+HttpClient.withFilter(HttpFilter.client.addHeader("X-Request-Id", requestId)) {
+    HttpClient.postJson[CreateUser]("/users", body)
+}
+```
+
+```scala
+// Endpoint-specific policy attached to a typed route
+val route = HttpRoute
+    .getText("/users")
+    .filter(HttpFilter.client.bearerAuth(token))
+```
+
+The client-side composition order is ServiceLoader filters, config filters, scoped filters, then route filters. Built-in client filters:
+`bearerAuth(token)`, `basicAuth(username, password)`, `addHeader(name, value)`, and `logging`.
+
+Client filters also apply to WebSocket HTTP upgrade handshakes, so auth and tracing headers can be configured in the same place for HTTP
+requests and WebSocket connections. They do not intercept WebSocket messages after the connection has upgraded.
 
 #### Global Filters via `HttpFilter.Factory`
 
