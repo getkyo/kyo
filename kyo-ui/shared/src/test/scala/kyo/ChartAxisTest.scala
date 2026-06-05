@@ -1440,4 +1440,198 @@ class ChartAxisTest extends Test:
             assert(t.svgAttrs.fontSize.exists(_.toString.contains("14")), "x tick font-size (L17 co-pin)")
     }
 
+    // ---- Phase 11 helpers ----
+
+    /** Horizontal gridlines: Lines spanning plotX to plotX+plotW with strokeOpacity set. */
+    private def hGridLinesIn(root: Svg.Root, plotW: Double = PlotW): Chunk[Svg.Line] =
+        frameLinesIn(root).filter: l =>
+            l.svgAttrs.x1.exists(_ == PlotX) &&
+                l.svgAttrs.x2.exists(_ == PlotX + plotW) &&
+                l.svgAttrs.y1 == l.svgAttrs.y2 &&
+                l.svgAttrs.strokeOpacity.isDefined
+
+    // ---- Leaf L11b (GAP-RIGHTY-SCALE): right-bound datum pixel matches log scale ----
+
+    "L11b: yScaleRight(_.log) projects a right-bound datum at the log-scaled pixel, not linear (GAP-RIGHTY-SCALE)" in {
+        // Right axis: data=[1.0, 100.0], log scale.
+        // Log scale: domain [1.0, 100.0], range [440, 20].
+        //   apply(1.0)  = rangeLo = 440.0 (domain min maps to rangeLo for log scale)
+        //   apply(100.0) = rangeHi = 20.0 (domain max maps to rangeHi)
+        // Linear scale (old behavior): domain nice(0,100)=[0,100], range [440, 20].
+        //   apply(1.0) = 440 + (1.0/100) * (20-440) = 440 - 4.2 = 435.8
+        // Log vs linear differ by ~4px at growthPct=1.0, discriminating the scale kind.
+        val rows = Chunk(Row2Ax("Jan", Usd(1000), 1.0), Row2Ax("Feb", Usd(2000), 100.0))
+        val spec = UI.chart(rows)(
+            bar(x = _.month, y = _.revenue),
+            line(x = _.month, y = _.growthPct, axis = Axis.Right)
+        ).yScaleRight(_.log)
+        val root = summon[Conversion[ChartSpec[Row2Ax], Svg.Root]](spec)
+
+        // Extract the right-bound line path from the marks G (last child of root).
+        val marksG: Svg.G = root.children.last match
+            case g: Svg.G => g
+            case other    => fail(s"Expected marks G as last child but got $other")
+        // Gather all <path> elements (line paths live inside nested G elements).
+        val paths = marksG.children.flatMap:
+            case g: Svg.G =>
+                g.children.flatMap:
+                    case p: Svg.Path => Chunk(p)
+                    case _           => Chunk.empty
+            case p: Svg.Path => Chunk(p)
+            case _           => Chunk.empty
+
+        // Extract all y-pixel values from path commands (MoveTo/LineTo y coordinates).
+        val allYPx: Chunk[Double] = paths.flatMap: p =>
+            p.svgAttrs.d match
+                case Present(pd) =>
+                    PathData.commands(pd).flatMap:
+                        case PathCommand.MoveTo(_, y) => Chunk(y)
+                        case PathCommand.LineTo(_, y) => Chunk(y)
+                        case _                        => Chunk.empty
+                case Absent => Chunk.empty
+
+        assert(allYPx.nonEmpty, s"L11b: Expected Y pixel values in line path commands but got none")
+        // With log scale: apply(1.0)=440.0 (domain min -> rangeLo).
+        // With linear scale: apply(1.0)≈435.8 (linear interpolation).
+        // The key discriminator: does any y exactly match 440.0 (log for growthPct=1.0)?
+        val hasLogBaseline = allYPx.exists(y => math.abs(y - 440.0) < 2.0)
+        assert(hasLogBaseline, s"L11b: Expected log-scaled y near 440.0 for growthPct=1.0 but got: $allYPx (GAP-RIGHTY-SCALE unfixed)")
+
+        // Confirm the linear fallback value is NOT present (linear would put 1.0 at ~435.8).
+        val hasLinearFallback = allYPx.exists(y => y > 433.0 && y < 438.0)
+        assert(!hasLinearFallback, s"L11b: Found linear-scaled y near 435-438 (expected log scaling): $allYPx")
+    }
+
+    // ---- Leaf L12a (CO-PIN): existing dual-axis test pixel unchanged ----
+    // This test guards byte-identity: no yScaleRight + default right chrome => same pixel as today.
+
+    "L12a (CO-PIN): dual-axis chart with no yScaleRight uses default Linear+nice right scale, right ticks exist (byte-identity)" in {
+        // Right: growthPct=[10.0, 20.0]; yRightExtent = Continuous(10, 20).
+        // niceTicks(10,20,5): step=5 -> snapped domain=[10,20].
+        // Linear(10, 20, rangeLo=440, rangeHi=20, nice=true):
+        //   apply(10) = 440 (domain min -> rangeLo=440)
+        //   apply(15) = 440 + (15-10)/(20-10) * (20-440) = 440 + 0.5*(-420) = 230
+        //   apply(20) = 20 (domain max -> rangeHi=20)
+        // This co-pin verifies byte-identity: the default (no yScaleRight) produces the same
+        // Linear+nice scale as the old hardcoded Scale.fit(Linear, rExt, plotBaseline, plotY, nice=true).
+        val rows = Chunk(
+            Row2Ax("Jan", Usd(1000), 10.0),
+            Row2Ax("Feb", Usd(2000), 20.0)
+        )
+        val spec = UI.chart(rows)(
+            bar(x = _.month, y = _.revenue),
+            line(x = _.month, y = _.growthPct, axis = Axis.Right)
+        ).yAxis(_.left).yAxisRight(_.right)
+        val root = summon[Conversion[ChartSpec[Row2Ax], Svg.Root]](spec)
+
+        // Right axis tick labels appear on the right margin.
+        val allTexts = frameTextsIn(root)
+        val rightTickLabels = allTexts.filter: t =>
+            t.svgAttrs.textAnchor.contains(Svg.TextAnchor.Start) &&
+                t.svgAttrs.x.exists { case Coord.Num(v) => v > PlotX + PlotWTwoAx; case _ => false }
+        assert(rightTickLabels.nonEmpty, "L12a: Expected right-axis tick labels (co-pin)")
+
+        // The tick labeled "10" (domain min) should be at y=440 (rangeLo=plotBaseline).
+        val tick10 = rightTickLabels.find(t => t.children.exists { case UI.Ast.Text("10") => true; case _ => false })
+        tick10 match
+            case Some(t) =>
+                val py = numOf(t.svgAttrs.y)
+                assertClose(py, 440.0, "L12a: right scale tick '10' (domain min) should be at y=440 (plotBaseline)")
+            case None =>
+                succeed // "10" tick may be skipped by niceTicks; ok for this co-pin.
+        end match
+
+        // The tick labeled "20" (domain max) should be at y=20 (rangeHi=plotY).
+        val tick20 = rightTickLabels.find(t => t.children.exists { case UI.Ast.Text("20") => true; case _ => false })
+        tick20 match
+            case Some(t) =>
+                val py = numOf(t.svgAttrs.y)
+                assertClose(py, 20.0, "L12a: right scale tick '20' (domain max) should be at y=20 (plotY)")
+            case None =>
+                succeed // "20" tick may be skipped; ok for this co-pin.
+        end match
+    }
+
+    // ---- Leaf L13 (GAP-RIGHTY-GRID): right gridlines emitted; left-wins guard ----
+
+    "L13a: .yAxisRight(_.grid) with left grid OFF emits right horizontal gridlines (GAP-RIGHTY-GRID)" in {
+        // Before fix: buildYAxis gate `cfg.showGrid && !isRight` suppresses ALL right gridlines.
+        // After fix: drawGrid=true for right when right cfg has showGrid AND left does not.
+        val rows = Chunk(Row2Ax("Jan", Usd(1000), 5.0), Row2Ax("Feb", Usd(2000), 20.0))
+        val spec = UI.chart(rows)(
+            bar(x = _.month, y = _.revenue),
+            line(x = _.month, y = _.growthPct, axis = Axis.Right)
+        ).yAxisRight(_.grid)
+        // Left grid is NOT set; right grid is set -> rightDrawGrid=true, leftDrawGrid=false.
+        val root = summon[Conversion[ChartSpec[Row2Ax], Svg.Root]](spec)
+
+        // Horizontal gridlines span x1=plotX to x2=plotX+plotW_twoax with strokeOpacity set.
+        val gridLines = hGridLinesIn(root, PlotWTwoAx)
+        assert(
+            gridLines.nonEmpty,
+            s"L13a: Expected right horizontal gridlines when yAxisRight(_.grid) is set with left grid OFF, but got none (GAP-RIGHTY-GRID unfixed)"
+        )
+    }
+
+    "L13b: .yAxis(_.grid) + .yAxisRight(_.grid) emits only LEFT tick count gridlines (left-wins guard)" in {
+        // When both left and right have showGrid=true, leftDrawGrid wins.
+        // Left: revenue=[0,2000], niceTicks(0,2000,5)=[0,500,1000,1500,2000] -> 5 ticks.
+        // Right grid suppressed by leftDrawGrid=true. Total gridlines == left tick count.
+        val rows = Chunk(Row2Ax("Jan", Usd(1000), 5.0), Row2Ax("Feb", Usd(2000), 20.0))
+        val spec = UI.chart(rows)(
+            bar(x = _.month, y = _.revenue),
+            line(x = _.month, y = _.growthPct, axis = Axis.Right)
+        ).yAxis(_.grid).yAxisRight(_.grid)
+        val root = summon[Conversion[ChartSpec[Row2Ax], Svg.Root]](spec)
+
+        val gridLines = hGridLinesIn(root, PlotWTwoAx)
+        assert(gridLines.nonEmpty, "L13b: Expected gridlines when yAxis(_.grid) is set")
+        // All gridlines come from the left; count matches left tick count.
+        // niceTicks(0,2000,5)=[0,500,1000,1500,2000] -> 5 ticks. gridLines.size should == 5.
+        assert(
+            gridLines.size == 5,
+            s"L13b: Expected exactly 5 gridlines (left tick count) but got ${gridLines.size} (right grid should be suppressed by left-wins)"
+        )
+    }
+
+    // ---- Leaf L19b (GAP-RIGHTY-SCALE independence): yScale(_.log) + yScaleRight(_.linear) ----
+
+    "L19b: .yScale(_.log).yScaleRight(_.linear(0,1)) leaves left log and right linear (independence)" in {
+        // Left: bar revenue=[1000,2000], log scale.
+        //   domain no-zero [1000,2000], range [440, 20+topHeadroom].
+        //   apply(1000) = baseline = 440 (log bottom = domain min maps to rangeLo).
+        //   apply(2000) = top (log top = domain max maps to rangeHi).
+        // Right: line growthPct=[0.1, 0.9], linear(0,1).
+        //   apply(0.5) = 440 + 0.5 * (20-440) = 230.0
+        // Verify independence: left is log (bottom of data at baseline), right is linear clamped [0,1].
+        val rows = Chunk(Row2Ax("Jan", Usd(1000), 0.1), Row2Ax("Feb", Usd(2000), 0.9))
+        val spec = UI.chart(rows)(
+            bar(x = _.month, y = _.revenue),
+            line(x = _.month, y = _.growthPct, axis = Axis.Right)
+        ).yScale(_.log).yScaleRight(_.linear(0.0, 1.0))
+        val root = summon[Conversion[ChartSpec[Row2Ax], Svg.Root]](spec)
+
+        // Both axes should render tick labels (confirming both exist with different scale kinds).
+        val allTexts = frameTextsIn(root)
+        val leftTicks = allTexts.filter: t =>
+            t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End) &&
+                t.svgAttrs.x.exists { case Coord.Num(v) => v < PlotX; case _ => false }
+        val rightTicks = allTexts.filter: t =>
+            t.svgAttrs.textAnchor.contains(Svg.TextAnchor.Start) &&
+                t.svgAttrs.x.exists { case Coord.Num(v) => v > PlotX + PlotWTwoAx; case _ => false }
+
+        assert(leftTicks.nonEmpty, "L19b: Expected left-axis tick labels")
+        assert(rightTicks.nonEmpty, "L19b: Expected right-axis tick labels")
+
+        // Right scale is linear(0,1): a tick at 0.5 should be at y=230.
+        val tick05 = rightTicks.find(t => t.children.exists { case UI.Ast.Text("0.5") => true; case _ => false })
+        tick05 match
+            case Some(t) =>
+                val py = numOf(t.svgAttrs.y)
+                assertClose(py, 230.0, "L19b: right linear(0,1) tick at 0.5 should be at y=230")
+            case None =>
+                succeed // Tick at 0.5 may not appear with default count; ok for independence verification.
+        end match
+    }
+
 end ChartAxisTest

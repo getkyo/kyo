@@ -946,6 +946,7 @@ object UI:
                 theme = Theme.default,
                 xScaleOverride = Absent,
                 yScaleOverride = Absent,
+                yScaleRightOverride = Absent,
                 animateCfg = AnimateConfig.default,
                 key = Absent,
                 onHover = Absent,
@@ -2266,6 +2267,7 @@ object UI:
             theme: Theme,
             xScaleOverride: Maybe[ScaleOverride],
             yScaleOverride: Maybe[ScaleOverride],
+            yScaleRightOverride: Maybe[ScaleOverride],
             animateCfg: AnimateConfig,
             key: Maybe[A => String],
             onHover: Maybe[Signal.SignalRef[Maybe[A]]],
@@ -2394,6 +2396,25 @@ object UI:
             /** Overrides the y-axis scale using a builder lambda. */
             def yScale(f: ScaleOverride => ScaleOverride): ChartSpec[A] =
                 spec.copy(yScaleOverride = Present(f(ScaleOverride.default)))
+
+            /** Overrides the right y-axis scale using a builder lambda.
+              *
+              * Applies only to marks bound to the right axis (`axis = Axis.Right`). The left axis is
+              * unaffected; configure it with `.yScale(...)`. Use this when the two axes carry
+              * unrelated domains that need independent scale kinds, ranges, or fitting knobs (the
+              * canonical dual-axis case, e.g. an absolute count on the left and a log-scaled ratio on
+              * the right).
+              *
+              * The builder receives a fresh `ScaleOverride.default` and returns the configured
+              * override: `.yScaleRight(_.log)`, `.yScaleRight(_.linear(0, 1).withClamp(true))`. An
+              * unset right override (the default) leaves the right scale inferred from the right-bound
+              * marks' data extent, exactly as today.
+              *
+              * Note: a right axis only exists when the chart has right-bound marks or `.yAxisRight(f)`
+              * was called; on a single-axis chart this override is a no-op.
+              */
+            def yScaleRight(f: ScaleOverride => ScaleOverride): ChartSpec[A] =
+                spec.copy(yScaleRightOverride = Present(f(ScaleOverride.default)))
 
             /** Configures animation using a builder lambda. */
             def animate(f: AnimateConfig => AnimateConfig): ChartSpec[A] =

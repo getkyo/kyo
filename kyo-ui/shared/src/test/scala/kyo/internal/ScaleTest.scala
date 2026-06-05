@@ -1,7 +1,15 @@
 package kyo.internal
 
+import kyo.Absent
 import kyo.Chunk
+import kyo.Maybe
+import kyo.Present
 import kyo.Test
+import kyo.UI
+import kyo.UI.*
+import kyo.UI.Ast.*
+import kyo.UI.mark.*
+import scala.language.implicitConversions
 
 class ScaleTest extends Test:
 
@@ -238,6 +246,50 @@ class ScaleTest extends Test:
         val clamped = s.apply(Domain.Continuous(20.0))
         val atMax   = s.apply(Domain.Continuous(10.0))
         assert(math.abs(clamped - atMax) < 1e-9, s"Clamped=$clamped should equal atMax=$atMax")
+    }
+
+    // ---- Phase 11: L11a and L12b -- right-scale kind readback via ChartScales ----
+
+    case class ScRow(x: String, yL: Double, yR: Double)
+    given CanEqual[ScRow, ScRow] = CanEqual.derived
+
+    "L11a: yScaleRight(_.log) resolves right scale as Log kind (kind readback via ChartScales, GAP-RIGHTY-SCALE)" in {
+        // Use toSvgWithScales (via lowerWithScales) to read the resolved right scale kind.
+        // The right scale should be Log after .yScaleRight(_.log).
+        // Data: yR=[1.0, 100.0]; with log scale, domain is [1.0, 100.0].
+        val rows = kyo.Chunk(ScRow("a", 100.0, 1.0), ScRow("b", 200.0, 100.0))
+        val spec = UI.chart(rows)(
+            bar(x = _.x, y = _.yL),
+            line(x = _.x, y = _.yR, axis = Axis.Right)
+        ).yScaleRight(_.log)
+        val (_, scales) = spec.toSvgWithScales
+        // The right axis should be Log kind.
+        scales.yRight match
+            case Present(ax) =>
+                ax.kind match
+                    case ScaleKind.Log => succeed
+                    case other         => fail(s"L11a: Expected Log kind for right axis but got $other")
+            case Absent =>
+                fail("L11a: Expected a right axis (yRight is Present) but got Absent")
+        end match
+    }
+
+    "L12b: no yScaleRight override -> right scale resolves as Linear (default byte-identity, CO-PIN)" in {
+        // Without yScaleRight, the right scale defaults to Linear+nice, matching the old hardcoded call.
+        val rows = kyo.Chunk(ScRow("a", 100.0, 0.0), ScRow("b", 200.0, 20.0))
+        val spec = UI.chart(rows)(
+            bar(x = _.x, y = _.yL),
+            line(x = _.x, y = _.yR, axis = Axis.Right)
+        )
+        val (_, scales) = spec.toSvgWithScales
+        scales.yRight match
+            case Present(ax) =>
+                ax.kind match
+                    case ScaleKind.Linear(_, _) => succeed
+                    case other                  => fail(s"L12b: Expected Linear kind for default right axis but got $other")
+            case Absent =>
+                fail("L12b: Expected a right axis (yRight is Present) but got Absent")
+        end match
     }
 
 end ScaleTest

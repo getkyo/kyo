@@ -552,6 +552,67 @@ private[kyo] object ChartLower:
         loop(0, Absent)
     end yRightExtent
 
+    /** Collect the no-zero y-extent for marks on `Axis.Right` (mirrors `yLeftExtentNoZero`).
+      *
+      * Used by the Log scale arm in `resolveYScale` for the right axis. Filters out non-positive
+      * values so the log domain starts at the smallest positive value (INV-011 for the right axis).
+      */
+    private def yRightExtentNoZero[A](rows: Chunk[A], marks: Chunk[Mark[A]]): Maybe[Extent] =
+        @scala.annotation.tailrec
+        def loop(i: Int, acc: Maybe[Extent]): Maybe[Extent] =
+            if i >= marks.size then acc
+            else
+                val markExtent: Maybe[Extent] = marks(i) match
+                    case m: Mark.Bar[A, ?, ?] if m.axis == Axis.Right =>
+                        foldExtent(
+                            rows,
+                            r =>
+                                m.y.plottable.toDomain(m.y.accessor(r.asInstanceOf[A])).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
+                    case m: Mark.Line[A, ?, ?] if m.axis == Axis.Right =>
+                        foldExtent(
+                            rows,
+                            r =>
+                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
+                    case m: Mark.Point[A, ?, ?] if m.axis == Axis.Right =>
+                        foldExtent(
+                            rows,
+                            r =>
+                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
+                    case m: Mark.Text[A, ?, ?] if m.axis == Axis.Right =>
+                        foldExtent(
+                            rows,
+                            r =>
+                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
+                    case m: Mark.ErrorBar[A, ?, ?] if m.axis == Axis.Right =>
+                        def posExtent(ch: Encoding[A, ?]) = foldExtent(
+                            rows,
+                            r =>
+                                ch.plottable.toDomain(ch.accessor(r.asInstanceOf[A])).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
+                        mergeExtents(
+                            mergeExtents(posExtent(m.y.asInstanceOf[Encoding[A, ?]]), posExtent(m.low.asInstanceOf[Encoding[A, ?]])),
+                            posExtent(m.high.asInstanceOf[Encoding[A, ?]])
+                        )
+                    case _ => Absent
+                val merged = mergeExtents(acc, markExtent)
+                loop(i + 1, merged)
+        loop(0, Absent)
+    end yRightExtentNoZero
+
     /** Compute the stacked y-extent for a Bar mark with a stack grouping.
       *
       * For each distinct x value, separately tracks the sum of positive contributions
@@ -662,7 +723,9 @@ private[kyo] object ChartLower:
         yOverride: Maybe[ScaleOverride],
         computeRight: Boolean,
         xAxisCfg: AxisConfig = AxisConfig.default,
-        yAxisCfg: AxisConfig = AxisConfig.default
+        yAxisCfg: AxisConfig = AxisConfig.default,
+        yRightOverride: Maybe[ScaleOverride] = Absent,
+        yAxisRightCfg: AxisConfig = AxisConfig.default
     ): ResolvedScales =
 
         // Compute effective pad (INV-007, Q-003): ScaleOverride wins over AxisConfig.
@@ -675,6 +738,47 @@ private[kyo] object ChartLower:
                 val delta = pad * (hi - lo)
                 Extent.Continuous(lo - delta, hi + delta)
             case other => other
+
+        // Resolve a y-axis scale from its data extent, no-zero extent (for log), scale override, axis config,
+        // and pixel range bounds. The rangeLo/rangeHi are caller-supplied to capture the left-vs-right
+        // range difference (left uses plotY+topHeadroom as hi; right uses plotY directly).
+        // When override=Absent and axisCfg=default this reproduces Scale.fit(Linear, ext, rangeLo, rangeHi, nice=true)
+        // byte-identically (default Linear getOrElse, nice=true getOrElse, no reverse, no clamp, pad=0).
+        def resolveYScale(
+            ext: Extent,
+            extNoZero: Extent,
+            ov: Maybe[ScaleOverride],
+            axisCfg: AxisConfig,
+            rangeLo: Double,
+            rangeHi: Double
+        ): Scale =
+            val pad     = effectivePad(ov, axisCfg)
+            val nice    = ov.map(_.nice).getOrElse(true)
+            val reverse = axisCfg.reversed
+            val kindOpt: Maybe[Scale.Kind] = ov.flatMap(_.kind) match
+                case Present(ScaleKind.Band)         => Present(Scale.Kind.Band)
+                case Present(ScaleKind.Log)          => Present(Scale.Kind.Log)
+                case Present(ScaleKind.Linear(_, _)) => Present(Scale.Kind.Linear)
+                case Present(ScaleKind.Time)         => Present(Scale.Kind.Time)
+                case Present(ScaleKind.Ordinal)      => Present(Scale.Kind.Ordinal)
+                case Present(ScaleKind.Point)        => Present(Scale.Kind.Point)
+                case Present(ScaleKind.Symlog)       => Present(Scale.Kind.Symlog)
+                case _                               => Absent
+            val kind = kindOpt.getOrElse(Scale.Kind.Linear)
+            // Swap range bounds when reverse=true (D20).
+            val (rLoBase, rHiBase) = if reverse then (rangeHi, rangeLo) else (rangeLo, rangeHi)
+            val (extFinal, rLo, rHi, useNice) = ov.flatMap(_.kind) match
+                // INV-007: pad applies to an explicit linear domain too; withPad must win.
+                case Present(ScaleKind.Linear(domLo, domHi)) =>
+                    (padExtent(Extent.Continuous(domLo, domHi), pad), rLoBase, rHiBase, false)
+                // G7: log scale uses the no-zero extent computation.
+                // WARN-3: apply pad to the log extent too (every other arm pads).
+                case Present(ScaleKind.Log) =>
+                    (padExtent(extNoZero, pad), rLoBase, rHiBase, false)
+                case _ => (padExtent(ext, pad), rLoBase, rHiBase, nice)
+            val clamp = ov.map(_.clamp).getOrElse(false)
+            Scale.fit(kind, extFinal, rLo, rHi, nice = useNice, clamp = clamp)
+        end resolveYScale
 
         // X scale
         val xExt     = xExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
@@ -703,46 +807,21 @@ private[kyo] object ChartLower:
         val xClamp     = xOverride.map(_.clamp).getOrElse(false)
         val xs         = Scale.fit(xKind, xExtFinal, xLo, xHi, nice = useXNice, clamp = xClamp)
 
-        // Y left scale
+        // Y left scale: push the top of the y range down by topHeadroom so the max-value point's
+        // centre sits topHeadroom px below plotY, keeping its top edge (cy - r) at or below plotY.
         val yExt     = yLeftExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
-        val yPad     = effectivePad(yOverride, yAxisCfg)
-        val yNice    = yOverride.map(_.nice).getOrElse(true)
-        val yReverse = yAxisCfg.reversed
-
-        val yKindOpt: Maybe[Scale.Kind] = yOverride.flatMap(_.kind) match
-            case Present(ScaleKind.Band)         => Present(Scale.Kind.Band)
-            case Present(ScaleKind.Log)          => Present(Scale.Kind.Log)
-            case Present(ScaleKind.Linear(_, _)) => Present(Scale.Kind.Linear)
-            case Present(ScaleKind.Time)         => Present(Scale.Kind.Time)
-            case Present(ScaleKind.Ordinal)      => Present(Scale.Kind.Ordinal)
-            case Present(ScaleKind.Point)        => Present(Scale.Kind.Point)
-            case Present(ScaleKind.Symlog)       => Present(Scale.Kind.Symlog)
-            case _                               => Absent
-        val yKind    = yKindOpt.getOrElse(Scale.Kind.Linear)
+        val yNoZero  = yLeftExtentNoZero(rows, marks).getOrElse(Extent.Continuous(1.0, 10.0))
         val baseline = layout.plotBaseline
-        // Push the top of the y range down by the reserved point headroom so the max-value point's centre sits
-        // topHeadroom px below plotY, keeping its top edge (cy - r) at or below plotY (no clipping into the band).
-        val top = layout.plotY + layout.topHeadroom
-        // Swap range bounds when reverse=true (D20).
-        val (yRLoBase, yRHiBase) = if yReverse then (top, baseline) else (baseline, top)
-        val (yExtFinal, yRLo, yRHi, useNice) = yOverride.flatMap(_.kind) match
-            // INV-007: pad applies to an explicit linear domain too (mirrors the log arm below); withPad must win.
-            case Present(ScaleKind.Linear(domLo, domHi)) =>
-                (padExtent(Extent.Continuous(domLo, domHi), yPad), yRLoBase, yRHiBase, false)
-            // G7: log scale uses the no-zero extent computation
-            case Present(ScaleKind.Log) =>
-                val rawExt = yLeftExtentNoZero(rows, marks).getOrElse(Extent.Continuous(1.0, 10.0))
-                // WARN-3: apply pad to the explicitly-overridden log extent too (every other arm pads).
-                (padExtent(rawExt, yPad), yRLoBase, yRHiBase, false)
-            case _ => (padExtent(yExt, yPad), yRLoBase, yRHiBase, yNice)
-        val yClamp = yOverride.map(_.clamp).getOrElse(false)
-        val ysL    = Scale.fit(yKind, yExtFinal, yRLo, yRHi, nice = useNice, clamp = yClamp)
+        val top      = layout.plotY + layout.topHeadroom
+        val ysL      = resolveYScale(yExt, yNoZero, yOverride, yAxisCfg, baseline, top)
 
-        // Y right scale (optional)
+        // Y right scale (optional): uses plotY directly (no topHeadroom offset, matching the old
+        // hardcoded Scale.fit call that used layout.plotBaseline / layout.plotY).
         val ysR: Maybe[Scale] =
             if computeRight then
-                val rExt = yRightExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
-                Present(Scale.fit(Scale.Kind.Linear, rExt, layout.plotBaseline, layout.plotY, nice = true))
+                val rExt    = yRightExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
+                val rNoZero = yRightExtentNoZero(rows, marks).getOrElse(Extent.Continuous(1.0, 10.0))
+                Present(resolveYScale(rExt, rNoZero, yRightOverride, yAxisRightCfg, layout.plotBaseline, layout.plotY))
             else Absent
 
         ResolvedScales(xs, ysL, ysR)
@@ -775,9 +854,12 @@ private[kyo] object ChartLower:
         val leftChrome  = axisChromeColorFor(spec.theme, spec.marks, Axis.Left)
         val rightChrome = axisChromeColorFor(spec.theme, spec.marks, Axis.Right)
         val gridColor   = gridlineColor(spec.theme)
-        val background  = buildBackground(layout, spec.theme)
-        val axisLines   = buildAxisLines(layout, ysR, spec.theme, leftChrome, rightChrome)
-        val leftAxis    = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false, spec.theme, leftChrome, gridColor)
+        // Left-wins tie-break: when BOTH axes set showGrid, only left emits gridlines (prevents doubles).
+        val leftDrawGrid  = spec.yAxisCfg.showGrid
+        val rightDrawGrid = spec.yAxisRightCfg.exists(_.showGrid) && !leftDrawGrid
+        val background    = buildBackground(layout, spec.theme)
+        val axisLines     = buildAxisLines(layout, ysR, spec.theme, leftChrome, rightChrome)
+        val leftAxis      = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false, spec.theme, leftChrome, gridColor, leftDrawGrid)
         val rightAxis = ysR match
             case Present(ysR_) =>
                 buildYAxis(
@@ -787,7 +869,8 @@ private[kyo] object ChartLower:
                     isRight = true,
                     spec.theme,
                     rightChrome,
-                    gridColor
+                    gridColor,
+                    rightDrawGrid
                 )
             case Absent => Chunk.empty
         val xAxisElems  = buildXAxis(layout, xs, spec.xAxisCfg, spec.theme)
@@ -864,7 +947,8 @@ private[kyo] object ChartLower:
         isRight: Boolean,
         theme: Theme,
         chrome: Style.Color,
-        gridColor: Style.Color
+        gridColor: Style.Color,
+        drawGrid: Boolean = false
     )(using Frame): Chunk[Svg.SvgElement] =
         val ticks  = ys.ticks(cfg.tickCount)
         val axisX  = if isRight then layout.plotX + layout.plotW else layout.plotX
@@ -877,9 +961,12 @@ private[kyo] object ChartLower:
             else
                 val tick = ticks(i)
                 val py   = tick.pixel
-                // gridline: always the neutral grid color, never the (possibly color-coded) axis chrome
+                // gridline: always the neutral grid color, never the (possibly color-coded) axis chrome.
+                // drawGrid is pre-computed by the caller using the left-wins tie-break:
+                //   leftDrawGrid  = spec.yAxisCfg.showGrid
+                //   rightDrawGrid = spec.yAxisRightCfg.exists(_.showGrid) && !leftDrawGrid
                 val grid: Maybe[Svg.SvgElement] =
-                    if cfg.showGrid && !isRight then
+                    if drawGrid then
                         Present(
                             Svg.line
                                 .x1(layout.plotX).y1(py)
@@ -3878,17 +3965,19 @@ private[kyo] object ChartLower:
         spec: ChartSpec[A],
         initialRows: Chunk[A]
     )(using Frame): Chunk[Svg.SvgElement] =
-        val leftChrome  = axisChromeColorFor(spec.theme, spec.marks, Axis.Left)
-        val rightChrome = axisChromeColorFor(spec.theme, spec.marks, Axis.Right)
-        val gridColor   = gridlineColor(spec.theme)
-        val background  = buildBackground(layout, spec.theme)
-        val axisLines   = buildAxisLines(layout, ysR, spec.theme, leftChrome, rightChrome)
+        val leftChrome    = axisChromeColorFor(spec.theme, spec.marks, Axis.Left)
+        val rightChrome   = axisChromeColorFor(spec.theme, spec.marks, Axis.Right)
+        val gridColor     = gridlineColor(spec.theme)
+        val leftDrawGrid  = spec.yAxisCfg.showGrid
+        val rightDrawGrid = spec.yAxisRightCfg.exists(_.showGrid) && !leftDrawGrid
+        val background    = buildBackground(layout, spec.theme)
+        val axisLines     = buildAxisLines(layout, ysR, spec.theme, leftChrome, rightChrome)
         // The legend is NOT built here: it is data-dependent and lives inside the reactive region, where it
         // reflects each emission's live category set. Building it from a one-shot sample would freeze it to the
         // first emission's categories.
         val yAxisElems: Chunk[Svg.SvgElement] =
             if isYDomainFixed(spec.yScaleOverride) then
-                val leftAxis = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false, spec.theme, leftChrome, gridColor)
+                val leftAxis = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false, spec.theme, leftChrome, gridColor, leftDrawGrid)
                 val rightAxis = ysR match
                     case Present(ysR_) =>
                         buildYAxis(
@@ -3898,7 +3987,8 @@ private[kyo] object ChartLower:
                             isRight = true,
                             spec.theme,
                             rightChrome,
-                            gridColor
+                            gridColor,
+                            rightDrawGrid
                         )
                     case Absent => Chunk.empty
                 leftAxis ++ rightAxis
@@ -3952,7 +4042,9 @@ private[kyo] object ChartLower:
             val leftChrome    = axisChromeColorFor(spec.theme, spec.marks, Axis.Left)
             val rightChrome   = axisChromeColorFor(spec.theme, spec.marks, Axis.Right)
             val gridColor     = gridlineColor(spec.theme)
-            val leftAxisElems = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false, spec.theme, leftChrome, gridColor)
+            val leftDrawGrid  = spec.yAxisCfg.showGrid
+            val rightDrawGrid = spec.yAxisRightCfg.exists(_.showGrid) && !leftDrawGrid
+            val leftAxisElems = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false, spec.theme, leftChrome, gridColor, leftDrawGrid)
             val rightAxisElems = ysR match
                 case Present(ysR_) =>
                     buildYAxis(
@@ -3962,7 +4054,8 @@ private[kyo] object ChartLower:
                         isRight = true,
                         spec.theme,
                         rightChrome,
-                        gridColor
+                        gridColor,
+                        rightDrawGrid
                     )
                 case Absent => Chunk.empty
             val allElems: Chunk[Svg.SvgElement] = leftAxisElems ++ rightAxisElems ++ xAxisElems ++ legendElems
@@ -4055,7 +4148,9 @@ private[kyo] object ChartLower:
                 spec.yScaleOverride,
                 computeRight,
                 spec.xAxisCfg,
-                spec.yAxisCfg
+                spec.yAxisCfg,
+                spec.yScaleRightOverride,
+                spec.yAxisRightCfg.getOrElse(AxisConfig.default)
             )
         // For fixed domain, compute ysL once from the override; for inferred domain, ysL is recomputed per
         // emission inside the reactive region.
@@ -4101,7 +4196,9 @@ private[kyo] object ChartLower:
                     spec.yScaleOverride,
                     computeRight,
                     spec.xAxisCfg,
-                    spec.yAxisCfg
+                    spec.yAxisCfg,
+                    spec.yScaleRightOverride,
+                    spec.yAxisRightCfg.getOrElse(AxisConfig.default)
                 )
             val ysLLive = ysLFixed.getOrElse(ysLLiveResolved)
             buildReactiveRegion(rows, spec, layout, xsLive, ysLLive, ysRLive, stateRefMaybe, gradPrefix, internalHoverRef)
@@ -4163,7 +4260,18 @@ private[kyo] object ChartLower:
             case _: Mark.ErrorBar[A, ?, ?] => false
         val computeRight = hasRight || spec.yAxisRightCfg.isDefined
         val ResolvedScales(xs, ysL, ysR) =
-            resolveAllScales(rows, spec.marks, layout, spec.xScaleOverride, spec.yScaleOverride, computeRight, spec.xAxisCfg, spec.yAxisCfg)
+            resolveAllScales(
+                rows,
+                spec.marks,
+                layout,
+                spec.xScaleOverride,
+                spec.yScaleOverride,
+                computeRight,
+                spec.xAxisCfg,
+                spec.yAxisCfg,
+                spec.yScaleRightOverride,
+                spec.yAxisRightCfg.getOrElse(AxisConfig.default)
+            )
         val plot   = UI.Ast.ChartScales.Rect(layout.plotX, layout.plotY, layout.plotW, layout.plotH)
         val scales = UI.Ast.ChartScales.from(xs, ysL, ysR, plot)
         val svg    = lower(spec)
@@ -4245,7 +4353,18 @@ private[kyo] object ChartLower:
             case _: Mark.ErrorBar[A, ?, ?] => false
         val computeRight = hasRight || spec.yAxisRightCfg.isDefined
         val ResolvedScales(xs, ysL, ysR) =
-            resolveAllScales(rows, spec.marks, layout, spec.xScaleOverride, spec.yScaleOverride, computeRight, spec.xAxisCfg, spec.yAxisCfg)
+            resolveAllScales(
+                rows,
+                spec.marks,
+                layout,
+                spec.xScaleOverride,
+                spec.yScaleOverride,
+                computeRight,
+                spec.xAxisCfg,
+                spec.yAxisCfg,
+                spec.yScaleRightOverride,
+                spec.yAxisRightCfg.getOrElse(AxisConfig.default)
+            )
         val vb = Svg.ViewBox(0.0, 0.0, layout.svgW, layout.svgH)
         // Interactive hidden-series filter (INV-026): the marks drop hidden rows; the legend keeps every
         // category (built from the full rows) so the user can still toggle a hidden series back on.
