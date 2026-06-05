@@ -1256,4 +1256,186 @@ class ChartAxisTest extends Test:
         end for
     }
 
+    // ---- Phase 8 helpers ----
+
+    /** Left y-axis tick labels: frame texts with TextAnchor.End (left of plotX). */
+    private def leftYTickLabelsIn(root: Svg.Root): Chunk[Svg.Text] =
+        frameTextsIn(root).filter(_.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
+
+    /** Right y-axis tick labels: frame texts with TextAnchor.Start to the right of plot area. */
+    private def rightYTickLabelsIn(root: Svg.Root): Chunk[Svg.Text] =
+        frameTextsIn(root).filter: t =>
+            t.svgAttrs.textAnchor.contains(Svg.TextAnchor.Start) &&
+                t.svgAttrs.x.exists { case Coord.Num(v) => v > PlotX + PlotWTwoAx; case _ => false }
+
+    // ---- Leaf L14 (GAP-YAXIS-ROTATION): yAxis rotateTicks gives every Y tick a Rotate transform ----
+
+    "yAxis(_.rotateTicks(-45)) gives every Y tick label a Rotate(-45) transform (L14, GAP-YAXIS-ROTATION)" in {
+        // Before fix: buildYAxis inline Svg.text has no rotation; cfg.tickRotation is not read.
+        // After fix: tickLabel helper applies Svg.Transform.Rotate(tickRotation, px, py).
+        val rows  = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
+        val spec  = UI.chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.rotateTicks(-45.0))
+        val root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val ticks = leftYTickLabelsIn(root)
+        assert(ticks.nonEmpty, "Expected left Y tick labels")
+        ticks.foldLeft(succeed): (_, t) =>
+            val rot = t.svgAttrs.transform.toSeq.collectFirst { case r: Svg.Transform.Rotate => r }
+            rot match
+                case Some(r) => assertClose(r.deg, -45.0, "Y tick label rotate degrees")
+                case None    => fail(s"Expected a Rotate transform on Y tick label but got ${t.svgAttrs.transform}")
+    }
+
+    "yAxisRight(_.rotateTicks(30)) gives every right Y tick label a Rotate(30) transform (L14 right, GAP-YAXIS-ROTATION)" in {
+        // Both left and right Y axes go through buildYAxis; the fix applies to both.
+        val rows = Chunk(Row2Ax("Jan", Usd(1000), 5.0), Row2Ax("Feb", Usd(2000), 10.0))
+        val spec = UI.chart(rows)(
+            bar(x = _.month, y = _.revenue),
+            line(x = _.month, y = _.growthPct, axis = Axis.Right)
+        ).yAxisRight(_.rotateTicks(30.0))
+        val root  = summon[Conversion[ChartSpec[Row2Ax], Svg.Root]](spec)
+        val ticks = rightYTickLabelsIn(root)
+        assert(ticks.nonEmpty, "Expected right Y tick labels")
+        ticks.foldLeft(succeed): (_, t) =>
+            val rot = t.svgAttrs.transform.toSeq.collectFirst { case r: Svg.Transform.Rotate => r }
+            rot match
+                case Some(r) => assertClose(r.deg, 30.0, "Right Y tick label rotate degrees")
+                case None    => fail(s"Expected a Rotate transform on right Y tick label but got ${t.svgAttrs.transform}")
+    }
+
+    // ---- Leaf L15 (GAP-YAXIS-ROTATION): anchor sets Y tick text-anchor; side-default preserved when unset ----
+
+    "yAxis(_.anchor(TextAnchor.Start)) sets text-anchor=start on left Y tick labels (L15, GAP-YAXIS-ROTATION)" in {
+        // Before fix: cfg.tickAnchor is never read; text-anchor is always the side-default (End for left).
+        // After fix: effAnchor = toSvgAnchor(cfg.tickAnchor) when cfg.tickAnchor != TextAnchor.Middle.
+        val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
+        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.anchor(TextAnchor.Start))
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        // After the fix the left Y ticks carry Start anchor (no longer filtered by TextAnchor.End).
+        // Use dominantBaseline.Middle to isolate Y ticks (not Hanging=X, not absent=rotated-title).
+        val ticks = frameTextsIn(root).filter(_.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Middle))
+        assert(ticks.nonEmpty, "Expected Y tick labels with DominantBaseline.Middle")
+        ticks.foldLeft(succeed): (_, t) =>
+            assert(
+                t.svgAttrs.textAnchor.contains(Svg.TextAnchor.Start),
+                s"Y tick with explicit anchor(Start) must have text-anchor=start but got ${t.svgAttrs.textAnchor}"
+            )
+    }
+
+    "left Y tick label keeps text-anchor=end when no anchor is set (L15 co-pin, R-9 byte-identity)" in {
+        // Side-default anchor (End for left, Start for right) must be preserved when cfg.tickAnchor is
+        // the default TextAnchor.Middle. This is the byte-identity guard for the no-anchor case.
+        val rows  = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
+        val spec  = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+        val root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val ticks = leftYTickLabelsIn(root)
+        assert(ticks.nonEmpty, "Expected left Y tick labels")
+        ticks.foldLeft(succeed): (_, t) =>
+            assert(
+                t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End),
+                s"Default left Y tick must retain text-anchor=end (side-default) but got ${t.svgAttrs.textAnchor}"
+            )
+    }
+
+    // ---- Leaf L16 (GAP-THEME-FONT): theme font applied to Y ticks, axis titles, legend text ----
+
+    "theme font appears on Y tick, axis title, and legend label (L16, GAP-THEME-FONT)" in {
+        // Before fix: withFont is only called in buildXAxis tick labels (through tickLabel helper).
+        // Y ticks, axis titles, and legend labels have no font attrs even when theme sets them.
+        // After fix: withFont called at all six sites; each text carries font-family + font-size.
+        val rows = Chunk(
+            Sale("Jan", Usd(1000), Region.NA),
+            Sale("Feb", Usd(2000), Region.EU)
+        )
+        val spec = UI.chart(rows)(
+            bar(x = _.month, y = _.revenue, color = _.region)
+        )
+            .yAxis(_.label("Revenue"))
+            .theme(_.font("monospace").fontSize(14))
+            .legend(_.colorScale[Region](Region.NA -> Style.Color.blue, Region.EU -> Style.Color.green))
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+
+        // A Y tick label: DominantBaseline.Middle + TextAnchor.End (left Y, default config).
+        val yTick = frameTextsIn(root)
+            .find(t =>
+                t.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Middle) &&
+                    t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End)
+            )
+            .getOrElse(fail("Expected a left Y tick label with DominantBaseline.Middle + TextAnchor.End"))
+        assert(
+            yTick.svgAttrs.fontFamily.contains("monospace"),
+            s"Y tick label must carry font-family=monospace but got ${yTick.svgAttrs.fontFamily}"
+        )
+        assert(
+            yTick.svgAttrs.fontSize.exists(_.toString.contains("14")),
+            s"Y tick label must carry font-size=14px but got ${yTick.svgAttrs.fontSize}"
+        )
+
+        // An axis title: the rotated y-title has a Rotate transform.
+        val yTitle = frameTextsIn(root)
+            .find(t => t.svgAttrs.transform.toSeq.exists { case _: Svg.Transform.Rotate => true; case _ => false })
+            .getOrElse(fail("Expected a rotated axis-title text"))
+        assert(
+            yTitle.svgAttrs.fontFamily.contains("monospace"),
+            s"Y axis title must carry font-family=monospace but got ${yTitle.svgAttrs.fontFamily}"
+        )
+
+        // A legend label: DominantBaseline.Middle, not End (legend labels are not anchored End in
+        // a categorical legend with default Top position), and no Rotate transform.
+        val legendLabel = frameTextsIn(root)
+            .find(t =>
+                t.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Middle) &&
+                    !t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End) &&
+                    !t.svgAttrs.textAnchor.contains(Svg.TextAnchor.Start) &&
+                    t.svgAttrs.transform.isEmpty
+            )
+            .getOrElse(fail("Expected a legend label text without End/Start anchor and without Rotate"))
+        assert(
+            legendLabel.svgAttrs.fontFamily.contains("monospace"),
+            s"Legend label must carry font-family=monospace but got ${legendLabel.svgAttrs.fontFamily}"
+        )
+    }
+
+    "default theme adds no font-family or font-size to Y tick, title, or legend (L16 co-pin, byte-identity)" in {
+        // withFont is a no-op when theme.fontFamily and theme.fontSize are both Absent (the default).
+        // No font attr must appear on any frame text when no theme font is set.
+        val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
+        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        frameTextsIn(root).foldLeft(succeed): (_, t) =>
+            assert(t.svgAttrs.fontFamily.isEmpty, s"Default theme must NOT add font-family; got ${t.svgAttrs.fontFamily}")
+            assert(t.svgAttrs.fontSize.isEmpty, s"Default theme must NOT add font-size; got ${t.svgAttrs.fontSize}")
+    }
+
+    // ---- Leaf L17 (CO-PIN): x tick-label chrome unchanged through shared helper ----
+
+    "x tick rotateTicks/anchor/font stay byte-identical after P8 (L17 co-pin)" in {
+        // P8 touches buildXAxis only to add withFont to the title block; the tickLabel helper call is
+        // unchanged (P2 already wired it). This test re-asserts the P2 baseline.
+        val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
+
+        // Rotation (mirrors Phase 6 Leaf 1 at line 972):
+        val rotSpec = UI.chart(rows)(bar(x = _.month, y = _.revenue)).xAxis(_.rotateTicks(-45.0))
+        val rotRoot = summon[Conversion[ChartSpec[Sale], Svg.Root]](rotSpec)
+        val xTicks  = xTickLabelsIn(rotRoot)
+        assert(xTicks.nonEmpty, "Expected x tick labels")
+        xTicks.foldLeft(succeed): (_, t) =>
+            val rot = t.svgAttrs.transform.toSeq.collectFirst { case r: Svg.Transform.Rotate => r }
+            rot match
+                case Some(r) => assertClose(r.deg, -45.0, "x tick rotate (L17 co-pin)")
+                case None    => fail(s"Expected Rotate on x tick but got ${t.svgAttrs.transform}")
+
+        // Anchor (mirrors Phase 6 Leaf 2 at line 987):
+        val ancSpec = UI.chart(rows)(bar(x = _.month, y = _.revenue)).xAxis(_.anchor(TextAnchor.End))
+        val ancRoot = summon[Conversion[ChartSpec[Sale], Svg.Root]](ancSpec)
+        xTickLabelsIn(ancRoot).foldLeft(succeed): (_, t) =>
+            assert(t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End), "x tick anchor (L17 co-pin)")
+
+        // Font:
+        val fntSpec = UI.chart(rows)(bar(x = _.month, y = _.revenue)).theme(_.font("monospace").fontSize(14))
+        val fntRoot = summon[Conversion[ChartSpec[Sale], Svg.Root]](fntSpec)
+        xTickLabelsIn(fntRoot).foldLeft(succeed): (_, t) =>
+            assert(t.svgAttrs.fontFamily.contains("monospace"), "x tick font-family (L17 co-pin)")
+            assert(t.svgAttrs.fontSize.exists(_.toString.contains("14")), "x tick font-size (L17 co-pin)")
+    }
+
 end ChartAxisTest

@@ -906,17 +906,18 @@ private[kyo] object ChartLower:
                 val labelStr = cfg.tickFormat match
                     case Present(f) => f(tick.value)
                     case Absent     => tick.label
-                val tickLabel: Svg.SvgElement =
-                    Svg.text
-                        .x(labelX)
-                        .y(py)
-                        .textAnchor(anchor)
-                        .dominantBaseline(Svg.DominantBaseline.Middle)
-                        .fill(Svg.Paint.Color(chrome))
-                        .apply(labelStr)
+                // P8: resolve the effective anchor. When the user has not set cfg.tickAnchor
+                // (the default TextAnchor.Middle), keep the side-default (End for left, Start for
+                // right) so existing output stays byte-identical. Only switch to the configured
+                // anchor when the user explicitly called .anchor(...) with a non-default value.
+                val effAnchor: Svg.TextAnchor =
+                    if cfg.tickAnchor != TextAnchor.Middle then toSvgAnchor(cfg.tickAnchor)
+                    else anchor // side-default: End for left, Start for right
+                val tickLabelElem: Svg.SvgElement =
+                    tickLabel(labelX, py, labelStr, chrome, Svg.DominantBaseline.Middle, effAnchor, cfg, theme)
                 val elements = grid match
-                    case Present(g) => Chunk[Svg.SvgElement](g, tickMark, tickLabel)
-                    case Absent     => Chunk[Svg.SvgElement](tickMark, tickLabel)
+                    case Present(g) => Chunk[Svg.SvgElement](g, tickMark, tickLabelElem)
+                    case Absent     => Chunk[Svg.SvgElement](tickMark, tickLabelElem)
                 loop(i + 1, acc ++ elements)
         val base = loop(0, Chunk.empty)
         // axis label: rotate vertically so the full string fits in the margin column without clipping.
@@ -930,24 +931,28 @@ private[kyo] object ChartLower:
                 val labelElem: Svg.SvgElement =
                     if isRight then
                         val cx = layout.svgW - AxisLabelInset
-                        Svg.text
-                            .x(cx)
-                            .y(midY)
-                            .textAnchor(Svg.TextAnchor.Middle)
-                            .dominantBaseline(Svg.DominantBaseline.Auto)
-                            .fill(Svg.Paint.Color(chrome))
-                            .transform(Svg.Transform.Rotate(90.0, Present(cx), Present(midY)))
-                            .apply(lbl)
+                        withFont(
+                            theme,
+                            Svg.text
+                                .x(cx)
+                                .y(midY)
+                                .textAnchor(Svg.TextAnchor.Middle)
+                                .dominantBaseline(Svg.DominantBaseline.Auto)
+                                .fill(Svg.Paint.Color(chrome))
+                                .transform(Svg.Transform.Rotate(90.0, Present(cx), Present(midY)))
+                        ).apply(lbl)
                     else
                         val cx = AxisLabelInset
-                        Svg.text
-                            .x(cx)
-                            .y(midY)
-                            .textAnchor(Svg.TextAnchor.Middle)
-                            .dominantBaseline(Svg.DominantBaseline.Auto)
-                            .fill(Svg.Paint.Color(chrome))
-                            .transform(Svg.Transform.Rotate(-90.0, Present(cx), Present(midY)))
-                            .apply(lbl)
+                        withFont(
+                            theme,
+                            Svg.text
+                                .x(cx)
+                                .y(midY)
+                                .textAnchor(Svg.TextAnchor.Middle)
+                                .dominantBaseline(Svg.DominantBaseline.Auto)
+                                .fill(Svg.Paint.Color(chrome))
+                                .transform(Svg.Transform.Rotate(-90.0, Present(cx), Present(midY)))
+                        ).apply(lbl)
                 base.append(labelElem)
             case Absent => base
         end match
@@ -1075,12 +1080,14 @@ private[kyo] object ChartLower:
         cfg.axisLabel match
             case Present(lbl) =>
                 val labelElem: Svg.SvgElement =
-                    Svg.text
-                        .x(layout.plotX + layout.plotW / 2.0)
-                        .y(layout.svgH - 4.0)
-                        .textAnchor(Svg.TextAnchor.Middle)
-                        .fill(Svg.Paint.Color(chrome))
-                        .apply(lbl)
+                    withFont(
+                        theme,
+                        Svg.text
+                            .x(layout.plotX + layout.plotW / 2.0)
+                            .y(layout.svgH - 4.0)
+                            .textAnchor(Svg.TextAnchor.Middle)
+                            .fill(Svg.Paint.Color(chrome))
+                    ).apply(lbl)
                 base.append(labelElem)
             case Absent => base
         end match
@@ -1120,7 +1127,15 @@ private[kyo] object ChartLower:
                                 buildSequentialLegend(layout, spec, lo, hi, categories, domOv, gradPrefix)
                             case _ =>
                                 val palette = resolvePalette(spec, categories)
-                                buildLegendItems(layout, categories, palette, spec.legendCfg, spec.marks, axisChromeColor(spec.theme))
+                                buildLegendItems(
+                                    layout,
+                                    categories,
+                                    palette,
+                                    spec.legendCfg,
+                                    spec.marks,
+                                    axisChromeColor(spec.theme),
+                                    spec.theme
+                                )
                     end if
 
             // Size legend: emitted when any Point mark has a size channel (INV-015, test 8).
@@ -1128,7 +1143,7 @@ private[kyo] object ChartLower:
                 case m: Mark.Point[A, ?, ?] =>
                     m.size match
                         case Present(fn) =>
-                            buildSizeLegend(layout, rows, m, axisChromeColor(spec.theme), colorItems.size)
+                            buildSizeLegend(layout, rows, m, axisChromeColor(spec.theme), colorItems.size, spec.theme)
                         case Absent => Chunk.empty
                 case _ => Chunk.empty
 
@@ -1182,13 +1197,15 @@ private[kyo] object ChartLower:
         val labelColor     = axisChromeColor(spec.theme)
         val labelY         = legendY + SwatchSize / 2.0
         def label(value: Double, lx: Double, anchor: Svg.TextAnchor): Svg.SvgElement =
-            Svg.text
-                .x(lx)
-                .y(labelY)
-                .textAnchor(anchor)
-                .dominantBaseline(Svg.DominantBaseline.Middle)
-                .fill(Svg.Paint.Color(labelColor))
-                .apply(NumberFormat.double(value))
+            withFont(
+                spec.theme,
+                Svg.text
+                    .x(lx)
+                    .y(labelY)
+                    .textAnchor(anchor)
+                    .dominantBaseline(Svg.DominantBaseline.Middle)
+                    .fill(Svg.Paint.Color(labelColor))
+            ).apply(NumberFormat.double(value))
         val minLabel = label(domLo, legendX - 6.0, Svg.TextAnchor.End)
         val maxLabel = label(domHi, legendX + swatchW + 6.0, Svg.TextAnchor.Start)
         Chunk(Svg.defs(gradient), swatch, minLabel, maxLabel)
@@ -1204,7 +1221,8 @@ private[kyo] object ChartLower:
         rows: Chunk[A],
         mark: Mark.Point[A, X, Y],
         labelColor: Style.Color,
-        colorItemCount: Int
+        colorItemCount: Int,
+        theme: Theme
     )(using Frame): Chunk[Svg.SvgElement] =
         mark.size match
             case Absent      => Chunk.empty
@@ -1242,24 +1260,28 @@ private[kyo] object ChartLower:
                         .r(rMin)
                         .fill(Svg.Paint.Color(DefaultPalette(0)))
                         .fillOpacity(0.5)
-                    val minLabel = Svg.text
-                        .x(startX + rMin * 2.0 + 4.0)
-                        .y(legendY)
-                        .dominantBaseline(Svg.DominantBaseline.Middle)
-                        .fill(Svg.Paint.Color(labelColor))
-                        .apply(NumberFormat.double(magMin))
+                    val minLabel = withFont(
+                        theme,
+                        Svg.text
+                            .x(startX + rMin * 2.0 + 4.0)
+                            .y(legendY)
+                            .dominantBaseline(Svg.DominantBaseline.Middle)
+                            .fill(Svg.Paint.Color(labelColor))
+                    ).apply(NumberFormat.double(magMin))
                     val maxCirc = Svg.circle
                         .cx(startX + rMin * 2.0 + 50.0 + rMax)
                         .cy(legendY)
                         .r(rMax)
                         .fill(Svg.Paint.Color(DefaultPalette(0)))
                         .fillOpacity(0.5)
-                    val maxLabel = Svg.text
-                        .x(startX + rMin * 2.0 + 50.0 + rMax * 2.0 + 4.0)
-                        .y(legendY)
-                        .dominantBaseline(Svg.DominantBaseline.Middle)
-                        .fill(Svg.Paint.Color(labelColor))
-                        .apply(NumberFormat.double(magMax))
+                    val maxLabel = withFont(
+                        theme,
+                        Svg.text
+                            .x(startX + rMin * 2.0 + 50.0 + rMax * 2.0 + 4.0)
+                            .y(legendY)
+                            .dominantBaseline(Svg.DominantBaseline.Middle)
+                            .fill(Svg.Paint.Color(labelColor))
+                    ).apply(NumberFormat.double(magMax))
                     Chunk(minCirc, minLabel, maxCirc, maxLabel)
                 end if
     end buildSizeLegend
@@ -1490,7 +1512,8 @@ private[kyo] object ChartLower:
         palette: Chunk[Style.Color],
         cfg: LegendConfig,
         marks: Chunk[Mark[A]],
-        labelColor: Style.Color
+        labelColor: Style.Color,
+        theme: Theme
     )(using Frame): Chunk[Svg.SvgElement] =
         // Origin and flow direction per legend position. `vertical` stacks items down a column (Left/Right);
         // otherwise items flow horizontally across the reserved band (Top/Bottom).
@@ -1538,13 +1561,15 @@ private[kyo] object ChartLower:
                             .fill(Svg.Paint.Color(color))
                             .withAttrs(clickAttrs)
                 val label: Svg.SvgElement =
-                    Svg.text
-                        .x(curX + SwatchSize + SwatchLabelGap)
-                        .y(curY + SwatchSize / 2.0)
-                        .dominantBaseline(Svg.DominantBaseline.Middle)
-                        .fill(Svg.Paint.Color(labelColor))
-                        .withAttrs(clickAttrs)
-                        .apply(cat)
+                    withFont(
+                        theme,
+                        Svg.text
+                            .x(curX + SwatchSize + SwatchLabelGap)
+                            .y(curY + SwatchSize / 2.0)
+                            .dominantBaseline(Svg.DominantBaseline.Middle)
+                            .fill(Svg.Paint.Color(labelColor))
+                            .withAttrs(clickAttrs)
+                    ).apply(cat)
                 val approxLabelW = cat.length.toDouble * 7.0
                 val (nextX, nextY) =
                     if vertical then (curX, curY + LegendRowH)
