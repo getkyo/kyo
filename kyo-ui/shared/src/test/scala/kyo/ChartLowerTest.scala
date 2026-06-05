@@ -2292,4 +2292,158 @@ class ChartLowerTest extends Test:
         end match
     }
 
+    // ---- Leaf L2 (GAP-COLOR-TEXT): text mark with categorical colorScale uses the scale colors ----
+    // Before the fix, lowerText resolves palette by index from themePalette(theme) only, ignoring
+    // spec.legendCfg.colorScale. With no custom theme.palette this yields DefaultPalette colors
+    // (#3b82f6 blue / #f97316 orange), not the colorScale colors. The fix adds spec: Maybe[ChartSpec[A]]
+    // and routes a Present colorScale through resolvePalette (mirroring lowerLine / lowerPoint).
+
+    "text mark with categorical colorScale uses the scale colors, not DefaultPalette (GAP-COLOR-TEXT)" in {
+        val naColor = Style.Color.hex("#e63946").getOrElse(fail("bad hex naColor"))
+        val euColor = Style.Color.hex("#2a9d8f").getOrElse(fail("bad hex euColor"))
+        val rows = Chunk(
+            Sale("Jan", Usd(1000), Region.NA),
+            Sale("Feb", Usd(2000), Region.EU)
+        )
+        val spec = UI.chart(rows)(text(x = _.month, y = _.revenue, label = _.month, color = _.region))
+            .yScale(_.linear(0.0, 4000.0))
+            .legend(_.colorScale[Region](
+                Region.NA -> naColor,
+                Region.EU -> euColor
+            ))
+        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        // Use the marks group to exclude axis tick texts from the count.
+        val marks = marksGroup(root)
+        val texts = marks.children.collect { case t: Svg.Text => t }
+        assert(texts.size >= 2, s"L2: expected at least 2 text glyphs in marks group, got ${texts.size}")
+        // Sort by x to recover NA/EU encounter order (NA is at "Jan", EU at "Feb" on a band scale).
+        val byX   = texts.toSeq.sortBy(t => numOf(t.svgAttrs.x))
+        val fill0 = fillColorOf(byX(0).svgAttrs.fill)
+        val fill1 = fillColorOf(byX(1).svgAttrs.fill)
+        assert(fill0 == naColor, s"L2: text glyph 0 (NA) must be naColor $naColor but got $fill0")
+        assert(fill1 == euColor, s"L2: text glyph 1 (EU) must be euColor $euColor but got $fill1")
+        // Explicit guard: these must NOT be DefaultPalette fallback colors.
+        assert(
+            fill0 != Style.Color.blue && fill0 != Style.Color.orange,
+            s"L2: text fill 0 must not be DefaultPalette colors; got $fill0"
+        )
+        assert(
+            fill1 != Style.Color.blue && fill1 != Style.Color.orange,
+            s"L2: text fill 1 must not be DefaultPalette colors; got $fill1"
+        )
+        // Legend swatch agreement: each region's swatch fill must equal its colorScale color.
+        val swatches = legendSwatchRects(root)
+        assert(swatches.size == 2, s"L2: expected 2 legend swatches but got ${swatches.size}")
+        val swatchesByY = swatches.toSeq.sortBy(s => coordNum(s.svgAttrs.y).getOrElse(0.0))
+        assert(
+            fillColorOf(swatchesByY(0).svgAttrs.fill) == naColor,
+            s"L2: swatch 0 must be naColor $naColor"
+        )
+        assert(
+            fillColorOf(swatchesByY(1).svgAttrs.fill) == euColor,
+            s"L2: swatch 1 must be euColor $euColor"
+        )
+    }
+
+    // ---- Leaf L3 (GAP-COLOR-ERRORBAR): errorBar with categorical colorScale uses the scale colors ----
+    // Before the fix, lowerErrorBar resolves palette by index from themePalette(theme) only, ignoring
+    // spec.legendCfg.colorScale. All three sub-shapes (vLine + caps + center marker) derive their
+    // stroke/fill from that broken palette. The fix mirrors the lowerText fix.
+
+    "errorBar with categorical colorScale uses the scale colors, one stroke per row (GAP-COLOR-ERRORBAR)" in {
+        val naColor = Style.Color.hex("#e63946").getOrElse(fail("bad hex naColor"))
+        val euColor = Style.Color.hex("#2a9d8f").getOrElse(fail("bad hex euColor"))
+        case class EbSale(x: String, mean: Double, lo: Double, hi: Double, region: Region)
+        given CanEqual[EbSale, EbSale] = CanEqual.derived
+        val rows = Chunk(
+            EbSale("a", 6.0, 4.0, 8.0, Region.NA),
+            EbSale("b", 3.0, 1.0, 5.0, Region.EU)
+        )
+        val spec = UI.chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi, color = _.region))
+            .yScale(_.linear(0.0, 10.0))
+            .legend(_.colorScale[Region](
+                Region.NA -> naColor,
+                Region.EU -> euColor
+            ))
+        val root = summon[Conversion[ChartSpec[EbSale], Svg.Root]](spec)
+        // Restrict to the marks group to avoid axis gridlines and tick-mark lines.
+        val marks   = marksGroup(root)
+        val lines   = marks.children.collect { case l: Svg.Line => l }
+        val circles = marks.children.collect { case c: Svg.Circle => c }
+        // 2 rows x 3 lines each (vLine + capLow + capHigh) = 6 lines total.
+        assert(lines.size == 6, s"L3: expected 6 lines (3 per row x 2 rows) but got ${lines.size}")
+        // 2 rows x 1 circle each (center marker) = 2 circles total.
+        assert(circles.size == 2, s"L3: expected 2 circles (1 per row x 2 rows) but got ${circles.size}")
+
+        def strokeOf(l: Svg.Line): Style.Color = l.svgAttrs.stroke match
+            case Present(Svg.Paint.Color(c)) => c
+            case other                       => fail(s"L3: expected stroke Color but got $other")
+
+        // Helper: extract a Double from Maybe[Double] (line coordinates are not Coord-wrapped).
+        def lineCoord(m: Maybe[Double], lbl: String): Double = m match
+            case Present(v) => v
+            case Absent     => fail(s"L3: $lbl absent")
+
+        // Group lines by their center x pixel ((x1+x2)/2) so that all 3 sub-shapes of a row land
+        // in the same group: the vLine has x1==x2==px, and each cap has x1=px-halfCap, x2=px+halfCap,
+        // so (x1+x2)/2 = px in all three cases.
+        def centerX(l: Svg.Line): Double =
+            (lineCoord(l.svgAttrs.x1, "x1") + lineCoord(l.svgAttrs.x2, "x2")) / 2.0
+        val byCenter = lines.toSeq.groupBy(l => math.round(centerX(l)).toInt)
+        assert(
+            byCenter.size == 2,
+            s"L3: expected 2 distinct center groups (one per row), got ${byCenter.keys.toSeq.sorted(using Ordering.Int)}"
+        )
+        val lineGroups = byCenter.values.toSeq.sortBy(_.map(centerX).min)
+        val naGroup    = lineGroups(0) // smaller x -> category "a" = NA
+        val euGroup    = lineGroups(1) // larger x -> category "b" = EU
+        naGroup.foreach(l =>
+            assert(
+                strokeOf(l) == naColor,
+                s"L3: NA line stroke must be naColor $naColor but got ${strokeOf(l)}"
+            )
+        )
+        euGroup.foreach(l =>
+            assert(
+                strokeOf(l) == euColor,
+                s"L3: EU line stroke must be euColor $euColor but got ${strokeOf(l)}"
+            )
+        )
+
+        // Explicit guard: must NOT be DefaultPalette fallback colors.
+        assert(
+            naGroup.forall(l => strokeOf(l) != Style.Color.blue && strokeOf(l) != Style.Color.orange),
+            s"L3: NA lines must not use DefaultPalette colors"
+        )
+        assert(
+            euGroup.forall(l => strokeOf(l) != Style.Color.blue && strokeOf(l) != Style.Color.orange),
+            s"L3: EU lines must not use DefaultPalette colors"
+        )
+
+        // Center marker circles: fill is set to the stroke color (lowerErrorBar uses fill(stroke)).
+        // Circle cx is Maybe[Double] (not Maybe[Coord]), extract directly and sort by cx.
+        val circlesByX = circles.toSeq.sortBy(c => lineCoord(c.svgAttrs.cx, "cx"))
+        val naCircleFill = circlesByX(0).svgAttrs.fill match
+            case Present(Svg.Paint.Color(c)) => c
+            case other                       => fail(s"L3: expected circle fill Color but got $other")
+        val euCircleFill = circlesByX(1).svgAttrs.fill match
+            case Present(Svg.Paint.Color(c)) => c
+            case other                       => fail(s"L3: expected circle fill Color but got $other")
+        assert(naCircleFill == naColor, s"L3: NA marker fill must be naColor $naColor but got $naCircleFill")
+        assert(euCircleFill == euColor, s"L3: EU marker fill must be euColor $euColor but got $euCircleFill")
+
+        // Legend swatch agreement.
+        val swatches = legendSwatchRects(root)
+        assert(swatches.size == 2, s"L3: expected 2 legend swatches but got ${swatches.size}")
+        val swatchesByY = swatches.toSeq.sortBy(s => coordNum(s.svgAttrs.y).getOrElse(0.0))
+        assert(
+            fillColorOf(swatchesByY(0).svgAttrs.fill) == naColor,
+            s"L3: swatch 0 must be naColor $naColor"
+        )
+        assert(
+            fillColorOf(swatchesByY(1).svgAttrs.fill) == euColor,
+            s"L3: swatch 1 must be euColor $euColor"
+        )
+    }
+
 end ChartLowerTest

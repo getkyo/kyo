@@ -1759,8 +1759,8 @@ private[kyo] object ChartLower:
                             ).asInstanceOf[Chunk[UI]]
                         case Absent => lowerPoint(rows, m, layout, xs, ys, markColor, theme = theme).asInstanceOf[Chunk[UI]]
                 case m: Mark.Rule[A]           => lowerRuleChildren(m, layout, xs, ys)
-                case m: Mark.Text[A, ?, ?]     => lowerText(m, rows, xs, ys, markColor, theme).asInstanceOf[Chunk[UI]]
-                case m: Mark.ErrorBar[A, ?, ?] => lowerErrorBar(m, rows, xs, ys, markColor, theme).asInstanceOf[Chunk[UI]]
+                case m: Mark.Text[A, ?, ?]     => lowerText(m, rows, xs, ys, markColor, theme, spec).asInstanceOf[Chunk[UI]]
+                case m: Mark.ErrorBar[A, ?, ?] => lowerErrorBar(m, rows, xs, ys, markColor, theme, spec).asInstanceOf[Chunk[UI]]
             end match
         allShapes.foldLeft(Svg.g): (g, el) =>
             el match
@@ -2354,7 +2354,8 @@ private[kyo] object ChartLower:
         xs: Scale,
         ys: Scale,
         defaultColor: Style.Color,
-        theme: Theme
+        theme: Theme,
+        spec: Maybe[ChartSpec[A]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         // TextAnchor mapping: two distinct enums, explicit match required (prep.md gotcha 5).
         val svgAnchor = mark.anchor match
@@ -2369,8 +2370,9 @@ private[kyo] object ChartLower:
         val palette: Chunk[Style.Color] =
             if colorCatsWithRaw.isEmpty then Chunk.empty
             else
-                colorCatsWithRaw.zipWithIndex.map: (_, i) =>
-                    basePaletteText.toSeq.apply(i % basePaletteText.size)
+                spec match
+                    case Present(s) => resolvePalette(s, colorCatsWithRaw)
+                    case Absent     => colorCatsWithRaw.zipWithIndex.map((_, i) => basePaletteText.toSeq.apply(i % basePaletteText.size))
         // Precompute catKey -> index once (first-seen wins, matching indexWhere); replaces per-row scan.
         val catIdxText: Map[String, Int] =
             colorCatsWithRaw.zipWithIndex.foldLeft(Map.empty[String, Int]): (m, ci) =>
@@ -2428,7 +2430,8 @@ private[kyo] object ChartLower:
         xs: Scale,
         ys: Scale,
         defaultColor: Style.Color,
-        theme: Theme
+        theme: Theme,
+        spec: Maybe[ChartSpec[A]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         val colorCatsWithRaw: Chunk[(String, Any)] = mark.color match
             case Present(ch) => collectColorCategoriesWithRaw(rows, ch.asInstanceOf[Encoding[A, Any]])
@@ -2437,8 +2440,9 @@ private[kyo] object ChartLower:
         val palette: Chunk[Style.Color] =
             if colorCatsWithRaw.isEmpty then Chunk.empty
             else
-                colorCatsWithRaw.zipWithIndex.map: (_, i) =>
-                    basePaletteErr.toSeq.apply(i % basePaletteErr.size)
+                spec match
+                    case Present(s) => resolvePalette(s, colorCatsWithRaw)
+                    case Absent     => colorCatsWithRaw.zipWithIndex.map((_, i) => basePaletteErr.toSeq.apply(i % basePaletteErr.size))
         // Precompute catKey -> index once (first-seen wins, matching indexWhere); replaces per-row scan.
         val catIdxErr: Map[String, Int] =
             colorCatsWithRaw.zipWithIndex.foldLeft(Map.empty[String, Int]): (m, ci) =>
@@ -3661,9 +3665,9 @@ private[kyo] object ChartLower:
                     case m: Mark.Rule[A] => (accElems ++ lowerRule(m, layout, xs, ys), accGeom)
                     // INV-021/INV-022: text/errorBar produce no geometry for morph tracking; elements are emitted.
                     case m: Mark.Text[A, ?, ?] =>
-                        (accElems ++ lowerText(m, rows, xs, ys, markColor, spec.theme), accGeom)
+                        (accElems ++ lowerText(m, rows, xs, ys, markColor, spec.theme, Present(spec)), accGeom)
                     case m: Mark.ErrorBar[A, ?, ?] =>
-                        (accElems ++ lowerErrorBar(m, rows, xs, ys, markColor, spec.theme), accGeom)
+                        (accElems ++ lowerErrorBar(m, rows, xs, ys, markColor, spec.theme, Present(spec)), accGeom)
                 end match
         // Write the new state only when this is a genuinely new emission.
         // On repeat pulls, the ref is left untouched so the next real emission still sees the correct fromGeom.
