@@ -38,8 +38,10 @@ private[kyo] object JarCentralDirectory:
       *   uncompressed size in bytes; already resolved from Zip64 extra field if the CEN field was 0xFFFFFFFF
       * @param method
       *   compression method: 0 = STORED, 8 = DEFLATED
+      * @param crc32
+      *   CRC-32 checksum of uncompressed entry data (CEN record offset +16 per PKWARE APPNOTE.TXT 4.3.12); stored as unsigned Long
       */
-    final case class JarEntry(name: String, lfhOffset: Long, compSize: Long, uncompSize: Long, method: Short)
+    final case class JarEntry(name: String, lfhOffset: Long, compSize: Long, uncompSize: Long, method: Short, crc32: Long)
 
     // ZIP signature constants
     private val SIG_EOCD: Int  = 0x06054b50
@@ -117,6 +119,120 @@ private[kyo] object JarCentralDirectory:
                         try raf.close()
                         catch case _: java.io.IOException => ()
                 end try
+
+    /** Read all CEN entries from a JAR file, returning them as a Chunk of JarEntry.
+      *
+      * Used by DigestComputer to walk the central directory for content-addressed digest computation (INV-003). Returns ALL entries (no
+      * suffix filter); directories are excluded. Runs synchronously under AllowUnsafe; no Scope or Sync effect required.
+      *
+      * Unsafe: synchronous JAR CEN walk via RandomAccessFile; bounded to this call site; no Scope required.
+      */
+    private[kyo] def read(jarPath: String)(using AllowUnsafe): Chunk[JarEntry] =
+        var raf: RandomAccessFile = null
+        try
+            raf = new RandomAccessFile(jarPath, "r")
+            val fileLen = raf.length()
+            if fileLen == 0 then Chunk.empty
+            else
+                val (eocdOffset, eocdBuf)     = findEocd(jarPath, raf, fileLen)
+                val (totalEntries, cenOffset) = readCenLocation(jarPath, raf, fileLen, eocdOffset, eocdBuf)
+
+                if cenOffset < 0 || cenOffset >= fileLen then Chunk.empty
+                else
+                    val cenSizeLong = (eocdOffset - cenOffset).max(0L)
+                    if cenSizeLong > Int.MaxValue then Chunk.empty
+                    else
+                        val cenSize = cenSizeLong.toInt
+                        val cenBuf  = new Array[Byte](cenSize)
+                        raf.seek(cenOffset)
+                        raf.readFully(cenBuf)
+                        readAllCenEntries(jarPath, cenBuf, cenSize)
+                    end if
+                end if
+            end if
+        catch
+            case _: TastyErrorWrapper | _: java.io.IOException => Chunk.empty
+        finally
+            if raf != null then
+                try raf.close()
+                catch case _: java.io.IOException => ()
+        end try
+    end read
+
+    /** Parse ALL central directory records from cenBuf into a Chunk (no suffix filter, no HashMap dedup).
+      *
+      * Used by `read` for the digest walk. Directories (names ending with '/') are skipped.
+      */
+    private def readAllCenEntries(jarPath: String, cenBuf: Array[Byte], cenSize: Int): Chunk[JarEntry] =
+        val results = mutable.ArrayBuffer.empty[JarEntry]
+        var pos     = 0
+
+        while pos + 46 <= cenSize do
+            val sig = readInt32LE(cenBuf, pos)
+            if sig != SIG_CEN then
+                pos = cenSize // break
+            else
+                val gpFlag = readUInt16LE(cenBuf, pos + 8)
+                val method = readUInt16LE(cenBuf, pos + 10).toShort
+                // CRC-32 at CEN record offset +16 per PKWARE APPNOTE.TXT 4.3.12
+                val crc32      = readUInt32LE(cenBuf, pos + 16)
+                var compSize   = readUInt32LE(cenBuf, pos + 20)
+                var uncompSize = readUInt32LE(cenBuf, pos + 24)
+                val nameLen    = readUInt16LE(cenBuf, pos + 28)
+                val extraLen   = readUInt16LE(cenBuf, pos + 30)
+                val commentLen = readUInt16LE(cenBuf, pos + 32)
+                var lfhOffset  = readUInt32LE(cenBuf, pos + 42)
+                val recordSize = 46 + nameLen + extraLen + commentLen
+
+                if pos + recordSize > cenSize then
+                    pos = cenSize // truncated record, stop
+                else
+                    // Resolve Zip64 extra field if sentinel values are present
+                    val needsZip64 = compSize == 0xffffffffL || uncompSize == 0xffffffffL || lfhOffset == 0xffffffffL
+                    if needsZip64 && extraLen >= 4 then
+                        val extraStart = pos + 46 + nameLen
+                        var ep         = extraStart
+                        val extraEnd   = extraStart + extraLen
+                        var done       = false
+                        while ep + 4 <= extraEnd && !done do
+                            val hdrId    = readUInt16LE(cenBuf, ep)
+                            val dataSize = readUInt16LE(cenBuf, ep + 2)
+                            if hdrId == 0x0001 then
+                                var dp = ep + 4
+                                if uncompSize == 0xffffffffL && dp + 8 <= ep + 4 + dataSize then
+                                    uncompSize = readUInt64LE(cenBuf, dp)
+                                    dp += 8
+                                end if
+                                if compSize == 0xffffffffL && dp + 8 <= ep + 4 + dataSize then
+                                    compSize = readUInt64LE(cenBuf, dp)
+                                    dp += 8
+                                end if
+                                if lfhOffset == 0xffffffffL && dp + 8 <= ep + 4 + dataSize then
+                                    lfhOffset = readUInt64LE(cenBuf, dp)
+                                    dp += 8
+                                end if
+                                done = true
+                            else
+                                ep += 4 + dataSize
+                            end if
+                        end while
+                    end if
+
+                    // Decode entry name: bit 11 set means UTF-8, otherwise CP437
+                    val charset = if (gpFlag & GP_FLAG_UTF8) != 0 then StandardCharsets.UTF_8 else CP437
+                    val name    = new String(cenBuf, pos + 46, nameLen, charset)
+
+                    // Skip directories
+                    if !name.endsWith("/") then
+                        results += JarEntry(name, lfhOffset, compSize, uncompSize, method, crc32)
+
+                    pos += recordSize
+                end if
+            end if
+        end while
+
+        Chunk.from(results.toSeq)
+    end readAllCenEntries
 
     /** Parse all entries in a JAR (regardless of suffix) into a HashMap keyed by entry name.
       *
@@ -318,7 +434,9 @@ private[kyo] object JarCentralDirectory:
                 // Stop at first non-CEN record (e.g., end of central directory)
                 pos = cenSize // break
             else
-                val gpFlag     = readUInt16LE(cenBuf, pos + 8)
+                val gpFlag = readUInt16LE(cenBuf, pos + 8)
+                // CRC-32 at CEN record offset +16 per PKWARE APPNOTE.TXT 4.3.12
+                val crc32      = readUInt32LE(cenBuf, pos + 16)
                 val nameLen    = readUInt16LE(cenBuf, pos + 28)
                 val extraLen   = readUInt16LE(cenBuf, pos + 30)
                 val commentLen = readUInt16LE(cenBuf, pos + 32)
@@ -403,8 +521,10 @@ private[kyo] object JarCentralDirectory:
             if sig != SIG_CEN then
                 pos = cenSize // break
             else
-                val gpFlag     = readUInt16LE(cenBuf, pos + 8)
-                val method     = readUInt16LE(cenBuf, pos + 10).toShort
+                val gpFlag = readUInt16LE(cenBuf, pos + 8)
+                val method = readUInt16LE(cenBuf, pos + 10).toShort
+                // CRC-32 at CEN record offset +16 per PKWARE APPNOTE.TXT 4.3.12
+                val crc32      = readUInt32LE(cenBuf, pos + 16)
                 var compSize   = readUInt32LE(cenBuf, pos + 20)
                 var uncompSize = readUInt32LE(cenBuf, pos + 24)
                 val nameLen    = readUInt16LE(cenBuf, pos + 28)
@@ -457,7 +577,7 @@ private[kyo] object JarCentralDirectory:
                         var i = 0
                         while i < suffixes.length do
                             if name.endsWith(suffixes(i)) then
-                                results += JarEntry(name, lfhOffset, compSize, uncompSize, method)
+                                results += JarEntry(name, lfhOffset, compSize, uncompSize, method, crc32)
                                 i = suffixes.length // break
                             else
                                 i += 1
@@ -490,8 +610,10 @@ private[kyo] object JarCentralDirectory:
             if sig != SIG_CEN then
                 pos = cenSize // break
             else
-                val gpFlag     = readUInt16LE(cenBuf, pos + 8)
-                val method     = readUInt16LE(cenBuf, pos + 10).toShort
+                val gpFlag = readUInt16LE(cenBuf, pos + 8)
+                val method = readUInt16LE(cenBuf, pos + 10).toShort
+                // CRC-32 at CEN record offset +16 per PKWARE APPNOTE.TXT 4.3.12
+                val crc32      = readUInt32LE(cenBuf, pos + 16)
                 var compSize   = readUInt32LE(cenBuf, pos + 20)
                 var uncompSize = readUInt32LE(cenBuf, pos + 24)
                 val nameLen    = readUInt16LE(cenBuf, pos + 28)
@@ -542,7 +664,7 @@ private[kyo] object JarCentralDirectory:
 
                     // Skip directories
                     if !name.endsWith("/") then
-                        results.put(name, JarEntry(name, lfhOffset, compSize, uncompSize, method)): Unit
+                        results.put(name, JarEntry(name, lfhOffset, compSize, uncompSize, method, crc32)): Unit
 
                     pos += recordSize
                 end if

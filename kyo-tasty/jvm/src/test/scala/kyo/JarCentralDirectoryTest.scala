@@ -811,4 +811,28 @@ class JarCentralDirectoryTest extends Test:
         Sync.defer(succeed)
     }
 
+    // T-CRC1 (Phase 12): JarEntry.crc32 field equals the CRC-32 of the entry bytes.
+    //
+    // Given: a JAR with foo.class = [1, 2, 3]; the ZIP spec places the CRC-32 at CEN record offset +16.
+    // When: JarCentralDirectory.read(jarPath).find(_.name == "foo.class").get.crc32
+    // Then: equals java.util.zip.CRC32 computed over [1, 2, 3].
+    // Pins: INV-003 producer-site; Phase 12 item 25.
+    "T-CRC1: JarEntry.crc32 from CEN offset+16 matches java.util.zip.CRC32 for foo.class=[1,2,3]" taggedAs jvmOnly in {
+        val dir     = makeTempDir()
+        val jarPath = s"$dir/crc1.jar"
+        val bytes   = Array[Byte](1, 2, 3)
+        writeJar(jarPath, Seq("foo.class" -> bytes))
+        val crc = new java.util.zip.CRC32()
+        crc.update(bytes)
+        val expectedCrc32 = crc.getValue
+        // Unsafe: AllowUnsafe boundary for JarCentralDirectory.read; bounded to this test site.
+        val entries = JarCentralDirectory.read(jarPath)(using AllowUnsafe.embrace.danger)
+        val entry   = entries.find(_.name == "foo.class")
+        assert(entry.isDefined, s"expected foo.class entry in JAR but entries were: $entries")
+        assert(
+            entry.get.crc32 == expectedCrc32,
+            s"crc32 mismatch: got ${entry.get.crc32}, expected $expectedCrc32 (0x${expectedCrc32.toHexString})"
+        )
+    }
+
 end JarCentralDirectoryTest

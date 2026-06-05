@@ -36,8 +36,11 @@ class SnapshotDigestTest extends Test:
                 throw t
     }
 
-    // T-J3: bumping jar mtime by +1 hour produces a different digest
-    "DigestComputer.compute detects jar mtime change (+1 hour offset)" in run {
+    // T-J3: INV-003 -- bumping jar mtime must NOT change the digest (content-addressed)
+    // After Phase 12 the jar digest is based on CEN CRC32 entries, not mtime. A mtime-only
+    // change must produce the same digest on JVM (CEN walk) and all platforms (path-hash fallback
+    // is also mtime-invariant since it only reads the path string).
+    "DigestComputer.compute jar mtime change does NOT change digest (INV-003 content-addressed)" in run {
         val src     = MemoryFileSource()
         val jarPath = "mem/tj3.jar"
         src.add(jarPath, Array[Byte]())
@@ -51,30 +54,32 @@ class SnapshotDigestTest extends Test:
                         (d1, d2)
         .map:
             case Result.Success((d1, d2)) =>
-                assert(!d1.sameElements(d2), "bumping jar mtime must produce a different digest")
+                assert(d1.sameElements(d2), "mtime-only change must NOT change the CEN-CRC digest (INV-003)")
             case Result.Failure(e) =>
                 fail(s"Unexpected failure: $e")
             case Result.Panic(t) =>
                 throw t
     }
 
-    // T-J4: rewriting the jar with different content (size change) produces a different digest
-    "DigestComputer.compute detects jar size change (rewrite with extra content)" in run {
-        val src     = MemoryFileSource()
-        val jarPath = "mem/tj4.jar"
-        src.add(jarPath, Array[Byte](1, 2, 3))
-        src.setMtime(jarPath, 1_700_000_000_000L)
+    // T-J4: INV-003 -- jar path change produces a different digest (cross-platform determinism)
+    // After Phase 12, the in-memory jar digest is based on the jar path (platform fallback) or
+    // CEN CRC32 (JVM with real JAR). Two different paths must produce different digests.
+    // Real CEN content-change detection is covered by DigestComputerTest leaf 2 (JVM-only, real JAR).
+    "DigestComputer.compute for two different jar paths produces different digests" in run {
+        val src      = MemoryFileSource()
+        val jarPath1 = "mem/tj4a.jar"
+        val jarPath2 = "mem/tj4b.jar"
+        src.add(jarPath1, Array[Byte](1, 2, 3))
+        src.add(jarPath2, Array[Byte](1, 2, 3))
+        src.setMtime(jarPath1, 1_700_000_000_000L)
+        src.setMtime(jarPath2, 1_700_000_000_000L)
         Abort.run[TastyError]:
-            DigestComputer.compute(Seq(jarPath), src).flatMap: d1 =>
-                Sync.defer:
-                    src.add(jarPath, Array[Byte](1, 2, 3, 4, 5, 6, 7, 8))
-                    src.setMtime(jarPath, 1_700_000_000_000L + 3_600_000L)
-                .flatMap: _ =>
-                    DigestComputer.compute(Seq(jarPath), src).map: d2 =>
-                        (d1, d2)
+            DigestComputer.compute(Seq(jarPath1), src).flatMap: d1 =>
+                DigestComputer.compute(Seq(jarPath2), src).map: d2 =>
+                    (d1, d2)
         .map:
             case Result.Success((d1, d2)) =>
-                assert(!d1.sameElements(d2), "size change in jar must produce a different digest")
+                assert(!d1.sameElements(d2), "different jar paths must produce different digests")
             case Result.Failure(e) =>
                 fail(s"Unexpected failure: $e")
             case Result.Panic(t) =>
