@@ -415,22 +415,25 @@ object WebsiteStyles:
                 Selector.cls("dark").descendant(Selector.cls("sec-head")).descendant(Selector.tag("p")),
                 Style.color(darkDim)
             )
-            // Approximate the accent glow overlay (radial in the reference) with a subtle vertical wash.
-            // Two anti-banding measures over the old two-stop sRGB gradient: interpolate in OKLCH so the
-            // indigo wash settles into the warm near-black along a perceptually-even path (no muddy grey
-            // midtone), and add intermediate stops so each interpolated span is short and the 8-bit steps
-            // stay below the visible-banding threshold across the long, low-contrast fade.
+            // A subtle indigo glow at the top of the dark band settling into the warm near-black,
+            // approximating the radial accent glow of the reference with a vertical wash. Every stop is
+            // OPAQUE and dark on purpose: an earlier version used semi-transparent indigo stops, which
+            // composite over the cream page, so the top of the section rendered as light lavender while
+            // the section's text stays light (white headings, darkDim body). That left the eyebrow,
+            // heading, and intro paragraph light-on-light and unreadable until the fade reached the dark
+            // end more than halfway down. Keeping every stop dark makes the light text legible from the
+            // section's top edge. sRGB interpolation between these near-identical dark indigos avoids the
+            // saturated purple midtone OKLCH swings through between a light and a dark color, and the
+            // short luminance range keeps 8-bit banding below the visible threshold.
             .rule(
                 "promise",
                 Style.position(_.flow).overflow(_.hidden)
                     .bgGradient(
                         _.toBottom,
-                        Style.GradientColorSpace.oklch,
-                        (Color.rgba(78, 70, 224, 0.16), Length.Pct(0)),
-                        (Color.rgba(60, 54, 150, 0.13), Length.Pct(18)),
-                        (Color.rgba(44, 40, 96, 0.1), Length.Pct(34)),
-                        (Color.rgba(30, 28, 52, 0.06), Length.Pct(46)),
-                        (inkSection, Length.Pct(58))
+                        Style.GradientColorSpace.srgb,
+                        (hex("#211D38"), Length.Pct(0)),
+                        (hex("#1A1726"), Length.Pct(40)),
+                        (inkSection, Length.Pct(82))
                     )
             )
             // two-column predictability/reliability block

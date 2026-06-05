@@ -38,22 +38,25 @@ class WebsiteStylesTest extends Test:
         assert(css.contains(".tok-comment"))
     }
 
-    "the .promise gradient interpolates in oklch with several intermediate stops (anti-banding)" in {
+    "the .promise gradient is an opaque dark band so the section's light text stays readable" in {
         val css = WebsiteStyles.sheet.render
         val idx = css.indexOf(".promise")
         assert(idx >= 0, "must have a .promise rule")
         // The rule body runs to its closing brace; scan only that span.
         val body = css.substring(idx, css.indexOf('}', idx))
-        // CSS spec order: the color-interpolation-method follows the direction (`to bottom in oklch`),
-        // the reversed `in oklch, to bottom` form is rejected by Chrome and renders as `none`.
+        // The dark sections carry light text (white headings, light-gray body), so the background must
+        // be dark from the top edge down. An earlier version used semi-transparent indigo stops, which
+        // composite over the cream page and rendered the top as light lavender, leaving the eyebrow,
+        // heading, and intro paragraph light-on-light and unreadable. The gradient must be a top-down
+        // sRGB ramp of OPAQUE DARK stops: no rgba transparency, and no oklch (which swung a saturated
+        // purple midtone between the old light and dark ends).
+        assert(body.contains("linear-gradient(to bottom,"), s"promise gradient must be a top-down sRGB linear-gradient: $body")
+        assert(!body.contains("rgba("), s"promise gradient stops must be opaque, not composited over the page: $body")
+        assert(!body.contains("oklch"), s"promise gradient must not interpolate in oklch: $body")
         assert(
-            body.contains("linear-gradient(to bottom in oklch,"),
-            s"promise gradient must interpolate in oklch with the direction first: $body"
+            body.contains("#211D38") && body.contains("#1A1726") && body.contains("#16150F 82%"),
+            s"promise gradient must ramp through dark indigo into the near-black ink: $body"
         )
-        // Several stops: the old gradient had 2 (one comma between stops). The anti-banding fix adds
-        // intermediate stops, so the gradient now carries at least 4 color stops (>= 4 `%` markers).
-        val stopCount = body.split('%').length - 1
-        assert(stopCount >= 4, s"promise gradient must carry several stops to break up banding, found $stopCount: $body")
     }
 
     "display headings carry text-wrap: balance and body carries text-wrap: pretty" in {
