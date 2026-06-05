@@ -108,7 +108,10 @@ object SiteApp:
         UI.header.cssClass("site-header").data("section", "header")(
             UI.div.cssClass("site-header-inner")(
                 UI.a.cssClass("brand").data("role", "logo").href(Href.Path("/"))(
-                    UI.img(ImgSrc.Path("/kyo.png"), "Kyo").cssClass("mark"),
+                    // The crisp vector mark (/kyo.svg): the 1000x1000 raster (/kyo.png) downscaled to the
+                    // 28px header mark read pixelated and aliased next to the wordmark. The SVG is the same
+                    // logo as pure vector art, so it renders sharp at any size.
+                    UI.img(ImgSrc.Path("/kyo.svg"), "Kyo").cssClass("mark"),
                     UI.span("kyo")
                 ),
                 UI.nav.cssClass("links")(

@@ -274,7 +274,7 @@ object WebsiteStyles:
                 Style.block.fontFamily(Style.FontFamily.Custom("var(--serif)")).fontWeight(_.w500)
                     .letterSpacing(Length.Em(-0.018)).fontSize(64.px).lineHeight(1.02)
                     .margin(20.px, Length.Auto, 0.px, Length.Auto).maxWidth(720.px).textAlign(_.center)
-                    .color(_.variable("ink"))
+                    .color(_.variable("ink")).textWrap(_.balance)
             )
             // the accent <span> inside the headline must flow inline within the block h1 (the reset
             // makes every span a flex row, which would push it onto its own line).
@@ -285,7 +285,7 @@ object WebsiteStyles:
             .rule(
                 "lead",
                 Style.fontSize(20.px).color(_.variable("dim")).maxWidth(620.px)
-                    .margin(24.px, Length.Auto, 0.px, Length.Auto).lineHeight(1.55).textAlign(_.center)
+                    .margin(24.px, Length.Auto, 0.px, Length.Auto).lineHeight(1.55).textAlign(_.center).textWrap(_.pretty)
             )
             .rule(
                 "hero-cta",
@@ -341,11 +341,11 @@ object WebsiteStyles:
                 Selector.cls("sec-head").descendant(Selector.tag("h2")),
                 Style.fontFamily(Style.FontFamily.Custom("var(--serif)")).fontWeight(_.w500)
                     .letterSpacing(Length.Em(-0.014)).fontSize(40.px).lineHeight(1.08)
-                    .margin(14.px, 0.px, 0.px, 0.px).color(_.variable("ink"))
+                    .margin(14.px, 0.px, 0.px, 0.px).color(_.variable("ink")).textWrap(_.balance)
             )
             .rule(
                 Selector.cls("sec-head").descendant(Selector.tag("p")),
-                Style.color(_.variable("dim")).fontSize(18.px).margin(18.px, 0.px, 0.px, 0.px).lineHeight(1.6)
+                Style.color(_.variable("dim")).fontSize(18.px).margin(18.px, 0.px, 0.px, 0.px).lineHeight(1.6).textWrap(_.pretty)
             )
             // problem section: centered head + centered body + stat
             .rule(
@@ -355,7 +355,7 @@ object WebsiteStyles:
             .rule(
                 Selector.cls("problem").descendant(Selector.tag("p")),
                 Style.maxWidth(620.px).margin(26.px, Length.Auto, 0.px, Length.Auto).textAlign(_.center)
-                    .fontSize(19.px).color(_.variable("dim")).lineHeight(1.66)
+                    .fontSize(19.px).color(_.variable("dim")).lineHeight(1.66).textWrap(_.pretty)
             )
             // control / visibility row
             .rule(
@@ -415,14 +415,22 @@ object WebsiteStyles:
                 Selector.cls("dark").descendant(Selector.cls("sec-head")).descendant(Selector.tag("p")),
                 Style.color(darkDim)
             )
-            // approximate the accent glow overlay (radial in the reference) with a subtle vertical wash
+            // Approximate the accent glow overlay (radial in the reference) with a subtle vertical wash.
+            // Two anti-banding measures over the old two-stop sRGB gradient: interpolate in OKLCH so the
+            // indigo wash settles into the warm near-black along a perceptually-even path (no muddy grey
+            // midtone), and add intermediate stops so each interpolated span is short and the 8-bit steps
+            // stay below the visible-banding threshold across the long, low-contrast fade.
             .rule(
                 "promise",
                 Style.position(_.flow).overflow(_.hidden)
                     .bgGradient(
                         _.toBottom,
+                        Style.GradientColorSpace.oklch,
                         (Color.rgba(78, 70, 224, 0.16), Length.Pct(0)),
-                        (inkSection, Length.Pct(55))
+                        (Color.rgba(60, 54, 150, 0.13), Length.Pct(18)),
+                        (Color.rgba(44, 40, 96, 0.1), Length.Pct(34)),
+                        (Color.rgba(30, 28, 52, 0.06), Length.Pct(46)),
+                        (inkSection, Length.Pct(58))
                     )
             )
             // two-column predictability/reliability block
@@ -445,11 +453,19 @@ object WebsiteStyles:
             .rule(
                 Selector.cls("col").descendant(Selector.tag("h3")),
                 Style.fontFamily(Style.FontFamily.Custom("var(--serif)")).fontWeight(_.w500)
-                    .fontSize(26.px).margin(12.px, 0.px, 0.px, 0.px).color(_.white)
+                    .fontSize(26.px).margin(12.px, 0.px, 0.px, 0.px).color(_.white).textWrap(_.balance)
             )
             .rule(
                 Selector.cls("col").descendant(Selector.tag("p")),
-                Style.margin(14.px, 0.px, 0.px, 0.px).color(darkDim).fontSize(16.px).lineHeight(1.62)
+                Style.margin(14.px, 0.px, 0.px, 0.px).color(darkDim).fontSize(16.px).lineHeight(1.62).textWrap(_.pretty)
+            )
+            // The terminal CTA band carries a tighter, top/bottom-balanced vertical padding instead of
+            // the generic 92px `.band` padding: the panel holds only a heading and two buttons, so the
+            // full band padding left a tall empty slab of dark gradient below the buttons (the over-tall
+            // CTA). 72px both sides sits the content centered in a panel sized to it.
+            .rule(
+                "cta-band",
+                Style.padding(72.px, 0.px)
             )
             // final CTA
             .rule(
@@ -459,7 +475,7 @@ object WebsiteStyles:
             .rule(
                 Selector.cls("cta-final").descendant(Selector.tag("h2")),
                 Style.fontFamily(Style.FontFamily.Custom("var(--serif)")).fontWeight(_.w500)
-                    .fontSize(48.px).color(_.white).margin(0.px).letterSpacing(Length.Em(-0.014))
+                    .fontSize(48.px).color(_.white).margin(0.px).letterSpacing(Length.Em(-0.014)).textWrap(_.balance)
             )
             .rule(
                 Selector.cls("cta-final").descendant(Selector.cls("hero-cta")),
@@ -497,8 +513,13 @@ object WebsiteStyles:
                 Style.column.flexBasis(Length.Pct(30)).flexGrow(1.0).bg(_.variable("bg")).padding(30.px, 26.px, 32.px, 26.px)
             )
             .rule(
+                // A 2-line reserved min-height so cards whose heading wraps to one line and cards whose
+                // heading wraps to two share one body baseline across the 3-up row (uneven heading heights
+                // otherwise pushed each card's body to a different y). lineHeight 1.25 x 2 lines x 18.5px
+                // ~= 46px. textWrap balance evens a 2-line heading's two lines.
                 Selector.cls("cell").descendant(Selector.tag("h3")),
                 Style.margin(0.px).fontSize(18.5.px).fontWeight(_.w600).letterSpacing(Length.Em(-0.01)).color(_.variable("ink"))
+                    .lineHeight(1.25).minHeight(46.px).textWrap(_.balance)
             )
             .rule(
                 Selector.cls("cell").descendant(Selector.tag("p")),
@@ -529,9 +550,13 @@ object WebsiteStyles:
                 Style.column.flexBasis(Length.Pct(30)).flexGrow(1.0).bg(_.variable("bg")).padding(26.px, 24.px, 28.px, 24.px)
             )
             .rule(
+                // Reserve a min-height (2 lines) so the six feature-category headings keep one shared
+                // baseline for their lists across the 3-up rows even when one title wraps and another does
+                // not, matching the `.cell h3` reservation above.
                 Selector.cls("fcat").descendant(Selector.tag("h4")),
                 Style.row.align(_.center).gap(9.px)
                     .margin(0.px, 0.px, 16.px, 0.px).fontSize(16.px).fontWeight(_.w600).color(_.variable("ink"))
+                    .lineHeight(1.3).minHeight(42.px)
             )
             .rule(
                 Selector.cls("fcat").descendant(Selector.tag("ul")),

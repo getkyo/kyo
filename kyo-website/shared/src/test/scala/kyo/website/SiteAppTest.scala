@@ -78,7 +78,7 @@ class SiteAppTest extends Test:
             // Brand links to the landing root.
             assert(html.contains("data-role=\"logo\""), s"brand logo hook missing: $html")
             assert(html.contains("href=\"/\""), s"brand must link to / : $html")
-            assert(html.contains("/kyo.png"), s"brand logo image missing: $html")
+            assert(html.contains("/kyo.svg"), s"brand logo image (vector mark) missing: $html")
         }
     }
 

@@ -197,14 +197,16 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- Test 7: logo and favicon assets copied ----
 
-    "kyo.png and kyo.ico are copied into outDir" in run {
+    "kyo.svg, kyo.png and kyo.ico are copied into outDir" in run {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
             _         <- emit(oneVersion, out, bundleDir)
+            svgExists <- (out / "kyo.svg").exists
             pngExists <- (out / "kyo.png").exists
             icoExists <- (out / "kyo.ico").exists
         yield
+            assert(svgExists, "kyo.svg (the vector brand mark) must be present in outDir")
             assert(pngExists, "kyo.png must be present in outDir")
             assert(icoExists, "kyo.ico must be present in outDir")
         end for

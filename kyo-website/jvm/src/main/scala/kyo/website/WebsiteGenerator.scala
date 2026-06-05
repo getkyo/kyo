@@ -29,7 +29,8 @@ import kyo.*
   *   <outDir>/robots.txt      -- allow-all + sitemap directive (SEO-3)
   *   <outDir>/CNAME           -- exactly "getkyo.io" (INV-011)
   *   <outDir>/.nojekyll       -- empty (INV-011)
-  *   <outDir>/kyo.png         -- logo (copied from repo root)
+  *   <outDir>/kyo.svg         -- vector logo for the header/footer mark (copied from repo root)
+  *   <outDir>/kyo.png         -- raster logo, kept for the favicon link (copied from repo root)
   *   <outDir>/kyo.ico         -- favicon (copied from kyo-website/assets/)
   *   <outDir>/main.js         -- bundle (copied from bundleDir)
   *   <outDir>/main.js.map     -- bundle source map (copied from bundleDir)
@@ -612,6 +613,10 @@ object WebsiteGenerator:
         bundleDir: Path
     )(using Frame): Unit < (Sync & Abort[WebsiteException]) =
         for
+            // kyo.svg is the crisp vector logo the header/footer brand mark references; kyo.png is kept
+            // because the favicon link still points at the raster (a PNG is the broadly-supported favicon
+            // format).
+            _ <- copyFile("kyo.svg", repoRoot / "kyo.svg", outDir / "kyo.svg")
             _ <- copyFile("kyo.png", repoRoot / "kyo.png", outDir / "kyo.png")
             _ <- copyFile("kyo.ico", repoRoot / "kyo-website" / "assets" / "kyo.ico", outDir / "kyo.ico")
             _ <- copyFile("main.js", bundleDir / "main.js", outDir / "main.js")

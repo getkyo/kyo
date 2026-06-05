@@ -349,7 +349,7 @@ object LandingApp:
     end depth
 
     private def finalCta(docsHome: String)(using Frame): UI =
-        UI.section.cssClass("band").cssClass("dark").cssClass("promise").data("section", "final-cta")(
+        UI.section.cssClass("band").cssClass("dark").cssClass("promise").cssClass("cta-band").data("section", "final-cta")(
             UI.div.cssClass("wrap")(
                 UI.div.cssClass("cta-final").cssClass("on-dark")(
                     UI.h2("Build something that holds."),
@@ -374,7 +374,9 @@ object LandingApp:
                 UI.div.cssClass("foot")(
                     UI.div(
                         UI.a.cssClass("brand").href(Href.Fragment("top"))(
-                            UI.img(ImgSrc.Path("/kyo.png"), "Kyo").cssClass("mark"),
+                            // The crisp vector mark (/kyo.svg), the same logo as the header brand: the
+                            // 1000x1000 raster downscaled to 28px read pixelated next to the wordmark.
+                            UI.img(ImgSrc.Path("/kyo.svg"), "Kyo").cssClass("mark"),
                             UI.span("kyo")
                         ),
                         UI.p.cssClass("note")(

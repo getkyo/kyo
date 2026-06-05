@@ -109,7 +109,7 @@ class LandingAppTest extends Test:
 
     "logo hook present with relative path (footer brand, not raw.githubusercontent URL)" in run {
         renderLanding.map { html =>
-            assert(html.contains("/kyo.png"), "logo src must use relative path /kyo.png")
+            assert(html.contains("/kyo.svg"), "logo src must use the relative vector path /kyo.svg")
             assert(!html.contains("raw.githubusercontent"), "logo must NOT use raw.githubusercontent URL")
         }
     }
