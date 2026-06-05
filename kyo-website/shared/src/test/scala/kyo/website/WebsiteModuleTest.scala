@@ -25,9 +25,15 @@ class WebsiteModuleTest extends Test:
             assert(m.displayName == "Core")
         }
 
-        "kyo-stats-registry strips prefix and capitalizes only first letter" in {
+        "kyo-stats-registry splits on hyphen and capitalizes each segment (no hyphen survives)" in {
             val m = WebsiteModule("kyo-stats-registry", "g", "kyo-stats-registry", "", WebsiteModule.Platforms(true, true, true))
-            assert(m.displayName == "Stats-registry")
+            assert(m.displayName == "Stats Registry")
+        }
+
+        "multi-segment slug with an acronym tail leaves no hyphen" in {
+            val m = WebsiteModule("kyo-logging-slf4j", "g", "kyo-logging-slf4j", "", WebsiteModule.Platforms(true, false, false))
+            assert(m.displayName == "Logging Slf4j")
+            assert(!m.displayName.contains("-"))
         }
 
         "non-kyo slug capitalizes first letter only" in {

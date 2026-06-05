@@ -10,13 +10,15 @@ final case class WebsiteModule(
     readme: String,
     platforms: WebsiteModule.Platforms
 ) derives CanEqual:
-    /** Friendly nav-rail label derived from the slug: strips a leading `kyo-` prefix then capitalizes
-      * the first letter. `kyo-core` becomes `Core`, `kyo-stm` becomes `Stm`, `kyo-scheduler-cats`
-      * becomes `Scheduler-cats`. Slugs without a `kyo-` prefix are capitalized as-is.
+    /** Friendly nav-rail label derived from the slug: strips a leading `kyo-` prefix, then splits on
+      * `-` and capitalizes each segment, joining with spaces so no hyphen survives. `kyo-core` becomes
+      * `Core`, `kyo-stats-registry` becomes `Stats Registry`, `kyo-scheduler-cats` becomes
+      * `Scheduler Cats`. Slugs without a `kyo-` prefix are transformed the same way.
       */
     def displayName: String =
-        if slug.startsWith("kyo-") then slug.stripPrefix("kyo-").capitalize
-        else slug.capitalize
+        val base = if slug.startsWith("kyo-") then slug.stripPrefix("kyo-") else slug
+        base.split('-').iterator.filter(_.nonEmpty).map(_.capitalize).mkString(" ")
+    end displayName
 
 end WebsiteModule
 
