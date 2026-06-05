@@ -3,7 +3,7 @@ package kyo.internal.tasty.symbol
 import kyo.Chunk
 import kyo.Maybe
 import kyo.Tasty
-import kyo.Tasty.SymbolBody
+import kyo.internal.tasty.symbol.SymbolBody
 
 /** Mutable scratch descriptor populated during Pass A and Pass B of classpath loading.
   *

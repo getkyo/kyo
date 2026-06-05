@@ -31,7 +31,6 @@ class MembersTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
         val methodB = Tasty.Symbol.Method(
@@ -45,7 +44,6 @@ class MembersTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
         val baseClass = Tasty.Symbol.Class(
@@ -61,8 +59,7 @@ class MembersTest extends Test:
             Chunk(aId, bId),
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val methodC = Tasty.Symbol.Method(
             cId,
@@ -75,7 +72,6 @@ class MembersTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
         val childClass = Tasty.Symbol.Class(
@@ -91,8 +87,7 @@ class MembersTest extends Test:
             Chunk(cId),
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(baseClass, methodA, methodB, childClass, methodC))
     end buildHierarchy

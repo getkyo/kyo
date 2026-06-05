@@ -48,8 +48,7 @@ class SymbolAdtVariantCoverageTest extends Test:
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
             annotations = Chunk.empty,
-            javaAnnotations = Chunk.empty,
-            body = Maybe.Absent
+            javaAnnotations = Chunk.empty
         )
         val enumCase = Tasty.Symbol.EnumCase(
             id = id0,
@@ -64,8 +63,7 @@ class SymbolAdtVariantCoverageTest extends Test:
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
             annotations = Chunk.empty,
-            javaAnnotations = Chunk.empty,
-            body = Maybe.Absent
+            javaAnnotations = Chunk.empty
         )
         val trt = Tasty.Symbol.Trait(
             id = id0,
@@ -80,8 +78,7 @@ class SymbolAdtVariantCoverageTest extends Test:
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
             annotations = Chunk.empty,
-            javaAnnotations = Chunk.empty,
-            body = Maybe.Absent
+            javaAnnotations = Chunk.empty
         )
         val obj = Tasty.Symbol.Object(
             id = id0,
@@ -95,8 +92,7 @@ class SymbolAdtVariantCoverageTest extends Test:
             typeParamIds = Chunk.empty,
             declarationIds = Chunk.empty,
             annotations = Chunk.empty,
-            javaAnnotations = Chunk.empty,
-            body = Maybe.Absent
+            javaAnnotations = Chunk.empty
         )
         val method = Tasty.Symbol.Method(
             id = id0,
@@ -109,7 +105,6 @@ class SymbolAdtVariantCoverageTest extends Test:
             paramListIds = Chunk.empty,
             typeParamIds = Chunk.empty,
             annotations = Chunk.empty,
-            body = Maybe.Absent,
             javaMetadata = Maybe.Absent
         )
         val valSym = Tasty.Symbol.Val(
@@ -120,8 +115,7 @@ class SymbolAdtVariantCoverageTest extends Test:
             scaladoc = Maybe.Absent,
             sourcePosition = present,
             declaredType = Maybe.Absent,
-            annotations = Chunk.empty,
-            body = Maybe.Absent
+            annotations = Chunk.empty
         )
         val varSym = Tasty.Symbol.Var(
             id = id0,
@@ -131,8 +125,7 @@ class SymbolAdtVariantCoverageTest extends Test:
             scaladoc = Maybe.Absent,
             sourcePosition = present,
             declaredType = Maybe.Absent,
-            annotations = Chunk.empty,
-            body = Maybe.Absent
+            annotations = Chunk.empty
         )
         val field = Tasty.Symbol.Field(
             id = id0,
@@ -239,6 +232,40 @@ class SymbolAdtVariantCoverageTest extends Test:
             end match
         end for
 
+        succeed
+    }
+
+    // ── Phase 09: body field removed from all Symbol subtypes ────────────────
+
+    // Confirms that ClassLike subtypes no longer carry a body field (Cat 17 Option A).
+    // Pins: Cat 17 Option A; INV-LOADING-SYMBOL; PRESERVE-M.
+    "Phase 09: Symbol.Class has no body field (ClassLike.body accessor removed)" in {
+        assert(
+            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Class).body").nonEmpty,
+            "Symbol.Class must not have a body field after Phase 09"
+        )
+        assert(
+            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.ClassLike).body").nonEmpty,
+            "Symbol.ClassLike must not have a body accessor after Phase 09"
+        )
+        succeed
+    }
+
+    // Confirms that Method, Val, Var no longer carry a body field (Cat 17 Option A).
+    // Pins: Cat 17 Option A.
+    "Phase 09: Symbol.Method, Val, Var have no body field" in {
+        assert(
+            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Method).body").nonEmpty,
+            "Symbol.Method must not have a body field after Phase 09"
+        )
+        assert(
+            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Val).body").nonEmpty,
+            "Symbol.Val must not have a body field after Phase 09"
+        )
+        assert(
+            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Var).body").nonEmpty,
+            "Symbol.Var must not have a body field after Phase 09"
+        )
         succeed
     }
 

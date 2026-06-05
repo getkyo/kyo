@@ -56,8 +56,7 @@ class QueryTraversalTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val symEc: Tasty.Symbol = enumCase
         val label = symEc match

@@ -30,8 +30,7 @@ class SymbolFieldPreservationTest extends Test:
                 Chunk.empty,
                 Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                Maybe.Absent
+                Chunk.empty
             ),
             2 -> Tasty.Symbol.Trait(
                 SymbolId(2),
@@ -46,8 +45,7 @@ class SymbolFieldPreservationTest extends Test:
                 Chunk.empty,
                 Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                Maybe.Absent
+                Chunk.empty
             ),
             3 -> Tasty.Symbol.Object(
                 SymbolId(3),
@@ -61,8 +59,7 @@ class SymbolFieldPreservationTest extends Test:
                 Chunk.empty,
                 Chunk.empty,
                 Chunk.empty,
-                Chunk.empty,
-                Maybe.Absent
+                Chunk.empty
             ),
             4 -> Tasty.Symbol.Method(
                 SymbolId(4),
@@ -75,7 +72,6 @@ class SymbolFieldPreservationTest extends Test:
                 Chunk.empty,
                 Chunk.empty,
                 Chunk.empty,
-                Maybe.Absent,
                 Maybe.Absent
             ),
             5 -> Tasty.Symbol.Val(
@@ -86,8 +82,7 @@ class SymbolFieldPreservationTest extends Test:
                 Maybe.Absent,
                 Maybe.Absent,
                 Maybe.Absent,
-                Chunk.empty,
-                Maybe.Absent
+                Chunk.empty
             ),
             6 -> Tasty.Symbol.Var(
                 SymbolId(6),
@@ -97,8 +92,7 @@ class SymbolFieldPreservationTest extends Test:
                 Maybe.Absent,
                 Maybe.Absent,
                 Maybe.Absent,
-                Chunk.empty,
-                Maybe.Absent
+                Chunk.empty
             ),
             7 -> Tasty.Symbol.Field(
                 SymbolId(7),
@@ -200,8 +194,7 @@ class SymbolFieldPreservationTest extends Test:
                 Chunk.empty,
                 Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                Maybe.Absent
+                Chunk.empty
             ),
             Tasty.Symbol.Trait(
                 SymbolId(2),
@@ -216,8 +209,7 @@ class SymbolFieldPreservationTest extends Test:
                 Chunk.empty,
                 Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                Maybe.Absent
+                Chunk.empty
             ),
             Tasty.Symbol.Object(
                 SymbolId(3),
@@ -231,8 +223,7 @@ class SymbolFieldPreservationTest extends Test:
                 Chunk.empty,
                 Chunk.empty,
                 Chunk.empty,
-                Chunk.empty,
-                Maybe.Absent
+                Chunk.empty
             ),
             Tasty.Symbol.Method(
                 SymbolId(4),
@@ -245,7 +236,6 @@ class SymbolFieldPreservationTest extends Test:
                 Chunk.empty,
                 Chunk.empty,
                 Chunk.empty,
-                Maybe.Absent,
                 Maybe.Absent
             ),
             Tasty.Symbol.Val(
@@ -256,8 +246,7 @@ class SymbolFieldPreservationTest extends Test:
                 Maybe.Absent,
                 Maybe.Absent,
                 Maybe.Absent,
-                Chunk.empty,
-                Maybe.Absent
+                Chunk.empty
             ),
             Tasty.Symbol.Var(
                 SymbolId(6),
@@ -267,8 +256,7 @@ class SymbolFieldPreservationTest extends Test:
                 Maybe.Absent,
                 Maybe.Absent,
                 Maybe.Absent,
-                Chunk.empty,
-                Maybe.Absent
+                Chunk.empty
             ),
             Tasty.Symbol.Field(
                 SymbolId(7),
@@ -368,7 +356,6 @@ class SymbolFieldPreservationTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
         val vl = Tasty.Symbol.Val(
@@ -379,8 +366,7 @@ class SymbolFieldPreservationTest extends Test:
             Maybe.Absent,
             Maybe.Absent,
             Maybe(namedType),
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val vr = Tasty.Symbol.Var(
             SymbolId(22),
@@ -390,8 +376,7 @@ class SymbolFieldPreservationTest extends Test:
             Maybe.Absent,
             Maybe.Absent,
             Maybe(namedType),
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val field = Tasty.Symbol.Field(
             SymbolId(23),
@@ -444,8 +429,7 @@ class SymbolFieldPreservationTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val trt = Tasty.Symbol.Trait(
             SymbolId(31),
@@ -460,8 +444,7 @@ class SymbolFieldPreservationTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val obj = Tasty.Symbol.Object(
             SymbolId(32),
@@ -475,8 +458,7 @@ class SymbolFieldPreservationTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         assert(cls.parentTypes == pt)
         assert(trt.parentTypes == pt)
@@ -506,8 +488,7 @@ class SymbolFieldPreservationTest extends Test:
             Chunk.empty,
             psi,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val trt = Tasty.Symbol.Trait(
             SymbolId(41),
@@ -522,8 +503,7 @@ class SymbolFieldPreservationTest extends Test:
             Chunk.empty,
             psi,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         assert(cls.permittedSubclassIds == psi)
         assert(trt.permittedSubclassIds == psi)

@@ -26,8 +26,7 @@ class ShowMethodTest extends Test with TastyTestSupport:
                 Chunk.empty,
                 kyo.Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                kyo.Maybe.Absent
+                Chunk.empty
             )
             Tasty.Classpath.make(
                 symbols = Chunk(pkgWithId, clsWithId),

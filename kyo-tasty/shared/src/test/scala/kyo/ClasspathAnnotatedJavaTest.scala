@@ -41,8 +41,7 @@ class ClasspathAnnotatedJavaTest extends Test:
                 Chunk.empty,
                 Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                Maybe.Absent
+                Chunk.empty
             )
             // Symbol 3: class "A" carrying a JavaAnnotation whose annotationClass is symbol 2
             val javaAnnot = Tasty.Java.Annotation(annotCls, Chunk.empty)
@@ -59,8 +58,7 @@ class ClasspathAnnotatedJavaTest extends Test:
                 Chunk.empty,
                 Maybe.Absent,
                 annotations = Chunk.empty,
-                javaAnnotations = Chunk(javaAnnot),
-                body = Maybe.Absent
+                javaAnnotations = Chunk(javaAnnot)
             )
             // Symbol 4: class "B" with no Java annotation
             val clsB = Tasty.Symbol.Class(
@@ -76,8 +74,7 @@ class ClasspathAnnotatedJavaTest extends Test:
                 Chunk.empty,
                 Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                Maybe.Absent
+                Chunk.empty
             )
             Tasty.Classpath.make(
                 symbols = Chunk(pkgJava, pkgLang, annotCls, clsA, clsB),

@@ -65,8 +65,7 @@ class DecoderFidelity5Phase02JvmTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeObject(id: Int, name: String): Tasty.Symbol.Object =
@@ -82,8 +81,7 @@ class DecoderFidelity5Phase02JvmTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def syntheticCp(using Frame): Tasty.Classpath < Sync =
@@ -143,42 +141,40 @@ class DecoderFidelity5Phase02JvmTest extends Test:
             val hex      = DigestComputer.toHexString(digest)
             val snapPath = s"$tmpDir/$hex.krfl"
             // Step 2: load via mmap INSIDE a Scope.run; extract any symbol; let Scope exit.
+            // Phase 09: snapshot-loaded symbols no longer carry body bytes; bodyTree returns Absent.
             val symAndCp =
                 Scope.run:
                     Abort.run[TastyError]:
                         SnapshotReader.readMapped(snapPath, platSrc).map: warmCp =>
-                            val sym = warmCp.symbols.find:
-                                case c: Tasty.Symbol.Class  => c.body.isDefined
-                                case t: Tasty.Symbol.Trait  => t.body.isDefined
-                                case o: Tasty.Symbol.Object => o.body.isDefined
-                                case _                      => false
-                            .getOrElse(warmCp.symbols(0))
+                            val sym = warmCp.symbols.headOption.getOrElse(
+                                throw new RuntimeException("snapshot has no symbols")
+                            )
                             (sym, warmCp)
                     .map:
                         case Result.Success(pair) => pair
                         case Result.Failure(e)    => throw new RuntimeException(s"mmap load failed: $e")
                         case Result.Panic(t)      => throw t
             // Step 3: Scope has exited. Call Tasty.bodyTree via a fresh binding with a fresh DecodeContext.
-            // The mmap arena is closed; body bytes in warmCp are zeroed (Array.empty), so decode must fail.
+            // After Phase 09, bodyStore is empty after snapshot load; bodyTree returns Absent.
             symAndCp.flatMap: (sym, warmCp) =>
                 val postScopeBinding = Binding(warmCp, Maybe.Present(DecodeContext.fresh()))
                 TastyState.bindingLocal.let(Maybe.Present(postScopeBinding)):
                     Abort.run[TastyError](Tasty.bodyTree(sym)).map: result =>
                         result match
+                            case Result.Success(Maybe.Absent) =>
+                                // Snapshot load has empty bodyStore; bodyTree correctly returns Absent.
+                                succeed
+                            case Result.Success(Maybe.Present(_)) =>
+                                // Would only happen if bodyStore was somehow populated; acceptable.
+                                succeed
                             case Result.Failure(TastyError.MalformedSection(_, reason, _)) =>
+                                // Legacy case: body bytes still present but invalid after mmap close.
                                 assert(
                                     reason.contains("body bytes not available"),
                                     s"Expected 'body bytes not available' in MalformedSection reason; got: '$reason'"
                                 )
                                 succeed
                             case Result.Failure(TastyError.ClasspathClosed(_)) =>
-                                // Also acceptable: arena accessed post-close raises ClasspathClosed.
-                                succeed
-                            case Result.Success(Maybe.Present(_)) =>
-                                // If the body was cached before Scope exit, success is acceptable.
-                                succeed
-                            case Result.Success(Maybe.Absent) =>
-                                // Symbol had no body: test is inconclusive but not a failure.
                                 succeed
                             case Result.Failure(other) =>
                                 fail(s"Unexpected TastyError from post-Scope decodeBody: $other")

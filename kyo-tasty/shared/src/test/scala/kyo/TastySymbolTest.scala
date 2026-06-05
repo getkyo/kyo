@@ -191,8 +191,7 @@ class TastySymbolTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val innerSym = Tasty.Symbol.Class(
             SymbolId(3),
@@ -207,8 +206,7 @@ class TastySymbolTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(comSym, exampleSym, outerSym, innerSym)).map: cp =>
             given Tasty.Classpath = cp
@@ -236,8 +234,7 @@ class TastySymbolTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(comSym, exampleSym, fooSym)).map: cp =>
             given Tasty.Classpath = cp
@@ -286,8 +283,7 @@ class TastySymbolTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         assert(sym.kind == SymbolKind.Class, s"Expected kind Class but got ${sym.kind}")
         assert(sym.name.asString == "Foo", s"Expected name 'Foo' but got '${sym.name.asString}'")
@@ -436,8 +432,7 @@ class TastySymbolTest extends Test:
                     Chunk.empty,
                     Maybe.Absent,
                     Chunk.empty,
-                    Chunk.empty,
-                    Maybe.Absent
+                    Chunk.empty
                 )
             end if
         Tasty.Classpath.fromPicklesWithSymbols(Chunk.from(syms)).map: cp =>
@@ -468,8 +463,7 @@ class TastySymbolTest extends Test:
                 Chunk.empty,
                 Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                Maybe.Absent
+                Chunk.empty
             )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk.from(syms)).flatMap: cp =>
             val last = syms.last
@@ -503,8 +497,7 @@ class TastySymbolTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val traitSym = Tasty.Symbol.Trait(
             sid,
@@ -519,8 +512,7 @@ class TastySymbolTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val objSym = Tasty.Symbol.Object(
             sid,
@@ -534,8 +526,7 @@ class TastySymbolTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val pkgSym = Tasty.Symbol.Package(sid, n0, flags, sid, Chunk.empty)
         assert(classSym.kind == SymbolKind.Class, s"Expected Class got ${classSym.kind}")

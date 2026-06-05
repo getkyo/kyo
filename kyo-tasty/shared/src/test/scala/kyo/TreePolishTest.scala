@@ -27,8 +27,7 @@ class TreePolishTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).flatMap: cp =>
             Tasty.withClasspath(cp):

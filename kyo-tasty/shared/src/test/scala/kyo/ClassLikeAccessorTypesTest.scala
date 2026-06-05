@@ -28,8 +28,7 @@ class ClassLikeAccessorTypesTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeMethod(id: Int, name: String): Tasty.Symbol.Method =
@@ -44,7 +43,6 @@ class ClassLikeAccessorTypesTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
 
@@ -57,8 +55,7 @@ class ClassLikeAccessorTypesTest extends Test:
             Maybe.Absent,
             Maybe.Absent,
             Maybe.Absent,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     // Leaf 66: typed-return-types-compile

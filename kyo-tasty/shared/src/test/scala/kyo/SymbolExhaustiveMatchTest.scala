@@ -60,8 +60,7 @@ class SymbolExhaustiveMatchTest extends Test:
             typeParamIds = Chunk.empty,
             declarationIds = Chunk.empty,
             annotations = Chunk.empty,
-            javaAnnotations = Chunk.empty,
-            body = Maybe.Absent
+            javaAnnotations = Chunk.empty
         )
         assert(cl(obj) == "O")
         succeed

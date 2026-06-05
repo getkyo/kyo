@@ -28,8 +28,7 @@ class FlagPredicatePreservationTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         assert(sym.isFinal, "isFinal must be true")
         assert(sym.isCase, "isCase must be true")
@@ -60,7 +59,6 @@ class FlagPredicatePreservationTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
         assert(sym.isInstanceOf[Tasty.Symbol.Method], "isMethod must be true")

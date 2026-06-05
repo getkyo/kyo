@@ -26,8 +26,7 @@ class SymbolAnnotationQueryTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makePackage(id: Int, name: String): Tasty.Symbol.Package =
@@ -50,7 +49,6 @@ class SymbolAnnotationQueryTest extends Test:
             Chunk.empty,
             Chunk.empty,
             annots,
-            Maybe.Absent,
             Maybe.Absent
         )
 
@@ -74,8 +72,7 @@ class SymbolAnnotationQueryTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             annots,
-            jannots,
-            Maybe.Absent
+            jannots
         )
 
     private def makeField(

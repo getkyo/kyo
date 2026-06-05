@@ -37,8 +37,7 @@ class ClasspathSubclassTypedTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeTrait(id: Int, name: String): Tasty.Symbol.Trait =
@@ -55,8 +54,7 @@ class ClasspathSubclassTypedTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def directSubclassFixture(using Frame): Tasty.Classpath < Sync =

@@ -1455,107 +1455,7 @@ object Tasty:
     enum ShowFormat derives Schema, CanEqual:
         case FullyQualified, Simple, Code
 
-    // ── SymbolBody ──────────────────────────────────────────────────────────
-
-    /** Byte slice and decode context for a TASTy symbol body. Carried by `Symbol.body: Maybe[SymbolBody]`.
-      *
-      * All symbols with a TASTy body (DEFDEF, VALDEF, class TYPEDEF with a non-trivial template) carry a `Present(SymbolBody)`. Java
-      * symbols, Package symbols, and abstract type stubs carry `Absent`.
-      *
-      * @param bodyStart
-      *   Absolute byte offset into `sectionBytes` where this symbol's body payload begins.
-      * @param bodyEnd
-      *   Absolute byte offset into `sectionBytes` where this symbol's body payload ends.
-      * @param sectionBytes
-      *   The raw AST section bytes for this file. Shared (not copied) across all symbols from the same file. Stored as Span[Byte] for
-      *   structural equality and zero-overhead immutable-view semantics (no boxing; Span[Byte] is opaque over Array[Byte]).
-      * @param names
-      *   The name table for this file, as decoded by NameUnpickler. Shared across all symbols from the same file. Stored as Span[Name]
-      *   for structural equality (default case-class equality used reference identity on Array, which made two loads of the same file
-      *   compare unequal).
-      * @param sectionOffset
-      *   Absolute byte offset where the AST section starts in the original TASTy file. Used to convert section-relative addrs to absolute.
-      * @param addrMap
-      *   Maps TASTy byte address to SymbolId for IDENT/SELECT tree references during lazy body decode.
-      */
-    final case class SymbolBody private[kyo] (
-        bodyStart: Int,
-        bodyEnd: Int,
-        sectionBytes: Span[Byte],
-        names: Span[Name],
-        sectionOffset: Int,
-        private[kyo] val addrMap: IntMap[SymbolId]
-    ):
-        override def equals(other: Any): Boolean = other match
-            case that: SymbolBody =>
-                bodyStart == that.bodyStart &&
-                bodyEnd == that.bodyEnd &&
-                sectionOffset == that.sectionOffset &&
-                addrMap == that.addrMap &&
-                sectionBytes.is(that.sectionBytes) &&
-                namesEqual(names, that.names)
-            case _ => false
-
-        // Compare two Span[Name] structurally by string content.
-        // Name is opaque over String; equality is String equality, which is content-based.
-        private def namesEqual(a: Span[Name], b: Span[Name]): Boolean =
-            // Pure: Name.asString returns the underlying String; no side effect, no AllowUnsafe proof required.
-            import Name.asString
-            val len = a.size
-            if len != b.size then false
-            else
-                var i  = 0
-                var ok = true
-                while i < len && ok do
-                    if a(i).asString != b(i).asString then ok = false
-                    i += 1
-                ok
-            end if
-        end namesEqual
-
-        override def hashCode(): Int =
-            // Pure: Name.asString returns the underlying String; referentially transparent.
-            import Name.asString
-            var h = 1
-            h = 31 * h + bodyStart
-            h = 31 * h + bodyEnd
-            h = 31 * h + sectionOffset
-            h = 31 * h + addrMap.hashCode
-            h = 31 * h + sectionBytes.hash
-            // Hash names by string content for cross-classpath consistency.
-            val namesLen = names.size
-            var i        = 0
-            while i < namesLen do
-                h = 31 * h + names(i).asString.hashCode
-                i += 1
-            h
-        end hashCode
-
-        /** Render this SymbolBody without leaking array identity hashes.
-          *
-          * The default case-class toString prints `sectionBytes` and `names` as `[B@<hash>` and
-          * `[Lkyo.Tasty$Name;@<hash>` respectively, which is useless for debugging. This override renders
-          * `sectionBytes` as `len=<N>` and `names` as `names=[<N> entries]` so assertion failure messages and
-          * debug logs contain actionable information.
-          */
-        override def toString: String =
-            s"SymbolBody(bodyStart=$bodyStart, bodyEnd=$bodyEnd, sectionBytes=len=${sectionBytes.size}, " +
-                s"names=[${names.size} entries], sectionOffset=$sectionOffset, addrMap=${addrMap.size} entries)"
-    end SymbolBody
-
-    // ── SymbolBody Schema (opaque placeholder for Schema derivation) ─────────
-    // SymbolBody carries mmap byte slices and decode context; it is not
-    // serializable via Schema in a meaningful way. This private[kyo] given
-    // satisfies derives Schema on Symbol subtypes that carry body fields.
-    // Encoding writes empty bytes; decoding returns a sentinel SymbolBody.
-    private[kyo] given schemaSymbolBody: Schema[SymbolBody] =
-        Schema.init[SymbolBody](
-            writeFn = (_, w) => w.bytes(Span.empty[Byte]),
-            readFn = r =>
-                discard(r.bytes())
-                // Return sentinel SymbolBody with empty byte slices
-                SymbolBody(0, 0, Span.empty[Byte], Span.empty[Name], 0, scala.collection.immutable.IntMap.empty)
-        )
+    // (public SymbolBody deleted; canonical lives at kyo.internal.tasty.symbol.SymbolBody.)
 
     // ── MemberScope enum ─────────────────────────────────────────────────────
 
@@ -1735,7 +1635,6 @@ object Tasty:
             def declarationIds: Chunk[SymbolId]
             def annotations: Chunk[Annotation]
             def javaAnnotations: Chunk[Java.Annotation]
-            def body: Maybe[SymbolBody]
 
         end ClassLike
 
@@ -1745,7 +1644,7 @@ object Tasty:
           *
           * `permittedSubclassIds` is `Present(ids)` for sealed parents; `Absent` for non-sealed classes.
           * `javaMetadata` is `Present` for symbols sourced from `.class` files.
-          * `body` is the AST bytes envelope decoded lazily via `Tasty.bodyTree`.
+          * Use `Tasty.bodyTree(sym)` to decode the AST body bytes for this symbol.
           * `EnumCase` is a peer of `Class` under `ClassLike`, not a subtype; pattern-match `Symbol.EnumCase` before
           * `Symbol.Class` if you need to discriminate enum cases.
           */
@@ -1762,8 +1661,7 @@ object Tasty:
             declarationIds: Chunk[SymbolId],
             permittedSubclassIds: Maybe[Chunk[SymbolId]],
             annotations: Chunk[Annotation],
-            javaAnnotations: Chunk[Java.Annotation],
-            body: Maybe[SymbolBody]
+            javaAnnotations: Chunk[Java.Annotation]
         ) extends ClassLike derives Schema, CanEqual
 
         /** A single case of a Scala 3 enum (F-E-007).
@@ -1785,8 +1683,7 @@ object Tasty:
             declarationIds: Chunk[SymbolId],
             permittedSubclassIds: Maybe[Chunk[SymbolId]],
             annotations: Chunk[Annotation],
-            javaAnnotations: Chunk[Java.Annotation],
-            body: Maybe[SymbolBody]
+            javaAnnotations: Chunk[Java.Annotation]
         ) extends ClassLike derives Schema, CanEqual
 
         /** A `trait` declaration: Scala source `trait` or a Java `interface` (which the loader normalizes to this
@@ -1797,7 +1694,7 @@ object Tasty:
           * `parentTypes` carries the source-order `extends`/`with` types; for a Java interface the head is
           * `java.lang.Object` followed by the declared interface parents. `permittedSubclassIds` is `Present` for
           * sealed traits, `Absent` otherwise (use `isSealed` to discriminate). `javaMetadata` is `Present` for
-          * interfaces sourced from `.class` files; `body` is the template envelope decoded lazily via `bodyTree`.
+          * interfaces sourced from `.class` files; use `Tasty.bodyTree(sym)` to decode the template envelope lazily.
           *
           * The narrow `ClassLike` accessors (`methods`, `vals`, `vars`, `fields`, `nestedTypes`, ...) work the same
           * here as on `Class`; `vars` and `fields` are typically empty for Scala-sourced traits and non-empty for
@@ -1816,8 +1713,7 @@ object Tasty:
             declarationIds: Chunk[SymbolId],
             permittedSubclassIds: Maybe[Chunk[SymbolId]],
             annotations: Chunk[Annotation],
-            javaAnnotations: Chunk[Java.Annotation],
-            body: Maybe[SymbolBody]
+            javaAnnotations: Chunk[Java.Annotation]
         ) extends ClassLike derives Schema, CanEqual
 
         /** A Scala `object` declaration: the singleton companion of a class/trait, a top-level `object`, or the
@@ -1844,8 +1740,7 @@ object Tasty:
             typeParamIds: Chunk[SymbolId],
             declarationIds: Chunk[SymbolId],
             annotations: Chunk[Annotation],
-            javaAnnotations: Chunk[Java.Annotation],
-            body: Maybe[SymbolBody]
+            javaAnnotations: Chunk[Java.Annotation]
         ) extends ClassLike derives Schema, CanEqual
 
         /** A `def`: a Scala source `def`, a Scala constructor (`<init>`), an extension method, a `transparent inline
@@ -1856,9 +1751,8 @@ object Tasty:
           * `declaredType` is the method's `MethodType` view (parameter types + result), `Present` for symbols with
           * a recorded signature and `Absent` for synthetics whose type the loader did not retain. `returnType`
           * unwraps the `Type.Function` or `Type.ContextFunction` result; for non-function shapes it returns the
-          * declared type as-is. `body` is the AST envelope for the implementation, decoded lazily via `bodyTree`;
-          * abstract methods (`flags.contains(Flag.Abstract)`) and methods sourced from `.class` files carry
-          * `Absent` here.
+          * declared type as-is. Use `Tasty.bodyTree(sym)` to decode the AST envelope for the implementation;
+          * abstract methods (`flags.contains(Flag.Abstract)`) and methods sourced from `.class` files return Absent.
           *
           * `javaMetadata` is `Present` for Java methods and holds the throws clauses, JVM access flags, parameter
           * names from the JVM `MethodParameters` attribute, and runtime/compile-time annotations. `annotations` is
@@ -1875,7 +1769,6 @@ object Tasty:
             paramListIds: Chunk[Chunk[SymbolId]],
             typeParamIds: Chunk[SymbolId],
             annotations: Chunk[Annotation],
-            body: Maybe[SymbolBody],
             javaMetadata: Maybe[Java.Metadata]
         ) extends Symbol derives Schema, CanEqual
 
@@ -1884,9 +1777,9 @@ object Tasty:
           * `Flag.Case | Flag.Enum` set). Java has no Scala-shaped `val`; Java `final` fields surface as `Field`.
           *
           * `declaredType` is `Present` for any Scala-sourced `val`; the only `Absent` case is synthetic ValDefs the
-          * loader has reason to keep without a recorded type. `body` is the AST for the right-hand side, decoded
-          * lazily through `bodyTree`; `Absent` for abstract members and for cases where the loader did not retain
-          * the initializer.
+          * loader has reason to keep without a recorded type. Use `Tasty.bodyTree(sym)` to decode the AST for the
+          * right-hand side; returns Absent for abstract members and for cases where the loader did not retain the
+          * initializer.
           */
         final case class Val(
             id: SymbolId,
@@ -1896,8 +1789,7 @@ object Tasty:
             scaladoc: Maybe[String],
             sourcePosition: Maybe[Position],
             declaredType: Maybe[Type],
-            annotations: Chunk[Annotation],
-            body: Maybe[SymbolBody]
+            annotations: Chunk[Annotation]
         ) extends Symbol derives Schema, CanEqual
 
         /** A Scala `var`: a mutable value member. Carries `Flag.Mutable`. Same shape as `Val`; the distinction is
@@ -1915,8 +1807,7 @@ object Tasty:
             scaladoc: Maybe[String],
             sourcePosition: Maybe[Position],
             declaredType: Maybe[Type],
-            annotations: Chunk[Annotation],
-            body: Maybe[SymbolBody]
+            annotations: Chunk[Annotation]
         ) extends Symbol derives Schema, CanEqual
 
         /** A Java field decoded from a `.class` file. Holds the field's declared type, the JVM access flags via
@@ -3728,56 +3619,49 @@ object Tasty:
       * INV-010: the top-level signature does not carry `AllowUnsafe`.
       */
     def bodyTree(sym: Symbol)(using frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
-        val maybeBody: Maybe[SymbolBody] = sym match
-            case c: Symbol.Class  => c.body
-            case t: Symbol.Trait  => t.body
-            case o: Symbol.Object => o.body
-            case m: Symbol.Method => m.body
-            case v: Symbol.Val    => v.body
-            case w: Symbol.Var    => w.body
-            case _                => Maybe.Absent
-        maybeBody match
-            case Maybe.Absent => Maybe.Absent
-            case Maybe.Present(blob) =>
-                TastyState.bindingLocal.use: mbind =>
-                    val maybeCtx = mbind.flatMap(_.decodeCtx)
-                    if maybeCtx.isEmpty then Maybe.Absent
-                    else
-                        val ctx = maybeCtx.get
-                        val cp  = mbind.get.cp
-                        Sync.Unsafe.defer:
-                            val cached = ctx.bodyMemo.get(sym.id)
-                            if cached != null then
-                                cached match
-                                    case Result.Success(t) => Maybe(t)
-                                    case Result.Failure(e) => Abort.fail(e)
-                                    case Result.Panic(t)   => throw t
-                            else
-                                val result: Result[TastyError, Tree] =
-                                    try
-                                        val syms = cp.symbols
-                                        Result.Success(kyo.internal.tasty.reader.TreeUnpickler.decodeSync(
-                                            blob,
-                                            sym,
-                                            idx => if idx >= 0 && idx < syms.size then syms(idx) else sym
-                                        ))
-                                    catch
-                                        case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
-                                            Result.Failure(TastyError.MalformedSection("ASTs", ex.getMessage, ex.byteOffset))
-                                        case _: ArrayIndexOutOfBoundsException =>
-                                            Result.Failure(TastyError.MalformedSection("ASTs", "truncated body", 0L))
-                                        case _: IllegalStateException =>
-                                            // F-W2-2: mmap arena closed before bodyTree ran; documented contract is ClasspathClosed.
-                                            Result.Failure(TastyError.ClasspathClosed(s"bodyTree(sym.id=${sym.id.value})"))
-                                ctx.bodyMemo.put(sym.id, result)
-                                result match
-                                    case Result.Success(t) => Maybe(t)
-                                    case Result.Failure(e) => Abort.fail(e)
-                                    case Result.Panic(t)   => throw t
-                                end match
-                            end if
-                    end if
-        end match
+        TastyState.bindingLocal.use: mbind =>
+            val maybeCtx = mbind.flatMap(_.decodeCtx)
+            if maybeCtx.isEmpty then Maybe.Absent
+            else
+                val ctx  = maybeCtx.get
+                val blob = ctx.bodyStore.get(sym.id)
+                if blob == null then Maybe.Absent
+                else
+                    val cp = mbind.get.cp
+                    Sync.Unsafe.defer:
+                        // INV-009 site-3: Sync.Unsafe.defer is the only AllowUnsafe in the public query layer.
+                        val cached = ctx.bodyMemo.get(sym.id)
+                        if cached != null then
+                            cached match
+                                case Result.Success(t) => Maybe(t)
+                                case Result.Failure(e) => Abort.fail(e)
+                                case Result.Panic(t)   => throw t
+                        else
+                            val result: Result[TastyError, Tree] =
+                                try
+                                    val syms = cp.symbols
+                                    Result.Success(kyo.internal.tasty.reader.TreeUnpickler.decodeSync(
+                                        blob,
+                                        sym,
+                                        idx => if idx >= 0 && idx < syms.size then syms(idx) else sym
+                                    ))
+                                catch
+                                    case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
+                                        Result.Failure(TastyError.MalformedSection("ASTs", ex.getMessage, ex.byteOffset))
+                                    case _: ArrayIndexOutOfBoundsException =>
+                                        Result.Failure(TastyError.MalformedSection("ASTs", "truncated body", 0L))
+                                    case _: IllegalStateException =>
+                                        // F-W2-2: mmap arena closed before bodyTree ran; documented contract is ClasspathClosed.
+                                        Result.Failure(TastyError.ClasspathClosed(s"bodyTree(sym.id=${sym.id.value})"))
+                            ctx.bodyMemo.put(sym.id, result)
+                            result match
+                                case Result.Success(t) => Maybe(t)
+                                case Result.Failure(e) => Abort.fail(e)
+                                case Result.Panic(t)   => throw t
+                            end match
+                        end if
+                end if
+            end if
     end bodyTree
 
     /** Resolve the symbol referenced by a Type.Named. Returns Absent for other Type shapes. */

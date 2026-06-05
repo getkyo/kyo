@@ -41,8 +41,7 @@ class SymbolCaseClassTest extends Test:
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
             annotations = Chunk.empty,
-            javaAnnotations = Chunk.empty,
-            body = Maybe.Absent
+            javaAnnotations = Chunk.empty
         )
 
     // ── Leaf 1: construction populates all 14 fields ─────────────────────────
@@ -72,7 +71,7 @@ class SymbolCaseClassTest extends Test:
         assert(sym.typeParamIds.isEmpty, s"typeParamIds: ${sym.typeParamIds}")
         assert(sym.declarationIds.isEmpty, s"declarationIds: ${sym.declarationIds}")
         assert(sym.permittedSubclassIds.isEmpty, s"permittedSubclassIds: ${sym.permittedSubclassIds}")
-        assert(sym.body.isEmpty, s"body: ${sym.body}")
+        // body field removed in Phase 09 (Cat 17 Option A)
         succeed
     }
 
@@ -142,14 +141,14 @@ class SymbolCaseClassTest extends Test:
         val _declarationIds       = sym.declarationIds
         val _permittedSubclassIds = sym.permittedSubclassIds
         val _annotations          = sym.annotations
-        val _body                 = sym.body
+        // body field removed in Phase 09
 
         assert(_id.getClass.getSimpleName != "SingleAssign", "id field must not be SingleAssign")
         assert(_kind.getClass.getSimpleName != "OnceCell", "kind field must not be OnceCell")
         assert(_flags.getClass.getSimpleName != "SingleAssign", "flags field must not be SingleAssign")
 
-        // Symbol.Class has 14 constructor fields.
-        assert(sym.productArity == 14, s"Expected 14 product elements (Symbol.Class params) but got ${sym.productArity}")
+        // Symbol.Class has 13 constructor fields after Phase 09 body removal.
+        assert(sym.productArity == 13, s"Expected 13 product elements (Symbol.Class params) but got ${sym.productArity}")
 
         succeed
     }

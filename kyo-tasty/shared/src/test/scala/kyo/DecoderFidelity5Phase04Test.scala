@@ -8,6 +8,7 @@ import kyo.internal.tasty.snapshot.SnapshotFormat
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import kyo.internal.tasty.symbol.FqnNormalizer
+import kyo.internal.tasty.symbol.SymbolBody
 import scala.collection.mutable
 
 /** Decoder-fidelity-5 Phase 5.04: API surface gaps (16 findings).
@@ -71,8 +72,7 @@ class DecoderFidelity5Phase04Test extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     // Build a small synthetic classpath and write+read a snapshot of it.
@@ -380,8 +380,9 @@ class DecoderFidelity5Phase04Test extends Test:
     // P04.12: F-W2-23 -- SymbolBody.toString does not print array identity hashes.
     //
     // The override renders sectionBytes as "len=<N>" and names as "[<N> entries]".
+    // After Phase 09, SymbolBody moved to kyo.internal.tasty.symbol.SymbolBody.
     "P04.12 F-W2-23: SymbolBody.toString contains len= not array identity hash" in run {
-        val body = Tasty.SymbolBody(
+        val body = SymbolBody(
             bodyStart = 10,
             bodyEnd = 20,
             sectionBytes = Span.fromUnsafe(new Array[Byte](42)),
@@ -492,14 +493,17 @@ class DecoderFidelity5Phase04Test extends Test:
     // Post-fix: SymbolBody overrides equals/hashCode using Span.is (structural) for sectionBytes
     // and names. Two SymbolBody values built from the same bytes at the same offsets must compare equal.
     "P04.17 SymbolBody structural equality: two loads of the same fixture produce equal bodies" in run {
+        import kyo.internal.tasty.query.DecodeContext
         Abort.run[TastyError]:
             val src = MemSrc()
             src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
             Scope.run:
-                ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).flatMap: cp1 =>
-                    ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).map: cp2 =>
-                        val bodies1 = cp1.allClassLike.toSeq.flatMap(c => c.body.toChunk.toSeq)
-                        val bodies2 = cp2.allClassLike.toSeq.flatMap(c => c.body.toChunk.toSeq)
+                ClasspathOrchestrator.coldLoadBinding(Seq("root"), Tasty.ErrorMode.SoftFail, Maybe.Absent, src, 1).flatMap: b1 =>
+                    ClasspathOrchestrator.coldLoadBinding(Seq("root"), Tasty.ErrorMode.SoftFail, Maybe.Absent, src, 1).map: b2 =>
+                        val ctx1    = b1.decodeCtx.getOrElse(DecodeContext.fresh())
+                        val ctx2    = b2.decodeCtx.getOrElse(DecodeContext.fresh())
+                        val bodies1 = b1.cp.allClassLike.toSeq.flatMap(c => Option(ctx1.bodyStore.get(c.id)))
+                        val bodies2 = b2.cp.allClassLike.toSeq.flatMap(c => Option(ctx2.bodyStore.get(c.id)))
                         assert(
                             bodies1.nonEmpty,
                             "Expected at least one SymbolBody from PlainClass.tasty fixture"
@@ -508,14 +512,14 @@ class DecoderFidelity5Phase04Test extends Test:
                             bodies1.length == bodies2.length,
                             s"Body count mismatch: cp1=${bodies1.length} cp2=${bodies2.length}"
                         )
-                        bodies1.zip(bodies2).foreach: (b1, b2) =>
+                        bodies1.zip(bodies2).foreach: (sb1, sb2) =>
                             assert(
-                                b1.equals(b2),
-                                s"SymbolBody equality failed (Span migration regression): b1=$b1 b2=$b2"
+                                sb1.equals(sb2),
+                                s"SymbolBody equality failed (Span migration regression): $sb1 $sb2"
                             )
                             assert(
-                                b1.hashCode == b2.hashCode,
-                                s"SymbolBody hashCode mismatch: ${b1.hashCode} != ${b2.hashCode}"
+                                sb1.hashCode == sb2.hashCode,
+                                s"SymbolBody hashCode mismatch: ${sb1.hashCode} != ${sb2.hashCode}"
                             )
                         succeed
         .map:

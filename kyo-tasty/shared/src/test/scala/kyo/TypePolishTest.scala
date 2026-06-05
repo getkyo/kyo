@@ -28,8 +28,7 @@ class TypePolishTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(classSym)).flatMap: cp =>
             Tasty.withClasspath(cp):
@@ -127,8 +126,7 @@ class TypePolishTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(classSym)).flatMap: cp =>
             Tasty.withClasspath(cp):

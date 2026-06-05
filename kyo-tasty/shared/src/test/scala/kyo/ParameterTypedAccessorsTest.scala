@@ -28,7 +28,6 @@ class ParameterTypedAccessorsTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
 

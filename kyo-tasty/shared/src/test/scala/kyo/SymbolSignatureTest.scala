@@ -37,8 +37,7 @@ class SymbolSignatureTest extends Test:
             decls,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeMethod(
@@ -59,7 +58,6 @@ class SymbolSignatureTest extends Test:
             plistIds,
             Chunk.empty,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
 
@@ -72,8 +70,7 @@ class SymbolSignatureTest extends Test:
             Maybe.Absent,
             Maybe.Absent,
             tpe,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeParameter(id: Int, name: String, ownerId: Int, tpe: Tasty.Type): Tasty.Symbol.Parameter =

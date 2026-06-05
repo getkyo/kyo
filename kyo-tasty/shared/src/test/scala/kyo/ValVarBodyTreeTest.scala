@@ -52,8 +52,9 @@ class ValVarBodyTreeTest extends Test:
 
     // Helper: open classpath as a Binding with DecodeContext so Tasty.bodyTree(Tasty) works.
     private def openSomeObjectBinding(using Frame): Binding < (Sync & Async & Scope & Abort[TastyError]) =
-        openSomeObjectCp.map: cp =>
-            Binding(cp, Maybe.Present(DecodeContext.fresh()))
+        val src = MemoryFileSource()
+        src.add("root/SomeObject.tasty", kyo.fixtures.Embedded.someObjectTasty)
+        ClasspathOrchestrator.coldLoadBinding(Seq("root"), Tasty.ErrorMode.SoftFail, Maybe.Absent, src, 1)
     end openSomeObjectBinding
 
     // ── Leaf 79: val-bodyTree ─────────────────────────────────────────────────
@@ -65,10 +66,11 @@ class ValVarBodyTreeTest extends Test:
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectBinding.flatMap: binding =>
-                    val cp = binding.cp
+                    val cp  = binding.cp
+                    val ctx = binding.decodeCtx.getOrElse(DecodeContext.fresh())
                     val valOpt = cp.symbols.find(s =>
                         s match
-                            case v: Tasty.Symbol.Val => v.body.isDefined
+                            case v: Tasty.Symbol.Val => ctx.bodyStore.get(v.id) != null
                             case _                   => false
                     )
                     valOpt match
@@ -97,18 +99,18 @@ class ValVarBodyTreeTest extends Test:
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectBinding.flatMap: binding =>
-                    val cp = binding.cp
+                    val cp  = binding.cp
+                    val ctx = binding.decodeCtx.getOrElse(DecodeContext.fresh())
                     val varOpt = cp.symbols.find(s =>
                         s match
-                            case v: Tasty.Symbol.Var => v.body.isDefined
+                            case v: Tasty.Symbol.Var => ctx.bodyStore.get(v.id) != null
                             case _                   => false
                     )
                     varOpt match
                         case None =>
                             // SomeObject.tasty may not have a Var with body.
-                            // Verify that a Var with Absent body returns Absent.
+                            // Verify that bodyTree returns Absent when DecodeContext has no entry for the symbol.
                             // Use withClasspath(cp) which gives Binding(cp, Maybe.Absent) -- no DecodeContext.
-                            // bodyTree returns Absent for any symbol when no DecodeContext is present.
                             val varSym = Tasty.Symbol.Var(
                                 SymbolId(1),
                                 Tasty.Name("y"),
@@ -117,13 +119,12 @@ class ValVarBodyTreeTest extends Test:
                                 Maybe.Absent,
                                 Maybe.Absent,
                                 Maybe.Absent,
-                                Chunk.empty,
-                                Maybe.Absent
+                                Chunk.empty
                             )
-                            // varSym.body is Absent, so Tasty.bodyTree(Tasty) returns Absent immediately without checking DecodeContext.
-                            TastyState.bindingLocal.let(Maybe.Present(binding)):
+                            // withClasspath(cp) creates Binding(cp, Maybe.Absent): no DecodeContext -> bodyTree returns Absent.
+                            Tasty.withClasspath(cp):
                                 Tasty.bodyTree(varSym).map: result =>
-                                    assert(!result.isDefined, "Tasty.bodyTree(Var) must return Absent when body field is Absent")
+                                    assert(!result.isDefined, "Tasty.bodyTree(Var) must return Absent when no DecodeContext is present")
                                     succeed
                         case Some(sym) =>
                             val v = sym.asInstanceOf[Tasty.Symbol.Var]
@@ -152,8 +153,7 @@ class ValVarBodyTreeTest extends Test:
             Maybe.Absent,
             Maybe.Absent,
             Maybe.Absent,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(valSym)).flatMap: cp =>
             // Install a binding WITH a DecodeContext so Tasty.bodyTree(valSym) exercises the full code path.

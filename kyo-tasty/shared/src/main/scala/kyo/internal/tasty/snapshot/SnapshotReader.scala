@@ -438,14 +438,7 @@ object SnapshotReader:
                         kyo.Maybe.Absent
                 ,
                 annotations = annotationsByIdx(si),
-                body = partial match
-                    case c: Tasty.Symbol.Class  => c.body
-                    case t: Tasty.Symbol.Trait  => t.body
-                    case o: Tasty.Symbol.Object => o.body
-                    case m: Tasty.Symbol.Method => m.body
-                    case v: Tasty.Symbol.Val    => v.body
-                    case w: Tasty.Symbol.Var    => w.body
-                    case _                      => kyo.Maybe.Absent
+                body = kyo.Maybe.Absent
             )
             finalSymbols(si) = TypedSymbolFactory.from(d)
             si += 1
@@ -892,14 +885,7 @@ object SnapshotReader:
                         kyo.Maybe.Absent
                 ,
                 annotations = annotationsByIdxM(j),
-                body = partial match
-                    case c: Tasty.Symbol.Class  => c.body
-                    case t: Tasty.Symbol.Trait  => t.body
-                    case o: Tasty.Symbol.Object => o.body
-                    case m: Tasty.Symbol.Method => m.body
-                    case v: Tasty.Symbol.Val    => v.body
-                    case w: Tasty.Symbol.Var    => w.body
-                    case _                      => kyo.Maybe.Absent
+                body = kyo.Maybe.Absent
             )
             finalSymbols(j) = TypedSymbolFactory.from(d)
             j += 1
@@ -1062,22 +1048,10 @@ object SnapshotReader:
                 else Tasty.Name("")
             val ownerIdInt = raw.ownerId
             val ownerIdVal = if ownerIdInt >= 0 && ownerIdInt < count then ownerIdInt else idx
-            // For mmap path: body bytes are accessed via bodyView sub-view.
-            // Phase 02: SymbolBody carries bodyView support via sectionBytes (empty) + addrMap.
-            // CARRY-1 body-offset fix: use bodyEnd > bodyStart (not bodyStart > 0). Same rationale as
-            // readSymbols above: the first body slice in BODY_BYTES starts at offset 0.
-            val bodyMaybe: kyo.Maybe[Tasty.SymbolBody] =
-                if raw.bodyEnd > raw.bodyStart && (bodyViewOpt ne null) then
-                    kyo.Maybe(Tasty.SymbolBody(
-                        bodyStart = raw.bodyStart,
-                        bodyEnd = raw.bodyEnd,
-                        sectionBytes = Span.empty[Byte],
-                        names = Span.empty[Tasty.Name],
-                        sectionOffset = 0,
-                        addrMap = scala.collection.immutable.IntMap.empty
-                    ))
-                else
-                    kyo.Maybe.Absent
+            // Body bytes are no longer propagated through SymbolDescriptor.body after Phase 09.
+            // The BODY_BYTES section is read above for backward compatibility (old snapshots may
+            // have non-empty BODY_BYTES) but the data is discarded here. bodyTree returns Absent
+            // after a snapshot load until withClasspath(roots) re-populates DecodeContext.bodyStore.
             val desc = new SymbolDescriptor(
                 id = idx,
                 kind = kind,
@@ -1092,7 +1066,7 @@ object SnapshotReader:
                 typeParamIds = Chunk.empty,
                 declarationIds = Chunk.empty,
                 permittedSubclassIds = kyo.Maybe.Absent,
-                body = bodyMaybe
+                body = kyo.Maybe.Absent
             )
             created(idx) = TypedSymbolFactory.from(desc)
         end for
@@ -1377,25 +1351,9 @@ object SnapshotReader:
             val ownerIdInt = raw.ownerId
             // ownerId: use index directly; -1 means self-referential (root sentinel).
             val ownerIdVal = if ownerIdInt >= 0 && ownerIdInt < count then ownerIdInt else idx
-            // CARRY-1 body-offset fix: use bodyEnd > bodyStart (not bodyStart > 0) as the presence
-            // sentinel. In the BODY_BYTES section, body slices are concatenated starting at offset 0;
-            // the first slice has bodyStart == 0 which is a valid non-empty body. Using bodyStart > 0
-            // incorrectly discards the first slice, causing warm-reserialize to emit a shorter
-            // BODY_BYTES section than the original cold snapshot.
-            val bodyMaybe: kyo.Maybe[Tasty.SymbolBody] =
-                if raw.bodyEnd > raw.bodyStart && bodyBytesArray.nonEmpty
-                    && raw.bodyEnd <= bodyBytesArray.length
-                then
-                    kyo.Maybe(Tasty.SymbolBody(
-                        bodyStart = raw.bodyStart,
-                        bodyEnd = raw.bodyEnd,
-                        sectionBytes = Span.fromUnsafe(bodyBytesArray),
-                        names = Span.empty[Tasty.Name],
-                        sectionOffset = 0,
-                        addrMap = scala.collection.immutable.IntMap.empty
-                    ))
-                else
-                    kyo.Maybe.Absent
+            // Body bytes are no longer propagated through SymbolDescriptor.body after Phase 09.
+            // The BODY_BYTES section is read above for backward compatibility with old snapshots.
+            // bodyTree returns Absent after a snapshot load until withClasspath(roots) is used.
             val desc2 = new SymbolDescriptor(
                 id = idx,
                 kind = kind,
@@ -1410,7 +1368,7 @@ object SnapshotReader:
                 typeParamIds = Chunk.empty,
                 declarationIds = Chunk.empty,
                 permittedSubclassIds = kyo.Maybe.Absent,
-                body = bodyMaybe
+                body = kyo.Maybe.Absent
             )
             created(idx) = TypedSymbolFactory.from(desc2)
         end for

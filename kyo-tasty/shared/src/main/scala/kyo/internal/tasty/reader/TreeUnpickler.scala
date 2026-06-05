@@ -5,6 +5,7 @@ import kyo.Tasty.Name.asString
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
+import kyo.internal.tasty.symbol.SymbolBody
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
@@ -104,7 +105,7 @@ object TreeUnpickler:
       *   function from SymbolId.value (Int) to Tasty.Symbol; used to build the addrMap for type decode.
       */
     def decodeSync(
-        body: Tasty.SymbolBody,
+        body: SymbolBody,
         sym: Tasty.Symbol,
         symbolLookup: Int => Tasty.Symbol
     )(using AllowUnsafe): Tasty.Tree =

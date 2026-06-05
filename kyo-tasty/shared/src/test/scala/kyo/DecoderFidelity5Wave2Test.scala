@@ -240,19 +240,23 @@ class DecoderFidelity5Wave2Test extends Test:
         TestClasspaths.withClasspath():
             Tasty.classpath.flatMap: cp =>
                 given Tasty.Classpath = cp
-                val candidate = cp.allClassLike.find:
-                    case c: Tasty.Symbol.ClassLike => c.body.isDefined
-                    case null                      => false
-                candidate match
-                    case None => succeed
-                    case Some(sym) =>
-                        Async.collectAll(
-                            (0 until 8).map(_ => Tasty.bodyTree(sym).map(_.isDefined))
-                        ).map: hits =>
-                            val first = hits.head
-                            assert(hits.forall(_ == first), s"bodyTree returned divergent presence: $hits")
-                            succeed
-                end match
+                TastyState.bindingLocal.use: mbind =>
+                    val candidateOpt: Option[Tasty.Symbol] = mbind.flatMap(_.decodeCtx) match
+                        case Maybe.Present(ctx) =>
+                            cp.allClassLike.find(c => ctx.bodyStore.get(c.id) != null).foldLeft(Option.empty[Tasty.Symbol])((_, s) =>
+                                Some(s)
+                            )
+                        case Maybe.Absent => None
+                    candidateOpt match
+                        case None => succeed
+                        case Some(sym) =>
+                            Async.collectAll(
+                                (0 until 8).map(_ => Tasty.bodyTree(sym).map(_.isDefined))
+                            ).map: hits =>
+                                val first = hits.head
+                                assert(hits.forall(_ == first), s"bodyTree returned divergent presence: $hits")
+                                succeed
+                    end match
     }
 
     // =========================================================================
@@ -544,23 +548,30 @@ class DecoderFidelity5Wave2Test extends Test:
         TestClasspaths.withClasspath():
             Tasty.classpath.flatMap: cp =>
                 given Tasty.Classpath = cp
-                cp.allClassLike.find(c => c.body.isDefined) match
-                    case None => succeed
-                    case Some(sym) =>
-                        Tasty.bodyTree(sym).flatMap: _ =>
-                            // bodyMemo now lives in DecodeContext, accessible via bindingLocal.
-                            TastyState.bindingLocal.use: mbind =>
-                                val ctx = mbind.flatMap(_.decodeCtx)
-                                if ctx.isEmpty then Sync.defer(succeed)
-                                else
-                                    val memoSize = ctx.get.bodyMemo.size()
-                                    assert(memoSize >= 1, s"Expected at least 1 bodyMemo entry after decode, got $memoSize")
-                                    // cp.copy produces a structurally equal Classpath (bodyMemo not in Classpath).
-                                    val cp2 = Tasty.Classpath.copyWithErrors(cp, cp.errors)
-                                    assert(cp2 == cp, "cp.copy with same errors must produce a structurally equal Classpath")
-                                    succeed
-                                end if
-                end match
+                TastyState.bindingLocal.use: mbind =>
+                    val candidateOpt: Option[Tasty.Symbol] = mbind.flatMap(_.decodeCtx) match
+                        case Maybe.Present(ctx) =>
+                            cp.allClassLike.find(c => ctx.bodyStore.get(c.id) != null).foldLeft(Option.empty[Tasty.Symbol])((_, s) =>
+                                Some(s)
+                            )
+                        case Maybe.Absent => None
+                    candidateOpt match
+                        case None => succeed
+                        case Some(sym) =>
+                            Tasty.bodyTree(sym).flatMap: _ =>
+                                // bodyMemo now lives in DecodeContext, accessible via bindingLocal.
+                                TastyState.bindingLocal.use: mbind2 =>
+                                    val ctx = mbind2.flatMap(_.decodeCtx)
+                                    if ctx.isEmpty then Sync.defer(succeed)
+                                    else
+                                        val memoSize = ctx.get.bodyMemo.size()
+                                        assert(memoSize >= 1, s"Expected at least 1 bodyMemo entry after decode, got $memoSize")
+                                        // cp.copy produces a structurally equal Classpath (bodyMemo not in Classpath).
+                                        val cp2 = Tasty.Classpath.copyWithErrors(cp, cp.errors)
+                                        assert(cp2 == cp, "cp.copy with same errors must produce a structurally equal Classpath")
+                                        succeed
+                                    end if
+                    end match
     }
 
     // W2.31: classFqn[A] for nested kyo types.
@@ -650,15 +661,23 @@ class DecoderFidelity5Wave2Test extends Test:
 
     // R-F-W2-2: decodeBody on a symbol whose blob.read throws IllegalStateException produces ClasspathClosed.
     "R-F-W2-2: decodeBody produces ClasspathClosed when body read throws IllegalStateException" in run {
-        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            given Tasty.Classpath = cp
-            cp.allClassLike.find(_.body.isDefined) match
-                case None => succeed
-                case Some(sym) =>
-                    Tasty.bodyTree(sym).map: tree =>
-                        assert(tree.isDefined || !tree.isDefined, "decodeBody must return without panic")
-                        succeed
-            end match
+        TestClasspaths.withClasspath():
+            Tasty.classpath.flatMap: cp =>
+                given Tasty.Classpath = cp
+                TastyState.bindingLocal.use: mbind =>
+                    val candidateOpt: Option[Tasty.Symbol] = mbind.flatMap(_.decodeCtx) match
+                        case Maybe.Present(ctx) =>
+                            cp.allClassLike.find(c => ctx.bodyStore.get(c.id) != null).foldLeft(Option.empty[Tasty.Symbol])((_, s) =>
+                                Some(s)
+                            )
+                        case Maybe.Absent => None
+                    candidateOpt match
+                        case None => succeed
+                        case Some(sym) =>
+                            Tasty.bodyTree(sym).map: tree =>
+                                assert(tree.isDefined || !tree.isDefined, "decodeBody must return without panic")
+                                succeed
+                    end match
     }
 
     // =========================================================================

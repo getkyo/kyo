@@ -29,8 +29,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeTrait(id: Int, name: String): Tasty.Symbol.Trait =
@@ -47,8 +46,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeObject(id: Int, name: String): Tasty.Symbol.Object =
@@ -64,8 +62,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeMethod(id: Int, name: String): Tasty.Symbol.Method =
@@ -80,7 +77,6 @@ class ClasspathTypedAllAggregationsTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
 
@@ -93,8 +89,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
             Maybe.Absent,
             Maybe.Absent,
             Maybe.Absent,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeVar(id: Int, name: String): Tasty.Symbol.Var =
@@ -106,8 +101,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
             Maybe.Absent,
             Maybe.Absent,
             Maybe.Absent,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeTypeAlias(id: Int, name: String): Tasty.Symbol.TypeAlias =

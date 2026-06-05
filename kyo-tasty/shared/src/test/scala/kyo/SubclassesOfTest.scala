@@ -37,8 +37,7 @@ class SubclassesOfTest extends Test:
                 Chunk.empty,
                 kyo.Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                kyo.Maybe.Absent
+                Chunk.empty
             )
             val b = Tasty.Symbol.Class(
                 SymbolId(1),
@@ -53,8 +52,7 @@ class SubclassesOfTest extends Test:
                 Chunk.empty,
                 kyo.Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                kyo.Maybe.Absent
+                Chunk.empty
             )
             val c = Tasty.Symbol.Class(
                 SymbolId(2),
@@ -69,8 +67,7 @@ class SubclassesOfTest extends Test:
                 Chunk.empty,
                 kyo.Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                kyo.Maybe.Absent
+                Chunk.empty
             )
             val d = Tasty.Symbol.Class(
                 SymbolId(3),
@@ -85,8 +82,7 @@ class SubclassesOfTest extends Test:
                 Chunk.empty,
                 kyo.Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                kyo.Maybe.Absent
+                Chunk.empty
             )
             Tasty.Classpath.make(
                 symbols = Chunk(a, b, c, d),
@@ -127,8 +123,7 @@ class SubclassesOfTest extends Test:
                 Chunk.empty,
                 kyo.Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                kyo.Maybe.Absent
+                Chunk.empty
             )
             val impl1 = Tasty.Symbol.Class(
                 SymbolId(1),
@@ -143,8 +138,7 @@ class SubclassesOfTest extends Test:
                 Chunk.empty,
                 kyo.Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                kyo.Maybe.Absent
+                Chunk.empty
             )
             val impl2 = Tasty.Symbol.Class(
                 SymbolId(2),
@@ -159,8 +153,7 @@ class SubclassesOfTest extends Test:
                 Chunk.empty,
                 kyo.Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                kyo.Maybe.Absent
+                Chunk.empty
             )
             val abs = Tasty.Symbol.Class(
                 SymbolId(3),
@@ -175,8 +168,7 @@ class SubclassesOfTest extends Test:
                 Chunk.empty,
                 kyo.Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                kyo.Maybe.Absent
+                Chunk.empty
             )
             Tasty.Classpath.make(
                 symbols = Chunk(t, impl1, impl2, abs),

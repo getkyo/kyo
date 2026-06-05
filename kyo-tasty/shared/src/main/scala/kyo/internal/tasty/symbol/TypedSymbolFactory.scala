@@ -33,8 +33,7 @@ private[kyo] object TypedSymbolFactory:
                     declarationIds = Chunk.from(d.declarationIds.toSeq.map(SymbolId(_))),
                     permittedSubclassIds = d.permittedSubclassIds.map(_.map(SymbolId(_))),
                     annotations = d.annotations,
-                    javaAnnotations = d.javaAnnotations,
-                    body = d.body
+                    javaAnnotations = d.javaAnnotations
                 )
             case SymbolKind.Trait =>
                 Tasty.Symbol.Trait(
@@ -50,8 +49,7 @@ private[kyo] object TypedSymbolFactory:
                     declarationIds = Chunk.from(d.declarationIds.toSeq.map(SymbolId(_))),
                     permittedSubclassIds = d.permittedSubclassIds.map(_.map(SymbolId(_))),
                     annotations = d.annotations,
-                    javaAnnotations = d.javaAnnotations,
-                    body = d.body
+                    javaAnnotations = d.javaAnnotations
                 )
             case SymbolKind.Object =>
                 Tasty.Symbol.Object(
@@ -66,8 +64,7 @@ private[kyo] object TypedSymbolFactory:
                     typeParamIds = Chunk.from(d.typeParamIds.toSeq.map(SymbolId(_))),
                     declarationIds = Chunk.from(d.declarationIds.toSeq.map(SymbolId(_))),
                     annotations = d.annotations,
-                    javaAnnotations = d.javaAnnotations,
-                    body = d.body
+                    javaAnnotations = d.javaAnnotations
                 )
             case SymbolKind.Method =>
                 Tasty.Symbol.Method(
@@ -81,7 +78,6 @@ private[kyo] object TypedSymbolFactory:
                     paramListIds = d.paramListIds.map(inner => inner.map(SymbolId(_))),
                     typeParamIds = Chunk.from(d.typeParamIds.toSeq.map(SymbolId(_))),
                     annotations = d.annotations,
-                    body = d.body,
                     javaMetadata = d.javaMetadata
                 )
             case SymbolKind.Val =>
@@ -93,8 +89,7 @@ private[kyo] object TypedSymbolFactory:
                     scaladoc = d.scaladoc,
                     sourcePosition = d.sourcePosition,
                     declaredType = d.declaredType,
-                    annotations = d.annotations,
-                    body = d.body
+                    annotations = d.annotations
                 )
             case SymbolKind.Var =>
                 Tasty.Symbol.Var(
@@ -105,8 +100,7 @@ private[kyo] object TypedSymbolFactory:
                     scaladoc = d.scaladoc,
                     sourcePosition = d.sourcePosition,
                     declaredType = d.declaredType,
-                    annotations = d.annotations,
-                    body = d.body
+                    annotations = d.annotations
                 )
             case SymbolKind.Field =>
                 Tasty.Symbol.Field(
@@ -206,8 +200,7 @@ private[kyo] object TypedSymbolFactory:
                     declarationIds = Chunk.from(d.declarationIds.toSeq.map(SymbolId(_))),
                     permittedSubclassIds = d.permittedSubclassIds.map(_.map(SymbolId(_))),
                     annotations = d.annotations,
-                    javaAnnotations = d.javaAnnotations,
-                    body = d.body
+                    javaAnnotations = d.javaAnnotations
                 )
             // SymbolKind.Unresolved was removed in Phase 08; this case is retained for backward compatibility
             // with SnapshotReader (ordinal 14 -> Package fallback). Treat as Package.

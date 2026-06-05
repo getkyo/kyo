@@ -32,8 +32,7 @@ class SymbolMemberSearchTest extends Test:
             decls,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeMethod(id: Int, name: String, ownerId: Int): Tasty.Symbol.Method =
@@ -48,7 +47,6 @@ class SymbolMemberSearchTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
 
@@ -61,8 +59,7 @@ class SymbolMemberSearchTest extends Test:
             Maybe.Absent,
             Maybe.Absent,
             Maybe.Absent,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     /** Fixture: class A { def foo; val x } Symbol ids: 0=A, 1=foo, 2=x

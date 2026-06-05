@@ -37,8 +37,7 @@ class PackageTypedAccessorsTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeTrait(id: Int, name: String): Tasty.Symbol.Trait =
@@ -55,8 +54,7 @@ class PackageTypedAccessorsTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeObject(id: Int, name: String): Tasty.Symbol.Object =
@@ -72,8 +70,7 @@ class PackageTypedAccessorsTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeSubPkg(id: Int, name: String, ownerId: Int): Tasty.Symbol.Package =

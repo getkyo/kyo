@@ -84,8 +84,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val aliasBody = Tasty.Type.Named(intId)
         val typeAlias = makeTypeAlias(1, "Foo", aliasBody)
@@ -146,8 +145,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val body       = Tasty.Type.Named(longId)
         val bounds     = Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown)
@@ -189,8 +187,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val upperType  = Tasty.Type.Named(intId)
         val bounds     = Tasty.TypeBounds(Tasty.Type.Unknown, upperType)

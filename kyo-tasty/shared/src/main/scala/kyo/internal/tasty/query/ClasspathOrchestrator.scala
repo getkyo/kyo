@@ -17,6 +17,7 @@ import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
 import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
+import kyo.internal.tasty.symbol.SymbolBody
 import kyo.internal.tasty.symbol.SymbolDescriptor
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.symbol.TypedSymbolFactory
@@ -190,6 +191,43 @@ object ClasspathOrchestrator:
                 if preErrors.nonEmpty then Tasty.Classpath.copyWithPreErrors(cp, preErrors)
                 else cp
 
+    /** Like init() but also returns a body store populated with SymbolBody blobs.
+      *
+      * Used by coldLoadBinding and loadPickles to populate DecodeContext.bodyStore so that
+      * Tasty.bodyTree can decode body bytes on demand. The public init() signature is unchanged.
+      */
+    private def initWithBodies(
+        roots: Seq[String],
+        mode: Tasty.ErrorMode,
+        source: FileSource,
+        concurrency: Int
+    )(using
+        Frame
+    ): (Tasty.Classpath, java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody]) < (Sync & Async & Scope & Abort[TastyError]) =
+        // Unsafe: ConcurrentHashMap allocation for body store; same pattern as DecodeContext.fresh().
+        val bodyStore: java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody] =
+            import AllowUnsafe.embrace.danger
+            new java.util.concurrent.ConcurrentHashMap()
+        Kyo.foreach(roots): root =>
+            source.exists(root).flatMap: ex =>
+                if !ex && mode == Tasty.ErrorMode.FailFast then Abort.fail(TastyError.FileNotFound(root))
+                else Sync.defer(ex)
+        .flatMap: existFlags =>
+            val validRoots: Seq[String] =
+                roots.zip(existFlags).collect:
+                    case (root, true) => root
+            val preErrors: Chunk[TastyError] =
+                Chunk.from(roots.zip(existFlags).collect:
+                    case (root, false) => TastyError.FileNotFound(root): TastyError)
+            source.withReadBatch:
+                runPhaseAB(validRoots, mode, source, concurrency, Maybe.Present(bodyStore))
+            .map: cp =>
+                val finalCp =
+                    if preErrors.nonEmpty then Tasty.Classpath.copyWithPreErrors(cp, preErrors)
+                    else cp
+                (finalCp, bodyStore)
+    end initWithBodies
+
     /** Phase A+B+C pipeline via Channels.
       *
       * Three concurrent stages run inside `Async.foreach`: - Producer: walks each root via `source.list`, puts (entryPath, kind) to
@@ -204,7 +242,8 @@ object ClasspathOrchestrator:
         roots: Seq[String],
         mode: Tasty.ErrorMode,
         source: FileSource,
-        concurrency: Int
+        concurrency: Int,
+        bodyStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody]] = Maybe.Absent
     )(using Frame): Tasty.Classpath < (Sync & Async & Abort[TastyError]) =
         val decodeConcurrency = concurrency.max(1)
         val rootCount         = roots.size.max(1)
@@ -288,7 +327,7 @@ object ClasspathOrchestrator:
                                     Chunk(producerWithClose, decoderWithClose, mergerWithTiming)
                                 Async.foreach(stages, 3): stage =>
                                     stage
-                                .andThen(finalizeMerge(mergeState, source, mode)).flatMap: result =>
+                                .andThen(finalizeMerge(mergeState, source, mode, bodyStoreOutput)).flatMap: result =>
                                     (if timingEnabled then
                                          Sync.Unsafe.defer:
                                              val t_end       = java.lang.System.nanoTime()
@@ -582,7 +621,8 @@ object ClasspathOrchestrator:
     private def finalizeMerge(
         state: MergeState,
         source: FileSource,
-        mode: Tasty.ErrorMode
+        mode: Tasty.ErrorMode,
+        bodyStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody]] = Maybe.Absent
     )(using Frame): Tasty.Classpath < (Sync & Abort[TastyError]) =
         val canonical   = TypeArena.canonical()
         val fileResults = state.fileResults.toSeq
@@ -1302,14 +1342,23 @@ object ClasspathOrchestrator:
                             val bodyEnd   = bodyData._2
                             val idx       = symbolIdMap.getOrElse(symId, -1)
                             if idx >= 0 && idx < count && bodyStart > 0 && bodyEnd > bodyStart then
-                                descs(idx).body = Maybe(Tasty.SymbolBody(
-                                    bodyStart = bodyStart,
-                                    bodyEnd = bodyEnd,
-                                    sectionBytes = Span.fromUnsafe(fr.sectionBytes),
-                                    names = Span.fromUnsafe(fr.fileNames),
-                                    sectionOffset = fr.sectionOffset,
-                                    addrMap = scala.collection.immutable.IntMap.empty
-                                ))
+                                bodyStoreOutput match
+                                    case Maybe.Present(store) =>
+                                        discard(store.put(
+                                            SymbolId(idx),
+                                            SymbolBody(
+                                                bodyStart = bodyStart,
+                                                bodyEnd = bodyEnd,
+                                                sectionBytes = Span.fromUnsafe(fr.sectionBytes),
+                                                names = Span.fromUnsafe(fr.fileNames),
+                                                sectionOffset = fr.sectionOffset,
+                                                addrMap = scala.collection.immutable.IntMap.empty
+                                            )
+                                        ))
+                                    case Maybe.Absent =>
+                                        // init() path: body data discarded (bodies not needed without a DecodeContext)
+                                        ()
+                                end match
                             end if
                         }
                     end for
@@ -1845,20 +1894,20 @@ object ClasspathOrchestrator:
             val coldLoad: Binding < (Sync & Async & Scope & Abort[TastyError]) =
                 cacheDir match
                     case Maybe.Absent =>
-                        init(coldRoots, mode, source, concurrency).map: coldCp =>
+                        initWithBodies(coldRoots, mode, source, concurrency).map: (coldCp, bodyStore) =>
                             val merged = if bundledCp.symbols.isEmpty then coldCp
                             else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
-                            Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                            Binding(merged, Maybe.Present(DecodeContext.fresh(bodyStore)))
                     case Maybe.Present(dir) =>
                         import kyo.internal.tasty.snapshot.DigestComputer as SnapshotDigest
                         import kyo.internal.tasty.snapshot.SnapshotReader
                         import kyo.internal.tasty.snapshot.SnapshotWriter
                         Abort.run[TastyError](SnapshotDigest.compute(coldRoots, source)).flatMap:
                             case Result.Failure(_) | Result.Panic(_) =>
-                                init(coldRoots, mode, source, concurrency).map: coldCp =>
+                                initWithBodies(coldRoots, mode, source, concurrency).map: (coldCp, bodyStore) =>
                                     val merged = if bundledCp.symbols.isEmpty then coldCp
                                     else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
-                                    Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                                    Binding(merged, Maybe.Present(DecodeContext.fresh(bodyStore)))
                             case Result.Success(digest) =>
                                 val hexDigest    = SnapshotDigest.toHexString(digest)
                                 val snapshotPath = s"$dir/$hexDigest.krfl"
@@ -1866,20 +1915,21 @@ object ClasspathOrchestrator:
                                     if exists then
                                         Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath, source)).flatMap:
                                             case Result.Success(coldCp) =>
+                                                // Snapshot load: body store is empty; bodyTree returns Absent.
                                                 val merged = if bundledCp.symbols.isEmpty then coldCp
                                                 else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
                                                 Binding(merged, Maybe.Present(DecodeContext.fresh()))
                                             case Result.Failure(_) | Result.Panic(_) =>
-                                                init(coldRoots, mode, source, concurrency).map: coldCp =>
+                                                initWithBodies(coldRoots, mode, source, concurrency).map: (coldCp, bodyStore) =>
                                                     val merged = if bundledCp.symbols.isEmpty then coldCp
                                                     else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
-                                                    Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                                                    Binding(merged, Maybe.Present(DecodeContext.fresh(bodyStore)))
                                     else
-                                        init(coldRoots, mode, source, concurrency).flatMap: coldCp =>
+                                        initWithBodies(coldRoots, mode, source, concurrency).flatMap: (coldCp, bodyStore) =>
                                             Abort.run[TastyError](SnapshotWriter.write(coldCp, dir, digest, source)).andThen:
                                                 val merged = if bundledCp.symbols.isEmpty then coldCp
                                                 else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
-                                                Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                                                Binding(merged, Maybe.Present(DecodeContext.fresh(bodyStore)))
             if coldRoots.isEmpty then Binding(bundledCp, Maybe.Present(DecodeContext.fresh()))
             else coldLoad
     end coldLoadBinding
@@ -1899,10 +1949,10 @@ object ClasspathOrchestrator:
             val coldLoad: Binding < (Sync & Async & Scope & Abort[TastyError]) =
                 cacheDir match
                     case Maybe.Absent =>
-                        init(coldRoots, mode, source, concurrency).map: coldCp =>
+                        initWithBodies(coldRoots, mode, source, concurrency).map: (coldCp, bodyStore) =>
                             val merged = if bundledCp.symbols.isEmpty then coldCp
                             else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
-                            Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                            Binding(merged, Maybe.Present(DecodeContext.fresh(bodyStore)))
                     case Maybe.Present(dir) =>
                         import kyo.internal.tasty.snapshot.DigestComputer as SnapshotDigest
                         import kyo.internal.tasty.snapshot.SnapshotReader
@@ -1910,10 +1960,10 @@ object ClasspathOrchestrator:
                         Abort.run[TastyError](SnapshotDigest.compute(coldRoots, source)).flatMap:
                             case Result.Failure(_) | Result.Panic(_) =>
                                 // Digest failed (e.g. browser platform): fall through to cold load.
-                                init(coldRoots, mode, source, concurrency).map: coldCp =>
+                                initWithBodies(coldRoots, mode, source, concurrency).map: (coldCp, bodyStore) =>
                                     val merged = if bundledCp.symbols.isEmpty then coldCp
                                     else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
-                                    Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                                    Binding(merged, Maybe.Present(DecodeContext.fresh(bodyStore)))
                             case Result.Success(digest) =>
                                 val hexDigest    = SnapshotDigest.toHexString(digest)
                                 val snapshotPath = s"$dir/$hexDigest.krfl"
@@ -1921,21 +1971,22 @@ object ClasspathOrchestrator:
                                     if exists then
                                         Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath, source)).flatMap:
                                             case Result.Success(coldCp) =>
+                                                // Snapshot load: body store is empty; bodyTree returns Absent.
                                                 val merged = if bundledCp.symbols.isEmpty then coldCp
                                                 else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
                                                 Binding(merged, Maybe.Present(DecodeContext.fresh()))
                                             case Result.Failure(_) | Result.Panic(_) =>
                                                 // Snapshot unreadable; fall through to cold load.
-                                                init(coldRoots, mode, source, concurrency).map: coldCp =>
+                                                initWithBodies(coldRoots, mode, source, concurrency).map: (coldCp, bodyStore) =>
                                                     val merged = if bundledCp.symbols.isEmpty then coldCp
                                                     else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
-                                                    Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                                                    Binding(merged, Maybe.Present(DecodeContext.fresh(bodyStore)))
                                     else
-                                        init(coldRoots, mode, source, concurrency).flatMap: coldCp =>
+                                        initWithBodies(coldRoots, mode, source, concurrency).flatMap: (coldCp, bodyStore) =>
                                             Abort.run[TastyError](SnapshotWriter.write(coldCp, dir, digest, source)).andThen:
                                                 val merged = if bundledCp.symbols.isEmpty then coldCp
                                                 else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
-                                                Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                                                Binding(merged, Maybe.Present(DecodeContext.fresh(bodyStore)))
             // If no cold roots remain (all roots had bundled snapshots), return the merged bundled classpath directly.
             if coldRoots.isEmpty then Binding(bundledCp, Maybe.Present(DecodeContext.fresh()))
             else coldLoad
@@ -2017,8 +2068,8 @@ object ClasspathOrchestrator:
                     bytesMap.get(path) match
                         case Some(b) => Sync.defer(FileSource.FileStat(mtimeMs = 0L, size = b.length.toLong))
                         case None    => Abort.fail(TastyError.FileNotFound(path))
-            init(roots, Tasty.ErrorMode.SoftFail, source, concurrency = 1).map: cp =>
-                Binding(cp, Maybe.Present(DecodeContext.fresh()))
+            initWithBodies(roots, Tasty.ErrorMode.SoftFail, source, concurrency = 1).map: (cp, bodyStore) =>
+                Binding(cp, Maybe.Present(DecodeContext.fresh(bodyStore)))
     end loadPickles
 
 end ClasspathOrchestrator

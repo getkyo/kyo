@@ -383,8 +383,10 @@ class SnapshotRoundTripTest extends Test:
                     throw t
     }
 
-    // Test G14a (Phase 15): BODY_BYTES round-trip -- sym.body on snapshot-loaded symbol with body bytes does not fail with NotImplemented
-    "BODY_BYTES round-trip: sym.body on snapshot-loaded symbol with body bytes does not fail with NotImplemented" in run {
+    // Test G14a (Phase 09): after snapshot round-trip, bodyTree returns Absent (bodies not serialized).
+    // Bodies are stored in DecodeContext.bodyStore which is not persisted in snapshots.
+    // Use withClasspath(roots) to re-populate the body store from TASTy files.
+    "BODY_BYTES round-trip: bodyTree returns Absent on snapshot-loaded symbol (Phase 09 contract)" in run {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37)
         Scope.run:
@@ -393,19 +395,14 @@ class SnapshotRoundTripTest extends Test:
                     SnapshotWriter.write(cp, "cache", digest, cacheSrc).andThen:
                         val hex      = DigestComputer.toHexString(digest)
                         val snapPath = s"cache/$hex.krfl"
-                        SnapshotReader.read(snapPath, cacheSrc).map: loadedCp =>
-                            val symWithBodyOpt = loadedCp.symbols.find(s =>
-                                s match
-                                    case c: Tasty.Symbol.Class  => c.body.isDefined
-                                    case t: Tasty.Symbol.Trait  => t.body.isDefined
-                                    case o: Tasty.Symbol.Object => o.body.isDefined
-                                    case m: Tasty.Symbol.Method => m.body.isDefined
-                                    case v: Tasty.Symbol.Val    => v.body.isDefined
-                                    case w: Tasty.Symbol.Var    => w.body.isDefined
-                                    case _                      => false
-                            )
-                            discard(symWithBodyOpt)
-                            succeed
+                        SnapshotReader.read(snapPath, cacheSrc).flatMap: loadedCp =>
+                            // After snapshot load, body store is empty; bodyTree must return Absent.
+                            Tasty.withClasspath(loadedCp):
+                                val methods = loadedCp.symbols.collect { case m: Tasty.Symbol.Method => m }
+                                val testSym = methods.headOption.getOrElse(loadedCp.symbols.head)
+                                Tasty.bodyTree(testSym).map: result =>
+                                    assert(!result.isDefined, "bodyTree must return Absent after snapshot load")
+                                    succeed
             ).map:
                 case Result.Success(r) => r
                 case Result.Failure(e) => fail(s"Unexpected failure: $e")
@@ -558,8 +555,7 @@ class SnapshotRoundTripTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val fooSym = Tasty.Symbol.Class(
             SymbolId(3),
@@ -574,8 +570,7 @@ class SnapshotRoundTripTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
         val allSyms: Chunk[Tasty.Symbol]  = Chunk(rootSym, pkgSym, barSym, fooSym)
@@ -693,8 +688,7 @@ class SnapshotRoundTripTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
         val allSyms2 = Chunk(rootSym2, pkgSym2, classSym2)
@@ -806,57 +800,38 @@ class SnapshotRoundTripTest extends Test:
                     throw t
     }
 
-    // Leaf 4 (Phase 11, INV-004): Classpath.decodeBody on a snapshot-restored Classpath
-    // invokes the memoized decode path and populates bodyMemo even when body decoding fails.
-    //
-    // Snapshot-loaded body bytes lack the name table and type context from the original TASTy
-    // section, so actual tree decode produces MalformedSection. The failure IS memoized: after
-    // one decodeBody call, the DecodeContext bodyMemo has size 1, confirming the per-invocation memo works.
-    // Uses DecodeContext (via TastyState.bindingLocal) to verify memoization.
-    "snapshot body decode invokes Tasty.bodyTree and memoizes result in DecodeContext (size == 1 after call)" in run {
+    // Leaf 4 (Phase 09 updated): after snapshot round-trip, bodyTree returns Absent for all symbols.
+    // Bodies are not serialized in snapshots; DecodeContext.bodyStore is empty after snapshot load.
+    // bodyMemo stays at size 0 because bodyTree returns Absent before any decode attempt.
+    "snapshot body: bodyTree returns Absent for snapshot-loaded symbol (bodyStore is empty)" in run {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0xd0.toByte, 0xd1.toByte, 0xd2.toByte, 0xd3.toByte, 0xd4.toByte, 0xd5.toByte, 0xd6.toByte, 0xd7.toByte)
         Scope.run:
-            // Open the warm classpath and find a body-bearing symbol.
             Abort.run[TastyError](
                 openClasspath(fixtureSource()).flatMap: cp =>
                     SnapshotWriter.write(cp, "cache", digest, cacheSrc).andThen:
                         val hex      = DigestComputer.toHexString(digest)
                         val snapPath = s"cache/$hex.krfl"
-                        SnapshotReader.read(snapPath, cacheSrc).map: (warmCp: Tasty.Classpath) =>
-                            (
-                                warmCp,
-                                warmCp.symbols.find(s =>
-                                    s match
-                                        case c: Tasty.Symbol.Class  => c.body.isDefined
-                                        case t: Tasty.Symbol.Trait  => t.body.isDefined
-                                        case o: Tasty.Symbol.Object => o.body.isDefined
-                                        case m: Tasty.Symbol.Method => m.body.isDefined
-                                        case v: Tasty.Symbol.Val    => v.body.isDefined
-                                        case w: Tasty.Symbol.Var    => w.body.isDefined
-                                        case _                      => false
-                                )
-                            )
-            ).flatMap:
-                case Result.Success((warmCp: Tasty.Classpath, Some(sym: Tasty.Symbol))) =>
-                    // Create a fresh DecodeContext and install it in bindingLocal.
-                    val ctx     = DecodeContext.fresh()
-                    val binding = Binding(warmCp, Maybe.Present(ctx))
-                    // Before decodeBody: bodyMemo must be 0.
-                    assert(ctx.bodyMemo.size() == 0, s"bodyMemo must be empty before any Tasty.bodyTree call, got ${ctx.bodyMemo.size()}")
-                    // Call Tasty.bodyTree inside the binding scope; snapshot bodies lack the name table so decode may fail,
-                    // but the result (success or failure) must be memoized in the DecodeContext.
-                    TastyState.bindingLocal.let(Maybe.Present(binding)):
-                        Abort.run[TastyError](Tasty.bodyTree(sym)).map: _ =>
-                            // After bodyTree: bodyMemo must have exactly 1 entry regardless of decode outcome.
-                            val memoSize = ctx.bodyMemo.size()
-                            assert(memoSize == 1, s"bodyMemo must have exactly 1 entry after first Tasty.bodyTree call, got $memoSize")
-                case Result.Success((_, None)) =>
-                    fail("No body-bearing symbol found in warm classpath; fixture must have at least one body")
-                case Result.Failure(e) =>
-                    fail(s"Unexpected failure in Leaf 4: $e")
-                case Result.Panic(t) =>
-                    throw t
+                        SnapshotReader.read(snapPath, cacheSrc).flatMap: (warmCp: Tasty.Classpath) =>
+                            // After snapshot load, body store is empty; bodyTree must return Absent.
+                            val ctx     = DecodeContext.fresh()
+                            val binding = Binding(warmCp, Maybe.Present(ctx))
+                            assert(ctx.bodyMemo.size() == 0, "bodyMemo must be empty before any call")
+                            assert(ctx.bodyStore.size() == 0, "bodyStore must be empty after snapshot load")
+                            val testSym = warmCp.symbols.headOption.getOrElse {
+                                fail("Snapshot has no symbols")
+                                warmCp.symbols.head // unreachable
+                            }
+                            TastyState.bindingLocal.let(Maybe.Present(binding)):
+                                Abort.run[TastyError](Tasty.bodyTree(testSym)).map: result =>
+                                    assert(result.isSuccess, s"bodyTree must not raise TastyError: $result")
+                                    val body = result.getOrElse(Maybe.Absent)
+                                    assert(!body.isDefined, "bodyTree must return Absent for snapshot-loaded symbol")
+                                    assert(ctx.bodyMemo.size() == 0, "bodyMemo must remain empty (no decode attempted)")
+            ).map:
+                case Result.Success(r) => r
+                case Result.Failure(e) => fail(s"Unexpected failure in Leaf 4: $e")
+                case Result.Panic(t)   => throw t
     }
 
     // T-J1-im: in-memory root digest is deterministic across two calls (mirrors T-J1 in SnapshotRoundTripJvmTest)

@@ -35,8 +35,7 @@ class TypeArenaTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
     end makeSym
 

@@ -32,8 +32,7 @@ class ClassLikeAccessorsTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeTrait(id: Int, name: String, ownerId: Int): Tasty.Symbol.Trait =
@@ -50,8 +49,7 @@ class ClassLikeAccessorsTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeObject(id: Int, name: String, ownerId: Int): Tasty.Symbol.Object =
@@ -67,8 +65,7 @@ class ClassLikeAccessorsTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeMethod(id: Int, name: String, ownerId: Int): Tasty.Symbol.Method =
@@ -83,7 +80,6 @@ class ClassLikeAccessorsTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
 
@@ -96,8 +92,7 @@ class ClassLikeAccessorsTest extends Test:
             Maybe.Absent,
             Maybe.Absent,
             Maybe.Absent,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeVar(id: Int, name: String, ownerId: Int): Tasty.Symbol.Var =
@@ -109,8 +104,7 @@ class ClassLikeAccessorsTest extends Test:
             Maybe.Absent,
             Maybe.Absent,
             Maybe.Absent,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeField(id: Int, name: String, ownerId: Int): Tasty.Symbol.Field =
@@ -537,8 +531,7 @@ class ClassLikeAccessorsTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val traitFlags = Tasty.Flags(Tasty.Flag.Abstract, Tasty.Flag.Sealed)
         val traitSym = Tasty.Symbol.Trait(
@@ -554,8 +547,7 @@ class ClassLikeAccessorsTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         assert(classSym.isFinal, "classSym.isFinal must be true")
         assert(classSym.isCase, "classSym.isCase must be true")

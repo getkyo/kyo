@@ -36,8 +36,7 @@ class ClasspathAnnotatedTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeMethod(id: Int, name: String, ownerId: Int, anns: Chunk[Tasty.Annotation]): Tasty.Symbol.Method =
@@ -52,7 +51,6 @@ class ClasspathAnnotatedTest extends Test:
             Chunk.empty,
             Chunk.empty,
             anns,
-            Maybe.Absent,
             Maybe.Absent
         )
 
@@ -65,8 +63,7 @@ class ClasspathAnnotatedTest extends Test:
             Maybe.Absent,
             Maybe.Absent,
             Maybe.Absent,
-            anns,
-            Maybe.Absent
+            anns
         )
 
     private def makeClass(id: Int, name: String, anns: Chunk[Tasty.Annotation]): Tasty.Symbol.Class =
@@ -83,8 +80,7 @@ class ClasspathAnnotatedTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             anns,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def buildFixture(using Frame): Tasty.Classpath < Sync =
@@ -114,8 +110,7 @@ class ClasspathAnnotatedTest extends Test:
                 Chunk.empty,
                 Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                Maybe.Absent
+                Chunk.empty
             )
 
             // Annotation: annotationType = Type.Named(SymbolId(1)) -> fullName resolves to "scala.deprecated"

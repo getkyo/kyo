@@ -59,8 +59,7 @@ class TastyEffectRowTest extends Test:
     private def openSomeObjectCp(using Frame): Binding < (Sync & Async & Scope & Abort[TastyError]) =
         val src = MemoryFileSource()
         src.add("root/SomeObject.tasty", kyo.fixtures.Embedded.someObjectTasty)
-        ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
-            Binding(cp, Maybe.Present(DecodeContext.fresh()))
+        ClasspathOrchestrator.coldLoadBinding(Seq("root"), Tasty.ErrorMode.SoftFail, Maybe.Absent, src, 1)
     end openSomeObjectCp
 
     // ── Leaf 6: Symbol.body delegates to cp.decodeBody (reference equality via memoization) ─
@@ -80,12 +79,8 @@ class TastyEffectRowTest extends Test:
                 openSomeObjectCp.flatMap: binding =>
                     val cp      = binding.cp
                     val allSyms = cp.symbols
-                    val valSym = allSyms.find(s =>
-                        (s match
-                            case v: Tasty.Symbol.Val => v.body.isDefined;
-                            case _                   => false
-                        )
-                    )
+                    val ctx     = binding.decodeCtx.getOrElse(DecodeContext.fresh())
+                    val valSym  = allSyms.find(s => ctx.bodyStore.get(s.id) != null)
                     valSym match
                         case None =>
                             Kyo.lift(fail("fixture missing Val with body; test cannot proceed"))

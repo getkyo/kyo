@@ -244,8 +244,7 @@ class SymbolResolutionTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
     end makeClassSym9
 
@@ -265,7 +264,6 @@ class SymbolResolutionTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
     end makeMethodSym9
@@ -279,8 +277,7 @@ class SymbolResolutionTest extends Test:
             Maybe.Absent,
             Maybe.Absent,
             Maybe.Absent,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
     end makeValSym9
 
@@ -293,8 +290,7 @@ class SymbolResolutionTest extends Test:
             Maybe.Absent,
             Maybe.Absent,
             Maybe.Absent,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
     end makeVarSym9
 

@@ -40,8 +40,7 @@ class IsSubtypeOfTest extends Test:
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
             annotations = Chunk.empty,
-            javaAnnotations = Chunk.empty,
-            body = Maybe.Absent
+            javaAnnotations = Chunk.empty
         )
     end makeSym
 

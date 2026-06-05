@@ -127,37 +127,14 @@ object SnapshotWriter:
                 case _                         => internName(nameToStr(sym.name)) // fallback: simple name for non-indexed symbols
         )
 
-        // Collect body byte slices from Symbol.body: Maybe[SymbolBody].
-        val bodyBytesBuffer = new java.io.ByteArrayOutputStream(128 * 1024 * 1024)
-        var runningOffset   = 0
-        val symBodyStarts   = new Array[Int](symbolList.size)
-        val symBodyEnds     = new Array[Int](symbolList.size)
-        for (sym, idx) <- symbolList.zipWithIndex do
-            (sym match
-                case c: Tasty.Symbol.Class  => c.body
-                case t: Tasty.Symbol.Trait  => t.body
-                case o: Tasty.Symbol.Object => o.body
-                case m: Tasty.Symbol.Method => m.body
-                case v: Tasty.Symbol.Val    => v.body
-                case w: Tasty.Symbol.Var    => w.body
-                case _                      => kyo.Maybe.Absent
-            ) match
-                // CARRY-1 body-offset fix: drop the bodyStart > 0 guard. For cold TASTy bodies,
-                // bodyStart is an absolute TASTy section offset (never 0 in practice). For warm
-                // bodies read from a BODY_BYTES section, bodyStart == 0 is the valid start of the
-                // first slice. Using bodyEnd > bodyStart is the correct "has body" sentinel.
-                case kyo.Maybe.Present(b) if b.bodyEnd > b.bodyStart && b.sectionBytes.nonEmpty =>
-                    val sliceLen = b.bodyEnd - b.bodyStart
-                    // Unsafe: toArrayUnsafe returns the backing array without copying; safe here because
-                    // we only read the bytes within [bodyStart, bodyEnd).
-                    bodyBytesBuffer.write(b.sectionBytes.toArrayUnsafe, b.bodyStart, sliceLen)
-                    symBodyStarts(idx) = runningOffset
-                    symBodyEnds(idx) = runningOffset + sliceLen
-                    runningOffset += sliceLen
-                case _ =>
-                    symBodyStarts(idx) = 0
-                    symBodyEnds(idx) = 0
-        end for
+        // Body bytes are no longer serialised through Symbol fields.
+        // Bodies are stored in DecodeContext.bodyStore (keyed by SymbolId) and reconstructed from
+        // pickles/TASTy files on the next withClasspath(roots) call. The BODY_BYTES section is
+        // written as empty so the snapshot format is backward-compatible (SnapshotReader still reads
+        // the section header and discards the empty payload).
+        val symBodyStarts = new Array[Int](symbolList.size)
+        val symBodyEnds   = new Array[Int](symbolList.size)
+        // All start/end offsets stay at 0 (no body slices stored in the snapshot).
 
         // Collect errors directly from the immutable case class field.
         val errors = cp.errors
@@ -173,10 +150,10 @@ object SnapshotWriter:
         // ERRORS section: length-prefixed error strings
         val errorsBytes = serializeErrors(errors)
 
-        // Empty sections for types (not serialized; bodies re-decoded lazily from BODY_BYTES)
+        // Empty sections for types (not serialized; bodies re-decoded lazily on next withClasspath(roots) call)
         val typesBytes      = Array.empty[Byte]
         val typesExtraBytes = Array.empty[Byte]
-        val bodyBytes       = bodyBytesBuffer.toByteArray
+        val bodyBytes       = Array.empty[Byte]
 
         // PARENTS section: for each symbol, store the list of symbol IDs of Named parent types.
         // Non-Named parents (complex types) are encoded as -1 and skipped on read.

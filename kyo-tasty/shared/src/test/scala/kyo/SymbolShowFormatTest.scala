@@ -35,8 +35,7 @@ class SymbolShowFormatTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeTypeParam(id: Int, name: String, ownerId: Int): Tasty.Symbol.TypeParam =
@@ -68,7 +67,6 @@ class SymbolShowFormatTest extends Test:
             paramListIds,
             Chunk.empty,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
 

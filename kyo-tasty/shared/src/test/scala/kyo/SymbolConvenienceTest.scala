@@ -31,8 +31,7 @@ class SymbolConvenienceTest extends Test:
             decls,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeMethod(id: Int, name: String, ownerId: Int): Tasty.Symbol.Method =
@@ -47,7 +46,6 @@ class SymbolConvenienceTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
 

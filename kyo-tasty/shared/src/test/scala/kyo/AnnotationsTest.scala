@@ -37,8 +37,7 @@ class AnnotationsTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val deprecationType = Tasty.Type.Named(SymbolId(1))
         val annotation      = Tasty.Annotation(deprecationType, Chunk.empty)
@@ -53,7 +52,6 @@ class AnnotationsTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk(annotation),
-            Maybe.Absent,
             Maybe.Absent
         )
         val plainMethod = Tasty.Symbol.Method(
@@ -67,7 +65,6 @@ class AnnotationsTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(scalaPackage, deprecatedClass, annotatedMethod, plainMethod))

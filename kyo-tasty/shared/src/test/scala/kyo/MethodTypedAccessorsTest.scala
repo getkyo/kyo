@@ -50,8 +50,9 @@ class MethodTypedAccessorsTest extends Test:
     end openSomeObjectCp
 
     private def openSomeObjectBinding(using Frame): Binding < (Sync & Async & Scope & Abort[TastyError]) =
-        openSomeObjectCp.map: cp =>
-            Binding(cp, Maybe.Present(DecodeContext.fresh()))
+        val src = MemoryFileSource()
+        src.add("root/SomeObject.tasty", kyo.fixtures.Embedded.someObjectTasty)
+        ClasspathOrchestrator.coldLoadBinding(Seq("root"), Tasty.ErrorMode.SoftFail, Maybe.Absent, src, 1)
     end openSomeObjectBinding
 
     // ── Synthetic builder helpers ─────────────────────────────────────────────
@@ -99,7 +100,6 @@ class MethodTypedAccessorsTest extends Test:
             paramListIds,
             typeParamIds,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
 
@@ -238,10 +238,11 @@ class MethodTypedAccessorsTest extends Test:
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectBinding.flatMap: binding =>
-                    val cp = binding.cp
+                    val cp  = binding.cp
+                    val ctx = binding.decodeCtx.getOrElse(DecodeContext.fresh())
                     val methodOpt = cp.symbols.find(s =>
                         s match
-                            case m: Tasty.Symbol.Method => m.body.isDefined
+                            case m: Tasty.Symbol.Method => ctx.bodyStore.get(m.id) != null
                             case _                      => false
                     )
                     methodOpt match

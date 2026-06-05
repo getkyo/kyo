@@ -61,8 +61,7 @@ class DecoderFidelity5Phase02Test extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeObject(id: Int, name: String): Tasty.Symbol.Object =
@@ -78,8 +77,7 @@ class DecoderFidelity5Phase02Test extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     /** Build a synthetic classpath with non-empty subclassIndex and companionIndex.

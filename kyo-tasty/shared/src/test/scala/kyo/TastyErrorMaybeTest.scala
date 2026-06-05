@@ -6,6 +6,7 @@ import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TreeUnpickler
 import kyo.internal.tasty.snapshot.SnapshotFormat
 import kyo.internal.tasty.snapshot.SnapshotReader
+import kyo.internal.tasty.symbol.SymbolBody
 import kyo.internal.tasty.symbol.SymbolKind
 import scala.collection.immutable.IntMap
 import scala.collection.mutable
@@ -299,7 +300,7 @@ class TastyErrorMaybeTest extends Test:
             Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown),
             Tasty.Variance.Invariant
         )
-        val body = Tasty.SymbolBody(
+        val body = SymbolBody(
             bodyStart = 0,
             bodyEnd = sectionBytes.length,
             sectionBytes = Span.fromUnsafe(sectionBytes),

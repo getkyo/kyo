@@ -55,8 +55,7 @@ class ClasspathPureDataTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         val sym1 = Tasty.Symbol.Method(
             SymbolId(1),
@@ -69,7 +68,6 @@ class ClasspathPureDataTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Maybe.Absent,
             Maybe.Absent
         )
         val indices = Classpath.Indices.empty.copy(

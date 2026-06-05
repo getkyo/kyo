@@ -55,10 +55,16 @@ class ClasspathBodyMemoTest extends Test:
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, makeSomeObjectSource(), 1)
     end openSomeObjectCp
 
-    // Helper: open classpath as a Binding with a fresh DecodeContext so Tasty.bodyTree works.
+    // Helper: open classpath as a Binding with a populated bodyStore so Tasty.bodyTree works.
+    // Uses coldLoadBinding (not init) to ensure body data is populated into DecodeContext.bodyStore.
     private def openSomeObjectBinding(using Frame): Binding < (Sync & Async & Scope & Abort[TastyError]) =
-        openSomeObjectCp.map: cp =>
-            Binding(cp, Maybe.Present(DecodeContext.fresh()))
+        ClasspathOrchestrator.coldLoadBinding(
+            Seq("root"),
+            Tasty.ErrorMode.SoftFail,
+            Maybe.Absent,
+            makeSomeObjectSource(),
+            1
+        )
     end openSomeObjectBinding
 
     // ── Leaf 2: bodyMemo excluded from equality ───────────────────────────────
@@ -79,13 +85,9 @@ class ClasspathBodyMemoTest extends Test:
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectBinding.flatMap: binding =>
-                    val cp = binding.cp
-                    val symOpt = cp.symbols.find(s =>
-                        (s match
-                            case v: Tasty.Symbol.Val => v.body.isDefined;
-                            case _                   => false
-                        )
-                    )
+                    val cp     = binding.cp
+                    val ctx    = binding.decodeCtx.getOrElse(DecodeContext.fresh())
+                    val symOpt = cp.symbols.find(s => ctx.bodyStore.get(s.id) != null)
                     symOpt match
                         case None =>
                             // No body symbols; still verify reflexivity and hashCode stability.
@@ -124,13 +126,9 @@ class ClasspathBodyMemoTest extends Test:
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectBinding.flatMap: binding1 =>
-                    val cp = binding1.cp
-                    val symOpt = cp.symbols.find(s =>
-                        (s match
-                            case v: Tasty.Symbol.Val => v.body.isDefined;
-                            case _                   => false
-                        )
-                    )
+                    val cp     = binding1.cp
+                    val ctx1   = binding1.decodeCtx.getOrElse(DecodeContext.fresh())
+                    val symOpt = cp.symbols.find(s => ctx1.bodyStore.get(s.id) != null)
                     symOpt match
                         case None =>
                             // No body symbols; test is inconclusive but not failed.
@@ -139,7 +137,6 @@ class ClasspathBodyMemoTest extends Test:
                             TastyState.bindingLocal.let(Maybe.Present(binding1)):
                                 Tasty.bodyTree(sym).map: _ =>
                                     // After one decode in binding1, bodyMemo has exactly 1 entry (the symbol decoded).
-                                    val ctx1      = binding1.decodeCtx.get
                                     val memoSize1 = ctx1.bodyMemo.size()
                                     assert(
                                         memoSize1 == 1,
@@ -170,13 +167,9 @@ class ClasspathBodyMemoTest extends Test:
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectBinding.flatMap: binding =>
-                    val cp = binding.cp
-                    val symOpt = cp.symbols.find(s =>
-                        (s match
-                            case v: Tasty.Symbol.Val => v.body.isDefined;
-                            case _                   => false
-                        )
-                    )
+                    val cp     = binding.cp
+                    val ctx    = binding.decodeCtx.getOrElse(DecodeContext.fresh())
+                    val symOpt = cp.symbols.find(s => ctx.bodyStore.get(s.id) != null)
                     symOpt match
                         case None =>
                             // No body symbols; test is inconclusive but not failed.

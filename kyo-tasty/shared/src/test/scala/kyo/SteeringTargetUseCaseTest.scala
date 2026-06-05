@@ -34,8 +34,7 @@ class SteeringTargetUseCaseTest extends Test:
                 Chunk.empty,
                 Maybe.Absent,
                 Chunk.empty,
-                Chunk.empty,
-                Maybe.Absent
+                Chunk.empty
             )
             val clsA = Tasty.Symbol.Class(
                 SymbolId(1),
@@ -50,8 +49,7 @@ class SteeringTargetUseCaseTest extends Test:
                 declarationIds = Chunk(SymbolId(2), SymbolId(3)),
                 permittedSubclassIds = Maybe.Absent,
                 annotations = Chunk.empty,
-                javaAnnotations = Chunk.empty,
-                body = Maybe.Absent
+                javaAnnotations = Chunk.empty
             )
             val mFoo = Tasty.Symbol.Method(
                 SymbolId(2),
@@ -64,7 +62,6 @@ class SteeringTargetUseCaseTest extends Test:
                 paramListIds = Chunk.empty,
                 typeParamIds = Chunk.empty,
                 annotations = Chunk.empty,
-                body = Maybe.Absent,
                 javaMetadata = Maybe.Absent
             )
             val vX = Tasty.Symbol.Val(
@@ -75,8 +72,7 @@ class SteeringTargetUseCaseTest extends Test:
                 Maybe.Absent,
                 Maybe.Absent,
                 declaredType = Maybe.Absent,
-                annotations = Chunk.empty,
-                body = Maybe.Absent
+                annotations = Chunk.empty
             )
             val pkg = Tasty.Symbol.Package(
                 SymbolId(4),

@@ -30,8 +30,7 @@ class ClasspathTypedFindTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeTrait(id: Int, name: String, ownerId: Int): Tasty.Symbol.Trait =
@@ -48,8 +47,7 @@ class ClasspathTypedFindTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makeObject(id: Int, name: String, ownerId: Int): Tasty.Symbol.Object =
@@ -65,8 +63,7 @@ class ClasspathTypedFindTest extends Test:
             Chunk.empty,
             Chunk.empty,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
 
     private def makePackage(id: Int, name: String, ownerId: Int, members: Chunk[SymbolId]): Tasty.Symbol.Package =

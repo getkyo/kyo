@@ -139,7 +139,6 @@ class FallbackBindingTest extends Test:
             paramListIds = Chunk.empty,
             typeParamIds = Chunk.empty,
             annotations = Chunk.empty,
-            body = Maybe.Absent,
             javaMetadata = Maybe.Absent
         )
         Abort.run[TastyError](Tasty.bodyTree(noBodyMethod)).map:

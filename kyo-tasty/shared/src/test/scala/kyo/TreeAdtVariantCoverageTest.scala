@@ -9,6 +9,7 @@ import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
 import kyo.internal.tasty.reader.TreeUnpickler
 import kyo.internal.tasty.symbol.LoadingSymbol
+import kyo.internal.tasty.symbol.SymbolBody
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 
@@ -50,10 +51,10 @@ class TreeAdtVariantCoverageTest extends Test:
         end for
     end runPass1
 
-    private def symbolBody(sym: LoadingSymbol.Materialising, pass1: AstUnpickler.Pass1Result): Maybe[Tasty.SymbolBody] =
+    private def symbolBody(sym: LoadingSymbol.Materialising, pass1: AstUnpickler.Pass1Result): Maybe[SymbolBody] =
         pass1.bodyDataByAddr.get(sym.id.toLong) match
             case Some((bodyStart, bodyEnd)) =>
-                Maybe(Tasty.SymbolBody(
+                Maybe(SymbolBody(
                     bodyStart = bodyStart,
                     bodyEnd = bodyEnd,
                     sectionBytes = Span.fromUnsafe(pass1.sectionBytes),

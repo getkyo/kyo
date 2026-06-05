@@ -39,11 +39,15 @@ class VarBodyPresentTest extends Test:
             Sync.defer(FileSource.FileStat(0L, files.get(p).map(_.length.toLong).getOrElse(0L)))
     end MemoryFileSource
 
-    private def openFixtureClassesCp(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
+    private def openFixtureClassesSrc(): MemoryFileSource =
         val src = MemoryFileSource()
         // Load the package-level TASTy which contains `var topLevelVar: Int = 0`
         src.add("root/FixtureClasses$package.tasty", kyo.fixtures.Embedded.fixtureClassesPackageTasty)
-        ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
+        src
+    end openFixtureClassesSrc
+
+    private def openFixtureClassesCp(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
+        ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, openFixtureClassesSrc(), 1)
     end openFixtureClassesCp
 
     // Given: FixtureClasses$package.tasty loaded into a Classpath (contains `var topLevelVar: Int = 0`)
@@ -53,10 +57,17 @@ class VarBodyPresentTest extends Test:
     "VarBodyPresentTest: Tasty.bodyTree(Var) returns Present(Tree) for a var with an initializer" in run {
         Scope.run:
             Abort.run[TastyError](
-                openFixtureClassesCp.flatMap: cp =>
-                    val binding = Binding(cp, Maybe.Present(DecodeContext.fresh()))
+                ClasspathOrchestrator.coldLoadBinding(
+                    Seq("root"),
+                    Tasty.ErrorMode.SoftFail,
+                    Maybe.Absent,
+                    openFixtureClassesSrc(),
+                    1
+                ).flatMap: binding =>
+                    val cp  = binding.cp
+                    val ctx = binding.decodeCtx.getOrElse(DecodeContext.fresh())
                     val varWithBodyOpt = cp.symbols.collectFirst:
-                        case v: Tasty.Symbol.Var if v.body.isDefined => v
+                        case v: Tasty.Symbol.Var if ctx.bodyStore.get(v.id) != null => v
                     varWithBodyOpt match
                         case None =>
                             // The fixture contains `var topLevelVar: Int = 0`; the body should be present.

@@ -115,8 +115,7 @@ class PureDataAdtsTest extends Test:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         // EnumCase should match EnumCase arm. Use upcast to Symbol so the match is over the sealed base type
         // where both arms are potentially reachable.

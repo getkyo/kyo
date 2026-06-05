@@ -33,8 +33,7 @@ class SymbolHierarchyTest extends Test:
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
             annotations = Chunk.empty,
-            javaAnnotations = Chunk.empty,
-            body = Maybe.Absent
+            javaAnnotations = Chunk.empty
         )
         assert(sym.id == SymbolId(7))
         import Tasty.Name.asString
@@ -66,8 +65,7 @@ class SymbolHierarchyTest extends Test:
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
             annotations = Chunk.empty,
-            javaAnnotations = Chunk.empty,
-            body = Maybe.Absent
+            javaAnnotations = Chunk.empty
         )
         assert(sym.isSealed)
         assert(sym.openLevel == Tasty.OpenLevel.Sealed)
@@ -96,7 +94,6 @@ class SymbolHierarchyTest extends Test:
             paramListIds = Chunk(Chunk(SymbolId(10), SymbolId(11))),
             typeParamIds = Chunk(SymbolId(12)),
             annotations = Chunk.empty,
-            body = Maybe.Absent,
             javaMetadata = Maybe.Absent
         )
         assert(sym.isInstanceOf[Tasty.Symbol.Method])
@@ -125,8 +122,7 @@ class SymbolHierarchyTest extends Test:
             scaladoc = Maybe.Absent,
             sourcePosition = Maybe.Absent,
             declaredType = Maybe.Absent,
-            annotations = Chunk.empty,
-            body = Maybe.Absent
+            annotations = Chunk.empty
         )
         assert(sym.isInstanceOf[Tasty.Symbol.Val])
         assert(sym.isLazy)
@@ -330,8 +326,7 @@ class SymbolHierarchyTest extends Test:
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
             annotations = Chunk.empty,
-            javaAnnotations = Chunk.empty,
-            body = Maybe.Absent
+            javaAnnotations = Chunk.empty
         )
         val b: Tasty.Symbol = Tasty.Symbol.Class(
             id = SymbolId(5),
@@ -346,8 +341,7 @@ class SymbolHierarchyTest extends Test:
             declarationIds = Chunk.empty,
             permittedSubclassIds = Maybe.Absent,
             annotations = Chunk.empty,
-            javaAnnotations = Chunk.empty,
-            body = Maybe.Absent
+            javaAnnotations = Chunk.empty
         )
         // Phase 03 change: Symbol equality is now field-based (case class default, Decision 15).
         // Two symbols with the same id but different names are NOT equal.

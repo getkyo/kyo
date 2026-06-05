@@ -30,8 +30,7 @@ class TastyAnnotationTest extends Test with TastyTestSupport:
             Chunk.empty,
             Maybe.Absent,
             Chunk.empty,
-            Chunk.empty,
-            Maybe.Absent
+            Chunk.empty
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(deprecatedSym)).flatMap: cp =>
             Tasty.withClasspath(cp):
