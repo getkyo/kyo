@@ -1811,35 +1811,56 @@ private[kyo] object ChartLower:
                                     .height(barH)
                                     .fill(Svg.Paint.Color(defaultFill))
                                     .withAttrs(iAttrs)
-                                // Opacity channel (INV-019).
-                                val withOpacity = mark.opacity match
-                                    case Present(fn) => baseRect.fillOpacity(math.max(0.0, math.min(1.0, fn(row))))
-                                    case Absent      => baseRect
-                                // Tooltip channel (INV-019).
-                                val withTooltip = mark.tooltip match
-                                    case Present(fn) => withOpacity(Svg.title(fn(row)))
-                                    case Absent      => withOpacity
-                                // Label channel: emit Svg.text above the bar (INV-019).
-                                val labelElems: Chunk[Svg.SvgElement] = mark.label match
-                                    case Present(fn) =>
-                                        val lx = barX + barW / 2.0
-                                        val ly = barY - 2.0
-                                        Chunk(
-                                            Svg.text
-                                                .x(lx)
-                                                .y(ly)
-                                                .textAnchor(Svg.TextAnchor.Middle)
-                                                .dominantBaseline(Svg.DominantBaseline.Auto)
-                                                .fill(Svg.Paint.Color(defaultFill))
-                                                .apply(fn(row))
-                                        )
-                                    case Absent => Chunk.empty
-                                (bars.append((row, withTooltip)), labels ++ labelElems)
+                                val (rectEl, labelElems) = applyBarChannels(baseRect, mark, row, barX, barW, barY, defaultFill)
+                                (bars.append((row, rectEl)), labels ++ labelElems)
                         end match
                 loop(i + 1, nextBars, nextLabels)
         val (bars, labels) = loop(0, Chunk.empty, Chunk.empty)
         withHighlight(bars, highlight) ++ labels
     end lowerBarSimple
+
+    /** Apply the opacity, tooltip, and label channels to a bar rect for row `row`.
+      *
+      * Returns the channel-decorated rect plus any emitted label `Svg.text` (Chunk.empty when no
+      * `label` channel). Shared by the static (`lowerBarSimple`) and transition
+      * (`lowerBarSimpleWithTransitions`) paths so the two cannot drift: both honor `opacity`/`tooltip`/
+      * `label` identically. `barX`/`barW`/`barY` are the already-projected rect geometry; `fill` is the
+      * resolved fill color (passed in so the caller keeps control of palette resolution).
+      */
+    private def applyBarChannels[A, X, Y](
+        rect: Svg.Rect,
+        mark: Mark.Bar[A, X, Y],
+        row: A,
+        barX: Double,
+        barW: Double,
+        barY: Double,
+        fill: Style.Color
+    )(using Frame): (Svg.SvgElement, Chunk[Svg.SvgElement]) =
+        // Opacity channel (INV-019).
+        val withOpacity = mark.opacity match
+            case Present(fn) => rect.fillOpacity(math.max(0.0, math.min(1.0, fn(row))))
+            case Absent      => rect
+        // Tooltip channel (INV-019).
+        val withTooltip = mark.tooltip match
+            case Present(fn) => withOpacity(Svg.title(fn(row)))
+            case Absent      => withOpacity
+        // Label channel: emit Svg.text above the bar (INV-019).
+        val labelElems: Chunk[Svg.SvgElement] = mark.label match
+            case Present(fn) =>
+                val lx = barX + barW / 2.0
+                val ly = barY - 2.0
+                Chunk(
+                    Svg.text
+                        .x(lx)
+                        .y(ly)
+                        .textAnchor(Svg.TextAnchor.Middle)
+                        .dominantBaseline(Svg.DominantBaseline.Auto)
+                        .fill(Svg.Paint.Color(fill))
+                        .apply(fn(row))
+                )
+            case Absent => Chunk.empty
+        (withTooltip, labelElems)
+    end applyBarChannels
 
     private def lowerBarGrouped[A, X, Y](
         rows: Chunk[A],
