@@ -2446,4 +2446,88 @@ class ChartLowerTest extends Test:
         )
     }
 
+    // ---- Leaf L22 (GAP-LEGEND-MARGIN-TEXT-ERRORBAR): legend margin reserved for color-bearing text/errorBar ----
+    // Before the fix, buildLayout.hasLegend uses wildcard patterns for Mark.Text and Mark.ErrorBar that
+    // hardcode false regardless of a color channel. So a chart whose ONLY color mark is text or errorBar
+    // does NOT reserve legend margin (topPad stays 0, plotY stays MarginTop=20). After the fix, those
+    // cases check m.color.isDefined, matching the Bar/Line/Area/Point treatment. plotY becomes 40.0.
+
+    // L22a: text-only color mark reserves the top strip (legend margin reserved, plotY = 40.0).
+    "legend margin reserved for color-bearing text mark, plot shifted by LegendReservedH (GAP-LEGEND-MARGIN-TEXT-ERRORBAR)" in {
+        // Use Sale rows with revenue=4000 at the top of yScale(linear(0,4000)).
+        // With linear(0,4000): apply(4000) == plotY.
+        // After fix: plotY = MarginTop(20) + LegendReservedH(20) = 40.0.
+        // Before fix: plotY = MarginTop(20) = 20.0.
+        val naColor = Style.Color.hex("#e63946").getOrElse(fail("bad hex naColor"))
+        val euColor = Style.Color.hex("#2a9d8f").getOrElse(fail("bad hex euColor"))
+        val rows = Chunk(
+            Sale("Jan", Usd(4000), Region.NA), // revenue at top of scale => glyph y == plotY
+            Sale("Feb", Usd(2000), Region.EU)
+        )
+        val spec = UI.chart(rows)(text(x = _.month, y = _.revenue, label = _.month, color = _.region))
+            .yScale(_.linear(0.0, 4000.0))
+            .legend(_.colorScale[Region](Region.NA -> naColor, Region.EU -> euColor))
+        val root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val marks = marksGroup(root)
+        val texts = marks.children.collect { case t: Svg.Text => t }.toSeq
+        assert(texts.size >= 2, s"L22a: expected at least 2 text glyphs in marks group, got ${texts.size}")
+        // Sort by x to get Jan (NA, revenue=4000) first (band-left is "Jan").
+        val byX       = texts.sortBy(t => numOf(t.svgAttrs.x))
+        val topGlyphY = numOf(byX(0).svgAttrs.y)
+        // After fix: plotY = 40.0; before fix: plotY = 20.0.
+        assertClose(topGlyphY, 40.0, "L22a: top glyph y must equal reserved plotY=40 (hasLegend=true for text color mark)")
+    }
+
+    // L22b: errorBar-only color mark reserves the top strip (legend margin reserved, plotY = 40.0).
+    "legend margin reserved for color-bearing errorBar mark, plot shifted by LegendReservedH (GAP-LEGEND-MARGIN-TEXT-ERRORBAR)" in {
+        // EbSale with hi=10.0 == top of yScale(linear(0,10)). apply(10.0) == plotY.
+        // After fix: plotY = 40.0; before fix: plotY = 20.0.
+        val naColor = Style.Color.hex("#e63946").getOrElse(fail("bad hex naColor"))
+        val euColor = Style.Color.hex("#2a9d8f").getOrElse(fail("bad hex euColor"))
+        case class EbSale22(x: String, mean: Double, lo: Double, hi: Double, region: Region)
+            derives CanEqual
+        val rows = Chunk(
+            EbSale22("a", 8.0, 6.0, 10.0, Region.NA), // hi=10.0 at top of scale => vLine y1 == plotY
+            EbSale22("b", 5.0, 3.0, 7.0, Region.EU)
+        )
+        val spec = UI.chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi, color = _.region))
+            .yScale(_.linear(0.0, 10.0))
+            .legend(_.colorScale[Region](Region.NA -> naColor, Region.EU -> euColor))
+        val root  = summon[Conversion[ChartSpec[EbSale22], Svg.Root]](spec)
+        val marks = marksGroup(root)
+        val lines = marks.children.collect { case l: Svg.Line => l }.toSeq
+        // vLines have x1 == x2. lowerErrorBar sets y1=pyLow, y2=pyHigh.
+        // pyHigh = ys.apply(hi) = plotY for hi=10.0 (top of scale). Minimum y2 across vLines = plotY.
+        val vLines = lines.filter(l => l.svgAttrs.x1 == l.svgAttrs.x2)
+        assert(vLines.nonEmpty, "L22b: no vLines found in marks group")
+        val topY = vLines.flatMap(l => l.svgAttrs.y2).min
+        // After fix: plotY = 40.0; before fix: plotY = 20.0.
+        assertClose(
+            topY,
+            40.0,
+            "L22b: top vLine y2 (pyHigh for hi=10.0) must equal reserved plotY=40 (hasLegend=true for errorBar color mark)"
+        )
+    }
+
+    // L22c (CO-PIN): no-color text mark keeps hasLegend==false, plotY unchanged at 20.0.
+    "no-color text mark keeps plotY=20 (hasLegend=false, topPad=0) after GAP-LEGEND-MARGIN fix (co-pin)" in {
+        // text mark WITHOUT a color channel: m.color.isDefined==false, hasLegend stays false.
+        val rows = Chunk(
+            Sale("Jan", Usd(4000)), // no region => Region.NA default, but no color channel on mark
+            Sale("Feb", Usd(2000))
+        )
+        val spec = UI.chart(rows)(text(x = _.month, y = _.revenue, label = _.month))
+            .yScale(_.linear(0.0, 4000.0))
+        val root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val marks = marksGroup(root)
+        val texts = marks.children.collect { case t: Svg.Text => t }.toSeq
+        assert(texts.size >= 1, s"L22c: expected at least 1 text glyph in marks group, got ${texts.size}")
+        val byX       = texts.sortBy(t => numOf(t.svgAttrs.x))
+        val topGlyphY = numOf(byX(0).svgAttrs.y)
+        // No legend reserved: plotY stays at MarginTop = 20.0.
+        assertClose(topGlyphY, 20.0, "L22c: no-color text mark must keep plotY=20 (hasLegend=false, no strip reserved)")
+        // Also: no legend swatches rendered.
+        assert(legendSwatchRects(root).isEmpty, "L22c: no legend swatches for no-color text mark")
+    }
+
 end ChartLowerTest

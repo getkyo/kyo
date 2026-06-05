@@ -281,8 +281,8 @@ private[kyo] object ChartLower:
             case m: Mark.Area[?, ?, ?]     => m.color.isDefined || m.stack.group.isDefined
             case m: Mark.Point[?, ?, ?]    => m.color.isDefined
             case _: Mark.Rule[?]           => false
-            case _: Mark.Text[?, ?, ?]     => false
-            case _: Mark.ErrorBar[?, ?, ?] => false
+            case m: Mark.Text[?, ?, ?]     => m.color.isDefined
+            case m: Mark.ErrorBar[?, ?, ?] => m.color.isDefined
         // A point mark with a `size` channel emits a size legend (representative sample bubbles). That legend
         // always sits in the TOP reserved strip, so the plot must be shifted down to make room even when there
         // is no color legend; otherwise the sample bubbles render over the plotted data (the scatter case).
