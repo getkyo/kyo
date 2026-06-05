@@ -1175,7 +1175,7 @@ val axisChart: Svg.Root =
 
 ### Two axes
 
-A mark opts onto the right y-axis with `axis = Axis.Right`. Each axis gets its own independent scale:
+A mark opts onto the right y-axis with `axis = Axis.Right`. Each axis gets its own independent scale. `.yScaleRight` configures the right-axis scale independently of the left; pass any of the same `ScaleOverride` builders you would pass to `.yScale`:
 
 ```scala
 val twoAxis: Svg.Root =
@@ -1185,6 +1185,7 @@ val twoAxis: Svg.Root =
     )
         .yAxis(_.label("Revenue"))
         .yAxisRight(_.label("Upper bound"))
+        .yScaleRight(_.linear(40000.0, 70000.0))
         .toSvg
 ```
 
