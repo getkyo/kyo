@@ -198,6 +198,8 @@ object TestKyo {
     private def fileToProjects(file: String, allProjectNames: Set[String]): Set[String] = {
         val parts = file.split("/").toList
         parts match {
+            case module :: "plugin" :: _ if allProjectNames.contains(s"$module-plugin") =>
+                Set(s"$module-plugin")
             case module :: sub :: _ =>
                 val affectedPlatforms = sub match {
                     case "shared" => Seq("JVM", "JS", "Native")
