@@ -404,9 +404,9 @@ object SnapshotReader:
                     case v: Tasty.Symbol.Val         => v.declaredType
                     case w: Tasty.Symbol.Var         => w.declaredType
                     case f: Tasty.Symbol.Field       => f.declaredType
-                    case p: Tasty.Symbol.Parameter   => kyo.Maybe(p.declaredType)
-                    case ta: Tasty.Symbol.TypeAlias  => kyo.Maybe(ta.body)
-                    case ot: Tasty.Symbol.OpaqueType => kyo.Maybe(ot.body)
+                    case p: Tasty.Symbol.Parameter   => p.declaredType
+                    case ta: Tasty.Symbol.TypeAlias  => ta.body
+                    case ot: Tasty.Symbol.OpaqueType => ot.body
                     case _ =>
                         kyo.Maybe.Absent
                 ,
@@ -851,9 +851,9 @@ object SnapshotReader:
                     case v: Tasty.Symbol.Val         => v.declaredType
                     case w: Tasty.Symbol.Var         => w.declaredType
                     case f: Tasty.Symbol.Field       => f.declaredType
-                    case p: Tasty.Symbol.Parameter   => kyo.Maybe(p.declaredType)
-                    case ta: Tasty.Symbol.TypeAlias  => kyo.Maybe(ta.body)
-                    case ot: Tasty.Symbol.OpaqueType => kyo.Maybe(ot.body)
+                    case p: Tasty.Symbol.Parameter   => p.declaredType
+                    case ta: Tasty.Symbol.TypeAlias  => ta.body
+                    case ot: Tasty.Symbol.OpaqueType => ot.body
                     case _ =>
                         kyo.Maybe.Absent
                 ,

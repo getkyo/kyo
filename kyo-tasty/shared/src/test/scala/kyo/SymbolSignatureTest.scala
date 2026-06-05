@@ -80,7 +80,7 @@ class SymbolSignatureTest extends Test:
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
-            tpe,
+            Maybe.Present(tpe),
             Maybe.Absent,
             Chunk.empty
         )
@@ -153,7 +153,7 @@ class SymbolSignatureTest extends Test:
             SymbolId(-1),
             Maybe.Absent,
             Maybe.Absent,
-            Tasty.Type.Nothing,
+            Maybe.Present(Tasty.Type.Nothing),
             Chunk.empty,
             Chunk.empty
         )

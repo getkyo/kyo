@@ -18,7 +18,6 @@ private[kyo] object TreeShow:
             case Tasty.Type.Tuple(es)              => s"(${es.map(showType(_, cp)).mkString(", ")})"
             case Tasty.Type.Nothing                => "Nothing"
             case Tasty.Type.Any                    => "Any"
-            case Tasty.Type.Unknown                => "<unknown>"
             case other                             => other.toString
         end match
     end showType

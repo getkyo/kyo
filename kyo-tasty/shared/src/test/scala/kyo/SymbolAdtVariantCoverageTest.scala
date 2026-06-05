@@ -145,7 +145,7 @@ class SymbolAdtVariantCoverageTest extends Test:
             ownerId = id1,
             scaladoc = Maybe.Absent,
             sourcePosition = present,
-            body = anyTy,
+            body = Maybe.Present(anyTy),
             typeParamIds = Chunk.empty,
             annotations = Chunk.empty
         )
@@ -156,7 +156,7 @@ class SymbolAdtVariantCoverageTest extends Test:
             ownerId = id1,
             scaladoc = Maybe.Absent,
             sourcePosition = present,
-            body = anyTy,
+            body = Maybe.Present(anyTy),
             bounds = Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any),
             typeParamIds = Chunk.empty,
             annotations = Chunk.empty
@@ -186,7 +186,7 @@ class SymbolAdtVariantCoverageTest extends Test:
             flags = flags,
             ownerId = id1,
             sourcePosition = present,
-            declaredType = anyTy,
+            declaredType = Maybe.Present(anyTy),
             defaultArgId = Maybe.Absent,
             annotations = Chunk.empty
         )

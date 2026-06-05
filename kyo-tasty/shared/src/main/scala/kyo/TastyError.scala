@@ -188,4 +188,23 @@ enum TastyError derives CanEqual:
       * placeholder in the loading array at the time the error was recorded.
       */
     case UnresolvedReference(name: String, idx: Int)
+
+    /** Cat 14: a producer at `internal/tasty/symbol/TypedSymbolFactory.scala` cannot resolve a declared
+      * type and is operating in `ErrorMode.SoftFail`. Accumulated in `cp.errors`.
+      * Replaces the old `Type.Unknown` sentinel.
+      *
+      * `file` is the source file for the symbol (from `sourcePosition.sourceFile`) or `"<unknown>"` when
+      * absent. `byteOffset` is `0L` because the byte position is not recoverable at materialization time
+      * (Pass C runs after all files are decoded). `reason` identifies which symbol kind triggered the
+      * absent declared type.
+      */
+    case UnknownType(file: String, byteOffset: Long, reason: String)
+
+    /** Cat 14: a Symbol must be materialised but the declared type is absent; raised at the producer
+      * under `ErrorMode.FailFast`. Accumulated in `cp.errors` under `ErrorMode.SoftFail`.
+      *
+      * `symbolId` is the id of the symbol whose declared type could not be resolved. `file` is the source
+      * file for the symbol or `"<unknown>"` when absent.
+      */
+    case MissingDeclaredType(symbolId: kyo.Tasty.SymbolId, file: String)
 end TastyError

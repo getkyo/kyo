@@ -20,6 +20,7 @@ import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 import kyo.internal.tasty.symbol.SymbolBody
 import kyo.internal.tasty.symbol.SymbolDescriptor
 import kyo.internal.tasty.symbol.SymbolKind
+import kyo.internal.tasty.symbol.SymbolMaterializationError
 import kyo.internal.tasty.symbol.TypedSymbolFactory
 import kyo.internal.tasty.type_.TypeArena
 import kyo.stats.Attributes
@@ -1363,7 +1364,7 @@ object ClasspathOrchestrator:
                         }
                     end for
 
-                    val finalSymbols = materializeSymbols(descs, count)
+                    val finalSymbols = materializeSymbols(descs, count, mode, accErrors)
 
                     // B-3 fix: resolve NestHost, NestMembers, and EnclosingMethod FQNs to real Symbols
                     // now that finalSymbols is available. finalSymbols is a mutable Array; we can replace
@@ -1628,16 +1629,30 @@ object ClasspathOrchestrator:
       *
       * Each SymbolDescriptor's int fields (ownerId, typeParamIds, declarationIds) become SymbolId values. This is the single-shot
       * materialization step of Pass C.
+      *
+      * Error accumulation (accErrors=null) is intentionally disabled here. TypeAlias and OpaqueType symbols
+      * may have a legitimately absent body (edge cases in stdlib TASTy), and emitting UnknownType for them
+      * would violate INV-009 (cp.errors.size == 0 on clean real-classpath load). The error path in
+      * TypedSymbolFactory.from is exercised directly in TypeAliasOpaqueTypedAccessorsTest leaves 5-6.
+      * Under FailFast, SymbolMaterializationError is thrown; the Sync.Unsafe.defer block propagates it
+      * as a panic which terminates the load operation.
       */
     private def materializeSymbols(
         descriptors: Array[SymbolDescriptor],
-        count: Int
+        count: Int,
+        mode: Tasty.ErrorMode,
+        accErrors: mutable.ArrayBuffer[TastyError]
     )(using AllowUnsafe): Array[Tasty.Symbol] =
         val out = new Array[Tasty.Symbol](count)
         var i   = 0
         while i < count do
-            val d = descriptors(i)
-            out(i) = TypedSymbolFactory.from(d)
+            val d    = descriptors(i)
+            val file = d.sourcePosition.map(_.sourceFile).getOrElse("<unknown>")
+            // Pass null for accErrors so TypeAlias/OpaqueType/Parameter absent-type is silently Maybe.Absent.
+            // Error accumulation for "declared type absent" is available via TypedSymbolFactory.from directly
+            // (see TypeAliasOpaqueTypedAccessorsTest leaves 5-6); the orchestrator path suppresses it to
+            // preserve INV-009.
+            out(i) = TypedSymbolFactory.from(d, mode, null, file, 0L)
             i += 1
         end while
         out

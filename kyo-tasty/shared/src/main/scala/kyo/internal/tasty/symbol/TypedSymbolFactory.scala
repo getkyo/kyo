@@ -3,7 +3,17 @@ package kyo.internal.tasty.symbol
 import kyo.*
 import kyo.Tasty
 import kyo.Tasty.SymbolId
+import kyo.TastyError
 // SymbolKind is in the same package (kyo.internal.tasty.symbol); no import needed
+
+/** Thrown by TypedSymbolFactory.from under FailFast when a declared type cannot be resolved.
+  *
+  * Uses the same stackless-exception pattern as TastyErrorException in the reader package, but is
+  * scoped to the symbol package to keep the two package boundaries clean. ClasspathOrchestrator catches
+  * this carrier at materializeSymbols and converts it to Abort.fail(TastyError.MissingDeclaredType).
+  */
+final private[kyo] class SymbolMaterializationError(val error: TastyError)
+    extends RuntimeException(error.toString, null, true, false)
 
 /** Canonical factory that converts a fully-populated SymbolDescriptor into the matching typed Symbol subtype.
   *
@@ -12,10 +22,21 @@ import kyo.Tasty.SymbolId
   *
   * All 14 SymbolKind cases are handled. The `d.id` and `d.ownerId` fields are int-typed in SymbolDescriptor; they are wrapped as SymbolId
   * values here. Collection fields (`typeParamIds`, `declarationIds`, `paramListIds`) undergo a similar int-to-SymbolId lift.
+  *
+  * The optional parameters `mode`, `accErrors`, `file`, and `byteOffset` are used by
+  * ClasspathOrchestrator.materializeSymbols to thread error-accumulation context. All other call sites
+  * (SnapshotReader, ClassfileUnpickler, Scala2PickleReader) leave them at defaults; their SymbolDescriptors
+  * always have declaredType resolved before calling from, so the error path is never triggered.
   */
 private[kyo] object TypedSymbolFactory:
 
-    def from(d: SymbolDescriptor): Tasty.Symbol =
+    def from(
+        d: SymbolDescriptor,
+        mode: Tasty.ErrorMode = Tasty.ErrorMode.SoftFail,
+        accErrors: scala.collection.mutable.ArrayBuffer[TastyError] = null,
+        file: String = "<unknown>",
+        byteOffset: Long = 0L
+    ): Tasty.Symbol =
         val sid      = SymbolId(d.id)
         val ownerSid = SymbolId(d.ownerId)
         d.kind match
@@ -122,7 +143,23 @@ private[kyo] object TypedSymbolFactory:
                     ownerId = ownerSid,
                     scaladoc = d.scaladoc,
                     sourcePosition = d.sourcePosition,
-                    body = d.declaredType.getOrElse(Tasty.Type.Unknown),
+                    body = d.declaredType match
+                        case Maybe.Present(t) => Maybe.Present(t)
+                        case Maybe.Absent =>
+                            if accErrors != null then
+                                if mode == Tasty.ErrorMode.FailFast then
+                                    throw new SymbolMaterializationError(
+                                        TastyError.MissingDeclaredType(SymbolId(d.id), file)
+                                    )
+                                else
+                                    accErrors += TastyError.UnknownType(
+                                        file = file,
+                                        byteOffset = byteOffset,
+                                        reason = "TypedSymbolFactory: TypeAlias body absent"
+                                    )
+                            end if
+                            Maybe.Absent
+                    ,
                     typeParamIds = Chunk.from(d.typeParamIds.toSeq.map(SymbolId(_))),
                     annotations = d.annotations
                 )
@@ -134,7 +171,23 @@ private[kyo] object TypedSymbolFactory:
                     ownerId = ownerSid,
                     scaladoc = d.scaladoc,
                     sourcePosition = d.sourcePosition,
-                    body = d.declaredType.getOrElse(Tasty.Type.Unknown),
+                    body = d.declaredType match
+                        case Maybe.Present(t) => Maybe.Present(t)
+                        case Maybe.Absent =>
+                            if accErrors != null then
+                                if mode == Tasty.ErrorMode.FailFast then
+                                    throw new SymbolMaterializationError(
+                                        TastyError.MissingDeclaredType(SymbolId(d.id), file)
+                                    )
+                                else
+                                    accErrors += TastyError.UnknownType(
+                                        file = file,
+                                        byteOffset = byteOffset,
+                                        reason = "TypedSymbolFactory: OpaqueType body absent"
+                                    )
+                            end if
+                            Maybe.Absent
+                    ,
                     bounds = d.bounds.getOrElse(Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any)),
                     typeParamIds = Chunk.from(d.typeParamIds.toSeq.map(SymbolId(_))),
                     annotations = d.annotations
@@ -171,7 +224,23 @@ private[kyo] object TypedSymbolFactory:
                     flags = d.flags,
                     ownerId = ownerSid,
                     sourcePosition = d.sourcePosition,
-                    declaredType = d.declaredType.getOrElse(Tasty.Type.Unknown),
+                    declaredType = d.declaredType match
+                        case Maybe.Present(t) => Maybe.Present(t)
+                        case Maybe.Absent =>
+                            if accErrors != null then
+                                if mode == Tasty.ErrorMode.FailFast then
+                                    throw new SymbolMaterializationError(
+                                        TastyError.MissingDeclaredType(SymbolId(d.id), file)
+                                    )
+                                else
+                                    accErrors += TastyError.UnknownType(
+                                        file = file,
+                                        byteOffset = byteOffset,
+                                        reason = "TypedSymbolFactory: Parameter declaredType absent"
+                                    )
+                            end if
+                            Maybe.Absent
+                    ,
                     defaultArgId = d.defaultArgId.map(SymbolId(_)),
                     annotations = d.annotations
                 )

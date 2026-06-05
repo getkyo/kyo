@@ -335,9 +335,6 @@ object TypeKey:
 
             case Tasty.Type.Any =>
                 work.append(new InjectHash(19))
-
-            case Tasty.Type.Unknown =>
-                work.append(new InjectHash(20))
         end match
     end pushHashWork
 
@@ -467,7 +464,6 @@ object TypeKey:
                         work.addOne((hi1, hi2))
                     case (Tasty.Type.Nothing, Tasty.Type.Nothing) => ()
                     case (Tasty.Type.Any, Tasty.Type.Any)         => ()
-                    case (Tasty.Type.Unknown, Tasty.Type.Unknown) => ()
                     case _ =>
                         result = false
                 end match

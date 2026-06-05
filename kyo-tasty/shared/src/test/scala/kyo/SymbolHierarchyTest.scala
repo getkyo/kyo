@@ -147,12 +147,12 @@ class SymbolHierarchyTest extends Test:
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,
             sourcePosition = Maybe.Absent,
-            body = Tasty.Type.Named(SymbolId(50)),
+            body = Maybe.Present(Tasty.Type.Named(SymbolId(50))),
             typeParamIds = Chunk.empty,
             annotations = Chunk.empty
         )
         val ta = sym.asInstanceOf[Tasty.Symbol.TypeAlias]
-        assert(ta.body == Tasty.Type.Named(SymbolId(50)))
+        assert(ta.body == Maybe.Present(Tasty.Type.Named(SymbolId(50))))
         assert(sym.isInstanceOf[Tasty.Symbol.TypeAlias])
         assert(sym.isInstanceOf[Tasty.Symbol.TypeAlias] || sym.isInstanceOf[Tasty.Symbol.OpaqueType] || sym.isInstanceOf[
             Tasty.Symbol.AbstractType
@@ -176,13 +176,13 @@ class SymbolHierarchyTest extends Test:
             ownerId = SymbolId(0),
             scaladoc = Maybe.Absent,
             sourcePosition = Maybe.Absent,
-            body = Tasty.Type.Named(SymbolId(60)),
+            body = Maybe.Present(Tasty.Type.Named(SymbolId(60))),
             bounds = Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any),
             typeParamIds = Chunk.empty,
             annotations = Chunk.empty
         )
         val ot = sym.asInstanceOf[Tasty.Symbol.OpaqueType]
-        assert(ot.body == Tasty.Type.Named(SymbolId(60)))
+        assert(ot.body == Maybe.Present(Tasty.Type.Named(SymbolId(60))))
         assert(ot.bounds.lower == Tasty.Type.Nothing)
         assert(ot.bounds.upper == Tasty.Type.Any)
         assert(sym.isInstanceOf[Tasty.Symbol.OpaqueType])
@@ -245,12 +245,12 @@ class SymbolHierarchyTest extends Test:
             flags = Tasty.Flags.empty,
             ownerId = SymbolId(0),
             sourcePosition = Maybe.Absent,
-            declaredType = Tasty.Type.Named(SymbolId(70)),
+            declaredType = Maybe.Present(Tasty.Type.Named(SymbolId(70))),
             defaultArgId = Maybe(SymbolId(71)),
             annotations = Chunk.empty
         )
         val p = sym.asInstanceOf[Tasty.Symbol.Parameter]
-        assert(p.declaredType == Tasty.Type.Named(SymbolId(70)))
+        assert(p.declaredType == Maybe.Present(Tasty.Type.Named(SymbolId(70))))
         assert(p.defaultArgId == Maybe(SymbolId(71)))
         assert(sym.isInstanceOf[Tasty.Symbol.Parameter])
         assert(sym.isInstanceOf[Tasty.Symbol.Method] || sym.isInstanceOf[Tasty.Symbol.Val] || sym.isInstanceOf[

@@ -112,7 +112,7 @@ class SymbolFieldPreservationTest extends Test:
                 SymbolId(0),
                 Maybe.Absent,
                 Maybe.Absent,
-                Tasty.Type.Unknown,
+                Maybe.Absent,
                 Chunk.empty,
                 Chunk.empty
             ),
@@ -123,7 +123,7 @@ class SymbolFieldPreservationTest extends Test:
                 SymbolId(0),
                 Maybe.Absent,
                 Maybe.Absent,
-                Tasty.Type.Unknown,
+                Maybe.Absent,
                 Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any),
                 Chunk.empty,
                 Chunk.empty
@@ -153,7 +153,7 @@ class SymbolFieldPreservationTest extends Test:
                 Tasty.Flags.empty,
                 SymbolId(0),
                 Maybe.Absent,
-                Tasty.Type.Unknown,
+                Maybe.Absent,
                 Maybe.Absent,
                 Chunk.empty
             ),
@@ -276,7 +276,7 @@ class SymbolFieldPreservationTest extends Test:
                 SymbolId(0),
                 Maybe.Absent,
                 Maybe.Absent,
-                Tasty.Type.Unknown,
+                Maybe.Absent,
                 Chunk.empty,
                 Chunk.empty
             ),
@@ -287,7 +287,7 @@ class SymbolFieldPreservationTest extends Test:
                 SymbolId(0),
                 Maybe.Absent,
                 Maybe.Absent,
-                Tasty.Type.Unknown,
+                Maybe.Absent,
                 Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any),
                 Chunk.empty,
                 Chunk.empty
@@ -317,7 +317,7 @@ class SymbolFieldPreservationTest extends Test:
                 sf,
                 SymbolId(0),
                 Maybe.Absent,
-                Tasty.Type.Unknown,
+                Maybe.Absent,
                 Maybe.Absent,
                 Chunk.empty
             ),
@@ -337,11 +337,9 @@ class SymbolFieldPreservationTest extends Test:
 
     // ── Leaf 17: declaredType-on-term-subtypes ───────────────────────────────
 
-    // Given: literals for Method, Val, Var, Field with declaredType=Maybe.Present(Type.Named(SymbolId(1)));
-    //   Parameter with declaredType=Type.Named(SymbolId(1)) (required, non-Maybe).
+    // Given: literals for Method, Val, Var, Field, Parameter with declaredType=Maybe.Present(Type.Named(SymbolId(1))).
     // When: read .declaredType.
-    // Then: Method/Val/Var/Field return Maybe.Present(Type.Named(SymbolId(1)));
-    //   Parameter returns Type.Named(SymbolId(1)).
+    // Then: all return Maybe.Present(Type.Named(SymbolId(1))).
     // Pins: INV-002.
     "Leaf 17: declaredType is accessible on Method/Val/Var/Field/Parameter" in {
         val namedType = Tasty.Type.Named(SymbolId(1))
@@ -395,7 +393,7 @@ class SymbolFieldPreservationTest extends Test:
             Tasty.Flags.empty,
             SymbolId(0),
             Maybe.Absent,
-            namedType,
+            Maybe.Present(namedType),
             Maybe.Absent,
             Chunk.empty
         )
@@ -403,7 +401,7 @@ class SymbolFieldPreservationTest extends Test:
         assert(vl.declaredType == Maybe(namedType))
         assert(vr.declaredType == Maybe(namedType))
         assert(field.declaredType == Maybe(namedType))
-        assert(param.declaredType == namedType)
+        assert(param.declaredType == Maybe.Present(namedType))
         succeed
     }
 

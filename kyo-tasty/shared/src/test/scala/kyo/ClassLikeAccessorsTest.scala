@@ -128,7 +128,7 @@ class ClassLikeAccessorsTest extends Test:
             SymbolId(ownerId),
             Maybe.Absent,
             Maybe.Absent,
-            Tasty.Type.Unknown,
+            Maybe.Absent,
             Chunk.empty,
             Chunk.empty
         )
@@ -141,7 +141,7 @@ class ClassLikeAccessorsTest extends Test:
             SymbolId(ownerId),
             Maybe.Absent,
             Maybe.Absent,
-            Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown),
+            Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any),
             Chunk.empty
         )
 
@@ -153,8 +153,8 @@ class ClassLikeAccessorsTest extends Test:
             SymbolId(ownerId),
             Maybe.Absent,
             Maybe.Absent,
-            Tasty.Type.Unknown,
-            Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown),
+            Maybe.Absent,
+            Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any),
             Chunk.empty,
             Chunk.empty
         )
@@ -166,7 +166,7 @@ class ClassLikeAccessorsTest extends Test:
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
-            Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown),
+            Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any),
             Tasty.Variance.Invariant
         )
 
@@ -177,7 +177,7 @@ class ClassLikeAccessorsTest extends Test:
             Tasty.Flags(Tasty.Flag.CoVariant),
             SymbolId(ownerId),
             Maybe.Absent,
-            Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown),
+            Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any),
             Tasty.Variance.Covariant
         )
 
@@ -188,7 +188,7 @@ class ClassLikeAccessorsTest extends Test:
             Tasty.Flags(Tasty.Flag.ContraVariant),
             SymbolId(ownerId),
             Maybe.Absent,
-            Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown),
+            Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any),
             Tasty.Variance.Contravariant
         )
 

@@ -793,9 +793,6 @@ object Tasty:
         /** Sentinel upper-bound type used in `TypeBounds` when no concrete upper bound is known. */
         case Any
 
-        /** Sentinel unknown type used when `declaredType` is absent but a concrete `Type` field is required. */
-        case Unknown
-
         /** Visit each direct child of this Type without allocating an intermediate Chunk.
           *
           * Used internally by `children` and `foreach` so the hot traversal path does not materialize a
@@ -1846,7 +1843,7 @@ object Tasty:
             ownerId: SymbolId,
             scaladoc: Maybe[String],
             sourcePosition: Maybe[Position],
-            body: Type,
+            body: Maybe[Type],
             typeParamIds: Chunk[SymbolId],
             annotations: Chunk[Annotation]
         ) extends Symbol derives Schema, CanEqual
@@ -1867,7 +1864,7 @@ object Tasty:
             ownerId: SymbolId,
             scaladoc: Maybe[String],
             sourcePosition: Maybe[Position],
-            body: Type,
+            body: Maybe[Type],
             bounds: TypeBounds,
             typeParamIds: Chunk[SymbolId],
             annotations: Chunk[Annotation]
@@ -1939,7 +1936,7 @@ object Tasty:
             flags: Flags,
             ownerId: SymbolId,
             sourcePosition: Maybe[Position],
-            declaredType: Type,
+            declaredType: Maybe[Type],
             defaultArgId: Maybe[SymbolId],
             annotations: Chunk[Annotation]
         ) extends Symbol derives Schema, CanEqual:
@@ -3701,7 +3698,6 @@ object Tasty:
                 case Type.Tuple(es)              => s"(${es.map(renderType).mkString(", ")})"
                 case Type.Nothing                => "Nothing"
                 case Type.Any                    => "Any"
-                case Type.Unknown                => "<unknown>"
                 case other                       => other.toString
             renderType(tpe)
 

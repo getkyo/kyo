@@ -3,11 +3,22 @@ package kyo
 import kyo.Json
 import kyo.Tasty.SymbolId
 
-/** Tests for Cat 10 (isContext drop), Cat 16 (derives CanEqual), and Schema round-trips for all Type cases.
+/** Tests for Cat 10 (isContext drop), Cat 14 (Unknown removal), Cat 16 (derives CanEqual), and Schema round-trips for all Type cases.
   *
-  * Leaves 1-3 from the phase-05 plan.
+  * Leaves 1-3 from the phase-05 plan. Leaf 4 (unknownDeleted) from phase-10 plan.
   */
 class TypeAdtVariantCoverageTest extends Test:
+
+    // Phase 10 leaf 1: unknownDeleted
+    // Given: a probe compiletime.testing.typeCheckErrors("kyo.Tasty.Type.Unknown")
+    // When: the test asserts
+    // Then: the returned list is non-empty (Type.Unknown was removed in Cat 14)
+    // Pins: Cat 14; INV-005-CLEAN; principle 2
+    "Type.Unknown no longer exists after Cat 14 elimination" in {
+        val errs = compiletime.testing.typeCheckErrors("kyo.Tasty.Type.Unknown")
+        assert(errs.nonEmpty, "Expected compile error for Type.Unknown, but got none; Unknown was removed in Phase 10")
+        succeed
+    }
 
     // Leaf 1: functionDropsIsContext
     // Given: a probe compileErrors('Type.Function(Chunk.empty, Type.Any, true)')
@@ -77,10 +88,9 @@ class TypeAdtVariantCoverageTest extends Test:
             Tasty.Type.Bounds(n, n),
             Tasty.Type.FlexibleType(n),
             Tasty.Type.Nothing,
-            Tasty.Type.Any,
-            Tasty.Type.Unknown
+            Tasty.Type.Any
         )
-        val encoded = Json.encode(cases)
+        val encoded = Json.encode[List[Tasty.Type]](cases)
         Json.decode[List[Tasty.Type]](encoded) match
             case Result.Success(decoded) =>
                 assert(decoded == cases, s"Schema round-trip failed: decoded != original")

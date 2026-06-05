@@ -112,7 +112,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
             SymbolId(-1),
             Maybe.Absent,
             Maybe.Absent,
-            Tasty.Type.Nothing,
+            Maybe.Present(Tasty.Type.Nothing),
             Chunk.empty,
             Chunk.empty
         )
@@ -125,7 +125,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
             SymbolId(-1),
             Maybe.Absent,
             Maybe.Absent,
-            Tasty.Type.Nothing,
+            Maybe.Present(Tasty.Type.Nothing),
             Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any),
             Chunk.empty,
             Chunk.empty
@@ -161,7 +161,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
             Tasty.Flags.empty,
             SymbolId(6),
             Maybe.Absent,
-            Tasty.Type.Nothing,
+            Maybe.Present(Tasty.Type.Nothing),
             Maybe.Absent,
             Chunk.empty
         )

@@ -52,7 +52,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
                         m.declaredType.foreach: dt =>
                             ctxFnCount += walkType(dt)
                     case p: Tasty.Symbol.Parameter =>
-                        ctxFnCount += walkType(p.declaredType)
+                        p.declaredType.foreach(t => ctxFnCount += walkType(t))
                     case c: Tasty.Symbol.ClassLike =>
                         c.parentTypes.foreach: pt =>
                             ctxFnCount += walkType(pt)
@@ -78,7 +78,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
             cp.symbols.foreach: sym =>
                 sym match
                     case p: Tasty.Symbol.Parameter =>
-                        paramCtxFnCount += countContextFunctions(p.declaredType)
+                        p.declaredType.foreach(t => paramCtxFnCount += countContextFunctions(t))
                     case _ => ()
             assert(
                 paramCtxFnCount > 0,
@@ -100,7 +100,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
             cp.symbols.foreach: sym =>
                 sym match
                     case p: Tasty.Symbol.Parameter =>
-                        total += countContextFunctions(p.declaredType)
+                        p.declaredType.foreach(t => total += countContextFunctions(t))
                     case m: Tasty.Symbol.Method =>
                         m.declaredType.foreach: dt =>
                             total += countContextFunctions(dt)

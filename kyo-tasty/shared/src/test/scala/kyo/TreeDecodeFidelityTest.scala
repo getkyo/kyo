@@ -147,7 +147,7 @@ class TreeDecodeFidelityTest extends Test:
                     t.children.foreach(walkType)
                 end walkType
                 sym match
-                    case ta: Tasty.Symbol.TypeAlias => walkType(ta.body)
+                    case ta: Tasty.Symbol.TypeAlias => ta.body.foreach(walkType)
                     case _                          => ()
                 end match
             assert(
@@ -163,7 +163,7 @@ class TreeDecodeFidelityTest extends Test:
                     t.children.foreach(walkType)
                 end walkType
                 sym match
-                    case ta: Tasty.Symbol.TypeAlias => walkType(ta.body)
+                    case ta: Tasty.Symbol.TypeAlias => ta.body.foreach(walkType)
                     case _                          => ()
                 end match
             assert(

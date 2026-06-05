@@ -25,11 +25,11 @@ private[kyo] object SymbolSignature:
             case v: Tasty.Symbol.Val          => s"val ${v.simpleName}${typeAscription(v.declaredType)}"
             case v: Tasty.Symbol.Var          => s"var ${v.simpleName}${typeAscription(v.declaredType)}"
             case f: Tasty.Symbol.Field        => s"field ${f.simpleName}${typeAscription(f.declaredType)}"
-            case t: Tasty.Symbol.TypeAlias    => s"type ${t.simpleName} = ${renderType(t.body)}"
-            case t: Tasty.Symbol.OpaqueType   => s"opaque type ${t.simpleName} = ${renderType(t.body)}"
+            case t: Tasty.Symbol.TypeAlias    => s"type ${t.simpleName} = ${t.body.map(renderType).getOrElse("<absent>")}"
+            case t: Tasty.Symbol.OpaqueType   => s"opaque type ${t.simpleName} = ${t.body.map(renderType).getOrElse("<absent>")}"
             case t: Tasty.Symbol.AbstractType => s"type ${t.simpleName}"
             case t: Tasty.Symbol.TypeParam    => t.simpleName
-            case p: Tasty.Symbol.Parameter    => s"${p.simpleName}: ${renderType(p.declaredType)}"
+            case p: Tasty.Symbol.Parameter    => s"${p.simpleName}: ${p.declaredType.map(renderType).getOrElse("<absent>")}"
             case p: Tasty.Symbol.Package      => s"package ${p.simpleName}"
             case _                            => s"<unknown ${sym.simpleName}>"
         end match
@@ -44,7 +44,7 @@ private[kyo] object SymbolSignature:
                 cp.symbol(pid).map: p =>
                     p match
                         case param: Tasty.Symbol.Parameter =>
-                            s"${param.simpleName}: ${renderType(param.declaredType)}"
+                            s"${param.simpleName}: ${param.declaredType.map(renderType).getOrElse("<absent>")}"
                         case other => other.simpleName
                     end match
                 .toList

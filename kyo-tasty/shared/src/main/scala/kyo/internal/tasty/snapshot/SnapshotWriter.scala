@@ -521,6 +521,10 @@ object SnapshotWriter:
                 case TastyError.UnhandledSubtypingCase(_, _, _, _) => ()
                 // UnresolvedReference: loading-phase error; write no snapshot fields (Phase 11 note).
                 case TastyError.UnresolvedReference(_, _) => ()
+                // Phase 10: UnknownType and MissingDeclaredType will get full wire-format in Phase 11.
+                // Write no fields for now; the reader maps unknown tags to TastyError.NotImplemented.
+                case TastyError.UnknownType(_, _, _)      => ()
+                case TastyError.MissingDeclaredType(_, _) => ()
             end match
         end for
         baos.toByteArray

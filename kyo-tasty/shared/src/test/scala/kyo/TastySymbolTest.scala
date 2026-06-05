@@ -483,7 +483,7 @@ class TastySymbolTest extends Test:
         val sid   = SymbolId(-1)
         val n0    = Tasty.Name("X")
         val flags = Tasty.Flags.empty
-        val tb    = Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown)
+        val tb    = Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any)
         val classSym = Tasty.Symbol.Class(
             sid,
             n0,

@@ -34,7 +34,7 @@ class ParameterTypedAccessorsTest extends Test:
     private def makeParameter(
         id: Int,
         name: String,
-        declaredType: Tasty.Type,
+        declaredType: Maybe[Tasty.Type],
         defaultArgId: Maybe[SymbolId] = Maybe.Absent,
         flags: Tasty.Flags = Tasty.Flags.empty
     ): Tasty.Symbol.Parameter =
@@ -57,7 +57,7 @@ class ParameterTypedAccessorsTest extends Test:
     "Leaf 96: defaultArg-present: Parameter.defaultArg returns Present when defaultArgId is Present" in run {
         // defaultArgMethod at index 0, parameter at index 1
         val defaultArgMethod = makeDefaultArgSymbol(0)
-        val param            = makeParameter(1, "x", Tasty.Type.Unknown, defaultArgId = Maybe(SymbolId(0)))
+        val param            = makeParameter(1, "x", Maybe.Absent, defaultArgId = Maybe(SymbolId(0)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(defaultArgMethod, param)).map: cp =>
             given Tasty.Classpath       = cp
             val da: Maybe[Tasty.Symbol] = param.defaultArgId.flatMap(id => cp.symbol(id))
@@ -71,7 +71,7 @@ class ParameterTypedAccessorsTest extends Test:
     // Then: Maybe.Absent
     // Pins: INV-002
     "Leaf 97: defaultArg-absent: Parameter.defaultArg returns Absent when defaultArgId is Absent" in run {
-        val param = makeParameter(0, "x", Tasty.Type.Unknown, defaultArgId = Maybe.Absent)
+        val param = makeParameter(0, "x", Maybe.Absent, defaultArgId = Maybe.Absent)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(param)).map: cp =>
             given Tasty.Classpath       = cp
             val da: Maybe[Tasty.Symbol] = param.defaultArgId.flatMap(id => cp.symbol(id))
@@ -86,7 +86,7 @@ class ParameterTypedAccessorsTest extends Test:
     // Pins: INV-003
     "Leaf 98: isImplicit-given: Parameter.isImplicit returns true for a Given-flagged parameter" in run {
         val givenFlags = Tasty.Flags(Tasty.Flag.Given)
-        val param      = makeParameter(0, "x", Tasty.Type.Unknown, flags = givenFlags)
+        val param      = makeParameter(0, "x", Maybe.Absent, flags = givenFlags)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(param)).map: cp =>
             assert(param.flags.contains(Tasty.Flag.Given), "isImplicit must be true when Flag.Given is set")
             succeed
@@ -98,11 +98,17 @@ class ParameterTypedAccessorsTest extends Test:
     // Then: true
     // Pins: INV-002
     "Leaf 99: isByName-typed: Parameter.isByName returns true when declaredType is Type.ByName" in run {
-        val byNameType = Tasty.Type.ByName(Tasty.Type.Unknown)
-        val param      = makeParameter(0, "x", byNameType)
+        val byNameType = Tasty.Type.ByName(Tasty.Type.Nothing)
+        val param      = makeParameter(0, "x", Maybe.Present(byNameType))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(param)).map: cp =>
-            assert(param.declaredType.isInstanceOf[Tasty.Type.ByName], "isByName must be true when declaredType is Type.ByName")
-            assert(!param.declaredType.isInstanceOf[Tasty.Type.Repeated], "isRepeated must be false when declaredType is Type.ByName")
+            assert(
+                param.declaredType.map(_.isInstanceOf[Tasty.Type.ByName]).getOrElse(false),
+                "isByName must be true when declaredType is Type.ByName"
+            )
+            assert(
+                !param.declaredType.map(_.isInstanceOf[Tasty.Type.Repeated]).getOrElse(false),
+                "isRepeated must be false when declaredType is Type.ByName"
+            )
             succeed
     }
 
@@ -112,11 +118,17 @@ class ParameterTypedAccessorsTest extends Test:
     // Then: true
     // Pins: INV-002
     "Leaf 100: isRepeated-typed: Parameter.isRepeated returns true when declaredType is Type.Repeated" in run {
-        val repeatedType = Tasty.Type.Repeated(Tasty.Type.Unknown)
-        val param        = makeParameter(0, "xs", repeatedType)
+        val repeatedType = Tasty.Type.Repeated(Tasty.Type.Nothing)
+        val param        = makeParameter(0, "xs", Maybe.Present(repeatedType))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(param)).map: cp =>
-            assert(param.declaredType.isInstanceOf[Tasty.Type.Repeated], "isRepeated must be true when declaredType is Type.Repeated")
-            assert(!param.declaredType.isInstanceOf[Tasty.Type.ByName], "isByName must be false when declaredType is Type.Repeated")
+            assert(
+                param.declaredType.map(_.isInstanceOf[Tasty.Type.Repeated]).getOrElse(false),
+                "isRepeated must be true when declaredType is Type.Repeated"
+            )
+            assert(
+                !param.declaredType.map(_.isInstanceOf[Tasty.Type.ByName]).getOrElse(false),
+                "isByName must be false when declaredType is Type.Repeated"
+            )
             succeed
     }
 

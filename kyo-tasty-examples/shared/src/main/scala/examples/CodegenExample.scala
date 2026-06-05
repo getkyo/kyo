@@ -61,7 +61,7 @@ object CodegenExample:
             case Maybe.Present(other) =>
                 FacadeMethod(m.name, m.flags, other, Chunk.empty)
             case Maybe.Absent =>
-                FacadeMethod(m.name, m.flags, Tasty.Type.Unknown, Chunk.empty)
+                FacadeMethod(m.name, m.flags, Tasty.Type.Nothing, Chunk.empty)
         end match
     end buildFacadeMethod
 

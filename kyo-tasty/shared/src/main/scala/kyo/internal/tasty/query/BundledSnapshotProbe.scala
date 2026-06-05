@@ -218,7 +218,7 @@ private[kyo] object BundledSnapshotProbe:
                     id = newId,
                     ownerId = newOwnerId,
                     typeParamIds = ta.typeParamIds.map(id => SymbolId(id.value + offset)),
-                    body = remapType(ta.body, offset),
+                    body = ta.body.map(remapType(_, offset)),
                     annotations = ta.annotations.map(remapAnnotation(_, offset))
                 )
             case ot: Tasty.Symbol.OpaqueType =>
@@ -226,7 +226,7 @@ private[kyo] object BundledSnapshotProbe:
                     id = newId,
                     ownerId = newOwnerId,
                     typeParamIds = ot.typeParamIds.map(id => SymbolId(id.value + offset)),
-                    body = remapType(ot.body, offset),
+                    body = ot.body.map(remapType(_, offset)),
                     bounds = remapTypeBounds(ot.bounds, offset),
                     annotations = ot.annotations.map(remapAnnotation(_, offset))
                 )
@@ -248,7 +248,7 @@ private[kyo] object BundledSnapshotProbe:
                     id = newId,
                     ownerId = newOwnerId,
                     defaultArgId = pr.defaultArgId.map(did => SymbolId(did.value + offset)),
-                    declaredType = remapType(pr.declaredType, offset),
+                    declaredType = pr.declaredType.map(remapType(_, offset)),
                     annotations = pr.annotations.map(remapAnnotation(_, offset))
                 )
         end match

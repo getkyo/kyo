@@ -77,7 +77,7 @@ class SymbolShowFormatTest extends Test:
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
-            tpe,
+            Maybe.Present(tpe),
             Maybe.Absent,
             Chunk.empty
         )

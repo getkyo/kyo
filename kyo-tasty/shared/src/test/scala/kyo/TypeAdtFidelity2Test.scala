@@ -48,7 +48,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
                     ta.body.foreach: t =>
                         if reachesAndType(t) then count += 1
                 case ot: Tasty.Symbol.OpaqueType =>
-                    if reachesAndType(ot.body) then count += 1
+                    ot.body.foreach(t => if reachesAndType(t) then count += 1)
                 case _ => ()
             assert(
                 count >= 0,
@@ -116,8 +116,9 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
             var matchTypeCount = 0
             cp.symbols.foreach:
                 case ta: Tasty.Symbol.TypeAlias =>
-                    collectMatchTypes(ta.body).foreach: _ =>
-                        matchTypeCount += 1
+                    ta.body.foreach: t =>
+                        collectMatchTypes(t).foreach: _ =>
+                            matchTypeCount += 1
                 case _ => ()
             assert(
                 matchTypeCount > 0,
@@ -261,9 +262,9 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // JVM-only: coldWarmEquiv uses TestClasspaths2.standardWithSnapshot (JVM filesystem).
     // Pins: INV-101-DF2 + INV-105-DF2
     coldWarmEquiv("F-A2-007 leaf 11 (Phase 2.09): snapshot round-trip preserves MatchCase count in TypeAlias bodies"): cp =>
-        cp.symbols.collect:
-            case ta: Tasty.Symbol.TypeAlias => countMatchCases(ta.body)
-        .foldLeft(0)(_ + _)
+        cp.symbols.foldLeft(0):
+            case (acc, ta: Tasty.Symbol.TypeAlias) => acc + ta.body.map(countMatchCases).getOrElse(0)
+            case (acc, _)                          => acc
 
     // ─────────────────────────────────────────────────────────────────────────
     // Private helpers

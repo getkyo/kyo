@@ -166,6 +166,9 @@ class TastyErrorMaybeTest extends Test:
                 case TastyError.UnhandledSubtypingCase(_, _, _, _) => ()
                 // Phase 08: UnresolvedReference is a loading-phase error; not serializable in Phase 11 yet; write no fields.
                 case TastyError.UnresolvedReference(_, _) => ()
+                // Phase 10: UnknownType and MissingDeclaredType will be serialized in Phase 11; write no fields.
+                case TastyError.UnknownType(_, _, _)      => ()
+                case TastyError.MissingDeclaredType(_, _) => ()
             end match
         end for
         baos.toByteArray
@@ -297,7 +300,7 @@ class TastyErrorMaybeTest extends Test:
             Tasty.Flags.empty,
             Tasty.SymbolId(-1),
             Maybe.Absent,
-            Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown),
+            Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any),
             Tasty.Variance.Invariant
         )
         val body = SymbolBody(
@@ -401,6 +404,48 @@ class TastyErrorMaybeTest extends Test:
                     fail(s"Expected Success(cp) with UnresolvedReference in cp.errors but got Failure: $e")
                 case Result.Panic(t) =>
                     fail(s"Unexpected panic: ${t.getMessage}")
+    }
+
+    // Phase 10 leaf 7: unknownTypeAndMissingDeclaredTypeExhaustiveMatch
+    // Given: TastyError enum with UnknownType and MissingDeclaredType variants
+    // When: matching on both variants by pattern
+    // Then: patterns compile correctly; values are reachable TastyError instances
+    // Note: Scala 3 sealed enum non-exhaustive warnings are not errors by default,
+    //   so we verify reachability via construction and pattern-match rather than typeCheckErrors.
+    // Pins: INV-TASTYERROR-WIRE
+    "Phase 10 leaf 7: TastyError.UnknownType and MissingDeclaredType are reachable closed-enum variants" in {
+        // Verify UnknownType is constructable and matches as TastyError
+        val ut: TastyError = TastyError.UnknownType("f.tasty", 0L, "reason")
+        val utResult = ut match
+            case TastyError.UnknownType(f, bo, r) =>
+                assert(f == "f.tasty")
+                assert(bo == 0L)
+                assert(r == "reason")
+                true
+            case _ => false
+        assert(utResult, "UnknownType pattern match arm must fire")
+        // Verify MissingDeclaredType is constructable and matches as TastyError
+        val mdt: TastyError = TastyError.MissingDeclaredType(Tasty.SymbolId(3), "g.tasty")
+        val mdtResult = mdt match
+            case TastyError.MissingDeclaredType(sid, f) =>
+                assert(sid == Tasty.SymbolId(3))
+                assert(f == "g.tasty")
+                true
+            case _ => false
+        assert(mdtResult, "MissingDeclaredType pattern match arm must fire")
+        // Verify both are subtype-equal (CanEqual derived) and distinguishable from other variants
+        assert(ut != mdt, "UnknownType and MissingDeclaredType must be distinct")
+        assert(ut == TastyError.UnknownType("f.tasty", 0L, "reason"), "CanEqual structural equality must hold for UnknownType")
+        assert(
+            mdt == TastyError.MissingDeclaredType(Tasty.SymbolId(3), "g.tasty"),
+            "CanEqual structural equality must hold for MissingDeclaredType"
+        )
+        // Verify neither is constructable from the other's shape (compile-time probe)
+        val errs = compiletime.testing.typeCheckErrors(
+            "kyo.TastyError.UnknownType(kyo.Tasty.SymbolId(3), \"f\")"
+        )
+        assert(errs.nonEmpty, "UnknownType(SymbolId, String) must not compile -- wrong arity")
+        succeed
     }
 
 end TastyErrorMaybeTest

@@ -64,7 +64,7 @@ class MethodTypedAccessorsTest extends Test:
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
-            Tasty.Type.Unknown,
+            Maybe.Absent,
             Maybe.Absent,
             Chunk.empty
         )
@@ -76,7 +76,7 @@ class MethodTypedAccessorsTest extends Test:
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
-            Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown),
+            Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any),
             Tasty.Variance.Invariant
         )
 
@@ -163,7 +163,7 @@ class MethodTypedAccessorsTest extends Test:
     // Pins: INV-002
     "Leaf 72: returnType-Function-result: extracts result from Type.Function" in run {
         val resultType = Tasty.Type.Named(SymbolId(99))
-        val funcType   = Tasty.Type.Function(Chunk(Tasty.Type.Unknown), resultType)
+        val funcType   = Tasty.Type.Function(Chunk(Tasty.Type.Nothing), resultType)
         val method     = makeMethod(id = 1, name = "compute", ownerId = 0, declaredType = Maybe(funcType))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(method)).map: cp =>
             given Tasty.Classpath = cp

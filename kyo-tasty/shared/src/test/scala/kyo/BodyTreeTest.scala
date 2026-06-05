@@ -28,19 +28,27 @@ class BodyTreeTest extends Test:
                 ClasspathOrchestrator.coldLoadBinding(Seq("root"), Tasty.ErrorMode.SoftFail, Maybe.Absent, src, 1).flatMap: binding =>
                     val cp = binding.cp
                     TastyState.bindingLocal.let(Maybe.Present(binding)):
-                        // Find any method that likely has a body (SomeObject.foo or similar)
+                        // Find a concrete method (SomeObject.tasty contains a non-abstract method).
+                        // The bodyStore is populated by coldLoadBinding, so a concrete method from
+                        // the loaded fixture MUST have its body tree available via Tasty.bodyTree.
                         val methodOpt = cp.allMethods.toSeq.find(m => !m.isAbstract)
                         methodOpt match
-                            case None => Kyo.lift(succeed) // no concrete methods in fixture
+                            case None =>
+                                Kyo.lift(fail("Expected at least one concrete method in SomeObject fixture"))
                             case Some(method) =>
                                 Tasty.bodyTree(method).map:
                                     case Maybe.Present(tree) =>
-                                        // Body was decoded; tree should be non-null
+                                        // Body was decoded; tree is a non-null AST node
                                         assert(tree != null, "bodyTree must return a non-null Tree when Present")
                                         succeed
                                     case Maybe.Absent =>
-                                        // Not all methods have bodies (abstract, Java-sourced, etc.)
-                                        succeed
+                                        // A concrete method loaded via coldLoadBinding must have body bytes
+                                        // in bodyStore; Maybe.Absent here means the bodyStore is empty or
+                                        // the method's body was not recorded -- both are incorrect.
+                                        fail(
+                                            s"Tasty.bodyTree returned Maybe.Absent for concrete method '${method.name}' " +
+                                                "loaded via coldLoadBinding; bodyStore should be populated"
+                                        )
                         end match
             ).map:
                 case Result.Success(s) => s

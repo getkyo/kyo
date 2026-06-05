@@ -25,7 +25,7 @@ object RuntimeReflectionExample:
             yield
                 val decls = cls.declarationIds.flatMap(id => cp.symbol(id).toChunk)
                 val vals  = decls.collect { case v: Tasty.Symbol.Val => v }
-                vals.map(f => (f.name.asString, f.declaredType.getOrElse(Tasty.Type.Unknown)))
+                vals.map(f => (f.name.asString, f.declaredType.getOrElse(Tasty.Type.Nothing)))
     end fieldsOf
 
     /** Returns a structural type summary of a known type for debugging or printing. */

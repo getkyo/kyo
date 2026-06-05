@@ -22,14 +22,14 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
             Tasty.Flags.empty,
             SymbolId(ownerId),
             Maybe.Absent,
-            Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown),
+            Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any),
             Tasty.Variance.Invariant
         )
 
     private def makeTypeAlias(
         id: Int,
         name: String,
-        body: Tasty.Type,
+        body: Maybe[Tasty.Type],
         typeParamIds: Chunk[SymbolId] = Chunk.empty
     ): Tasty.Symbol.TypeAlias =
         Tasty.Symbol.TypeAlias(
@@ -47,7 +47,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
     private def makeOpaqueType(
         id: Int,
         name: String,
-        body: Tasty.Type,
+        body: Maybe[Tasty.Type],
         bounds: Tasty.TypeBounds,
         typeParamIds: Chunk[SymbolId] = Chunk.empty
     ): Tasty.Symbol.OpaqueType =
@@ -87,20 +87,21 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
             Chunk.empty
         )
         val aliasBody = Tasty.Type.Named(intId)
-        val typeAlias = makeTypeAlias(1, "Foo", aliasBody)
+        val typeAlias = makeTypeAlias(1, "Foo", Maybe.Present(aliasBody))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(intSymbol, typeAlias)).map: cp =>
             given Tasty.Classpath = cp
-            val b: Tasty.Type     = typeAlias.body
-            b match
-                case Tasty.Type.Named(sid) =>
+            typeAlias.body match
+                case Maybe.Present(Tasty.Type.Named(sid)) =>
                     import Tasty.Name.asString
                     val resolved = cp.symbol(sid)
                     assert(
                         resolved.map(_.name.asString).getOrElse("<absent>") == "Int",
                         s"Expected body to resolve to Int but got ${resolved.map(_.name.asString).getOrElse("<absent>")}"
                     )
-                case other =>
+                case Maybe.Present(other) =>
                     fail(s"Expected Type.Named but got $other")
+                case Maybe.Absent =>
+                    fail("Expected body to be Present but got Absent")
             end match
             succeed
     }
@@ -114,7 +115,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
         // Indices: tpA=0, tpB=1, typeAlias=2
         val tpA       = makeTypeParam(0, "A", ownerId = 2)
         val tpB       = makeTypeParam(1, "B", ownerId = 2)
-        val typeAlias = makeTypeAlias(2, "Foo", Tasty.Type.Unknown, typeParamIds = Chunk(SymbolId(0), SymbolId(1)))
+        val typeAlias = makeTypeAlias(2, "Foo", Maybe.Absent, typeParamIds = Chunk(SymbolId(0), SymbolId(1)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(tpA, tpB, typeAlias)).map: cp =>
             given Tasty.Classpath = cp
             val tps               = typeAlias.typeParamIds.flatMap(id => cp.symbol(id).toChunk).asInstanceOf[Chunk[Tasty.Symbol.TypeParam]]
@@ -148,21 +149,22 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
             Chunk.empty
         )
         val body       = Tasty.Type.Named(longId)
-        val bounds     = Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown)
-        val opaqueType = makeOpaqueType(1, "Money", body, bounds)
+        val bounds     = Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any)
+        val opaqueType = makeOpaqueType(1, "Money", Maybe.Present(body), bounds)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(longSymbol, opaqueType)).map: cp =>
             given Tasty.Classpath = cp
-            val b: Tasty.Type     = opaqueType.body
-            b match
-                case Tasty.Type.Named(sid) =>
+            opaqueType.body match
+                case Maybe.Present(Tasty.Type.Named(sid)) =>
                     import Tasty.Name.asString
                     val resolved = cp.symbol(sid)
                     assert(
                         resolved.map(_.name.asString).getOrElse("<absent>") == "Long",
                         s"Expected Long but got ${resolved.map(_.name.asString).getOrElse("<absent>")}"
                     )
-                case other =>
+                case Maybe.Present(other) =>
                     fail(s"Expected Type.Named but got $other")
+                case Maybe.Absent =>
+                    fail("Expected body to be Present but got Absent")
             end match
             succeed
     }
@@ -190,9 +192,9 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
             Chunk.empty
         )
         val upperType  = Tasty.Type.Named(intId)
-        val bounds     = Tasty.TypeBounds(Tasty.Type.Unknown, upperType)
+        val bounds     = Tasty.TypeBounds(Tasty.Type.Nothing, upperType)
         val body       = Tasty.Type.Named(intId)
-        val opaqueType = makeOpaqueType(1, "N", body, bounds)
+        val opaqueType = makeOpaqueType(1, "N", Maybe.Present(body), bounds)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(intSymbol, opaqueType)).map: cp =>
             given Tasty.Classpath    = cp
             val tb: Tasty.TypeBounds = opaqueType.bounds
@@ -218,8 +220,8 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
     "Leaf 95: opaque-typeParams: OpaqueType.typeParams returns Chunk[TypeParam] size 1 name A" in run {
         // Indices: tpA=0, opaqueType=1
         val tpA        = makeTypeParam(0, "A", ownerId = 1)
-        val bounds     = Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown)
-        val opaqueType = makeOpaqueType(1, "Box", Tasty.Type.Unknown, bounds, typeParamIds = Chunk(SymbolId(0)))
+        val bounds     = Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any)
+        val opaqueType = makeOpaqueType(1, "Box", Maybe.Absent, bounds, typeParamIds = Chunk(SymbolId(0)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(tpA, opaqueType)).map: cp =>
             given Tasty.Classpath = cp
             val tps               = opaqueType.typeParamIds.flatMap(id => cp.symbol(id).toChunk).asInstanceOf[Chunk[Tasty.Symbol.TypeParam]]
@@ -227,6 +229,157 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
             import Tasty.Name.asString
             assert(tps(0).name.asString == "A", s"Expected name A but got ${tps(0).name.asString}")
             succeed
+    }
+
+    // ── Phase 10 leaves: Maybe[Type] fields and error accumulation ──────────────
+
+    // Phase 10 leaf 2: typeAliasBodyIsMaybe
+    // Given: a fixture Symbol.TypeAlias with a real body
+    // When: the test reads ta.body
+    // Then: Maybe.Present(t) for a resolvable body; Maybe.Absent under SoftFail with no resolution
+    // Pins: Cat 14
+    "Phase 10 leaf 2: TypeAlias.body is Maybe[Type] -- Present for real body, Absent for SoftFail missing" in {
+        val bodyType = Tasty.Type.Named(Tasty.SymbolId(0))
+        val ta       = makeTypeAlias(0, "Foo", Maybe.Present(bodyType))
+        assert(ta.body == Maybe.Present(bodyType), s"Expected Maybe.Present but got ${ta.body}")
+        val taAbsent = makeTypeAlias(0, "Bar", Maybe.Absent)
+        assert(taAbsent.body == Maybe.Absent, "Expected Maybe.Absent for body=Maybe.Absent")
+        succeed
+    }
+
+    // Phase 10 leaf 3: opaqueTypeBodyIsMaybe
+    // Given: a fixture Symbol.OpaqueType with a real body
+    // When: the test reads ot.body
+    // Then: Maybe.Present(t); bounds unchanged (TypeBounds(Type.Nothing, Type.Any) by default)
+    // Pins: Cat 14; PRESERVE-M
+    "Phase 10 leaf 3: OpaqueType.body is Maybe[Type] -- Present for real body; bounds default Nothing/Any" in {
+        val bodyType = Tasty.Type.Named(Tasty.SymbolId(0))
+        val bounds   = Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any)
+        val ot       = makeOpaqueType(0, "Money", Maybe.Present(bodyType), bounds)
+        assert(ot.body == Maybe.Present(bodyType), s"Expected Maybe.Present but got ${ot.body}")
+        assert(ot.bounds.lower == Tasty.Type.Nothing, "Expected Nothing as default lower bound")
+        assert(ot.bounds.upper == Tasty.Type.Any, "Expected Any as default upper bound")
+        succeed
+    }
+
+    // Phase 10 leaf 4: parameterDeclaredTypeIsMaybe
+    // Given: a fixture Symbol.Parameter
+    // When: the test reads p.declaredType
+    // Then: Maybe.Present(t) for resolvable; Maybe.Absent for unresolved under SoftFail
+    // Pins: Cat 14
+    "Phase 10 leaf 4: Parameter.declaredType is Maybe[Type] -- Present for real type, Absent for missing" in {
+        val dt = Tasty.Type.Named(Tasty.SymbolId(0))
+        val p1 = Tasty.Symbol.Parameter(
+            Tasty.SymbolId(0),
+            Tasty.Name("x"),
+            Tasty.Flags.empty,
+            Tasty.SymbolId(-1),
+            Maybe.Absent,
+            Maybe.Present(dt),
+            Maybe.Absent,
+            Chunk.empty
+        )
+        assert(p1.declaredType == Maybe.Present(dt), s"Expected Maybe.Present but got ${p1.declaredType}")
+        val p2 = Tasty.Symbol.Parameter(
+            Tasty.SymbolId(1),
+            Tasty.Name("y"),
+            Tasty.Flags.empty,
+            Tasty.SymbolId(-1),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty
+        )
+        assert(p2.declaredType == Maybe.Absent, "Expected Maybe.Absent for missing declaredType")
+        succeed
+    }
+
+    // Phase 10 leaf 5: failFastRaisesMissingDeclaredType
+    // Given: a SymbolDescriptor with kind=Parameter, declaredType=Maybe.Absent
+    // When: TypedSymbolFactory.from called with FailFast mode and a non-null accErrors buffer
+    // Then: SymbolMaterializationError is thrown carrying TastyError.MissingDeclaredType
+    // Pins: Cat 14; INV-TASTYERROR-WIRE consumer
+    "Phase 10 leaf 5: TypedSymbolFactory.from throws SymbolMaterializationError under FailFast with absent declaredType" in {
+        import kyo.internal.tasty.symbol.SymbolDescriptor
+        import kyo.internal.tasty.symbol.SymbolKind
+        import kyo.internal.tasty.symbol.SymbolMaterializationError
+        import kyo.internal.tasty.symbol.TypedSymbolFactory
+        val d = new SymbolDescriptor(
+            id = 42,
+            kind = SymbolKind.Parameter,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name("p"),
+            ownerId = -1,
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            body = Maybe.Absent
+        )
+        // A non-null accErrors buffer is required to activate the error path.
+        // When accErrors is null, the factory silently returns Maybe.Absent (for INV-009 compliance).
+        val sentinel = new scala.collection.mutable.ArrayBuffer[TastyError]()
+        try
+            TypedSymbolFactory.from(d, Tasty.ErrorMode.FailFast, sentinel, "test.tasty", 0L)
+            fail("Expected SymbolMaterializationError to be thrown")
+        catch
+            case sme: SymbolMaterializationError =>
+                sme.error match
+                    case TastyError.MissingDeclaredType(sid, file) =>
+                        assert(sid == Tasty.SymbolId(42), s"Expected symbolId=42 but got $sid")
+                        assert(file == "test.tasty", s"Expected file='test.tasty' but got '$file'")
+                    case other =>
+                        fail(s"Expected MissingDeclaredType but got $other")
+        end try
+        succeed
+    }
+
+    // Phase 10 leaf 6: softFailAccumulatesUnknownType
+    // Given: the same SymbolDescriptor with kind=Parameter, declaredType=Maybe.Absent
+    // When: TypedSymbolFactory.from called with SoftFail mode and a real accErrors buffer
+    // Then: accErrors contains exactly one TastyError.UnknownType; returned symbol has declaredType==Maybe.Absent
+    // Pins: Cat 14
+    "Phase 10 leaf 6: TypedSymbolFactory.from accumulates UnknownType under SoftFail with absent declaredType" in {
+        import kyo.internal.tasty.symbol.SymbolDescriptor
+        import kyo.internal.tasty.symbol.SymbolKind
+        import kyo.internal.tasty.symbol.TypedSymbolFactory
+        val accErrors = new scala.collection.mutable.ArrayBuffer[TastyError]()
+        val d = new SymbolDescriptor(
+            id = 7,
+            kind = SymbolKind.Parameter,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name("q"),
+            ownerId = -1,
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            body = Maybe.Absent
+        )
+        val sym = TypedSymbolFactory.from(d, Tasty.ErrorMode.SoftFail, accErrors, "soft.tasty", 0L)
+        assert(accErrors.length == 1, s"Expected 1 accumulated error but got ${accErrors.length}")
+        accErrors.head match
+            case TastyError.UnknownType(file, _, reason) =>
+                assert(file == "soft.tasty", s"Expected file='soft.tasty' but got '$file'")
+                assert(reason.contains("Parameter"), s"Expected reason to mention Parameter but got '$reason'")
+            case other =>
+                fail(s"Expected UnknownType but got $other")
+        end match
+        sym match
+            case p: Tasty.Symbol.Parameter =>
+                assert(p.declaredType == Maybe.Absent, s"Expected Maybe.Absent declaredType but got ${p.declaredType}")
+            case other =>
+                fail(s"Expected Parameter but got $other")
+        end match
+        succeed
     }
 
 end TypeAliasOpaqueTypedAccessorsTest
