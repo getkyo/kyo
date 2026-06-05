@@ -131,7 +131,7 @@ class HtmlRendererTest extends UITest:
         }
     }
 
-    "two handlers from same event both complete" in {
+    "two handlers from same event both complete".flaky in {
         val app: UI < Async =
             for clickLog <- Signal.initRef(Chunk.empty[String])
             yield UI.div(

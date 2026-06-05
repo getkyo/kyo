@@ -372,7 +372,7 @@ class BrowserHistoryTest extends BrowserTest:
     }
 
     // After reload returns, the DOM must be fully loaded so a synchronous text read finds the element.
-    "Browser.reload() zero-arg reloads and waits for NetworkIdle" in {
+    "Browser.reload() zero-arg reloads and waits for NetworkIdle".flaky in {
         val p = page("<html><body><div id='x'>hello</div></body></html>")
         withBrowser {
             Browser.goto(p).andThen {

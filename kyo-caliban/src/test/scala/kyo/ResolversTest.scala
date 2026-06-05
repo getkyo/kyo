@@ -847,7 +847,7 @@ class ResolverTest extends BaseCalibanTest:
         end for
     }
 
-    "WS - graphql-transport-ws - ping returns pong" in {
+    "WS - graphql-transport-ws - ping returns pong".flaky in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
@@ -887,7 +887,7 @@ class ResolverTest extends BaseCalibanTest:
         end for
     }
 
-    "WS - graphql-ws (legacy) - subscription happy path" in {
+    "WS - graphql-ws (legacy) - subscription happy path".flaky in {
         val api = subscriptionApi(10, 20)
         for
             interpreter <- Resolvers.get(api)

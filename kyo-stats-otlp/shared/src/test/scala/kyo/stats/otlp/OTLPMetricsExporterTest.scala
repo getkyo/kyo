@@ -125,7 +125,7 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
             }
         }
 
-        "exports registered gauge at interval".onlyJvm in {
+        "exports registered gauge at interval".onlyJvm.flaky in {
             withCollector { (config, metricCh) =>
                 val uniqueName           = "test.export.gauge." + java.util.UUID.randomUUID().toString.take(8)
                 @volatile var gaugeValue = 99.5

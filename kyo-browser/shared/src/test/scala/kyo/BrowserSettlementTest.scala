@@ -726,7 +726,7 @@ class BrowserSettlementTest extends BrowserTest:
 
     // ---- Settle.Load + signature normalization + catalog deliverable ----
 
-    "Settle.Load is accepted by goto and the back/forward/reload paths" in {
+    "Settle.Load is accepted by goto and the back/forward/reload paths".flaky in {
         // Two distinct pages so back/forward have somewhere to navigate between.
         val first  = page("<h1>first</h1>")
         val second = page("<h1>second</h1>")

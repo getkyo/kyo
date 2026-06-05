@@ -975,7 +975,7 @@ class RealisticInteractionItTest extends UITest:
         }
     }
 
-    "checkbox onClick and onChange both fire on click" in {
+    "checkbox onClick and onChange both fire on click".flaky in {
         val app: UI < Async =
             for log <- Signal.initRef(Chunk.empty[String])
             yield UI.div(

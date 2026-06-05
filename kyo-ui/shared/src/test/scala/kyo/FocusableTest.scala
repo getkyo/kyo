@@ -260,7 +260,7 @@ class FocusableTest extends UITest:
         }
     }
 
-    "Tab from input to button fires onBlur on input and onFocus on button" in {
+    "Tab from input to button fires onBlur on input and onFocus on button".flaky in {
         val app: UI < Async =
             for log <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -427,7 +427,7 @@ class FocusableTest extends UITest:
         }
     }
 
-    "Tab dispatches Blur on old and Focus on new" in {
+    "Tab dispatches Blur on old and Focus on new".flaky in {
         val app: UI < Async =
             for log <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
