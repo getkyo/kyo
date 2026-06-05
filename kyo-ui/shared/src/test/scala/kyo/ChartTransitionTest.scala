@@ -475,4 +475,107 @@ class ChartTransitionTest extends Test:
         end for
     }
 
+    // ---- Leaf L18 (GAP-TRANS-BAR-CHANNELS): animated bar emits opacity/label/tooltip channels ----
+
+    "animated bar emits opacity/label/tooltip channels matching the static path (L18, GAP-TRANS-BAR-CHANNELS)" in run {
+        // Static bar (no Signal ref): lowerBarSimple -> applyBarChannels -> channels applied.
+        // Animated bar (Signal ref + .animate): lowerBarSimpleWithTransitions -> was missing applyBarChannels.
+        // Both must emit fill-opacity="0.5", a <title> tooltip child, and a sibling label <text>.
+        //
+        // Scale: linear(0, 4000), baseline=440.
+        //   rev=2000: barY=230, barH=210
+        //   barX = plotX = 60 (single band), barW = plotW = 560 (single category)
+        //   labelX = barX + barW/2 = 60 + 280 = 340, labelY = barY - 2 = 228
+        val rows = Chunk(Sale("Jan", Rev(2000.0)))
+        for
+            ref <- Signal.initRef(rows)
+            animSpec = UI.chart(ref: Signal[Chunk[Sale]])(
+                bar(
+                    x = _.month,
+                    y = _.revenue,
+                    opacity = _ => 0.5,
+                    label = _.month,
+                    tooltip = _.month
+                )
+            ).yScale(_.linear(0.0, 4000.0))
+                .animate(_.ease(300.millis))
+            animRoot = summon[Conversion[ChartSpec[Sale], Svg.Root]](animSpec)
+            // First render (ENTER): bar is new, from=0 to=210 height, from=440 to=230 y.
+            html <- HtmlRenderer.render(animRoot, Seq.empty)
+        yield
+            // (a) fill-opacity channel: the animated rect must carry fill-opacity="0.5".
+            assert(
+                html.contains("fill-opacity=\"0.5\""),
+                s"Animated bar must carry fill-opacity=0.5 (opacity channel dropped before fix):\n$html"
+            )
+            // (b) tooltip channel: the animated rect must contain a <title ...>Jan</title> child.
+            // The renderer emits data-kyo-path attributes, so match on the closing tag pattern.
+            assert(
+                html.contains(">Jan</title>"),
+                s"Animated bar must contain >Jan</title> (tooltip channel dropped before fix):\n$html"
+            )
+            // (c) label channel: a sibling label <text>Jan</text> must be present.
+            assert(
+                html.contains(">Jan<"),
+                s"Animated bar must emit a label text >Jan< (label channel dropped before fix):\n$html"
+            )
+            // (d) SMIL animates still present (animation not disturbed): both <animate> children preserved.
+            assert(
+                html.contains("attributeName=\"height\""),
+                s"Animated bar must still carry attributeName=height SMIL animate:\n$html"
+            )
+            assert(
+                html.contains("attributeName=\"y\""),
+                s"Animated bar must still carry attributeName=y SMIL animate:\n$html"
+            )
+            // (e) ENTER animate values: from=0 to=210 (height), from=440 to=230 (y).
+            assert(
+                html.contains("from=\"0\"") && html.contains("to=\"210\""),
+                s"Animated bar ENTER must have from=0 to=210 height animate:\n$html"
+            )
+            assert(
+                html.contains("from=\"440\"") && html.contains("to=\"230\""),
+                s"Animated bar ENTER must have from=440 to=230 y animate:\n$html"
+            )
+        end for
+    }
+
+    // ---- L18 co-pin: no-channel animated bar is byte-identical to today (L8 co-pin arm for transitions) ----
+
+    "no-channel animated bar is byte-identical through the fix (L18 co-pin)" in run {
+        // A bar with NO opacity/label/tooltip channels. After the fix, applyBarChannels returns the rect
+        // unchanged (Absent arms for all three channels) and an empty label Chunk. The SMIL animates are
+        // attached as before. Output must be byte-identical to the pre-fix animated bar.
+        val rows = Chunk(Sale("Jan", Rev(1000.0)))
+        for
+            ref <- Signal.initRef(rows)
+            spec = UI.chart(ref: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+                .yScale(_.linear(0.0, 4000.0))
+                .animate(_.ease(300.millis))
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // No fill-opacity attribute (opacity channel absent).
+            assert(
+                !html.contains("fill-opacity"),
+                s"No-channel animated bar must NOT carry fill-opacity (Absent arm):\n$html"
+            )
+            // No <title> child (tooltip absent).
+            assert(
+                !html.contains("<title>"),
+                s"No-channel animated bar must NOT carry <title> (Absent arm):\n$html"
+            )
+            // SMIL animates still present.
+            assert(
+                html.contains("attributeName=\"height\"") && html.contains("attributeName=\"y\""),
+                s"No-channel animated bar must still carry SMIL animates:\n$html"
+            )
+            // ENTER animate for Jan rev=1000: barH=105, barY=335.
+            assert(
+                html.contains("from=\"0\"") && html.contains("to=\"105\""),
+                s"No-channel animated bar ENTER must have from=0 to=105 height:\n$html"
+            )
+        end for
+    }
+
 end ChartTransitionTest

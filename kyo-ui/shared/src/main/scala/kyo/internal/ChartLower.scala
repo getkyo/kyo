@@ -3382,41 +3382,47 @@ private[kyo] object ChartLower:
         def loop(
             i: Int,
             acc: Chunk[Svg.SvgElement],
-            geom: Map[String, MarkGeom]
+            geom: Map[String, MarkGeom],
+            labels: Chunk[Svg.SvgElement]
         ): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
-            if i >= rows.size then (acc, geom)
+            if i >= rows.size then (acc ++ labels, geom)
             else
                 val row     = rows(i)
                 val yDomain = mark.y.plottable.toDomain(mark.y.accessor(row))
                 val nextResult = yDomain match
-                    case Absent => (acc, geom)
+                    case Absent => (acc, geom, labels)
                     case Present(yd) =>
                         val xDomain = mark.x.plottable.toDomain(mark.x.accessor(row))
                         xDomain match
-                            case Absent => (acc, geom)
+                            case Absent => (acc, geom, labels)
                             case Present(xd) =>
-                                val barX  = xs.apply(xd)
-                                val barW  = xs.bandwidth
-                                val barY  = ys.apply(yd)
-                                val barH  = baseline - barY
-                                val key   = rowKey(spec, mark, row)
-                                val newG2 = geom.updated(key, MarkGeom.Bar(barH, barY))
-                                val r: Svg.Rect =
-                                    if !animOk then
-                                        Svg.rect.x(barX).y(barY).width(barW).height(barH).fill(Svg.Paint.Color(defaultFill))
+                                val barX     = xs.apply(xd)
+                                val barW     = xs.bandwidth
+                                val barY     = ys.apply(yd)
+                                val barH     = baseline - barY
+                                val key      = rowKey(spec, mark, row)
+                                val newG2    = geom.updated(key, MarkGeom.Bar(barH, barY))
+                                val baseRect = Svg.rect.x(barX).y(barY).width(barW).height(barH).fill(Svg.Paint.Color(defaultFill))
+                                val (channelRect, labelEls) = applyBarChannels(baseRect, mark, row, barX, barW, barY, defaultFill)
+                                val r: Svg.SvgElement =
+                                    if !animOk then channelRect
                                     else
                                         val (fromH, fromY) = fromGeom.get(key) match
                                             case Some(MarkGeom.Bar(ph, py)) => (ph, py)
                                             case _                          => (0.0, baseline) // enter from baseline
-                                        val rectBase = Svg.rect.x(barX).y(barY).width(barW).height(barH).fill(Svg.Paint.Color(defaultFill))
-                                        rectBase(
+                                        // channelRect is a Svg.Rect at runtime (applyBarChannels returns the rect with
+                                        // opacity/title applied; only .fillOpacity and .apply(ShapeChild) are called,
+                                        // both returning Svg.Rect). Cast back to Svg.Rect to attach the SMIL animate
+                                        // children. Child order: tooltip (<title>) added first by applyBarChannels,
+                                        // animates follow: [<title>, <animate height>, <animate y>].
+                                        channelRect.asInstanceOf[Svg.Rect](
                                             smilAnimate("height", fromH, barH, durStr),
                                             smilAnimate("y", fromY, barY, durStr)
                                         )
-                                (acc.append(r), newG2)
+                                (acc.append(r), newG2, labels ++ labelEls)
                         end match
-                loop(i + 1, nextResult._1, nextResult._2)
-        loop(0, Chunk.empty, newGeom)
+                loop(i + 1, nextResult._1, nextResult._2, nextResult._3)
+        loop(0, Chunk.empty, newGeom, Chunk.empty)
     end lowerBarSimpleWithTransitions
 
     /** Lower a line mark with keyed-transition awareness, emitting a declarative SMIL path morph when
