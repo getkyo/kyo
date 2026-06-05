@@ -194,4 +194,59 @@ class WebsiteStylesCoverageTest extends Test:
         }
     }
 
+    // Leaf 2: the .ver rule is present and is a positioning container (not the pill chrome)
+    "the .ver rule is a relatively-positioned layout container" in run {
+        val css = WebsiteStyles.sheet.render
+        // find the .ver { ... } block (terminated by the next newline after the opening brace)
+        val verIdx = css.indexOf(".ver {")
+        assert(verIdx >= 0, ".ver rule must be present in the rendered CSS")
+        val blockEnd = css.indexOf('}', verIdx)
+        val block    = if blockEnd >= 0 then css.substring(verIdx, blockEnd + 1) else css.substring(verIdx)
+        assert(block.contains("position: relative"), s".ver rule must carry position: relative; got: $block")
+    }
+
+    // Leaf 3: the option overlay rule is keyed on data-kyo-dropdown-options with position: absolute
+    "the [data-kyo-dropdown-options] rule carries position: absolute (Position.dropdown card chrome)" in run {
+        val css    = WebsiteStyles.sheet.render
+        val selStr = "[data-kyo-dropdown-options]"
+        val selIdx = css.indexOf(selStr)
+        assert(selIdx >= 0, s"$selStr rule must be present in the rendered CSS")
+        val blockEnd = css.indexOf('}', selIdx)
+        val block    = if blockEnd >= 0 then css.substring(selIdx, blockEnd + 1) else css.substring(selIdx)
+        assert(block.contains("position: absolute"), s"$selStr rule must carry position: absolute; got: $block")
+        assert(block.contains("var(--surface)"), s"$selStr rule must carry surface background; got: $block")
+        assert(block.contains("var(--line)"), s"$selStr rule must carry line border; got: $block")
+    }
+
+    // Leaf 4: the highlighted-option rule is keyed on data-kyo-dropdown-hl="true" with accent-ghost
+    "the [data-kyo-dropdown-hl=true] rule carries the accent-ghost background" in run {
+        val css    = WebsiteStyles.sheet.render
+        val selStr = """[data-kyo-dropdown-hl="true"]"""
+        val selIdx = css.indexOf(selStr)
+        assert(selIdx >= 0, s"""$selStr rule must be present in the rendered CSS""")
+        val blockEnd = css.indexOf('}', selIdx)
+        val block    = if blockEnd >= 0 then css.substring(selIdx, blockEnd + 1) else css.substring(selIdx)
+        assert(block.contains("accent-ghost"), s"$selStr rule must carry accent-ghost background; got: $block")
+    }
+
+    // Leaf 5: the version dropdown carries .id("site-version"), so the renderer emits
+    // data-kyo-dropdown-trigger and data-kyo-dropdown-options. Rules 2 and 3 in the sheet now
+    // match real elements, proving the rules are no longer inert.
+    "the version dropdown emits data-kyo-dropdown-trigger and data-kyo-dropdown-options (Rules 2 and 3 are live)" in run {
+        landingHtml.map { html =>
+            assert(
+                html.contains("data-kyo-dropdown-trigger=\"site-version\""),
+                "landing HTML must contain data-kyo-dropdown-trigger=\"site-version\" (Rule 2 now matches a real element)"
+            )
+            assert(
+                html.contains("data-kyo-dropdown-options=\"site-version\""),
+                "landing HTML must contain data-kyo-dropdown-options=\"site-version\" (Rule 3 now matches a real element)"
+            )
+            assert(
+                html.contains("data-kyo-dropdown-opt"),
+                "landing HTML must contain data-kyo-dropdown-opt rows"
+            )
+        }
+    }
+
 end WebsiteStylesCoverageTest

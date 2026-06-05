@@ -136,7 +136,7 @@ object SiteApp:
                         .onInput(q => queryRef.set(q).andThen(activeRef.set(-1)))
                         .onKeyDown(handleKey(searchIndex, queryRef, activeRef, navigate)),
                     searchResults(searchIndex, queryRef, activeRef),
-                    UI.dropdown(versionOptions*).cssClass("ver"),
+                    UI.dropdown(versionOptions*).cssClass("ver").id("site-version"),
                     UI.a
                         .cssClass("btn")
                         .cssClass("btn-primary")

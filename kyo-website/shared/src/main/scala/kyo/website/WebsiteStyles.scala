@@ -243,15 +243,41 @@ object WebsiteStyles:
                     .padding(12.px, 8.px)
                     .hover(_.color(_.variable("ink")))
             )
-            // version control button (the `ver` dropdown trigger)
+            // version control wrapper: a relatively-positioned bare container so the option overlay's
+            // Position.dropdown (top:100%; right:0) anchors to the trigger. Pill chrome lives on the
+            // inner button keyed on data-kyo-dropdown-trigger below.
             .rule(
                 "ver",
+                Style.row.align(_.center).gap(6.px).flexShrink(0.0).position(_.relative)
+            )
+            .rule(
+                Selector.cls("ver").descendant(Selector.data("kyo-dropdown-trigger")),
                 Style.row.align(_.center).gap(6.px)
                     .fontFamily(Style.FontFamily.Custom("var(--mono)")).fontSize(12.5.px).fontWeight(_.w500)
                     .color(_.variable("dim"))
                     .border(1.px, _.variable("line")).rounded(8.px).padding(8.px, 11.px)
                     .bg(_.variable("surface")).cursor(_.pointer)
                     .hover(_.color(_.variable("ink")).borderColor(_.variable("faint")))
+            )
+            .rule(
+                Selector.data("kyo-dropdown-options"),
+                Style.column.position(_.dropdown).gap(2.px)
+                    .minWidth(140.px)
+                    .margin(4.px, 0.px, 0.px, 0.px)
+                    .bg(_.variable("surface")).border(1.px, _.variable("line")).rounded(8.px)
+                    .padding(4.px)
+                    .shadow(0.px, 12.px, 32.px, 0.px, Color.rgba(20, 20, 15, 0.14))
+            )
+            .rule(
+                Selector.data("kyo-dropdown-opt"),
+                Style.row.align(_.center)
+                    .padding(6.px, 10.px).rounded(6.px).cursor(_.pointer)
+                    .color(_.variable("ink"))
+                    .hover(_.bg(_.variable("accent-ghost")))
+            )
+            .rule(
+                Selector.data("kyo-dropdown-hl", "true"),
+                Style.bg(_.variable("accent-ghost"))
             )
     end landingChrome
 
