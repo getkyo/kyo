@@ -51,11 +51,13 @@ enum TestResult derives CanEqual:
       */
     case Cancelled(reason: String, duration: Duration)
 
-    /** The leaf was decorated with `.pending(reason) - { body }` (non-terminal); the body was not executed. */
+    /** The leaf was held pending by `.pendingUntilFixed`: the body ran and still failed, so it is reported pending (not failed) until
+      * the underlying issue is fixed.
+      */
     case Pending(reason: String)
 
-    /** The leaf was marked `.ignore` and its body was not executed. */
-    case Ignored
+    /** The leaf was marked `.ignore` (optionally `.ignore(reason)`) and its body was not executed. */
+    case Ignored(reason: String)
 
     /** The leaf's body exceeded the configured timeout limit. */
     case TimedOut(limit: Duration)

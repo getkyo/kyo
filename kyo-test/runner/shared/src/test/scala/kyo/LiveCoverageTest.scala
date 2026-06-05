@@ -150,13 +150,13 @@ private object LiveCoverageFixtures:
         "ig".ignore in Sync.defer(ignoreCounter.incrementAndGet()).andThen(succeed)
     end IgnoreSuite
 
-    // ── 11. plain pending (non-xfail) ────────────────────────────────────────────────────────
+    // ── 11. ignore with reason (formerly plain pending) ──────────────────────────────────────
 
-    val pendingCounter: AtomicInteger = new AtomicInteger(0)
+    val ignoreWithReasonCounter: AtomicInteger = new AtomicInteger(0)
 
-    class PendingSuite extends TestBase[Any]:
-        "pd".pending("known reason") in Sync.defer(pendingCounter.incrementAndGet()).andThen(succeed)
-    end PendingSuite
+    class IgnoreWithReasonSuite extends TestBase[Any]:
+        "pd".ignore("known reason") in Sync.defer(ignoreWithReasonCounter.incrementAndGet()).andThen(succeed)
+    end IgnoreWithReasonSuite
 
     // ── 12. only(false) ──────────────────────────────────────────────────────────────────────
 
@@ -404,15 +404,15 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
     }
 
-    // ── 11. plain pending: body does NOT run; leaf reports Pending ───────────────────────────
+    // ── 11. ignore with reason: body does NOT run; leaf reports Ignored ─────────────────────
 
-    "pending: leaf reports Pending and body does not run" in {
-        LiveCoverageFixtures.pendingCounter.set(0)
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.PendingSuite])).map { report =>
-            assert(report.pending == 1, s"expected pending==1 but got $report")
+    "ignore with reason: leaf reports Ignored and body does not run" in {
+        LiveCoverageFixtures.ignoreWithReasonCounter.set(0)
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.IgnoreWithReasonSuite])).map { report =>
+            assert(report.ignored == 1, s"expected ignored==1 but got $report")
             assert(
-                LiveCoverageFixtures.pendingCounter.get() == 0,
-                s"expected pendingCounter == 0 (body must NOT run) but got ${LiveCoverageFixtures.pendingCounter.get()}"
+                LiveCoverageFixtures.ignoreWithReasonCounter.get() == 0,
+                s"expected ignoreWithReasonCounter == 0 (body must NOT run) but got ${LiveCoverageFixtures.ignoreWithReasonCounter.get()}"
             )
         }
     }

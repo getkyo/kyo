@@ -43,7 +43,7 @@ class SummaryTest extends kyo.test.Test[Any]:
                 leafResult(TestResult.Failed("x == y", Maybe.empty, oneMilli)),
                 leafResult(TestResult.Cancelled("interrupted", oneMilli)),
                 leafResult(TestResult.Pending("not yet")),
-                leafResult(TestResult.Ignored),
+                leafResult(TestResult.Ignored("")),
                 leafResult(TestResult.TimedOut(5L.seconds)),
                 leafResult(TestResult.Skipped("filtered"))
             ),
@@ -206,7 +206,7 @@ class SummaryTest extends kyo.test.Test[Any]:
                 (Chunk("MixedSuite", "c1"), TestResult.Cancelled("setup failed", oneMilli)),
                 (Chunk("MixedSuite", "pnd"), TestResult.Pending("not ready")),
                 (Chunk("MixedSuite", "skp"), TestResult.Skipped("filtered")),
-                (Chunk("MixedSuite", "ign"), TestResult.Ignored)
+                (Chunk("MixedSuite", "ign"), TestResult.Ignored(""))
             ),
             zeroDuration
         )

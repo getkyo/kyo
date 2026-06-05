@@ -74,8 +74,8 @@ final class TapReporter(out: PrintStream) extends TestReporter:
                 s"not ok $n - $testName\n$yamlBlock"
             case TestResult.Pending(reason) =>
                 s"ok $n - $testName # SKIP pending: $reason"
-            case TestResult.Ignored =>
-                s"ok $n - $testName # SKIP ignored"
+            case TestResult.Ignored(reason) =>
+                s"ok $n - $testName # SKIP ignored${if reason.nonEmpty then s": $reason" else ""}"
             case TestResult.Skipped(reason) =>
                 s"ok $n - $testName # SKIP $reason"
 

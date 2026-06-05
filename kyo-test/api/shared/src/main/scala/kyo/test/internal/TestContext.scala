@@ -150,23 +150,14 @@ final class TestContext private[test] (val target: Chunk[Int], private val disco
 
     // ── Terminal leaf registrations (no body) ────────────────────────────────────────────────
 
-    /** Record this cursor as Ignored without running a body. */
-    def registerIgnored(name: String): Unit =
+    /** Record this cursor as Ignored without running a body, carrying the optional reason. */
+    def registerIgnored(name: String, reason: String): Unit =
         if producedLeaf.get().isDefined then return
         val myIndex = nextChildIndex.getAndIncrement()
         val mine    = pathStack.get().append(myIndex)
         if mine == target then
-            producedLeaf.set(Maybe.Present((Chunk.from(nameStack) :+ name, TestResult.Ignored)))
+            producedLeaf.set(Maybe.Present((Chunk.from(nameStack) :+ name, TestResult.Ignored(reason))))
     end registerIgnored
-
-    /** Record this cursor as Pending. */
-    def registerPending(name: String, reason: String): Unit =
-        if producedLeaf.get().isDefined then return
-        val myIndex = nextChildIndex.getAndIncrement()
-        val mine    = pathStack.get().append(myIndex)
-        if mine == target then
-            producedLeaf.set(Maybe.Present((Chunk.from(nameStack) :+ name, TestResult.Pending(reason))))
-    end registerPending
 
     /** Record this cursor as Skipped. */
     def registerSkipped(name: String, reason: String): Unit =

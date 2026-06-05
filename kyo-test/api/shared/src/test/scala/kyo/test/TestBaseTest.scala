@@ -151,17 +151,17 @@ class TestBaseTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
     }
 
-    "pending(reason) records Pending without running body" in {
+    "ignore(reason) records Ignored without running body" in {
         runLeaf {
             new kyo.test.Test[Any]:
-                "todo".pending("waiting") in { throw new RuntimeException("should not run") }
+                "todo".ignore("waiting") in { throw new RuntimeException("should not run") }
         }.map { case (path, result) =>
             assert(path == Chunk("todo"))
             result match
-                case TestResult.Pending(reason) =>
+                case TestResult.Ignored(reason) =>
                     assert(reason == "waiting")
                     succeed
-                case other => fail(s"Expected Pending(waiting), got $other")
+                case other => fail(s"Expected Ignored(waiting), got $other")
             end match
         }
     }
@@ -173,8 +173,8 @@ class TestBaseTest extends AsyncFreeSpec with NonImplicitAssertions:
         }.map { case (path, result) =>
             assert(path == Chunk("skip-me"))
             result match
-                case TestResult.Ignored => succeed
-                case other              => fail(s"Expected Ignored, got $other")
+                case TestResult.Ignored(_) => succeed
+                case other                 => fail(s"Expected Ignored, got $other")
         }
     }
 

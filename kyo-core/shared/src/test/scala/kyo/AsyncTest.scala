@@ -113,7 +113,7 @@ class AsyncTest extends kyo.test.Test[Any]:
                 _           <- done.await
             yield assert(interrupted)
         }
-        "multiple fibers".notNative.pending(
+        "multiple fibers".notNative.ignore(
             "hangs intermittently (sometimes indefinitely) on the cross-platform CI matrix via the Defer-prefixed Async.Join interrupt-cascade gap; needs a kernel-level bracket primitive (see INTERRUPT-CASCADE-FIX.md)"
         ) in {
             // Pending: hangs intermittently (sometimes indefinitely) on the cross-platform
@@ -154,7 +154,7 @@ class AsyncTest extends kyo.test.Test[Any]:
                 else once.map(i => if i then repeat(n - 1) else fail("interrupt returned false"))
             repeat(50).andThen(succeed("all 50 interrupt attempts returned true"))
         }
-        "DIAGNOSE — multi-fiber interrupt per-fiber state on hang".notJs.pending(
+        "DIAGNOSE — multi-fiber interrupt per-fiber state on hang".notJs.ignore(
             "diagnostic harness for the same cascade-gap multi-fiber interrupt hang (see INTERRUPT-CASCADE-FIX.md)"
         ) in {
             // Diagnostic harness for the multi-fiber interrupt hang seen on

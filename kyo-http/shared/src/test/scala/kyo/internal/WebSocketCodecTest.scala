@@ -207,7 +207,7 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
     // ── Fragmented messages (continuation frames) ──────────────
 
     "fragmented messages (continuation frames) reassemble into a single message" - {
-        "three-frame text message: text/FIN=0 + continuation/FIN=0 + continuation/FIN=1".pending(
+        "three-frame text message: text/FIN=0 + continuation/FIN=0 + continuation/FIN=1".ignore(
             "WebSocketCodec.readFrameWith does not yet reassemble multi-frame continuation messages; it delivers each frame raw (proper reassembly is a follow-up)"
         ) in {
             // Spec: a WebSocket message MAY be split across multiple frames per RFC 6455.

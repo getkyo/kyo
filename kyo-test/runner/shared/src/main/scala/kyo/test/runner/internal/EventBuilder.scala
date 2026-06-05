@@ -46,7 +46,7 @@ private[internal] object EventBuilder:
         case _: TestResult.Failed    => Status.Failure
         case _: TestResult.Cancelled => Status.Canceled
         case _: TestResult.Pending   => Status.Skipped
-        case TestResult.Ignored      => Status.Skipped
+        case _: TestResult.Ignored   => Status.Skipped
         case _: TestResult.TimedOut  => Status.Failure
         case _: TestResult.Skipped   => Status.Skipped
 

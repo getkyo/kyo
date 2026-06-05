@@ -71,7 +71,7 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
 
     "onLeafComplete with Ignored prints [IGNORED]" in {
         val out = capture() { r =>
-            r.onLeafComplete(leaf("e"), TestResult.Ignored)
+            r.onLeafComplete(leaf("e"), TestResult.Ignored(""))
         }
         assert(out.contains("[IGNORED]"))
     }
@@ -235,7 +235,7 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
                 Chunk("MixSuite", "tout")  -> TestResult.TimedOut(10L.seconds),
                 Chunk("MixSuite", "canc")  -> TestResult.Cancelled("setup failed", 1L.millis),
                 Chunk("MixSuite", "pend")  -> TestResult.Pending("not ready"),
-                Chunk("MixSuite", "ignrd") -> TestResult.Ignored
+                Chunk("MixSuite", "ignrd") -> TestResult.Ignored("")
             ),
             5L.millis
         )

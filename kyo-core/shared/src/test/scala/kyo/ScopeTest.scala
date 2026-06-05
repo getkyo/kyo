@@ -656,7 +656,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             }
         }
 
-        "multiple finalizers one fails others still run".pending(
+        "multiple finalizers one fails others still run".ignore(
             "when one Scope finalizer fails the remaining finalizers are not yet guaranteed to still run"
         ) in { () }
 

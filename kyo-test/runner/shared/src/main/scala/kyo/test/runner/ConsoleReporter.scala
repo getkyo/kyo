@@ -126,9 +126,9 @@ final class ConsoleReporter(
                 if verbosity != Verbosity.Quiet then
                     out.println(s"$ind${color("[PENDING]", _.yellow)} $path  $reason")
 
-            case TestResult.Ignored =>
+            case TestResult.Ignored(reason) =>
                 if verbosity != Verbosity.Quiet then
-                    out.println(s"$ind${color("[IGNORED]", _.grey)} $path")
+                    out.println(s"$ind${color("[IGNORED]", _.grey)} $path${if reason.nonEmpty then s"  $reason" else ""}")
 
             case TestResult.TimedOut(limit) =>
                 out.println(
@@ -146,7 +146,7 @@ final class ConsoleReporter(
         val failedCount   = report.leafResults.count(_._2.isInstanceOf[TestResult.Failed])
         val cancelCount   = report.leafResults.count(_._2.isInstanceOf[TestResult.Cancelled])
         val pendingCount  = report.leafResults.count(_._2.isInstanceOf[TestResult.Pending])
-        val ignoredCount  = report.leafResults.count(_._2 == TestResult.Ignored)
+        val ignoredCount  = report.leafResults.count(_._2.isInstanceOf[TestResult.Ignored])
         val timedOutCount = report.leafResults.count(_._2.isInstanceOf[TestResult.TimedOut])
         val skippedCount  = report.leafResults.count(_._2.isInstanceOf[TestResult.Skipped])
 

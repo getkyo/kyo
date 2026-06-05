@@ -28,9 +28,7 @@ import scala.compiletime.erasedValue
   * @param focus
   *   true when `.focus` is in the decorator chain
   * @param ignore
-  *   true when `.ignore` is in the decorator chain
-  * @param pending
-  *   `Present(reason)` when `.pending(reason)` is in the chain
+  *   `Present(reason)` when `.ignore` or `.ignore(reason)` is in the decorator chain (an empty reason for the no-arg form)
   * @param pendingUntilFixed
   *   `Present(reason)` when `.pendingUntilFixed(reason)` is in the chain. Unlike `pending`, the body RUNS: a still-failing body reports
   *   `Pending(reason)`, a now-passing body reports `Failed` so the marker gets removed. Retry/repeat do not apply (the body is expected to
@@ -58,8 +56,7 @@ final case class TestBuilder(
     name: String,
     tags: Set[String] = Set.empty,
     focus: Boolean = false,
-    ignore: Boolean = false,
-    pending: Maybe[String] = Maybe.empty,
+    ignore: Maybe[String] = Maybe.empty,
     pendingUntilFixed: Maybe[String] = Maybe.empty,
     timeout: Maybe[Duration] = Maybe.empty,
     retrySchedule: Maybe[kyo.Schedule] = Maybe.empty,

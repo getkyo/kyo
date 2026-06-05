@@ -316,8 +316,8 @@ object TestRunner:
                 val instance = Instantiate.newInstance(suite)
                 ctx.signalPastEnd()
 
-                // A TERMINAL registration (`.pending` / `.ignore` / `.only(false)` / platform-mismatch) calls
-                // registerPending / registerIgnored / registerSkipped during re-instantiation: it sets `producedLeaf`
+                // A TERMINAL registration (`.ignore` / `.only(false)` / platform-mismatch) calls
+                // registerIgnored / registerSkipped during re-instantiation: it sets `producedLeaf`
                 // and buffers NO body. Honor that terminal result directly rather than discharging an empty
                 // `takeRegisteredBody` (which would run as () -> Passed and lose the terminal status). `pendingUntilFixed`
                 // is NOT terminal (it buffers a body, so peekRegisteredLeaf is Absent), so its inversion path below is

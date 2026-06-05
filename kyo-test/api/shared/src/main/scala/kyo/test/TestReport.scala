@@ -97,7 +97,7 @@ object TestReport:
                 case _: TestResult.Failed    => copy(failed = failed + 1)
                 case _: TestResult.Cancelled => copy(cancelled = cancelled + 1)
                 case _: TestResult.Pending   => copy(pending = pending + 1)
-                case TestResult.Ignored      => copy(ignored = ignored + 1)
+                case _: TestResult.Ignored   => copy(ignored = ignored + 1)
                 case _: TestResult.TimedOut  => copy(timedOut = timedOut + 1)
                 case _: TestResult.Skipped   => copy(skipped = skipped + 1)
             end match

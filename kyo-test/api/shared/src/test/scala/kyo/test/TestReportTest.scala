@@ -38,7 +38,7 @@ class TestReportTest extends AnyFunSuite with NonImplicitAssertions:
             (Chunk("f"), TestResult.Failed("", Maybe.empty, Duration.Zero)),
             (Chunk("c"), TestResult.Cancelled("reason", Duration.Zero)),
             (Chunk("n"), TestResult.Pending("reason")),
-            (Chunk("i"), TestResult.Ignored),
+            (Chunk("i"), TestResult.Ignored("")),
             (Chunk("t"), TestResult.TimedOut(Duration.Zero)),
             (Chunk("s"), TestResult.Skipped("reason"))
         )

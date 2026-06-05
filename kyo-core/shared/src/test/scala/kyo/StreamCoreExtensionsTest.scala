@@ -747,7 +747,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 }.unit
             }
 
-            "scope".pending("groupedWithin does not yet close scoped resources with the same semantics as a plain stream run") in {
+            "scope".ignore("groupedWithin does not yet close scoped resources with the same semantics as a plain stream run") in {
                 class TestResource(var closes: Int = 0) extends java.io.Closeable:
                     def close() = closes += 1
 
@@ -833,7 +833,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
-        "Sync.ensure with take documents current behavior".pending("Sync.ensure interaction with Stream.take is not yet specified") in {
+        "Sync.ensure with take documents current behavior".ignore("Sync.ensure interaction with Stream.take is not yet specified") in {
             ()
         }
 

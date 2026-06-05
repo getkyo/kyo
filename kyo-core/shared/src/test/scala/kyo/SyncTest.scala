@@ -144,7 +144,7 @@ class SyncTest extends kyo.test.Test[Any]:
         }
 
         "resource safety" - {
-            "runs finalizer on Abort.fail".pending("Sync.ensure finalizer is not yet run when the computation aborts via Abort.fail") in {
+            "runs finalizer on Abort.fail".ignore("Sync.ensure finalizer is not yet run when the computation aborts via Abort.fail") in {
                 ()
             }
 
@@ -188,7 +188,7 @@ class SyncTest extends kyo.test.Test[Any]:
                 }
             }
 
-            "error-aware ensure passes error on Abort.fail".pending(
+            "error-aware ensure passes error on Abort.fail".ignore(
                 "an error-aware Sync.ensure finalizer is not yet passed the abort error on Abort.fail"
             ) in { () }
 

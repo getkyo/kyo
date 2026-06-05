@@ -71,7 +71,7 @@ class EventBuilderTest extends kyo.test.Test[Any]:
     // ── Test 10: Ignored → Status.Skipped ────────────────────────────────────────────────────────
 
     "test-10: Ignored produces Status.Skipped" in {
-        val event = EventBuilder.build(taskDef, Chunk("leaf"), TestResult.Ignored)
+        val event = EventBuilder.build(taskDef, Chunk("leaf"), TestResult.Ignored(""))
         val s     = event.status()
         assert(s eq statusSkipped): Unit
     }

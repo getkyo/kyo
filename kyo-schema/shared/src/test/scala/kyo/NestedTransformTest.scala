@@ -62,7 +62,7 @@ class NestedTransformTest extends kyo.test.Test[Any]:
         assert(js.contains("\"derived\":6"), js)
     }
 
-    "discriminator + drop combine on a nested schema".pending(
+    "discriminator + drop combine on a nested schema".ignore(
         "chaining .discriminator and .drop on the same sum-type schema is not expressible today: the API rejects .drop on sealed traits"
     ) in {
         ()

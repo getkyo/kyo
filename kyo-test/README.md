@@ -4,7 +4,7 @@ kyo-test is the Kyo project's own test framework. You write a suite by extending
 
 Because the body is an ordinary Kyo value, an asynchronous test and a synchronous one share the same shape: a bare `()` or `assert(...)` auto-lifts into the effectful type, with no `Future` or `toFuture` shim. Inside a leaf you assert with a single power-`assert` that renders a subexpression diagram on failure.
 
-The type parameter `S` is an additive extra effect row. The baseline `Async & Abort[Any] & Scope` is always present and cannot be dropped; `Test[Any]` is the common case (baseline only), spelled explicitly because Scala 3 has no default type arguments. A suite that needs an extra effect (a database `Env[Db]`, a `Var`, a seeded `Random`) declares it in `S` and discharges it with `.handle` at the leaf or group level, so the runner only ever sees a baseline-shaped leaf. Decorators chain off the name before the operator (`"slow op".retry(3).timeout(5.seconds) in { ... }`). Property-based and snapshot testing are opt-in by extending `PropertyTest[S]` or `SnapshotTest[S]` instead of `Test[S]`. The whole surface compiles and runs on JVM, JS, and Scala Native.
+The type parameter `S` is an additive extra effect row. The baseline `Async & Abort[Any] & Scope` is always present and cannot be dropped; `Test[Any]` is the common case (baseline only), spelled explicitly because Scala 3 has no default type arguments. A suite that needs an extra effect (a database `Env[Db]` or a `Var`) declares it in `S` and discharges it with `.handle` at the leaf or group level, so the runner only ever sees a baseline-shaped leaf. Decorators chain off the name before the operator (`"slow op".retry(3).timeout(5.seconds) in { ... }`). Property-based and snapshot testing are opt-in by extending `PropertyTest[S]` or `SnapshotTest[S]` instead of `Test[S]`. The whole surface compiles and runs on JVM, JS, and Scala Native.
 
 <!-- doctest:setup
 ```scala
@@ -224,7 +224,7 @@ end DecoratedTest
 
 ### Selection: `focus`, `ignore`, `only`, `tagged`, `slow`
 
-`.focus` restricts the run to focused leaves only (everything else reports `Skipped`), the way you isolate one test while iterating. `.ignore` marks a leaf as ignored: its body never runs and it reports `Ignored`. `.only(cond)` registers the leaf only when `cond` is true at registration; a false condition reports `Skipped`. `.tagged("name", ...)` attaches tags for filtering at run time; `.slow` is shorthand for `.tagged("slow")`.
+`.focus` restricts the run to focused leaves only (everything else reports `Skipped`), the way you isolate one test while iterating. `.ignore` (optionally `.ignore(reason)`) marks a leaf as ignored: its body never runs and it reports `Ignored`, recording the optional reason; use it both to disable a test and to mark one whose body is not written yet. `.only(cond)` registers the leaf only when `cond` is true at registration; a false condition reports `Skipped`. `.tagged("name", ...)` attaches tags for filtering at run time; `.slow` is shorthand for `.tagged("slow")`.
 
 ```scala
 class SelectionTest extends Test[Any]:
@@ -235,17 +235,12 @@ class SelectionTest extends Test[Any]:
 end SelectionTest
 ```
 
-### Lifecycle: `pending` vs `pendingUntilFixed`
+### Lifecycle: `pendingUntilFixed`
 
-`.pending` (optionally `.pending(reason)`) registers the leaf but does NOT run its body; the leaf reports `Pending`. Use it for a test you have written the name for but not the body.
-
-`.pendingUntilFixed` (optionally `.pendingUntilFixed(reason)`) DOES run the body and inverts the outcome: a still-failing body reports `Pending`, a now-passing body reports `Failed`. The failure is a tripwire telling you the underlying bug is fixed and the marker should be removed.
+`.pendingUntilFixed` (optionally `.pendingUntilFixed(reason)`) DOES run the body and inverts the outcome: a still-failing body reports `Pending`, a now-passing body reports `Failed`. The failure is a tripwire telling you the underlying bug is fixed and the marker should be removed. To skip a test's body entirely, whether it is disabled or not yet written, reach for `.ignore` / `.ignore(reason)` from the [selection group](#selection-focus-ignore-only-tagged-slow) above.
 
 ```scala
 class LifecycleTest extends Test[Any]:
-    "not written yet".pending("waiting on the API") in {
-        assert(false)
-    }
     "blocked on issue #123".pendingUntilFixed in {
         assert(brokenFeatureWorks())
     }
@@ -254,11 +249,11 @@ class LifecycleTest extends Test[Any]:
 end LifecycleTest
 ```
 
-> **Caution:** `pending` and `pendingUntilFixed` have opposite execution behavior. `pending` skips the body; `pendingUntilFixed` runs it and flips the result. Reaching for the wrong one means either a known-broken body silently runs (with `pendingUntilFixed`) or a now-fixed test stays green-but-skipped forever (with `pending`).
+> **Caution:** `.pendingUntilFixed` RUNS the body and flips its result, unlike `.ignore`, which skips the body entirely. Reaching for `.ignore` when you meant `.pendingUntilFixed` leaves a now-fixed test silently skipped forever; reaching for `.pendingUntilFixed` on a test you only meant to disable runs a body you expected to skip.
 
 ### Resilience and timing: `timeout`, `retry`, `flaky`, `times`
 
-`.timeout(d)` bounds this leaf to `d`, overriding the suite default. `.retry(n)` retries up to `n` times with no backoff; `.retry(schedule)` retries on a `Schedule` you supply. `.flaky` is the curated form for known-flaky leaves: 3 retries with linear 100ms backoff, plus a `"flaky"` tag so CI can filter them. `.times(n)` repeats the body `n` times (every run must pass).
+`.timeout(d)` bounds this leaf to `d`, overriding the suite default. `.retry(n)` retries up to `n` times with no backoff; `.retry(schedule)` retries on a `Schedule` you supply. `.flaky` is the curated form for known-flaky leaves: 3 retries with linear 100ms backoff, plus a `"flaky"` tag so CI can filter them. `.times(n)` repeats the body `n` times (every run must pass); `.nonFlaky` (or `.nonFlaky(n)`) is the readable alias for that and the inverse of `.flaky`: it runs the leaf 100 times (or `n`) and requires every run to pass, to prove a leaf is not flaky.
 
 ```scala
 class ResilienceTest extends Test[Any]:
@@ -297,7 +292,7 @@ end PlatformTest
 
 ## Per-test and per-suite setup
 
-A leaf that uses an effect beyond the baseline (`Env`, `Var`, a seeded `Random`) must discharge it before the runner sees the leaf. Two surfaces cover this: `.handle` discharges per leaf or per group, and `aroundLeaf` wraps every leaf in the suite.
+A leaf that uses an effect beyond the baseline (`Env` or `Var`) must discharge it before the runner sees the leaf. Two surfaces cover this: `.handle` discharges per leaf or per group, and `aroundLeaf` wraps every leaf in the suite.
 
 ### `.handle`: discharge an extra effect
 
@@ -331,9 +326,9 @@ end TwoEffectTest
 
 The terminal operator rejects an under-discharged body at compile time: a body whose residual row still needs an effect beyond what you discharged is not a subtype of the baseline-shaped type the operator requires, and the compiler reports a lift failure naming the leaked effect.
 
-> **Note:** group-level `.handle` is applied freshly around EACH descended leaf body, so every leaf in the group gets fresh `Var`/`Env`/`Random` state rather than sharing one discharge across the group.
+> **Note:** group-level `.handle` is applied freshly around EACH descended leaf body, so every leaf in the group gets fresh `Var`/`Env` state rather than sharing one discharge across the group.
 
-When you need deterministic kyo-`Random`, flow it through `S` and discharge it with `.handle(... Random.withSeed(seed) ...)`; the property runner's RNG (below) is a separate, pure seed and does not touch kyo-`Random`.
+kyo-`Random` is not a row effect: every operation suspends `Sync`, which the baseline already provides through `Async`, so you use it directly inside a leaf without declaring anything in `S`. For a deterministic RNG, wrap the body in `Random.withSeed(seed) { ... }` (it returns `< Sync`). The property runner's RNG (below) is a separate, pure seed and does not touch kyo-`Random`.
 
 ### `aroundLeaf` and the suite hooks
 
@@ -386,7 +381,7 @@ end UrlPropertyTest
 
 > **Note:** inside `PropertyTest`, the body row is `Abort[Throwable]` (not the `Abort[Any]` of a plain `Test` leaf). The property name is auto-synthesized from the source `Frame` (`forAll @ file:line`), so two `forAll` calls on the same source line collide on name; keep one `forAll` per line.
 
-> **Note:** `forAll`'s RNG is a pure splittable seed derived from `nonRandomSeed` (default 42L) unless the suite sets `randomize = true`. It is unrelated to kyo-`Random`. A deterministic kyo-`Random` scenario must flow through `S` via `.handle(Random.withSeed(...))`. Override `numSamples`, `maxShrinks` (default 100), or `nonRandomSeed` per suite to tune the run.
+> **Note:** `forAll`'s RNG is a pure splittable seed derived from `nonRandomSeed` (default 42L) unless the suite sets `randomize = true`. It is unrelated to kyo-`Random`. A deterministic kyo-`Random` scenario wraps the body in `Random.withSeed(...)` (it suspends `Sync`, so no `S` declaration is needed). Override `numSamples`, `maxShrinks` (default 100), or `nonRandomSeed` per suite to tune the run.
 
 ### `Gen`: generators with shrinking
 

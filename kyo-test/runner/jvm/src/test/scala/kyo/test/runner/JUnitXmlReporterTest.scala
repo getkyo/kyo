@@ -147,7 +147,7 @@ class JUnitXmlReporterTest extends kyo.test.Test[Any]:
             val suiteInfo = SuiteInfo("SkCntS", "com.example.SkCntS", Maybe.empty)
             val leaves = List(
                 LeafInfo("SkCntS", Chunk("pending1"), Set.empty) -> TestResult.Pending("waiting"),
-                LeafInfo("SkCntS", Chunk("ignored1"), Set.empty) -> TestResult.Ignored
+                LeafInfo("SkCntS", Chunk("ignored1"), Set.empty) -> TestResult.Ignored("")
             )
             runOneSuite(reporter, suiteInfo, leaves)
             val xml = Files.readString(dir.resolve("TEST-SkCntS.xml"))

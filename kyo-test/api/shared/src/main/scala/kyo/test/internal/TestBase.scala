@@ -84,18 +84,17 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         ): EnrichedTestBuilder[S1] =
             new EnrichedTestBuilder[S1](TestBuilder(name), h)
 
-        def focus: TestBuilder  = TestBuilder(name).copy(focus = true)
-        def ignore: TestBuilder = TestBuilder(name).copy(ignore = true)
-        def slow: TestBuilder   = TestBuilder(name).copy(tags = Set("slow"))
+        def focus: TestBuilder = TestBuilder(name).copy(focus = true)
+        def slow: TestBuilder  = TestBuilder(name).copy(tags = Set("slow"))
 
-        /** Non-terminal decorator: marks the leaf as pending; the body is registered but not run. */
-        def pending: TestBuilder                 = TestBuilder(name).copy(pending = Maybe(""))
-        def pending(reason: String): TestBuilder = TestBuilder(name).copy(pending = Maybe(reason))
+        /** Non-terminal decorator: marks the leaf ignored; the body is registered but not run. `.ignore(reason)` records why. */
+        def ignore: TestBuilder                 = name.ignore("")
+        def ignore(reason: String): TestBuilder = TestBuilder(name).copy(ignore = Maybe(reason))
 
         /** Non-terminal decorator: runs the body and inverts its outcome (still-failing -> Pending, now-passing -> Failed, the tripwire to
           * remove the marker). The kyo-native equivalent of ScalaTest's pendingUntilFixed. Runs once.
           */
-        def pendingUntilFixed: TestBuilder                 = TestBuilder(name).copy(pendingUntilFixed = Maybe(""))
+        def pendingUntilFixed: TestBuilder                 = name.pendingUntilFixed("")
         def pendingUntilFixed(reason: String): TestBuilder = TestBuilder(name).copy(pendingUntilFixed = Maybe(reason))
 
         def tagged(tags: String*): TestBuilder =
@@ -119,6 +118,12 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
 
         def times(n: Int): TestBuilder =
             TestBuilder(name).copy(repeat = n)
+
+        /** Run this leaf 100 times (or `n`); EVERY run must pass. The inverse of `.flaky` (ZIO's `nonFlaky`): proves a leaf is not
+          * flaky rather than tolerating flakiness. Alias for `.times`.
+          */
+        def nonFlaky: TestBuilder         = name.times(100)
+        def nonFlaky(n: Int): TestBuilder = name.times(n)
 
         def only(cond: => Boolean): TestBuilder =
             TestBuilder(name).copy(onlyIf = Maybe(() => cond))
@@ -154,31 +159,25 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
 
         /** Register with the TestBuilder's accumulated metadata. Honor terminal decorators (ignore, pending, onlyIf) before dispatching. */
         inline infix def -(inline body: => Unit < (S & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
-            if b.ignore then
-                regCtx.registerIgnored(b.name)
-            else
-                b.pending match
-                    case Maybe.Present(reason) => regCtx.registerPending(b.name, reason)
-                    case _ =>
-                        b.onlyIf match
-                            case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
-                            case _ =>
-                                regCtx.visitGroupWithBuilder[S](b.name, b, body)
+            b.ignore match
+                case Maybe.Present(reason) => regCtx.registerIgnored(b.name, reason)
+                case _ =>
+                    b.onlyIf match
+                        case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
+                        case _ =>
+                            regCtx.visitGroupWithBuilder[S](b.name, b, body)
         end -
 
         /** Like the String-extension `in`, but carrying this TestBuilder's decorators: register a LEAF unconditionally (deferred body),
           * after honoring the terminal decorators (ignore, pending, platform filter, onlyIf). No group inference.
           */
         inline infix def in(inline body: kyo.test.AssertScope ?=> Unit < (S & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
-            if b.ignore then
-                regCtx.registerIgnored(b.name)
-            else
-                b.pending match
-                    case Maybe.Present(reason) => regCtx.registerPending(b.name, reason)
-                    case _ =>
-                        b.onlyIf match
-                            case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
-                            case _                              => regCtx.visitLeafWithBuilder[S](b.name, b, body)
+            b.ignore match
+                case Maybe.Present(reason) => regCtx.registerIgnored(b.name, reason)
+                case _ =>
+                    b.onlyIf match
+                        case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
+                        case _                              => regCtx.visitLeafWithBuilder[S](b.name, b, body)
         end in
 
         /** Discharge one or more effects beyond the baseline locally, carrying this TestBuilder's accumulated decorators (`.timeout`,
@@ -190,18 +189,17 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         ): EnrichedTestBuilder[S1] =
             new EnrichedTestBuilder[S1](b, h)
 
-        def focus: TestBuilder  = b.copy(focus = true)
-        def ignore: TestBuilder = b.copy(ignore = true)
-        def slow: TestBuilder   = b.copy(tags = b.tags + "slow")
+        def focus: TestBuilder = b.copy(focus = true)
+        def slow: TestBuilder  = b.copy(tags = b.tags + "slow")
 
-        /** Non-terminal decorator: marks the leaf as pending; the body is registered but not run. */
-        def pending: TestBuilder                 = b.copy(pending = Maybe(""))
-        def pending(reason: String): TestBuilder = b.copy(pending = Maybe(reason))
+        /** Non-terminal decorator: marks the leaf ignored; the body is registered but not run. `.ignore(reason)` records why. */
+        def ignore: TestBuilder                 = b.ignore("")
+        def ignore(reason: String): TestBuilder = b.copy(ignore = Maybe(reason))
 
         /** Non-terminal decorator: runs the body and inverts its outcome (still-failing -> Pending, now-passing -> Failed, the tripwire to
           * remove the marker). The kyo-native equivalent of ScalaTest's pendingUntilFixed. Runs once.
           */
-        def pendingUntilFixed: TestBuilder                 = b.copy(pendingUntilFixed = Maybe(""))
+        def pendingUntilFixed: TestBuilder                 = b.pendingUntilFixed("")
         def pendingUntilFixed(reason: String): TestBuilder = b.copy(pendingUntilFixed = Maybe(reason))
 
         def tagged(tags: String*): TestBuilder  = b.copy(tags = b.tags ++ tags.toSet)
@@ -217,6 +215,10 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
             )
 
         def times(n: Int): TestBuilder = b.copy(repeat = n)
+
+        /** Run this leaf 100 times (or `n`); EVERY run must pass (ZIO's `nonFlaky`, the inverse of `.flaky`). Alias for `.times`. */
+        def nonFlaky: TestBuilder         = b.times(100)
+        def nonFlaky(n: Int): TestBuilder = b.times(n)
 
         def only(cond: => Boolean): TestBuilder =
             b.copy(onlyIf = Maybe(() => cond))
@@ -256,16 +258,13 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         inline infix def in(inline body: kyo.test.AssertScope ?=> Unit < (S & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
             inline if gateOf[P] then
                 val b = pb.builder
-                if b.ignore then
-                    regCtx.registerIgnored(b.name)
-                else
-                    b.pending match
-                        case Maybe.Present(reason) => regCtx.registerPending(b.name, reason)
-                        case _ =>
-                            b.onlyIf match
-                                case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
-                                case _                              => regCtx.visitLeafWithBuilder[S](b.name, b, body)
-                end if
+                b.ignore match
+                    case Maybe.Present(reason) => regCtx.registerIgnored(b.name, reason)
+                    case _ =>
+                        b.onlyIf match
+                            case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
+                            case _                              => regCtx.visitLeafWithBuilder[S](b.name, b, body)
+                end match
             else
                 discardScoped[S](body)
         end in
@@ -274,28 +273,24 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         inline infix def -(inline body: => Unit < (S & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
             inline if gateOf[P] then
                 val b = pb.builder
-                if b.ignore then
-                    regCtx.registerIgnored(b.name)
-                else
-                    b.pending match
-                        case Maybe.Present(reason) => regCtx.registerPending(b.name, reason)
-                        case _ =>
-                            b.onlyIf match
-                                case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
-                                case _                              => regCtx.visitGroupWithBuilder[S](b.name, b, body)
-                end if
+                b.ignore match
+                    case Maybe.Present(reason) => regCtx.registerIgnored(b.name, reason)
+                    case _ =>
+                        b.onlyIf match
+                            case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
+                            case _                              => regCtx.visitGroupWithBuilder[S](b.name, b, body)
+                end match
             else
                 discardGroup[S](body)
         end -
 
         // Decorators chained after a platform filter preserve P so the gate still applies at the terminal.
 
-        def focus: PlatformTestBuilder[P]  = PlatformTestBuilder(pb.builder.copy(focus = true))
-        def ignore: PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(ignore = true))
-        def slow: PlatformTestBuilder[P]   = PlatformTestBuilder(pb.builder.copy(tags = pb.builder.tags + "slow"))
+        def focus: PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(focus = true))
+        def slow: PlatformTestBuilder[P]  = PlatformTestBuilder(pb.builder.copy(tags = pb.builder.tags + "slow"))
 
-        def pending: PlatformTestBuilder[P]                 = PlatformTestBuilder(pb.builder.copy(pending = Maybe("")))
-        def pending(reason: String): PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(pending = Maybe(reason)))
+        def ignore: PlatformTestBuilder[P]                 = PlatformTestBuilder(pb.builder.copy(ignore = Maybe("")))
+        def ignore(reason: String): PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(ignore = Maybe(reason)))
 
         def pendingUntilFixed: PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(pendingUntilFixed = Maybe("")))
         def pendingUntilFixed(reason: String): PlatformTestBuilder[P] =
@@ -531,42 +526,34 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
           * `TestBuilder` `-` does.
           */
         inline infix def -(inline body: => Unit < (S0 & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
-            if builder.ignore then
-                regCtx.registerIgnored(builder.name)
-            else
-                builder.pending match
-                    case Maybe.Present(reason) => regCtx.registerPending(builder.name, reason)
-                    case _ =>
-                        builder.onlyIf match
-                            case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(builder.name, "condition false")
-                            case _                              =>
-                                // `-` is ALWAYS a group: register the RAW `S0`-shaped block so its nested `-`/`in` calls fire during
-                                // discovery descent. `transform` is applied per descended leaf by the runner (O7). Leaves use `in`.
-                                regCtx.visitGroupWithBuilder[S0](builder.name, builder, body)
-            end if
+            builder.ignore match
+                case Maybe.Present(reason) => regCtx.registerIgnored(builder.name, reason)
+                case _ =>
+                    builder.onlyIf match
+                        case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(builder.name, "condition false")
+                        case _                              =>
+                            // `-` is ALWAYS a group: register the RAW `S0`-shaped block so its nested `-`/`in` calls fire during
+                            // discovery descent. `transform` is applied per descended leaf by the runner (O7). Leaves use `in`.
+                            regCtx.visitGroupWithBuilder[S0](builder.name, builder, body)
         end -
 
         /** Always-leaf form of the enriched terminal (deferred body, `transform` peels `S0` to baseline), honoring the builder's terminal
           * decorators first. No group inference.
           */
         inline infix def in(inline body: kyo.test.AssertScope ?=> Unit < (S0 & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
-            if builder.ignore then
-                regCtx.registerIgnored(builder.name)
-            else
-                builder.pending match
-                    case Maybe.Present(reason) => regCtx.registerPending(builder.name, reason)
-                    case _ =>
-                        builder.onlyIf match
-                            case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(builder.name, "condition false")
-                            case _                              =>
-                                // The runner mints the per-leaf scope; peel S0 to baseline inside the context function so
-                                // `transform` is applied per descended leaf with the leaf's scope already supplied to `body`.
-                                regCtx.visitLeafWithBuilder[Async & Abort[Any] & Scope](
-                                    builder.name,
-                                    builder,
-                                    (as: kyo.test.AssertScope) ?=> transform[Unit](body(using as))
-                                )
-            end if
+            builder.ignore match
+                case Maybe.Present(reason) => regCtx.registerIgnored(builder.name, reason)
+                case _ =>
+                    builder.onlyIf match
+                        case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(builder.name, "condition false")
+                        case _                              =>
+                            // The runner mints the per-leaf scope; peel S0 to baseline inside the context function so
+                            // `transform` is applied per descended leaf with the leaf's scope already supplied to `body`.
+                            regCtx.visitLeafWithBuilder[Async & Abort[Any] & Scope](
+                                builder.name,
+                                builder,
+                                (as: kyo.test.AssertScope) ?=> transform[Unit](body(using as))
+                            )
         end in
 
     end EnrichedTestBuilder

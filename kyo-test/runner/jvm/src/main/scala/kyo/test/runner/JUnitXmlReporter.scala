@@ -63,8 +63,8 @@ final class JUnitXmlReporter(outputDir: Path) extends TestReporter:
             case _: TestResult.Failed | _: TestResult.Cancelled | _: TestResult.TimedOut => true
             case _                                                                       => false)
         val skipped = leaves.count(_._2 match
-            case _: TestResult.Pending | TestResult.Ignored | _: TestResult.Skipped => true
-            case _                                                                  => false)
+            case _: TestResult.Pending | _: TestResult.Ignored | _: TestResult.Skipped => true
+            case _                                                                     => false)
 
         val totalMillis = leaves.foldLeft(0L) { case (acc, (_, result)) =>
             acc + leafDurationMillis(result)
@@ -109,8 +109,9 @@ final class JUnitXmlReporter(outputDir: Path) extends TestReporter:
                 case TestResult.Pending(reason) =>
                     sb.append(s"""    <skipped message="${xmlEscape(reason)}"/>""")
                     sb.append("\n")
-                case TestResult.Ignored =>
-                    sb.append("""    <skipped message="ignored"/>""")
+                case TestResult.Ignored(reason) =>
+                    val msg = if reason.nonEmpty then reason else "ignored"
+                    sb.append(s"""    <skipped message="${xmlEscape(msg)}"/>""")
                     sb.append("\n")
                 case TestResult.Skipped(reason) =>
                     sb.append(s"""    <skipped message="${xmlEscape(reason)}"/>""")
@@ -130,7 +131,7 @@ final class JUnitXmlReporter(outputDir: Path) extends TestReporter:
             case TestResult.Cancelled(_, d)    => d.toMillis
             case TestResult.TimedOut(limit)    => limit.toMillis
             case TestResult.Pending(_)         => 0L
-            case TestResult.Ignored            => 0L
+            case _: TestResult.Ignored         => 0L
             case TestResult.Skipped(_)         => 0L
 
     private def formatSeconds(millis: Long): String =
