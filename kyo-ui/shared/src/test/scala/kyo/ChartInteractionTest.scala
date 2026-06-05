@@ -641,4 +641,140 @@ class ChartInteractionTest extends Test:
         end for
     }
 
+    // ---- Phase-9 tests: highlight coverage for line/area/text/errorBar (L20 / INV-024) ----
+
+    // Domain type for errorBar tests (needs low/high accessors).
+    case class EB(x: String, y: Double, lo: Double, hi: Double) derives CanEqual
+
+    // Test 16 (L20): line with highlightSelect — the active series path carries stroke="#000000" (INV-024)
+    "line with highlightSelect: after the select ref is set, the active series path carries the select style (L20)" in run {
+        // 2-row chart: Jan and Feb. Select Jan; the single-series line path must carry the dark stroke.
+        // Before fix: withHighlight is not called in lowerLine, so no stroke appears after selection.
+        for
+            selectRef <- Signal.initRef[Maybe[Sale]](Absent)
+            rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+            spec = UI.chart(rows)(line(x = _.month, y = _.revenue))
+                .onSelect(selectRef)
+                .interaction(_.highlightSelect)
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            htmlBefore <- HtmlRenderer.render(root, Seq.empty)
+            _ = assert(
+                !htmlBefore.contains("stroke=\"#000000\""),
+                s"No line may carry the select stroke before selection, but got:\n${htmlBefore.take(2000)}"
+            )
+            _         <- selectRef.set(Present(Sale("Jan", Rev(1000.0))))
+            htmlAfter <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            assert(
+                htmlAfter.contains("stroke=\"#000000\"") && htmlAfter.contains("stroke-width=\"2px\""),
+                s"Selected line series must carry stroke=#000000 and stroke-width=2px but got:\n${htmlAfter.take(2000)}"
+            )
+            // Single series: exactly 1 occurrence of the highlight stroke.
+            val strokeOccurrences = "stroke=\"#000000\"".r.findAllMatchIn(htmlAfter).size
+            assert(
+                strokeOccurrences == 1,
+                s"Only the active series path may carry the select stroke, but found $strokeOccurrences occurrences"
+            )
+    }
+
+    // Test 17 (L20): area with highlightSelect — the active series path carries stroke="#000000" (INV-024)
+    "area with highlightSelect: after the select ref is set, the active series path carries the select style (L20)" in run {
+        // 2-row chart: Jan and Feb. Select Jan; the single-series area path must carry the dark stroke.
+        // Before fix: withHighlight is not called in lowerArea, so no stroke appears after selection.
+        for
+            selectRef <- Signal.initRef[Maybe[Sale]](Absent)
+            rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+            spec = UI.chart(rows)(area(x = _.month, y = _.revenue))
+                .yScale(_.linear(0, 2000))
+                .onSelect(selectRef)
+                .interaction(_.highlightSelect)
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            htmlBefore <- HtmlRenderer.render(root, Seq.empty)
+            _ = assert(
+                !htmlBefore.contains("stroke=\"#000000\""),
+                s"No area may carry the select stroke before selection, but got:\n${htmlBefore.take(2000)}"
+            )
+            _         <- selectRef.set(Present(Sale("Jan", Rev(1000.0))))
+            htmlAfter <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            assert(
+                htmlAfter.contains("stroke=\"#000000\"") && htmlAfter.contains("stroke-width=\"2px\""),
+                s"Selected area series must carry stroke=#000000 and stroke-width=2px but got:\n${htmlAfter.take(2000)}"
+            )
+            // Single series: exactly 1 occurrence.
+            val strokeOccurrences = "stroke=\"#000000\"".r.findAllMatchIn(htmlAfter).size
+            assert(
+                strokeOccurrences == 1,
+                s"Only the active area series path may carry the select stroke, but found $strokeOccurrences occurrences"
+            )
+    }
+
+    // Test 18 (L20): text with highlightSelect — the active glyph carries stroke="#000000" (INV-024)
+    "text with highlightSelect: after the select ref is set, the active glyph carries the select style (L20)" in run {
+        // 2-row chart: Jan and Feb. Select Jan; only the Jan glyph must carry the dark stroke.
+        // Before fix: withHighlight is not called in lowerText, so no stroke appears after selection.
+        for
+            selectRef <- Signal.initRef[Maybe[Sale]](Absent)
+            rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+            spec = UI.chart(rows)(text(x = _.month, y = _.revenue, label = _.month))
+                .yScale(_.linear(0, 2000))
+                .onSelect(selectRef)
+                .interaction(_.highlightSelect)
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            htmlBefore <- HtmlRenderer.render(root, Seq.empty)
+            _ = assert(
+                !htmlBefore.contains("stroke=\"#000000\""),
+                s"No text glyph may carry the select stroke before selection, but got:\n${htmlBefore.take(2000)}"
+            )
+            _         <- selectRef.set(Present(Sale("Jan", Rev(1000.0))))
+            htmlAfter <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            assert(
+                htmlAfter.contains("stroke=\"#000000\"") && htmlAfter.contains("stroke-width=\"2px\""),
+                s"Selected text glyph must carry stroke=#000000 and stroke-width=2px but got:\n${htmlAfter.take(2000)}"
+            )
+            // 2 rows, 1 active: exactly 1 occurrence.
+            val strokeOccurrences = "stroke=\"#000000\"".r.findAllMatchIn(htmlAfter).size
+            assert(
+                strokeOccurrences == 1,
+                s"Only the active text glyph may carry the select stroke, but found $strokeOccurrences occurrences"
+            )
+    }
+
+    // Test 19 (L20): errorBar with highlightSelect — the active row GROUP carries stroke="#000000" once (INV-024)
+    "errorBar with highlightSelect: after the select ref is set, the active row group carries the select style once (L20)" in run {
+        // 2-row chart: Jan and Feb. Select Jan; the Jan error-bar GROUP must carry the dark stroke exactly once.
+        // Before fix: withHighlight is not called in lowerErrorBar, so no stroke appears after selection.
+        // The group wraps the 4 sub-shapes (vLine, capLow, capHigh, marker) so highlight fires once, not 4 times.
+        for
+            selectRef <- Signal.initRef[Maybe[EB]](Absent)
+            rows = Chunk(EB("Jan", 1000.0, 800.0, 1200.0), EB("Feb", 2000.0, 1700.0, 2300.0))
+            spec = UI.chart(rows)(
+                errorBar(x = _.x, y = _.y, low = _.lo, high = _.hi)
+            )
+                .yScale(_.linear(0, 3000))
+                .onSelect(selectRef)
+                .interaction(_.highlightSelect)
+            root = summon[Conversion[ChartSpec[EB], Svg.Root]](spec)
+            htmlBefore <- HtmlRenderer.render(root, Seq.empty)
+            _ = assert(
+                !htmlBefore.contains("stroke=\"#000000\""),
+                s"No errorBar element may carry the select stroke before selection, but got:\n${htmlBefore.take(2000)}"
+            )
+            _         <- selectRef.set(Present(EB("Jan", 1000.0, 800.0, 1200.0)))
+            htmlAfter <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            assert(
+                htmlAfter.contains("stroke=\"#000000\"") && htmlAfter.contains("stroke-width=\"2px\""),
+                s"Selected errorBar group must carry stroke=#000000 and stroke-width=2px but got:\n${htmlAfter.take(2000)}"
+            )
+            // The group's stroke="#000000" must appear exactly once (on the group, not on the 4 sub-shapes
+            // individually). This validates the Svg.g grouping approach.
+            val strokeOccurrences = "stroke=\"#000000\"".r.findAllMatchIn(htmlAfter).size
+            assert(
+                strokeOccurrences == 1,
+                s"The highlight stroke must appear exactly once (on the group element), but found $strokeOccurrences occurrences"
+            )
+    }
+
 end ChartInteractionTest
