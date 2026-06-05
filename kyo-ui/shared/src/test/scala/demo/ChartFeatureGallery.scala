@@ -17,6 +17,10 @@ import kyo.UI.mark.*
   *      so the per-group fills are distinct bands.
   *   5. Theme + named palette: `.theme(_.dark.palette(UI.Ast.Palette.Okabe))`.
   *   6. Accessibility: `.title(...)` (implies `role="img"`) and `.desc(...)` on a chart.
+  *   7. Grouped (dodged) bar with categorical colorScale: distinct per-region colors + legend, no stack.
+  *   8. Colored errorBar via colorScale: per-category whisker colors.
+  *   9. Colored text annotations via colorScale: per-region colored value labels.
+  *  10. X tick rotation + theme font: long category labels rotated -40 degrees + Georgia font.
   *
   * `ChartFeatureGallery.app` is the page value; `ChartFeatureGalleryShot` serves it and captures a PNG.
   */
@@ -55,6 +59,31 @@ object ChartFeatureGallery extends KyoApp:
         StackRow("Apr", 44, Region.APAC)
     )
 
+    // ---- dataset for grouped bar + colorScale demos ----
+
+    /** Multi-month, multi-region sales data for grouped-bar and colored errorBar/text demos. */
+    case class SaleRow(month: String, units: Double, lo: Double, hi: Double, region: Region)
+
+    val saleData: Chunk[SaleRow] = Chunk(
+        SaleRow("Jan", 120, 108, 132, Region.NA),
+        SaleRow("Jan", 80, 72, 88, Region.EU),
+        SaleRow("Jan", 60, 52, 68, Region.APAC),
+        SaleRow("Feb", 140, 125, 155, Region.NA),
+        SaleRow("Feb", 95, 86, 104, Region.EU),
+        SaleRow("Feb", 72, 64, 80, Region.APAC)
+    )
+
+    // Long category labels for the tick-rotation demo
+    case class CatRow(category: String, value: Double)
+
+    val rotateData: Chunk[CatRow] = Chunk(
+        CatRow("London", 310),
+        CatRow("Berlin", 245),
+        CatRow("Madrid", 198),
+        CatRow("Lisbon", 134),
+        CatRow("Vienna", 92)
+    )
+
     // ---- feature charts ----
 
     /** 1. Numeric color channel + sequential gradient (cool to warm).
@@ -70,7 +99,8 @@ object ChartFeatureGallery extends KyoApp:
             .yScale(_.withNice(true))
             .yAxis(_.grid.ticks(4))
             .legend(_.colorScaleSequential(Style.Color.blue, Style.Color.red))
-            .size(360, 240)
+            .margins(_.top(30))
+            .size(360, 260)
             .toSvg
 
     /** 2. Error bars: low-to-high whisker with caps and a center marker. */
@@ -131,6 +161,85 @@ object ChartFeatureGallery extends KyoApp:
             .size(360, 240)
             .toSvg
 
+    /** 7. Grouped (dodged) bar with categorical colorScale: distinct per-region colors + legend. No stack.
+      *
+      * A grouped bar is `bar(x, y, color = _.region)` with NO `stack` argument. The `.legend`
+      * call attaches a `colorScale[Region](...)` so each region gets its own explicit color and a
+      * legend swatch. Contrast with cell 4 (stacked area) where the same data is stacked instead.
+      */
+    val groupedColorScale: Svg.Root =
+        UI.chart(saleData)(
+            bar(x = _.month, y = _.units, color = _.region)
+        )
+            .yScale(_.withNice(true))
+            .yAxis(_.grid.ticks(4))
+            .legend(_.top.colorScale[Region](
+                Region.NA   -> Style.Color.rgb(59, 130, 246),
+                Region.EU   -> Style.Color.rgb(16, 185, 129),
+                Region.APAC -> Style.Color.rgb(245, 158, 11)
+            ))
+            .size(360, 240)
+            .toSvg
+
+    /** 8. Colored errorBar via colorScale: per-category whisker colors.
+      *
+      * Each region's error whiskers are colored to match the region's categorical color, making it
+      * easy to distinguish overlapping confidence intervals when multiple groups share an x position.
+      */
+    val coloredErrorBar: Svg.Root =
+        UI.chart(saleData)(
+            point(x = _.month, y = _.units, color = _.region),
+            errorBar(x = _.month, y = _.units, low = _.lo, high = _.hi, color = _.region, capWidth = 8.0)
+        )
+            .yScale(_.withNice(true))
+            .yAxis(_.grid.ticks(4))
+            .legend(_.top.colorScale[Region](
+                Region.NA   -> Style.Color.rgb(59, 130, 246),
+                Region.EU   -> Style.Color.rgb(16, 185, 129),
+                Region.APAC -> Style.Color.rgb(245, 158, 11)
+            ))
+            .size(360, 240)
+            .toSvg
+
+    /** 9. Colored text annotations via colorScale: each bar's value label uses the region's color.
+      *
+      * Combines a `bar` mark with a `text` mark; the `text` carries `color = _.region` so the label
+      * above each bar matches the region's colorScale color from the legend. Pure value annotation
+      * without the uniform grey of an uncolored `text` mark.
+      */
+    val coloredText: Svg.Root =
+        UI.chart(saleData)(
+            bar(x = _.month, y = _.units, color = _.region),
+            text(x = _.month, y = _.units, label = r => r.units.toInt.toString, color = _.region, anchor = UI.TextAnchor.Middle)
+        )
+            .yScale(_.withNice(true))
+            .yAxis(_.ticks(4))
+            .legend(_.top.colorScale[Region](
+                Region.NA   -> Style.Color.rgb(59, 130, 246),
+                Region.EU   -> Style.Color.rgb(16, 185, 129),
+                Region.APAC -> Style.Color.rgb(245, 158, 11)
+            ))
+            .size(360, 240)
+            .toSvg
+
+    /** 10. X tick rotation + theme font: category names rotated -40 degrees in a Georgia serif font.
+      *
+      * `.xAxis(_.rotateTicks(-40))` tilts the x-axis tick labels so they read clearly without crowding
+      * the axis. `.theme(_.font("Georgia"))` applies a serif font to the axis labels. The combination is
+      * the canonical solution for charts whose x domain is a set of named categories (regions, SKUs, etc.).
+      */
+    val rotatedTicksAndFont: Svg.Root =
+        UI.chart(rotateData)(
+            bar(x = _.category, y = _.value)
+        )
+            .yScale(_.withNice(true))
+            .yAxis(_.grid.ticks(4))
+            .xAxis(_.rotateTicks(-40))
+            .theme(_.font("Georgia"))
+            .margins(_.bottom(74).left(56))
+            .size(480, 300)
+            .toSvg
+
     // ---- styles ----
 
     private val pageStyle =
@@ -170,7 +279,11 @@ object ChartFeatureGallery extends KyoApp:
                 chartCell("3. Text value annotations", textAnnotations),
                 chartCell("4. Stacked filled area", stackedArea),
                 chartCell("5. Dark theme + Okabe palette", themedPalette),
-                chartCell("6. Accessibility (title + desc)", accessible)
+                chartCell("6. Accessibility (title + desc)", accessible),
+                chartCell("7. Grouped bar + categorical colorScale", groupedColorScale),
+                chartCell("8. Colored errorBar via colorScale", coloredErrorBar),
+                chartCell("9. Colored text annotations via colorScale", coloredText),
+                chartCell("10. X tick rotation + theme font (Georgia)", rotatedTicksAndFont)
             )
         )
 
@@ -200,12 +313,12 @@ object ChartFeatureGalleryShot extends KyoApp:
             url = s"http://localhost:${server.port}/"
             _    <- Console.printLine(s"ChartFeatureGalleryShot serving $url")
             base <- Browser.chromeForTestingLaunchConfig()
-            launch = base.copy(extraArgs = base.extraArgs ++ Chunk("--window-size=1200,900", "--hide-scrollbars"))
+            launch = base.copy(extraArgs = base.extraArgs ++ Chunk("--window-size=1400,1380", "--hide-scrollbars"))
             _ <- Browser.run(launch) {
                 for
                     _   <- Browser.goto(url)
                     _   <- Async.sleep(1500.millis)
-                    img <- Browser.screenshot(1200, 900)
+                    img <- Browser.screenshot(1400, 1380)
                     _   <- img.writeFileBinary(s"$outDir/chart-features.png")
                     _   <- Console.printLine(s"wrote $outDir/chart-features.png")
                 yield ()
