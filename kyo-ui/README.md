@@ -1085,7 +1085,7 @@ val firstChart: Svg.Root =
         UI.mark.bar(x = _.month, y = _.revenue, color = _.region),
         UI.mark.rule[Sale, Usd](y = Usd(1000.0))
     )
-        .yAxis(_.left.grid.ticks(5).format(v => f"$$$v%,.0f"))
+        .yAxis(_.grid.ticks(5).format(v => f"$$$v%,.0f"))
         .legend(_.top)
         .size(640, 360)
         .toSvg
@@ -1165,8 +1165,8 @@ val axisChart: Svg.Root =
     UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.region))
         .xScale(_.band)
         .yScale(_.linear(0.0, 80000.0))
-        .xAxis(_.bottom.label("Month"))
-        .yAxis(_.left.grid.ticks(5).format(v => f"$$$v%,.0f"))
+        .xAxis(_.label("Month"))
+        .yAxis(_.grid.ticks(5).format(v => f"$$$v%,.0f"))
         .legend(_.top)
         .theme(_.light)
         .size(640, 360)
@@ -1183,8 +1183,8 @@ val twoAxis: Svg.Root =
         UI.mark.bar(x = _.month, y = _.revenue),
         UI.mark.line(x = _.month, y = _.hi, axis = Axis.Right)
     )
-        .yAxis(_.left.label("Revenue"))
-        .yAxisRight(_.right.label("Upper bound"))
+        .yAxis(_.label("Revenue"))
+        .yAxisRight(_.label("Upper bound"))
         .toSvg
 ```
 
@@ -1288,7 +1288,7 @@ val a11yChart: Svg.Root =
     UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue))
         .responsive(16.0 / 9)
         .yScale(_.linear(0.0, 80000.0).withNice(true).withClamp(true).withPad(0.05))
-        .xAxis(_.bottom.rotateTicks(45).pad(8))
+        .xAxis(_.rotateTicks(45).pad(8))
         .title("Revenue by region")
         .desc("Quarterly revenue, EU vs NA")
         .ariaLabel("Revenue by region bar chart")

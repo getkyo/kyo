@@ -81,16 +81,16 @@ class ChartAxisTest extends Test:
         case Present(Svg.Paint.Color(c)) => c
         case other                       => fail(s"Expected Paint.Color but got $other")
 
-    // ---- Test 1: yAxis(_.left.grid.ticks(3)) -> 3 gridlines + 3 tick labels ----
+    // ---- Test 1: yAxis(_.grid.ticks(3)) -> 3 gridlines + 3 tick labels ----
 
-    "yAxis(_.left.grid.ticks(3)) produces 3 gridline Lines and 3 tick Text labels at niceTick pixels" in {
+    "yAxis(_.grid.ticks(3)) produces 3 gridline Lines and 3 tick Text labels at niceTick pixels" in {
         // Data: two bars y=[1000, 2000]; yExtent: Continuous(0, 2000) after ensureZero
         // niceTicks(0, 2000, 3): step=1000 -> ticks=[0, 1000, 2000]
         // Scale.Linear(0, 2000, 440, 20):
         //   apply(0)=440, apply(1000)=230, apply(2000)=20
         val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
-            .yAxis(_.left.grid.ticks(3))
+            .yAxis(_.grid.ticks(3))
         val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
 
         // Gridlines are Svg.Line elements spanning the full plot width with strokeOpacity=0.3
@@ -191,7 +191,6 @@ class ChartAxisTest extends Test:
         val rows = Chunk(Sale("a", Usd(10)), Sale("b", Usd(100)), Sale("c", Usd(1000)))
         val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
             .yScale(_.log)
-            .yAxis(_.left)
         val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
 
         // Tick labels use TextAnchor.End for left axis
@@ -280,8 +279,6 @@ class ChartAxisTest extends Test:
             bar(x = _.month, y = _.revenue),
             line(x = _.month, y = _.growthPct, axis = Axis.Right)
         )
-            .yAxis(_.left)
-            .yAxisRight(_.right)
         val root = summon[Conversion[ChartSpec[Row2Ax], Svg.Root]](spec)
 
         // Verify two independent y-scales by checking that the same value (10) maps to different pixels.
@@ -324,9 +321,8 @@ class ChartAxisTest extends Test:
             bar(x = _.month, y = _.revenue),
             line(x = _.month, y = _.growthPct, axis = Axis.Right)
         )
-            .yAxis(_.left.label("Revenue"))
-            .yAxisRight(_.right.label("Growth %"))
-            .xAxis(_.bottom)
+            .yAxis(_.label("Revenue"))
+            .yAxisRight(_.label("Growth %"))
         val root  = summon[Conversion[ChartSpec[Row2Ax], Svg.Root]](spec)
         val texts = frameTextsIn(root)
 
@@ -391,9 +387,8 @@ class ChartAxisTest extends Test:
             bar(x = _.month, y = _.revenue),
             line(x = _.month, y = _.growthPct, axis = Axis.Right)
         )
-            .yAxis(_.left.label("Revenue"))
-            .yAxisRight(_.right.label("Growth %"))
-            .xAxis(_.bottom)
+            .yAxis(_.label("Revenue"))
+            .yAxisRight(_.label("Growth %"))
             .size(360, 240)
         val root  = summon[Conversion[ChartSpec[Row2Ax], Svg.Root]](spec)
         val texts = frameTextsIn(root)
@@ -660,7 +655,7 @@ class ChartAxisTest extends Test:
         // The formatter v => s"$$${v.toInt}" should produce "$2000" from domain 2000, not "$20"
         val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
-            .yAxis(_.left.ticks(3).format(v => s"$$${v.toInt}"))
+            .yAxis(_.ticks(3).format(v => s"$$${v.toInt}"))
         val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
 
         // Left-axis tick labels have TextAnchor.End
@@ -901,7 +896,7 @@ class ChartAxisTest extends Test:
         case class LRow(month: String, value: Double)
         given CanEqual[LRow, LRow] = CanEqual.derived
         val rows                   = Chunk(LRow("Jan", 100.0), LRow("Feb", 200.0), LRow("Mar", 150.0))
-        val spec                   = UI.chart(rows)(line(x = _.month, y = _.value)).yAxis(_.left.grid)
+        val spec                   = UI.chart(rows)(line(x = _.month, y = _.value)).yAxis(_.grid)
         val root                   = summon[Conversion[ChartSpec[LRow], Svg.Root]](spec)
 
         val leftTickLabels = frameTextsIn(root).filter(_.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
@@ -923,7 +918,7 @@ class ChartAxisTest extends Test:
         case class LRow(month: String, value: Double)
         given CanEqual[LRow, LRow] = CanEqual.derived
         val rows                   = Chunk(LRow("Jan", 100.0), LRow("Feb", 200.0), LRow("Mar", 150.0))
-        val spec                   = UI.chart(rows)(line(x = _.month, y = _.value)).yAxis(_.left.grid.ticks(3))
+        val spec                   = UI.chart(rows)(line(x = _.month, y = _.value)).yAxis(_.grid.ticks(3))
         val root                   = summon[Conversion[ChartSpec[LRow], Svg.Root]](spec)
 
         // Gridlines span the full plot width and carry a strokeOpacity (distinct from axis lines).
@@ -1000,7 +995,7 @@ class ChartAxisTest extends Test:
 
     "xAxis(_.grid) emits vertical gridlines at each x tick from plotY to plotBaseline" in {
         val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)), Sale("Mar", Usd(1500)))
-        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue)).xAxis(_.bottom.grid)
+        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue)).xAxis(_.grid)
         val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
         // Vertical gridlines: x1==x2, y1==plotY, y2==plotBaseline, with a strokeOpacity.
         val vGrid = frameLinesIn(root).filter: l =>
@@ -1016,8 +1011,8 @@ class ChartAxisTest extends Test:
     "yAxis(_.reverse) swaps the y range so a small value sits near the top, not the baseline" in {
         // Without reverse, y=0 maps near baseline (440); with reverse, the range swaps so y=0 maps near top (20).
         val rows    = Chunk(Sale("Jan", Usd(0)), Sale("Feb", Usd(2000)))
-        val normal  = UI.chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.left)
-        val flipped = UI.chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.left.reverse)
+        val normal  = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+        val flipped = UI.chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.reverse)
         val rNorm   = barsIn(summon[Conversion[ChartSpec[Sale], Svg.Root]](normal))
         val rFlip   = barsIn(summon[Conversion[ChartSpec[Sale], Svg.Root]](flipped))
         // The Jan bar (value 0): normal top y is at the baseline; reversed top y is at the plot top.
@@ -1067,7 +1062,7 @@ class ChartAxisTest extends Test:
 
     // ---- Phase 6 Leaf 6 (INV-009): a 7-category band x-axis yields 7 tick labels ----
 
-    "a 7-category band x-axis produces 7 tick labels (labelAllBands default)" in {
+    "a 7-category band x-axis produces 7 tick labels" in {
         case class CRow(cat: String, y: Int)
         val cats   = Chunk("a", "b", "c", "d", "e", "f", "g")
         val rows   = cats.map(c => CRow(c, 1))
@@ -1149,8 +1144,7 @@ class ChartAxisTest extends Test:
             WideRow("Jun", 83000, 18.6)
         )
         val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
-            .yAxis(_.left.label("Revenue"))
-            .xAxis(_.bottom)
+            .yAxis(_.label("Revenue"))
             .size(360, 240)
         val root = summon[Conversion[ChartSpec[WideRow], Svg.Root]](spec)
 
@@ -1205,8 +1199,7 @@ class ChartAxisTest extends Test:
             SizeRow(8.2, 4.0, 6.0)
         )
         val spec = UI.chart(rows)(point(x = _.a, y = _.b, size = _.w))
-            .yAxis(_.left.grid)
-            .xAxis(_.bottom)
+            .yAxis(_.grid)
             .size(360, 240)
         val root = summon[Conversion[ChartSpec[SizeRow], Svg.Root]](spec)
 
@@ -1243,9 +1236,8 @@ class ChartAxisTest extends Test:
             bar(x = _.month, y = _.revenue),
             line(x = _.month, y = _.growthPct, axis = Axis.Right)
         )
-            .yAxis(_.left.label("Revenue"))
-            .yAxisRight(_.right.label("Growth %"))
-            .xAxis(_.bottom)
+            .yAxis(_.label("Revenue"))
+            .yAxisRight(_.label("Growth %"))
             .size(360, 240)
         val root = summon[Conversion[ChartSpec[ComboRow], Svg.Root]](spec)
         for html <- kyo.internal.HtmlRenderer.render(root, Seq.empty)
@@ -1521,7 +1513,7 @@ class ChartAxisTest extends Test:
         val spec = UI.chart(rows)(
             bar(x = _.month, y = _.revenue),
             line(x = _.month, y = _.growthPct, axis = Axis.Right)
-        ).yAxis(_.left).yAxisRight(_.right)
+        )
         val root = summon[Conversion[ChartSpec[Row2Ax], Svg.Root]](spec)
 
         // Right axis tick labels appear on the right margin.

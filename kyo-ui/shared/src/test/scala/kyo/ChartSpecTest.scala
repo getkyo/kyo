@@ -87,11 +87,9 @@ class ChartSpecTest extends Test:
         assert(spec.chartSize == (640, 360))
     }
 
-    "yAxis(_.left.grid.ticks(5)) sets side Left, grid true, tickCount 5" in {
-        val spec = UI.chart(sales)(bar(x = _.month, y = _.revenue)).yAxis(_.left.grid.ticks(5))
-        spec.yAxisCfg.side match
-            case Present(Side.Left) => succeed
-            case other              => fail(s"Expected Present(Side.Left) but got $other")
+    "yAxis(_.grid.ticks(5)) sets showGrid true and tickCount 5" in {
+        val spec = UI.chart(sales)(bar(x = _.month, y = _.revenue)).yAxis(_.grid.ticks(5))
+        // side field removed (dead/false knob per design §GAP-AXISCONFIG-SIDE)
         assert(spec.yAxisCfg.showGrid == true)
         assert(spec.yAxisCfg.tickCount == 5)
     }

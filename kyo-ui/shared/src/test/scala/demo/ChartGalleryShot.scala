@@ -78,8 +78,8 @@ object ChartGalleryShot extends KyoApp:
             bar(x = _.month, y = _.units, color = _.region)
         )
             .yScale(_.withNice(true))
-            .yAxis(_.left.grid.ticks(4))
-            .xAxis(_.bottom.label("Month"))
+            .yAxis(_.grid.ticks(4))
+            .xAxis(_.label("Month"))
             .legend(_.top)
             .size(360, 240)
             .toSvg
@@ -90,8 +90,7 @@ object ChartGalleryShot extends KyoApp:
             line(x = _.month, y = _.value)
         )
             .yScale(_.withNice(true))
-            .yAxis(_.left.grid)
-            .xAxis(_.bottom)
+            .yAxis(_.grid)
             .size(360, 240)
             .toSvg
 
@@ -101,8 +100,7 @@ object ChartGalleryShot extends KyoApp:
             bar(x = _.month, y = _.units, stack = by(_.region))
         )
             .yScale(_.withNice(true))
-            .yAxis(_.left.grid.ticks(4))
-            .xAxis(_.bottom)
+            .yAxis(_.grid.ticks(4))
             .legend(_.top)
             .size(360, 240)
             .toSvg
@@ -114,9 +112,8 @@ object ChartGalleryShot extends KyoApp:
             line(x = _.month, y = _.growthPct, axis = Axis.Right)
         )
             .yScale(_.withNice(true))
-            .yAxis(_.left.label("Revenue"))
-            .yAxisRight(_.right.label("Growth %"))
-            .xAxis(_.bottom)
+            .yAxis(_.label("Revenue"))
+            .yAxisRight(_.label("Growth %"))
             .size(360, 240)
             .toSvg
 
@@ -126,8 +123,7 @@ object ChartGalleryShot extends KyoApp:
             point(x = _.a, y = _.b, size = _.w)
         )
             .yScale(_.withNice(true))
-            .yAxis(_.left.grid)
-            .xAxis(_.bottom)
+            .yAxis(_.grid)
             .size(360, 240)
             .toSvg
 
@@ -137,8 +133,7 @@ object ChartGalleryShot extends KyoApp:
             bar(x = _.month, y = _.value)
         )
             .yScale(_.withNice(true))
-            .yAxis(_.left.grid.ticks(4))
-            .xAxis(_.bottom)
+            .yAxis(_.grid.ticks(4))
             .theme(_.dark)
             .size(360, 240)
             .toSvg

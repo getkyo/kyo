@@ -90,8 +90,7 @@ object ChartReactiveScales extends KyoApp:
             bar(x = _.label, y = _.value, color = _.label)
         )
             .yScale(_.linear(clampLo, clampHi).withClamp(true))
-            .yAxis(_.left.grid.ticks(5))
-            .xAxis(_.bottom)
+            .yAxis(_.grid.ticks(5))
             .legend(_.hidden)
             .size(360, 240)
             .toSvg
@@ -103,8 +102,7 @@ object ChartReactiveScales extends KyoApp:
                 bar(x = _.name, y = _.score)
             )
                 .yScale(_.linear(0.0, 100.0))
-                .yAxis(_.left.grid.ticks(5))
-                .xAxis(_.bottom)
+                .yAxis(_.grid.ticks(5))
                 .size(overlayW, overlayH)
                 .toSvgWithScales
         val targetPx = scales.y.toPixel(targetScore)
@@ -172,8 +170,7 @@ object ChartReactiveScales extends KyoApp:
                     point(x = _.x, y = _.y)
                 )
                     .yScale(_.linear(0.0, 200.0))
-                    .yAxis(_.left.grid.ticks(5))
-                    .xAxis(_.bottom)
+                    .yAxis(_.grid.ticks(5))
                     .animate(_.ease(800.millis))
                     .size(360, 240)
                     .toSvg

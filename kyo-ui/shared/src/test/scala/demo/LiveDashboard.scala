@@ -304,8 +304,7 @@ object LiveDashboard extends KyoApp:
             // is needed. (Wrapping would rebuild the whole chart per tick and reset the animation state.)
             // Throughput bar chart: FIXED y-domain so the axis stays put; bars animate to new heights.
             throughputChart = UI.chart(throughput)(bar(x = _.name, y = _.rps, color = _.name))
-                .yAxis(_.left.grid.ticks(4))
-                .xAxis(_.bottom)
+                .yAxis(_.grid.ticks(4))
                 .yScale(_.linear(0.0, rpsMax))
                 .legend(_.hidden)
                 .theme(_.dark)
@@ -316,8 +315,8 @@ object LiveDashboard extends KyoApp:
             // Latency lines over the fixed 31-slot rolling window: one line per series via the color channel,
             // so the layer derives a p50/p99 legend. Cyan p50 and amber p99 stay distinct from the bars.
             latencyChart = UI.chart(latency)(line(x = _.t, y = _.ms, color = _.series))
-                .yAxis(_.left.grid.ticks(4))
-                .xAxis(_.bottom.format(timeAxisLabel))
+                .yAxis(_.grid.ticks(4))
+                .xAxis(_.format(timeAxisLabel))
                 .yScale(_.linear(0.0, latMax))
                 .legend(
                     _.top.colorScale {
@@ -333,8 +332,7 @@ object LiveDashboard extends KyoApp:
             // Status stacked bar grouped by code, colored by monitoring convention: 2xx green, 4xx amber, 5xx red.
             statusChart = UI.chart(status)(bar(x = _.name, y = _.count, stack = by(_.code)))
                 .yScale(_.withNice(true))
-                .yAxis(_.left.grid.ticks(4))
-                .xAxis(_.bottom)
+                .yAxis(_.grid.ticks(4))
                 .legend(
                     _.top.colorScale {
                         case "2xx" => scGreen
@@ -348,8 +346,8 @@ object LiveDashboard extends KyoApp:
 
             // Error-rate line over the rolling window: fills the bottom-right cell so all four quadrants balance.
             errorChart = UI.chart(errRate)(line(x = _.t, y = _.pct))
-                .yAxis(_.left.grid.ticks(4))
-                .xAxis(_.bottom.format(timeAxisLabel))
+                .yAxis(_.grid.ticks(4))
+                .xAxis(_.format(timeAxisLabel))
                 .yScale(_.withNice(true))
                 .theme(_.dark)
                 .animate(_.ease(400.millis))

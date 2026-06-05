@@ -615,8 +615,6 @@ class ChartLowerTest extends Test:
             bar(x = _.month, y = _.revenue),
             line(x = _.month, y = _.growth, axis = Axis.Right)
         )
-            .yAxis(_.left)
-            .yAxisRight(_.right)
         val root = summon[Conversion[ChartSpec[Combo], Svg.Root]](spec)
 
         // Bar mark (index 0): fill must be palette(0) = blue.
@@ -673,8 +671,8 @@ class ChartLowerTest extends Test:
         val lightText = Style.Color.hex("#e5e7eb").getOrElse(Style.Color.white)
         val rows      = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
-            .yAxis(_.left.ticks(3))
-            .xAxis(_.bottom.label("Month"))
+            .yAxis(_.ticks(3))
+            .xAxis(_.label("Month"))
             .theme(_.dark)
         val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
 
@@ -1714,7 +1712,7 @@ class ChartLowerTest extends Test:
     // Leaf 10
     "theme.background(c) sets the background rect fill to the override color" in {
         val custom = Style.Color.rgb(10, 20, 30)
-        val spec   = UI.chart(themeRows)(bar(x = _.month, y = _.revenue)).theme(_.background(custom)).yAxis(_.left.grid)
+        val spec   = UI.chart(themeRows)(bar(x = _.month, y = _.revenue)).theme(_.background(custom)).yAxis(_.grid)
         val root   = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
         val bg     = root.children.collectFirst { case r: Svg.Rect => r }.getOrElse(fail("Expected a background rect"))
         assert(fillColorOf(bg.svgAttrs.fill) == custom, s"Expected background fill $custom but got ${fillColorOf(bg.svgAttrs.fill)}")
@@ -1723,7 +1721,7 @@ class ChartLowerTest extends Test:
     // Leaf 11
     "theme.axisColor(c) sets the axis line / tick mark stroke color" in {
         val custom = Style.Color.rgb(200, 0, 0)
-        val spec   = UI.chart(themeRows)(bar(x = _.month, y = _.revenue)).theme(_.axisColor(custom)).yAxis(_.left)
+        val spec   = UI.chart(themeRows)(bar(x = _.month, y = _.revenue)).theme(_.axisColor(custom))
         val root   = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
         // Axis lines / tick marks are frame lines WITHOUT a strokeOpacity (gridlines carry one).
         val axisLines = frameLines(root).filter(_.svgAttrs.strokeOpacity.isEmpty)
@@ -1737,7 +1735,7 @@ class ChartLowerTest extends Test:
     // Leaf 12
     "theme.gridColor(c) sets the gridline stroke color" in {
         val custom    = Style.Color.rgb(0, 200, 0)
-        val spec      = UI.chart(themeRows)(bar(x = _.month, y = _.revenue)).theme(_.gridColor(custom)).yAxis(_.left.grid)
+        val spec      = UI.chart(themeRows)(bar(x = _.month, y = _.revenue)).theme(_.gridColor(custom)).yAxis(_.grid)
         val root      = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
         val gridLines = frameLines(root).filter(_.svgAttrs.strokeOpacity.isDefined)
         assert(gridLines.nonEmpty, "Expected gridlines")
@@ -1750,8 +1748,8 @@ class ChartLowerTest extends Test:
     // Leaf 13
     "an unset theme produces output identical to the explicit default theme (no regression)" in run {
         val rows      = themeRows
-        val unset     = UI.chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.left.grid)
-        val explicit  = UI.chart(rows)(bar(x = _.month, y = _.revenue)).theme(_.light).yAxis(_.left.grid)
+        val unset     = UI.chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.grid)
+        val explicit  = UI.chart(rows)(bar(x = _.month, y = _.revenue)).theme(_.light).yAxis(_.grid)
         val rUnset    = summon[Conversion[ChartSpec[Sale], Svg.Root]](unset)
         val rExplicit = summon[Conversion[ChartSpec[Sale], Svg.Root]](explicit)
         for

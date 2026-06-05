@@ -68,8 +68,7 @@ object ChartFeatureGallery extends KyoApp:
             point(x = _.month, y = _.value, color = _.heat)
         )
             .yScale(_.withNice(true))
-            .yAxis(_.left.grid.ticks(4))
-            .xAxis(_.bottom)
+            .yAxis(_.grid.ticks(4))
             .legend(_.colorScaleSequential(Style.Color.blue, Style.Color.red))
             .size(360, 240)
             .toSvg
@@ -81,8 +80,7 @@ object ChartFeatureGallery extends KyoApp:
             errorBar(x = _.month, y = _.value, low = _.lo, high = _.hi, capWidth = 10.0)
         )
             .yScale(_.withNice(true))
-            .yAxis(_.left.grid.ticks(4))
-            .xAxis(_.bottom)
+            .yAxis(_.grid.ticks(4))
             .size(360, 240)
             .toSvg
 
@@ -93,8 +91,7 @@ object ChartFeatureGallery extends KyoApp:
             text(x = _.month, y = _.value, label = r => r.value.toInt.toString, anchor = UI.TextAnchor.Middle)
         )
             .yScale(_.withNice(true))
-            .yAxis(_.left.ticks(4))
-            .xAxis(_.bottom)
+            .yAxis(_.ticks(4))
             .size(360, 240)
             .toSvg
 
@@ -104,8 +101,7 @@ object ChartFeatureGallery extends KyoApp:
             area(x = _.month, y = _.units, color = _.region, stack = by(_.region))
         )
             .yScale(_.withNice(true))
-            .yAxis(_.left.grid.ticks(4))
-            .xAxis(_.bottom)
+            .yAxis(_.grid.ticks(4))
             .legend(_.top)
             .size(360, 240)
             .toSvg
@@ -116,8 +112,7 @@ object ChartFeatureGallery extends KyoApp:
             bar(x = _.month, y = _.units, color = _.region, stack = by(_.region))
         )
             .yScale(_.withNice(true))
-            .yAxis(_.left.grid.ticks(4))
-            .xAxis(_.bottom)
+            .yAxis(_.grid.ticks(4))
             .legend(_.top)
             .theme(_.dark.palette(UI.Ast.Palette.Okabe))
             .size(360, 240)
@@ -129,8 +124,7 @@ object ChartFeatureGallery extends KyoApp:
             line(x = _.month, y = _.value)
         )
             .yScale(_.withNice(true))
-            .yAxis(_.left.grid.ticks(4))
-            .xAxis(_.bottom)
+            .yAxis(_.grid.ticks(4))
             .title("Monthly readings, North America")
             .desc("Line chart of the NA monthly reading value from January through May.")
             .ariaLabel("Monthly NA readings line chart")

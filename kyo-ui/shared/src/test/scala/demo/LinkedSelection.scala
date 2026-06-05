@@ -55,7 +55,7 @@ object LinkedSelection extends KyoApp:
                     .onSelect(selected)
                     .interaction(_.highlightSelect)
                     .yScale(_.withNice(true))
-                    .yAxis(_.left.grid.ticks(4))
+                    .yAxis(_.grid.ticks(4))
                     .theme(_.dark)
                     .size(560, 300)
                     .toSvg
@@ -81,8 +81,7 @@ object LinkedSelection extends KyoApp:
                 UI.chart(detailData)(line(x = _.month, y = _.value))
                     .xScale(_.linear(1.0, 12.0))
                     .yScale(_.linear(0.0, 150.0))
-                    .xAxis(_.bottom)
-                    .yAxis(_.left.grid.ticks(4))
+                    .yAxis(_.grid.ticks(4))
                     .theme(_.dark)
                     .size(560, 300)
                     .toSvg

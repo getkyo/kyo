@@ -466,10 +466,6 @@ object UI:
     enum TextAnchor derives CanEqual:
         case Start, Middle, End
 
-    /** The side on which an axis is drawn. Used inside `UI.Ast.AxisConfig`. */
-    enum Side derives CanEqual:
-        case Left, Right, Top, Bottom
-
     /** Position of a legend relative to the plot area. */
     enum LegendPosition derives CanEqual:
         case Top, Bottom, Left, Right
@@ -2505,15 +2501,13 @@ object UI:
           *
           * Builder methods return a copy with one field changed, so chains compose
           * without mutation. Used as the argument to `.xAxis(f)` / `.yAxis(f)` /
-          * `.yAxisRight(f)`: write `_.left.grid.ticks(5).format(...)`.
+          * `.yAxisRight(f)`: write `_.grid.ticks(5).format(...)`.
           *
-          * `side` selects where the axis line and labels are drawn. `axisLabel` is an
-          * optional axis label string. `showGrid` enables gridlines across the plot.
-          * `tickCount` is the desired number of ticks (a hint, not a hard limit).
-          * `tickFormat` overrides the default tick label formatter.
+          * `axisLabel` is an optional axis label string. `showGrid` enables gridlines
+          * across the plot. `tickCount` is the desired number of ticks (a hint, not a
+          * hard limit). `tickFormat` overrides the default tick label formatter.
           */
         final case class AxisConfig(
-            side: Maybe[Side],
             axisLabel: Maybe[String],
             showGrid: Boolean,
             tickCount: Int,
@@ -2521,13 +2515,8 @@ object UI:
             tickRotation: Double = 0.0,                 // D17
             tickAnchor: TextAnchor = TextAnchor.Middle, // D17
             reversed: Boolean = false,                  // D20
-            padding: Double = 0.0,                      // D21
-            labelAllBands: Boolean = true               // D18
+            padding: Double = 0.0                       // D21
         ):
-            def left: AxisConfig                         = copy(side = Present(Side.Left))
-            def right: AxisConfig                        = copy(side = Present(Side.Right))
-            def bottom: AxisConfig                       = copy(side = Present(Side.Bottom))
-            def top: AxisConfig                          = copy(side = Present(Side.Top))
             def label(s: String): AxisConfig             = copy(axisLabel = Present(s))
             def grid: AxisConfig                         = copy(showGrid = true)
             def ticks(n: Int): AxisConfig                = copy(tickCount = n)
@@ -2540,7 +2529,7 @@ object UI:
         end AxisConfig
 
         object AxisConfig:
-            val default: AxisConfig = AxisConfig(Absent, Absent, false, 5, Absent)
+            val default: AxisConfig = AxisConfig(Absent, false, 5, Absent)
 
         /** Configures legend appearance, position, color scale, and interactivity.
           *
