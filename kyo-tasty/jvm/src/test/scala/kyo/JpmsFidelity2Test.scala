@@ -94,8 +94,8 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
                     )
                     val moduleCount = cp.modules.size
                     assert(
-                        moduleCount >= 20,
-                        s"Expected >= 20 JPMS modules after jrt:/ walk (JDK typically has 69+), found $moduleCount"
+                        moduleCount >= 65,
+                        s"Expected >= 65 JPMS modules after jrt:/ walk (measured 69 on JDK 25), found $moduleCount"
                     )
                     succeed
                 case Absent =>
