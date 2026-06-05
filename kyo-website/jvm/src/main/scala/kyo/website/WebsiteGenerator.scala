@@ -14,23 +14,23 @@ import kyo.*
   * Taking only the first emission gives the initial static render; subsequent reactive
   * re-renders are irrelevant for SSG. Each docs page also embeds a `#docs-island` and a
   * `#versions-island` JSON `<script>` (the boot schema the SPA bundle reads on load) and a
-  * sibling `content.md` raw-Markdown file (the single source the client fetches, D6/INV-009).
+  * sibling `content.md` raw-Markdown file (the single source the client fetches).
   *
   * Output directory layout:
   * {{{
-  *   <outDir>/index.html             -- landing page (INV-009)
+  *   <outDir>/index.html             -- landing page
   *   <outDir>/<prefix>/index.html    -- per-version overview page (chrome + rendered root-README intro)
   *   <outDir>/<prefix>/content.md    -- raw root-README intro Markdown (== content.intro, kept)
   *   <outDir>/<prefix>/content.html  -- pre-rendered article JSON ({html, headings}) for the SPA
   *   <outDir>/<prefix>/<slug>/index.html  -- per-module docs page (chrome + rendered article)
   *   <outDir>/<prefix>/<slug>/content.md  -- raw README Markdown (== module.readme, kept)
   *   <outDir>/<prefix>/<slug>/content.html -- pre-rendered article JSON ({html, headings}) for the SPA
-  *   <outDir>/<prefix>/manifest.json      -- module/slug list + TOC outlines + prev/next (D5)
-  *   <outDir>/versions.json   -- version manifest (INV-010)
+  *   <outDir>/<prefix>/manifest.json      -- module/slug list + TOC outlines + prev/next
+  *   <outDir>/versions.json   -- version manifest
   *   <outDir>/sitemap.xml     -- canonical-indexable route set (SEO-3)
   *   <outDir>/robots.txt      -- allow-all + sitemap directive (SEO-3)
-  *   <outDir>/CNAME           -- exactly "getkyo.io" (INV-011)
-  *   <outDir>/.nojekyll       -- empty (INV-011)
+  *   <outDir>/CNAME           -- exactly "getkyo.io"
+  *   <outDir>/.nojekyll       -- empty
   *   <outDir>/kyo.svg         -- vector logo for the header/footer mark (copied from repo root)
   *   <outDir>/kyo.png         -- raster logo, kept for the favicon link (copied from repo root)
   *   <outDir>/kyo.ico         -- favicon (copied from kyo-website/assets/)
@@ -102,7 +102,7 @@ object WebsiteGenerator:
       *   - `<prefix>/<slug>/content.html`: pre-rendered article JSON for the SPA navigator.
       *   - `<prefix>/manifest.json`: the module/slug list with TOC outlines and prev/next order.
       *
-      * An intro-only version (empty groups, INV-007) emits its overview page (and its content.md) and
+      * An intro-only version (empty groups) emits its overview page (and its content.md) and
       * an empty manifest, with zero `<slug>` pages and zero per-module `content.md` files.
       */
     private def emitDocs(
@@ -240,7 +240,7 @@ object WebsiteGenerator:
     /** Wrap a route's content `body` in the unified `SiteApp` shell for SSG. The header inputs (the
       * versions dropdown, the `docsHome` target, the empty search query and index) are exactly the
       * inputs the bundle passes for the same route, so the server-rendered shell and the bundle's
-      * first render produce a structurally identical `data-kyo-path` tree (hydration parity, INV-003).
+      * first render produce a structurally identical `data-kyo-path` tree (hydration parity).
       * The content signal is constant on SSG (one route is emitted per call); the bundle uses a
       * `SignalRef` updated by its nav fiber.
       */
@@ -330,7 +330,7 @@ object WebsiteGenerator:
         )
     end introOpts
 
-    /** Build the schema.org JSON-LD payload for a page (SEO-5). `kind` is `"landing"`, `"docs"`, or
+    /** Build the schema.org JSON-LD payload for a page. `kind` is `"landing"`, `"docs"`, or
       * `"intro"`. `title` is the page headline; `url` is the page's own self URL. The landing emits a
       * `@graph` with `WebSite` + `SoftwareSourceCode`; docs and intro pages emit a single `TechArticle`
       * that is `isPartOf` the site `WebSite`. All string fields are JSON-escaped via `escJson`.
@@ -420,8 +420,8 @@ object WebsiteGenerator:
       * (slug/group/title), the full version list, the pre-rendered article HTML, and the heading
       * outline. `WebsiteBundleMain` reads this at bundle entry to seed the SPA with the current
       * page's content before navigation. The `article` field carries the pre-rendered HTML so the
-      * client never needs to call the transpiler (INV-002). The `headings` array carries the
-      * level-carrying outline entries (INV-010).
+      * client never needs to call the transpiler. The `headings` array carries the
+      * level-carrying outline entries.
       */
     private def docsIsland(
         c: WebsiteContent,
@@ -446,7 +446,7 @@ object WebsiteGenerator:
       * immediately before `</body>` in the rendered SSG HTML. The JSON has its angle brackets escaped
       * to their JSON unicode escapes (via escScript) so a `</script>` substring in any field cannot
       * close the element early. This is a string-level SSG concern, not a kyo-ui API or a `UI.rawHtml`
-      * use, so the INV-005/INV-012 raw-HTML boundary (the transpiler's inline-HTML node) is preserved.
+      * use, so the raw-HTML boundary (the transpiler's inline-HTML node) is preserved.
       */
     private def injectIslands(html: String, docsIslandJson: String, versions: Chunk[WebsiteVersion]): String =
         val versionsIslandJson = buildVersionsJson(versions)
@@ -492,7 +492,7 @@ object WebsiteGenerator:
         )
         // The landing's header Docs/Modules/Get-started target and its seeded island are the latest
         // version's first module under `latest/`. The same content seeds the #docs-island so the
-        // bundle hydrates `/` with the same docsHome the SSG header used (D4: islands now ship on `/`).
+        // bundle hydrates `/` with the same docsHome the SSG header used (islands now ship on `/`).
         val latest      = pickLatest(content)
         val landingHome = latest.fold("/")(c => docsHome(c, "latest"))
         for
@@ -507,7 +507,7 @@ object WebsiteGenerator:
     end emitLanding
 
     /** Emit a styled `404.html` at the site root (B14). GitHub Pages serves this file for any unknown
-      * path, so an off-tree deep-link (AF-4) lands on the unified shell carrying a "page not found"
+      * path, so an off-tree deep-link lands on the unified shell carrying a "page not found"
       * message and a link home rather than a bare server 404. The page is noindex (it is an error
       * surface, not content) and is intentionally absent from the sitemap. The header uses the latest
       * version's docsHome so its nav targets resolve, matching the landing.

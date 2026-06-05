@@ -39,9 +39,9 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    // ---- Heading slugs == headings slugs (INV-004) ----
+    // ---- Heading slugs == headings slugs ----
 
-    "heading id slugs equal headings slugs (INV-004)" in run {
+    "heading id slugs equal headings slugs" in run {
         val source =
             "# Alpha\n" +
                 "## Beta\n" +
@@ -353,7 +353,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    // ---- HTML comment before heading (RI-002 trap 5) ----
+    // ---- HTML comment before heading ----
 
     "leading HTML comment is skipped; first heading is the H1" in run {
         val source = "<!-- This is a comment -->\n# kyo-core\nSome text.\n"
@@ -365,7 +365,7 @@ class DocsMarkdownTest extends Test:
     // ---- Degrade-not-fail: unknown construct ----
 
     "unknown construct degrades to plain paragraph without abort" in run {
-        // A definition list style is not in RI-002; must not abort, must produce some output.
+        // A definition list style is not supported; must not abort, must produce some output.
         val source = "term\n:   definition\n"
         for
             rendered <- transpile(source)
@@ -395,7 +395,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    // ---- Multi-line <a><img></a> video embed (R4 regression, leaf 20) ----
+    // ---- Multi-line <a><img></a> video embed ----
 
     "multi-line <a><img></a> video embed is coalesced into one wrapped rawHtml node" in run {
         val source =
@@ -507,7 +507,7 @@ class DocsMarkdownTest extends Test:
         val source = "```scala\n" + code + "\n```\n"
         transpileHtml(source)
 
-    "INV-006 every TokenKind cssClass is in the docsTokens stylesheet" in run {
+    "every TokenKind cssClass is in the docsTokens stylesheet" in run {
         // Collect all css classes from the token kinds.
         val tokenClasses = DocsMarkdownRender.TokenKind.values.map(_.cssClass).toSet
         // The stylesheet includes: tok-keyword, tok-string, tok-comment, tok-type, tok-number,
@@ -541,7 +541,7 @@ class DocsMarkdownTest extends Test:
         assert(DocsMarkdownRender.TokenKind.Operator.cssClass == "tok-operator")
     }
 
-    "INV-007 keyword/number classification: val x = 1" in run {
+    "keyword/number classification: val x = 1" in run {
         for html <- highlightScalaHtml("val x = 1")
         yield
             assert(html.contains("tok-keyword"), s"Expected tok-keyword for val: $html")
@@ -555,7 +555,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-007 string and char literals" in run {
+    "string and char literals" in run {
         for html <- highlightScalaHtml("val s = \"hi\"\nval c = 'a'")
         yield
             assert(html.contains("tok-string"), s"Expected tok-string for string literal: $html")
@@ -564,7 +564,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-007 line and block comments" in run {
+    "line and block comments" in run {
         for html <- highlightScalaHtml("// note\n/* block */\nval x = 1")
         yield
             assert(html.contains("tok-comment"), s"Expected tok-comment: $html")
@@ -573,7 +573,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-007 numeric literals Int/Long/Float/Double" in run {
+    "numeric literals Int/Long/Float/Double" in run {
         for html <- highlightScalaHtml("val a = 1\nval b = 2L\nval c = 3.0\nval d = 4.5d")
         yield
             // Each of 1, 2L, 3.0, 4.5d should be in tok-number spans.
@@ -585,7 +585,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-007 interpolation parts and id: s\"x=$x\"" in run {
+    "interpolation parts and id: s\"x=$x\"" in run {
         for html <- highlightScalaHtml("s\"x=$x\"")
         yield
             // The interpolator id 's' should be in tok-interpolation.
@@ -597,7 +597,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-007 annotation marker and name: @main def run = ()" in run {
+    "annotation marker and name: @main def run = ()" in run {
         for html <- highlightScalaHtml("@main def run = ()")
         yield
             // @ should be in tok-annotation.
@@ -610,7 +610,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-007 operator punctuation: val f: Int => Int = _ + 1" in run {
+    "operator punctuation: val f: Int => Int = _ + 1" in run {
         for html <- highlightScalaHtml("val f: Int => Int = _ + 1")
         yield
             // : should be in tok-operator.
@@ -627,7 +627,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-007 Type heuristic arm (a) capitalized idents" in run {
+    "Type heuristic arm (a) capitalized idents" in run {
         for html <- highlightScalaHtml("val o: Option = ???\nval n = Int.MaxValue")
         yield
             // Option and Int should be classified as tok-type (arm a: uppercase first char).
@@ -638,7 +638,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-007 Type heuristic arm (b) lowercase after context tokens" in run {
+    "Type heuristic arm (b) lowercase after context tokens" in run {
         // type alias = Int: 'alias' after KwType -> tok-type (arm b).
         // extends Foo with Bar: Bar after KwWith -> tok-type.
         // def f[a](x: a): a = x: 'a' after [ and : -> tok-type.
@@ -665,10 +665,10 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    // INV-007 regression: boolean and null literals must classify as tok-keyword.
+    // Regression: boolean and null literals must classify as tok-keyword.
     // KwTrue, KwFalse, KwNull extend BooleanConstant/Literal, not Token$Keyword in scalameta 4.13.4.
     // Without the dedicated arm they fall through to Absent and render unhighlighted.
-    "INV-007 boolean and null literals classify as tok-keyword" in run {
+    "boolean and null literals classify as tok-keyword" in run {
         val snippet = "val b = true\nval n = null\nval f = false"
         for html <- highlightScalaHtml(snippet)
         yield
@@ -678,8 +678,8 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-008 any snippet completes without exception or Abort" in run {
-        // INV-008: no input may panic the build. Scalameta 4.13.4 in Scala3 dialect is
+    "any snippet completes without exception or Abort" in run {
+        // No input may panic the build. Scalameta 4.13.4 in Scala3 dialect is
         // lenient and returns Right (tokens) even for partial/malformed snippets (empirically
         // verified: unterminated strings, multi-char char literals, invalid unicode escapes all
         // produce Right). The Left branch in highlightScala degrades to Ast.Text as a defensive
@@ -705,7 +705,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-008 partial expression still tokenizes (not a degrade)" in run {
+    "partial expression still tokenizes (not a degrade)" in run {
         // scalameta can tokenize expressions like x.map(_ + 1) even without a complete compilation
         // unit. The result should be a fragment with tok- spans, not a single Ast.Text degrade.
         for html <- highlightScalaHtml("x.map(_ + 1)")
@@ -825,23 +825,23 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-003 SSG article HTML equals injected article HTML (parity unit assertion)" in run {
-        // INV-003: the SSG-emitted article HTML equals the client-injected article, byte-identical.
+    "SSG article HTML equals injected article HTML (parity unit assertion)" in run {
+        // The SSG-emitted article HTML equals the client-injected article, byte-identical.
         // Unit assertion: renderArticle produces articleHtml == renderHtml(article). This is trivially
         // true by construction (renderArticleHtml IS runRender(article).take(1)...), but is pinned as a
-        // permanent regression guard. The full Chrome-backed parity test is in a later phase.
+        // permanent regression guard.
         val source = "## Scope\n\nSome text.\n"
         for
             rendered        <- DocsMarkdownRender.renderArticle(source)
             htmlFromArticle <- renderHtml(rendered.article)
         yield assert(
             rendered.articleHtml == htmlFromArticle,
-            s"INV-003: articleHtml must equal renderHtml(article) byte-for-byte; got articleHtml=${rendered.articleHtml}, renderHtml=$htmlFromArticle"
+            s"articleHtml must equal renderHtml(article) byte-for-byte; got articleHtml=${rendered.articleHtml}, renderHtml=$htmlFromArticle"
         )
         end for
     }
 
-    // ---- Phase-2 audit NOTE-1: sectionSnippets excludes RawEmbed from the snippet ----
+    // ---- sectionSnippets excludes RawEmbed from the snippet ----
 
     "sectionSnippets excludes a RawEmbed block from the snippet" in run {
         // A section whose only following block is a raw HTML embed yields an empty snippet.
@@ -860,7 +860,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    // ---- Phase-2 leaf 7: sectionSnippets returns one pair per heading in document order ----
+    // ---- sectionSnippets returns one pair per heading in document order ----
 
     "sectionSnippets returns one pair per heading in document order with slugs matching parseArticle" in run {
         val source = "## Alpha\nAlpha text.\n### Beta\nBeta.\n## Gamma\nGamma text.\n"
@@ -888,7 +888,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    // ---- Phase-2 leaf 8: sectionSnippets excludes fenced code from the snippet ----
+    // ---- sectionSnippets excludes fenced code from the snippet ----
 
     "sectionSnippets excludes fenced code blocks from the snippet" in run {
         val source = "## Section\n```\nxyzzy\n```\n"
@@ -901,7 +901,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    // ---- Phase-2 leaf 9: a heading with no following prose maps to an empty snippet ----
+    // ---- a heading with no following prose maps to an empty snippet ----
 
     "a heading with no following prose maps to an empty snippet" in run {
         val source = "## First\n## Second\n"

@@ -10,8 +10,8 @@ class DocsSearchTest extends Test:
     private def mkContent(groups: Chunk[WebsiteContent.Group]): WebsiteContent =
         WebsiteContent(intro = "", groups = groups, version = WebsiteVersion("latest", "latest", true))
 
-    // Leaf 14: index has one entry per module
-    "index has one entry per module (leaf 14)" in run {
+    // index has one entry per module
+    "index has one entry per module" in run {
         val content = mkContent(Chunk(
             WebsiteContent.Group(
                 "Foundation",
@@ -37,8 +37,8 @@ class DocsSearchTest extends Test:
         assert(idx.entries(4).slug == "kyo-combinators", s"Last entry slug: ${idx.entries(4).slug}")
     }
 
-    // Leaf 15: filter matches title substring
-    "filter matches title substring (leaf 15)" in run {
+    // filter matches title substring
+    "filter matches title substring" in run {
         val content = mkContent(Chunk(
             WebsiteContent.Group(
                 "Foundation",
@@ -55,8 +55,8 @@ class DocsSearchTest extends Test:
         assert(hits(0).title == "kyo-core", s"Expected kyo-core title, got: ${hits(0).title}")
     }
 
-    // Leaf 16: filter ranks title before text hits
-    "filter ranks title match before text-only match (leaf 16)" in run {
+    // filter ranks title before text hits
+    "filter ranks title match before text-only match" in run {
         val content = mkContent(Chunk(
             WebsiteContent.Group(
                 "Foundation",
@@ -76,8 +76,8 @@ class DocsSearchTest extends Test:
         assert(hits(1).slug == "kyo-beta", s"Text-only match should come second, got: ${hits(1).slug}")
     }
 
-    // Leaf 17: empty query yields no hits
-    "empty query yields no hits (leaf 17)" in run {
+    // empty query yields no hits
+    "empty query yields no hits" in run {
         val content = mkContent(Chunk(
             WebsiteContent.Group(
                 "Foundation",
@@ -127,8 +127,8 @@ class DocsSearchTest extends Test:
         assert(hits(0).sub == Present("Fibers and forks"), s"sub-label: ${hits(0).sub}")
     }
 
-    // Leaf 18: filter searches stripped plaintext, not code
-    "filter does not match terms inside fenced code blocks (leaf 18)" in run {
+    // filter searches stripped plaintext, not code
+    "filter does not match terms inside fenced code blocks" in run {
         val codeOnlyReadme =
             """Some prose about effects.
               |
@@ -152,8 +152,8 @@ class DocsSearchTest extends Test:
         assert(proseHits.size == 1, s"Prose term should match, got: $proseHits")
     }
 
-    // Leaf 8: within the title band, exact title match ranks above prefix title match
-    "within the title band exact match ranks above prefix match (leaf 8)" in run {
+    // within the title band, exact title match ranks above prefix title match
+    "within the title band an exact match ranks above a prefix match" in run {
         val modules = Chunk(
             mkModule("kyo-core", "Effects", "kyo-core", ""),
             mkModule("kyo", "Foundation", "kyo", "")
@@ -166,9 +166,9 @@ class DocsSearchTest extends Test:
         assert(hits(1).slug == "kyo-core", s"Prefix match must rank second, got: ${hits(1).slug}")
     }
 
-    // Leaf 9: within the heading band, a higher matchClass heading hit ranks above a lower one
-    // (levelWeight=0 per Decision 1; ordering is matchClass-driven, not level-driven)
-    "within the heading band higher matchClass ranks above lower matchClass (leaf 9)" in run {
+    // within the heading band, a higher matchClass heading hit ranks above a lower one
+    // (levelWeight=0 because Heading carries no level; ordering is matchClass-driven, not level-driven)
+    "within the heading band higher matchClass ranks above lower matchClass" in run {
         val modules = Chunk(mkModule("kyo-core", "Effects", "kyo-core", ""))
         val headings = Map(
             "kyo-core" -> Chunk(
@@ -200,7 +200,7 @@ class DocsSearchTest extends Test:
     // the key is (isProse, -matchClass, ...) so kyo-alpha (isProse=0) sorts before kyo-beta
     // (isProse=1) regardless of matchClass. The assertion [kyo-alpha, kyo-beta] FAILS under the old
     // uniform-key filter and PASSES only with the isProse tier.
-    "heading-band: per-heading hit ranks above prose-fallback hit regardless of matchClass (leaf 10)" in run {
+    "heading-band: per-heading hit ranks above prose-fallback hit regardless of matchClass" in run {
         // kyo-beta (idx 0): no headings; text "fibers" matches query "fibers" exactly (matchClass 3).
         // kyo-alpha (idx 1): heading "fibers overview" prefix-matches query "fibers" (matchClass 2).
         // Neither title matches "fibers", so both entries go to the heading/text band.
@@ -233,8 +233,8 @@ class DocsSearchTest extends Test:
         assert(hits(1).sub == Absent, s"kyo-beta prose hit must have no sub-label, got: ${hits(1).sub}")
     }
 
-    // Leaf 11: filter is deterministic (same input produces same output)
-    "filter is deterministic (leaf 11)" in run {
+    // filter is deterministic (same input produces same output)
+    "filter is deterministic" in run {
         val modules = Chunk(
             mkModule("kyo-core", "Effects", "kyo-core", ""),
             mkModule("kyo-data", "Foundation", "kyo-data", ""),

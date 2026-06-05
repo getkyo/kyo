@@ -14,14 +14,14 @@ import scala.meta.tokens.Token as MetaToken
   * tree (headings, paragraphs, lists, tables, fenced code with token highlighting, callout divs,
   * inline images and links) ready to embed directly into a page rendered by `UI.runRenderPage`.
   *
-  * The grammar is bounded to the construct set enumerated in RI-002 and is expressed with kyo-parse
+  * The grammar is bounded to a fixed construct set and is expressed with kyo-parse
   * `Parse[Char]` combinators. A thin line-oriented splitter groups raw lines into block segments;
   * the inline content of each block, and the block-level recognizers (headings, list markers, table
   * cells, fence info-strings, badge/link/image inline tokens) are genuine kyo-parse parsers run via
   * `Parse.runResult`.
   *
-  * This object lives in `kyo-website/jvm/` so scalameta never reaches the JS link classpath
-  * (D2, INV-001). The shared [[DocsMarkdown]] object holds only the cross-platform
+  * This object lives in `kyo-website/jvm/` so scalameta never reaches the JS link classpath.
+  * The shared [[DocsMarkdown]] object holds only the cross-platform
   * [[DocsMarkdown.Heading]] carrier type.
   *
   * @see
@@ -39,7 +39,7 @@ object DocsMarkdownRender:
       * sentinel) when produced by [[transpile]] alone, and filled with the full rendered HTML by
       * [[renderArticle]]. `headings` is the ordered outline; each entry carries the same `slug`
       * that was set as the `id` attribute on the corresponding `UI.h1`..`UI.h4` element, so
-      * `article` id attributes and `headings` slugs are always consistent (INV-004). Duplicate
+      * `article` id attributes and `headings` slugs are always consistent. Duplicate
       * heading texts are disambiguated with a `-2` suffix on both sides.
       */
     final case class Rendered(article: UI, articleHtml: String, headings: Chunk[DocsMarkdown.Heading])
@@ -50,7 +50,7 @@ object DocsMarkdownRender:
       * The effect row is `Sync` only (no `Abort`). Malformed input degrades rather than failing:
       * unknown inline constructs become plain `UI.text` (via kyo-parse `recoverWith`), unknown
       * block constructs become a `UI.p` carrying the verbatim line, and an empty source returns
-      * `Rendered(UI.empty, "", Chunk.empty)`. The bounded RI-002 grammar plus those total fall-throughs
+      * `Rendered(UI.empty, "", Chunk.empty)`. The bounded grammar plus those total fall-throughs
       * are designed so no malformed-corpus path reaches an undefined evaluation; the row stays
       * `Sync`.
       *
@@ -70,7 +70,7 @@ object DocsMarkdownRender:
       *
       * @param article
       *   The article `UI` value produced by [[transpile]]. Must be 100% static (no `Signal`/
-      *   `Reactive` nodes), which is guaranteed by the bounded RI-002 grammar (D3).
+      *   `Reactive` nodes), which is guaranteed by the bounded grammar.
       */
     def renderArticleHtml(article: UI)(using Frame): String < Async =
         UI.runRender(article).take(1).run.map(_.headMaybe.getOrElse(""))
@@ -251,7 +251,7 @@ object DocsMarkdownRender:
         t.length > 2 && t.head.isDigit && t.drop(1).startsWith(". ")
 
     /** Group cleaned source lines into [[Block]] segments. Leading HTML comments are skipped
-      * (RI-002 trap 5). This is line-level structuring only; the content of each block is parsed
+      * Leading HTML comments are skipped. This is line-level structuring only; the content of each block is parsed
       * by the kyo-parse block/inline parsers.
       */
     private def splitBlocks(cleaned: String): Chunk[Block] =
@@ -276,7 +276,7 @@ object DocsMarkdownRender:
             end if
         end skipComment
 
-        // Skip leading HTML comments (RI-002 trap 5).
+        // Skip leading HTML comments.
         while i < lines.length && lines(i).trim.startsWith("<!--") do
             i = skipComment()
         end while
@@ -859,7 +859,7 @@ object DocsMarkdownRender:
 
     /** Token kinds for scalameta-backed Scala highlighting. Each case maps to one CSS class in
       * `WebsiteStyles.docsTokens`. The closed set is defined by `design/02-public-api.md` note 4;
-      * the `cssClass` accessor is the single source of truth for the class name string (INV-006).
+      * the `cssClass` accessor is the single source of truth for the class name string.
       */
     enum TokenKind derives CanEqual:
         case Keyword
@@ -894,7 +894,7 @@ object DocsMarkdownRender:
     end highlight
 
     /** Tokenize a Scala/SBT snippet using scalameta and emit `tok-*` UI.span nodes. On a lex error
-      * (`Tokenized.Error`) the whole body degrades to a single `Ast.Text` leaf (INV-008). All token
+      * (`Tokenized.Error`) the whole body degrades to a single `Ast.Text` leaf. All token
       * `.text` values are emitted (including trivia), so the output is byte-preserving.
       *
       * A `foldLeft` threads `prev` (the last non-trivia token) as accumulator state for the one-token
@@ -945,7 +945,7 @@ object DocsMarkdownRender:
             Present(TokenKind.Operator)
         case _: MetaToken.At => Present(TokenKind.Annotation)
         // KwTrue, KwFalse, and KwNull extend BooleanConstant/Literal, not Token$Keyword in scalameta
-        // 4.13.4, so they do not match the Keyword arm below. Place this arm first (INV-007).
+        // 4.13.4, so they do not match the Keyword arm below. Place this arm first.
         case _: MetaToken.KwTrue | _: MetaToken.KwFalse | _: MetaToken.KwNull =>
             Present(TokenKind.Keyword)
         case _: MetaToken.Keyword => Present(TokenKind.Keyword)

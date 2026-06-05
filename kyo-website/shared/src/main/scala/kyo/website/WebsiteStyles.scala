@@ -9,7 +9,7 @@ import kyo.*
   * `DocsApp`, and `DocsMarkdown`). The sheet is rendered to a CSS string and placed in
   * `PageHead.css` by `WebsitePage.wrap`; the same value is injected client-side via
   * `UI.runStylesheet` by the bundle entry. No raw CSS string is used anywhere in the site
-  * (INV-012). `WebsiteStylesCoverageTest` renders both apps and asserts that every emitted class
+  * `WebsiteStylesCoverageTest` renders both apps and asserts that every emitted class
   * has a matching rule here, so a future unstyled class fails the build.
   *
   * The palette, gradients, font stacks, spacing, and breakpoints port the reference design
@@ -1115,7 +1115,7 @@ object WebsiteStyles:
     private def responsive: Stylesheet =
         Stylesheet.empty
             // On narrow viewports the unified header wraps to two rows so all nav targets stay
-            // reachable (AF-3). Row 1: brand + nav links. Row 2: search + version + CTA.
+            // reachable on narrow viewports. Row 1: brand + nav links. Row 2: search + version + CTA.
             // .site-header-inner drops its fixed 60px height and gains flex-wrap; .right takes the
             // full width of the second row (ml-auto still pushes it right on wide viewports).
             // .btn-ghost (the GitHub icon-only button used elsewhere) is hidden on small screens

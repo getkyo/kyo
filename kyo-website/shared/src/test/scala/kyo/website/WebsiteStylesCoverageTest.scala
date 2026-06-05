@@ -118,7 +118,7 @@ class WebsiteStylesCoverageTest extends Test:
             DocsMarkdown.Heading(4, "Deeper", "deeper")
         )
         // DocsMarkdown.transpile is JVM-only after the split; use a constructed UI article
-        // so this shared test stays cross-platform (steering constraint 6, INV-G6).
+        // so this shared test stays cross-platform.
         // The constructed article includes all prose-hook classes so the coverage assertion
         // and the non-vacuousness assertion remain meaningful.
         val article2 = UI.fragment(
@@ -194,7 +194,7 @@ class WebsiteStylesCoverageTest extends Test:
         }
     }
 
-    // Leaf 2: the .ver rule is present and is a positioning container (not the pill chrome)
+    // the .ver rule is present and is a positioning container (not the pill chrome)
     "the .ver rule is a relatively-positioned layout container" in run {
         val css = WebsiteStyles.sheet.render
         // find the .ver { ... } block (terminated by the next newline after the opening brace)
@@ -205,7 +205,7 @@ class WebsiteStylesCoverageTest extends Test:
         assert(block.contains("position: relative"), s".ver rule must carry position: relative; got: $block")
     }
 
-    // Leaf 3: the option overlay rule is keyed on data-kyo-dropdown-options with position: absolute
+    // the option overlay rule is keyed on data-kyo-dropdown-options with position: absolute
     "the [data-kyo-dropdown-options] rule carries position: absolute (Position.dropdown card chrome)" in run {
         val css    = WebsiteStyles.sheet.render
         val selStr = "[data-kyo-dropdown-options]"
@@ -218,7 +218,7 @@ class WebsiteStylesCoverageTest extends Test:
         assert(block.contains("var(--line)"), s"$selStr rule must carry line border; got: $block")
     }
 
-    // Leaf 4: the highlighted-option rule is keyed on data-kyo-dropdown-hl="true" with accent-ghost
+    // the highlighted-option rule is keyed on data-kyo-dropdown-hl="true" with accent-ghost
     "the [data-kyo-dropdown-hl=true] rule carries the accent-ghost background" in run {
         val css    = WebsiteStyles.sheet.render
         val selStr = """[data-kyo-dropdown-hl="true"]"""
@@ -229,10 +229,9 @@ class WebsiteStylesCoverageTest extends Test:
         assert(block.contains("accent-ghost"), s"$selStr rule must carry accent-ghost background; got: $block")
     }
 
-    // Leaf 5: the version dropdown carries .id("site-version"), so the renderer emits
-    // data-kyo-dropdown-trigger and data-kyo-dropdown-options. Rules 2 and 3 in the sheet now
-    // match real elements, proving the rules are no longer inert.
-    "the version dropdown emits data-kyo-dropdown-trigger and data-kyo-dropdown-options (Rules 2 and 3 are live)" in run {
+    // the version dropdown carries .id("site-version"), so the renderer emits
+    // data-kyo-dropdown-trigger and data-kyo-dropdown-options, proving those sheet rules match real elements.
+    "the version dropdown emits data-kyo-dropdown-trigger and data-kyo-dropdown-options" in run {
         landingHtml.map { html =>
             assert(
                 html.contains("data-kyo-dropdown-trigger=\"site-version\""),

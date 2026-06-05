@@ -14,7 +14,7 @@ import org.scalajs.dom
   *      `/<prefix>/...` route).
   *   3. Mounts the unified `SiteApp` shell ONCE around one route-reactive content slot, then drives
   *      that slot from a single nav fiber on `route.next`: `/` swaps to the landing body with no
-  *      reload (D1), `/<prefix>/<slug>/` and the overview `/<prefix>/` both fetch + inject pre-rendered
+  *      reload, `/<prefix>/<slug>/` and the overview `/<prefix>/` both fetch + inject pre-rendered
   *      article HTML from `content.html` and swap the article/TOC in place (the overview's
   *      `content.html` is the root-README intro rendered at build time), and any genuinely off-tree
   *      route falls back to a full browser navigation.
@@ -24,7 +24,7 @@ import org.scalajs.dom
   * formats `WebsiteGenerator` emits at build time, so the in-browser head never diverges from what
   * crawlers indexed.
   *
-  * This object is the one shared ESModule entry across all doc versions (INV-008).
+  * This object is the one shared ESModule entry across all doc versions.
   */
 object WebsiteBundleMain:
 
@@ -106,7 +106,7 @@ object WebsiteBundleMain:
             Sync.Unsafe.evalOrThrow(route.current)
         // The active prefix is `latest` when on `/` (the SSG seeds the landing's header + island from
         // the latest version under `latest/`); otherwise it is the path's first physical segment so a
-        // reader under `/v<X>/...` keeps navigating within that tree (WARN-1).
+        // reader under `/v<X>/...` keeps navigating within that tree.
         val prefix = activePrefix(initialRoute)
         val home   = docsHome(island.content, prefix)
         // The physical trees a `/<prefix>/` intro route may legitimately name: `latest`, every
@@ -115,11 +115,11 @@ object WebsiteBundleMain:
         // classification from the `#versions-island` element: when that island is absent (a non-SSG
         // harness, or a page that omits it) `versions` is empty, but the reader is still browsing
         // within the island's own tree, so `/<islandTag>/` must classify as intro, not off-tree
-        // (AF-5). When the versions island IS present the island tag is already in the version set,
+        // When the versions island IS present the island tag is already in the version set,
         // so the extra term is idempotent.
         val knownPrefixes: Set[String] = knownPrefixesOf(island, versions)
         // The known module slugs for the seeded tree, derived once from the island's module list. A
-        // multi-segment route whose last segment is NOT in this set is off-tree (AF-4): it full-
+        // multi-segment route whose last segment is NOT in this set is off-tree: it full-
         // navigates to a clean server 404 instead of fetching a missing content.html into a broken shell.
         val knownSlugs: Set[String] = knownSlugsOf(island)
         // The island's pre-rendered article is the current route's article when the initial route is
@@ -167,7 +167,7 @@ object WebsiteBundleMain:
                 // scroll to the hash so an Enter on a heading hit lands on the section even when the
                 // module page is already loaded (the nav fiber does not re-fire for a same-route push).
                 target => UILocation.push(target).andThen(scrollToHash()),
-                Kyo.unit, // onSearchFocus no-op (Q-003); eager fetch makes focus-triggered loading unnecessary
+                Kyo.unit, // onSearchFocus no-op; eager fetch makes focus-triggered loading unnecessary
                 content
             )
         yield view
@@ -209,7 +209,7 @@ object WebsiteBundleMain:
       * version tag. The island tag is included unconditionally so that `/<islandTag>/` classifies as
       * [[RouteKind.Intro]] even when the `#versions-island` element is absent (i.e. `versions` is
       * empty). When the versions island IS present the island tag is already in the set, making the
-      * extra term idempotent (AF-5).
+      * extra term idempotent.
       */
     private[website] def knownPrefixesOf(island: DocsClient.DocsIsland, versions: Chunk[WebsiteVersion]): Set[String] =
         versions.toSeq.map(_.tag).toSet + LatestPrefix + island.content.version.tag
@@ -218,7 +218,7 @@ object WebsiteBundleMain:
       *
       * A multi-segment route whose last segment is NOT in this set is [[RouteKind.OffTree]]: the SPA
       * full-navigates to a clean server 404 rather than fetching a missing `content.html` into a broken
-      * docs shell (AF-4). The set is derived directly from the island so a regression in the
+      * docs shell. The set is derived directly from the island so a regression in the
       * slug-derivation logic is caught by tests that call this helper.
       */
     private[website] def knownSlugsOf(island: DocsClient.DocsIsland): Set[String] =
@@ -240,7 +240,7 @@ object WebsiteBundleMain:
       * on. A multi-segment route is a [[Module]] ONLY when its last segment is a known module slug;
       * an unknown multi-segment slug (e.g. `/latest/does-not-exist/`) is [[OffTree]] so it full-
       * navigates to a clean server 404 instead of fetching a missing `content.html` into a broken docs
-      * shell (AF-4). A single-segment route is an [[Intro]] only when it names a known prefix.
+      * shell. A single-segment route is an [[Intro]] only when it names a known prefix.
       */
     private[website] def classifyRoute(
         segments: Array[String],
@@ -255,7 +255,7 @@ object WebsiteBundleMain:
 
     /** The single nav fiber. On each new route it dispatches on [[classifyRoute]] into one of four
       * branches:
-      *   - [[RouteKind.Landing]] (root `/`): swap `content` to the landing body, no reload (D1).
+      *   - [[RouteKind.Landing]] (root `/`): swap `content` to the landing body, no reload.
       *   - [[RouteKind.Module]] (`/<prefix>/<slug>/` whose last segment is a known module slug): fetch
       *     pre-rendered article from `content.html` (cache), update `articleRef`/`tocRef`, and swap
       *     `content` to the docs body.
@@ -264,13 +264,13 @@ object WebsiteBundleMain:
       *     `content.html` (the root-README intro rendered at build time), so the rail's Overview item is
       *     active and expands to the intro's `## ` sections.
       *   - [[RouteKind.OffTree]] (an unknown single-segment prefix OR a multi-segment route whose last
-      *     segment is not a known module slug, e.g. `/latest/does-not-exist/`, AF-4): a full browser
+      *     segment is not a known module slug, e.g. `/latest/does-not-exist/`): a full browser
       *     navigation as the narrow safety fallback, so the server resolves the real page or a clean 404
       *     instead of the SPA fetching a missing `content.html` into a broken docs shell.
       *
       * Same-document `#anchor` clicks never reach this fiber: `UILocation` skips same-document links
       * (`UILocation.scala:60-62`), so a TOC or landing `#how` anchor scrolls natively without changing
-      * the route signal. After every in-shell branch the fiber updates the head (SEO-4).
+      * the route signal. After every in-shell branch the fiber updates the head.
       */
     private def navFiber(
         route: Signal[String],
@@ -292,7 +292,7 @@ object WebsiteBundleMain:
                     _ <-
                         classifyRoute(segments, knownPrefixes, knownSlugs) match
                             case RouteKind.Landing =>
-                                // Root `/`: swap to the landing body (no reload, D1).
+                                // Root `/`: swap to the landing body without a full reload.
                                 content.set(landingBody).andThen(updateHead(nextRoute, island))
                             case RouteKind.Module =>
                                 // Module route: fetch pre-rendered article from content.html, update article + TOC, show docs.
@@ -307,9 +307,9 @@ object WebsiteBundleMain:
                                 showContentRoute(nextRoute, island, content, articleRef, tocRef, loadingRef, docsBody)
                             case RouteKind.OffTree =>
                                 // Off-tree route: a single segment that is not a known prefix, OR a multi-
-                                // segment route whose last segment is not a known module slug (AF-4). Hand off
+                                // segment route whose last segment is not a known module slug. Hand off
                                 // to a full browser navigation so the server resolves the real page or a clean
-                                // 404 instead of fetching a missing content.html into a broken docs shell (D1).
+                                // 404 instead of fetching a missing content.html into a broken docs shell.
                                 // Unsafe: DOM bridge for the off-tree full-navigate fallback.
                                 Sync.defer(dom.window.location.href = nextRoute)
                 yield Loop.continue
@@ -320,7 +320,7 @@ object WebsiteBundleMain:
     /** Show a content route (a module page OR the intro/overview): fetch the route's pre-rendered
       * article from `content.html` (from the cache when seeded, else over the network, caching the
       * result), inject via `UI.rawHtml`, update the shared `articleRef`/`tocRef`, swap `content` to
-      * the one docs body, update the head (SEO-4), and scroll to the URL hash or the top (B5). Both
+      * the one docs body, update the head, and scroll to the URL hash or the top. Both
       * the [[RouteKind.Module]] and [[RouteKind.Intro]] branches share this: the overview is fetched
       * and injected exactly like a module, so the rail's Overview item expands to the intro's `## `
       * sections and the overview prose is byte-identical to the SSG first paint.
@@ -381,7 +381,7 @@ object WebsiteBundleMain:
         yield ()
     end showContentRoute
 
-    /** SEO-4: update `document.title` and the `<link rel=canonical>` href to match `route`, with no
+    /** Update `document.title` and the `<link rel=canonical>` href to match `route`, with no
       * reload. The strings mirror `WebsiteGenerator.docOpts` / the landing opts exactly:
       *   - root `/`: title `"Kyo | Build with AI. Ship something that holds."`, canonical
       *     `"https://getkyo.io/"`.
@@ -421,7 +421,7 @@ object WebsiteBundleMain:
     /** The bounded scroll-poll budget: up to [[ScrollMaxAttempts]] lookups, [[ScrollPollInterval]]
       * apart, for a total settle budget of 200ms (10 * 20ms), well within human perception of a snap
       * nav. The article patch applies on the event loop after `content.set`, so the first attempt may
-      * miss; each subsequent attempt yields the event loop a chance to apply the patch (AF-9).
+      * miss; each subsequent attempt yields the event loop a chance to apply the patch.
       */
     private val ScrollMaxAttempts: Int       = 10
     private val ScrollPollInterval: Duration = 20.millis
@@ -433,7 +433,7 @@ object WebsiteBundleMain:
       * the route changes and this fiber swaps the content. This reads `window.location.hash` once and,
       * when present, polls for the anchor element with a BOUNDED retry: up to [[ScrollMaxAttempts]]
       * lookups [[ScrollPollInterval]] apart, yielding the event loop between attempts so the reactive
-      * article patch has a chance to apply before each lookup (AF-9). On a large article the patch may
+      * article patch has a chance to apply before each lookup. On a large article the patch may
       * not have applied on the first attempt, so a single fixed-sleep lookup raced the render and the
       * scroll silently no-op'd; the bounded poll lands it once the anchor appears. A missing hash, or
       * an element that never appears after the full budget, is a clean no-op (no crash, no console
@@ -442,7 +442,7 @@ object WebsiteBundleMain:
       * The poll is a [[Loop]] over the attempt count (not mutual recursion), so the iteration state is
       * an explicit `Int` carried by the loop and there is no self-referencing closure to leak.
       */
-    /** Module-navigation scroll reset (B5). When the URL carries a fragment, delegate to
+    /** Module-navigation scroll reset. When the URL carries a fragment, delegate to
       * [[scrollToHash]] so a heading-hit search result lands on its section. When there is NO
       * fragment (sidebar nav, prev/next, or a plain module link), scroll the window to the top so the
       * freshly-rendered article starts at its heading instead of keeping the previous page's scrollY
@@ -487,7 +487,7 @@ object WebsiteBundleMain:
 
     /** The active physical prefix for the initial route. `/` resolves to `latest` (the tree the SSG
       * seeds the landing from); any other route uses its own leading segment so the reader stays in
-      * the tree they landed on (WARN-1).
+      * the tree they landed on.
       */
     private def activePrefix(path: String): String =
         val segments = path.split('/').filter(_.nonEmpty)

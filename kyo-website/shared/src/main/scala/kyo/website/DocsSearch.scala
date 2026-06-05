@@ -239,11 +239,10 @@ object DocsSearch:
         false
     end atWordBoundary
 
-    // DocsSearch.Heading is FROZEN without a level field (spec 3). levelWeight degenerates to 0
-    // because Heading carries only text and slug; no level is available at filter time.
-    // The heading-band sort key (isProse, -matchClass, -levelWeight, entryIndex, headingDocIndex)
-    // therefore uses the prose discriminator, match quality, and document order only.
-    // See phases/phase-03/decisions.md Decision 1.
+    // DocsSearch.Heading carries only text and slug; no level field is available at filter time.
+    // levelWeight therefore degenerates to 0: the heading-band sort key
+    // (isProse, -matchClass, -levelWeight, entryIndex, headingDocIndex) uses the prose
+    // discriminator, match quality, and document order only.
     private def levelWeight(e: Entry, h: Heading): Int = 0
 
 end DocsSearch

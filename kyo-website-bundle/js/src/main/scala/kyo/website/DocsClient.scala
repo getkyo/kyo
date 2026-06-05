@@ -87,8 +87,8 @@ object DocsClient:
       * `activePrefix` is the caller's own tree prefix (`latest` or a version tag like `v0.9.3`), so a
       * reader on an older version gets the heading index built from THAT version's `toc`, not the
       * latest version's. Building the heading index from the latest manifest while stamping hits with
-      * the old prefix would produce `/<oldPrefix>/<slug>/#<latestSlug>` fragments that land nowhere
-      * (AF-8). The caller (`WebsiteBundleMain.build`, via the eager fetch fiber) already knows its
+      * the old prefix would produce `/<oldPrefix>/<slug>/#<latestSlug>` fragments that land nowhere.
+      * The caller (`WebsiteBundleMain.build`, via the eager fetch fiber) already knows its
       * active prefix.
       *
       * @param activePrefix
@@ -114,7 +114,7 @@ object DocsClient:
       *
       * The `headings` field carries `DocsMarkdown.Heading` entries (level, text, slug), not the
       * search-index `DocsSearch.Heading` type (which has only text and slug, no level). Heading ids
-      * in the article HTML and the `slug` values in `headings` are always consistent (INV-004): the
+      * in the article HTML and the `slug` values in `headings` are always consistent: the
       * SSG produces both from the same transpile pass so anchor scroll from a TOC entry always lands.
       *
       * @param html
@@ -398,7 +398,7 @@ object DocsClient:
       * `"`; a `\` escapes the next character (so `\"` does not close the string). This mirrors
       * `extractBracketed`'s `inStr`/`escaped` scan, so a heading or label whose text contains an
       * unbalanced `]`/`}`/`[`/`{` inside a JSON string value (e.g. a toc entry `"Layout[A] and ]weird["`)
-      * does not desync the depth counter and split an element wrongly (WARN-2).
+      * does not desync the depth counter and split an element wrongly.
       */
     private def splitJsonArray(json: String): Seq[String] =
         val trimmed = json.trim

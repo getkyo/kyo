@@ -89,7 +89,7 @@ object SpaHarnessMain:
     end dispatchKey
 
     def main(args: Array[String]): Unit =
-        // Phase 2.5 smoke scenario. Keep; `UITestSpaSmokeTest` covers it as a regression check.
+        // Smoke scenario: `UITestSpaSmokeTest` covers it as a regression check.
         UITestEntry.register("ping", () => Future.successful("pong"))
 
         // 1. UIWindow.size initial value.
@@ -219,7 +219,7 @@ object SpaHarnessMain:
                 }
         )
 
-        // Phase 4: UILocation scenarios.
+        // UILocation scenarios.
 
         // 1. UILocation.current initial value matches dom.window.location.pathname + .search.
         UITestEntry.register(

@@ -12,7 +12,7 @@ import kyo.UI.Target
   *
   * `SiteApp` is the one shell both the JVM static-site generator and the JS bundle render, so a
   * route's server-rendered HTML and the bundle's first render produce a structurally identical
-  * `data-kyo-path` tree (the hydration-parity contract, INV-003). The header is rendered once and
+  * `data-kyo-path` tree (the hydration-parity contract). The header is rendered once and
   * never remounts during a content swap; the content slot is a single reactive boundary at a fixed
   * position immediately below the header, so swapping the body (landing to docs, or one docs page to
   * another) does not disturb the header or the layout.
@@ -220,7 +220,7 @@ object SiteApp:
 
     private def resultList(query: String, hits: Chunk[DocsSearch.Hit], active: Int)(using Frame): UI =
         // The element stays in the tree on the empty query for SSG<->bundle hydration parity. Three
-        // states (B9):
+        // states:
         //   - empty query: the dropdown is `hidden`, so the reset's `[hidden]{display:none!important}`
         //     collapses it to nothing (no faint pill under the header). This is also the SSG first
         //     render, keeping the bundle's hydration tree structurally identical.

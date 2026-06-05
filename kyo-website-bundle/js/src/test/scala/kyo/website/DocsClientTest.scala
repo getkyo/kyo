@@ -251,14 +251,14 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         }
     }
 
-    // AF-8 reproduce: routeTable must fetch the ACTIVE prefix's manifest, not always the latest.
+    // Regression: routeTable must fetch the ACTIVE prefix's manifest, not always the latest.
     // A non-latest reader (browsing /v0.9.3/...) whose heading index is built from the LATEST manifest
     // gets heading routes /<oldPrefix>/<slug>/#<latestSlug> whose fragment can land nowhere. This stubs
     // DIFFERENT latest vs old manifests and asserts routeTable("v0.9.3") returns the OLD version's
     // headings. Before the fix, routeTable took no argument and always fetched the latest manifest, so
     // this assertion failed (the v0.9.3 reader got "new-heading" instead of "old-heading"). The
     // signature change itself is the compile-time reproduce signal.
-    "routeTable(activePrefix) fetches the active prefix's manifest, not always the latest (AF-8)" in run {
+    "routeTable(activePrefix) fetches the active prefix's manifest, not always the latest" in run {
         val versionsJson =
             """[{"tag":"v1.0.0","label":"1.0.0","latest":true},{"tag":"v0.9.3","label":"0.9.3","latest":false}]"""
         // The latest manifest has "new-heading"; the old manifest has "old-heading" instead.
@@ -321,8 +321,8 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         end for
     }
 
-    // INV-005: island round-trip survives </script> break-out and < > in article HTML
-    "INV-005 island round-trip survives </script> break-out" in run {
+    // island round-trip survives </script> break-out and < > in article HTML
+    "island round-trip survives </script> break-out" in run {
         // In production, injectIslands wraps the entire island JSON in escScript, which replaces
         // `<` with `<` and `>` with `>` (6-char JSON unicode escape sequences).
         // el.textContent delivers these sequences verbatim to parseDocsIsland, because the
@@ -341,7 +341,7 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
             island <- DocsClient.parseDocsIsland(escapedIslandJson)
         yield assert(
             island.articleHtml == "</script><p>a < b</p>",
-            s"INV-005: unescapeJson must decode \\u003c/\\u003e and </script> byte-for-byte, got: ${island.articleHtml}"
+            s"unescapeJson must decode \\u003c/\\u003e and </script> byte-for-byte, got: ${island.articleHtml}"
         )
         end for
     }
@@ -391,7 +391,7 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
     }
 
     // Article.headings carries level (compile-time and runtime check, not DocsSearch.Heading)
-    "Article.headings carries level field (INV-010)" in run {
+    "Article.headings carries level field" in run {
         val stubBody =
             """{"html": "<h2 id=\"sec\">Section</h2>", "headings": [{"level": 2, "text": "Section", "slug": "sec"}]}"""
         withFetch(Map("/latest/kyo-core/content.html" -> stubBody)) {
@@ -409,7 +409,7 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
     }
 
     // parseOutlineHeading skips entries with missing slug
-    "parseOutlineHeading skips malformed entries with missing fields (INV-012)" in run {
+    "parseOutlineHeading skips malformed entries with missing fields" in run {
         // One valid heading, one missing slug, one missing level; only the valid one survives.
         val islandJson =
             """{"version": {"tag": "v1.0.0", "label": "1.0.0", "latest": true}, """ +
@@ -429,7 +429,7 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
     }
 
     // Empty headings array yields empty Chunk
-    "empty headings array yields Chunk.empty (INV-012)" in run {
+    "empty headings array yields Chunk.empty" in run {
         val islandJson =
             """{"version": {"tag": "v1.0.0", "label": "1.0.0", "latest": true}, """ +
                 """"intro": "", "groups": [], "versions": [], """ +
@@ -441,8 +441,8 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         end for
     }
 
-    // island parse feeds Chunk[DocsMarkdown.Heading], compile-time type guard (INV-010)
-    "island parse produces Chunk[DocsMarkdown.Heading] usable as tocRef (INV-010)" in run {
+    // island parse feeds Chunk[DocsMarkdown.Heading], compile-time type guard
+    "island parse produces Chunk[DocsMarkdown.Heading] usable as tocRef" in run {
         val islandJson =
             """{"version": {"tag": "v1.0.0", "label": "1.0.0", "latest": true}, """ +
                 """"intro": "", "groups": [], "versions": [], """ +
@@ -475,7 +475,7 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         end for
     }
 
-    // routeTable/parseHeadings still produce DocsSearch.Heading (unchanged, INV-012)
+    // routeTable/parseHeadings still produce DocsSearch.Heading (unchanged)
     "routeTable parseHeadings still produce DocsSearch.Heading with text+slug only" in run {
         val versionsJson = """[{"tag":"v1.0.0","label":"1.0.0","latest":true}]"""
         val manifestJson =
@@ -512,8 +512,8 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         }
     }
 
-    // Leaf 12: parseSearchIndex on a well-formed body yields the expected entries
-    "parseSearchIndex on a well-formed body yields the expected entries (leaf 12)" in run {
+    // parseSearchIndex on a well-formed body yields the expected entries
+    "parseSearchIndex on a well-formed body yields the expected entries" in run {
         val body =
             """[{"slug":"kyo-core","title":"kyo-core","group":"Effects","sections":[""" +
                 """{"level":2,"text":"Fibers and forks","slug":"fibers-and-forks","snippet":"Fibers are lightweight threads."},""" +
@@ -542,8 +542,8 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         end for
     }
 
-    // Leaf 13: parseSearchIndex on a non-array or empty body yields Chunk.empty
-    "parseSearchIndex on a non-array or empty body yields Chunk.empty (leaf 13)" in run {
+    // parseSearchIndex on a non-array or empty body yields Chunk.empty
+    "parseSearchIndex on a non-array or empty body yields Chunk.empty" in run {
         for
             r1 <- DocsClient.parseSearchIndex("not-json")
             r2 <- DocsClient.parseSearchIndex("")
@@ -555,8 +555,8 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         end for
     }
 
-    // Leaf 14: parseSearchIndex drops a malformed element, keeps the well-formed one
-    "parseSearchIndex drops malformed element and keeps well-formed one (leaf 14)" in run {
+    // parseSearchIndex drops a malformed element, keeps the well-formed one
+    "parseSearchIndex drops malformed element and keeps well-formed one" in run {
         // First element is well-formed; second is missing the required slug field.
         val body =
             """[""" +
@@ -571,8 +571,8 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         end for
     }
 
-    // Leaf 15: emit/parse round-trip (the schema Phase 2 emits parses back to the expected entries)
-    "emit/parse round-trip parses the schema Phase 2 emits (leaf 15)" in run {
+    // emit/parse round-trip: the schema the emitter produces parses back to the expected entries
+    "emit/parse round-trip parses the emitted schema back to the expected entries" in run {
         // Fixture in the exact schema writeSearchIndex produces:
         // {"slug","title","group","sections":[{"level","text","slug","snippet"}]}
         val body =
@@ -602,8 +602,8 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         end for
     }
 
-    // Leaf 16: fetchSearchIndex GETs the active-prefix file, stamps the prefix, stays < Async with no Abort
-    "fetchSearchIndex GETs active-prefix file and stamps prefix (leaf 16)" in run {
+    // fetchSearchIndex GETs the active-prefix file, stamps the prefix, stays < Async with no Abort
+    "fetchSearchIndex GETs active-prefix file and stamps prefix" in run {
         val body =
             """[{"slug":"kyo-core","title":"kyo-core","group":"Effects","sections":[]}]"""
         withFetch(Map("/v0.9.0/search-index.json" -> body)) {
@@ -620,9 +620,9 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         }
     }
 
-    // Leaf 16 (failure path): fetchSearchIndex failure surfaces as non-Success via Abort.run
+    // fetchSearchIndex failure surfaces as non-Success via Abort.run
     // (validates the caller's degrade pattern used in build())
-    "fetchSearchIndex failure surfaces as non-Success result (leaf 16 degrade)" in run {
+    "fetchSearchIndex failure surfaces as non-Success result" in run {
         withFetch[Assertion](Map.empty) {
             Abort.run[Throwable](
                 Abort.catching[Throwable](DocsClient.fetchSearchIndex("v0.9.0"))
@@ -637,7 +637,7 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         }
     }
 
-    // Leaf 13/14 totality: a heading-less module emits sections [] and parses to an entry with
+    // Totality: a heading-less module emits sections [] and parses to an entry with
     // empty headings and empty text (exercises the sections-absent degrade path for parseSearchIndex)
     "parseSearchIndex handles a module with empty sections array (sections totality)" in run {
         val body =
@@ -653,10 +653,10 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         end for
     }
 
-    // Leaf 17 (success path): refreshSearchIndex upgrades the SignalRef from the title-only seed
+    // refreshSearchIndex upgrades the SignalRef from the title-only seed
     // to the full heading+prose index when the fetch succeeds. The assertion FAILS if the ref was
     // not upgraded (i.e. searchIndex.set(idx) was not called on the success arm).
-    "refreshSearchIndex upgrades the searchIndex ref on successful fetch (leaf 17 success)" in run {
+    "refreshSearchIndex upgrades the searchIndex ref on a successful fetch" in run {
         // Build the title-only seed: one module, no headings.
         val modules       = Chunk(WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true)))
         val content       = WebsiteContent("", Chunk(WebsiteContent.Group("Effects", modules)), WebsiteVersion("v0.9.0", "0.9.0", false))
@@ -690,10 +690,10 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         }
     }
 
-    // Leaf 17 (failure/degrade path): refreshSearchIndex leaves the SignalRef unchanged when the
+    // refreshSearchIndex leaves the SignalRef unchanged when the
     // fetch fails. The assertion FAILS if the failure was not gracefully degraded (i.e. the ref was
     // cleared or overwritten with an empty/wrong index instead of retaining the seed).
-    "refreshSearchIndex retains the title-only seed when the fetch fails (leaf 17 degrade)" in run {
+    "refreshSearchIndex retains the title-only seed when the fetch fails" in run {
         // Build the title-only seed: one module, no headings.
         val modules       = Chunk(WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true)))
         val titleOnlySeed = DocsSearch.headingIndex("v0.9.0", modules, _ => Chunk.empty)
@@ -711,7 +711,7 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         }
     }
 
-    // Phase-3 audit NOTE-1: unescapeJson degrades gracefully on a malformed \uXXXX escape.
+    // unescapeJson degrades gracefully on a malformed \uXXXX escape.
     // A well-formed SSG response always carries valid hex; a malformed escape must not throw
     // (total functions: model failure, do not throw as control flow).
     "unescapeJson degrades gracefully on a malformed \\uXXXX escape without throwing" in run {

@@ -81,9 +81,9 @@ class WebsiteGeneratorTest extends Test:
             case p: Result.Panic   => Abort.error(p)
         }
 
-    // ---- Test 1: index.html is a complete document (INV-002/INV-009) ----
+    // ---- Test 1: index.html is a complete document ----
 
-    "index.html is a complete HTML document (INV-002, INV-009)" in run {
+    "index.html is a complete HTML document" in run {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -98,9 +98,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test 2: index.html contains landing content (INV-009) ----
+    // ---- Test 2: index.html contains landing content ----
 
-    "index.html contains landing page content (INV-002, INV-001, INV-012)" in run {
+    "index.html contains landing page content" in run {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -111,7 +111,7 @@ class WebsiteGeneratorTest extends Test:
             assert(html.contains("data-section=\"hero\""), "hero data-section missing")
             assert(html.contains("data-section=\"footer\""), "footer section missing")
             assert(html.contains("1.0.0-RC2"), "version label must appear in dropdown")
-            // INV-012: the emitted CSS is the rendered WebsiteStyles.sheet, not a raw blob.
+            // The emitted CSS is the rendered WebsiteStyles.sheet, not a raw blob.
             // .feat-grid is a marker selector produced by WebsiteStyles.sheet.render.
             val styleStart = html.indexOf("<style>")
             val styleEnd   = html.indexOf("</style>")
@@ -121,14 +121,14 @@ class WebsiteGeneratorTest extends Test:
             val sheetIdx   = style.indexOf(".feat-grid {")
             assert(baseCssIdx >= 0, "baseCss reset missing from <style>")
             assert(sheetIdx >= 0, "WebsiteStyles.sheet marker (.feat-grid) missing from <style>")
-            // INV-001: baseCss must appear strictly before the rendered sheet so site rules win.
+            // baseCss must appear strictly before the rendered sheet so site rules win.
             assert(baseCssIdx < sheetIdx, "baseCss must precede the WebsiteStyles.sheet rules")
         end for
     }
 
-    // ---- Test 3: versions.json has correct shape and length (INV-010) ----
+    // ---- Test 3: versions.json has correct shape and length ----
 
-    "versions.json has correct shape with 3 versions (INV-010)" in run {
+    "versions.json has correct shape with 3 versions" in run {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -151,9 +151,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test 4: CNAME exact content (INV-011) ----
+    // ---- Test 4: CNAME exact content ----
 
-    "CNAME content is exactly getkyo.io (INV-011)" in run {
+    "CNAME content is exactly getkyo.io" in run {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -165,9 +165,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test 5: .nojekyll exists and is empty (INV-011) ----
+    // ---- Test 5: .nojekyll exists and is empty ----
 
-    ".nojekyll exists at root and is empty (INV-011)" in run {
+    ".nojekyll exists at root and is empty" in run {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -177,9 +177,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test 6: exactly one main.js referenced (INV-008) ----
+    // ---- Test 6: exactly one main.js referenced ----
 
-    "index.html references exactly one main.js bundle (INV-008)" in run {
+    "index.html references exactly one main.js bundle" in run {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -283,9 +283,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test 13: versions.json length equals content size (INV-010) ----
+    // ---- Test 13: versions.json length equals content size ----
 
-    "versions.json entry count equals input content size (INV-010)" in run {
+    "versions.json entry count equals input content size" in run {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -297,9 +297,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test 14: bundle href in emitted HTML ends with main.js (INV-008) ----
+    // ---- Test 14: bundle href in emitted HTML ends with main.js ----
 
-    "bundle href in emitted index.html ends with main.js (INV-008)" in run {
+    "bundle href in emitted index.html ends with main.js" in run {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -318,9 +318,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test D4: the landing page carries the unified header + islands ----
+    // ---- The landing page carries the unified header + islands ----
 
-    "landing index.html carries the unified SiteApp header and #docs-island + #versions-island (D4)" in run {
+    "landing index.html carries the unified SiteApp header and #docs-island + #versions-island" in run {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -330,15 +330,15 @@ class WebsiteGeneratorTest extends Test:
             // The unified header is now on the landing page too.
             assert(html.contains("class=\"site-header\""), s"landing must carry the unified site-header: $html")
             assert(html.contains("search-input"), s"landing header must carry the search input: $html")
-            // D4: the islands now ship on `/` (today emitLanding skipped them), so the bundle can
-            // hydrate `/` and the search/version dropdown have their seed data.
+            // The islands ship on `/` so the bundle can hydrate `/` and the search/version
+            // dropdown have their seed data.
             assert(
                 html.contains("""<script type="application/json" id="docs-island">"""),
-                s"landing must carry #docs-island (D4): $html"
+                s"landing must carry #docs-island: $html"
             )
             assert(
                 html.contains("""<script type="application/json" id="versions-island">"""),
-                s"landing must carry #versions-island (D4): $html"
+                s"landing must carry #versions-island: $html"
             )
             // The landing content body is still present under the header.
             assert(html.contains("data-section=\"hero\""), s"landing hero must still be present: $html")
@@ -399,9 +399,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- full route set + per-route content.md + per-version manifest.json (INV-009) ----
+    // ---- full route set + per-route content.md + per-version manifest.json ----
 
-    "full route set + per-route content.md + per-version manifest.json (INV-009)" in run {
+    "full route set + per-route content.md + per-version manifest.json" in run {
         for
             out           <- tmpDir
             bundleDir     <- stubBundleDir
@@ -478,9 +478,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- intro-only version emits intro alone (INV-007 consumer) ----
+    // ---- intro-only version emits intro alone ----
 
-    "intro-only version emits intro alone, zero per-module pages (INV-007)" in run {
+    "intro-only version emits intro alone, zero per-module pages" in run {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -611,9 +611,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- docs page embeds transpiled article AND content.md equals source (INV-005/INV-009) ----
+    // ---- docs page embeds transpiled article AND content.md equals source ----
 
-    "docs page embeds transpiled article AND content.md equals the source (INV-005/INV-009)" in run {
+    "docs page embeds transpiled article AND content.md equals the source" in run {
         val readme = "# MyModule\n## Scope\nDoes things.\n```scala\nval x = 1\n```\n"
         val mod    = WebsiteModule("my-module", "Foundation", "my-module", readme, WebsiteModule.Platforms(true, true, true))
         val content =
@@ -632,9 +632,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- rail section links resolve to article anchors (INV-004 e2e) ----
+    // ---- rail section links resolve to article anchors ----
 
-    "rail section links resolve to article anchors (INV-004 e2e)" in run {
+    "rail section links resolve to article anchors" in run {
         val readme = "# Alpha\n## Beta\nText.\n### Gamma\nMore.\n"
         val mod    = WebsiteModule("anchors", "Foundation", "anchors", readme, WebsiteModule.Platforms(true, true, true))
         val content =
@@ -682,9 +682,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test AF-11: escJson escapes control chars (newline, tab, CR, SOH) so JSON-LD stays valid ----
+    // ---- escJson escapes control chars (newline, tab, CR, SOH) so JSON-LD stays valid ----
 
-    "escJson escapes control chars (newline, tab, carriage-return, SOH 0x01) in JSON-LD (AF-11)" in run {
+    "escJson escapes control chars (newline, tab, carriage-return, SOH 0x01) in JSON-LD" in run {
         // Inject a label with embedded control characters into the versions.json pipeline.
         // The label value uses Scala escape sequences so scalac embeds the actual control chars:
         // \n = 0x0A (LF), \t = 0x09 (tab), \r = 0x0D (CR), \u0001 = 0x01 (SOH).
@@ -1050,7 +1050,7 @@ class WebsiteGeneratorTest extends Test:
         count
     end countOccurrences
 
-    // ---- content.html, INV-004, island reshape, landing seed, sitemap, manifest, escape ----
+    // ---- content.html, island reshape, landing seed, sitemap, manifest, escape ----
 
     "content.html written per route with html + headings" in run {
         for
@@ -1070,7 +1070,7 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    "INV-004 article ids equal shipped heading slugs in content.html" in run {
+    "article ids equal shipped heading slugs in content.html" in run {
         val readme = "# Title\n## Section One\n### Sub\n"
         val mod    = WebsiteModule("inv004", "Foundation", "inv004", readme, WebsiteModule.Platforms(true, true, true))
         val content =
@@ -1092,7 +1092,7 @@ class WebsiteGeneratorTest extends Test:
             assert(slugs.nonEmpty, s"Expected slug entries in content.html: $contentHtml")
             assert(
                 slugs.subsetOf(articleIds),
-                s"INV-004: every heading slug must have a matching article id; slugs=$slugs, ids=$articleIds"
+                s"every heading slug must have a matching article id; slugs=$slugs, ids=$articleIds"
             )
         end for
     }
@@ -1172,7 +1172,7 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    "island article HTML round-trips an escaped < tag on emit (INV-005 emit-side)" in run {
+    "island article HTML round-trips an escaped < tag on emit" in run {
         // Build a README whose rendered article will contain < characters (via a heading with a code
         // snippet; the backtick renders to <code>, so the rendered HTML contains <code>...</code>).
         val readme = "# Test\n## Usage\n`myFunc` does things.\n"
@@ -1191,20 +1191,19 @@ class WebsiteGeneratorTest extends Test:
             // So the raw island text must contain < where < appeared in the HTML.
             assert(
                 islandJson.contains("\\u003c"),
-                s"INV-005 emit-side: island must contain unicode-escaped < (\\u003c) from the article HTML: $islandJson"
+                s"island must contain unicode-escaped < (\\u003c) from the article HTML: $islandJson"
             )
             // No literal </script> must appear in the raw island text.
             assert(
                 !islandJson.contains("</script>"),
-                s"INV-005: island must not contain literal </script>: $islandJson"
+                s"island must not contain literal </script>: $islandJson"
             )
         end for
     }
 
-    // INV-010 no-regression roll-up: concrete level==2 check across island, content.html,
+    // No-regression roll-up: concrete level==2 check across island, content.html,
     // content.md, sitemap, manifest, and article ids in a single multi-version emit.
-    // The individual checks (a)-(d) from the plan are all exercised here as a bundle.
-    "INV-010 no-regression: level-carrying headings in island, content.html, and manifest" in run {
+    "level-carrying headings in island, content.html, and manifest" in run {
         // Use a README with explicit level-2 headings so the level==2 assertion is concrete.
         val readme = "# Alpha\n## Beta\nText.\n## Gamma\nMore.\n"
         val mod    = WebsiteModule("inv010", "Foundation", "inv010", readme, WebsiteModule.Platforms(true, true, true))
@@ -1228,32 +1227,32 @@ class WebsiteGeneratorTest extends Test:
             val decodedContent = contentHtml.replace("\\u003c", "<").replace("\\u003e", ">")
             assert(decodedContent.contains("\"level\": 2"), s"content.html must carry a level==2 heading entry: $decodedContent")
             // (b) content.md still emitted and equals the source.
-            assert(contentMd == readme, s"INV-010 (b): content.md must equal module.readme, got: $contentMd")
+            assert(contentMd == readme, s"content.md must equal module.readme, got: $contentMd")
             // (b) sitemap excludes both content.md and content.html.
-            assert(!sitemap.contains("content.md"), s"INV-010 (b): sitemap must not list content.md: $sitemap")
-            assert(!sitemap.contains("content.html"), s"INV-010 (b): sitemap must not list content.html: $sitemap")
+            assert(!sitemap.contains("content.md"), s"sitemap must not list content.md: $sitemap")
+            assert(!sitemap.contains("content.html"), s"sitemap must not list content.html: $sitemap")
             // (c) manifest toc carries level, text, and slug fields.
-            assert(manifest.contains("\"level\""), s"INV-010 (c): manifest toc must carry level: $manifest")
-            assert(manifest.contains("\"text\""), s"INV-010 (c): manifest toc must carry text: $manifest")
-            assert(manifest.contains("\"slug\""), s"INV-010 (c): manifest toc must carry slug: $manifest")
+            assert(manifest.contains("\"level\""), s"manifest toc must carry level: $manifest")
+            assert(manifest.contains("\"text\""), s"manifest toc must carry text: $manifest")
+            assert(manifest.contains("\"slug\""), s"manifest toc must carry slug: $manifest")
             // (c) manifest toc carries a level==2 entry (sidebar auto-expand requires this).
-            assert(manifest.contains("\"level\": 2"), s"INV-010 (c): manifest toc must carry a level==2 entry: $manifest")
+            assert(manifest.contains("\"level\": 2"), s"manifest toc must carry a level==2 entry: $manifest")
             // (d) article ids equal shipped slugs: extract id="..." from index.html and slug values from content.html.
             val idPattern   = """id="([^"]+)"""".r
             val slugPattern = """"slug":\s*"([^"]+)"""".r
             val articleIds  = idPattern.findAllMatchIn(indexHtml).map(_.group(1)).toSet
             val slugs       = slugPattern.findAllMatchIn(contentHtml).map(_.group(1)).toSet
-            assert(slugs.nonEmpty, s"INV-010 (d): content.html must carry slug entries: $contentHtml")
+            assert(slugs.nonEmpty, s"content.html must carry slug entries: $contentHtml")
             assert(
                 slugs.subsetOf(articleIds),
-                s"INV-010 (d): all heading slugs must have matching article ids; slugs=$slugs, ids=$articleIds"
+                s"all heading slugs must have matching article ids; slugs=$slugs, ids=$articleIds"
             )
         end for
     }
 
-    // ---- Phase-2 leaf 1: emit writes one search-index.json per prefix next to manifest.json (INV-004) ----
+    // ---- emit writes one search-index.json per prefix next to manifest.json ----
 
-    "emit writes one search-index.json per prefix next to manifest.json (INV-004)" in run {
+    "emit writes one search-index.json per prefix next to manifest.json" in run {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -1272,7 +1271,7 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Phase-2 leaf 2: each section carries level + text + slug + snippet (INV-004) ----
+    // ---- each section carries level + text + slug + snippet ----
 
     "each section in search-index.json carries level, text, slug, and snippet" in run {
         val readme = "## Fibers and forks\nFibers are lightweight threads.\n### Interruption\nInterrupt a fiber.\n"
@@ -1298,7 +1297,7 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Phase-2 leaf 3: snippet <= 160 chars, word-boundary, no ellipsis ----
+    // ---- snippet <= 160 chars, word-boundary, no ellipsis ----
 
     "snippet is at most 160 chars, word-boundary truncated, and has no ellipsis" in run {
         // Produce a prose block that exceeds 160 characters.
@@ -1342,7 +1341,7 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Phase-2 leaf 4: heading-less module emits sections [] ----
+    // ---- heading-less module emits sections [] ----
 
     "a heading-less module emits sections [] in search-index.json" in run {
         val readme = "Prose only, no headings.\n"
@@ -1360,7 +1359,7 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Phase-2 leaf 5: manifest.json is byte-unchanged after adding search-index emit ----
+    // ---- manifest.json is byte-unchanged after adding search-index emit ----
 
     "manifest.json is byte-unchanged after adding the search-index emit" in run {
         // Golden string: the exact deterministic output of writeManifest for vWithModules
@@ -1387,7 +1386,7 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Phase-2 leaf 6: search-index.json escapes JSON-special characters ----
+    // ---- search-index.json escapes JSON-special characters ----
 
     "search-index.json escapes JSON-special characters in fields" in run {
         val headingText = "Results: \"quoted\" & <angle>"
