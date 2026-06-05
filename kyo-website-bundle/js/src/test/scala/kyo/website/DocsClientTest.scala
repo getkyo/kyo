@@ -40,13 +40,20 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         }
     end withFetch
 
-    // Leaf 19: fetchMarkdown returns route content.md body
-    "fetchMarkdown returns the content.md body for a route (leaf 19)" in run {
-        val fixtureMarkdown = "## kyo-core\n\nThe core effects module.\n"
-        withFetch(Map("/latest/kyo-core/content.md" -> fixtureMarkdown)) {
+    // fetchArticle parses html + headings into Article
+    "fetchArticle parses html and headings into Article" in run {
+        val stubBody =
+            """{"html": "<h2 id=\"a\">A</h2>", "headings": [{"level": 2, "text": "A", "slug": "a"}]}"""
+        withFetch(Map("/latest/kyo-core/content.html" -> stubBody)) {
             for
-                body <- DocsClient.fetchMarkdown("/latest/kyo-core/")
-            yield assert(body == fixtureMarkdown, s"Expected fixture body, got: $body")
+                article <- DocsClient.fetchArticle("/latest/kyo-core/")
+            yield assert(
+                article == DocsClient.Article(
+                    "<h2 id=\"a\">A</h2>",
+                    Chunk(DocsMarkdown.Heading(2, "A", "a"))
+                ),
+                s"Expected Article with html and heading, got: $article"
+            )
             end for
         }
     }
@@ -105,19 +112,17 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         }
     }
 
-    // Leaf 21: unknown route surfaces as failure (edge case)
-    "fetchMarkdown fails for a route that throws (leaf 21)" in run {
-        // Install via withFetch (empty map) so the stub is restored after the async completes; a
-        // map miss throws "Unexpected fetch", which is the failure this leaf verifies surfaces.
+    // fetchArticle on a non-200 fails the Async (no Abort widening)
+    "fetchArticle on a non-200 fails the Async" in run {
         withFetch[Assertion](Map.empty) {
             Abort.run[Throwable](
-                Abort.catching[Throwable](DocsClient.fetchMarkdown("/unknown/route/"))
+                Abort.catching[Throwable](DocsClient.fetchArticle("/unknown/route/"))
             ).map { result =>
                 result match
                     case Result.Failure(_) | Result.Panic(_) =>
                         succeed
-                    case Result.Success(body) =>
-                        fail(s"Expected failure for unknown route, got: $body")
+                    case Result.Success(a) =>
+                        fail(s"Expected failure for unknown route, got: $a")
                 end match
             }
         }
@@ -144,8 +149,9 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
     }
 
     // Island round-trip: the exact JSON shape WebsiteGenerator.docsIsland emits parses back to the
-    // seeded content (version, grouped modules, full version list, raw Markdown). This is the parse
-    // half of the emit -> parse boot-island round-trip (emit half asserted in WebsiteGeneratorTest).
+    // seeded content (version, grouped modules, full version list, pre-rendered article + headings).
+    // This is the parse half of the emit -> parse boot-island round-trip (emit half asserted in
+    // WebsiteGeneratorTest).
     "parseDocsIsland parses the generator's docs-island JSON back to seeded content" in run {
         // Mirrors WebsiteGenerator.docsIsland output (note the `"latest": true` space the SSG emits).
         val islandJson =
@@ -153,7 +159,8 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
                 """"intro": "intro text", """ +
                 """"groups": [{"name": "Foundation", "modules": [{"slug": "kyo-data", "group": "Foundation", "title": "kyo-data"}, {"slug": "kyo-kernel", "group": "Foundation", "title": "kyo-kernel"}]}], """ +
                 """"versions": [{"tag": "v1.0.0-RC2", "label": "1.0.0-RC2", "latest": true}, {"tag": "v0.9.3", "label": "0.9.3", "latest": false}], """ +
-                """"markdown": "# kyo-data\n## Overview\nData types.\n"}"""
+                """"article": "<h1 id=\"kyo-data\">kyo-data</h1>", """ +
+                """"headings": [{"level": 1, "text": "kyo-data", "slug": "kyo-data"}, {"level": 2, "text": "Overview", "slug": "overview"}]}"""
         for
             island <- DocsClient.parseDocsIsland(islandJson)
         yield
@@ -168,7 +175,17 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
             )
             assert(island.versions.size == 2, s"versions: ${island.versions.size}")
             assert(island.versions(1).tag == "v0.9.3", s"second version: ${island.versions(1).tag}")
-            assert(island.markdown == "# kyo-data\n## Overview\nData types.\n", s"markdown must unescape \\n, got: ${island.markdown}")
+            assert(
+                island.articleHtml == "<h1 id=\"kyo-data\">kyo-data</h1>",
+                s"articleHtml must round-trip through island JSON, got: ${island.articleHtml}"
+            )
+            assert(
+                island.headings == Chunk(
+                    DocsMarkdown.Heading(1, "kyo-data", "kyo-data"),
+                    DocsMarkdown.Heading(2, "Overview", "overview")
+                ),
+                s"headings must round-trip with level, got: ${island.headings}"
+            )
         end for
     }
 
@@ -283,8 +300,209 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         yield
             assert(island.content.groups == Chunk.empty, "empty payload yields empty groups")
             assert(island.content.version.tag == "latest", "empty payload yields the latest placeholder version")
-            assert(island.markdown.isEmpty, "empty payload yields empty markdown")
+            assert(island.articleHtml.isEmpty, "empty payload yields empty articleHtml")
+            assert(island.headings == Chunk.empty, "empty payload yields empty headings")
         end for
+    }
+
+    // parseDocsIsland with missing article/headings fields defaults to empty
+    "parseDocsIsland missing article/headings fields default to empty" in run {
+        val islandJson =
+            """{"version": {"tag": "v1.0.0", "label": "1.0.0", "latest": true}, """ +
+                """"intro": "some intro", """ +
+                """"groups": [], """ +
+                """"versions": []}"""
+        for
+            island <- DocsClient.parseDocsIsland(islandJson)
+        yield
+            assert(island.articleHtml == "", s"missing article key must default to empty, got: ${island.articleHtml}")
+            assert(island.headings == Chunk.empty, s"missing headings key must default to empty Chunk, got: ${island.headings}")
+            assert(island.content.intro == "some intro", s"other fields must still parse, got: ${island.content.intro}")
+        end for
+    }
+
+    // INV-005: island round-trip survives </script> break-out and < > in article HTML
+    "INV-005 island round-trip survives </script> break-out" in run {
+        // The SSG escapes `<` as `<` and `>` as `>` via escScript, and `"` as `\"` via escJson.
+        // Simulate the escaped JSON the SSG would embed in the island for an article containing </script>.
+        val escapedIslandJson =
+            """{"version": {"tag": "v1.0.0", "label": "1.0.0", "latest": true}, """ +
+                """"intro": "", "groups": [], "versions": [], """ +
+                """"article": "</script><p>a < b</p>", """ +
+                """"headings": []}"""
+        for
+            island <- DocsClient.parseDocsIsland(escapedIslandJson)
+        yield assert(
+            island.articleHtml == "</script><p>a < b</p>",
+            s"INV-005: unescapeJson must decode \\u003c/\\u003e and </script> byte-for-byte, got: ${island.articleHtml}"
+        )
+        end for
+    }
+
+    // fetchArticle requests <route>content.html
+    "fetchArticle requests route/content.html" in run {
+        var capturedUrl = ""
+        Sync.defer {
+            val saved = DocsClient.fetchFn
+            DocsClient.fetchFn = url =>
+                capturedUrl = url
+                """{"html": "", "headings": []}"""
+            Abort.run[Throwable](Abort.catching[Throwable](DocsClient.fetchArticle("/latest/kyo-core/"))).map { _ =>
+                DocsClient.fetchFn = saved
+                assert(capturedUrl == "/latest/kyo-core/content.html", s"Expected /latest/kyo-core/content.html, got: $capturedUrl")
+            }
+        }
+    }
+
+    // fetchArticle normalizes route without trailing slash
+    "fetchArticle normalizes route without trailing slash" in run {
+        var capturedUrl = ""
+        Sync.defer {
+            val saved = DocsClient.fetchFn
+            DocsClient.fetchFn = url =>
+                capturedUrl = url
+                """{"html": "", "headings": []}"""
+            Abort.run[Throwable](Abort.catching[Throwable](DocsClient.fetchArticle("/latest/kyo-core"))).map { _ =>
+                DocsClient.fetchFn = saved
+                assert(capturedUrl == "/latest/kyo-core/content.html", s"Expected /latest/kyo-core/content.html, got: $capturedUrl")
+            }
+        }
+    }
+
+    // fetchArticle round-trips an escaped article (unescapeJson decodes <)
+    "fetchArticle round-trips an escaped article via unescapeJson" in run {
+        val stubBody = """{"html": "<p>a < b</p>", "headings": []}"""
+        withFetch(Map("/latest/kyo-data/content.html" -> stubBody)) {
+            for
+                article <- DocsClient.fetchArticle("/latest/kyo-data/")
+            yield assert(
+                article.html == "<p>a < b</p>",
+                s"unescapeJson must decode \\u003c to <, got: ${article.html}"
+            )
+            end for
+        }
+    }
+
+    // Article.headings carries level (compile-time and runtime check, not DocsSearch.Heading)
+    "Article.headings carries level field (INV-010)" in run {
+        val stubBody =
+            """{"html": "<h2 id=\"sec\">Section</h2>", "headings": [{"level": 2, "text": "Section", "slug": "sec"}]}"""
+        withFetch(Map("/latest/kyo-core/content.html" -> stubBody)) {
+            for
+                article <- DocsClient.fetchArticle("/latest/kyo-core/")
+            yield
+                assert(article.headings.size == 1, s"Expected 1 heading, got: ${article.headings.size}")
+                val h = article.headings(0)
+                // h is DocsMarkdown.Heading with .level; DocsSearch.Heading has no .level
+                assert(h.level == 2, s"heading.level must be 2, got: ${h.level}")
+                assert(h.text == "Section", s"heading.text must be Section, got: ${h.text}")
+                assert(h.slug == "sec", s"heading.slug must be sec, got: ${h.slug}")
+            end for
+        }
+    }
+
+    // parseOutlineHeading skips entries with missing slug
+    "parseOutlineHeading skips malformed entries with missing fields (INV-012)" in run {
+        // One valid heading, one missing slug, one missing level; only the valid one survives.
+        val islandJson =
+            """{"version": {"tag": "v1.0.0", "label": "1.0.0", "latest": true}, """ +
+                """"intro": "", "groups": [], "versions": [], """ +
+                """"article": "", """ +
+                """"headings": [""" +
+                """{"level": 1, "text": "Good", "slug": "good"}, """ +
+                """{"level": 2, "text": "NoSlug"}, """ +
+                """{"text": "NoLevel", "slug": "no-level"}""" +
+                """]}"""
+        for
+            island <- DocsClient.parseDocsIsland(islandJson)
+        yield
+            assert(island.headings.size == 1, s"Only the valid heading must survive, got: ${island.headings}")
+            assert(island.headings(0) == DocsMarkdown.Heading(1, "Good", "good"), s"Valid heading: ${island.headings(0)}")
+        end for
+    }
+
+    // Empty headings array yields empty Chunk
+    "empty headings array yields Chunk.empty (INV-012)" in run {
+        val islandJson =
+            """{"version": {"tag": "v1.0.0", "label": "1.0.0", "latest": true}, """ +
+                """"intro": "", "groups": [], "versions": [], """ +
+                """"article": "<p>text</p>", """ +
+                """"headings": []}"""
+        for
+            island <- DocsClient.parseDocsIsland(islandJson)
+        yield assert(island.headings == Chunk.empty, s"empty headings array must yield Chunk.empty, got: ${island.headings}")
+        end for
+    }
+
+    // island parse feeds Chunk[DocsMarkdown.Heading], compile-time type guard (INV-010)
+    "island parse produces Chunk[DocsMarkdown.Heading] usable as tocRef (INV-010)" in run {
+        val islandJson =
+            """{"version": {"tag": "v1.0.0", "label": "1.0.0", "latest": true}, """ +
+                """"intro": "", "groups": [], "versions": [], """ +
+                """"article": "", """ +
+                """"headings": [{"level": 3, "text": "T", "slug": "t"}]}"""
+        for
+            island <- DocsClient.parseDocsIsland(islandJson)
+            // Signal.initRef accepts Chunk[DocsMarkdown.Heading]; would not compile with Chunk[DocsSearch.Heading]
+            tocRef <- Signal.initRef[Chunk[DocsMarkdown.Heading]](island.headings)
+            vals   <- tocRef.get
+        yield assert(vals == Chunk(DocsMarkdown.Heading(3, "T", "t")), s"tocRef carries the parsed Chunk, got: $vals")
+        end for
+    }
+
+    // extractInt parses level and rejects non-numeric
+    "extractInt parses level and rejects non-numeric values" in run {
+        val goodJson = """{"level": 3, "text": "T", "slug": "t"}"""
+        val badJson  = """{"level": "x", "text": "T", "slug": "t"}"""
+        // Use parseDocsIsland wrapper: a headings array with one good, one bad
+        val islandJson =
+            """{"version": {"tag": "v1.0.0", "label": "1.0.0", "latest": true}, """ +
+                """"intro": "", "groups": [], "versions": [], """ +
+                """"article": "", """ +
+                s""""headings": [$goodJson, $badJson]}"""
+        for
+            island <- DocsClient.parseDocsIsland(islandJson)
+        yield
+            assert(island.headings.size == 1, s"Non-numeric level must be dropped, got: ${island.headings}")
+            assert(island.headings(0).level == 3, s"Good level 3 must survive, got: ${island.headings(0).level}")
+        end for
+    }
+
+    // routeTable/parseHeadings still produce DocsSearch.Heading (unchanged, INV-012)
+    "routeTable parseHeadings still produce DocsSearch.Heading with text+slug only" in run {
+        val versionsJson = """[{"tag":"v1.0.0","label":"1.0.0","latest":true}]"""
+        val manifestJson =
+            """[{"slug":"kyo-core","group":"Effects","title":"kyo-core",""" +
+                """"toc":[{"level":2,"text":"Overview","slug":"overview"}]}]"""
+        withFetch(Map(
+            "/versions.json"        -> versionsJson,
+            "/v1.0.0/manifest.json" -> manifestJson
+        )) {
+            for
+                table <- DocsClient.routeTable("v1.0.0")
+            yield
+                val headings = table.headingsBySlug.getOrElse("kyo-core", Chunk.empty)
+                assert(headings.size == 1, s"Expected 1 heading, got: $headings")
+                // DocsSearch.Heading has text and slug only; checking both fields
+                assert(headings(0).text == "Overview", s"text: ${headings(0).text}")
+                assert(headings(0).slug == "overview", s"slug: ${headings(0).slug}")
+            end for
+        }
+    }
+
+    // fetchArticle uses exactly one fetch (html + headings are co-located)
+    "fetchArticle uses exactly one fetch call" in run {
+        var fetchCount = 0
+        Sync.defer {
+            val saved = DocsClient.fetchFn
+            DocsClient.fetchFn = _ =>
+                fetchCount += 1
+                """{"html": "<p>x</p>", "headings": []}"""
+            Abort.run[Throwable](Abort.catching[Throwable](DocsClient.fetchArticle("/latest/kyo-data/"))).map { _ =>
+                DocsClient.fetchFn = saved
+                assert(fetchCount == 1, s"fetchArticle must issue exactly one fetch, issued: $fetchCount")
+            }
+        }
     }
 
 end DocsClientTest

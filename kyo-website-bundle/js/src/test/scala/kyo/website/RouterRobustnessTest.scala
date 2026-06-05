@@ -40,7 +40,7 @@ class RouterRobustnessTest extends AsyncFreeSpec with NonImplicitAssertions with
         Chunk(WebsiteContent.Group("Foundation", islandModules)),
         islandVersion
     )
-    private val island = DocsClient.DocsIsland(islandContent, Chunk.empty, "")
+    private val island = DocsClient.DocsIsland(islandContent, Chunk.empty, "", Chunk.empty)
 
     // A versions list containing the island's own tag (the normal case when the versions island is
     // present in the DOM).

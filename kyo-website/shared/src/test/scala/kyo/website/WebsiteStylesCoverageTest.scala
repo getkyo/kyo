@@ -103,29 +103,6 @@ class WebsiteStylesCoverageTest extends Test:
             html <- UI.runRender(view).take(1).run
         yield html.headMaybe.getOrElse("")
 
-    // A docs article that exercises every prose hook: a note callout, a caution callout, a plain
-    // blockquote, a bold run, a table, and a fenced Scala block (for the tok-* spans).
-    private val article =
-        """## Heading
-          |
-          |A paragraph with **bold** text and `inline code`.
-          |
-          |> **Note:** this is a note callout.
-          |
-          |> **Caution:** this is a caution callout.
-          |
-          |> A plain blockquote line.
-          |
-          || Col A | Col B |
-          || ----- | ----- |
-          || one   | two   |
-          |
-          |```scala
-          |val x: Int = 42 // a comment
-          |def greet(name: String): String = "hello " + name
-          |```
-          |""".stripMargin
-
     private def docsHtml(using Frame): String < Async =
         val mod = WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true))
         val content = WebsiteContent(

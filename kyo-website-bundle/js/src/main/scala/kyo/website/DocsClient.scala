@@ -50,23 +50,33 @@ object DocsClient:
     private val defaultFetch: String => String = _ =>
         throw new RuntimeException("defaultFetch sentinel called directly; this should not happen")
 
-    // Testability: tests replace this var with a stub before calling fetchMarkdown/routeTable.
+    // Testability: tests replace this var with a stub before calling fetchArticle/routeTable.
     // Unsafe: mutable module-level var in a JS bundle entry; the bundle is single-threaded.
     private[website] var fetchFn: String => String = defaultFetch
 
-    /** Fetch the raw Markdown for a docs route.
+    /** Fetch the pre-rendered article content and heading outline for a docs route.
       *
-      * GETs `<route>/content.md` and returns the response body as a `String`. The route
-      * is the URL pathname of the docs page (e.g. `/latest/kyo-core/`). If the request
-      * fails (network error or non-200 status) the returned `Async` fails.
+      * GETs `<route>/content.html`, which is the static file the SSG writes for every docs page.
+      * The response body is a JSON object with two fields:
+      *   - `html`: the pre-rendered article HTML (injected via `UI.rawHtml`; never re-transpiled).
+      *   - `headings`: a JSON array of `{"level", "text", "slug"}` objects for the TOC outline.
+      *
+      * The route is the URL pathname of the docs page (e.g. `/latest/kyo-core/`). The endpoint is
+      * the co-located `content.html` file; a single fetch delivers both the article and the outline
+      * (one fetch per navigation). If the request fails (network error or non-200 status) the
+      * returned `Async` fails; no `Abort` widening is introduced.
       *
       * @param route
-      *   The URL pathname of the docs route.
+      *   The URL pathname of the docs route (with or without trailing slash).
       * @return
-      *   The raw Markdown content of that route's `content.md`, wrapped in `Async`.
+      *   The parsed [[DocsClient.Article]] containing `html` and `headings`, wrapped in `Async`.
       */
-    def fetchMarkdown(route: String)(using Frame): String < Async =
-        fetch(markdownUrl(route))
+    def fetchArticle(route: String)(using Frame): DocsClient.Article < Async =
+        for
+            body     <- fetch(articleUrl(route))
+            headings <- parseArticleHeadings(body)
+        yield Article(extractString(body, "html").getOrElse(""), headings)
+    end fetchArticle
 
     /** Fetch and parse the route table (versions + module manifest) for the ACTIVE prefix.
       *
@@ -95,10 +105,47 @@ object DocsClient:
         yield RouteTable(versions, modules, headings)
     end routeTable
 
-    private def markdownUrl(route: String): String =
+    /** The pre-rendered article content fetched from a docs route's `content.html` endpoint.
+      *
+      * Returned by [[fetchArticle]] as a single value carrying both the article body and the TOC
+      * outline. The `html` field is injected verbatim via `UI.rawHtml`; it is the exact HTML the SSG
+      * produced and must not be HTML-escaped again (use `UI.rawHtml`, never `UI.text`).
+      *
+      * The `headings` field carries `DocsMarkdown.Heading` entries (level, text, slug), not the
+      * search-index `DocsSearch.Heading` type (which has only text and slug, no level). Heading ids
+      * in the article HTML and the `slug` values in `headings` are always consistent (INV-004): the
+      * SSG produces both from the same transpile pass so anchor scroll from a TOC entry always lands.
+      *
+      * @param html
+      *   The pre-rendered article HTML produced by the SSG.
+      * @param headings
+      *   The heading outline: level, human-readable text, and anchor slug for each heading.
+      */
+    final case class Article(html: String, headings: Chunk[DocsMarkdown.Heading]) derives CanEqual
+
+    private def articleUrl(route: String): String =
         val clean = if route.endsWith("/") then route else route + "/"
-        s"${clean}content.md"
-    end markdownUrl
+        s"${clean}content.html"
+    end articleUrl
+
+    private def parseArticleHeadings(body: String)(using Frame): Chunk[DocsMarkdown.Heading] < Sync =
+        Sync.defer {
+            val tocArray = extractArray(body, "headings").getOrElse("[]")
+            Chunk.from(splitJsonArray(tocArray).flatMap(parseOutlineHeading))
+        }
+
+    private def parseOutlineHeading(obj: String): Maybe[DocsMarkdown.Heading] =
+        for
+            level <- extractInt(obj, "level")
+            text  <- extractString(obj, "text")
+            slug  <- extractString(obj, "slug")
+        yield DocsMarkdown.Heading(level, text, slug)
+    end parseOutlineHeading
+
+    private def extractInt(obj: String, key: String): Maybe[Int] =
+        val pattern = s""""$key"\\s*:\\s*(-?\\d+)""".r
+        Maybe.fromOption(pattern.findFirstMatchIn(obj).flatMap(m => m.group(1).toIntOption))
+    end extractInt
 
     /** Issue a GET and return the response body text as `String < Async`.
       *
@@ -139,16 +186,26 @@ object DocsClient:
     /** The parsed `#docs-island` payload the SSG seeds into each docs page.
       *
       * Carries the current route's `WebsiteContent` (intro + grouped modules + version record), the
-      * full version list for the dropdown, and the route's raw Markdown for first-paint reconciliation.
+      * full version list for the dropdown, the pre-rendered article HTML for first-paint injection,
+      * and the heading outline for the TOC. The article HTML is injected verbatim via `UI.rawHtml`;
+      * it is never re-transpiled in the browser.
       *
       * @param content
       *   The current page's content (intro, groups, version).
       * @param versions
       *   All available versions (for the dropdown).
-      * @param markdown
-      *   The current route's raw README Markdown (seeds the cache; transpiled for first render).
+      * @param articleHtml
+      *   The pre-rendered article HTML produced by the SSG (seeds the article cache; injected via
+      *   `UI.rawHtml` for first render; never re-transpiled).
+      * @param headings
+      *   The heading outline for the TOC: level, text, and anchor slug for each heading.
       */
-    final case class DocsIsland(content: WebsiteContent, versions: Chunk[WebsiteVersion], markdown: String) derives CanEqual
+    final case class DocsIsland(
+        content: WebsiteContent,
+        versions: Chunk[WebsiteVersion],
+        articleHtml: String,
+        headings: Chunk[DocsMarkdown.Heading]
+    ) derives CanEqual
 
     /** Parse a JSON array of version objects from an SSG-seeded DOM island.
       *
@@ -167,10 +224,12 @@ object DocsClient:
       *
       * The object schema, written by `WebsiteGenerator.docsIsland`, is
       * `{"version": {...}, "intro": "...", "groups": [{"name": "...", "modules": [...]}],
-      * "versions": [...], "markdown": "..."}`. Returns a `DocsIsland` whose `content` carries the
-      * parsed intro/groups/version. When `json` is empty or not a JSON object, returns an empty
-      * island (empty groups, a `latest` placeholder version, empty markdown); this empty-parse case
-      * is distinct from the absent-`#docs-island`-element case the caller handles before parsing.
+      * "versions": [...], "article": "...", "headings": [...]}`. Returns a `DocsIsland` whose
+      * `content` carries the parsed intro/groups/version, `articleHtml` is the pre-rendered article
+      * HTML, and `headings` is the outline for the TOC. When `json` is empty or not a JSON object,
+      * returns an empty island (empty groups, a `latest` placeholder version, empty article, empty
+      * headings); this empty-parse case is distinct from the absent-`#docs-island`-element case the
+      * caller handles before parsing.
       *
       * Exposed as `private[website]` so `WebsiteBundleMain` can call it synchronously at bundle entry.
       */
@@ -182,14 +241,17 @@ object DocsClient:
                 val versionObj  = extractObject(trimmed, "version")
                 val version     = versionObj.flatMap(parseVersion).getOrElse(WebsiteVersion("latest", "latest", true))
                 val intro       = extractString(trimmed, "intro").getOrElse("")
-                val markdown    = extractString(trimmed, "markdown").getOrElse("")
+                val articleHtml = extractString(trimmed, "article").getOrElse("")
+                val headingsArr = extractArray(trimmed, "headings").getOrElse("[]")
+                val headings    = Chunk.from(splitJsonArray(headingsArr).flatMap(parseOutlineHeading))
                 val groupsArray = extractArray(trimmed, "groups").getOrElse("[]")
                 val groups      = Chunk.from(splitJsonArray(groupsArray).flatMap(parseGroup))
                 val versions    = extractArray(trimmed, "versions").map(splitJsonArray).getOrElse(Seq.empty).flatMap(parseVersion)
                 DocsIsland(
                     WebsiteContent(intro, groups, version),
                     Chunk.from(versions),
-                    markdown
+                    articleHtml,
+                    headings
                 )
             end if
         }
@@ -199,7 +261,8 @@ object DocsClient:
         DocsIsland(
             WebsiteContent("", Chunk.empty, WebsiteVersion("latest", "latest", true)),
             Chunk.empty,
-            ""
+            "",
+            Chunk.empty
         )
 
     private def parseGroup(obj: String): Maybe[WebsiteContent.Group] =
@@ -269,9 +332,9 @@ object DocsClient:
             group <- extractString(obj, "group")
             title <- extractString(obj, "title")
         // The manifest/island JSON carries only slug/group/title (the fields the client nav needs);
-        // it does not serialize per-platform support or the raw README. `readme` is fetched on demand
-        // via fetchMarkdown, and `Platforms(true, true, true)` is an unused placeholder here (the
-        // client never reads module.platforms), not a claim that every module is cross-platform.
+        // it does not serialize per-platform support or the raw README. Article content is fetched
+        // on demand via fetchArticle, and `Platforms(true, true, true)` is an unused placeholder
+        // here (the client never reads module.platforms), not a claim that every module is cross-platform.
         yield WebsiteModule(slug, group, title, "", WebsiteModule.Platforms(true, true, true))
     end parseModule
 

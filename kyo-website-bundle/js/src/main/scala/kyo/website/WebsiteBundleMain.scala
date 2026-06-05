@@ -14,9 +14,10 @@ import org.scalajs.dom
   *      `/<prefix>/...` route).
   *   3. Mounts the unified `SiteApp` shell ONCE around one route-reactive content slot, then drives
   *      that slot from a single nav fiber on `route.next`: `/` swaps to the landing body with no
-  *      reload (D1), `/<prefix>/<slug>/` and the overview `/<prefix>/` both fetch + transpile
-  *      `content.md` and swap the article/TOC in place (the overview's `content.md` is the root-README
-  *      intro), and any genuinely off-tree route falls back to a full browser navigation.
+  *      reload (D1), `/<prefix>/<slug>/` and the overview `/<prefix>/` both fetch + inject pre-rendered
+  *      article HTML from `content.html` and swap the article/TOC in place (the overview's
+  *      `content.html` is the root-README intro rendered at build time), and any genuinely off-tree
+  *      route falls back to a full browser navigation.
   *
   * After every in-shell content swap the nav fiber also updates `document.title` and the
   * `<link rel=canonical>` href to match the new route (SEO-4), using the SAME title/canonical string
@@ -40,14 +41,13 @@ object WebsiteBundleMain:
     // from the SSG header, breaking hydration parity on `/`.
     private val LatestPrefix: String = "latest"
 
-    // Markdown cache: populated with the current-route Markdown on first load (from the JSON
-    // island), then populated with fetched Markdown on navigation (DocsClient.fetchMarkdown).
+    // Article cache: pre-rendered Article per route (island seed + fetched on nav).
     // Unsafe: mutable module-level var in a JS bundle; single-threaded JS event loop is safe.
-    private val markdownCache: scala.collection.mutable.Map[String, String] =
+    private val articleCache: scala.collection.mutable.Map[String, DocsClient.Article] =
         scala.collection.mutable.Map.empty
 
-    private def seedMarkdownCache(route: String, markdown: String): Unit =
-        markdownCache(route) = markdown
+    private def seedArticleCache(route: String, article: DocsClient.Article): Unit =
+        articleCache(route) = article
 
     // Guards the one-shot heading-index fetch: the manifest `toc` is fetched at most once, on the
     // first search-box focus, and cached into `searchIndex`. Re-focus reuses the loaded index.
@@ -74,7 +74,8 @@ object WebsiteBundleMain:
                     version = WebsiteVersion("latest", "latest", true)
                 ),
                 versions = Chunk.empty,
-                markdown = ""
+                articleHtml = "",
+                headings = Chunk.empty
             )
         else
             // Unsafe: synchronous parse at JS entry; the event loop is single-threaded and this is
@@ -123,19 +124,18 @@ object WebsiteBundleMain:
         val knownPrefixes: Set[String] = knownPrefixesOf(island, versions)
         // The known module slugs for the seeded tree, derived once from the island's module list. A
         // multi-segment route whose last segment is NOT in this set is off-tree (AF-4): it full-
-        // navigates to a clean server 404 instead of fetching a missing content.md into a broken shell.
+        // navigates to a clean server 404 instead of fetching a missing content.html into a broken shell.
         val knownSlugs: Set[String] = knownSlugsOf(island)
-        // The island's Markdown is the current route's README when the initial route is a module page,
-        // and "" on `/` and `/<prefix>/` (the SSG seeds an empty island there). Seed the cache so the
-        // module branch reuses the first-paint content instead of re-fetching it.
-        seedMarkdownCache(initialRoute, island.markdown)
+        // The island's pre-rendered article is the current route's article when the initial route is
+        // a module page, and "" on `/` and `/<prefix>/` (the SSG seeds an empty island there). Seed
+        // the cache so the module branch reuses the first-paint content instead of re-fetching it.
+        seedArticleCache(initialRoute, DocsClient.Article(island.articleHtml, island.headings))
         for
-            initialRendered <- DocsMarkdown.transpile(island.markdown)
-            articleRef      <- Signal.initRef[UI](initialRendered.article)
-            tocRef          <- Signal.initRef[Chunk[DocsMarkdown.Heading]](initialRendered.headings)
-            // Content-loading flag, false at first paint (the boot island is already rendered into
+            articleRef <- Signal.initRef[UI](UI.rawHtml(island.articleHtml))
+            tocRef     <- Signal.initRef[Chunk[DocsMarkdown.Heading]](island.headings)
+            // Content-loading flag, false at first paint (the boot island is already injected into
             // articleRef/tocRef above). `showContentRoute` sets it true the instant a navigation clears
-            // those refs for an async content.md fetch, and false once the fetched article/TOC are set
+            // those refs for an async content.html fetch, and false once the fetched article/TOC are set
             // (or the fetch fails), so the prev/next pager (gated on this in DocsApp.contentArea) only
             // appears together with the article and never flashes at the top of the empty content area.
             loadingRef <- Signal.initRef(false)
@@ -224,7 +224,7 @@ object WebsiteBundleMain:
     /** Derive the set of known module slugs for the seeded island's content tree.
       *
       * A multi-segment route whose last segment is NOT in this set is [[RouteKind.OffTree]]: the SPA
-      * full-navigates to a clean server 404 rather than fetching a missing `content.md` into a broken
+      * full-navigates to a clean server 404 rather than fetching a missing `content.html` into a broken
       * docs shell (AF-4). The set is derived directly from the island so a regression in the
       * slug-derivation logic is caught by tests that call this helper.
       */
@@ -246,7 +246,7 @@ object WebsiteBundleMain:
     /** Classify a route's path segments into a [[RouteKind]], the pure decision [[navFiber]] dispatches
       * on. A multi-segment route is a [[Module]] ONLY when its last segment is a known module slug;
       * an unknown multi-segment slug (e.g. `/latest/does-not-exist/`) is [[OffTree]] so it full-
-      * navigates to a clean server 404 instead of fetching a missing `content.md` into a broken docs
+      * navigates to a clean server 404 instead of fetching a missing `content.html` into a broken docs
       * shell (AF-4). A single-segment route is an [[Intro]] only when it names a known prefix.
       */
     private[website] def classifyRoute(
@@ -263,17 +263,17 @@ object WebsiteBundleMain:
     /** The single nav fiber. On each new route it dispatches on [[classifyRoute]] into one of four
       * branches:
       *   - [[RouteKind.Landing]] (root `/`): swap `content` to the landing body, no reload (D1).
-      *   - [[RouteKind.Module]] (`/<prefix>/<slug>/` whose last segment is a known module slug): fetch +
-      *     transpile `content.md` (cache), update `articleRef`/`tocRef`, and swap `content` to the docs
-      *     body.
+      *   - [[RouteKind.Module]] (`/<prefix>/<slug>/` whose last segment is a known module slug): fetch
+      *     pre-rendered article from `content.html` (cache), update `articleRef`/`tocRef`, and swap
+      *     `content` to the docs body.
       *   - [[RouteKind.Intro]] (`/<knownPrefix>/`, exactly one segment naming a real tree, `latest` or a
-      *     known version tag): the overview, fetched and rendered exactly like a module from the route's
-      *     `content.md` (the root-README intro), so the rail's Overview item is active and expands to the
-      *     intro's `## ` sections.
+      *     known version tag): the overview, fetched and injected exactly like a module from the route's
+      *     `content.html` (the root-README intro rendered at build time), so the rail's Overview item is
+      *     active and expands to the intro's `## ` sections.
       *   - [[RouteKind.OffTree]] (an unknown single-segment prefix OR a multi-segment route whose last
       *     segment is not a known module slug, e.g. `/latest/does-not-exist/`, AF-4): a full browser
       *     navigation as the narrow safety fallback, so the server resolves the real page or a clean 404
-      *     instead of the SPA fetching a missing `content.md` into a broken docs shell.
+      *     instead of the SPA fetching a missing `content.html` into a broken docs shell.
       *
       * Same-document `#anchor` clicks never reach this fiber: `UILocation` skips same-document links
       * (`UILocation.scala:60-62`), so a TOC or landing `#how` anchor scrolls natively without changing
@@ -302,21 +302,21 @@ object WebsiteBundleMain:
                                 // Root `/`: swap to the landing body (no reload, D1).
                                 content.set(landingBody).andThen(updateHead(nextRoute, island))
                             case RouteKind.Module =>
-                                // Module route: fetch/transpile content.md, update article + TOC, show docs.
+                                // Module route: fetch pre-rendered article from content.html, update article + TOC, show docs.
                                 showContentRoute(nextRoute, island, content, articleRef, tocRef, loadingRef, docsBody)
                             case RouteKind.Intro =>
-                                // Intro/overview `/<knownPrefix>/`: the root-README overview is now real
-                                // content served at `/<prefix>/content.md`, so the intro is a content route
-                                // exactly like a module: fetch/transpile content.md, update article + TOC,
-                                // show docs. The Overview is the active rail item (DocsApp keys it on the
-                                // single-segment intro route), and its `## ` sections come from the TOC set
-                                // here.
+                                // Intro/overview `/<knownPrefix>/`: the root-README overview is served at
+                                // `/<prefix>/content.html` (pre-rendered at build time), so the intro is a
+                                // content route exactly like a module: fetch pre-rendered article, update
+                                // article + TOC, show docs. The Overview is the active rail item (DocsApp
+                                // keys it on the single-segment intro route), and its `## ` sections come
+                                // from the TOC set here.
                                 showContentRoute(nextRoute, island, content, articleRef, tocRef, loadingRef, docsBody)
                             case RouteKind.OffTree =>
                                 // Off-tree route: a single segment that is not a known prefix, OR a multi-
                                 // segment route whose last segment is not a known module slug (AF-4). Hand off
                                 // to a full browser navigation so the server resolves the real page or a clean
-                                // 404 instead of fetching a missing content.md into a broken docs shell (D1).
+                                // 404 instead of fetching a missing content.html into a broken docs shell (D1).
                                 // Unsafe: DOM bridge for the off-tree full-navigate fallback.
                                 Sync.defer(dom.window.location.href = nextRoute)
                 yield Loop.continue
@@ -324,13 +324,13 @@ object WebsiteBundleMain:
         }
     end navFiber
 
-    /** Show a content route (a module page OR the intro/overview): fetch the route's `content.md` (from
-      * the cache when seeded, else over the network, caching the result), transpile it, update the
-      * shared `articleRef`/`tocRef`, swap `content` to the one docs body, update the head (SEO-4), and
-      * scroll to the URL hash or the top (B5). Both the [[RouteKind.Module]] and [[RouteKind.Intro]]
-      * branches share this: the overview is fetched and rendered exactly like a module, so the rail's
-      * Overview item expands to the intro's `## ` sections and the overview prose renders identically to
-      * the SSG first paint (hydration parity).
+    /** Show a content route (a module page OR the intro/overview): fetch the route's pre-rendered
+      * article from `content.html` (from the cache when seeded, else over the network, caching the
+      * result), inject via `UI.rawHtml`, update the shared `articleRef`/`tocRef`, swap `content` to
+      * the one docs body, update the head (SEO-4), and scroll to the URL hash or the top (B5). Both
+      * the [[RouteKind.Module]] and [[RouteKind.Intro]] branches share this: the overview is fetched
+      * and injected exactly like a module, so the rail's Overview item expands to the intro's `## `
+      * sections and the overview prose is byte-identical to the SSG first paint.
       */
     private def showContentRoute(
         nextRoute: String,
@@ -343,7 +343,7 @@ object WebsiteBundleMain:
     )(using Frame): Unit < Async =
         for
             // Clear the shared refs BEFORE the (async) content fetch so the rail's active-module reactive
-            // never paints stale content from the PREVIOUS module while the new module's content.md is in
+            // never paints stale content from the PREVIOUS module while the new module's content.html is in
             // flight. The `route` signal flips synchronously on click, so the rail keys the NEW module as
             // active immediately; without this reset it would expand showing the OLD module's `## ` sections
             // (tocRef still holds them) and the article would still show the OLD page, both for the full
@@ -364,19 +364,18 @@ object WebsiteBundleMain:
             _ <- loadingRef.set(true)
             _ <- Sync.ensure(loadingRef.set(false)) {
                 for
-                    _  <- tocRef.set(Chunk.empty)
-                    _  <- articleRef.set(UI.empty)
-                    md <- Sync.defer(markdownCache.getOrElse(nextRoute, ""))
-                    fetched <-
-                        if md.nonEmpty then Sync.defer(md)
-                        else
-                            DocsClient.fetchMarkdown(nextRoute).map { f =>
-                                seedMarkdownCache(nextRoute, f)
-                                f
+                    _ <- tocRef.set(Chunk.empty)
+                    _ <- articleRef.set(UI.empty)
+                    article <- Sync.defer(Maybe.fromOption(articleCache.get(nextRoute))).flatMap {
+                        case Present(a) => Sync.defer(a)
+                        case Absent =>
+                            DocsClient.fetchArticle(nextRoute).map { a =>
+                                seedArticleCache(nextRoute, a)
+                                a
                             }
-                    rendered <- DocsMarkdown.transpile(fetched)
-                    _        <- articleRef.set(rendered.article)
-                    _        <- tocRef.set(rendered.headings)
+                    }
+                    _ <- articleRef.set(UI.rawHtml(article.html))
+                    _ <- tocRef.set(article.headings)
                 yield ()
             }
             _ <- content.set(docsBody)
