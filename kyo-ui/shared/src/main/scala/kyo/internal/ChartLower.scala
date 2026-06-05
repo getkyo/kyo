@@ -3472,8 +3472,12 @@ private[kyo] object ChartLower:
 
     /** Build one SMIL `Svg.Animate` child that animates a single numeric attribute over the config duration.
       *
-      * Uses `begin("0s")` and `repeatCount("1")` so the animation plays once on re-render, matching the demo
-      * pattern from BarChart.scala:206-207. N4-guard: no `url(#id)` refs.
+      * Uses `begin("indefinite")` so the animation does NOT auto-play against the shared SVG document
+      * timeline (which would make any post-load reactive update snap straight to the frozen `to` value,
+      * since `begin="0s"` resolves to page-load time). Instead the reactive runtime calls `beginElement()`
+      * on each freshly-inserted `<animate>` after a mount/patch (DomBackend.beginAnimationsSync and the
+      * server client-script `ba(...)`), which starts the tween relative to insertion time. `repeatCount("1")`
+      * plays it once. N4-guard: no `url(#id)` refs.
       */
     private def smilAnimate(attributeName: String, from: Double, to: Double, dur: String)(using Frame): Svg.Animate =
         Svg.animate
@@ -3481,7 +3485,7 @@ private[kyo] object ChartLower:
             .from(from)
             .to(to)
             .dur(dur)
-            .begin("0s")
+            .begin("indefinite")
             .repeatCount("1")
     end smilAnimate
 
@@ -3497,7 +3501,7 @@ private[kyo] object ChartLower:
             .from(fromD)
             .to(toD)
             .dur(dur)
-            .begin("0s")
+            .begin("indefinite")
             .repeatCount("1")
     end smilAnimatePath
 

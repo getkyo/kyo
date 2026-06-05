@@ -114,6 +114,14 @@ class ChartMorphTest extends Test:
                 html.contains("attributeName=\"d\""),
                 s"Expected attributeName=d:\n$html"
             )
+            // The transition animate must use begin="indefinite", not begin="0s": with begin="0s" a
+            // post-load reactive update snaps to the frozen end (the animate's window is already past on
+            // the shared document timeline), so the chart jumps instead of tweening. The reactive runtime
+            // calls beginElement() on insert to start it. A revert to begin="0s" reintroduces that bug.
+            assert(
+                html.contains("begin=\"indefinite\"") && !html.contains("begin=\"0s\""),
+                s"Expected begin=indefinite (not 0s) so the runtime can start the tween on insert:\n$html"
+            )
             // The from string must be the rendered d of the initial path.
             assert(
                 html.contains("from=\"M200 335 L480 230\""),
@@ -125,6 +133,20 @@ class ChartMorphTest extends Test:
                 s"Expected to=M200 125 L480 387.5:\n$html"
             )
         end for
+    }
+
+    // ---- Runtime wiring: the page client script must START inserted SMIL animations ----
+
+    "renderPage client script calls beginElement so begin=indefinite transitions actually play" in run {
+        // The chart transition <animate> elements use begin="indefinite" (so a post-load update does not
+        // snap against the shared document timeline). They only tween if the reactive runtime calls
+        // beginElement() on each freshly-inserted animate after a mount/patch. This asserts the server
+        // client script carries that trigger; DomBackend.beginAnimationsSync is the JS-backend mirror.
+        val page = HtmlRenderer.renderPage("t", "<div></div>", "", "sid", "/")
+        assert(
+            page.contains("beginElement"),
+            s"renderPage client script must call beginElement() to start inserted SMIL animations:\n${page.take(600)}"
+        )
     }
 
     // ---- Test 2: LINE structural change (category added) snaps, no animate ----

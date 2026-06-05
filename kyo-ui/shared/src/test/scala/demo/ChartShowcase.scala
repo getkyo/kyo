@@ -328,8 +328,8 @@ object ChartShowcaseShot extends KyoApp:
                     _ <- a.writeFileBinary(s"$outDir/chart-showcase-1.png")
                     _ <- Console.printLine(s"wrote $outDir/chart-showcase-1.png (initial)")
 
-                    // Click the button: every Signal swaps to its end dataset (the .animate charts tween) and
-                    // the Beta line is selected (highlightSelect applies the dark stroke).
+                    // Click the button: every Signal swaps to its end dataset (the .animate charts tween over
+                    // the ease) and the Beta line is selected (highlightSelect applies the dark stroke).
                     _ <- Browser.click(Browser.Selector.css("#play"))
                     _ <- Async.sleep(1300.millis) // ease (800ms) settles + highlight applied
                     b <- Browser.screenshot(W, H)

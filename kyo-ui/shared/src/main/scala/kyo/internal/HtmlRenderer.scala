@@ -571,7 +571,7 @@ private[kyo] object HtmlRenderer:
            |      var ss=(ae&&typeof ae.selectionStart==='number')?ae.selectionStart:null;
            |      var se=(ae&&typeof ae.selectionEnd==='number')?ae.selectionEnd:null;
            |      el.outerHTML=op.Replace.html;
-           |      var nel=document.querySelector('[data-kyo-path="'+p+'"]');if(nel)applyJsProps(nel);
+           |      var nel=document.querySelector('[data-kyo-path="'+p+'"]');if(nel){applyJsProps(nel);ba(nel);}
            |      if(ap){var rf=document.querySelector('[data-kyo-path="'+ap+'"]');if(rf&&rf.hasAttribute&&rf.hasAttribute('data-kyo-reactive')){var inner=rf.querySelector('input,textarea,select,[contenteditable]');if(inner)rf=inner;}if(rf){rf.focus();if(ss!==null&&typeof rf.setSelectionRange==='function'){try{rf.setSelectionRange(ss,se);}catch(e){if(e.name!=='InvalidStateError')throw e;}}}}
            |    }
            |  }else if(op.Remove){
@@ -644,7 +644,17 @@ private[kyo] object HtmlRenderer:
            |    for(var k=0;k<rem.length;k++)el.removeAttribute(rem[k]);
            |  }
            |}
-           |applyJsProps(document.body);
+           |// Start freshly-inserted SMIL animations. Chart transition <animate> elements use
+           |// begin="indefinite" so they do not auto-play against the shared document timeline (which would
+           |// snap a post-load update to its frozen end value); beginElement() starts them relative to the
+           |// insertion. Deferred one frame so the SMIL engine has registered the new nodes.
+           |function ba(root){
+           |  if(!root||!root.querySelectorAll)return;
+           |  var an=root.querySelectorAll("animate,animateTransform,animateMotion");
+           |  if(!an.length)return;
+           |  requestAnimationFrame(function(){for(var i=0;i<an.length;i++){try{an[i].beginElement();}catch(e){}}});
+           |}
+           |applyJsProps(document.body);ba(document.body);
            |// Dropdown helpers: close all dropdowns except the given id
            |function kyoCloseDropdown(exceptId){
            |  var all=document.querySelectorAll('[data-kyo-dropdown-options]');
