@@ -2,6 +2,8 @@ package io.getkyo.tasty.sbt
 
 import sbt._
 import sbt.Keys._
+import java.nio.file.{ Files, StandardCopyOption }
+import java.security.MessageDigest
 
 /** sbt plugin that generates a kyo-tasty snapshot at compile time by forking a JVM.
   *
@@ -66,34 +68,72 @@ object KyoTastyPlugin extends AutoPlugin {
 
     private val runnerMainClass = "io.getkyo.tasty.sbt.runner.SnapshotRunner"
 
+    /** SHA-256 hex digest of a byte array. */
+    private def sha256Hex(bytes: Array[Byte]): String = {
+        val md = MessageDigest.getInstance("SHA-256")
+        md.digest(bytes).map("%02x".format(_)).mkString
+    }
+
+    /** SHA-256 hex digest of a file on disk, or empty string if the file does not exist. */
+    private def sha256HexFile(f: File): String =
+        if (f.exists()) sha256Hex(Files.readAllBytes(f.toPath)) else ""
+
+    /** Extract the bundled runner.jar to `extractDir/runner.jar` using a content-hash guard and atomic rename.
+      *
+      * If the target already exists and its SHA-256 matches the bundled resource, the write is skipped entirely
+      * to avoid racing concurrent sbt processes that call this setting in parallel. Otherwise the bytes are written
+      * to a sibling `.tmp` file in the SAME directory (same filesystem) and then renamed with ATOMIC_MOVE so no
+      * reader ever observes a partially-written JAR.
+      */
+    private def extractRunnerJar(extractDir: File): File = {
+        IO.createDirectory(extractDir)
+        val target   = extractDir / "runner.jar"
+        val resource = getClass.getResource("/kyo-tasty/runner.jar")
+        if (resource == null)
+            sys.error(
+                "kyo-tasty-sbt: bundled runner.jar resource not found on plugin classpath; " +
+                    "this is a plugin packaging bug, not a user error."
+            )
+        val in = resource.openStream()
+        val bytes =
+            try in.readAllBytes()
+            finally in.close()
+        val bundledHash = sha256Hex(bytes)
+        if (sha256HexFile(target) != bundledHash) {
+            val tmp = extractDir / "runner.jar.tmp"
+            Files.write(tmp.toPath, bytes)
+            Files.move(
+                tmp.toPath,
+                target.toPath,
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING
+            )
+        }
+        target
+    }
+
     override lazy val projectSettings: Seq[Setting[_]] = Seq(
         tastySnapshotDir     := (Compile / target).value / "kyo-tasty-snapshots",
         tastySnapshotEnabled := true,
         tastyRunnerClasspath := {
-            val extractDir: File       = (LocalRootProject / target).value / "kyo-tasty-runner-extract"
-            IO.createDirectory(extractDir)
-            val extracted: File        = extractDir / "runner.jar"
-            val resource: java.net.URL = getClass.getResource("/kyo-tasty/runner.jar")
-            if (resource == null)
-                sys.error(
-                    "kyo-tasty-sbt: bundled runner.jar resource not found on plugin classpath; " +
-                        "this is a plugin packaging bug, not a user error."
-                )
-            else {
-                IO.transfer(resource.openStream(), extracted)
-                Seq(extracted)
-            }
+            val extractDir: File = (LocalRootProject / target).value / "kyo-tasty-runner-extract"
+            Seq(extractRunnerJar(extractDir))
         },
         tastySnapshot := {
-            val log         = streams.value.log
-            val rc          = tastyRunnerClasspath.value
+            val log = streams.value.log
+            val rc  = tastyRunnerClasspath.value
             // Use dependencyClasspath (not fullClasspath) to avoid a circular dependency:
             // fullClasspath depends on resourceGenerators which may include tastySnapshot
             // itself when tastySnapshotEnabled := true. dependencyClasspath excludes
             // resourceGenerators output and breaks the cycle.
-            val roots       = (Compile / dependencyClasspath).value.map(_.data.getAbsolutePath)
-            val out         = (Compile / resourceManaged).value / "META-INF" / "kyo-tasty" / "snapshot.krfl"
-            val cacheDir    = streams.value.cacheDirectory / "tasty-snapshot"
+            // Append classDirectory to restore the project's own compiled classes which
+            // dependencyClasspath omits (BLOCKER-2 / A11 fix): classDirectory does NOT
+            // depend on resourceGenerators, so it does not re-introduce the cycle.
+            val depRoots  = (Compile / dependencyClasspath).value.map(_.data.getAbsolutePath)
+            val classDir  = (Compile / classDirectory).value.getAbsolutePath
+            val roots     = depRoots :+ classDir
+            val out       = (Compile / resourceManaged).value / "META-INF" / "kyo-tasty" / "snapshot.krfl"
+            val cacheDir  = streams.value.cacheDirectory / "tasty-snapshot"
             val javaHomeVal = javaHome.value
             val baseDirVal  = baseDirectory.value
             if (rc.isEmpty)

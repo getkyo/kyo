@@ -1,0 +1,8 @@
+# BLOCKER-1 idempotence: second extraction skips write when hash matches.
+# First pass: extract runner.jar and record its mtime.
+> compile
+> recordRunnerMtime
+# Reload forces SettingKey re-evaluation, which re-runs extractRunnerJar.
+# The hash check should find the existing file unchanged and skip the write.
+> reload
+> assertRunnerMtimeUnchanged

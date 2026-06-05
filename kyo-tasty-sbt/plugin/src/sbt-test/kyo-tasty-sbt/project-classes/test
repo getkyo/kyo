@@ -1,0 +1,4 @@
+# BLOCKER-2 guard: tastySnapshot includes the project's own classDirectory.
+# The project source defines MyProjectClass; the snapshot must contain that FQN.
+> compile
+> checkProjectClassInSnapshot
