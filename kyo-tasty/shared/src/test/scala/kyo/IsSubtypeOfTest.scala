@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.internal.tasty.query.TastyState
 import kyo.internal.tasty.symbol.SymbolKind
 import scala.compiletime.testing.typeCheckErrors
 
@@ -10,14 +9,13 @@ import scala.compiletime.testing.typeCheckErrors
   * Leaves:
   *   1. indeterminateRenamedFromUnknown
   *   2. budgetExhaustionYieldsIndeterminate
-  *   3. unhandledShapeRoutesToCtxErrors
+  *   3. unhandledShapeRoutesToCpErrors
   *   4. pureVerdictSignatureUnchanged
   *   5. schemaRoundTripsSubtypeVerdict
   *   6. unhandledSubtypingCaseIsClosedEnumVariant
   */
 class IsSubtypeOfTest extends Test:
 
-    import AllowUnsafe.embrace.danger
     import kyo.Tasty.SymbolId
 
     private var nextId: Int = 0
@@ -91,10 +89,11 @@ class IsSubtypeOfTest extends Test:
                     succeed
     }
 
-    // Leaf 3: Unhandled parent shape accumulates in decodeCtx.subtypingErrors.
+    // Leaf 3: Unhandled parent shape accumulates in cp.errors (Q-003 binding).
     // Uses a Symbol.Class whose parentTypes contains a TermRef (not Named/Applied(Named)),
-    // which is outside the matcher set in checkParents.
-    "leaf-3: unhandled parent shape accumulates in decodeCtx.subtypingErrors" in run {
+    // which is outside the matcher set in checkParents. After isSubtypeOf, calling
+    // Tasty.classpath folds any accumulated decodeCtx.subtypingErrors into cp.errors.
+    "leaf-3: unhandled parent shape routes to cp.errors" in run {
         nextId = 0
         val baseSym  = makeSym("test.Base")
         val baseId   = baseSym.id
@@ -113,15 +112,13 @@ class IsSubtypeOfTest extends Test:
             Tasty.withClasspath(cp):
                 for
                     verdict <- Tasty.isSubtypeOf(subType, supType)
-                    errors <- TastyState.bindingLocal.use: mbind =>
-                        Sync.defer(
-                            mbind.flatMap(_.decodeCtx).map(_.subtypingErrors.toSeq).getOrElse(Seq.empty)
-                        )
+                    finalCp <- Tasty.classpath
                 yield
                     assert(
                         verdict == Tasty.SubtypeVerdict.Indeterminate,
                         s"Expected Indeterminate for unhandled parent shape but got $verdict"
                     )
+                    val errors = finalCp.errors
                     assert(
                         errors.size == 1,
                         s"Expected exactly 1 UnhandledSubtypingCase error but got ${errors.size}: $errors"
@@ -166,8 +163,10 @@ class IsSubtypeOfTest extends Test:
         succeed
     }
 
-    // Leaf 6: TastyError.UnhandledSubtypingCase is a closed-enum variant; constructable and matchable.
-    "leaf-6: UnhandledSubtypingCase is a reachable TastyError variant" in {
+    // Leaf 6: TastyError.UnhandledSubtypingCase is a closed-enum variant: constructable,
+    // matchable, and its omission from a match causes an exhaustiveness compile error.
+    "leaf-6: UnhandledSubtypingCase is a reachable, closed-enum TastyError variant" in {
+        // Reachability: the variant can be constructed and matched.
         val e: TastyError = TastyError.UnhandledSubtypingCase(
             shape = "TermRef",
             lhs = Tasty.Type.Any,
@@ -183,6 +182,33 @@ class IsSubtypeOfTest extends Test:
             case other =>
                 fail(s"Expected UnhandledSubtypingCase but got $other")
         end match
+
+        // Closed-enum exhaustiveness: a match on TastyError that includes UnhandledSubtypingCase
+        // compiles cleanly; if the variant were removed, this match would produce a compile error.
+        // (The SealedAdtCompletenessTest Mirror guard enforces count at compile time; this arm
+        // confirms the variant is syntactically matchable and closes the positive pin.)
+        val label: String = e match
+            case TastyError.FileNotFound(_)                    => "FileNotFound"
+            case TastyError.CorruptedFile(_, _, _)             => "CorruptedFile"
+            case TastyError.UnsupportedVersion(_, _)           => "UnsupportedVersion"
+            case TastyError.InconsistentClasspath(_, _, _)     => "InconsistentClasspath"
+            case TastyError.FqnCollisionError(_)               => "FqnCollisionError"
+            case TastyError.MalformedSection(_, _, _)          => "MalformedSection"
+            case TastyError.SymbolNotFound(_)                  => "SymbolNotFound"
+            case TastyError.NotFound(_)                        => "NotFound"
+            case TastyError.ClassfileFormatError(_, _, _)      => "ClassfileFormatError"
+            case TastyError.ClasspathClosed(_)                 => "ClasspathClosed"
+            case TastyError.ClasspathBuilding(_)               => "ClasspathBuilding"
+            case TastyError.SnapshotFormatError(_, _, _)       => "SnapshotFormatError"
+            case TastyError.SnapshotVersionMismatch(_, _)      => "SnapshotVersionMismatch"
+            case TastyError.SnapshotIoError(_)                 => "SnapshotIoError"
+            case TastyError.NotImplemented(_)                  => "NotImplemented"
+            case TastyError.UnsupportedPlatform(_)             => "UnsupportedPlatform"
+            case TastyError.UnknownTagInPosition(_, _)         => "UnknownTagInPosition"
+            case TastyError.InvalidFqn(_, _)                   => "InvalidFqn"
+            case TastyError.DigestMismatch(_, _)               => "DigestMismatch"
+            case TastyError.UnhandledSubtypingCase(_, _, _, _) => "UnhandledSubtypingCase"
+        assert(label == "UnhandledSubtypingCase", s"Expected UnhandledSubtypingCase label but got $label")
         succeed
     }
 

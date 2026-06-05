@@ -2416,6 +2416,10 @@ object Tasty:
       * This is the ONLY entry point that reads the file system during classpath construction. All
       * `Tasty.*` query methods called inside `f` are pure and perform no IO.
       *
+      * Diagnostics accumulated during the scope by `Tasty.isSubtypeOf` (e.g.,
+      * `TastyError.UnhandledSubtypingCase`) are folded into `cp.errors` on any call to
+      * `Tasty.classpath` within `f` (Q-003 binding: errors appear in `cp.errors`).
+      *
       * Effect row: `A < (Async & Abort[TastyError] & S)` -- `Scope` is consumed internally.
       */
     def withClasspath[A, S](
@@ -2432,6 +2436,9 @@ object Tasty:
       * that `Tasty.isSubtypeOf` can accumulate `TastyError.UnhandledSubtypingCase` diagnostics.
       * `Tasty.bodyTree` returns `Maybe.Absent` for every symbol inside `f` because the DecodeContext
       * carries no body source handle.
+      *
+      * Diagnostics accumulated during the scope are folded into `cp.errors` on any call to
+      * `Tasty.classpath` within `f` (Q-003 binding: errors appear in `cp.errors`).
       *
       * Effect row: `A < S` -- identical to `f`'s row.
       */
@@ -2468,11 +2475,22 @@ object Tasty:
       *
       * Returns the JVM classpath stub when called outside a `withClasspath` scope.
       *
+      * When called inside a `withClasspath` scope, folds any `TastyError.UnhandledSubtypingCase`
+      * diagnostics accumulated by `isSubtypeOf` calls during the scope into the returned
+      * `Classpath.errors` field. This makes `cp.errors` the user-visible channel for
+      * unhandled-shape diagnostics (Q-003 binding).
+      *
       * Effect row: Sync, because reading the lazy val TastyState.global may trigger initialization.
       */
     def classpath(using Frame): Classpath < Sync =
         TastyState.bindingLocal.use: mbind =>
-            Sync.defer(mbind.getOrElse(TastyState.global).cp)
+            val binding = mbind.getOrElse(TastyState.global)
+            Sync.defer:
+                binding.decodeCtx match
+                    case Maybe.Present(ctx) if ctx.subtypingErrors.nonEmpty =>
+                        Classpath.copyWithErrors(binding.cp, binding.cp.errors ++ Chunk.from(ctx.subtypingErrors))
+                    case _ =>
+                        binding.cp
 
     // ── Classpath ───────────────────────────────────────────────────────────
 
@@ -3845,9 +3863,11 @@ object Tasty:
     /** Structural subtype check. Returns Sub, NotSub, or Indeterminate.
       *
       * Unhandled parent-walk shapes accumulate as TastyError.UnhandledSubtypingCase
-      * in decodeCtx.subtypingErrors (accessible via TastyState.bindingLocal inside a
-      * withClasspath scope). The verdict signature stays pure (no Abort[TastyError] row);
-      * diagnostics use the error channel.
+      * in the active scope's `decodeCtx.subtypingErrors` buffer during the call.
+      * They are folded into `cp.errors` on the next `Tasty.classpath` read within
+      * the scope (Q-003 binding: the user-visible channel is `cp.errors`). The
+      * verdict signature stays pure (no Abort[TastyError] row); diagnostics use
+      * the error channel.
       */
     def isSubtypeOf(tpe: Type, other: Type)(using Frame): SubtypeVerdict < Sync =
         TastyState.bindingLocal.use: mbind =>
