@@ -1524,23 +1524,25 @@ class ChartAxisTest extends Test:
         assert(rightTickLabels.nonEmpty, "L12a: Expected right-axis tick labels (co-pin)")
 
         // The tick labeled "10" (domain min) should be at y=440 (rangeLo=plotBaseline).
+        // niceTicks(10, 20, 5): step=5 -> ticks [10, 15, 20] (3 ticks); "10" is always present.
         val tick10 = rightTickLabels.find(t => t.children.exists { case UI.Ast.Text("10") => true; case _ => false })
         tick10 match
             case Some(t) =>
                 val py = numOf(t.svgAttrs.y)
                 assertClose(py, 440.0, "L12a: right scale tick '10' (domain min) should be at y=440 (plotBaseline)")
             case None =>
-                succeed // "10" tick may be skipped by niceTicks; ok for this co-pin.
+                fail(s"L12a: tick '10' not found in right tick labels: ${rightTickLabels.map(_.children).toList}")
         end match
 
         // The tick labeled "20" (domain max) should be at y=20 (rangeHi=plotY).
+        // niceTicks(10, 20, 5): "20" is the domain max and always present as the last tick.
         val tick20 = rightTickLabels.find(t => t.children.exists { case UI.Ast.Text("20") => true; case _ => false })
         tick20 match
             case Some(t) =>
                 val py = numOf(t.svgAttrs.y)
                 assertClose(py, 20.0, "L12a: right scale tick '20' (domain max) should be at y=20 (plotY)")
             case None =>
-                succeed // "20" tick may be skipped; ok for this co-pin.
+                fail(s"L12a: tick '20' not found in right tick labels: ${rightTickLabels.map(_.children).toList}")
         end match
     }
 
@@ -1559,10 +1561,20 @@ class ChartAxisTest extends Test:
 
         // Horizontal gridlines span x1=plotX to x2=plotX+plotW_twoax with strokeOpacity set.
         val gridLines = hGridLinesIn(root, PlotWTwoAx)
+        // Right axis domain: growthPct in [5.0, 20.0], default tickCount=5, nice=true.
+        // niceTicks(5.0, 20.0, 5): step=5 -> ticks [5, 10, 15, 20] = 4 ticks.
+        // One gridline per right tick -> 4 gridlines, per invariant L13 (04-invariants).
         assert(
-            gridLines.nonEmpty,
-            s"L13a: Expected right horizontal gridlines when yAxisRight(_.grid) is set with left grid OFF, but got none (GAP-RIGHTY-GRID unfixed)"
+            gridLines.size == 4,
+            s"L13a: Expected 4 right horizontal gridlines (one per right tick: 5, 10, 15, 20) but got ${gridLines.size} (GAP-RIGHTY-GRID)"
         )
+        // Gridline y-positions must match the right scale tick pixels (invariant L13).
+        // Right scale: Linear(5.0, 20.0, rangeLo=440, rangeHi=20): apply(v) = 440 + (v-5)/(20-5)*(20-440).
+        val expectedYs = Chunk(440.0, 300.0, 160.0, 20.0) // apply(5), apply(10), apply(15), apply(20)
+        val actualYs   = gridLines.flatMap(l => l.svgAttrs.y1.map(_.toDouble)).sorted.reverse
+        expectedYs.zip(actualYs).foldLeft(succeed): (_, pair) =>
+            val (expected, actual) = pair
+            assertClose(actual, expected, s"L13a: gridline y-position mismatch (expected $expected, got $actual)")
     }
 
     "L13b: .yAxis(_.grid) + .yAxisRight(_.grid) emits only LEFT tick count gridlines (left-wins guard)" in {
@@ -1615,14 +1627,16 @@ class ChartAxisTest extends Test:
         assert(leftTicks.nonEmpty, "L19b: Expected left-axis tick labels")
         assert(rightTicks.nonEmpty, "L19b: Expected right-axis tick labels")
 
-        // Right scale is linear(0,1): a tick at 0.5 should be at y=230.
+        // Right scale is linear(0,1), domain fixed [0,1], nice=false, tickCount=5.
+        // niceTicks(0.0, 1.0, 5): step=0.5 -> ticks [0.0, 0.5, 1.0] (3 ticks); "0.5" is always present.
+        // apply(0.5) = 440 + 0.5 * (20-440) = 440 - 210 = 230.0.
         val tick05 = rightTicks.find(t => t.children.exists { case UI.Ast.Text("0.5") => true; case _ => false })
         tick05 match
             case Some(t) =>
                 val py = numOf(t.svgAttrs.y)
                 assertClose(py, 230.0, "L19b: right linear(0,1) tick at 0.5 should be at y=230")
             case None =>
-                succeed // Tick at 0.5 may not appear with default count; ok for independence verification.
+                fail(s"L19b: tick '0.5' not found in right tick labels: ${rightTicks.map(_.children).toList}")
         end match
     }
 
