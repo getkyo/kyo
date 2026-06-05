@@ -1938,13 +1938,13 @@ private[kyo] object ChartLower:
         val basePalette: Chunk[Style.Color] = spec match
             case Present(s) => themePalette(s.theme)
             case Absent     => DefaultPalette
-        // A Sequential color scale routes through resolvePalette (interpolated per raw value); Categorical
-        // and Absent keep the existing categorical themePalette/DefaultPalette assignment byte-for-byte.
+        // Route any Present colorScale (Categorical OR Sequential) through resolvePalette.
+        // Absent keeps the existing by-index basePalette path, byte-identical (§0.1 proof).
         val palette: Chunk[Style.Color] = spec match
             case Present(s) =>
                 s.legendCfg.colorScale match
-                    case Present(_: LegendConfig.ColorScale.Sequential) => resolvePalette(s, colorCats)
-                    case _ =>
+                    case Present(_) => resolvePalette(s, colorCats)
+                    case Absent =>
                         colorKeys.zipWithIndex.map: (_, i) =>
                             basePalette.toSeq.apply(i % basePalette.size)
             case Absent =>

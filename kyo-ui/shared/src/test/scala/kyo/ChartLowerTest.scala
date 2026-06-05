@@ -485,6 +485,67 @@ class ChartLowerTest extends Test:
         )
     }
 
+    // ---- Leaf L1 (GAP-COLOR-GROUPEDBAR): grouped bar with a Categorical colorScale uses the scale colors ----
+    // Before the fix, lowerBarGrouped's `palette` val matched only `Present(_: Sequential)` and routed
+    // `Present(_: Categorical)` into the `case _` fallback (the by-index basePalette), so bars got
+    // DefaultPalette colors (#3b82f6 blue, #f97316 orange, ...) instead of the colorScale colors.
+    // The fix changes `Present(_: Sequential) => resolvePalette` to `Present(_) => resolvePalette`, so
+    // both Categorical and Sequential colorScales are honoured. The Absent arm is byte-identical (§0.1).
+
+    "grouped bar with categorical colorScale uses the scale colors, not DefaultPalette (GAP-COLOR-GROUPEDBAR)" in {
+        // Three rows sharing x="Jan", one per region -- this guarantees dodge=true (multiple distinct
+        // colors in the same x-band). Colors are chosen to be unambiguously distinct from the
+        // DefaultPalette entries (#3b82f6 blue and #f97316 orange) so an accidental fallback is caught.
+        val naColor   = Style.Color.hex("#e63946").getOrElse(fail("bad hex naColor"))   // red
+        val euColor   = Style.Color.hex("#2a9d8f").getOrElse(fail("bad hex euColor"))   // teal
+        val apacColor = Style.Color.hex("#e9c46a").getOrElse(fail("bad hex apacColor")) // yellow
+        val rows = Chunk(
+            Sale("Jan", Usd(1000), Region.NA),
+            Sale("Jan", Usd(2000), Region.EU),
+            Sale("Jan", Usd(1500), Region.APAC)
+        )
+        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
+            .legend(_.colorScale[Region](
+                Region.NA   -> naColor,
+                Region.EU   -> euColor,
+                Region.APAC -> apacColor
+            ))
+        val root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val rects = rectsIn(root)
+        assert(rects.size == 3, s"Expected 3 bar rects (one per region) but got ${rects.size}")
+
+        // Sort rects by x position to recover NA/EU/APAC encounter order.
+        val byX = rects.toSeq.sortBy(r => numOf(r.svgAttrs.x))
+        def fillOf(r: Svg.Rect): Style.Color =
+            r.svgAttrs.fill match
+                case Present(Svg.Paint.Color(c)) => c
+                case other                       => fail(s"Expected a color fill but got $other")
+        val fills = byX.map(fillOf)
+
+        // Each sub-bar must carry the colorScale color for its region, NOT the DefaultPalette color.
+        // colorCats are collected in encounter order: NA (idx 0), EU (idx 1), APAC (idx 2).
+        assert(fills(0) == naColor, s"NA sub-bar (idx 0) must be naColor $naColor but got ${fills(0)}")
+        assert(fills(1) == euColor, s"EU sub-bar (idx 1) must be euColor $euColor but got ${fills(1)}")
+        assert(fills(2) == apacColor, s"APAC sub-bar (idx 2) must be apacColor $apacColor but got ${fills(2)}")
+
+        // Explicit guard: must NOT be the DefaultPalette fallback colors.
+        assert(
+            fills.forall(c => c != Style.Color.blue && c != Style.Color.orange),
+            s"bar fills must not be DefaultPalette colors (#3b82f6/#f97316); got $fills"
+        )
+
+        // Legend swatch colors must agree with their corresponding mark fills.
+        // Swatches are 12x12 rects that are direct children of the root frame (not inside the marks G).
+        val swatches = legendSwatchRects(root)
+        assert(swatches.size == 3, s"Expected 3 legend swatches but got ${swatches.size}")
+        // Sort swatches by y position (they are stacked vertically in encounter order: NA, EU, APAC).
+        val swatchesByY = swatches.toSeq.sortBy(s => coordNum(s.svgAttrs.y).getOrElse(0.0))
+        val swatchFills = swatchesByY.map(s => fillColorOf(s.svgAttrs.fill))
+        assert(swatchFills(0) == naColor, s"Legend swatch 0 must be naColor $naColor but got ${swatchFills(0)}")
+        assert(swatchFills(1) == euColor, s"Legend swatch 1 must be euColor $euColor but got ${swatchFills(1)}")
+        assert(swatchFills(2) == apacColor, s"Legend swatch 2 must be apacColor $apacColor but got ${swatchFills(2)}")
+    }
+
     // ---- Test 9: line path has fill=None, stroke present, strokeWidth present ----
     // Regression test for the bug where lowerLineSeries produced a filled black polygon instead of a stroked line.
     // The old code did `Svg.path.d(pathData)` with no paint, so the browser filled the path with black (default fill).
