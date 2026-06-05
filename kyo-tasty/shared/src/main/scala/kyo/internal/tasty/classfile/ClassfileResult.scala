@@ -38,5 +38,26 @@ final case class ClassfileResult(
       * Non-empty only when the class has a PermittedSubclasses attribute (Java 17+ sealed classes).
       * Used by ClasspathOrchestrator.finalizeMerge to resolve permittedSubclassIds for classfile symbols.
       */
-    permittedSubclassFqns: Chunk[String] = Chunk.empty
+    permittedSubclassFqns: Chunk[String] = Chunk.empty,
+    /** Dotted FQN of the NestHost class, e.g. "java.lang.invoke.MethodHandles".
+      *
+      * Present when the classfile carries a NestHost attribute (JVMS 4.7.28). The orchestrator resolves
+      * this FQN to a final Symbol after finalizeMerge and injects it into javaMetadata.nestHost.
+      * Stored as a string here so no sentinel Symbol is created during decode.
+      */
+    nestHostFqn: Maybe[String] = Maybe.Absent,
+    /** Dotted FQNs of NestMembers, e.g. "java.lang.invoke.MethodHandles$Lookup".
+      *
+      * Non-empty when the classfile carries a NestMembers attribute (JVMS 4.7.29). The orchestrator
+      * resolves these FQNs to final Symbols after finalizeMerge and injects them into
+      * javaMetadata.nestMembers.
+      */
+    nestMemberFqns: Chunk[String] = Chunk.empty,
+    /** Enclosing-method data from the EnclosingMethod attribute (JVMS 4.7.7).
+      *
+      * The pair is (enclosingClassFqn, methodName). The orchestrator resolves the FQN to a final Symbol
+      * after finalizeMerge and injects it into javaMetadata.enclosingMethod.
+      * Stored as a string pair here so no sentinel Symbol is created during decode.
+      */
+    enclosingMethodData: Maybe[(String, String)] = Maybe.Absent
 )

@@ -269,4 +269,30 @@ class SymbolAdtVariantCoverageTest extends Test:
         succeed
     }
 
+    // ── Phase 08 leaf 4: unresolvedCaseDeleted ───────────────────────────────
+
+    // Confirms that Symbol.Unresolved is not a valid symbol subtype (Cat 19 deletion).
+    // Pins: Cat 19; INV-005-CLEAN; PRESERVE-M.
+    "Phase 08 leaf 4: unresolvedCaseDeleted: Symbol.Unresolved is not part of the ADT" in {
+        // Symbol.Unresolved was deleted in Phase 08. A compileErrors probe must return non-empty.
+        assert(
+            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Unresolved)").nonEmpty,
+            "Symbol.Unresolved must not exist after Phase 08 Cat 19"
+        )
+        succeed
+    }
+
+    // ── Phase 08 leaf 5: makePlaceholderDeleted ───────────────────────────────
+
+    // Confirms that Symbol.makePlaceholder is not a valid method (Cat 19 deletion).
+    // Pins: Cat 19.
+    "Phase 08 leaf 5: makePlaceholderDeleted: Symbol.makePlaceholder is not available" in {
+        // Symbol.makePlaceholder was deleted in Phase 08. A compileErrors probe must return non-empty.
+        assert(
+            compiletime.testing.typeCheckErrors("kyo.Tasty.Symbol.makePlaceholder(???, ???, ???)").nonEmpty,
+            "Symbol.makePlaceholder must not exist after Phase 08 Cat 19"
+        )
+        succeed
+    }
+
 end SymbolAdtVariantCoverageTest

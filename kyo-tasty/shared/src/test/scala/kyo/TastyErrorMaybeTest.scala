@@ -367,20 +367,40 @@ class TastyErrorMaybeTest extends Test:
             case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 4: UnresolvedReference is a valid TastyError variant ────────────
+    // ── Leaf 4: UnresolvedReference is emitted by finalizeMerge ─────────────
     //
-    // TastyError.UnresolvedReference is produced by ClasspathOrchestrator.finalizeMerge
-    // when a LoadingSymbol.Placeholder survives to the merge boundary (cross-file reference
-    // that was never resolved). This test pins the variant shape and confirms it is a
-    // TastyError (not some other error type).
+    // TastyError.UnresolvedReference is produced by ClasspathOrchestrator.finalizeMerge when
+    // a partial symbol in the fqnIndex cannot be resolved to a final SymbolId. Under SoftFail
+    // mode the error is accumulated in cp.errors.
+    //
+    // This test verifies the end-to-end production path: a degenerate MergeState with a ghost
+    // FQN produces exactly one UnresolvedReference in cp.errors, whose name matches the ghost FQN.
+    // Replaces the prior vacuous field-roundtrip probe per B-5 carry fix.
 
-    "INV-008 leaf-4: TastyError.UnresolvedReference carries name and idx fields" in {
-        val err: TastyError.UnresolvedReference = TastyError.UnresolvedReference("MissingClass", 42)
-        assert(err.name == "MissingClass", s"Expected name 'MissingClass' but got '${err.name}'")
-        assert(err.idx == 42, s"Expected idx 42 but got ${err.idx}")
-        val isTastyError: TastyError = err
-        assert(isTastyError.isInstanceOf[TastyError], "UnresolvedReference must be a TastyError")
-        succeed
+    "INV-008 leaf-4: TastyError.UnresolvedReference is emitted by finalizeMerge for unresolvable FQN entries" in run {
+        Abort.run[TastyError](
+            kyo.internal.tasty.query.ClasspathOrchestrator.triggerUnresolvedReferenceForTest()
+        ).map: result =>
+            result match
+                case Result.Success(cp) =>
+                    val refs = cp.errors.collect:
+                        case e: TastyError.UnresolvedReference => e
+                    assert(
+                        refs.length == 1,
+                        s"Expected exactly one UnresolvedReference but got: ${cp.errors}"
+                    )
+                    val ref = refs.head
+                    assert(
+                        ref.name.contains("GhostFqn"),
+                        s"Expected name to contain 'GhostFqn' but got: ${ref.name}"
+                    )
+                    val isTastyError: TastyError = ref
+                    assert(isTastyError.isInstanceOf[TastyError], "UnresolvedReference must be a TastyError subtype")
+                    succeed
+                case Result.Failure(e) =>
+                    fail(s"Expected Success(cp) with UnresolvedReference in cp.errors but got Failure: $e")
+                case Result.Panic(t) =>
+                    fail(s"Unexpected panic: ${t.getMessage}")
     }
 
 end TastyErrorMaybeTest

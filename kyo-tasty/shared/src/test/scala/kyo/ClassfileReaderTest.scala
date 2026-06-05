@@ -395,31 +395,35 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 14 (M8/INV-008): NestHost attribute is parsed and exposed
     // -------------------------------------------------------------------------
-    "M8: NestHost attribute is parsed into metadata.nestHost for an inner class" in run {
+    // After the B-3 architectural fix, ClassfileUnpickler stores the NestHost binary FQN in
+    // ClassfileResult.nestHostFqn instead of constructing a sentinel Symbol. The orchestrator
+    // resolves the FQN to a real Symbol after finalizeMerge. Tests of the standalone unpickler
+    // check nestHostFqn directly.
+    "M8: NestHost attribute is parsed into nestHostFqn for an inner class" in run {
         // java.util.HashMap$Node is an inner class of HashMap; has NestHost = java/util/HashMap
         readClass("java/util/HashMap$Node.class").map: result =>
-            val md = symJavaMetadata(result.classSymbol).getOrElse(fail("Expected javaMetadata Present"))
             assert(
-                md.nestHost.isDefined,
-                "Expected nestHost to be Present for java/util/HashMap$Node.class"
+                result.nestHostFqn.isDefined,
+                "Expected nestHostFqn to be Present for java/util/HashMap$Node.class"
             )
-            val hostName = md.nestHost.get.name.asString
+            val hostFqn = result.nestHostFqn.get
             assert(
-                hostName == "HashMap" || hostName.contains("HashMap"),
-                s"Expected NestHost name to contain 'HashMap', got '$hostName'"
+                hostFqn.contains("HashMap"),
+                s"Expected nestHostFqn to contain 'HashMap', got '$hostFqn'"
             )
     }
 
     // -------------------------------------------------------------------------
     // Test 15 (M8/INV-008): NestMembers attribute is parsed and exposed
     // -------------------------------------------------------------------------
-    "M8: NestMembers attribute is parsed into metadata.nestMembers for an outer class" in run {
+    // After the B-3 architectural fix, ClassfileUnpickler stores NestMembers FQNs in
+    // ClassfileResult.nestMemberFqns. Tests of the standalone unpickler check nestMemberFqns directly.
+    "M8: NestMembers attribute is parsed into nestMemberFqns for an outer class" in run {
         // java.util.HashMap has inner classes; NestMembers lists them
         readClass("java/util/HashMap.class").map: result =>
-            val md = symJavaMetadata(result.classSymbol).getOrElse(fail("Expected javaMetadata Present"))
             assert(
-                md.nestMembers.nonEmpty,
-                "Expected non-empty nestMembers in java/util/HashMap.class"
+                result.nestMemberFqns.nonEmpty,
+                "Expected non-empty nestMemberFqns in java/util/HashMap.class"
             )
     }
 

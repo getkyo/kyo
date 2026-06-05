@@ -402,22 +402,29 @@ class JavaSymbolTest extends Test:
     }
 
     // -------------------------------------------------------------------------
-    // Test 10: enclosingMethod is Present for an anonymous class
+    // Test 10: enclosingMethod data is present for an anonymous class
     // -------------------------------------------------------------------------
+    // After the B-3 architectural fix, ClassfileUnpickler stores enclosing-method data in
+    // ClassfileResult.enclosingMethodData as a (classFqn, methodName) pair. The orchestrator
+    // resolves the FQN to a real Symbol after finalizeMerge. Tests of the standalone unpickler
+    // check enclosingMethodData directly.
     // Cross-platform: uses Embedded.anonymousFixture1Class instead of loadFixture("AnonymousFixture$1.class").
-    "JavaMetadata.enclosingMethod is Present for an anonymous class inside enclosingMethodFixture" in run {
+    "JavaMetadata.enclosingMethod data is Present for an anonymous class inside enclosingMethodFixture" in run {
         // AnonymousFixture$1.class is the anonymous Runnable inside enclosingMethodFixture()
         val bytes = kyo.fixtures.Embedded.anonymousFixture1Class
         readClass(bytes).map: result =>
-            val sym  = result.classSymbol
-            val meta = symJavaMetadata(sym)
-            assert(meta.isDefined, "Expected javaMetadata Present for AnonymousFixture$1")
-            val enclosing = meta.get.enclosingMethod
-            assert(enclosing.isDefined, s"Expected enclosingMethod Present for AnonymousFixture$$1; got Absent")
-            val methodName = enclosing.get.methodName.asString
+            assert(
+                result.enclosingMethodData.isDefined,
+                s"Expected enclosingMethodData Present for AnonymousFixture$$1; got Absent"
+            )
+            val (encFqn, methodName) = result.enclosingMethodData.get
             assert(
                 methodName == "enclosingMethodFixture",
                 s"Expected enclosingMethod name 'enclosingMethodFixture', got '$methodName'"
+            )
+            assert(
+                encFqn.nonEmpty,
+                "Expected non-empty enclosing class FQN"
             )
     }
 

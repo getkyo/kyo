@@ -519,6 +519,8 @@ object SnapshotWriter:
                 // yet encodable in the snapshot format. Write no fields; the reader maps the unknown tag
                 // string to TastyError.NotImplemented for forward-compat until Phase 11 adds the encoding.
                 case TastyError.UnhandledSubtypingCase(_, _, _, _) => ()
+                // UnresolvedReference: loading-phase error; write no snapshot fields (Phase 11 note).
+                case TastyError.UnresolvedReference(_, _) => ()
             end match
         end for
         baos.toByteArray

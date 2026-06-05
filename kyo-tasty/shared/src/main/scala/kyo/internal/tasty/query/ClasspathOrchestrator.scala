@@ -1365,15 +1365,94 @@ object ClasspathOrchestrator:
 
                     val finalSymbols = materializeSymbols(descs, count)
 
-                    val newFqnIndex = state.fqnIndex.map { case (fqn, partial) =>
+                    // B-3 fix: resolve NestHost, NestMembers, and EnclosingMethod FQNs to real Symbols
+                    // now that finalSymbols is available. finalSymbols is a mutable Array; we can replace
+                    // entries whose javaMetadata needs the resolved fields.
+                    //
+                    // Helper: look up a dotted FQN in fqnIndex and return its final SymbolId value.
+                    def resolveFqnToIdx(fqn: String): Int =
+                        state.fqnIndex.get(fqn) match
+                            case Some(p) => symbolIdMap.getOrElse(p.id.toLong, -1)
+                            case None =>
+                                val srcFqn = kyo.internal.tasty.symbol.FqnNormalizer.canonicalSourceFqn(fqn)
+                                if srcFqn != fqn then
+                                    state.fqnIndex.get(srcFqn) match
+                                        case Some(p) => symbolIdMap.getOrElse(p.id.toLong, -1)
+                                        case None    => -1
+                                else -1
+                                end if
+                        end match
+                    end resolveFqnToIdx
+
+                    for (_, cfResult) <- state.javaClassfileResults do
+                        val classSym = cfResult.classSymbol
+                        val classIdx = symbolIdMap.getOrElse(classSym.id.toLong, -1)
+                        if classIdx >= 0 && classIdx < count then
+                            val hasNestHost        = cfResult.nestHostFqn.nonEmpty
+                            val hasNestMembers     = cfResult.nestMemberFqns.nonEmpty
+                            val hasEnclosingMethod = cfResult.enclosingMethodData.nonEmpty
+                            if hasNestHost || hasNestMembers || hasEnclosingMethod then
+                                finalSymbols(classIdx) match
+                                    case cls: Tasty.Symbol.Class =>
+                                        val currentMeta = cls.javaMetadata
+                                        val resolvedMeta = currentMeta.map: meta =>
+                                            val withNestHost =
+                                                if hasNestHost then
+                                                    cfResult.nestHostFqn.fold(meta): nhFqn =>
+                                                        val nhIdx = resolveFqnToIdx(nhFqn)
+                                                        if nhIdx >= 0 && nhIdx < count then
+                                                            meta.copy(nestHost = Maybe(finalSymbols(nhIdx)))
+                                                        else meta
+                                                else meta
+                                            val withNestMembers =
+                                                if hasNestMembers then
+                                                    val nmBuf = new scala.collection.mutable.ArrayBuffer[Tasty.Symbol]()
+                                                    for nmFqn <- cfResult.nestMemberFqns do
+                                                        val nmIdx = resolveFqnToIdx(nmFqn)
+                                                        if nmIdx >= 0 && nmIdx < count then
+                                                            nmBuf += finalSymbols(nmIdx)
+                                                    end for
+                                                    if nmBuf.nonEmpty then
+                                                        withNestHost.copy(nestMembers = Chunk.from(nmBuf.toSeq))
+                                                    else withNestHost
+                                                else withNestHost
+                                            val withEnclosingMethod =
+                                                if hasEnclosingMethod then
+                                                    cfResult.enclosingMethodData.fold(withNestMembers):
+                                                        case (encFqn, methodName) =>
+                                                            val encIdx = resolveFqnToIdx(encFqn)
+                                                            if encIdx >= 0 && encIdx < count then
+                                                                withNestMembers.copy(
+                                                                    enclosingMethod = Maybe(Tasty.Java.EnclosingMethod(
+                                                                        finalSymbols(encIdx),
+                                                                        Tasty.Name(methodName)
+                                                                    ))
+                                                                )
+                                                            else withNestMembers
+                                                            end if
+                                                else withNestMembers
+                                            withEnclosingMethod
+                                        if resolvedMeta != currentMeta then
+                                            finalSymbols(classIdx) = cls.copy(javaMetadata = resolvedMeta)
+                                    case _ => ()
+                            end if
+                        end if
+                    end for
+
+                    // Build fqnIdIdx: for each partial symbol in fqnIndex, resolve its final SymbolId.
+                    // Unresolvable entries (both direct and F-A4-001 canonical fallback fail) are:
+                    //   - Dropped from the index (no sentinel symbol inserted), AND
+                    //   - Accumulated as TastyError.UnresolvedReference in accErrors (SoftFail) or
+                    //     trigger ClasspathBuilding (FailFast) via the brokenFqnCount check below.
+                    val fqnIdBuf           = scala.collection.mutable.ArrayBuffer.empty[(String, SymbolId)]
+                    var fqnUnresolvedCount = 0
+                    for (fqn, partial) <- state.fqnIndex do
                         val idx = symbolIdMap.getOrElse(partial.id.toLong, -1)
-                        if idx >= 0 then (fqn, finalSymbols(idx))
+                        if idx >= 0 then
+                            fqnIdBuf += fqn -> SymbolId(idx)
                         else
-                            // F-A4-001 fix: binary-alias FQN keys (e.g. "scala.Predef$") store a partial
-                            // symbol whose identity does not appear in symbolIdMap because the same logical
-                            // symbol was stored under the canonical source form ("scala.Predef"). Fall back
-                            // to a FQN-string lookup: canonicalize this fqn, look up the canonical partial
-                            // in state.fqnIndex, then resolve that partial via symbolIdMap.
+                            // F-A4-001 fix: binary-alias FQN keys store a partial symbol not in
+                            // symbolIdMap; canonicalize and retry.
                             val canonFqn = kyo.internal.tasty.symbol.FqnNormalizer.canonicalSourceFqn(fqn)
                             val fallbackIdx =
                                 if canonFqn != fqn then
@@ -1381,23 +1460,31 @@ object ClasspathOrchestrator:
                                         case Some(canonPartial) => symbolIdMap.getOrElse(canonPartial.id.toLong, -1)
                                         case None               => -1
                                 else -1
-                            if fallbackIdx >= 0 then (fqn, finalSymbols(fallbackIdx))
-                            else (fqn, _sentinelUnresolved)
+                            if fallbackIdx >= 0 then
+                                fqnIdBuf += fqn -> SymbolId(fallbackIdx)
+                            else
+                                // Genuinely unresolvable: accumulate as UnresolvedReference and skip.
+                                accErrors += TastyError.UnresolvedReference(fqn, fqnUnresolvedCount)
+                                fqnUnresolvedCount += 1
+                            end if
                         end if
-                    }
-                    val newPackageIndex = state.packageIndex.map { case (pkg, partial) =>
+                    end for
+                    // pkgIdIdx: package FQN -> final SymbolId; unresolvable entries use SymbolId(-1).
+                    val pkgIdBuf = scala.collection.mutable.ArrayBuffer.empty[(String, SymbolId)]
+                    for (pkg, partial) <- state.packageIndex do
                         val idx = symbolIdMap.getOrElse(partial.id.toLong, -1)
-                        if idx >= 0 then (pkg, finalSymbols(idx)) else (pkg, _sentinelUnresolved)
-                    }
-                    val newPackages = packages.map { partial =>
+                        pkgIdBuf += pkg -> (if idx >= 0 then SymbolId(idx) else SymbolId(-1))
+                    end for
+                    // packages list: unresolvable entries use SymbolId(-1).
+                    val pkgIdsList = packages.map { partial =>
                         val idx = symbolIdMap.getOrElse(partial.id.toLong, -1)
-                        if idx >= 0 then finalSymbols(idx) else _sentinelUnresolved
+                        if idx >= 0 then SymbolId(idx) else SymbolId(-1)
                     }
 
                     val finalErrors = Chunk.from(accErrors)
                     val symsChunk   = Chunk.from(finalSymbols)
-                    val fqnIdIdx    = Dict.from(newFqnIndex.map { case (fqn, sym) => fqn -> sym.id }.toMap)
-                    val pkgIdIdx    = Dict.from(newPackageIndex.map { case (fqn, sym) => fqn -> sym.id }.toMap)
+                    val fqnIdIdx    = Dict.from(fqnIdBuf.toMap)
+                    val pkgIdIdx    = Dict.from(pkgIdBuf.toMap)
                     // F-G-006 fix: filter topLevelClassIds to only ClassLike symbols whose owner is a Package.
                     // The prior approach appended ALL ClassLike symbols to topLevelCls regardless of nesting
                     // depth, producing a count (3,514) larger than allClassLike (1,508). The correct invariant
@@ -1413,7 +1500,7 @@ object ClasspathOrchestrator:
                             else Chunk.empty
                             end if
                         case _ => Chunk.empty
-                    val pkgIds = Chunk.from(newPackages.map(_.id))
+                    val pkgIds = Chunk.from(pkgIdsList)
                     val rootId = if finalSymbols.nonEmpty then SymbolId(0) else SymbolId(-1)
 
                     val subclassIdx  = buildSubclassIndex(symsChunk)
@@ -1430,11 +1517,11 @@ object ClasspathOrchestrator:
                             }
                         )
 
-                    // F-A5-001 (ClasspathBuilding): check for partial symbols that escaped both symbolIdMap
-                    // and the OQ-003 canonFqn fallback. Such symbols retain id.value < 0 in newFqnIndex.
-                    // Under FailFast, fire ClasspathBuilding. Under SoftFail, accumulate a diagnostic note
-                    // but continue (the classpath is still usable for all unaffected FQNs).
-                    val brokenFqnCount = fqnIdIdx.count((_, sid) => sid.value < 0)
+                    // F-A5-001 (ClasspathBuilding): check for partial symbols that could not be resolved.
+                    // Under SoftFail these were accumulated as TastyError.UnresolvedReference above and
+                    // dropped from fqnIdIdx. Under FailFast we check fqnUnresolvedCount instead of scanning
+                    // fqnIdIdx for negative ids (unresolved entries are no longer inserted into the index).
+                    val brokenFqnCount = fqnUnresolvedCount
 
                     // OQ-001 FailFast wiring:
                     //   - If collisions exist under FailFast -> FqnCollisionError (first colliding FQN).
@@ -1809,34 +1896,6 @@ object ClasspathOrchestrator:
         n.asString
     end nameToString
 
-    /** Create a synthetic unresolved symbol for a FQN not found in fqnIndex.
-      *
-      * F-G-007 partial (Phase 04): route ALL unresolved fallbacks to the single interned sentinel from TypeUnpickler so that
-      * cp.symbols.filter(_.id.value == -1).map(_.name.asString).toSet.size decreases from the Phase 01 baseline.
-      * Phase 11 completes the interning by routing the remaining TypeUnpickler call sites.
-      */
-    // Sentinel Tasty.Symbol for unresolved FQN fallbacks (id.value == -1).
-    // Used by finalizeMerge when a partial symbol cannot be resolved to a final SymbolId.
-    private val _sentinelUnresolved: Tasty.Symbol =
-        import AllowUnsafe.embrace.danger
-        TypedSymbolFactory.from(new SymbolDescriptor(
-            id = -1,
-            kind = SymbolKind.Package,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name("<unresolved>"),
-            ownerId = -1,
-            declaredType = Maybe.Absent,
-            scaladoc = Maybe.Absent,
-            sourcePosition = Maybe.Absent,
-            javaMetadata = Maybe.Absent,
-            parentTypes = Chunk.empty,
-            typeParamIds = Chunk.empty,
-            declarationIds = Chunk.empty,
-            permittedSubclassIds = Maybe.Absent,
-            body = Maybe.Absent
-        ))
-    end _sentinelUnresolved
-
     /** Test helper: trigger a `TastyError.ClasspathBuilding` abort via a synthetic degenerate MergeState.
       *
       * Constructs a `MergeState` where one entry in `fqnIndex` maps to a partial symbol that is NOT present in `allSyms`. As a result,
@@ -1865,6 +1924,32 @@ object ClasspathOrchestrator:
         val platSrc = kyo.internal.tasty.query.PlatformFileSource.get
         finalizeMerge(state, platSrc, Tasty.ErrorMode.FailFast)
     end triggerClasspathBuildingForTest
+
+    /** Test helper: produce a `Tasty.Classpath` with a `TastyError.UnresolvedReference` in `cp.errors` via SoftFail.
+      *
+      * Constructs a `MergeState` where one entry in `fqnIndex` maps to a partial symbol that is NOT present in `allSyms`. Under
+      * `ErrorMode.SoftFail`, `finalizeMerge` accumulates `TastyError.UnresolvedReference("test.GhostClass", 0)` in the returned
+      * `cp.errors`. This is the B-1/B-2/B-5 behavioral proof: real production code emits `UnresolvedReference`.
+      *
+      * This method is `private[kyo]` so it is reachable from tests in `kyo.*` test packages but invisible to API consumers.
+      */
+    private[kyo] def triggerUnresolvedReferenceForTest()(using Frame): Tasty.Classpath < (Sync & Abort[TastyError]) =
+        // Unsafe: synthesizes a degenerate MergeState in a test-only path (§839 case 3).
+        import AllowUnsafe.embrace.danger
+        val state = new MergeState()
+        // Insert a partial symbol into fqnIndex but deliberately do NOT add it to allSyms.
+        // symbolIdMap.getOrElse(ghost.id.toLong, -1) == -1 and canonical fallback also returns -1.
+        // Under SoftFail: accumulates TastyError.UnresolvedReference("test.GhostFqn", 0) in cp.errors.
+        val ghost = kyo.internal.tasty.symbol.Symbol.makeSymbol(
+            id = Int.MaxValue,
+            kind = SymbolKind.Class,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name("GhostFqn")
+        )
+        state.fqnIndex("test.GhostFqn") = ghost
+        val platSrc = kyo.internal.tasty.query.PlatformFileSource.get
+        finalizeMerge(state, platSrc, Tasty.ErrorMode.SoftFail)
+    end triggerUnresolvedReferenceForTest
 
     /** Load a Binding by cold-loading from roots with optional dev-cache support.
       *

@@ -7,8 +7,13 @@ import kyo.Tasty
   *
   * Loading-phase symbols are mutable: their fields are populated incrementally as the decoder scans AST sections, type sections, and
   * position sections. When all per-file decoding is done, `ClasspathOrchestrator.finalizeMerge` converts each `Materialising` into a final
-  * immutable `Tasty.Symbol` via `TypedSymbolFactory.from`. Symbols that were never fully populated (cross-file references that could not be
-  * resolved) remain as `Placeholder` instances and are reported as `TastyError.UnresolvedReference`.
+  * immutable `Tasty.Symbol` via `TypedSymbolFactory.from`.
+  *
+  * Cross-file symbol references (where the defining file is not in the classpath) travel as `Tasty.Type.Named(SymbolId(negId))` with the
+  * FQN stored in `Classpath.Indices.unresolvedFqnByNegId`. For FQN index entries that cannot be resolved at finalizeMerge time,
+  * `TastyError.UnresolvedReference` is accumulated in `cp.errors` (soft-fail mode) or raises `TastyError.ClasspathBuilding`
+  * (fail-fast mode). The `Placeholder` case is reserved for future use in scenarios where a loading-phase symbol reference needs to be
+  * tracked before its kind is known.
   *
   * Visibility is `private[kyo]`: user code never sees loading-phase symbols; only the public `Tasty.Symbol` ADT is exposed.
   *
@@ -24,19 +29,22 @@ end LoadingSymbol
 
 private[kyo] object LoadingSymbol:
 
-    /** A cross-file reference placeholder: a symbol whose defining file is absent from the loaded classpath.
+    /** Reserved for future use: a cross-file symbol reference whose defining file is absent from the loaded classpath.
       *
-      * `Placeholder` instances are NOT placed in the global symbol accumulator. They are used as type sentinels (e.g. `Type.Named(SymbolId(-1))`)
-      * within the decode session and discarded after the session completes. If a `Placeholder` somehow survives to `finalizeMerge`, it is
-      * reported as `TastyError.UnresolvedReference`.
+      * In the current architecture, cross-file unresolved references travel as `Tasty.Type.Named(SymbolId(negId))` with the FQN tracked in
+      * `Classpath.Indices.unresolvedFqnByNegId`. Unresolvable FQN index entries produce `TastyError.UnresolvedReference` at finalizeMerge
+      * time. `Placeholder` is not currently constructed by any production code path.
       */
-    final case class Placeholder(kind: SymbolKind, flags: Tasty.Flags, name: Tasty.Name) extends LoadingSymbol
+    final case class Placeholder(kind: SymbolKind, flags: Tasty.Flags, name: Tasty.Name)
+        extends LoadingSymbol
+        derives CanEqual
 
     /** A symbol under construction: all known fields are populated incrementally during Pass A and Pass B.
       *
-      * `id` is assigned at construction time by a local counter in `runPass1` (or the equivalent classfile decode path). It is unique within
-      * a single decode session and is used as the LongMap key in `AstUnpickler.Pass1Result` and `ClasspathOrchestrator.FileResult`. The
-      * global final SymbolId is assigned only by `finalizeMerge` (the index of the symbol in the ordered `allSyms` accumulator).
+      * `id` is assigned at construction time by a global `AtomicInt` counter threaded from `ClasspathOrchestrator` through all concurrent
+      * decode sessions. The counter guarantees uniqueness across all files in a single decode run. It is used as the LongMap key in
+      * `AstUnpickler.Pass1Result` and `ClasspathOrchestrator.FileResult`. The global final SymbolId is assigned only by `finalizeMerge`
+      * (the index of the symbol in the ordered `allSyms` accumulator).
       *
       * All mutable fields start at their empty/absent defaults and are written by the various Pass A/B decoder stages. `finalizeMerge`
       * reads each field to build a `SymbolDescriptor` for `TypedSymbolFactory.from`.
