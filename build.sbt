@@ -675,11 +675,15 @@ lazy val `kyo-tasty` =
         .jvmSettings(
             mimaCheck(false),
             // Track C: scoverage threshold for kyo-tasty JVM.
-            // Baseline measured 2026-06-02 at 77.50% stmt coverage (155 test classes,
-            // 9675/12484 stmts). Gate at 75% (measured minus 2.5% headroom) so future
-            // regressions are caught without being so tight that minor fluctuation fails.
+            // Re-measured 2026-06-05 after phases 01-14 (campaign structural changes:
+            // Interner drop, pure-data ADTs, withClasspath entries, fallback,
+            // Base64 fixtures, Java fixtures, exact counts, runJVM, wire format
+            // minor, content digest, per-jar probe, sbt plugin).
+            // TypeKey.structuralEquals and computeHash made iterative (work-list)
+            // to prevent StackOverflowError under scoverage instrumentation.
+            // New measurement: 77.39% stmt; gate at 75.3% (measured minus 2% headroom).
             // Run: sbt 'kyo-tasty/coverage; kyo-tasty/test; kyo-tasty/coverageReport'
-            coverageMinimumStmtTotal := 75,
+            coverageMinimumStmtTotal := 75.3,
             coverageFailOnMinimum    := true,
             // Track A: differential testing against tasty-query 1.7.0.
             // tasty-query is JVM-only (ClasspathLoaders uses java.nio); test lives in jvm/src/test.
