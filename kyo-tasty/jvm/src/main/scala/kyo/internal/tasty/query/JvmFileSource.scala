@@ -193,11 +193,17 @@ object JvmFileSource extends FileSource:
         end if
     end readJarEntry
 
-    /** Open a jar root and return a ZipHandle backed by an in-memory entry map.
+    /** Open a jar root and return a ZipHandle backed by a memory-mapped CEN index.
       *
-      * Reads the jar bytes from disk, parses all entries via ZipInputStream, and stores each entry in a HashMap keyed by entry name.
-      * The ZipHandle returned serves individual entries from this in-memory map. Scope.acquireRelease ensures the map is cleared on Scope
-      * exit (the map itself is GC'd, but the explicit acquire/release boundary documents the lifetime).
+      * Uses JarMappedReader.init to mmap the jar and parse its central directory once.
+      * readEntry reads only the requested entry by seeking to its offset in the mmap, not the
+      * entire jar. Cost is O(CEN size + entry size) rather than O(jar size). For a 50 MB jar
+      * with a 4 KB snapshot entry, this avoids the ~50 MB allocation that Files.readAllBytes
+      * would incur.
+      *
+      * The JarMappedReader (and its MappedByteBuffer) outlives the Scope; the OS mapping is
+      * released when the buffer is GC'd. This is the same lifecycle as the pool-backed reader
+      * in withReadBatch; no explicit unmap is performed (unsafe on Java 9+).
       *
       * Returns Maybe.Absent for non-jar paths (directories, jrt:/) and for paths that do not exist.
       */
@@ -210,31 +216,18 @@ object JvmFileSource extends FileSource:
                     val path = Paths.get(root)
                     if !Files.exists(path) then Maybe.Absent
                     else
-                        val rawBytes = Files.readAllBytes(path)
-                        val entries  = scala.collection.mutable.HashMap.empty[String, Array[Byte]]
-                        val zis      = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(rawBytes))
-                        var entry    = zis.getNextEntry
-                        while entry != null do
-                            if !entry.isDirectory then
-                                val name = entry.getName
-                                // Read all bytes for this entry
-                                val baos = new java.io.ByteArrayOutputStream()
-                                val buf  = new Array[Byte](8192)
-                                var n    = zis.read(buf)
-                                while n >= 0 do
-                                    baos.write(buf, 0, n)
-                                    n = zis.read(buf)
-                                entries(name) = baos.toByteArray
-                            end if
-                            zis.closeEntry()
-                            entry = zis.getNextEntry
-                        end while
-                        zis.close()
+                        // Unsafe: JarMappedReader.init is synchronous and allocates a MappedByteBuffer;
+                        // AllowUnsafe is propagated via Sync.Unsafe.defer. No Scope.acquireRelease is
+                        // needed because the buffer GC lifecycle matches our needs.
+                        val reader = JarMappedReader.init(root)
                         val handle = new ZipHandle:
                             def readEntry(internalPath: String)(using Frame): Maybe[Array[Byte]] < (Sync & Abort[TastyError]) =
-                                entries.get(internalPath) match
-                                    case Some(bytes) => Maybe.Present(bytes)
-                                    case None        => Maybe.Absent
+                                Sync.Unsafe.defer:
+                                    try Maybe.Present(reader.readEntry(internalPath))
+                                    catch
+                                        case _: java.io.FileNotFoundException => Maybe.Absent
+                                        case ex: java.io.IOException =>
+                                            Abort.fail(TastyError.FileNotFound(s"$root!/$internalPath: ${ex.getMessage}"))
                         Maybe.Present(handle)
                     end if
                 catch

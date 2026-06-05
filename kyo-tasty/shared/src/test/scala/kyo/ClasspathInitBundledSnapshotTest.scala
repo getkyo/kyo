@@ -6,6 +6,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.query.BundledSnapshotProbe
+import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.ZipHandle
 import kyo.internal.tasty.snapshot.DigestComputer
@@ -14,7 +15,7 @@ import scala.collection.mutable
 
 /** Phase 13 plan leaves for end-to-end transparent bundled snapshot loading.
   *
-  * Leaf 4: end-to-end transparent bundled load -- Tasty.withClasspath uses bundled snapshot.
+  * Leaf 4: end-to-end transparent bundled load -- probe HIT; symbols come from bundled snapshot.
   * Leaf 5: mixed-root merge -- bundled jar + cold jar produces combined symbol count.
   * Leaf 6: digest mismatch under SoftFail falls back to cold load.
   * Leaf 7: digest mismatch under FailFast raises DigestMismatch.
@@ -86,44 +87,149 @@ class ClasspathInitBundledSnapshotTest extends Test:
         tmp
     end writeTempJar
 
-    // ── Leaf 4: end-to-end transparent bundled load ─────────────────────────
-    // Given: fixture jar with valid bundled snapshot; digest embedded is the CEN-walk
-    //        digest of jarNoSnap (a jar without the snapshot).
-    //        The jar used for withClasspath has a DIFFERENT CEN (it includes the snapshot entry),
-    //        so the embedded digest will NOT match the recomputed one. This means SoftFail is
-    //        triggered and cold load fallback runs. We verify the call succeeds (no thrown errors).
-    // When: Tasty.withClasspath(Seq(bundledJarPath)) { Tasty.classpath.map(_.symbols.size) }
-    // Then: call succeeds; symbol count >= 0; errors only from DigestMismatch or cold load.
-    // Pins: INV-004 end-to-end (probe fires, SoftFail fallback path exercised)
-    "Leaf 4: end-to-end load with bundled jar (SoftFail fallback) succeeds without Abort" in runJVM {
-        val snapshotBytes = syntheticSnapshotBytes(5, 0L) // any digest; mismatch expected
-        val jarWithSnap = writeTempJar(buildZipBytes(
-            "Placeholder.class"                    -> Array[Byte](0xca.toByte),
+    /** Parse all entries of a zip byte array into a HashMap. JVM-only. */
+    private def parseZipEntries(zipBytes: Array[Byte]): mutable.HashMap[String, Array[Byte]] =
+        val entries = mutable.HashMap.empty[String, Array[Byte]]
+        val zis     = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(zipBytes))
+        var entry   = zis.getNextEntry
+        while entry != null do
+            if !entry.isDirectory then
+                val name = entry.getName
+                val baos = new ByteArrayOutputStream()
+                val buf  = new Array[Byte](4096)
+                var n    = zis.read(buf)
+                while n >= 0 do
+                    baos.write(buf, 0, n)
+                    n = zis.read(buf)
+                entries(name) = baos.toByteArray
+            end if
+            zis.closeEntry()
+            entry = zis.getNextEntry
+        end while
+        zis.close()
+        entries
+    end parseZipEntries
+
+    /** FileSource that serves zip entries from an in-memory map, keyed by jar root path.
+      *
+      * openZip(root) returns a ZipHandle over the in-memory entry map. All other methods are
+      * no-op stubs because the probe only needs openZip. DigestComputer.digestForRoot reads
+      * from the real on-disk file at the key path, so the test can control digest matching by
+      * writing a base jar (no snapshot) to disk and serving a different zip (with snapshot)
+      * from memory under the same path key.
+      */
+    private class ZipMemoryFileSource(zipMap: Map[String, Array[Byte]]) extends FileSource:
+        def read(path: String)(using Frame): Array[Byte] < (Sync & Abort[TastyError]) =
+            Abort.fail(TastyError.FileNotFound(path))
+        def write(path: String, bytes: Array[Byte])(using Frame): Unit < (Sync & Abort[TastyError]) =
+            Abort.fail(TastyError.SnapshotIoError("read-only stub"))
+        def rename(from: String, to: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
+            Abort.fail(TastyError.SnapshotIoError("read-only stub"))
+        def mkdirs(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
+            Abort.fail(TastyError.SnapshotIoError("read-only stub"))
+        def list(dir: String, suffixes: Chunk[String])(using Frame): Chunk[String] < (Sync & Abort[TastyError]) =
+            Chunk.empty
+        def exists(path: String)(using Frame): Boolean < Sync =
+            false
+        def stat(path: String)(using Frame): FileSource.FileStat < (Sync & Abort[TastyError]) =
+            Abort.fail(TastyError.FileNotFound(path))
+        override def openZip(root: String)(using Frame): Maybe[ZipHandle] < (Sync & Scope & Abort[TastyError]) =
+            zipMap.get(root) match
+                case None => Maybe.Absent
+                case Some(zipBytes) =>
+                    Sync.defer:
+                        val entries = parseZipEntries(zipBytes)
+                        Maybe.Present(new ZipHandle:
+                            def readEntry(internalPath: String)(using Frame): Maybe[Array[Byte]] < (Sync & Abort[TastyError]) =
+                                entries.get(internalPath) match
+                                    case Some(b) => Maybe.Present(b)
+                                    case None    => Maybe.Absent)
+    end ZipMemoryFileSource
+
+    // ── Leaf 4: end-to-end transparent bundled load (probe HIT) ─────────────
+    // Given: two-pass setup:
+    //   pass 1: write base jar (no snapshot) to disk; compute its CEN digest.
+    //   pass 2: build final zip (Foo.class + snapshot embedding base digest) in memory.
+    // The custom ZipMemoryFileSource serves the final zip for openZip(basePath)
+    // while DigestComputer.digestForRoot(basePath) reads from disk (base jar, no snapshot).
+    // This ensures the embedded digest matches the computed digest -> probe HIT.
+    // When: ClasspathOrchestrator.coldLoadBinding with the custom source.
+    // Then: cp.symbols.size == 5 (exactly the 5 symbols in the bundled snapshot).
+    //       No DigestMismatch in cp.errors (proving no cold-load fallback for the bundled root).
+    // Pins: INV-004 end-to-end probe-HIT path
+    "Leaf 4: end-to-end bundled load produces exact symbol count (probe HIT)" in runJVM {
+        // Pass 1: write base jar without snapshot, compute CEN digest.
+        val baseBytes = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
+        val baseFile  = writeTempJar(baseBytes)
+        val basePath  = baseFile.getAbsolutePath
+        val digest    = DigestComputer.digestForRoot(basePath)
+        // Build snapshot with the correct digest (5 Package symbols).
+        val snapshotBytes = syntheticSnapshotBytes(5, digest)
+        // Pass 2: build final zip (with snapshot) in memory, keyed by basePath.
+        val finalZipBytes = buildZipBytes(
+            "Foo.class"                            -> Array[Byte](0xca.toByte, 0xfe.toByte),
             BundledSnapshotProbe.snapshotEntryPath -> snapshotBytes
-        ))
-        Tasty.withClasspath(Seq(jarWithSnap.getAbsolutePath)):
-            Tasty.classpath.map: cp =>
-                // SoftFail mode: no Abort raised regardless of digest mismatch.
-                assert(cp.symbols.size >= 0, "symbol count must be non-negative")
+        )
+        val source = new ZipMemoryFileSource(Map(basePath -> finalZipBytes))
+        Scope.run:
+            ClasspathOrchestrator.coldLoadBinding(
+                roots = Seq(basePath),
+                mode = Tasty.ErrorMode.SoftFail,
+                cacheDir = Maybe.Absent,
+                source = source
+            ).map: binding =>
+                val cp = binding.cp
+                assert(
+                    cp.symbols.size == 5,
+                    s"expected exactly 5 bundled symbols (probe HIT), got ${cp.symbols.size}"
+                )
+                val hasMismatch = cp.errors.exists:
+                    case _: TastyError.DigestMismatch => true
+                    case _                            => false
+                assert(!hasMismatch, s"unexpected DigestMismatch in errors: ${cp.errors}")
     }
 
-    // ── Leaf 5: mixed-root merge ──────────────────────────────────────────────
-    // Given: roots = Seq(bundledJar, coldJar); coldJar has no .tasty files.
-    // When: Tasty.withClasspath(roots) { Tasty.classpath.map(_.symbols.size) }
-    // Then: call succeeds; symbol count >= 0 (bundled + cold-loaded merged).
+    // ── Leaf 5: mixed-root merge (bundled HIT + cold jar) ────────────────────
+    // Given: two roots: bundledRoot (probe HIT, 3 symbols) + coldRoot (no .tasty files, 0 symbols).
+    // Both use the two-pass ZipMemoryFileSource approach.
+    // When: ClasspathOrchestrator.coldLoadBinding with both roots.
+    // Then: cp.symbols.size == 3 (exactly 3 from bundled snapshot; cold jar produces 0 symbols).
+    //       The merged classpath is symbol-equal to a fresh load of the bundled root alone (INV-005).
     // Pins: INV-004 + INV-005 merge correctness
-    "Leaf 5: mixed-root merge produces valid non-negative symbol count" in runJVM {
-        val bundledSnap = syntheticSnapshotBytes(3, 0L)
-        val bundledJar = writeTempJar(buildZipBytes(
+    "Leaf 5: mixed-root merge: bundled root contributes exact symbol count from snapshot" in runJVM {
+        // Pass 1: write base jar without snapshot for the bundled root.
+        val bundledBase     = buildZipBytes("A.class" -> Array[Byte](0xca.toByte))
+        val bundledBaseFile = writeTempJar(bundledBase)
+        val bundledBasePath = bundledBaseFile.getAbsolutePath
+        val bundledDigest   = DigestComputer.digestForRoot(bundledBasePath)
+        val bundledSnapshot = syntheticSnapshotBytes(3, bundledDigest)
+        val bundledFinalZip = buildZipBytes(
             "A.class"                              -> Array[Byte](0xca.toByte),
-            BundledSnapshotProbe.snapshotEntryPath -> bundledSnap
-        ))
-        // Cold jar: just a class file with no .tasty entries.
-        val coldJar  = writeTempJar(buildZipBytes("B.class" -> Array[Byte](0xca.toByte)))
-        val allRoots = Seq(bundledJar.getAbsolutePath, coldJar.getAbsolutePath)
-        Tasty.withClasspath(allRoots):
-            Tasty.classpath.map: cp =>
-                assert(cp.symbols.size >= 0, s"merged symbol count must be non-negative, got ${cp.symbols.size}")
+            BundledSnapshotProbe.snapshotEntryPath -> bundledSnapshot
+        )
+        // Cold root: write a separate base jar with only a .class file (no .tasty files).
+        val coldBase     = buildZipBytes("B.class" -> Array[Byte](0xca.toByte))
+        val coldBaseFile = writeTempJar(coldBase)
+        val coldBasePath = coldBaseFile.getAbsolutePath
+        // ZipMemoryFileSource serves bundled zip for bundledBasePath; coldBasePath has no openZip entry.
+        val source = new ZipMemoryFileSource(Map(bundledBasePath -> bundledFinalZip))
+        Scope.run:
+            ClasspathOrchestrator.coldLoadBinding(
+                roots = Seq(bundledBasePath, coldBasePath),
+                mode = Tasty.ErrorMode.SoftFail,
+                cacheDir = Maybe.Absent,
+                source = source
+            ).map: binding =>
+                val cp = binding.cp
+                // Bundled root contributes 3 symbols; cold jar has no .tasty files -> 0 symbols.
+                assert(
+                    cp.symbols.size == 3,
+                    s"expected 3 merged symbols (3 bundled + 0 cold), got ${cp.symbols.size}"
+                )
+                val hasMismatch = cp.errors.exists:
+                    case _: TastyError.DigestMismatch => true
+                    case _                            => false
+                assert(!hasMismatch, s"unexpected DigestMismatch: ${cp.errors}")
     }
 
     // ── Leaf 6: SoftFail falls back on digest mismatch ───────────────────────

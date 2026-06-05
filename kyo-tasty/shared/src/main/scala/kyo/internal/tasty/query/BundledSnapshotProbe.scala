@@ -127,7 +127,14 @@ private[kyo] object BundledSnapshotProbe:
         )
     end mergePartialInto
 
-    /** Remap all SymbolId fields (id, ownerId, member/type-param/declaration ids) in `sym` by adding `offset`. */
+    /** Remap all SymbolId fields and all Type-bearing fields in `sym` by adding `offset`.
+      *
+      * Every SymbolId reference in the bundled partial is a finalized id in range [0, N). Adding
+      * offset shifts the entire id space to [offset, offset+N) so it is disjoint from the ids
+      * already in `existing`. This includes: id, ownerId, declarationIds, typeParamIds,
+      * permittedSubclassIds, paramListIds, defaultArgId, memberIds, and every SymbolId embedded
+      * inside a Type field (Named, ThisType, TypeLambda.paramIds, ParamRef.binderId).
+      */
     private def remapSymbol(sym: Tasty.Symbol, offset: Int): Tasty.Symbol =
         val newId      = SymbolId(sym.id.value + offset)
         val newOwnerId = SymbolId(sym.ownerId.value + offset)
@@ -143,67 +150,183 @@ private[kyo] object BundledSnapshotProbe:
                     id = newId,
                     ownerId = newOwnerId,
                     typeParamIds = c.typeParamIds.map(id => SymbolId(id.value + offset)),
-                    declarationIds = c.declarationIds.map(id => SymbolId(id.value + offset))
+                    declarationIds = c.declarationIds.map(id => SymbolId(id.value + offset)),
+                    permittedSubclassIds = c.permittedSubclassIds.map(_.map(id => SymbolId(id.value + offset))),
+                    parentTypes = c.parentTypes.map(remapType(_, offset)),
+                    annotations = c.annotations.map(remapAnnotation(_, offset))
                 )
             case t: Tasty.Symbol.Trait =>
                 t.copy(
                     id = newId,
                     ownerId = newOwnerId,
                     typeParamIds = t.typeParamIds.map(id => SymbolId(id.value + offset)),
-                    declarationIds = t.declarationIds.map(id => SymbolId(id.value + offset))
+                    declarationIds = t.declarationIds.map(id => SymbolId(id.value + offset)),
+                    permittedSubclassIds = t.permittedSubclassIds.map(_.map(id => SymbolId(id.value + offset))),
+                    parentTypes = t.parentTypes.map(remapType(_, offset)),
+                    annotations = t.annotations.map(remapAnnotation(_, offset))
                 )
             case o: Tasty.Symbol.Object =>
                 o.copy(
                     id = newId,
                     ownerId = newOwnerId,
                     typeParamIds = o.typeParamIds.map(id => SymbolId(id.value + offset)),
-                    declarationIds = o.declarationIds.map(id => SymbolId(id.value + offset))
+                    declarationIds = o.declarationIds.map(id => SymbolId(id.value + offset)),
+                    parentTypes = o.parentTypes.map(remapType(_, offset)),
+                    annotations = o.annotations.map(remapAnnotation(_, offset))
                 )
             case e: Tasty.Symbol.EnumCase =>
                 e.copy(
                     id = newId,
                     ownerId = newOwnerId,
                     typeParamIds = e.typeParamIds.map(id => SymbolId(id.value + offset)),
-                    declarationIds = e.declarationIds.map(id => SymbolId(id.value + offset))
+                    declarationIds = e.declarationIds.map(id => SymbolId(id.value + offset)),
+                    permittedSubclassIds = e.permittedSubclassIds.map(_.map(id => SymbolId(id.value + offset))),
+                    parentTypes = e.parentTypes.map(remapType(_, offset)),
+                    annotations = e.annotations.map(remapAnnotation(_, offset))
                 )
             case m: Tasty.Symbol.Method =>
                 m.copy(
                     id = newId,
                     ownerId = newOwnerId,
                     paramListIds = m.paramListIds.map(_.map(id => SymbolId(id.value + offset))),
-                    typeParamIds = m.typeParamIds.map(id => SymbolId(id.value + offset))
+                    typeParamIds = m.typeParamIds.map(id => SymbolId(id.value + offset)),
+                    declaredType = m.declaredType.map(remapType(_, offset)),
+                    annotations = m.annotations.map(remapAnnotation(_, offset))
                 )
             case v: Tasty.Symbol.Val =>
-                v.copy(id = newId, ownerId = newOwnerId)
+                v.copy(
+                    id = newId,
+                    ownerId = newOwnerId,
+                    declaredType = v.declaredType.map(remapType(_, offset)),
+                    annotations = v.annotations.map(remapAnnotation(_, offset))
+                )
             case w: Tasty.Symbol.Var =>
-                w.copy(id = newId, ownerId = newOwnerId)
+                w.copy(
+                    id = newId,
+                    ownerId = newOwnerId,
+                    declaredType = w.declaredType.map(remapType(_, offset)),
+                    annotations = w.annotations.map(remapAnnotation(_, offset))
+                )
             case f: Tasty.Symbol.Field =>
-                f.copy(id = newId, ownerId = newOwnerId)
+                f.copy(
+                    id = newId,
+                    ownerId = newOwnerId,
+                    declaredType = f.declaredType.map(remapType(_, offset))
+                )
             case ta: Tasty.Symbol.TypeAlias =>
                 ta.copy(
                     id = newId,
                     ownerId = newOwnerId,
-                    typeParamIds = ta.typeParamIds.map(id => SymbolId(id.value + offset))
+                    typeParamIds = ta.typeParamIds.map(id => SymbolId(id.value + offset)),
+                    body = remapType(ta.body, offset),
+                    annotations = ta.annotations.map(remapAnnotation(_, offset))
                 )
             case ot: Tasty.Symbol.OpaqueType =>
                 ot.copy(
                     id = newId,
                     ownerId = newOwnerId,
-                    typeParamIds = ot.typeParamIds.map(id => SymbolId(id.value + offset))
+                    typeParamIds = ot.typeParamIds.map(id => SymbolId(id.value + offset)),
+                    body = remapType(ot.body, offset),
+                    bounds = remapTypeBounds(ot.bounds, offset),
+                    annotations = ot.annotations.map(remapAnnotation(_, offset))
                 )
             case ab: Tasty.Symbol.AbstractType =>
-                ab.copy(id = newId, ownerId = newOwnerId)
+                ab.copy(
+                    id = newId,
+                    ownerId = newOwnerId,
+                    bounds = remapTypeBounds(ab.bounds, offset),
+                    annotations = ab.annotations.map(remapAnnotation(_, offset))
+                )
             case tp: Tasty.Symbol.TypeParam =>
-                tp.copy(id = newId, ownerId = newOwnerId)
+                tp.copy(
+                    id = newId,
+                    ownerId = newOwnerId,
+                    bounds = remapTypeBounds(tp.bounds, offset)
+                )
             case pr: Tasty.Symbol.Parameter =>
                 pr.copy(
                     id = newId,
                     ownerId = newOwnerId,
-                    defaultArgId = pr.defaultArgId.map(did => SymbolId(did.value + offset))
+                    defaultArgId = pr.defaultArgId.map(did => SymbolId(did.value + offset)),
+                    declaredType = remapType(pr.declaredType, offset),
+                    annotations = pr.annotations.map(remapAnnotation(_, offset))
                 )
             case u: Tasty.Symbol.Unresolved =>
                 u.copy(id = newId, ownerId = newOwnerId)
         end match
     end remapSymbol
+
+    /** Remap all SymbolId references embedded in a Type by adding `offset`.
+      *
+      * All SymbolIds in a bundled partial are finalized ids in [0, N). This walk shifts every
+      * Named.symbolId, ThisType.clsId, TypeLambda.paramIds, and ParamRef.binderId by offset so
+      * they refer to the post-merge id space. Pure structural cases (ConstantType, Nothing, Any,
+      * Unknown) carry no ids and are returned unchanged.
+      */
+    private def remapType(t: Tasty.Type, offset: Int): Tasty.Type =
+        t match
+            case Tasty.Type.Named(sid) =>
+                Tasty.Type.Named(SymbolId(sid.value + offset))
+            case Tasty.Type.ThisType(clsId) =>
+                Tasty.Type.ThisType(SymbolId(clsId.value + offset))
+            case Tasty.Type.ParamRef(binderId, idx) =>
+                Tasty.Type.ParamRef(SymbolId(binderId.value + offset), idx)
+            case Tasty.Type.TypeLambda(paramIds, body) =>
+                Tasty.Type.TypeLambda(
+                    paramIds.map(id => SymbolId(id.value + offset)),
+                    remapType(body, offset)
+                )
+            case Tasty.Type.Applied(base, args) =>
+                Tasty.Type.Applied(remapType(base, offset), args.map(remapType(_, offset)))
+            case Tasty.Type.Function(params, result, isCtx) =>
+                Tasty.Type.Function(params.map(remapType(_, offset)), remapType(result, offset), isCtx)
+            case Tasty.Type.ContextFunction(params, result) =>
+                Tasty.Type.ContextFunction(params.map(remapType(_, offset)), remapType(result, offset))
+            case Tasty.Type.Tuple(elements) =>
+                Tasty.Type.Tuple(elements.map(remapType(_, offset)))
+            case Tasty.Type.ByName(underlying) =>
+                Tasty.Type.ByName(remapType(underlying, offset))
+            case Tasty.Type.Repeated(elem) =>
+                Tasty.Type.Repeated(remapType(elem, offset))
+            case Tasty.Type.Array(elem) =>
+                Tasty.Type.Array(remapType(elem, offset))
+            case Tasty.Type.Refinement(parent, name, info) =>
+                Tasty.Type.Refinement(remapType(parent, offset), name, remapType(info, offset))
+            case Tasty.Type.Rec(parent) =>
+                Tasty.Type.Rec(remapType(parent, offset))
+            case Tasty.Type.RecThis(rec) =>
+                Tasty.Type.RecThis(remapType(rec, offset))
+            case Tasty.Type.AndType(left, right) =>
+                Tasty.Type.AndType(remapType(left, offset), remapType(right, offset))
+            case Tasty.Type.OrType(left, right) =>
+                Tasty.Type.OrType(remapType(left, offset), remapType(right, offset))
+            case Tasty.Type.Annotated(underlying, ann) =>
+                Tasty.Type.Annotated(remapType(underlying, offset), remapAnnotation(ann, offset))
+            case Tasty.Type.SuperType(self, mixin) =>
+                Tasty.Type.SuperType(remapType(self, offset), remapType(mixin, offset))
+            case Tasty.Type.Wildcard(lo, hi) =>
+                Tasty.Type.Wildcard(remapType(lo, offset), remapType(hi, offset))
+            case Tasty.Type.Bounds(lo, hi) =>
+                Tasty.Type.Bounds(remapType(lo, offset), remapType(hi, offset))
+            case Tasty.Type.Skolem(underlying) =>
+                Tasty.Type.Skolem(remapType(underlying, offset))
+            case Tasty.Type.MatchType(bound, scrut, cases) =>
+                Tasty.Type.MatchType(remapType(bound, offset), remapType(scrut, offset), cases.map(remapType(_, offset)))
+            case Tasty.Type.MatchCase(pat, rhs) =>
+                Tasty.Type.MatchCase(remapType(pat, offset), remapType(rhs, offset))
+            case Tasty.Type.FlexibleType(underlying) =>
+                Tasty.Type.FlexibleType(remapType(underlying, offset))
+            case Tasty.Type.TermRef(prefix, name) =>
+                Tasty.Type.TermRef(remapType(prefix, offset), name)
+            case Tasty.Type.TypeRef(qual, name) =>
+                Tasty.Type.TypeRef(remapType(qual, offset), name)
+            case _ => t
+    end remapType
+
+    private def remapTypeBounds(tb: Tasty.TypeBounds, offset: Int): Tasty.TypeBounds =
+        Tasty.TypeBounds(remapType(tb.lower, offset), remapType(tb.upper, offset))
+
+    private def remapAnnotation(ann: Tasty.Annotation, offset: Int): Tasty.Annotation =
+        ann.copy(annotationType = remapType(ann.annotationType, offset))
 
 end BundledSnapshotProbe

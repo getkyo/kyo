@@ -1815,6 +1815,61 @@ object ClasspathOrchestrator:
       *
       * The DecodeContext is always fresh per call; body memos are never shared across invocations.
       */
+    /** Test-only overload: same as `coldLoadBinding(roots, mode, cacheDir)` but accepts an explicit FileSource.
+      *
+      * Allows tests to inject a custom FileSource (e.g. ZipMemoryFileSource) so the probe's openZip and
+      * DigestComputer.digestForRoot paths can be controlled independently. Uses concurrency=1.
+      */
+    private[kyo] def coldLoadBinding(
+        roots: Seq[String],
+        mode: Tasty.ErrorMode,
+        cacheDir: Maybe[String],
+        source: FileSource,
+        concurrency: Int = 1
+    )(using Frame): Binding < (Sync & Async & Scope & Abort[TastyError]) =
+        probeAndLoadBundled(roots, mode, source).flatMap: (bundledCp, coldRoots) =>
+            val coldLoad: Binding < (Sync & Async & Scope & Abort[TastyError]) =
+                cacheDir match
+                    case Maybe.Absent =>
+                        init(coldRoots, mode, source, concurrency).map: coldCp =>
+                            val merged = if bundledCp.symbols.isEmpty then coldCp
+                            else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
+                            Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                    case Maybe.Present(dir) =>
+                        import kyo.internal.tasty.snapshot.DigestComputer as SnapshotDigest
+                        import kyo.internal.tasty.snapshot.SnapshotReader
+                        import kyo.internal.tasty.snapshot.SnapshotWriter
+                        Abort.run[TastyError](SnapshotDigest.compute(coldRoots, source)).flatMap:
+                            case Result.Failure(_) | Result.Panic(_) =>
+                                init(coldRoots, mode, source, concurrency).map: coldCp =>
+                                    val merged = if bundledCp.symbols.isEmpty then coldCp
+                                    else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
+                                    Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                            case Result.Success(digest) =>
+                                val hexDigest    = SnapshotDigest.toHexString(digest)
+                                val snapshotPath = s"$dir/$hexDigest.krfl"
+                                source.exists(snapshotPath).flatMap: exists =>
+                                    if exists then
+                                        Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath, source)).flatMap:
+                                            case Result.Success(coldCp) =>
+                                                val merged = if bundledCp.symbols.isEmpty then coldCp
+                                                else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
+                                                Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                                            case Result.Failure(_) | Result.Panic(_) =>
+                                                init(coldRoots, mode, source, concurrency).map: coldCp =>
+                                                    val merged = if bundledCp.symbols.isEmpty then coldCp
+                                                    else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
+                                                    Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                                    else
+                                        init(coldRoots, mode, source, concurrency).flatMap: coldCp =>
+                                            Abort.run[TastyError](SnapshotWriter.write(coldCp, dir, digest, source)).andThen:
+                                                val merged = if bundledCp.symbols.isEmpty then coldCp
+                                                else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
+                                                Binding(merged, Maybe.Present(DecodeContext.fresh()))
+            if coldRoots.isEmpty then Binding(bundledCp, Maybe.Present(DecodeContext.fresh()))
+            else coldLoad
+    end coldLoadBinding
+
     private[kyo] def coldLoadBinding(
         roots: Seq[String],
         mode: Tasty.ErrorMode,
