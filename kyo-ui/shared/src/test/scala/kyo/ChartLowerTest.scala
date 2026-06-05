@@ -2195,4 +2195,101 @@ class ChartLowerTest extends Test:
         assertClose(maxX, aprCentre, "rightmost area vertex must be the last band's centre (no empty wedge)")
     }
 
+    // ---- Phase P5 (GAP-COLOR-AREA-SIMPLE): non-stacked area color split ----
+
+    // L9 + L4 (reproduce-before-fix): non-stacked area with color channel emits one path per series.
+    // Fails today: lowerArea emits ONE path filled with defaultColor regardless of mark.color.
+    "non-stacked area with color=_.region emits one closed path per series at fill-opacity 0.7, each colored by colorScale (L4 + L9)" in {
+        // Use colors that differ from DefaultPalette(0)=blue so failure is unambiguous on the color assertions.
+        // red and purple are not DefaultPalette(0) (blue) so the EU path having purple unambiguously fails
+        // when the single-path bug produces blue.
+        val naColor = Style.Color.red    // #ef4444 -> NA
+        val euColor = Style.Color.purple // #a855f7 -> EU
+        val rows = Chunk(
+            Sale("Jan", Usd(1000), Region.NA),
+            Sale("Feb", Usd(2000), Region.EU)
+        )
+        val spec = UI.chart(rows)(area(x = _.month, y = _.revenue, color = _.region))
+            .yScale(_.linear(0.0, 4000.0))
+            .legend(_.colorScale[Region](Region.NA -> naColor, Region.EU -> euColor))
+        val root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val marks = marksGroup(root)
+        // L9: exactly 2 distinct path elements in the marks group (one per Region)
+        val areaPaths = marks.children.collect { case p: Svg.Path => p }
+        assert(
+            areaPaths.size == 2,
+            s"L9: expected 2 per-series area paths but got ${areaPaths.size} (the single-path bug produces 1)"
+        )
+        // L9: each path is closed (the PathData ends with a Close command)
+        areaPaths.zipWithIndex.foreach: (p, i) =>
+            p.svgAttrs.d match
+                case Absent => fail(s"L9: area path $i has no d attribute")
+                case Present(pd) =>
+                    val cmds = Svg.PathData.commands(pd)
+                    assert(
+                        cmds.toSeq.lastOption.exists { case Svg.PathCommand.Close => true; case _ => false },
+                        s"L9: area path $i must be closed (last command == Close) but last was ${cmds.toSeq.lastOption}"
+                    )
+        // L9: each path carries fill-opacity == 0.7
+        areaPaths.zipWithIndex.foreach: (p, i) =>
+            assert(
+                p.svgAttrs.fillOpacity.exists(fo => math.abs(fo - 0.7) < 1e-9),
+                s"L9: area path $i must have fill-opacity=0.7 but got ${p.svgAttrs.fillOpacity}"
+            )
+        // L4: path fills match the colorScale colors (NA=red, EU=purple); encounter/ordinal order: NA(0) first.
+        assert(
+            fillColorOf(areaPaths(0).svgAttrs.fill) == naColor,
+            s"L4: first area path (NA) must be naColor but got ${areaPaths(0).svgAttrs.fill}"
+        )
+        assert(
+            fillColorOf(areaPaths(1).svgAttrs.fill) == euColor,
+            s"L4: second area path (EU) must be euColor but got ${areaPaths(1).svgAttrs.fill}"
+        )
+        // L4: legend swatches must agree with the mark fills.
+        // Area marks use line swatches (not rect swatches): find them by strokeWidth == 2.0 px among direct-child lines.
+        val legendSwatchLines = root.children.collect:
+            case l: Svg.Line if l.svgAttrs.strokeWidth.contains(Svg.SvgLength.px(2.0)) => l
+        assert(
+            legendSwatchLines.size >= 2,
+            s"L4: expected at least 2 legend line swatches but got ${legendSwatchLines.size} (area uses line swatches)"
+        )
+        def strokeColorOf(l: Svg.Line): Style.Color = l.svgAttrs.stroke match
+            case Present(Svg.Paint.Color(c)) => c
+            case other                       => fail(s"L4: expected Svg.Paint.Color stroke on legend swatch but got $other")
+        assert(
+            strokeColorOf(legendSwatchLines(0)) == naColor,
+            s"L4: NA legend swatch must be naColor but got ${legendSwatchLines(0).svgAttrs.stroke}"
+        )
+        assert(
+            strokeColorOf(legendSwatchLines(1)) == euColor,
+            s"L4: EU legend swatch must be euColor but got ${legendSwatchLines(1).svgAttrs.stroke}"
+        )
+    }
+
+    // L8 co-pin: non-stacked area WITHOUT a color channel emits exactly 1 closed path,
+    // byte-identical to today. The buildSimpleAreaPath refactor must not change the Absent-color arm.
+    "non-stacked area with no color channel still emits exactly one closed path (L8 co-pin, byte-identical)" in {
+        case class SimpleRow(x: String, y: Int) derives CanEqual
+        val rows = Chunk(SimpleRow("a", 100), SimpleRow("b", 200))
+        val spec = UI.chart(rows)(area(x = _.x, y = _.y))
+        val root = summon[Conversion[ChartSpec[SimpleRow], Svg.Root]](spec)
+        val paths = root.children.flatMap:
+            case g: Svg.G => g.children.collect { case p: Svg.Path => p }
+            case _        => Chunk.empty
+        assert(paths.size == 1, s"L8: mark.color=Absent area must emit exactly 1 path but got ${paths.size}")
+        assert(
+            paths(0).svgAttrs.fillOpacity.exists(fo => math.abs(fo - 0.7) < 1e-9),
+            s"L8: the single area path must have fill-opacity=0.7 but got ${paths(0).svgAttrs.fillOpacity}"
+        )
+        paths(0).svgAttrs.d match
+            case Absent => fail("L8: area path must have a d attribute")
+            case Present(pd) =>
+                val cmds = Svg.PathData.commands(pd)
+                assert(
+                    cmds.toSeq.lastOption.exists { case Svg.PathCommand.Close => true; case _ => false },
+                    s"L8: the single path must be closed; last command was ${cmds.toSeq.lastOption}"
+                )
+        end match
+    }
+
 end ChartLowerTest

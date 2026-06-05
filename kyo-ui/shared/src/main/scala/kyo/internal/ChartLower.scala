@@ -2496,11 +2496,95 @@ private[kyo] object ChartLower:
         loop(0, Chunk.empty)
     end lowerErrorBar
 
+    /** Build one closed area path for a single series from `seriesRows`.
+      *
+      * Collects finite (px, py) points from `seriesRows` using the same band-centre projection as
+      * `lowerArea` (xs.apply(x) + xs.bandwidth / 2.0). Returns Absent when no finite points exist
+      * (e.g. all rows have undefined y), so the caller can flatMap over the Maybe and silently omit
+      * empty series, consistent with `lowerArea`'s own empty-guard.
+      *
+      * The path is always CLOSED: top edge via CurvePath.append, then lineTo the last x at baseline,
+      * lineTo the first x at baseline, then close (INV-019). fillOpacity defaults to 0.7 (INV-019).
+      * The `mark.opacity` channel overrides fillOpacity when Present; the channel is sampled from the
+      * first row in `seriesRows` (the series-representative row, same as the interaction anchor).
+      *
+      * `fill` is the resolved fill color (the caller handles palette resolution so this helper is
+      * color-agnostic). `spec` and `internalHoverRef` are forwarded to `buildInteractionAttrs`
+      * unchanged, attaching click/hover handlers to the path (INV-023).
+      */
+    private def buildSimpleAreaPath[A, X, Y](
+        seriesRows: Chunk[A],
+        mark: Mark.Area[A, X, Y],
+        layout: Layout,
+        xs: Scale,
+        ys: Scale,
+        fill: Style.Color,
+        spec: Maybe[ChartSpec[A]],
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]]
+    )(using Frame): Maybe[Svg.SvgElement] =
+        mark.y match
+            case Absent => Absent
+            case Present(yEnc) =>
+                val baseline = layout.plotBaseline
+                // Collect (px, py) pairs, skipping non-finite gaps (WARN-2 from phase-1 audit).
+                val points: Chunk[(Double, Double)] = seriesRows.flatMap: row =>
+                    yEnc.accessor(row) match
+                        case Absent => Chunk.empty
+                        case Present(yv) =>
+                            val xd = mark.x.plottable.toDomain(mark.x.accessor(row))
+                            val yd = yEnc.plottable.toDomain(yv)
+                            (xd, yd) match
+                                case (Present(x), Present(y)) =>
+                                    // Centre on the band (xs.apply is the band LEFT edge; bandwidth is 0
+                                    // for continuous scales) so the area aligns with the centred tick labels.
+                                    val px = xs.apply(x) + xs.bandwidth / 2.0
+                                    val py = ys.apply(y)
+                                    if java.lang.Double.isFinite(px) && java.lang.Double.isFinite(py) then
+                                        Chunk((px, py))
+                                    else Chunk.empty
+                                case _ => Chunk.empty
+                            end match
+                if points.isEmpty then Absent
+                else
+                    // Top edge forward via CurvePath (INV-016 applied to area).
+                    val startPd = Svg.PathData.from(points(0)._1, points(0)._2)
+                    val topPd   = CurvePath.append(startPd, points.drop(1), mark.curve)
+                    // Baseline back: from last x at baseline to first x at baseline, then close.
+                    val lastX  = points(points.size - 1)._1
+                    val firstX = points(0)._1
+                    val pd2    = topPd.lineTo(lastX, baseline).lineTo(firstX, baseline).close
+                    // Apply opacity channel if present; default fillOpacity=0.7 (INV-019).
+                    val baseOpacity = 0.7
+                    val opacity = mark.opacity match
+                        case Present(fn) =>
+                            seriesRows.toSeq.headOption.map(r => math.max(0.0, math.min(1.0, fn(r)))).getOrElse(baseOpacity)
+                        case Absent => baseOpacity
+                    val basePath = Svg.path.d(pd2).fill(Svg.Paint.Color(fill)).fillOpacity(opacity)
+                    val withTooltip = mark.tooltip match
+                        case Present(fn) =>
+                            seriesRows.toSeq.headOption match
+                                case Some(r) => basePath(Svg.title(fn(r)))
+                                case None    => basePath
+                        case Absent => basePath
+                    // INV-023: attach interaction attrs to the area path.
+                    // The representative row is the first defined row.
+                    val withInteraction = spec match
+                        case Absent => withTooltip
+                        case Present(s) =>
+                            seriesRows.toSeq.headOption match
+                                case None    => withTooltip
+                                case Some(r) => withTooltip.withAttrs(buildInteractionAttrs(r, s, internalHoverRef))
+                    Present(withInteraction)
+                end if
+        end match
+    end buildSimpleAreaPath
+
     /** Lower a `Mark.Area` to closed `Svg.Path`(s).
       *
       * Three dispatch paths:
       *   1. `mark.stack.group` is `Present` and `mark.y` is `Present`: stacked area (groups sit atop each other).
-      *   2. `mark.y` is `Present` and no stack: single area fills between y values and the plot baseline.
+      *   2. `mark.y` is `Present` and no stack: per-color-series area(s) fill between y values and the plot
+      *      baseline; with a color channel, one path per category (mirroring `lowerLine`); without, one path.
       *   3. `mark.y` is `Absent`: the `y0`/`y1` band form (INV-017: closed ribbon between two edges).
       */
     private def lowerArea[A, X, Y](
@@ -2513,7 +2597,6 @@ private[kyo] object ChartLower:
         spec: Maybe[ChartSpec[A]] = Absent,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
-        val baseline = layout.plotBaseline
         mark.y match
             case Present(yEnc) =>
                 mark.stack.group match
@@ -2521,56 +2604,27 @@ private[kyo] object ChartLower:
                         // INV-023: thread spec/internalHoverRef into stacked area so interaction fires per group.
                         lowerAreaStacked(rows, mark, yEnc, layout, xs, ys, spec, internalHoverRef)
                     case Absent =>
-                        // Collect (px, py) pairs, skipping non-finite gaps (WARN-2 from phase-1 audit).
-                        val points: Chunk[(Double, Double)] = rows.flatMap: row =>
-                            yEnc.accessor(row) match
-                                case Absent => Chunk.empty
-                                case Present(yv) =>
-                                    val xd = mark.x.plottable.toDomain(mark.x.accessor(row))
-                                    val yd = yEnc.plottable.toDomain(yv)
-                                    (xd, yd) match
-                                        case (Present(x), Present(y)) =>
-                                            // Centre on the band (xs.apply is the band LEFT edge; bandwidth is 0
-                                            // for continuous scales) so the area aligns with the centred tick labels.
-                                            val px = xs.apply(x) + xs.bandwidth / 2.0
-                                            val py = ys.apply(y)
-                                            if java.lang.Double.isFinite(px) && java.lang.Double.isFinite(py) then
-                                                Chunk((px, py))
-                                            else Chunk.empty
-                                        case _ => Chunk.empty
-                                    end match
-                        if points.isEmpty then Chunk.empty
-                        else
-                            // Top edge forward via CurvePath (INV-016 applied to area).
-                            val startPd = Svg.PathData.from(points(0)._1, points(0)._2)
-                            val topPd   = CurvePath.append(startPd, points.drop(1), mark.curve)
-                            // Baseline back: from last x at baseline to first x at baseline, then close.
-                            val lastX  = points(points.size - 1)._1
-                            val firstX = points(0)._1
-                            val pd2    = topPd.lineTo(lastX, baseline).lineTo(firstX, baseline).close
-                            // Apply opacity channel if present; default fillOpacity=0.7 (INV-019).
-                            val baseOpacity = 0.7
-                            val opacity = mark.opacity match
-                                case Present(fn) =>
-                                    rows.toSeq.headOption.map(r => math.max(0.0, math.min(1.0, fn(r)))).getOrElse(baseOpacity)
-                                case Absent => baseOpacity
-                            val basePath = Svg.path.d(pd2).fill(Svg.Paint.Color(defaultColor)).fillOpacity(opacity)
-                            val withTooltip = mark.tooltip match
-                                case Present(fn) =>
-                                    rows.toSeq.headOption match
-                                        case Some(r) => basePath(Svg.title(fn(r)))
-                                        case None    => basePath
-                                case Absent => basePath
-                            // INV-023: attach interaction attrs to the single area path.
-                            // The representative row is the first defined row.
-                            val withInteraction = spec match
-                                case Absent => withTooltip
-                                case Present(s) =>
-                                    rows.toSeq.headOption match
-                                        case None    => withTooltip
-                                        case Some(r) => withTooltip.withAttrs(buildInteractionAttrs(r, s, internalHoverRef))
-                            Chunk(withInteraction)
-                        end if
+                        // Non-stacked: dispatch on mark.color (mirrors lowerLine).
+                        mark.color match
+                            case Absent =>
+                                // No color channel: single series using the per-mark default color.
+                                buildSimpleAreaPath(rows, mark, layout, xs, ys, defaultColor, spec, internalHoverRef)
+                                    .toChunk
+                            case Present(colorEnc) =>
+                                // Color channel: split rows by category, one path per series.
+                                // resolvePalette falls back to theme.palette / DefaultPalette when no colorScale is set,
+                                // so a non-stacked area WITHOUT a colorScale keeps byte-identical colors to before.
+                                val cats: Chunk[(String, Any)] =
+                                    collectColorCategoriesWithRaw(rows, colorEnc.asInstanceOf[Encoding[A, Any]])
+                                val colorKeys: Chunk[String] = cats.map(_._1)
+                                val palette: Chunk[Style.Color] = spec match
+                                    case Present(s) => resolvePalette(s, cats)
+                                    case Absent     => DefaultPalette
+                                colorKeys.zipWithIndex.flatMap: (key, idx) =>
+                                    val seriesRows = rows.filter(r => colorEnc.accessor(r).toString == key)
+                                    val fillColor  = palette.toSeq.apply(idx % palette.size)
+                                    buildSimpleAreaPath(seriesRows, mark, layout, xs, ys, fillColor, spec, internalHoverRef)
+                                        .toChunk
             case Absent =>
                 // y0/y1 band form: render a closed ribbon between the two edges (INV-017).
                 buildBandRibbon(rows, mark, xs, ys, defaultColor)
@@ -3492,7 +3546,7 @@ private[kyo] object ChartLower:
                 case p: Svg.Path => p
             // pathKey = "area-$markIdx-$seriesIdx" is stable per (mark identity, series position),
             // so a prior mark's geometry-count change does NOT shift this mark's key (INV-036).
-            // Simple area always produces at most one path; seriesIdx is always 0 here.
+            // A non-stacked area with a color channel produces one path per category; seriesIdx tracks each.
             val (elems, updatedGeom) = rawPaths.zipWithIndex.foldLeft((Chunk.empty[Svg.SvgElement], newGeom)):
                 case ((accElems, accGeom), (rawPath, seriesIdx)) =>
                     val pathKey  = s"area-$markIdx-$seriesIdx"
