@@ -2192,6 +2192,10 @@ object Tasty:
       * cold-loads and writes the snapshot before returning. Resources (mmap arenas, JAR handles)
       * are released when the scope exits via the internal `Scope.run`.
       *
+      * INV-009 site-1: init from file-system roots (cold-load) via `ClasspathOrchestrator.coldLoadBinding`.
+      * This is the ONLY entry point that reads the file system during classpath construction. All
+      * `Tasty.*` query methods called inside `f` are pure and perform no IO.
+      *
       * Effect row: `A < (Async & Abort[TastyError] & S)` -- `Scope` is consumed internally.
       */
     def withClasspath[A, S](
@@ -2217,7 +2221,11 @@ object Tasty:
       * Decodes the pickles sequentially using an in-memory FileSource. The resulting Binding carries
       * a fresh DecodeContext so `Tasty.bodyTree` can decode body bytes on demand.
       *
-      * Effect row: `A < (Sync & Abort[TastyError] & S)` -- no `Async` because no parallel decode.
+      * INV-009 site-2 (alt-init): constructs an anonymous in-memory FileSource from the pickle bytes
+      * map; never reads `PlatformFileSource.get` and never touches the real file system. All
+      * `Tasty.*` query methods called inside `f` are pure and perform no IO.
+      *
+      * Effect row: `A < (Async & Abort[TastyError] & S)`.
       */
     def withPickles[A, S](pickles: Chunk[Pickle])(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
         Scope.run:
