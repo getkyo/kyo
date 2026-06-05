@@ -70,8 +70,7 @@ object TreeUnpickler:
 
     /** Synchronously decode the body byte slice for `sym` into a Tree.
       *
-      * plan: phase-02 new signature; accepts SymbolBody and a symbol lookup function to resolve SymbolId -> Symbol for IDENT/SELECT
-      * references. Phase 04 wires this via cp.decodeBody.
+      * Accepts SymbolBody and a symbol lookup function to resolve SymbolId -> Symbol for IDENT/SELECT references.
       *
       * @param body
       *   the SymbolBody carrying sectionBytes, bodyStart, bodyEnd, names, sectionOffset, and addrMap.
@@ -1325,8 +1324,7 @@ object TreeUnpickler:
 
     /** Resolve a SymbolId back to a Symbol by scanning the addrMap.
       *
-      * plan: phase-05 bridge; Tree.This still carries Symbol (migrated in Phase 09). Scans the addrMap values for a symbol whose id
-      * matches. O(n) but used only in THIS/QUALTHIS decode.
+      * Tree.This carries Symbol; scans the addrMap values for a symbol whose id matches. O(n) but used only in THIS/QUALTHIS decode.
       */
     private def resolveSymbolById(
         id: kyo.Tasty.SymbolId,

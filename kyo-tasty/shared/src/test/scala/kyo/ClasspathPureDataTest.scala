@@ -73,7 +73,7 @@ class ClasspathPureDataTest extends Test:
             Maybe.Absent
         )
         val indices = Classpath.Indices.empty.copy(
-            byFqn = Map("test.Foo" -> SymbolId(0))
+            byFqn = Dict("test.Foo" -> SymbolId(0))
         )
         val cp = Classpath(
             symbols = Chunk(sym0, sym1),

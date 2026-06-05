@@ -106,11 +106,11 @@ class SymbolSignatureTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk(SymbolId(1)),
                 packageIds = Chunk(SymbolId(0)),
-                fqnIndex = Map("pkg.String" -> SymbolId(1)),
-                packageIndex = Map("pkg" -> SymbolId(0)),
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                fqnIndex = Dict("pkg.String" -> SymbolId(1)),
+                packageIndex = Dict("pkg" -> SymbolId(0)),
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
 
@@ -165,11 +165,11 @@ class SymbolSignatureTest extends Test:
             rootSymbolId = SymbolId(-1),
             topLevelClassIds = Chunk.empty,
             packageIds = Chunk.empty,
-            fqnIndex = Map.empty,
-            packageIndex = Map.empty,
-            subclassIndex = Map.empty,
-            companionIndex = Map.empty,
-            moduleIndex = Map.empty,
+            fqnIndex = Dict.empty,
+            packageIndex = Dict.empty,
+            subclassIndex = Dict.empty,
+            companionIndex = Dict.empty,
+            moduleIndex = Dict.empty,
             errors = Chunk.empty
         )
         SymbolSignature.compute(ta, cp).map: sig =>

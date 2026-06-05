@@ -97,15 +97,15 @@ class BundledSnapshotProbeJvmTest extends Test:
         val cp = Tasty.Classpath(
             symbols = syms,
             indices = Tasty.Classpath.Indices(
-                byFqn = syms.toSeq.zipWithIndex.map((s, i) => s"pkg$i" -> Tasty.SymbolId(i)).toMap,
-                bySimpleName = Map.empty,
-                packageIndex = syms.toSeq.zipWithIndex.map((s, i) => s"pkg$i" -> Tasty.SymbolId(i)).toMap,
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                modulesIndex = Map.empty,
+                byFqn = Dict.from(syms.toSeq.zipWithIndex.map((s, i) => s"pkg$i" -> Tasty.SymbolId(i)).toMap),
+                bySimpleName = Dict.empty[String, Chunk[Tasty.SymbolId]],
+                packageIndex = Dict.from(syms.toSeq.zipWithIndex.map((s, i) => s"pkg$i" -> Tasty.SymbolId(i)).toMap),
+                subclassIndex = Dict.empty[Tasty.SymbolId, Chunk[Tasty.SymbolId]],
+                companionIndex = Dict.empty[Tasty.SymbolId, Tasty.SymbolId],
+                modulesIndex = Dict.empty[String, Tasty.ModuleDescriptor],
                 topLevelClassIds = Chunk.empty,
                 packageIds = Chunk.from(syms.map(_.id)),
-                unresolvedFqnByNegId = Map.empty,
+                unresolvedFqnByNegId = Dict.empty[Tasty.SymbolId, String],
                 diagnostics = Chunk.empty
             ),
             errors = Chunk.empty,

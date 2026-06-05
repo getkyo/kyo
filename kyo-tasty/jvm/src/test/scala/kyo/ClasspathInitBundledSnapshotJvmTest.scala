@@ -40,15 +40,15 @@ class ClasspathInitBundledSnapshotJvmTest extends Test:
         val cp = Tasty.Classpath(
             symbols = syms,
             indices = Tasty.Classpath.Indices(
-                byFqn = syms.toSeq.zipWithIndex.map((s, i) => s"bundledPkg$i" -> Tasty.SymbolId(i)).toMap,
-                bySimpleName = Map.empty,
-                packageIndex = syms.toSeq.zipWithIndex.map((s, i) => s"bundledPkg$i" -> Tasty.SymbolId(i)).toMap,
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                modulesIndex = Map.empty,
+                byFqn = Dict.from(syms.toSeq.zipWithIndex.map((s, i) => s"bundledPkg$i" -> Tasty.SymbolId(i)).toMap),
+                bySimpleName = Dict.empty,
+                packageIndex = Dict.from(syms.toSeq.zipWithIndex.map((s, i) => s"bundledPkg$i" -> Tasty.SymbolId(i)).toMap),
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                modulesIndex = Dict.empty,
                 topLevelClassIds = Chunk.empty,
                 packageIds = Chunk.from(syms.map(_.id)),
-                unresolvedFqnByNegId = Map.empty,
+                unresolvedFqnByNegId = Dict.empty,
                 diagnostics = Chunk.empty
             ),
             errors = Chunk.empty,

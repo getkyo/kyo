@@ -178,7 +178,7 @@ object Subtyping:
 
     /** Check `Named(subId) <: Named(supId)` by walking the sub symbol's transitive parent chain.
       *
-      * plan: phase-05; resolves SymbolId -> Symbol via cp.symbol(id); parentTypes is a direct field. Phase 09 adds sym.parents.
+      * Resolves SymbolId -> Symbol via cp.symbol(id); parentTypes is a direct field.
       */
     private def isNamedSubNamed(
         subId: SymbolId,
@@ -297,16 +297,16 @@ object Subtyping:
       * positional index in the parameter list.
       */
     private def alphaEquiv(t1: Tasty.Type.TypeLambda, t2: Tasty.Type.TypeLambda): Boolean =
-        val idx1 = buildParamIndex(t1.paramIds, Map.empty)
-        val idx2 = buildParamIndex(t2.paramIds, Map.empty)
+        val idx1 = buildParamIndex(t1.paramIds, Dict.empty[SymbolId, Int])
+        val idx2 = buildParamIndex(t2.paramIds, Dict.empty[SymbolId, Int])
         typeEquivAlpha(t1.body, t2.body, idx1, idx2)
     end alphaEquiv
 
-    private def buildParamIndex(params: Chunk[SymbolId], base: Map[SymbolId, Int]): Map[SymbolId, Int] =
+    private def buildParamIndex(params: Chunk[SymbolId], base: Dict[SymbolId, Int]): Dict[SymbolId, Int] =
         var result = base
         var i      = 0
         while i < params.length do
-            result = result + (params(i) -> (base.size + i))
+            result = result.update(params(i), base.size + i)
             i += 1
         result
     end buildParamIndex
@@ -314,16 +314,16 @@ object Subtyping:
     private def typeEquivAlpha(
         t1: Tasty.Type,
         t2: Tasty.Type,
-        idx1: Map[SymbolId, Int],
-        idx2: Map[SymbolId, Int]
+        idx1: Dict[SymbolId, Int],
+        idx2: Dict[SymbolId, Int]
     ): Boolean =
         (t1, t2) match
             case (Tasty.Type.Named(s1), Tasty.Type.Named(s2)) =>
                 // Either both are bound params at same position, or both are the same external SymbolId
                 (idx1.get(s1), idx2.get(s2)) match
-                    case (Some(i), Some(j)) => i == j
-                    case (None, None)       => s1 == s2
-                    case _                  => false
+                    case (Maybe.Present(i), Maybe.Present(j)) => i == j
+                    case (Maybe.Absent, Maybe.Absent)         => s1 == s2
+                    case _                                    => false
             case (Tasty.Type.Applied(b1, a1), Tasty.Type.Applied(b2, a2)) =>
                 typeEquivAlpha(b1, b2, idx1, idx2) &&
                 a1.length == a2.length &&
@@ -361,8 +361,8 @@ object Subtyping:
     private def chunkPairsEquivAlpha(
         a1: Chunk[Tasty.Type],
         a2: Chunk[Tasty.Type],
-        idx1: Map[SymbolId, Int],
-        idx2: Map[SymbolId, Int]
+        idx1: Dict[SymbolId, Int],
+        idx2: Dict[SymbolId, Int]
     ): Boolean =
         var i = 0
         while i < a1.length do

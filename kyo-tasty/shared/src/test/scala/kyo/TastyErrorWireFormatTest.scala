@@ -36,11 +36,11 @@ class TastyErrorWireFormatTest extends Test:
             rootSymbolId = SymbolId(0),
             topLevelClassIds = Chunk.empty,
             packageIds = Chunk(rootSym.id),
-            fqnIndex = Map.empty,
-            packageIndex = Map.empty,
-            subclassIndex = Map.empty,
-            companionIndex = Map.empty,
-            moduleIndex = Map.empty,
+            fqnIndex = Dict.empty,
+            packageIndex = Dict.empty,
+            subclassIndex = Dict.empty,
+            companionIndex = Dict.empty,
+            moduleIndex = Dict.empty,
             errors = errors
         )
         val digest = Array[Byte](0, 1, 2, 3, 4, 5, 6, 7)

@@ -155,19 +155,19 @@ class SymbolAnnotationQueryTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk(SymbolId(6)),
                 packageIds = Chunk(SymbolId(0), SymbolId(3), SymbolId(8)),
-                fqnIndex = Map(
+                fqnIndex = Dict(
                     "scala.deprecated"     -> SymbolId(1),
                     "scala.inline"         -> SymbolId(2),
                     "java.lang.Deprecated" -> SymbolId(4)
                 ),
-                packageIndex = Map(
+                packageIndex = Dict(
                     "scala"     -> SymbolId(0),
                     "java.lang" -> SymbolId(3),
                     "empty"     -> SymbolId(8)
                 ),
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
 

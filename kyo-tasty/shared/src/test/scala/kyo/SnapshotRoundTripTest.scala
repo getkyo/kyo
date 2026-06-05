@@ -584,8 +584,8 @@ class SnapshotRoundTripTest extends Test:
         val pkgMap                        = scala.collection.immutable.Map[String, Tasty.Symbol]("test" -> pkgSym)
 
         Abort.run[TastyError]:
-            val fqnIdMap = fqnMap.map { case (k, v) => k -> v.id }.toMap
-            val pkgIdMap = pkgMap.map { case (k, v) => k -> v.id }.toMap
+            val fqnIdMap = Dict.from(fqnMap.map { case (k, v) => k -> v.id }.toMap)
+            val pkgIdMap = Dict.from(pkgMap.map { case (k, v) => k -> v.id }.toMap)
             val topIds   = topLevel.map(_.id)
             val pkgIds   = pkgs.map(_.id)
             val coldCp = Tasty.Classpath.make(
@@ -595,9 +595,9 @@ class SnapshotRoundTripTest extends Test:
                 packageIds = pkgIds,
                 fqnIndex = fqnIdMap,
                 packageIndex = pkgIdMap,
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
             SnapshotWriter.write(coldCp, "cache", digest, cacheSrc).andThen:
@@ -646,7 +646,7 @@ class SnapshotRoundTripTest extends Test:
                         s"symbols count mismatch: ${cp.symbols.length} != ${cp2.symbols.length}"
                     )
                     assert(
-                        cp.indices.byFqn.keySet == cp2.indices.byFqn.keySet,
+                        cp.indices.byFqn.toMap.keySet == cp2.indices.byFqn.toMap.keySet,
                         s"fqnIndex key sets differ after round-trip"
                     )
                     assert(
@@ -697,8 +697,8 @@ class SnapshotRoundTripTest extends Test:
         )
 
         val allSyms2 = Chunk(rootSym2, pkgSym2, classSym2)
-        val fqnMap2  = scala.collection.immutable.Map("legacy.OldClass" -> classSym2.id)
-        val pkgMap2  = scala.collection.immutable.Map("legacy" -> pkgSym2.id)
+        val fqnMap2  = Dict("legacy.OldClass" -> classSym2.id)
+        val pkgMap2  = Dict("legacy" -> pkgSym2.id)
         val topIds2  = Chunk(classSym2.id)
         val pkgIds2  = Chunk(rootSym2.id, pkgSym2.id)
 
@@ -710,9 +710,9 @@ class SnapshotRoundTripTest extends Test:
                 packageIds = pkgIds2,
                 fqnIndex = fqnMap2,
                 packageIndex = pkgMap2,
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
             SnapshotWriter.write(syntheticCp, "cache", digest, cacheSrc).andThen:

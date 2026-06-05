@@ -58,8 +58,7 @@ object ClasspathOrchestrator:
       * is written by a single decoder fiber and consumed exclusively by the single-threaded merger fiber after the channel put/take
       * provides a happens-before edge.
       *
-      * plan: phase-02 bridge fields ownerBySymbol, bodyDataByAddr, sectionBytes, sectionOffset, names -- fed from AstUnpickler Pass1Result
-      * to ClasspathOrchestrator Pass C; removed in Phase 12 when the pipeline fully uses SymbolDescriptor.
+      * Fields ownerBySymbol, bodyDataByAddr, sectionBytes, sectionOffset, names are fed from AstUnpickler Pass1Result to ClasspathOrchestrator Pass C.
       */
     final private case class FileResult(
         fqns: Chunk[(String, Tasty.Symbol)],
@@ -577,7 +576,7 @@ object ClasspathOrchestrator:
         val topLevelCls = state.topLevelCls
         val packages    = state.packages
         val accErrors   = state.accErrors
-        val moduleIndex = state.moduleIndex.toMap
+        val moduleIndex = Dict.from(state.moduleIndex.toMap)
 
         TastyStat.scope.traceSpan("finalize.mergeArenas") {
             Sync.Unsafe.defer:
@@ -1338,8 +1337,8 @@ object ClasspathOrchestrator:
 
                     val finalErrors = Chunk.from(accErrors)
                     val symsChunk   = Chunk.from(finalSymbols)
-                    val fqnIdIdx    = newFqnIndex.map { case (fqn, sym) => fqn -> sym.id }.toMap
-                    val pkgIdIdx    = newPackageIndex.map { case (fqn, sym) => fqn -> sym.id }.toMap
+                    val fqnIdIdx    = Dict.from(newFqnIndex.map { case (fqn, sym) => fqn -> sym.id }.toMap)
+                    val pkgIdIdx    = Dict.from(newPackageIndex.map { case (fqn, sym) => fqn -> sym.id }.toMap)
                     // F-G-006 fix: filter topLevelClassIds to only ClassLike symbols whose owner is a Package.
                     // The prior approach appended ALL ClassLike symbols to topLevelCls regardless of nesting
                     // depth, producing a count (3,514) larger than allClassLike (1,508). The correct invariant
@@ -1376,7 +1375,7 @@ object ClasspathOrchestrator:
                     // and the OQ-003 canonFqn fallback. Such symbols retain id.value < 0 in newFqnIndex.
                     // Under FailFast, fire ClasspathBuilding. Under SoftFail, accumulate a diagnostic note
                     // but continue (the classpath is still usable for all unaffected FQNs).
-                    val brokenFqnCount = fqnIdIdx.count { case (_, sid) => sid.value < 0 }
+                    val brokenFqnCount = fqnIdIdx.count((_, sid) => sid.value < 0)
 
                     // OQ-001 FailFast wiring:
                     //   - If collisions exist under FailFast -> FqnCollisionError (first colliding FQN).
@@ -1405,7 +1404,7 @@ object ClasspathOrchestrator:
                         moduleIndex = moduleIndex,
                         errors = finalErrors,
                         diagnostics = collisionDiagnostics,
-                        unresolvedFqnByNegId = unresolvedFqnByNegId.toMap
+                        unresolvedFqnByNegId = Dict.from(unresolvedFqnByNegId.toMap)
                     )
                     (cp, failFastError)
             }.flatMap: result =>
@@ -1420,7 +1419,7 @@ object ClasspathOrchestrator:
       * Handles both direct `Named(pid)` and `Applied(Named(pid), args)` cases, since in TASTy a class parent is often encoded as
       * `APPLY(TYPEREFsymbol(addr), constructor_args)` which decodes to `Applied(Named(baseId), args)`.
       */
-    private def buildSubclassIndex(symbols: Chunk[Tasty.Symbol])(using AllowUnsafe): Map[SymbolId, Chunk[SymbolId]] =
+    private def buildSubclassIndex(symbols: Chunk[Tasty.Symbol])(using AllowUnsafe): Dict[SymbolId, Chunk[SymbolId]] =
         val b = scala.collection.mutable.HashMap.empty[SymbolId, scala.collection.mutable.ArrayBuffer[SymbolId]]
 
         def extractNamedId(t: Tasty.Type): Maybe[SymbolId] = t match
@@ -1443,18 +1442,18 @@ object ClasspathOrchestrator:
                     case _ => ()
             i += 1
         end while
-        b.iterator.map((pid, buf) => pid -> Chunk.from(buf.toSeq)).toMap
+        Dict.from(b.iterator.map((pid, buf) => pid -> Chunk.from(buf.toSeq)).toMap)
     end buildSubclassIndex
 
     /** Build companionIndex: for each Class, look up its Object companion (FQN + "$") and vice versa. */
     private def buildCompanionIndex(
         symbols: Chunk[Tasty.Symbol],
-        fqnIndex: Map[String, SymbolId]
-    )(using AllowUnsafe): Map[SymbolId, SymbolId] =
-        val b = Map.newBuilder[SymbolId, SymbolId]
+        fqnIndex: Dict[String, SymbolId]
+    )(using AllowUnsafe): Dict[SymbolId, SymbolId] =
+        val b = DictBuilder.init[SymbolId, SymbolId]
         // We need symbol FQNs. Build a quick index: SymbolId.value -> FQN from fqnIndex inverse.
         val idToFqn = new java.util.HashMap[Int, String](fqnIndex.size * 2)
-        for (fqn, sid) <- fqnIndex do idToFqn.put(sid.value, fqn)
+        fqnIndex.foreach((fqn, sid) => discard(idToFqn.put(sid.value, fqn)))
         var i = 0
         while i < symbols.length do
             val s   = symbols(i)
@@ -1470,8 +1469,8 @@ object ClasspathOrchestrator:
                     else null
                 if companionFqn != null then
                     fqnIndex.get(companionFqn) match
-                        case Some(cid) => b += s.id -> cid
-                        case None      => ()
+                        case Maybe.Present(cid) => discard(b.add(s.id, cid))
+                        case Maybe.Absent       => ()
                 end if
             end if
             i += 1

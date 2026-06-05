@@ -84,11 +84,11 @@ class ClasspathAnnotatedJavaTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk.empty,
                 packageIds = Chunk(SymbolId(0), SymbolId(1)),
-                fqnIndex = Map("A" -> SymbolId(3), "B" -> SymbolId(4)),
-                packageIndex = Map("java" -> SymbolId(0), "java.lang" -> SymbolId(1)),
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                fqnIndex = Dict("A" -> SymbolId(3), "B" -> SymbolId(4)),
+                packageIndex = Dict("java" -> SymbolId(0), "java.lang" -> SymbolId(1)),
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
 

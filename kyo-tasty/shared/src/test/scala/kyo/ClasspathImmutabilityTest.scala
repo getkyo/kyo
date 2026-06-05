@@ -68,7 +68,10 @@ class ClasspathImmutabilityTest extends Test:
                     val root1 = cp.rootSymbolId
                     val root2 = cp.rootSymbolId
                     // canonical field removed in Phase 04: Classpath is now pure data with no TypeArena.
-                    (syms1 eq syms2, errs1 eq errs2, fqn1 eq fqn2, top1 eq top2, root1 == root2)).map:
+                    // byFqn is Dict (opaque type); structural sameness checked via same case class field access.
+                    val fqnSameRef = java.lang.System.identityHashCode(fqn1.asInstanceOf[AnyRef]) ==
+                        java.lang.System.identityHashCode(fqn2.asInstanceOf[AnyRef])
+                    (syms1 eq syms2, errs1 eq errs2, fqnSameRef, top1 eq top2, root1 == root2)).map:
                 case Result.Success((symsSame, errsSame, fqnSame, topSame, rootSame)) =>
                     assert(symsSame, "symbols field must return reference-equal value on repeated access")
                     assert(errsSame, "errors field must return reference-equal value on repeated access")

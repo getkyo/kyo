@@ -1,5 +1,6 @@
 package kyo.internal.tasty.reader
 
+import kyo.Dict
 import kyo.TastyError
 
 /** Exhaustive per-position tag enumerations for TASTy decode positions.
@@ -109,8 +110,8 @@ private[kyo] object TagKind:
     object TypePositionTag:
         val position: String = "type"
 
-        private val byRawMap: Map[Int, TypePositionTag] =
-            values.map(t => t.raw -> t).toMap
+        private val byRawMap: Dict[Int, TypePositionTag] =
+            Dict.from(values.map(t => t.raw -> t).toMap)
 
         /** Convert a raw byte to the typed tag; throws `TastyErrorException(UnknownTagInPosition)` on unrecognised input. */
         def from(raw: Int): TypePositionTag =
@@ -194,8 +195,8 @@ private[kyo] object TagKind:
     object TreePositionTag:
         val position: String = "tree"
 
-        private val byRawMap: Map[Int, TreePositionTag] =
-            values.map(t => t.raw -> t).toMap
+        private val byRawMap: Dict[Int, TreePositionTag] =
+            Dict.from(values.map(t => t.raw -> t).toMap)
 
         /** Convert a raw byte to the typed tag; throws `TastyErrorException(UnknownTagInPosition)` on unrecognised input. */
         def from(raw: Int): TreePositionTag =
@@ -240,8 +241,8 @@ private[kyo] object TagKind:
     object TptPositionTag:
         val position: String = "tpt"
 
-        private val byRawMap: Map[Int, TptPositionTag] =
-            values.map(t => t.raw -> t).toMap
+        private val byRawMap: Dict[Int, TptPositionTag] =
+            Dict.from(values.map(t => t.raw -> t).toMap)
 
         /** Convert a raw byte to the typed tag; throws `TastyErrorException(UnknownTagInPosition)` on unrecognised input. */
         def from(raw: Int): TptPositionTag =
@@ -281,8 +282,8 @@ private[kyo] object TagKind:
     object ConstantTag:
         val position: String = "constant"
 
-        private val byRawMap: Map[Int, ConstantTag] =
-            values.map(t => t.raw -> t).toMap
+        private val byRawMap: Dict[Int, ConstantTag] =
+            Dict.from(values.map(t => t.raw -> t).toMap)
 
         /** Convert a raw byte to the typed tag; throws `TastyErrorException(UnknownTagInPosition)` on unrecognised input. */
         def from(raw: Int): ConstantTag =
@@ -357,8 +358,8 @@ private[kyo] object TagKind:
     object ModifierTag:
         val position: String = "modifier"
 
-        private val byRawMap: Map[Int, ModifierTag] =
-            values.map(t => t.raw -> t).toMap
+        private val byRawMap: Dict[Int, ModifierTag] =
+            Dict.from(values.map(t => t.raw -> t).toMap)
 
         /** Convert a raw byte to the typed tag; throws `TastyErrorException(UnknownTagInPosition)` on unrecognised input. */
         def from(raw: Int): ModifierTag =

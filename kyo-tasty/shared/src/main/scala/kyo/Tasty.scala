@@ -321,7 +321,7 @@ object Tasty:
             Scala2
         )
 
-        private val nameOf: Map[Long, String] = Map(
+        private val nameOf: Dict[Long, String] = Dict(
             Inline        -> "Inline",
             Private       -> "Private",
             Protected     -> "Protected",
@@ -2158,7 +2158,7 @@ object Tasty:
 
     /** Thread-local binding that carries the active Classpath and optional DecodeContext.
       *
-      * Set by `withClasspath`, `withPickles`, and (in Phase 06) the lazy module-level fallback.
+      * Set by `withClasspath`, `withPickles`, and the lazy module-level fallback.
       * Query operations on object Tasty read this local to obtain the classpath.
       *
       * private[kyo]: accessible within package kyo and kyo.* sub-packages only.
@@ -2174,10 +2174,9 @@ object Tasty:
       */
     private[kyo] lazy val current: Binding = kyo.internal.tasty.query.PlatformFallback.initFallback
 
-    /** Get the current Classpath from the active binding, falling back to the module-level stub.
+    /** Get the current Classpath from the active binding, falling back to the module-level JVM classpath.
       *
-      * Returns `Classpath.empty` when called outside a `withClasspath` scope (Phase 05 behavior;
-      * Phase 06 replaces the stub with a real JVM classpath).
+      * Returns the JVM classpath stub when called outside a `withClasspath` scope.
       *
       * Effect row: Sync, because reading the lazy val `current` may trigger initialization.
       */
@@ -2308,8 +2307,8 @@ object Tasty:
           */
         def findSymbol(fqn: String): Maybe[Symbol] =
             indices.byFqn.get(fqn) match
-                case Some(id) => Maybe(symbol(id))
-                case None     => Maybe.Absent
+                case Maybe.Present(id) => Maybe(symbol(id))
+                case Maybe.Absent      => Maybe.Absent
 
         /** Look up a class symbol by fully-qualified dotted name.
           *
@@ -2328,11 +2327,11 @@ object Tasty:
           */
         def findClass(fqn: String): Maybe[Symbol.Class] =
             indices.byFqn.get(fqn) match
-                case Some(id) =>
+                case Maybe.Present(id) =>
                     symbol(id) match
                         case c: Symbol.Class => Maybe(c)
                         case _               => Maybe.Absent
-                case None => Maybe.Absent
+                case Maybe.Absent => Maybe.Absent
 
         /** Look up a concrete (non-abstract) class symbol by fully-qualified dotted name.
           *
@@ -2382,11 +2381,11 @@ object Tasty:
           */
         def findTrait(fqn: String): Maybe[Symbol.Trait] =
             indices.byFqn.get(fqn) match
-                case Some(id) =>
+                case Maybe.Present(id) =>
                     symbol(id) match
                         case t: Symbol.Trait => Maybe(t)
                         case _               => Maybe.Absent
-                case None => Maybe.Absent
+                case Maybe.Absent => Maybe.Absent
 
         /** Look up an object symbol by fully-qualified dotted name.
           *
@@ -2402,7 +2401,7 @@ object Tasty:
           */
         def findObject(fqn: String): Maybe[Symbol.Object] =
             indices.byFqn.get(fqn) match
-                case Some(id) =>
+                case Maybe.Present(id) =>
                     symbol(id) match
                         case o: Symbol.Object => Maybe(o)
                         case _                =>
@@ -2411,21 +2410,21 @@ object Tasty:
                             if fqn.endsWith("$") then Maybe.Absent
                             else
                                 indices.byFqn.get(fqn + "$") match
-                                    case Some(id2) =>
+                                    case Maybe.Present(id2) =>
                                         symbol(id2) match
                                             case o: Symbol.Object => Maybe(o)
                                             case _                => Maybe.Absent
-                                    case None => Maybe.Absent
-                case None =>
+                                    case Maybe.Absent => Maybe.Absent
+                case Maybe.Absent =>
                     // No entry at the source-form key; try the binary $-suffixed key directly.
                     if fqn.endsWith("$") then Maybe.Absent
                     else
                         indices.byFqn.get(fqn + "$") match
-                            case Some(id2) =>
+                            case Maybe.Present(id2) =>
                                 symbol(id2) match
                                     case o: Symbol.Object => Maybe(o)
                                     case _                => Maybe.Absent
-                            case None => Maybe.Absent
+                            case Maybe.Absent => Maybe.Absent
 
         /** Look up a class-like symbol (Class, Trait, or Object) by fully-qualified dotted name.
           *
@@ -2433,11 +2432,11 @@ object Tasty:
           */
         def findClassLike(fqn: String): Maybe[Symbol.ClassLike] =
             indices.byFqn.get(fqn) match
-                case Some(id) =>
+                case Maybe.Present(id) =>
                     symbol(id) match
                         case c: Symbol.ClassLike => Maybe(c)
                         case _                   => Maybe.Absent
-                case None => Maybe.Absent
+                case Maybe.Absent => Maybe.Absent
 
         /** Look up a package symbol by fully-qualified dotted name.
           *
@@ -2445,11 +2444,11 @@ object Tasty:
           */
         def findPackage(fqn: String): Maybe[Symbol.Package] =
             indices.packageIndex.get(fqn) match
-                case Some(id) =>
+                case Maybe.Present(id) =>
                     symbol(id) match
                         case p: Symbol.Package => Maybe(p)
                         case _                 => Maybe.Absent
-                case None => Maybe.Absent
+                case Maybe.Absent => Maybe.Absent
 
         /** Find all `Symbol.Class` instances whose simple name equals `simpleName`.
           *
@@ -2496,7 +2495,7 @@ object Tasty:
           * O(1) lookup via the modulesIndex in Indices.
           */
         def findModule(name: String): Maybe[ModuleDescriptor] =
-            Maybe.fromOption(indices.modulesIndex.get(name))
+            indices.modulesIndex.get(name)
 
         /** Find a class symbol by JVM binary name (e.g., "com/example/Foo$Inner").
           *
@@ -2742,8 +2741,8 @@ object Tasty:
           */
         def companion(sym: Symbol): Maybe[Symbol] =
             indices.companionIndex.get(sym.id) match
-                case Some(cid) => Maybe(symbol(cid))
-                case None      => Maybe.Absent
+                case Maybe.Present(cid) => Maybe(symbol(cid))
+                case Maybe.Absent       => Maybe.Absent
 
         /** Compute the fully-qualified dotted name of `sym` by walking the owner chain.
           *
@@ -2869,47 +2868,66 @@ object Tasty:
           *   - `unresolvedFqnByNegId`: negative SymbolId to FQN string (annotation types not on classpath).
           *   - `diagnostics`: FQN collision records from initialization.
           *
-          * `derives Schema, CanEqual`: Schema derivation succeeds because all fields use supported types;
-          * `Map[SymbolId, V]` fields use the `symbolIdMapSchema` given defined in `object Classpath`.
+          * `derives CanEqual`: Schema derivation is provided by the hand-written `given schemaIndices`
+          * (placed after `symbolIdMapSchema`) so `Dict[SymbolId, V]` fields resolve correctly.
           */
         final case class Indices(
-            byFqn: Map[String, SymbolId],
-            bySimpleName: Map[String, Chunk[SymbolId]],
-            packageIndex: Map[String, SymbolId],
-            subclassIndex: Map[SymbolId, Chunk[SymbolId]],
-            companionIndex: Map[SymbolId, SymbolId],
-            modulesIndex: Map[String, ModuleDescriptor],
+            byFqn: Dict[String, SymbolId],
+            bySimpleName: Dict[String, Chunk[SymbolId]],
+            packageIndex: Dict[String, SymbolId],
+            subclassIndex: Dict[SymbolId, Chunk[SymbolId]],
+            companionIndex: Dict[SymbolId, SymbolId],
+            modulesIndex: Dict[String, ModuleDescriptor],
             topLevelClassIds: Chunk[SymbolId],
             packageIds: Chunk[SymbolId],
-            unresolvedFqnByNegId: Map[SymbolId, String],
+            unresolvedFqnByNegId: Dict[SymbolId, String],
             diagnostics: Chunk[Classpath.Diagnostic]
-        ) derives CanEqual
+        ) derives CanEqual:
+            // Dict is an opaque type without structural == ; override equals to use Dict.is
+            // for each Dict field so that structural comparison works as expected for case class equality.
+            override def equals(other: Any): Boolean = other match
+                case i: Indices =>
+                    byFqn.is(i.byFqn)(using CanEqual.canEqualAny, CanEqual.canEqualAny) &&
+                    bySimpleName.is(i.bySimpleName)(using CanEqual.canEqualAny, CanEqual.canEqualAny) &&
+                    packageIndex.is(i.packageIndex)(using CanEqual.canEqualAny, CanEqual.canEqualAny) &&
+                    subclassIndex.is(i.subclassIndex)(using CanEqual.canEqualAny, CanEqual.canEqualAny) &&
+                    companionIndex.is(i.companionIndex)(using CanEqual.canEqualAny, CanEqual.canEqualAny) &&
+                    modulesIndex.is(i.modulesIndex)(using CanEqual.canEqualAny, CanEqual.canEqualAny) &&
+                    topLevelClassIds == i.topLevelClassIds &&
+                    packageIds == i.packageIds &&
+                    unresolvedFqnByNegId.is(i.unresolvedFqnByNegId)(using CanEqual.canEqualAny, CanEqual.canEqualAny) &&
+                    diagnostics == i.diagnostics
+                case _ => false
+            end equals
+        end Indices
 
         object Indices:
             val empty: Indices = Indices(
-                byFqn = Map.empty,
-                bySimpleName = Map.empty,
-                packageIndex = Map.empty,
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                modulesIndex = Map.empty,
+                byFqn = Dict.empty[String, SymbolId],
+                bySimpleName = Dict.empty[String, Chunk[SymbolId]],
+                packageIndex = Dict.empty[String, SymbolId],
+                subclassIndex = Dict.empty[SymbolId, Chunk[SymbolId]],
+                companionIndex = Dict.empty[SymbolId, SymbolId],
+                modulesIndex = Dict.empty[String, ModuleDescriptor],
                 topLevelClassIds = Chunk.empty,
                 packageIds = Chunk.empty,
-                unresolvedFqnByNegId = Map.empty,
+                unresolvedFqnByNegId = Dict.empty[SymbolId, String],
                 diagnostics = Chunk.empty
             )
         end Indices
 
-        /** Schema for Map[SymbolId, V]: encodes SymbolId keys as their String representation (Int value).
+        /** Schema for Dict[SymbolId, V]: encodes SymbolId keys as their String representation (Int value).
           *
-          * kyo-schema provides Schema[Map[String, V]] but not Schema[Map[K, V]] for non-String keys.
-          * This given bridges the gap for all Map[SymbolId, V] fields in Classpath.Indices.
+          * kyo-schema provides Schema[Dict[String, V]] (stringDictSchema, JSON object) but not
+          * Schema[Dict[K, V]] for non-String keys via the object-format path.
+          * This given bridges the gap for all Dict[SymbolId, V] fields in Classpath.Indices.
           * Encoding: each SymbolId key is converted to its Int value rendered as a String; decoding
-          * parses the String back to Int and wraps in SymbolId.
+          * parses the String back to Int and wraps in SymbolId. Wire format is a JSON object,
+          * preserving the existing snapshot encoding.
           */
-        private[kyo] given symbolIdMapSchema[V](using vs: Schema[V]): Schema[Map[SymbolId, V]] =
-            summon[Schema[Map[String, V]]].transform((m: Map[String, V]) => m.map((k, v) => (SymbolId(k.toInt), v)))(
-                (m: Map[SymbolId, V]) => m.map((k, v) => (k.value.toString, v))
+        private[kyo] given symbolIdMapSchema[V](using vs: Schema[V]): Schema[Dict[SymbolId, V]] =
+            summon[Schema[Dict[String, V]]].transform((d: Dict[String, V]) => d.map((k, v) => (SymbolId(k.toInt), v)))(
+                (d: Dict[SymbolId, V]) => d.map((k, v) => (k.value.toString, v))
             )
 
         /** Schema for Classpath.Indices. Placed here (after symbolIdMapSchema is defined) so Map[SymbolId, V] fields resolve. */
@@ -2951,8 +2969,10 @@ object Tasty:
                     cp         <- initImpl(jdkClassFiles.toSeq ++ roots, ErrorMode.SoftFail)
                     jdkModules <- PlatformModuleOps.readJdkModuleDescriptors
                 yield
-                    val newModulesIndex = cp.indices.modulesIndex ++ jdkModules
-                    val newModules      = Chunk.from(newModulesIndex.values.toSeq)
+                    val newModulesIndex = cp.indices.modulesIndex ++ Dict.from(jdkModules)
+                    val newModulesBuf   = Chunk.newBuilder[ModuleDescriptor]
+                    newModulesIndex.foreach((_, v) => newModulesBuf += v)
+                    val newModules = newModulesBuf.result()
                     cp.copy(
                         modules = newModules,
                         indices = cp.indices.copy(modulesIndex = newModulesIndex)
@@ -2965,14 +2985,13 @@ object Tasty:
           * symbols(i).id.value must equal i for cp.symbol(id) to resolve correctly. Only callable from within package kyo (private[kyo]).
           */
         private[kyo] def fromPicklesWithSymbols(symbols: Chunk[Symbol])(using Frame): Classpath < Sync =
-            Sync.defer:
-                Classpath(
-                    symbols = symbols,
-                    indices = Indices.empty,
-                    errors = Chunk.empty,
-                    modules = Chunk.empty,
-                    rootSymbolId = if symbols.nonEmpty then SymbolId(0) else SymbolId(-1)
-                )
+            Classpath(
+                symbols = symbols,
+                indices = Indices.empty,
+                errors = Chunk.empty,
+                modules = Chunk.empty,
+                rootSymbolId = if symbols.nonEmpty then SymbolId(0) else SymbolId(-1)
+            )
 
         /** Internal: init implementation, delegates to ClasspathOrchestrator. */
         private def initImpl(
@@ -3032,24 +3051,29 @@ object Tasty:
             rootSymbolId: SymbolId,
             topLevelClassIds: Chunk[SymbolId],
             packageIds: Chunk[SymbolId],
-            fqnIndex: Map[String, SymbolId],
-            packageIndex: Map[String, SymbolId],
-            subclassIndex: Map[SymbolId, Chunk[SymbolId]],
-            companionIndex: Map[SymbolId, SymbolId],
-            moduleIndex: Map[String, ModuleDescriptor],
+            fqnIndex: Dict[String, SymbolId],
+            packageIndex: Dict[String, SymbolId],
+            subclassIndex: Dict[SymbolId, Chunk[SymbolId]],
+            companionIndex: Dict[SymbolId, SymbolId],
+            moduleIndex: Dict[String, ModuleDescriptor],
             errors: Chunk[TastyError],
             diagnostics: Chunk[Classpath.Diagnostic] = Chunk.empty,
-            unresolvedFqnByNegId: Map[SymbolId, String] = Map.empty
+            unresolvedFqnByNegId: Dict[SymbolId, String] = Dict.empty[SymbolId, String]
         ): Classpath =
             import Name.asString
-            val bySimpleName: Map[String, Chunk[SymbolId]] =
+            val bySimpleName: Dict[String, Chunk[SymbolId]] =
                 val b = scala.collection.mutable.HashMap.empty[String, scala.collection.mutable.ArrayBuffer[SymbolId]]
                 symbols.foreach: sym =>
                     val nm = sym.name.asString
                     if nm.nonEmpty then
                         b.getOrElseUpdate(nm, new scala.collection.mutable.ArrayBuffer()) += sym.id
-                b.map((k, v) => k -> Chunk.from(v)).toMap
+                Dict.from(b.map((k, v) => k -> Chunk.from(v)).toMap)
             end bySimpleName
+            val moduleValues =
+                val buf = Chunk.newBuilder[ModuleDescriptor]
+                moduleIndex.foreach((_, v) => buf += v)
+                buf.result()
+            end moduleValues
             Classpath(
                 symbols = symbols,
                 indices = Classpath.Indices(
@@ -3065,7 +3089,7 @@ object Tasty:
                     diagnostics = diagnostics
                 ),
                 errors = errors,
-                modules = Chunk.from(moduleIndex.values.toSeq),
+                modules = moduleValues,
                 rootSymbolId = rootSymbolId
             )
         end make
@@ -3342,7 +3366,7 @@ object Tasty:
                 case ShowFormat.FullyQualified =>
                     import Name.asString
                     cp.fullName(sym).map(_.asString)
-                case ShowFormat.Simple => Sync.defer(sym.simpleName)
+                case ShowFormat.Simple => sym.simpleName
                 case ShowFormat.Code   => kyo.internal.tasty.symbol.SymbolSignature.compute(sym, cp)
 
     /** Human-readable signature of a method symbol. */
@@ -3517,11 +3541,11 @@ object Tasty:
             case w: Symbol.Var    => w.body
             case _                => Maybe.Absent
         maybeBody match
-            case Maybe.Absent => Sync.defer(Maybe.Absent)
+            case Maybe.Absent => Maybe.Absent
             case Maybe.Present(blob) =>
                 bindingLocal.use: mbind =>
                     val maybeCtx = mbind.flatMap(_.decodeCtx)
-                    if maybeCtx.isEmpty then Sync.defer(Maybe.Absent)
+                    if maybeCtx.isEmpty then Maybe.Absent
                     else
                         val ctx = maybeCtx.get
                         val cp  = mbind.get.cp

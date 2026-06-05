@@ -79,11 +79,11 @@ class ClasspathTypedRequireTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk(SymbolId(0), SymbolId(1), SymbolId(2)),
                 packageIds = Chunk(SymbolId(3)),
-                fqnIndex = Map("pkg.A" -> SymbolId(0), "pkg.T" -> SymbolId(1), "pkg.O" -> SymbolId(2)),
-                packageIndex = Map("pkg" -> SymbolId(3)),
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                fqnIndex = Dict("pkg.A" -> SymbolId(0), "pkg.T" -> SymbolId(1), "pkg.O" -> SymbolId(2)),
+                packageIndex = Dict("pkg" -> SymbolId(3)),
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
 

@@ -68,11 +68,11 @@ class ClasspathSubclassTypedTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk(SymbolId(0), SymbolId(1)),
                 packageIds = Chunk.empty,
-                fqnIndex = Map("A" -> SymbolId(0), "B" -> SymbolId(1)),
-                packageIndex = Map.empty,
-                subclassIndex = Map(SymbolId(0) -> Chunk(SymbolId(1))),
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                fqnIndex = Dict("A" -> SymbolId(0), "B" -> SymbolId(1)),
+                packageIndex = Dict.empty,
+                subclassIndex = Dict(SymbolId(0) -> Chunk(SymbolId(1))),
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
 
@@ -88,14 +88,14 @@ class ClasspathSubclassTypedTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk(SymbolId(0), SymbolId(1), SymbolId(2), SymbolId(3), SymbolId(4)),
                 packageIds = Chunk.empty,
-                fqnIndex = Map("T" -> SymbolId(0), "B" -> SymbolId(1), "C" -> SymbolId(2), "AbsA" -> SymbolId(3), "CFromA" -> SymbolId(4)),
-                packageIndex = Map.empty,
-                subclassIndex = Map(
+                fqnIndex = Dict("T" -> SymbolId(0), "B" -> SymbolId(1), "C" -> SymbolId(2), "AbsA" -> SymbolId(3), "CFromA" -> SymbolId(4)),
+                packageIndex = Dict.empty,
+                subclassIndex = Dict(
                     SymbolId(0) -> Chunk(SymbolId(1), SymbolId(2), SymbolId(3)),
                     SymbolId(3) -> Chunk(SymbolId(4))
                 ),
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
 

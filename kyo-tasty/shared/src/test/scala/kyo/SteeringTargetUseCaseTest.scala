@@ -90,11 +90,11 @@ class SteeringTargetUseCaseTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk(SymbolId(0), SymbolId(1)),
                 packageIds = Chunk(SymbolId(4)),
-                fqnIndex = Map("pkg.A" -> SymbolId(1), "pkg.B" -> SymbolId(0)),
-                packageIndex = Map("pkg" -> SymbolId(4)),
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                fqnIndex = Dict("pkg.A" -> SymbolId(1), "pkg.B" -> SymbolId(0)),
+                packageIndex = Dict("pkg" -> SymbolId(4)),
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
 

@@ -205,11 +205,11 @@ class ClasspathTypedAllAggregationsTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk(SymbolId(0), SymbolId(1), SymbolId(2), SymbolId(3), SymbolId(4), SymbolId(5)),
                 packageIds = Chunk(SymbolId(19), SymbolId(20)),
-                fqnIndex = Map.empty,
-                packageIndex = Map.empty,
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                fqnIndex = Dict.empty,
+                packageIndex = Dict.empty,
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
 

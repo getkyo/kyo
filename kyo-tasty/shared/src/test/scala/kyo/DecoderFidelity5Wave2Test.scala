@@ -154,7 +154,12 @@ class DecoderFidelity5Wave2Test extends Test:
             assert(syms1 eq syms2, "cp.symbols should be the same reference on each access (immutable val)")
             val fqn1 = cp.indices.byFqn
             val fqn2 = cp.indices.byFqn
-            assert(fqn1 eq fqn2, "cp.indices.byFqn should be the same reference on each access (immutable val)")
+            // Dict is an opaque type; identity check via identityHashCode to confirm same backing object.
+            assert(
+                java.lang.System.identityHashCode(fqn1.asInstanceOf[AnyRef]) ==
+                    java.lang.System.identityHashCode(fqn2.asInstanceOf[AnyRef]),
+                "cp.indices.byFqn should be the same reference on each access (immutable val)"
+            )
             val seq1 = cp.symbols.toIndexedSeq.map(_.id.value)
             val seq2 = cp.symbols.toIndexedSeq.map(_.id.value)
             assert(seq1 == seq2, "iteration order must be stable across calls")
@@ -164,7 +169,7 @@ class DecoderFidelity5Wave2Test extends Test:
     // W2.8: concurrent findClass from many fibers returns the same Symbol object.
     "W2.8: concurrent findClass from many fibers is deterministic" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            val anyFqn  = cp.indices.byFqn.keys.headOption.getOrElse("nonexistent")
+            val anyFqn  = cp.indices.byFqn.toMap.keys.headOption.getOrElse("nonexistent")
             val results = (0 until 64).map(_ => cp.findClass(anyFqn))
             val allSame = results.forall(_ == results.head)
             assert(allSame, s"findClass($anyFqn) returned divergent results across 64 calls: $results")
@@ -335,7 +340,7 @@ class DecoderFidelity5Wave2Test extends Test:
     // W2.18: findClass on the same FQN 100 times returns the same result.
     "W2.18: findClass 100x on the same FQN returns the same result" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            val sample = cp.indices.byFqn.keys.take(3).toList
+            val sample = cp.indices.byFqn.toMap.keys.take(3).toList
             sample.foreach: k =>
                 val results = (0 until 100).map(_ => cp.findClass(k))
                 assert(results.toSet.size == 1, s"100 lookups of $k diverged: ${results.toSet}")
@@ -370,7 +375,7 @@ class DecoderFidelity5Wave2Test extends Test:
     // W2.21: Same Symbol fetched twice via findSymbol is equal+hashEqual.
     "W2.21: same Symbol fetched twice is equal and has equal hashCode" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            val fqnOpt = cp.indices.byFqn.keys.headOption
+            val fqnOpt = cp.indices.byFqn.toMap.keys.headOption
             fqnOpt match
                 case None => succeed
                 case Some(fqn) =>

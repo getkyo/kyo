@@ -77,11 +77,11 @@ class SymbolMemberSearchTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk(SymbolId(0)),
                 packageIds = Chunk.empty,
-                fqnIndex = Map("A" -> SymbolId(0)),
-                packageIndex = Map.empty,
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                fqnIndex = Dict("A" -> SymbolId(0)),
+                packageIndex = Dict.empty,
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
 
@@ -105,11 +105,11 @@ class SymbolMemberSearchTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk(SymbolId(0), SymbolId(2)),
                 packageIds = Chunk.empty,
-                fqnIndex = Map("A" -> SymbolId(0), "B" -> SymbolId(2)),
-                packageIndex = Map.empty,
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                fqnIndex = Dict("A" -> SymbolId(0), "B" -> SymbolId(2)),
+                packageIndex = Dict.empty,
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
 
@@ -125,11 +125,11 @@ class SymbolMemberSearchTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk(SymbolId(0)),
                 packageIds = Chunk.empty,
-                fqnIndex = Map("A" -> SymbolId(0)),
-                packageIndex = Map.empty,
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                fqnIndex = Dict("A" -> SymbolId(0)),
+                packageIndex = Dict.empty,
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
 

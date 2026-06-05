@@ -97,17 +97,17 @@ class DecoderFidelity5Phase02JvmTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk(SymbolId(0), SymbolId(1), SymbolId(2), SymbolId(3), SymbolId(4)),
                 packageIds = Chunk.empty,
-                fqnIndex = Map(
+                fqnIndex = Dict(
                     "Animal" -> SymbolId(0),
                     "Dog"    -> SymbolId(1),
                     "Cat"    -> SymbolId(2),
                     "Foo"    -> SymbolId(3),
                     "Foo$"   -> SymbolId(4)
                 ),
-                packageIndex = Map.empty,
-                subclassIndex = Map(SymbolId(0) -> Chunk(SymbolId(1), SymbolId(2))),
-                companionIndex = Map(SymbolId(3) -> SymbolId(4), SymbolId(4) -> SymbolId(3)),
-                moduleIndex = Map.empty,
+                packageIndex = Dict.empty,
+                subclassIndex = Dict(SymbolId(0) -> Chunk(SymbolId(1), SymbolId(2))),
+                companionIndex = Dict(SymbolId(3) -> SymbolId(4), SymbolId(4) -> SymbolId(3)),
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
     end syntheticCp

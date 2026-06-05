@@ -226,9 +226,9 @@ object AstUnpickler:
     /** Walk all stats (top-level definitions) until position reaches `end`. Mirrors dotty indexStats.
       *
       * @param sectionBytes
-      *   The raw AST section bytes (from view.allBytes). plan: phase-02 bridge; used by Pass C to build SymbolBody.
+      *   The raw AST section bytes (from view.allBytes); used by Pass C to build SymbolBody.
       * @param ownerBySymbol
-      *   Accumulator: maps each symbol to its owner partial symbol. plan: phase-02 bridge; feeds Pass C ownerId.
+      *   Accumulator: maps each symbol to its owner partial symbol; feeds Pass C ownerId.
       * @param bodyDataByAddr
       *   Accumulator: maps each symbol to (bodyStart, bodyEnd) bytes within sectionBytes.
       */

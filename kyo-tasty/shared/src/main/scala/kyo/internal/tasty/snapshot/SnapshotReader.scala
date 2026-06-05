@@ -471,38 +471,38 @@ object SnapshotReader:
         // FQNIDX__ section (Phase 12 dual-FQN fix): if present, reconstruct the full fqnIndex
         // verbatim (all keys including dual-index source-FQN aliases). Overrides the per-symbol
         // single-FQN fqnIndex built by readSymbols. If absent, fall back to the per-symbol index.
-        val fullFqnIdIdx: Map[String, SymbolId] = sectionMap.get(SnapshotFormat.sectionFQNIDX) match
+        val fullFqnIdIdx: Dict[String, SymbolId] = sectionMap.get(SnapshotFormat.sectionFQNIDX) match
             case Some((off, len)) if len > 0 =>
                 deserializeFqnIndex(bytes, off, len, namePool, finalSymbols)
             case _ =>
-                finalFqnIndex.map { case (k, v) => k -> v.id }.toMap
+                Dict.from(finalFqnIndex.map { case (k, v) => k -> v.id }.toMap)
 
         // FQNMAP__ section (Phase 2.13 unresolvedFqnByNegId persistence): if present, reconstruct the
         // negId -> FQN string map so warm-loaded classpaths resolve annotation FQNs on JS/Native.
-        val unresolvedFqnByNegId: Map[SymbolId, String] = sectionMap.get(SnapshotFormat.sectionFQNMAP) match
+        val unresolvedFqnByNegId: Dict[SymbolId, String] = sectionMap.get(SnapshotFormat.sectionFQNMAP) match
             case Some((off, len)) if len > 0 =>
                 deserializeFqnMap(bytes, off, len, namePool)
             case _ =>
-                Map.empty
+                Dict.empty[SymbolId, String]
 
         // SUBCIDX_ section (Phase 5.02 F-W2-30): subclassIndex for warm-load parity.
-        val warmSubclassIndex: Map[SymbolId, Chunk[SymbolId]] =
+        val warmSubclassIndex: Dict[SymbolId, Chunk[SymbolId]] =
             sectionMap.get(SnapshotFormat.sectionSUBCIDX) match
                 case Some((off, len)) if len > 0 =>
                     deserializeSubclassIndex(bytes, off, len, finalSymbols.length)
                 case _ =>
-                    Map.empty
+                    Dict.empty[SymbolId, Chunk[SymbolId]]
 
         // COMPIDX_ section (Phase 5.02 F-W2-31): companionIndex for warm-load parity.
-        val warmCompanionIndex: Map[SymbolId, SymbolId] =
+        val warmCompanionIndex: Dict[SymbolId, SymbolId] =
             sectionMap.get(SnapshotFormat.sectionCOMPIDX) match
                 case Some((off, len)) if len > 0 =>
                     deserializeCompanionIndex(bytes, off, len, finalSymbols.length)
                 case _ =>
-                    Map.empty
+                    Dict.empty[SymbolId, SymbolId]
 
         val symsChunk = Chunk.from(finalSymbols)
-        val pkgIdIdx  = finalPackageIndex.map { case (k, v) => k -> v.id }.toMap
+        val pkgIdIdx  = Dict.from(finalPackageIndex.map { case (k, v) => k -> v.id }.toMap)
         val topIds    = finalTopLevelCls.map(_.id)
         val pkgIds    = finalPackages.map(_.id)
         val rootId    = if symsChunk.nonEmpty then SymbolId(0) else SymbolId(-1)
@@ -515,7 +515,7 @@ object SnapshotReader:
             packageIndex = pkgIdIdx,
             subclassIndex = warmSubclassIndex,
             companionIndex = warmCompanionIndex,
-            moduleIndex = Map.empty,
+            moduleIndex = Dict.empty[String, Tasty.ModuleDescriptor],
             errors = errors,
             diagnostics = Chunk.empty,
             unresolvedFqnByNegId = unresolvedFqnByNegId
@@ -918,41 +918,41 @@ object SnapshotReader:
         }
 
         // FQNIDX__ section (Phase 12 dual-FQN fix): reconstruct the full fqnIndex verbatim.
-        val fullFqnIdIdx2: Map[String, SymbolId] = sectionMap.get(SnapshotFormat.sectionFQNIDX) match
+        val fullFqnIdIdx2: Dict[String, SymbolId] = sectionMap.get(SnapshotFormat.sectionFQNIDX) match
             case Some((off, len)) if len > 0 =>
                 val secBytes = copyViewRange(view, off, off + len)
                 deserializeFqnIndex(secBytes, 0, len, namePool, finalSymbols)
             case _ =>
-                newFqnIndex.map { case (k, v) => k -> v.id }.toMap
+                Dict.from(newFqnIndex.map { case (k, v) => k -> v.id }.toMap)
 
         // FQNMAP__ section (Phase 2.13): reconstruct unresolvedFqnByNegId for warm loads.
-        val unresolvedFqnByNegId2: Map[SymbolId, String] = sectionMap.get(SnapshotFormat.sectionFQNMAP) match
+        val unresolvedFqnByNegId2: Dict[SymbolId, String] = sectionMap.get(SnapshotFormat.sectionFQNMAP) match
             case Some((off, len)) if len > 0 =>
                 val secBytes = copyViewRange(view, off, off + len)
                 deserializeFqnMap(secBytes, 0, len, namePool)
             case _ =>
-                Map.empty
+                Dict.empty[SymbolId, String]
 
         // SUBCIDX_ section (Phase 5.02 F-W2-30): subclassIndex for warm-load parity.
-        val warmSubclassIndex2: Map[SymbolId, Chunk[SymbolId]] =
+        val warmSubclassIndex2: Dict[SymbolId, Chunk[SymbolId]] =
             sectionMap.get(SnapshotFormat.sectionSUBCIDX) match
                 case Some((off, len)) if len > 0 =>
                     val secBytes = copyViewRange(view, off, off + len)
                     deserializeSubclassIndex(secBytes, 0, len, finalSymbols.length)
                 case _ =>
-                    Map.empty
+                    Dict.empty[SymbolId, Chunk[SymbolId]]
 
         // COMPIDX_ section (Phase 5.02 F-W2-31): companionIndex for warm-load parity.
-        val warmCompanionIndex2: Map[SymbolId, SymbolId] =
+        val warmCompanionIndex2: Dict[SymbolId, SymbolId] =
             sectionMap.get(SnapshotFormat.sectionCOMPIDX) match
                 case Some((off, len)) if len > 0 =>
                     val secBytes = copyViewRange(view, off, off + len)
                     deserializeCompanionIndex(secBytes, 0, len, finalSymbols.length)
                 case _ =>
-                    Map.empty
+                    Dict.empty[SymbolId, SymbolId]
 
         val symsChunk2 = Chunk.from(finalSymbols)
-        val pkgIdIdx2  = newPackageIndex.map { case (k, v) => k -> v.id }.toMap
+        val pkgIdIdx2  = Dict.from(newPackageIndex.map { case (k, v) => k -> v.id }.toMap)
         val topIds2    = newTopLevelCls.map(_.id)
         val pkgIds2    = newPackages.map(_.id)
         val rootId2    = if symsChunk2.nonEmpty then SymbolId(0) else SymbolId(-1)
@@ -965,7 +965,7 @@ object SnapshotReader:
             packageIndex = pkgIdIdx2,
             subclassIndex = warmSubclassIndex2,
             companionIndex = warmCompanionIndex2,
-            moduleIndex = Map.empty,
+            moduleIndex = Dict.empty[String, Tasty.ModuleDescriptor],
             errors = errors,
             unresolvedFqnByNegId = unresolvedFqnByNegId2
         )
@@ -1149,13 +1149,13 @@ object SnapshotReader:
         length: Int,
         namePool: Array[String],
         finalSymbols: Array[Tasty.Symbol]
-    ): Map[String, SymbolId] =
+    ): Dict[String, SymbolId] =
         val symCount = finalSymbols.length
         val end      = offset + length
         val count    = SnapshotFormat.readInt32LE(bytes, offset)
         var pos      = offset + 4
         var i        = 0
-        val builder  = scala.collection.mutable.HashMap.empty[String, SymbolId]
+        val builder  = DictBuilder.init[String, SymbolId]
         while i < count && pos + 8 <= end do
             val nameId      = SnapshotFormat.readInt32LE(bytes, pos)
             val snapshotIdx = SnapshotFormat.readInt32LE(bytes, pos + 4)
@@ -1163,11 +1163,11 @@ object SnapshotReader:
             if nameId >= 0 && nameId < namePool.length && snapshotIdx >= 0 && snapshotIdx < symCount then
                 val fqn = namePool(nameId)
                 if fqn.nonEmpty then
-                    builder(fqn) = finalSymbols(snapshotIdx).id
+                    discard(builder.add(fqn, finalSymbols(snapshotIdx).id))
             end if
             i += 1
         end while
-        builder.toMap
+        builder.result()
     end deserializeFqnIndex
 
     /** Deserialize the FQNMAP__ section into a Map[Int, String] (negId -> FQN string).
@@ -1180,23 +1180,23 @@ object SnapshotReader:
         offset: Int,
         length: Int,
         namePool: Array[String]
-    ): Map[SymbolId, String] =
+    ): Dict[SymbolId, String] =
         val end     = offset + length
         val count   = SnapshotFormat.readInt32LE(bytes, offset)
         var pos     = offset + 4
         var i       = 0
-        val builder = scala.collection.mutable.HashMap.empty[SymbolId, String]
+        val builder = DictBuilder.init[SymbolId, String]
         while i < count && pos + 8 <= end do
             val negId      = SnapshotFormat.readInt32LE(bytes, pos)
             val namePoolId = SnapshotFormat.readInt32LE(bytes, pos + 4)
             pos += 8
             if namePoolId >= 0 && namePoolId < namePool.length then
                 val fqn = namePool(namePoolId)
-                if fqn.nonEmpty then builder(SymbolId(negId)) = fqn
+                if fqn.nonEmpty then discard(builder.add(SymbolId(negId), fqn))
             end if
             i += 1
         end while
-        builder.toMap
+        builder.result()
     end deserializeFqnMap
 
     /** Deserialize subclassIndex from the SUBCIDX_ section (Phase 5.02 F-W2-30).
@@ -1211,12 +1211,12 @@ object SnapshotReader:
         offset: Int,
         length: Int,
         symCount: Int
-    ): Map[SymbolId, Chunk[SymbolId]] =
+    ): Dict[SymbolId, Chunk[SymbolId]] =
         val end     = offset + length
         val count   = SnapshotFormat.readInt32LE(bytes, offset)
         var pos     = offset + 4
         var i       = 0
-        val builder = scala.collection.mutable.HashMap.empty[SymbolId, Chunk[SymbolId]]
+        val builder = DictBuilder.init[SymbolId, Chunk[SymbolId]]
         while i < count && pos + 8 <= end do
             val parentIdx  = SnapshotFormat.readInt32LE(bytes, pos)
             val childCount = SnapshotFormat.readInt32LE(bytes, pos + 4)
@@ -1231,11 +1231,11 @@ object SnapshotReader:
             if parentIdx >= 0 && parentIdx < symCount then
                 val validChildren = Chunk.from(children.take(j).filter(cid => cid.value >= 0 && cid.value < symCount))
                 if validChildren.nonEmpty then
-                    builder(SymbolId(parentIdx)) = validChildren
+                    discard(builder.add(SymbolId(parentIdx), validChildren))
             end if
             i += 1
         end while
-        builder.toMap
+        builder.result()
     end deserializeSubclassIndex
 
     /** Deserialize companionIndex from the COMPIDX_ section (Phase 5.02 F-W2-31).
@@ -1250,22 +1250,22 @@ object SnapshotReader:
         offset: Int,
         length: Int,
         symCount: Int
-    ): Map[SymbolId, SymbolId] =
+    ): Dict[SymbolId, SymbolId] =
         val end     = offset + length
         val count   = SnapshotFormat.readInt32LE(bytes, offset)
         var pos     = offset + 4
         var i       = 0
-        val builder = scala.collection.mutable.HashMap.empty[SymbolId, SymbolId]
+        val builder = DictBuilder.init[SymbolId, SymbolId]
         while i < count && pos + 8 <= end do
             val symIdx       = SnapshotFormat.readInt32LE(bytes, pos)
             val companionIdx = SnapshotFormat.readInt32LE(bytes, pos + 4)
             pos += 8
             if symIdx >= 0 && symIdx < symCount && companionIdx >= 0 && companionIdx < symCount then
-                builder(SymbolId(symIdx)) = SymbolId(companionIdx)
+                discard(builder.add(SymbolId(symIdx), SymbolId(companionIdx)))
             end if
             i += 1
         end while
-        builder.toMap
+        builder.result()
     end deserializeCompanionIndex
 
     /** Read the name pool from the NAMES section. */

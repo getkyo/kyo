@@ -16,13 +16,10 @@ import kyo.internal.tasty.binary.MalformedVarintException
   *
   * NameRefs in the section table are 0-based indices into the `Array[Tasty.Name]` produced by `NameUnpickler`.
   */
-final class SectionIndex private (private val sections: Map[String, (Int, Int)]):
+final class SectionIndex private (private val sections: Dict[String, (Int, Int)]):
 
     /** Return `Present((offset, length))` for the named section, or `Absent` if not found. */
-    def get(name: String): Maybe[(Int, Int)] =
-        sections.get(name) match
-            case Some(v) => Present(v)
-            case None    => Absent
+    def get(name: String): Maybe[(Int, Int)] = sections.get(name)
 
 end SectionIndex
 
@@ -51,7 +48,7 @@ object SectionIndex:
     end read
 
     private def readSync(view: ByteView, names: Array[Tasty.Name])(using AllowUnsafe): SectionIndex =
-        val builder = Map.newBuilder[String, (Int, Int)]
+        val builder = DictBuilder.init[String, (Int, Int)]
         while view.remaining > 0 do
             val nameRef    = view.readNat()   // 0-based index into names
             val sectionLen = view.readNat()   // byte count of payload
@@ -67,7 +64,7 @@ object SectionIndex:
                 )
             end if
             val name = names(nameRef).asString
-            builder += (name -> (offset, sectionLen))
+            discard(builder.add(name, (offset, sectionLen)))
             view.goto(offset + sectionLen) // skip payload
         end while
         new SectionIndex(builder.result())

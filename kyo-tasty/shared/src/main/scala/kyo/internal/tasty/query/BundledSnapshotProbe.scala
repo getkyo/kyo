@@ -67,11 +67,11 @@ private[kyo] object BundledSnapshotProbe:
         // Build merged symbol chunk.
         val allSymbols: Chunk[Tasty.Symbol] = existing.symbols ++ remapped
         // Merge byFqn: partial SymbolIds must be shifted.
-        val mergedByFqn: Map[String, SymbolId] =
+        val mergedByFqn: Dict[String, SymbolId] =
             existing.indices.byFqn ++
                 partial.indices.byFqn.map((fqn, id) => fqn -> SymbolId(id.value + offset))
         // Merge packageIndex.
-        val mergedPkgIdx: Map[String, SymbolId] =
+        val mergedPkgIdx: Dict[String, SymbolId] =
             existing.indices.packageIndex ++
                 partial.indices.packageIndex.map((fqn, id) => fqn -> SymbolId(id.value + offset))
         // Merge topLevelClassIds.
@@ -81,23 +81,23 @@ private[kyo] object BundledSnapshotProbe:
         val mergedPkgIds: Chunk[SymbolId] =
             existing.indices.packageIds ++ partial.indices.packageIds.map(id => SymbolId(id.value + offset))
         // Merge subclassIndex.
-        val mergedSubclass: Map[SymbolId, Chunk[SymbolId]] =
+        val mergedSubclass: Dict[SymbolId, Chunk[SymbolId]] =
             existing.indices.subclassIndex ++
                 partial.indices.subclassIndex.map((k, vs) =>
                     SymbolId(k.value + offset) -> vs.map(v => SymbolId(v.value + offset))
                 )
         // Merge companionIndex.
-        val mergedCompanion: Map[SymbolId, SymbolId] =
+        val mergedCompanion: Dict[SymbolId, SymbolId] =
             existing.indices.companionIndex ++
                 partial.indices.companionIndex.map((k, v) => SymbolId(k.value + offset) -> SymbolId(v.value + offset))
         // Merge bySimpleName.
-        val mergedSimple: Map[String, Chunk[SymbolId]] =
+        val mergedSimple: Dict[String, Chunk[SymbolId]] =
             val b = scala.collection.mutable.HashMap.empty[String, Chunk[SymbolId]]
             existing.indices.bySimpleName.foreach((k, v) => b(k) = v)
             partial.indices.bySimpleName.foreach: (k, v) =>
                 val shifted = v.map(id => SymbolId(id.value + offset))
                 b(k) = b.getOrElse(k, Chunk.empty) ++ shifted
-            b.toMap
+            Dict.from(b.toMap)
         end mergedSimple
         // Merge errors and modules.
         val mergedErrors: Chunk[TastyError]              = existing.errors ++ partial.errors

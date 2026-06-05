@@ -18,11 +18,11 @@ class ClasspathFindTest extends Test:
                 rootSymbolId = kyo.Tasty.SymbolId(-1),
                 topLevelClassIds = Chunk.empty,
                 packageIds = Chunk.empty,
-                fqnIndex = Map.empty,
-                packageIndex = Map.empty,
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                fqnIndex = Dict.empty,
+                packageIndex = Dict.empty,
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
     end emptyClasspath
@@ -74,11 +74,11 @@ class ClasspathFindTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk.empty,
                 packageIds = Chunk.empty,
-                fqnIndex = Map("p.Foo.Bar" -> SymbolId(0)),
-                packageIndex = Map.empty,
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                fqnIndex = Dict("p.Foo.Bar" -> SymbolId(0)),
+                packageIndex = Dict.empty,
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
         }.map: cp =>

@@ -138,11 +138,11 @@ class ClasspathAnnotatedTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk(SymbolId(1), SymbolId(4)),
                 packageIds = Chunk(SymbolId(0)),
-                fqnIndex = Map("scala.deprecated" -> SymbolId(1), "PlainA" -> SymbolId(4)),
-                packageIndex = Map("scala" -> SymbolId(0)),
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                fqnIndex = Dict("scala.deprecated" -> SymbolId(1), "PlainA" -> SymbolId(4)),
+                packageIndex = Dict("scala" -> SymbolId(0)),
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
 

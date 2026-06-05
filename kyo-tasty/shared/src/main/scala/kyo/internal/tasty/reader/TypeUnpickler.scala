@@ -913,7 +913,7 @@ object TypeUnpickler:
 
             case TastyFormat.ANNOTATEDtpt =>
                 // ANNOTATEDtpt (154): cat-5 (tag + Length + tpe_Tree + annot_Tree).
-                // Phase 05 wires the annotation term; Phase 03 extracts the underlying type only.
+                // The annotation term is wired via the type-decode pass; only the underlying type is extracted here.
                 val end        = view.readEnd()
                 val underlying = readTypeNode(view, ctx)
                 view.goto(end)
@@ -945,7 +945,7 @@ object TypeUnpickler:
 
             case TastyFormat.REFINEDtpt =>
                 // REFINEDtpt (160): cat-5 (tag + Length + parent_Tree + decl_Tree*).
-                // Phase 03 extracts the parent type only; refinement decls are deferred to Phase 05.
+                // Only the parent type is extracted here; refinement decls are skipped.
                 val end    = view.readEnd()
                 val parent = readTypeNode(view, ctx)
                 view.goto(end)

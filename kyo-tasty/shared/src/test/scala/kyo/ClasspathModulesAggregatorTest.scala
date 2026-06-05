@@ -31,11 +31,11 @@ class ClasspathModulesAggregatorTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk.empty,
                 packageIds = Chunk.empty,
-                fqnIndex = Map.empty,
-                packageIndex = Map.empty,
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map(
+                fqnIndex = Dict.empty,
+                packageIndex = Dict.empty,
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict(
                     "java.base"    -> makeModule("java.base"),
                     "java.logging" -> makeModule("java.logging"),
                     "myApp"        -> makeModule("myApp")

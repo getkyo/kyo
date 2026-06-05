@@ -22,8 +22,8 @@ class SnapshotEquivalenceTest extends kyo.Test:
     // Pins: INV-101-DF2 helper-correctness
     "size-divergence-reports-fqnIndex-axis" in run {
         Sync.defer:
-            val coldFqn = (1 to 110).map(i => s"a.B$i" -> InternalSymbolId(-1)).toMap
-            val warmFqn = (1 to 73).map(i => s"a.B$i" -> InternalSymbolId(-1)).toMap
+            val coldFqn = Dict.from((1 to 110).map(i => s"a.B$i" -> InternalSymbolId(-1)).toMap)
+            val warmFqn = Dict.from((1 to 73).map(i => s"a.B$i" -> InternalSymbolId(-1)).toMap)
             val cold    = makeSyntheticCp(fqnIndex = coldFqn)
             val warm    = makeSyntheticCp(fqnIndex = warmFqn)
             val result  = SnapshotEquivalence.warmColdEquivalent(cold, warm)
@@ -52,8 +52,8 @@ class SnapshotEquivalenceTest extends kyo.Test:
         Sync.defer:
             // Build 635 synthetic class symbols each with parentTypes = Chunk(Named(SymbolId(-1)))
             // For the cold classpath only: warm has no symbols with Named(-1) parentTypes.
-            val coldFqnMap = (0 until 635).map(i => s"x.C$i" -> InternalSymbolId(-1)).toMap
-            val warmFqnMap = (0 until 635).map(i => s"x.C$i" -> InternalSymbolId(-1)).toMap
+            val coldFqnMap = Dict.from((0 until 635).map(i => s"x.C$i" -> InternalSymbolId(-1)).toMap)
+            val warmFqnMap = Dict.from((0 until 635).map(i => s"x.C$i" -> InternalSymbolId(-1)).toMap)
             // Use synthetic classpaths with unresolved counts via countUnresolvedRefs check.
             // Since makeSyntheticCp has no real symbols, we test the axis ordering directly
             // by checking that fqnIndex.size matches first (both 635) then unresolvedRefs diverges.
@@ -75,7 +75,7 @@ class SnapshotEquivalenceTest extends kyo.Test:
             // The helper reports Equal here because all axes match.
             assert(result.isEqual, s"Expected Equal for matched synthetic classpaths but got $result")
             // Verify that when the cold fqnIndex is larger, fqnIndex.size divergence is reported first.
-            val bigColdFqn = (0 until 735).map(i => s"x.C$i" -> InternalSymbolId(-1)).toMap
+            val bigColdFqn = Dict.from((0 until 735).map(i => s"x.C$i" -> InternalSymbolId(-1)).toMap)
             val bigCold    = makeSyntheticCp(fqnIndex = bigColdFqn)
             val result2    = SnapshotEquivalence.warmColdEquivalent(bigCold, equalWarm)
             assert(!result2.isEqual, "Expected Diverged for size mismatch")
@@ -103,7 +103,7 @@ class SnapshotEquivalenceTest extends kyo.Test:
       * for testing the size-comparison axes in SnapshotEquivalence.
       */
     private def makeSyntheticCp(
-        fqnIndex: Map[String, kyo.Tasty.SymbolId] = Map.empty
+        fqnIndex: Dict[String, kyo.Tasty.SymbolId] = Dict.empty
     )(using AllowUnsafe): Tasty.Classpath =
         Tasty.Classpath.make(
             symbols = Chunk.empty,
@@ -111,10 +111,10 @@ class SnapshotEquivalenceTest extends kyo.Test:
             topLevelClassIds = Chunk.empty,
             packageIds = Chunk.empty,
             fqnIndex = fqnIndex,
-            packageIndex = Map.empty,
-            subclassIndex = Map.empty,
-            companionIndex = Map.empty,
-            moduleIndex = Map.empty,
+            packageIndex = Dict.empty,
+            subclassIndex = Dict.empty,
+            companionIndex = Dict.empty,
+            moduleIndex = Dict.empty,
             errors = Chunk.empty
         )
 

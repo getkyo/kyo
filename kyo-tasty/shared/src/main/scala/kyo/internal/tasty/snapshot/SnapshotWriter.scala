@@ -91,7 +91,7 @@ object SnapshotWriter:
         // their object identities differ from the cold-load symbols used to populate the map.
         val fqnBySymbol: mutable.HashMap[Int, String] =
             val rev = mutable.HashMap.empty[Int, String]
-            cp.indices.byFqn.toSeq.sortBy(_._1).foreach { case (fqn, id) =>
+            cp.indices.byFqn.toMap.toSeq.sortBy(_._1).foreach { case (fqn, id) =>
                 val canonical = FqnNormalizer.canonicalSourceFqn(fqn)
                 rev(id.value) = canonical
             }
@@ -589,7 +589,7 @@ object SnapshotWriter:
         internFqn: String => Int,
         symbolById: scala.collection.mutable.HashMap[Int, Tasty.Symbol],
         fqnBySymbol: mutable.HashMap[Int, String],
-        unresolvedFqnByNegId: Map[Tasty.SymbolId, String]
+        unresolvedFqnByNegId: Dict[Tasty.SymbolId, String]
     ): Array[Byte] =
         import Tasty.Name.asString
         val baos = new java.io.ByteArrayOutputStream(4 * 1024)
@@ -683,7 +683,7 @@ object SnapshotWriter:
       * from this section, bypassing the single-FQN-per-symbol limitation of the SYMBOLS section.
       */
     private def serializeFqnIndex(
-        fqnIndex: Map[String, kyo.Tasty.SymbolId],
+        fqnIndex: Dict[String, kyo.Tasty.SymbolId],
         symbolList: Seq[Tasty.Symbol],
         internName: String => Int
     ): Array[Byte] =
@@ -701,20 +701,19 @@ object SnapshotWriter:
         // canonical form is present in fqnIndex with a valid SymbolId, use that snapshot index.
         // This ensures EVERY entry in fqnIndex is serialized, eliminating the cold/warm size gap.
         // F-A4-005 determinism: sort by fqn before building entries so FQNIDX__ byte layout is stable
-        // regardless of Map iteration order (which varies with runtime state despite String hashCode
-        // being deterministic, since Map bucket layout also depends on load factor and capacity).
-        val entries = fqnIndex.toSeq.sortBy(_._1).flatMap: (fqn, id) =>
+        // regardless of Dict iteration order.
+        val entries = fqnIndex.toMap.toSeq.sortBy(_._1).flatMap: (fqn, id) =>
             symIdToIdx.get(id.value) match
                 case Some(idx) => Some((internName(fqn), idx))
                 case None =>
                     val canonFqn = FqnNormalizer.canonicalSourceFqn(fqn)
                     if canonFqn != fqn then
                         fqnIndex.get(canonFqn) match
-                            case Some(canonId) =>
+                            case Maybe.Present(canonId) =>
                                 symIdToIdx.get(canonId.value) match
                                     case Some(idx) => Some((internName(fqn), idx))
                                     case None      => None
-                            case None => None
+                            case Maybe.Absent => None
                     else None
                     end if
         SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
@@ -735,14 +734,14 @@ object SnapshotWriter:
       * Entries are sorted by negId for determinism (F-A4-005 pattern).
       */
     private def serializeFqnMap(
-        unresolvedFqnByNegId: Map[kyo.Tasty.SymbolId, String],
+        unresolvedFqnByNegId: Dict[kyo.Tasty.SymbolId, String],
         internName: String => Int
     ): Array[Byte] =
         import kyo.Tasty.SymbolId
         val baos = new java.io.ByteArrayOutputStream(4 * 1024)
         val tmp  = new Array[Byte](4)
         // Sort by negId value for deterministic output.
-        val entries = unresolvedFqnByNegId.toSeq.sortBy(_._1.value).filter { case (_, fqn) => fqn.nonEmpty }
+        val entries = unresolvedFqnByNegId.toMap.toSeq.sortBy(_._1.value).filter { case (_, fqn) => fqn.nonEmpty }
         SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
         baos.write(tmp)
         for (negId, fqn) <- entries do
@@ -763,14 +762,14 @@ object SnapshotWriter:
       * skipped.
       */
     private def serializeSubclassIndex(
-        subclassIndex: Map[kyo.Tasty.SymbolId, Chunk[kyo.Tasty.SymbolId]],
+        subclassIndex: Dict[kyo.Tasty.SymbolId, Chunk[kyo.Tasty.SymbolId]],
         symIdToIdx: scala.collection.mutable.HashMap[Int, Int]
     ): Array[Byte] =
         import kyo.Tasty.SymbolId
         val baos = new java.io.ByteArrayOutputStream(4 * 1024)
         val tmp  = new Array[Byte](4)
         // Collect valid entries: (parentIdx, filteredChildren).
-        val entries = subclassIndex.toSeq.sortBy(_._1.value).flatMap: (parentId, children) =>
+        val entries = subclassIndex.toMap.toSeq.sortBy(_._1.value).flatMap: (parentId, children) =>
             symIdToIdx.get(parentId.value) match
                 case Some(parentIdx) =>
                     val childIdxs = children.toSeq.flatMap(cid => symIdToIdx.get(cid.value)).filter(_ >= 0)
@@ -798,13 +797,13 @@ object SnapshotWriter:
       * Entries where either SymbolId is not in the symbols array are skipped.
       */
     private def serializeCompanionIndex(
-        companionIndex: Map[kyo.Tasty.SymbolId, kyo.Tasty.SymbolId],
+        companionIndex: Dict[kyo.Tasty.SymbolId, kyo.Tasty.SymbolId],
         symIdToIdx: scala.collection.mutable.HashMap[Int, Int]
     ): Array[Byte] =
         import kyo.Tasty.SymbolId
         val baos = new java.io.ByteArrayOutputStream(4 * 1024)
         val tmp  = new Array[Byte](4)
-        val entries = companionIndex.toSeq.sortBy(_._1.value).flatMap: (symId, companionId) =>
+        val entries = companionIndex.toMap.toSeq.sortBy(_._1.value).flatMap: (symId, companionId) =>
             for
                 symIdx       <- symIdToIdx.get(symId.value)
                 companionIdx <- symIdToIdx.get(companionId.value)
@@ -842,7 +841,7 @@ object SnapshotWriter:
         t: Tasty.Type,
         symbolById: scala.collection.mutable.HashMap[Int, Tasty.Symbol],
         fqnBySymbol: mutable.HashMap[Int, String],
-        unresolvedFqnByNegId: Map[Tasty.SymbolId, String]
+        unresolvedFqnByNegId: Dict[Tasty.SymbolId, String]
     ): String =
         import Tasty.Name.asString
         t match

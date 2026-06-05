@@ -93,15 +93,15 @@ class SubclassesOfTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk(SymbolId(0), SymbolId(1), SymbolId(2), SymbolId(3)),
                 packageIds = Chunk.empty,
-                fqnIndex = Map("A" -> SymbolId(0), "B" -> SymbolId(1), "C" -> SymbolId(2), "D" -> SymbolId(3)),
-                packageIndex = Map.empty,
-                subclassIndex = Map(
+                fqnIndex = Dict("A" -> SymbolId(0), "B" -> SymbolId(1), "C" -> SymbolId(2), "D" -> SymbolId(3)),
+                packageIndex = Dict.empty,
+                subclassIndex = Dict(
                     SymbolId(0) -> Chunk(SymbolId(1)),
                     SymbolId(1) -> Chunk(SymbolId(2)),
                     SymbolId(2) -> Chunk(SymbolId(3))
                 ),
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
         }
@@ -183,11 +183,11 @@ class SubclassesOfTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk(SymbolId(0), SymbolId(1), SymbolId(2), SymbolId(3)),
                 packageIds = Chunk.empty,
-                fqnIndex = Map("T" -> SymbolId(0), "Impl1" -> SymbolId(1), "Impl2" -> SymbolId(2), "AbsImpl" -> SymbolId(3)),
-                packageIndex = Map.empty,
-                subclassIndex = Map(SymbolId(0) -> Chunk(SymbolId(1), SymbolId(2), SymbolId(3))),
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                fqnIndex = Dict("T" -> SymbolId(0), "Impl1" -> SymbolId(1), "Impl2" -> SymbolId(2), "AbsImpl" -> SymbolId(3)),
+                packageIndex = Dict.empty,
+                subclassIndex = Dict(SymbolId(0) -> Chunk(SymbolId(1), SymbolId(2), SymbolId(3))),
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
         }

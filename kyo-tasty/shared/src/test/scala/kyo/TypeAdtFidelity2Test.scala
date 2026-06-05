@@ -238,14 +238,14 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val dollarKey = cp.indices.byFqn.get("scala.reflect.Manifest$")
             dollarKey match
-                case Some(_) =>
+                case Maybe.Present(_) =>
                     val cleanKey = cp.indices.byFqn.get("scala.reflect.Manifest")
                     assert(
                         cleanKey.isDefined,
                         "scala.reflect.Manifest$ is in fqnIndex but canonical form scala.reflect.Manifest is absent; FqnNormalizer dual-index should add both"
                     )
                     succeed
-                case None =>
+                case Maybe.Absent =>
                     succeed
             end match
     }

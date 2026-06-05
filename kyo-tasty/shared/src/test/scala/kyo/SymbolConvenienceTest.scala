@@ -68,11 +68,11 @@ class SymbolConvenienceTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk(SymbolId(1)),
                 packageIds = Chunk(SymbolId(0)),
-                fqnIndex = Map("scala.collection.List" -> SymbolId(1)),
-                packageIndex = Map("scala.collection" -> SymbolId(0)),
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                fqnIndex = Dict("scala.collection.List" -> SymbolId(1)),
+                packageIndex = Dict("scala.collection" -> SymbolId(0)),
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
             cp.fullNameUnsafe(cls)
@@ -108,11 +108,11 @@ class SymbolConvenienceTest extends Test:
             rootSymbolId = SymbolId(-1),
             topLevelClassIds = Chunk(SymbolId(1)),
             packageIds = Chunk(SymbolId(0)),
-            fqnIndex = Map.empty,
-            packageIndex = Map("pkg" -> SymbolId(0)),
-            subclassIndex = Map.empty,
-            companionIndex = Map.empty,
-            moduleIndex = Map.empty,
+            fqnIndex = Dict.empty,
+            packageIndex = Dict("pkg" -> SymbolId(0)),
+            subclassIndex = Dict.empty,
+            companionIndex = Dict.empty,
+            moduleIndex = Dict.empty,
             errors = Chunk.empty
         )
         Tasty.withClasspath(cp):
@@ -133,11 +133,11 @@ class SymbolConvenienceTest extends Test:
             rootSymbolId = SymbolId(5),
             topLevelClassIds = Chunk.empty,
             packageIds = Chunk(SymbolId(5)),
-            fqnIndex = Map.empty,
-            packageIndex = Map("root" -> SymbolId(5)),
-            subclassIndex = Map.empty,
-            companionIndex = Map.empty,
-            moduleIndex = Map.empty,
+            fqnIndex = Dict.empty,
+            packageIndex = Dict("root" -> SymbolId(5)),
+            subclassIndex = Dict.empty,
+            companionIndex = Dict.empty,
+            moduleIndex = Dict.empty,
             errors = Chunk.empty
         )
         Tasty.withClasspath(cp):
@@ -160,11 +160,11 @@ class SymbolConvenienceTest extends Test:
                 rootSymbolId = SymbolId(-1),
                 topLevelClassIds = Chunk(SymbolId(0)),
                 packageIds = Chunk.empty,
-                fqnIndex = Map.empty,
-                packageIndex = Map.empty,
-                subclassIndex = Map.empty,
-                companionIndex = Map.empty,
-                moduleIndex = Map.empty,
+                fqnIndex = Dict.empty,
+                packageIndex = Dict.empty,
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
             (if m.ownerId.value == -1 then Maybe.Absent else Maybe(cp.symbol(m.ownerId))) match
@@ -190,11 +190,11 @@ class SymbolConvenienceTest extends Test:
             rootSymbolId = SymbolId(-1),
             topLevelClassIds = Chunk(SymbolId(0)),
             packageIds = Chunk.empty,
-            fqnIndex = Map.empty,
-            packageIndex = Map.empty,
-            subclassIndex = Map.empty,
-            companionIndex = Map.empty,
-            moduleIndex = Map.empty,
+            fqnIndex = Dict.empty,
+            packageIndex = Dict.empty,
+            subclassIndex = Dict.empty,
+            companionIndex = Dict.empty,
+            moduleIndex = Dict.empty,
             errors = Chunk.empty
         )
         assert((if sym.ownerId.value == -1 then Maybe.Absent else Maybe(cp.symbol(sym.ownerId))) == Maybe.Absent)
