@@ -1,0 +1,535 @@
+# 05-plan.yaml — phased execution plan: kyo-ui chart feature-completeness (14 gaps)
+# Machine-readable sibling of 05-plan.md. One entry per phase.
+# Ordering is TECHNICAL-DEPENDENCY only (what must compile/exist before what), NOT priority/severity.
+# severity_attr is a neutral reviewer attribute (from feature-completeness-gaps.md), never used to order or cut.
+# All sources land in kyo-ui/shared/src/main; all tests in kyo-ui/shared/src/test.
+# Reproduce-before-fix: per phase, the cited leaf tests (L1..L24 from 04-invariants.md) are written FIRST
+# and must FAIL for the right reason, then the fix lands, then they stay as regression guards.
+# verification_strategy: targeted (JVM only) per phase; the FINAL phase runs cross-platform-full.
+
+meta:
+  feature: charts-completeness
+  total_phases: 13
+  gaps_total: 14
+  public_decision_defaults:
+    Q-1_yScaleRight: "candidate B (dedicated yScaleRight + ChartSpec.yScaleRightOverride)"
+    Q-2_labelAllBands: "REMOVE the dead field"
+    Q-3_side: "REMOVE side + .left/.right/.top/.bottom + Side enum + fix false scaladoc"
+  byte_identity_copins_held_every_phase:
+    - "L8 (COLOR-ABSENT byte-identity; INV-004 golden unchanged)"
+    - "L12 (right-axis default Linear+nice)"
+    - "L17 (x tick-label chrome unchanged through shared helper)"
+    - "L5 / L6 / L7 (line / point / stacked-bar colorScale already correct)"
+  paths:
+    API: kyo-ui/shared/src/main/scala/kyo/UI.scala
+    LOWER: kyo-ui/shared/src/main/scala/kyo/internal/ChartLower.scala
+    SCALE: kyo-ui/shared/src/main/scala/kyo/internal/Scale.scala
+
+phases:
+
+  - id: P1
+    title: "Extract shared bar-channel helper (applyBarChannels), no behavior change"
+    gaps_closed: []   # enabling refactor; closes no gap directly (unblocks P7)
+    dependency:
+      precedes: [P7]
+      rationale: >
+        Must run before P7 (animated-bar channels) because P7 calls applyBarChannels from
+        lowerBarSimpleWithTransitions; the helper must exist and be proven byte-identical on the
+        static path first. Depends on nothing (pure extraction from current lowerBarSimple body).
+    surface_touching: false
+    files_modified:
+      - kyo-ui/shared/src/main/scala/kyo/internal/ChartLower.scala
+    tests:
+      - file: kyo-ui/shared/src/test/scala/kyo/ChartLowerTest.scala
+        leaves: []
+        note: >
+          No new leaf. Regression guard only: the EXISTING lowerBarSimple opacity/tooltip/label
+          tests must stay byte-identical after the extraction (run the existing ChartLowerTest bar
+          channel assertions; they are the reproduce signal if the extraction drifts).
+        reproduce_before_fix: false
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-ui/testOnly kyo.ChartLowerTest'"
+    estimated_loc: 40
+    estimated_wall_clock_min: 35
+    severity_attr: "n/a (enabling refactor)"
+    public_decision_dependency: none
+
+  - id: P2
+    title: "Extract shared tick-label chrome (tickLabel + withFont + toSvgAnchor), no behavior change"
+    gaps_closed: []   # enabling refactor; closes no gap directly (unblocks P8)
+    dependency:
+      precedes: [P8]
+      rationale: >
+        Must run before P8 (y-axis rotation/anchor + theme font) because P8 routes BOTH x and y
+        tick labels through the shared tickLabel helper. This phase hoists withFont (buildXAxis
+        975-977), toSvgAnchor (969-972), and the tickLabel block (1005-1018) out of buildXAxis and
+        re-routes buildXAxis through them, proving x output byte-identical BEFORE y is added.
+        Depends on nothing. tickLabel takes a RESOLVED anchor param (R-9) so buildYAxis can later
+        pass its side-default anchor.
+    surface_touching: false
+    files_modified:
+      - kyo-ui/shared/src/main/scala/kyo/internal/ChartLower.scala
+    tests:
+      - file: kyo-ui/shared/src/test/scala/kyo/ChartAxisTest.scala
+        leaves: [L17]
+        note: >
+          L17 (CO-PIN): the existing x-axis rotateTicks/anchor/font tests stay byte-identical
+          through the new shared helper. Written/confirmed FIRST as the refactor guard.
+        reproduce_before_fix: false
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-ui/testOnly kyo.ChartAxisTest'"
+    estimated_loc: 60
+    estimated_wall_clock_min: 45
+    severity_attr: "n/a (enabling refactor)"
+    public_decision_dependency: none
+
+  - id: P3
+    title: "errorBar band-centering on Band x"
+    gaps_closed: [GAP-ERRORBAR-BANDCENTER]
+    dependency:
+      precedes: [P6]
+      rationale: >
+        Standalone one-line geometry fix (lowerErrorBar px 2384: xs.apply(x) ->
+        xs.apply(x) + xs.bandwidth/2.0). Depends on nothing. Placed before P6 only because P6 adds
+        the colorScale spec param to the SAME lowerErrorBar signature; doing the geometry fix first
+        keeps the two lowerErrorBar edits sequential and conflict-free (not a logical dependency).
+    surface_touching: false
+    files_modified:
+      - kyo-ui/shared/src/main/scala/kyo/internal/ChartLower.scala
+    tests:
+      - file: kyo-ui/shared/src/test/scala/kyo/ChartLowerTest.scala
+        leaves: [L21]
+        note: >
+          L21 (NEW, reproduce-first): errorBar on a Band x; assert vertical line x1 == band-left +
+          bandwidth/2, co-aligned with a bar/point at the same category; continuous-x errorBar
+          unchanged (byte-identity edge). Fails today (left edge xs.apply(x)).
+        reproduce_before_fix: true
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-ui/testOnly kyo.ChartLowerTest'"
+    estimated_loc: 30
+    estimated_wall_clock_min: 30
+    severity_attr: minor
+    public_decision_dependency: none
+
+  - id: P4
+    title: "Grouped-bar colorScale resolution (categorical + sequential)"
+    gaps_closed: [GAP-COLOR-GROUPEDBAR]
+    dependency:
+      precedes: []
+      rationale: >
+        No signature change (spec already threaded into lowerBarGrouped at 1851; colorCats already
+        collected at 1858). Depends only on the §0.1 colorScale-vs-Absent pattern, which needs no
+        prior phase. Independent of P3; placed here to open the COLOR family with the no-signature
+        case before the signature-delta color phases (P5, P6).
+    surface_touching: false
+    files_modified:
+      - kyo-ui/shared/src/main/scala/kyo/internal/ChartLower.scala
+    tests:
+      - file: kyo-ui/shared/src/test/scala/kyo/ChartLowerTest.scala
+        leaves: [L1, L10, L8]
+        note: >
+          L1 (NEW, reproduce-first): grouped/dodged bar split by color=_.region with a categorical
+          colorScale; each dodged rect for region R fills with colorScale(R), AND equals that
+          region's legend swatch (legend<->mark agreement). Fails today (themePalette by index).
+          L10 (NEW): Sequential colorScale arm emits two distinct concrete hex fills ordered low->high,
+          never url(#...). L8 (CO-PIN): no-colorScale grouped bar stays byte-identical (Leaf 16
+          #3b82f6/#f97316; INV-004 golden unchanged) -- Absent arm is the existing by-index code verbatim.
+        reproduce_before_fix: true
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-ui/testOnly kyo.ChartLowerTest'"
+    estimated_loc: 70
+    estimated_wall_clock_min: 50
+    severity_attr: major
+    public_decision_dependency: none
+
+  - id: P5
+    title: "Non-stacked area color split + colorScale (buildSimpleAreaPath extraction)"
+    gaps_closed: [GAP-COLOR-AREA-SIMPLE]
+    dependency:
+      precedes: [P9]
+      rationale: >
+        Introduces the private buildSimpleAreaPath helper (factors the single-series path body
+        2451-2499) so the Absent-color arm calls it once and the Present-color arm calls it per
+        series, guaranteeing single-series byte-identity. P9 (highlight) depends on this because it
+        tags the per-series area paths this phase produces. The animated twin
+        (lowerAreaWithTransitions) inherits the multi-path lowerArea (same phase). Depends only on
+        the §0.1 pattern + the §0.5 overlap policy (per-series, data order, 0.7 fillOpacity).
+    surface_touching: false
+    files_modified:
+      - kyo-ui/shared/src/main/scala/kyo/internal/ChartLower.scala
+    tests:
+      - file: kyo-ui/shared/src/test/scala/kyo/ChartLowerTest.scala
+        leaves: [L4, L9, L10, L8]
+        note: >
+          L9 (NEW, reproduce-first): non-stacked area(color=_.series) over N series renders N
+          DISTINCT closed paths each fill-opacity="0.7", not one merged blob; single-series still
+          exactly ONE path at 0.7 (byte-identity edge). L4 (NEW): each per-series path fill ==
+          colorScale(series) + legend agreement. L10 (NEW): Sequential arm two distinct concrete
+          fills. L8 (CO-PIN): mark.color=Absent area output unchanged (buildSimpleAreaPath with
+          defaultColor; INV-004 golden held).
+        reproduce_before_fix: true
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-ui/testOnly kyo.ChartLowerTest'"
+    estimated_loc: 130
+    estimated_wall_clock_min: 90
+    severity_attr: major
+    public_decision_dependency: none
+
+  - id: P6
+    title: "text + errorBar colorScale resolution (spec param thread-through)"
+    gaps_closed: [GAP-COLOR-TEXT, GAP-COLOR-ERRORBAR]
+    dependency:
+      precedes: [P9, P10]
+      rationale: >
+        Adds the private spec: Maybe[ChartSpec[A]] = Absent param to lowerText (sig 2277-2283) and
+        lowerErrorBar (sig 2351-2357), updating call sites marksRegion 1709/1710 and
+        marksRegionWithTransitions 3536/3538. P9 (highlight) reuses this same spec param it adds, so
+        P9 must follow. P10 (legend margin) must follow because the margin is reserved precisely
+        BECAUSE text/errorBar now honor colorScale and render a meaningful legend (one shared
+        keep-legend decision, R-6). Runs after P3 to keep the two lowerErrorBar edits sequential.
+        Depends only on the §0.1 pattern.
+    surface_touching: false
+    files_modified:
+      - kyo-ui/shared/src/main/scala/kyo/internal/ChartLower.scala
+    tests:
+      - file: kyo-ui/shared/src/test/scala/kyo/ChartLowerTest.scala
+        leaves: [L2, L3, L10, L8]
+        note: >
+          L2 (NEW, reproduce-first): text(color=_.region) glyph fill == colorScale(region) + legend
+          agreement. L3 (NEW, reproduce-first): errorBar(color=_.region) all 3 sub-shapes (vLine,
+          caps, marker) of a row share ONE stroke == colorScale(region). L10 (NEW): Sequential arm
+          for both marks (concrete hex, no url(#...)). L8 (CO-PIN): Leaf 17/18 (ChartLowerTest
+          1692/1728) Absent-path fills/strokes byte-identical; INV-004 golden held.
+        reproduce_before_fix: true
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-ui/testOnly kyo.ChartLowerTest'"
+    estimated_loc: 90
+    estimated_wall_clock_min: 70
+    severity_attr: major
+    public_decision_dependency: none
+
+  - id: P7
+    title: "Animated simple-bar opacity/label/tooltip channels (via applyBarChannels)"
+    gaps_closed: [GAP-TRANS-BAR-CHANNELS]
+    dependency:
+      precedes: []
+      rationale: >
+        Must follow P1: it calls the applyBarChannels helper P1 extracted, applying it to the
+        lowerBarSimpleWithTransitions rect (3272-3284) before the SMIL animates attach, so the
+        static and transition paths cannot drift. Depends on P1 only.
+    surface_touching: false
+    files_modified:
+      - kyo-ui/shared/src/main/scala/kyo/internal/ChartLower.scala
+    tests:
+      - file: kyo-ui/shared/src/test/scala/kyo/ChartTransitionTest.scala
+        leaves: [L18]
+        note: >
+          L18 (NEW, reproduce-first): animated simple bar with opacity=_=>0.5 + label=_.name +
+          tooltip=_.name emits fill-opacity="0.5", a <title> child, and a label <text>, matching the
+          static lowerBarSimple values (static-vs-transition parity cross-check). No-channel
+          animated bar byte-identical (co-pin). Fails today (all three dropped on the animated path).
+        reproduce_before_fix: true
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-ui/testOnly kyo.ChartTransitionTest'"
+    estimated_loc: 60
+    estimated_wall_clock_min: 50
+    severity_attr: minor
+    public_decision_dependency: none
+
+  - id: P8
+    title: "y-axis tick rotation + anchor + theme font across ticks/titles/legend"
+    gaps_closed: [GAP-YAXIS-ROTATION, GAP-THEME-FONT]
+    dependency:
+      precedes: []
+      rationale: >
+        Must follow P2: routes buildYAxis tick labels (909-916, both left and right) through the
+        shared tickLabel helper P2 extracted, applying cfg.tickRotation, the resolved anchor
+        (side-default unless user-set, R-9), and withFont in one call. GAP-THEME-FONT lands here too
+        because font rides the same tickLabel path; withFont is additionally applied to axis TITLES
+        (buildXAxis 1024-1031, buildYAxis 927-952) and legend text (buildLegend). The two gaps share
+        the single tickLabel/withFont path, so they cannot be split without re-deriving the same
+        helper twice. Depends on P2 only.
+    surface_touching: false
+    files_modified:
+      - kyo-ui/shared/src/main/scala/kyo/internal/ChartLower.scala
+    tests:
+      - file: kyo-ui/shared/src/test/scala/kyo/ChartAxisTest.scala
+        leaves: [L14, L15, L16, L17]
+        note: >
+          L14 (NEW, reproduce-first): .yAxis(_.rotateTicks(-45)) gives each Y tick <text> a
+          Rotate(-45.0,...) transform; right Y too. L15 (NEW): .yAxis(_.anchor(Start)) sets Y tick
+          text-anchor=Start; with no anchor the left Y stays side-default End (R-9 co-pin). L16
+          (NEW): .theme(_.font("monospace").fontSize(14)) puts font-family="monospace" +
+          font-size="14px" on a Y tick, an axis title, and a legend label; default theme adds no
+          font attr (co-pin). L17 (CO-PIN): x tick rotation/anchor/font stay byte-identical.
+        reproduce_before_fix: true
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-ui/testOnly kyo.ChartAxisTest'"
+    estimated_loc: 110
+    estimated_wall_clock_min: 80
+    severity_attr: major
+    public_decision_dependency: none
+
+  - id: P9
+    title: "Highlight coverage on line/area (series-level) + text/errorBar (per-row)"
+    gaps_closed: [GAP-HIGHLIGHT-COVERAGE]
+    dependency:
+      precedes: []
+      rationale: >
+        Must follow P6 (reuses the spec param P6 adds to lowerText/lowerErrorBar; adds a parallel
+        highlight: Maybe[Highlight[A]] = Absent param to lowerLine/lowerArea/lowerText/lowerErrorBar)
+        and P5 (tags the per-series area paths P5 produces). Granularity per R-4: series-level for
+        line/area (tag the per-series path with its representative row), per-row for text/errorBar.
+        withHighlight(_, Absent) is a no-op so non-interactive charts are byte-identical.
+    surface_touching: false
+    files_modified:
+      - kyo-ui/shared/src/main/scala/kyo/internal/ChartLower.scala
+    tests:
+      - file: kyo-ui/shared/src/test/scala/kyo/ChartInteractionTest.scala
+        leaves: [L20]
+        note: >
+          L20 (NEW, reproduce-first): .onSelect(ref).interaction(_.highlightSelect); driving the ref
+          to a known datum, the active line/area (series-level) and text/errorBar (per-row) element
+          gets stroke="#000000" + stroke-width="2px" and exactly the active element does
+          (count==expected); a non-active element does not. Before selection, no #000000 on those
+          marks. Bar/point highlight tests stay green and unchanged (co-pin). Fails today (no
+          highlight on those four marks).
+        reproduce_before_fix: true
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-ui/testOnly kyo.ChartInteractionTest'"
+    estimated_loc: 110
+    estimated_wall_clock_min: 80
+    severity_attr: minor
+    public_decision_dependency: none
+
+  - id: P10
+    title: "Reserve legend margin for color-bearing text/errorBar marks"
+    gaps_closed: [GAP-LEGEND-MARGIN-TEXT-ERRORBAR]
+    dependency:
+      precedes: []
+      rationale: >
+        Must follow P6: the hasLegend predicate (buildLayout 278-285) is extended to return
+        m.color.isDefined for Mark.Text and Mark.ErrorBar precisely BECAUSE P6 made those marks
+        honor colorScale and render a meaningful legend (R-6, one shared keep-legend decision). If
+        P6 had not landed, reserving the strip would reserve space for a legend that means nothing.
+        Depends on P6 only.
+    surface_touching: false
+    files_modified:
+      - kyo-ui/shared/src/main/scala/kyo/internal/ChartLower.scala
+    tests:
+      - file: kyo-ui/shared/src/test/scala/kyo/ChartLowerTest.scala
+        leaves: [L22]
+        note: >
+          L22 (NEW, reproduce-first): a chart whose ONLY color-bearing mark is text(color=_.region)
+          reserves the top strip (hasLegend==true): assert a concrete top reference (top tick /
+          baseline / first-glyph y) == reserved-strip y (the LegendReservedH/topPad constant; the
+          plan pins the EXACT readback element + pixel per 04-invariants concrete-assertability flag).
+          No-color text/errorBar keeps hasLegend==false, un-shifted y (co-pin). Fails today (overlap,
+          topPad 0).
+        reproduce_before_fix: true
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-ui/testOnly kyo.ChartLowerTest'"
+    estimated_loc: 40
+    estimated_wall_clock_min: 45
+    severity_attr: minor
+    public_decision_dependency: none
+
+  - id: P11
+    title: "Right y-axis scale overrides + right-axis grid (resolveYScale extraction, yScaleRight public surface)"
+    gaps_closed: [GAP-RIGHTY-SCALE, GAP-RIGHTY-GRID]
+    dependency:
+      precedes: []
+      rationale: >
+        GAP-RIGHTY-SCALE adds the public yScaleRight builder + ChartSpec.yScaleRightOverride field
+        (candidate B default) and factors the left Y resolution (708-741) into a private resolveYScale
+        used for BOTH axes, plus the new yRightExtentNoZero helper (R-3) for the log-right arm.
+        GAP-RIGHTY-GRID is bundled here and runs AFTER the scale fix WITHIN the phase because the
+        right grid needs the resolved right scale's ticks to exist (the gridline y-positions are the
+        right scale tick pixels); both also touch the same right-axis / isRight branch in buildYAxis.
+        Left-wins double-draw tie-break per R-10. The 4 resolveAllScales call sites (3759/3805/3875/
+        3957) pass the new override + right axis cfg. Depends on no earlier color/chrome phase (the
+        right-scale path is disjoint); placed here so the one public-surface phase is isolated and
+        its surface-design audit (flow-api-design T2) is self-contained.
+    surface_touching: true
+    files_modified:
+      - kyo-ui/shared/src/main/scala/kyo/UI.scala
+      - kyo-ui/shared/src/main/scala/kyo/internal/ChartLower.scala
+    tests:
+      - file: kyo-ui/shared/src/test/scala/kyo/internal/ScaleTest.scala
+        leaves: [L11, L12, L19]
+        note: >
+          L11a (NEW, reproduce-first): resolveYScale readback -- kind==Log under .yScaleRight(_.log),
+          clamped/padded domain under withClamp/withPad, reversed range under .yAxisRight(_.reverse).
+          L12b (CO-PIN): resolveYScale with default args == Scale.fit(Linear, rExt, baseline, plotY,
+          nice=true) (old hardcoded call). L19a (NEW): .yScale(_.log).yScaleRight(_.linear(0,1)) ->
+          left kind Log AND right kind Linear simultaneously (disjoint fields).
+        reproduce_before_fix: true
+      - file: kyo-ui/shared/src/test/scala/kyo/ChartAxisTest.scala
+        leaves: [L11, L12, L13, L19]
+        note: >
+          L11b (NEW, reproduce-first): a right-bound datum's rendered y-pixel matches the log-scaled
+          pixel, not the linear one. L13 (NEW, reproduce-first): .yAxisRight(_.grid) with left grid
+          OFF emits right horizontal gridlines (count==rightTickCount at the right tick y-positions);
+          with BOTH grids set, count==leftTickCount only (left-wins, no doubled lines). L12a (CO-PIN):
+          existing dual-axis test (ChartAxisTest:268, value 10 -> right pixel ~230) stays green.
+          L19b (NEW): per-axis pixel independence (left-bound datum log, right-bound datum linear).
+        reproduce_before_fix: true
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-ui/testOnly kyo.ScaleTest kyo.ChartAxisTest'"
+    estimated_loc: 200
+    estimated_wall_clock_min: 150
+    severity_attr: "GAP-RIGHTY-SCALE major; GAP-RIGHTY-GRID minor"
+    public_decision_dependency:
+      - "Q-1 (yScaleRight): DEFAULT candidate B (dedicated yScaleRight + yScaleRightOverride). If the
+         user picks candidate A in 03b (reuse yScaleOverride for both axes): this phase REMOVES the
+         yScaleRight builder + yScaleRightOverride field; resolveYScale reads spec.yScaleOverride for
+         BOTH axes; the yScale scaladoc is amended to 'both axes'; L19 (independence) is DROPPED and
+         L11 is re-expressed against the shared override; a 02-public-api §6 re-audit is required."
+
+  - id: P12
+    title: "Remove dead AxisConfig knobs (side + setters + Side enum + labelAllBands), fix false scaladoc"
+    gaps_closed: [GAP-AXISCONFIG-SIDE, GAP-LABELALLBANDS]
+    dependency:
+      precedes: [P13]
+      rationale: >
+        Both are dead-knob REMOVALs on the SAME AxisConfig case class, so they land as one
+        AxisConfig-cleanup unit (the side removal changes AxisConfig.default arity; labelAllBands
+        removal does not, but both edit the same declaration). Independent of all rendering phases
+        (nothing reads either knob). Must precede P13 because P13's cross-platform clean build + the
+        README doctest gate must run AFTER the ~84-site setter rewrite this phase performs, so the
+        green is real (no stale .tasty/.sjsir). Carries the full call-site rewrite: ~42 demos +
+        ~36 chart tests + the two named test-site edits ChartSpecTest:90 and ChartAxisTest:1068.
+    surface_touching: true
+    files_modified:
+      - kyo-ui/shared/src/main/scala/kyo/UI.scala
+    tests:
+      - file: kyo-ui/shared/src/test/scala/kyo/ChartSpecTest.scala
+        leaves: [L24]
+        note: >
+          L24 (NEW, reproduce-first as a compile/API-shape guard): rewrite ChartSpecTest:90-97 (which
+          today reads spec.yAxisCfg.side and uses .left) to assert the surviving real behavior
+          .yAxis(_.grid.ticks(5)) => showGrid==true, tickCount==5, with the .side assertion DROPPED
+          (it verified a knob that did nothing). Module-wide grep guard: no source/test references
+          .side, Side., or the four removed setters. The false scaladoc (UI.scala:2489) sentence is
+          removed; .xAxis(_.top) no longer compiles (silent no-op -> compile error).
+        reproduce_before_fix: true
+      - file: kyo-ui/shared/src/test/scala/kyo/ChartAxisTest.scala
+        leaves: [L23]
+        note: >
+          L23 (NEW, reproduce-first as a compile/API-shape guard): labelAllBands field removed from
+          AxisConfig; ChartAxisTest:1068 test NAME corrected to drop the now-meaningless
+          "(labelAllBands default)" parenthetical; the 7-label render assertion is UNCHANGED and stays
+          green as the regression guard (band labeling unaffected by the removal).
+        reproduce_before_fix: true
+      - file: "kyo-ui/shared/src/test/scala/kyo/*Chart*.scala, kyo-ui/shared/src/test/scala/demo/*.scala"
+        leaves: []
+        note: >
+          ~36 chart-test + ~42 demo setter chain-starts rewritten: .yAxis(_.left.grid) ->
+          .yAxis(_.grid); .xAxis(_.bottom) -> dropped (positional default); .yAxisRight(_.right...) ->
+          .yAxisRight(...). These are mechanical edits; the existing assertions in those tests are the
+          regression guards (no assertion weakened). Do NOT touch LegendConfig .legend(_.top) or
+          Margins .margins(_.left(...)) -- distinct setters (R-2 disambiguation).
+        reproduce_before_fix: false
+    verification_strategy: targeted
+    verification_command: "sbt 'kyo-ui/test'"
+    estimated_loc: 180
+    estimated_wall_clock_min: 140
+    severity_attr: "GAP-AXISCONFIG-SIDE minor; GAP-LABELALLBANDS minor"
+    public_decision_dependency:
+      - "Q-2 (labelAllBands): DEFAULT REMOVE. If the user picks WIRE in 03b: this phase instead ADDS a
+         band-label thinning policy + setter + an N hint field and wires buildXAxis/buildYAxis tick
+         loops (a new feature); L23 changes from a removal guard to a thinning-behavior assertion; a
+         02-public-api §6 re-audit is required."
+      - "Q-3 (side): DEFAULT REMOVE (+ delete Side enum + fix false scaladoc). If the user picks
+         KEEP-AS-MARKER in 03b: this phase keeps the four setters + Side enum and edits ONLY the false
+         scaladoc sentence (2489); the ~84-site rewrite is DROPPED; ChartSpecTest:90 keeps the .left
+         call but the .side assertion still drops; L24 becomes a scaladoc-correctness guard, not a
+         removal guard. If the user picks WIRE: this phase builds positional placement (a new feature)
+         and a §6 re-audit is required."
+
+  - id: P13
+    title: "README Charts-section + doctest update, then cross-platform-full clean-build gate"
+    gaps_closed: []   # final integration gate; no new gap (closes the README/doctest + cross-platform obligation)
+    dependency:
+      precedes: []
+      rationale: >
+        FINAL phase. Must follow EVERY prior phase because (a) it updates the README Charts examples
+        for the public surface deltas from P11 (yScaleRight) and P12 (removed .left/.right/.top/.bottom
+        setters at README lines 1088/1168/1169/1186/1187/1291, R-2) and re-runs sbt kyo-ui/doctest;
+        and (b) it runs the cross-platform-full gate (JVM + JS + Native CLEAN build green) which can
+        only certify the whole feature once all source changes are in. Beware the stale .sjsir/.tasty
+        false green (00-guides Trap 6): force a clean compile of the dependency chain on each platform;
+        a no-"Compiling" log is RED. Also flags to the user the kyo-ui/CONTRIBUTING.md GAP (do NOT
+        create it mid-campaign; 00-guides Update Obligation 1).
+    surface_touching: true   # README is public-facing documentation of the surface; no new code surface
+    files_modified:
+      - kyo-ui/README.md
+    tests:
+      - file: kyo-ui/README.md
+        leaves: []
+        note: >
+          Doctest gate: every fenced ```scala block compiles via sbt kyo-ui/doctest. Rewrite the
+          removed-setter blocks (1088 .yAxis(_.left...), 1168 .xAxis(_.bottom...), 1169/1186
+          .yAxis(_.left...), 1187 .yAxisRight(_.right...), 1291 .xAxis(_.bottom...)) to chains without
+          the removed setter (e.g. .yAxis(_.grid.ticks(4)), .xAxis(_.grid.ticks(5))); add/adjust a
+          yScaleRight example if the Charts section demonstrates dual-axis scales. Do NOT touch
+          .legend(_.top) (1089/1170) or .margins(_.left(...)) -- distinct setters (R-2).
+        reproduce_before_fix: false
+    verification_strategy: cross-platform-full
+    verification_command: >
+      sbt 'clean' 'kyo-ui/doctest' 'kyo-ui/test' 'kyo-uiJS/test' 'kyo-uiNative/test'
+      (force clean recompile per platform; a no-"Compiling" log is RED -- 00-guides Trap 6)
+    estimated_loc: 60
+    estimated_wall_clock_min: 120
+    severity_attr: "n/a (final integration + doc gate)"
+    public_decision_dependency:
+      - "If Q-1 resolves to candidate A: drop any yScaleRight README example. If Q-3 resolves to
+         KEEP-AS-MARKER: the removed-setter README rewrites at 1088/1168/1169/1186/1187/1291 are NOT
+         needed (setters retained); only verify doctest stays green."
+
+# ---------------------------------------------------------------------------
+# Coverage map: every one of the 14 gaps -> exactly one phase deliverable (NO scope cuts).
+coverage:
+  GAP-ERRORBAR-BANDCENTER: P3
+  GAP-COLOR-GROUPEDBAR: P4
+  GAP-COLOR-AREA-SIMPLE: P5
+  GAP-COLOR-TEXT: P6
+  GAP-COLOR-ERRORBAR: P6
+  GAP-TRANS-BAR-CHANNELS: P7
+  GAP-YAXIS-ROTATION: P8
+  GAP-THEME-FONT: P8
+  GAP-HIGHLIGHT-COVERAGE: P9
+  GAP-LEGEND-MARGIN-TEXT-ERRORBAR: P10
+  GAP-RIGHTY-SCALE: P11
+  GAP-RIGHTY-GRID: P11
+  GAP-AXISCONFIG-SIDE: P12
+  GAP-LABELALLBANDS: P12
+
+# Phases P1 and P2 are enabling refactors (shared helpers) and P13 is the final gate; they close no
+# gap directly but every gap above is covered. 14/14 gaps mapped, none deferred/dropped.
+
+leaf_coverage:
+  L1: P4
+  L2: P6
+  L3: P6
+  L4: P5
+  L5: [P4, P5, P6]   # line categorical co-pin re-asserted alongside each color phase
+  L6: [P4, P5, P6]   # point categorical co-pin
+  L7: [P4]           # stacked-bar categorical co-pin (grouped-bar phase mirror)
+  L8: [P4, P5, P6]   # COLOR-ABSENT byte-identity + INV-004 golden; held every color phase
+  L9: P5
+  L10: [P4, P5, P6]  # sequential arm asserted in each color phase
+  L11: P11
+  L12: P11
+  L13: P11
+  L14: P8
+  L15: P8
+  L16: P8
+  L17: [P2, P8]      # x tick-label chrome co-pin (P2 extract, P8 y added)
+  L18: P7
+  L19: P11
+  L20: P9
+  L21: P3
+  L22: P10
+  L23: P12
+  L24: P12
