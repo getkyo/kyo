@@ -1108,6 +1108,9 @@ private[kyo] object HtmlRenderer:
                 s.animTo.foreach(v => svgAttr(sb, "to", v))
                 s.animValues.foreach(v => svgAttr(sb, "values", v))
                 s.animDur.foreach(v => svgAttr(sb, "dur", v))
+                s.animCalcMode.foreach(v => svgAttr(sb, "calcMode", v))
+                s.animKeyTimes.foreach(v => svgAttr(sb, "keyTimes", v))
+                s.animKeySplines.foreach(v => svgAttr(sb, "keySplines", v))
                 s.animRepeatCount.foreach(v => svgAttr(sb, "repeatCount", v))
                 s.animBegin.foreach(v => svgAttr(sb, "begin", v))
             case _: Svg.AnimateTransform =>

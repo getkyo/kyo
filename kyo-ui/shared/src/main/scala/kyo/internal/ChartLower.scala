@@ -3470,6 +3470,13 @@ private[kyo] object ChartLower:
         else s"${ms / 1000.0}s"
     end formatDur
 
+    /** Cubic Bezier control points for the easeInOutCubic timing curve, in SMIL `keySplines` form
+      * (`x1 y1 x2 y2`). With `calcMode="spline"` + `keyTimes="0;1"` this eases the single from->to segment
+      * so the transition accelerates out of the start and decelerates into the end instead of moving
+      * linearly. Matches the `AnimateConfig` scaladoc's documented ease-in-out-cubic curve.
+      */
+    private val EaseInOutCubicSplines = "0.645 0.045 0.355 1"
+
     /** Build one SMIL `Svg.Animate` child that animates a single numeric attribute over the config duration.
       *
       * Uses `begin("indefinite")` so the animation does NOT auto-play against the shared SVG document
@@ -3485,6 +3492,9 @@ private[kyo] object ChartLower:
             .from(from)
             .to(to)
             .dur(dur)
+            .calcMode("spline")
+            .keyTimes("0;1")
+            .keySplines(EaseInOutCubicSplines)
             .begin("indefinite")
             .repeatCount("1")
     end smilAnimate
@@ -3501,6 +3511,9 @@ private[kyo] object ChartLower:
             .from(fromD)
             .to(toD)
             .dur(dur)
+            .calcMode("spline")
+            .keyTimes("0;1")
+            .keySplines(EaseInOutCubicSplines)
             .begin("indefinite")
             .repeatCount("1")
     end smilAnimatePath

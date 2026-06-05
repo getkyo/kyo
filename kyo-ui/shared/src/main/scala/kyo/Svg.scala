@@ -422,6 +422,9 @@ object Svg:
         animDur: Maybe[String] = Absent,
         animRepeatCount: Maybe[String] = Absent,
         animBegin: Maybe[String] = Absent,
+        animCalcMode: Maybe[String] = Absent,
+        animKeyTimes: Maybe[String] = Absent,
+        animKeySplines: Maybe[String] = Absent,
         animType: Maybe[TransformType] = Absent
     )
 
@@ -1084,6 +1087,9 @@ object Svg:
         def dur(v: String): Animate           = withSvg(svgAttrs.copy(animDur = Present(v)))
         def repeatCount(v: String): Animate   = withSvg(svgAttrs.copy(animRepeatCount = Present(v)))
         def begin(v: String): Animate         = withSvg(svgAttrs.copy(animBegin = Present(v)))
+        def calcMode(v: String): Animate      = withSvg(svgAttrs.copy(animCalcMode = Present(v)))
+        def keyTimes(v: String): Animate      = withSvg(svgAttrs.copy(animKeyTimes = Present(v)))
+        def keySplines(v: String): Animate    = withSvg(svgAttrs.copy(animKeySplines = Present(v)))
     end Animate
 
     final case class AnimateTransform(svgAttrs: SvgAttrs = SvgAttrs(), attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using

@@ -122,6 +122,13 @@ class ChartMorphTest extends Test:
                 html.contains("begin=\"indefinite\"") && !html.contains("begin=\"0s\""),
                 s"Expected begin=indefinite (not 0s) so the runtime can start the tween on insert:\n$html"
             )
+            // The transition eases (ease-in-out-cubic) rather than moving linearly: calcMode="spline"
+            // plus keyTimes/keySplines for the single from->to segment. Without these, SMIL interpolates
+            // linearly despite the .ease(...) API name.
+            assert(
+                html.contains("calcMode=\"spline\"") && html.contains("keySplines=\"0.645 0.045 0.355 1\""),
+                s"Expected ease-in-out-cubic easing (calcMode=spline + keySplines), not linear:\n$html"
+            )
             // The from string must be the rendered d of the initial path.
             assert(
                 html.contains("from=\"M200 335 L480 230\""),
