@@ -1251,4 +1251,165 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
+    // ---- Phase-2 leaf 1: emit writes one search-index.json per prefix next to manifest.json (INV-004) ----
+
+    "emit writes one search-index.json per prefix next to manifest.json (INV-004)" in run {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(vWithModules), out, bundleDir)
+            exists    <- (out / "v1.0.0-RC2" / "search-index.json").exists
+            latestEx  <- (out / "latest" / "search-index.json").exists
+            json      <- readFile(out / "v1.0.0-RC2" / "search-index.json")
+        yield
+            assert(exists, "v1.0.0-RC2/search-index.json must exist next to manifest.json")
+            assert(latestEx, "latest/search-index.json must exist")
+            assert(json.startsWith("["), s"search-index.json must be a JSON array: $json")
+            assert(json.endsWith("]"), s"search-index.json must end with ]: $json")
+            // One object per module.
+            assert(json.contains("\"slug\": \"kyo-data\""), s"search-index must carry kyo-data: $json")
+            assert(json.contains("\"slug\": \"kyo-kernel\""), s"search-index must carry kyo-kernel: $json")
+        end for
+    }
+
+    // ---- Phase-2 leaf 2: each section carries level + text + slug + snippet (INV-004) ----
+
+    "each section in search-index.json carries level, text, slug, and snippet" in run {
+        val readme = "## Fibers and forks\nFibers are lightweight threads.\n### Interruption\nInterrupt a fiber.\n"
+        val mod    = WebsiteModule("kyo-async", "Foundation", "kyo-async", readme, WebsiteModule.Platforms(true, true, true))
+        val content =
+            WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(content), out, bundleDir)
+            json      <- readFile(out / "v1.0.0" / "search-index.json")
+        yield
+            assert(json.contains("\"text\": \"Fibers and forks\""), s"first section text missing: $json")
+            assert(json.contains("\"slug\": \"fibers-and-forks\""), s"first section slug missing: $json")
+            assert(json.contains("\"level\": 2"), s"first section level missing: $json")
+            assert(json.contains("Fibers are lightweight threads"), s"first section snippet missing: $json")
+            assert(json.contains("\"text\": \"Interruption\""), s"second section text missing: $json")
+            assert(json.contains("\"slug\": \"interruption\""), s"second section slug missing: $json")
+            assert(json.contains("\"level\": 3"), s"second section level missing: $json")
+            assert(json.contains("Interrupt a fiber"), s"second section snippet missing: $json")
+            // Document order: fibers-and-forks before interruption.
+            assert(json.indexOf("fibers-and-forks") < json.indexOf("interruption"), "sections must be in document order")
+        end for
+    }
+
+    // ---- Phase-2 leaf 3: snippet <= 160 chars, word-boundary, no ellipsis ----
+
+    "snippet is at most 160 chars, word-boundary truncated, and has no ellipsis" in run {
+        // Produce a prose block that exceeds 160 characters.
+        val longProse = ("The quick brown fox jumps over the lazy dog " * 5).trim
+        val readme    = s"## Section\n$longProse\n"
+        val mod       = WebsiteModule("kyo-long", "Foundation", "kyo-long", readme, WebsiteModule.Platforms(true, true, true))
+        val content =
+            WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(content), out, bundleDir)
+            json      <- readFile(out / "v1.0.0" / "search-index.json")
+        yield
+            // Extract the snippet value from the JSON.
+            val snippetKey = "\"snippet\": \""
+            val sk         = json.indexOf(snippetKey)
+            assert(sk >= 0, s"snippet field not found: $json")
+            val from    = sk + snippetKey.length
+            var i       = from
+            var snippet = ""
+            while i < json.length && json.charAt(i) != '"' do i += 1
+            snippet = json.substring(from, i)
+            assert(snippet.length <= 160, s"snippet must be at most 160 chars, got ${snippet.length}: $snippet")
+            assert(!snippet.endsWith("..."), s"snippet must not end with ...: $snippet")
+            assert(!snippet.endsWith("…"), s"snippet must not end with ellipsis char: $snippet")
+            // The snippet must land on a whole-word boundary: it must be a prefix of the
+            // whitespace-collapsed source prose, and the character at position snippet.length
+            // in the collapsed string must be whitespace (proving the cut did not split a word).
+            val collapsed = longProse.replaceAll("\\s+", " ").trim
+            assert(
+                collapsed.startsWith(snippet),
+                s"snippet must be a prefix of the collapsed prose: collapsed='$collapsed', snippet='$snippet'"
+            )
+            assert(
+                snippet.length < collapsed.length && collapsed.charAt(snippet.length).isWhitespace,
+                s"character after cut must be whitespace (whole-word boundary): collapsed.charAt(${snippet.length})='${
+                        if snippet.length < collapsed.length then collapsed.charAt(snippet.length) else '?'
+                    }'"
+            )
+        end for
+    }
+
+    // ---- Phase-2 leaf 4: heading-less module emits sections [] ----
+
+    "a heading-less module emits sections [] in search-index.json" in run {
+        val readme = "Prose only, no headings.\n"
+        val mod    = WebsiteModule("kyo-noh", "Foundation", "kyo-noh", readme, WebsiteModule.Platforms(true, true, true))
+        val content =
+            WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(content), out, bundleDir)
+            json      <- readFile(out / "v1.0.0" / "search-index.json")
+        yield
+            assert(json.contains("\"slug\": \"kyo-noh\""), s"module slug must be present: $json")
+            assert(json.contains("\"sections\": []"), s"heading-less module must emit empty sections: $json")
+        end for
+    }
+
+    // ---- Phase-2 leaf 5: manifest.json is byte-unchanged after adding search-index emit ----
+
+    "manifest.json is byte-unchanged after adding the search-index emit" in run {
+        // Golden string: the exact deterministic output of writeManifest for vWithModules
+        // (two modules, kyo-data then kyo-kernel, each with their own TOC from the fixture READMEs).
+        // This guards against any future manifest reformatting and proves the search-index emit is
+        // purely additive (the manifest bytes are identical before and after adding writeSearchIndex).
+        val expectedManifest =
+            """|[
+               |  {"slug": "kyo-data", "group": "Foundation", "title": "kyo-data", "prev": null, "next": "kyo-kernel", "toc": [{"level": 1, "text": "kyo-data", "slug": "kyo-data"}, {"level": 2, "text": "Overview", "slug": "overview"}]},
+               |  {"slug": "kyo-kernel", "group": "Foundation", "title": "kyo-kernel", "prev": "kyo-data", "next": null, "toc": [{"level": 1, "text": "kyo-kernel", "slug": "kyo-kernel"}, {"level": 2, "text": "Effects", "slug": "effects"}]}
+               |]""".stripMargin
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(vWithModules), out, bundleDir)
+            manifest  <- readFile(out / "v1.0.0-RC2" / "manifest.json")
+            siExists  <- (out / "v1.0.0-RC2" / "search-index.json").exists
+        yield
+            assert(
+                manifest == expectedManifest,
+                s"manifest.json must be byte-identical to the pre-campaign golden string.\nExpected:\n$expectedManifest\nActual:\n$manifest"
+            )
+            assert(siExists, "search-index.json must be a separate file next to manifest.json")
+        end for
+    }
+
+    // ---- Phase-2 leaf 6: search-index.json escapes JSON-special characters ----
+
+    "search-index.json escapes JSON-special characters in fields" in run {
+        val headingText = "Results: \"quoted\" & <angle>"
+        val snippetText = "See the reference for more."
+        val readme      = s"## $headingText\n$snippetText\n"
+        val mod         = WebsiteModule("kyo-esc", "Foundation", "kyo-esc", readme, WebsiteModule.Platforms(true, true, true))
+        val content =
+            WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(content), out, bundleDir)
+            json      <- readFile(out / "v1.0.0" / "search-index.json")
+        yield
+            // The JSON must not contain an unescaped double-quote that would break the array.
+            // Verify the text field carries properly escaped quotes.
+            assert(json.contains("\\\"quoted\\\""), s"double quotes must be escaped in heading text: $json")
+            // The file must be a valid JSON array (starts with [ and ends with ]).
+            assert(json.startsWith("["), s"must start with [: $json")
+            assert(json.endsWith("]"), s"must end with ]: $json")
+            assert(json.contains("\"slug\": \"kyo-esc\""), s"module slug must be present: $json")
+        end for
+    }
+
 end WebsiteGeneratorTest

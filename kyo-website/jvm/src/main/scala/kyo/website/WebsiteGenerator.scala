@@ -117,6 +117,7 @@ object WebsiteGenerator:
             _ <- emitIntroPage(c, versions, prefix, outDir, isCurrentLatest)
             _ <- Kyo.foreachDiscard(modules)(m => emitModulePage(c, versions, prefix, m, outDir, isCurrentLatest))
             _ <- writeManifest(c, prefix, outDir)
+            _ <- writeSearchIndex(c, prefix, outDir)
         yield ()
         end for
     end emitDocs
@@ -383,6 +384,35 @@ object WebsiteGenerator:
                 m.title
             )}", "prev": $prevJson, "next": $nextJson, "toc": $tocJson}"""
     end manifestEntry
+
+    private val SnippetMaxChars: Int = 160
+
+    /** Serialize the version's modules to `<prefix>/search-index.json` as a flat JSON array of
+      * module objects, each carrying `slug`, `title`, `group`, and a `sections` array. Each section
+      * carries `level`, `text`, `slug`, and `snippet` for every heading in document order. A module
+      * with no headings emits `"sections": []`. The emit is additive: manifest.json and all other
+      * files are byte-unchanged.
+      */
+    private def writeSearchIndex(c: WebsiteContent, prefix: String, outDir: Path)(using Frame): Unit < (Sync & Abort[WebsiteException]) =
+        val modules = c.groups.flatMap(_.modules)
+        for
+            entries <- Kyo.foreach(modules.toSeq) { m =>
+                DocsMarkdownRender.sectionSnippets(m.readme, SnippetMaxChars).map(sections => searchEntryJson(m, sections))
+            }
+            json = if entries.isEmpty then "[]" else entries.mkString("[\n", ",\n", "\n]")
+            _ <- writeString(s"$prefix/search-index.json", outDir / prefix / "search-index.json", json)
+        yield ()
+        end for
+    end writeSearchIndex
+
+    private def searchEntryJson(m: WebsiteModule, sections: Chunk[(DocsMarkdown.Heading, String)]): String =
+        val sectionsJson = sections.toSeq.map { case (h, snippet) => sectionJson(h, snippet) }.mkString("[", ", ", "]")
+        s"""  {"slug": "${escJson(m.slug)}", "title": "${escJson(m.title)}", "group": "${escJson(m.group)}", "sections": $sectionsJson}"""
+    end searchEntryJson
+
+    private def sectionJson(h: DocsMarkdown.Heading, snippet: String): String =
+        s"""{"level": ${h.level}, "text": "${escJson(h.text)}", "slug": "${escJson(h.slug)}", "snippet": "${escJson(snippet)}"}"""
+    end sectionJson
 
     // ---- Boot islands (first-paint payload; the schema DocsClient parses) ----
 

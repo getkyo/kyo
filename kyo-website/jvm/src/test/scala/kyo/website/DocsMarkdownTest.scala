@@ -841,4 +841,57 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
+    // ---- Phase-2 leaf 7: sectionSnippets returns one pair per heading in document order ----
+
+    "sectionSnippets returns one pair per heading in document order with slugs matching parseArticle" in run {
+        val source = "## Alpha\nAlpha text.\n### Beta\nBeta.\n## Gamma\nGamma text.\n"
+        for
+            snippets <- DocsMarkdownRender.sectionSnippets(source, 160)
+            rendered <- DocsMarkdownRender.transpile(source)
+        yield
+            assert(snippets.size == 3, s"expected 3 pairs, got ${snippets.size}: $snippets")
+            val (h0, s0) = snippets(0)
+            val (h1, s1) = snippets(1)
+            val (h2, s2) = snippets(2)
+            assert(h0.level == 2, s"first heading must be level 2: $h0")
+            assert(h0.text == "Alpha", s"first heading text must be Alpha: $h0")
+            assert(h0.slug == "alpha", s"first heading slug must be alpha: $h0")
+            assert(h1.level == 3, s"second heading must be level 3: $h1")
+            assert(h1.text == "Beta", s"second heading text must be Beta: $h1")
+            assert(h1.slug == "beta", s"second heading slug must be beta: $h1")
+            assert(h2.level == 2, s"third heading must be level 2: $h2")
+            assert(h2.text == "Gamma", s"third heading text must be Gamma: $h2")
+            assert(h2.slug == "gamma", s"third heading slug must be gamma: $h2")
+            // Slugs must match parseArticle's slugs for the same headings in the same order.
+            val articleSlugs = rendered.headings.map(_.slug).toSeq
+            val snippetSlugs = snippets.map(_._1.slug).toSeq
+            assert(snippetSlugs == articleSlugs, s"slugs must match parseArticle: snippetSlugs=$snippetSlugs articleSlugs=$articleSlugs")
+        end for
+    }
+
+    // ---- Phase-2 leaf 8: sectionSnippets excludes fenced code from the snippet ----
+
+    "sectionSnippets excludes fenced code blocks from the snippet" in run {
+        val source = "## Section\n```\nxyzzy\n```\n"
+        for snippets <- DocsMarkdownRender.sectionSnippets(source, 160)
+        yield
+            assert(snippets.size == 1, s"expected 1 pair: $snippets")
+            val (_, snippet) = snippets(0)
+            assert(!snippet.contains("xyzzy"), s"fenced code must not leak into snippet: $snippet")
+            assert(snippet == "", s"snippet must be empty when only block is a fence: $snippet")
+        end for
+    }
+
+    // ---- Phase-2 leaf 9: a heading with no following prose maps to an empty snippet ----
+
+    "a heading with no following prose maps to an empty snippet" in run {
+        val source = "## First\n## Second\n"
+        for snippets <- DocsMarkdownRender.sectionSnippets(source, 160)
+        yield
+            assert(snippets.size == 2, s"expected 2 pairs: $snippets")
+            val (_, snippet0) = snippets(0)
+            assert(snippet0 == "", s"first heading with no prose must have empty snippet: $snippet0")
+        end for
+    }
+
 end DocsMarkdownTest

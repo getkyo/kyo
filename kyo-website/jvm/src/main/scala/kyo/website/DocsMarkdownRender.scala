@@ -90,6 +90,80 @@ object DocsMarkdownRender:
             html <- renderArticleHtml(t.article)
         yield t.copy(articleHtml = html)
 
+    /** Walk the block list of a README source and return one `(Heading, snippet)` pair per heading.
+      *
+      * Each heading accumulates the stripped prose text from the blocks that follow it up to the
+      * next heading. Fenced code blocks and raw HTML embeds are excluded from the snippet. The
+      * snippet is word-boundary truncated at `maxChars` with no ellipsis appended.
+      *
+      * The slug deduplication follows the same algorithm as `parseArticle` (local `slugCounts` map,
+      * count 0 yields raw, count N >= 1 yields `$raw-${count+1}`), so the returned slugs match the
+      * article anchor ids for the same source string.
+      *
+      * @param source
+      *   The Markdown source. May be empty; returns `Chunk.empty` for blank or heading-less input.
+      * @param maxChars
+      *   Maximum snippet length in characters; truncates at the last word boundary at or before this
+      *   limit.
+      */
+    private[website] def sectionSnippets(source: String, maxChars: Int)(using Frame): Chunk[(DocsMarkdown.Heading, String)] < Sync =
+        Sync.defer {
+            val cleaned    = stripDoctest(source)
+            val blocks     = splitBlocks(cleaned)
+            val out        = new mutable.ArrayBuffer[(DocsMarkdown.Heading, String)]()
+            val slugCounts = new mutable.HashMap[String, Int]()
+            def uniqueSlug(raw: String): String =
+                val count = slugCounts.getOrElse(raw, 0)
+                slugCounts(raw) = count + 1
+                if count == 0 then raw else s"$raw-${count + 1}"
+            end uniqueSlug
+            def makeSlug(text: String): String =
+                val base = text.toLowerCase.map(c => if c.isLetterOrDigit then c else '-').mkString
+                    .replaceAll("-+", "-").stripPrefix("-").stripSuffix("-")
+                uniqueSlug(base)
+            end makeSlug
+            var i = 0
+            while i < blocks.length do
+                blocks(i) match
+                    case Block.Heading(line) =>
+                        val (level, text) = parseHeading(line)
+                        val slug          = makeSlug(text)
+                        val heading       = DocsMarkdown.Heading(level, stripInlineMarkdown(text), slug)
+                        val prose         = new mutable.ArrayBuffer[String]()
+                        var j             = i + 1
+                        while j < blocks.length && !blocks(j).isInstanceOf[Block.Heading] do
+                            blocks(j) match
+                                case Block.Paragraph(t)  => prose += stripInlineMarkdown(t)
+                                case Block.Quote(c)      => prose += stripInlineMarkdown(c)
+                                case Block.Unordered(ls) => prose += ls.map(stripInlineMarkdown).mkString(" ")
+                                case Block.Ordered(ls)   => prose += ls.map(stripInlineMarkdown).mkString(" ")
+                                case Block.Table(ls)     => prose += ls.map(stripInlineMarkdown).mkString(" ")
+                                case _                   => ()
+                            end match
+                            j += 1
+                        end while
+                        out += (heading -> snippetOf(prose.mkString(" "), maxChars))
+                    case _ => ()
+                end match
+                i += 1
+            end while
+            Chunk.from(out.toSeq)
+        }
+    end sectionSnippets
+
+    /** Collapse whitespace and truncate `prose` at the last word boundary at or before `maxChars`.
+      * Returns the trimmed prefix with no trailing ellipsis.
+      */
+    private def snippetOf(prose: String, maxChars: Int): String =
+        val collapsed = prose.replaceAll("\\s+", " ").trim
+        if collapsed.length <= maxChars then collapsed
+        else
+            val cut    = collapsed.substring(0, maxChars)
+            val lastWs = cut.lastIndexOf(' ')
+            (if lastWs > 0 then cut.substring(0, lastWs) else cut).trim
+        end if
+    end snippetOf
+
     // ---- doctest pre-pass (string cleanup, not parsing) ----
 
     /** Remove `<!-- doctest:setup ... -->` comment blocks (and the fenced scala block they wrap)
