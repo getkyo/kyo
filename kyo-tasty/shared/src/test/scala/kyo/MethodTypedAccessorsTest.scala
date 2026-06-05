@@ -157,17 +157,17 @@ class MethodTypedAccessorsTest extends Test:
     }
 
     // ── Leaf 72: returnType-Function-result ───────────────────────────────────
-    // Given: declaredType = Type.Function(params, result, false)
+    // Given: declaredType = Type.Function(params, result)
     // When: m.returnType
     // Then: Maybe.Present(result type)
     // Pins: INV-002
     "Leaf 72: returnType-Function-result: extracts result from Type.Function" in run {
         val resultType = Tasty.Type.Named(SymbolId(99))
-        val funcType   = Tasty.Type.Function(Chunk(Tasty.Type.Unknown), resultType, false)
+        val funcType   = Tasty.Type.Function(Chunk(Tasty.Type.Unknown), resultType)
         val method     = makeMethod(id = 1, name = "compute", ownerId = 0, declaredType = Maybe(funcType))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(method)).map: cp =>
             given Tasty.Classpath = cp
-            val rt                = method.declaredType.map { case Tasty.Type.Function(_, r, _) => r; case t => t }
+            val rt                = method.declaredType.map { case Tasty.Type.Function(_, r) => r; case t => t }
             assert(rt.isDefined, "returnType must be Present for a Function declared type")
             assert(rt.get == resultType, s"Expected $resultType but got ${rt.get}")
             succeed
@@ -183,7 +183,7 @@ class MethodTypedAccessorsTest extends Test:
         val method    = makeMethod(id = 1, name = "get", ownerId = 0, declaredType = Maybe(namedType))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(method)).map: cp =>
             given Tasty.Classpath = cp
-            val rt                = method.declaredType.map { case Tasty.Type.Function(_, r, _) => r; case t => t }
+            val rt                = method.declaredType.map { case Tasty.Type.Function(_, r) => r; case t => t }
             assert(rt.isDefined, "returnType must be Present when declaredType is Present")
             assert(rt.get == namedType, s"Expected $namedType but got ${rt.get}")
             succeed
@@ -199,7 +199,7 @@ class MethodTypedAccessorsTest extends Test:
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(method)).map: cp =>
             given Tasty.Classpath = cp
             assert(
-                !method.declaredType.map { case Tasty.Type.Function(_, r, _) => r; case t => t }.isDefined,
+                !method.declaredType.map { case Tasty.Type.Function(_, r) => r; case t => t }.isDefined,
                 "returnType must be Absent when declaredType is Absent"
             )
             succeed

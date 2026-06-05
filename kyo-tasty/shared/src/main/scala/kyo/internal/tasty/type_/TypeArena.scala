@@ -42,8 +42,8 @@ final class TypeArena:
                 case Tasty.Type.ThisType(_)     => t
                 case Tasty.Type.Applied(base, args) =>
                     Tasty.Type.Applied(internRec(base, depth), args.map(internRec(_, depth)))
-                case Tasty.Type.Function(ps, r, ctx) =>
-                    Tasty.Type.Function(ps.map(internRec(_, depth)), internRec(r, depth), ctx)
+                case Tasty.Type.Function(ps, r) =>
+                    Tasty.Type.Function(ps.map(internRec(_, depth)), internRec(r, depth))
                 case Tasty.Type.ContextFunction(ps, r) =>
                     Tasty.Type.ContextFunction(ps.map(internRec(_, depth)), internRec(r, depth))
                 case Tasty.Type.Tuple(elems) =>

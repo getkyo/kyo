@@ -50,9 +50,9 @@ private[kyo] object SymbolSignature:
             .mkString("(", ", ", ")")
         .mkString
         val rt = m.declaredType match
-            case Maybe.Present(Tasty.Type.Function(_, result, _)) => s": ${renderType(result)}"
-            case Maybe.Present(t)                                 => s": ${renderType(t)}"
-            case Maybe.Absent                                     => ""
+            case Maybe.Present(Tasty.Type.Function(_, result)) => s": ${renderType(result)}"
+            case Maybe.Present(t)                              => s": ${renderType(t)}"
+            case Maybe.Absent                                  => ""
         s"def ${m.simpleName}$tps$plists$rt"
     end methodSig
 

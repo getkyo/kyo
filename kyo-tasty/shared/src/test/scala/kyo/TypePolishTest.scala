@@ -53,7 +53,7 @@ class TypePolishTest extends Test:
     // Then: returns Maybe.Absent (head is not Named)
     "Leaf 156: symbol returns Absent for non-Named types" in run {
         Tasty.withPickles(Chunk.empty):
-            val t = Tasty.Type.Function(Chunk.empty, Tasty.Type.Named(SymbolId(5)), false)
+            val t = Tasty.Type.Function(Chunk.empty, Tasty.Type.Named(SymbolId(5)))
             Tasty.typeSymbol(t).map: result =>
                 assert(!result.isDefined, "symbol must return Absent for non-Named type")
             succeed
@@ -67,7 +67,7 @@ class TypePolishTest extends Test:
         val p1 = Tasty.Type.Named(SymbolId(1))
         val p2 = Tasty.Type.Named(SymbolId(2))
         val r  = Tasty.Type.Named(SymbolId(3))
-        val t  = Tasty.Type.Function(Chunk(p1, p2), r, false)
+        val t  = Tasty.Type.Function(Chunk(p1, p2), r)
         val ch = t.children
         assert(ch.length == 3, s"Expected 3 children, got ${ch.length}")
         assert(ch(0) == p1)
@@ -137,8 +137,7 @@ class TypePolishTest extends Test:
                     Tasty.Type.TermRef(n, Tasty.Name("x")),
                     Tasty.Type.Applied(n, Chunk(n)),
                     Tasty.Type.TypeLambda(Chunk.empty, n),
-                    Tasty.Type.Function(Chunk(n), n, false),
-                    Tasty.Type.Function(Chunk(n), n, true),
+                    Tasty.Type.Function(Chunk(n), n),
                     Tasty.Type.Tuple(Chunk(n, n)),
                     Tasty.Type.ByName(n),
                     Tasty.Type.Repeated(n),

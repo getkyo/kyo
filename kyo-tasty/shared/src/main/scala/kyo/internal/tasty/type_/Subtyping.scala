@@ -346,8 +346,7 @@ object Subtyping:
                 typeEquivAlpha(p1, p2, idx1, idx2)
             case (Tasty.Type.RecThis(r1), Tasty.Type.RecThis(r2)) =>
                 typeEquivAlpha(r1, r2, idx1, idx2)
-            case (Tasty.Type.Function(ps1, r1, ctx1), Tasty.Type.Function(ps2, r2, ctx2)) =>
-                (ctx1: Boolean) == (ctx2: Boolean) &&
+            case (Tasty.Type.Function(ps1, r1), Tasty.Type.Function(ps2, r2)) =>
                 ps1.length == ps2.length &&
                 chunkPairsEquivAlpha(ps1, ps2, idx1, idx2) &&
                 typeEquivAlpha(r1, r2, idx1, idx2)
@@ -392,8 +391,8 @@ object Subtyping:
                 Tasty.Type.TypeLambda(paramIds, substituteRecThis(body, recNode))
             case Tasty.Type.Wildcard(lo, hi) =>
                 Tasty.Type.Wildcard(substituteRecThis(lo, recNode), substituteRecThis(hi, recNode))
-            case Tasty.Type.Function(params, result, ctx) =>
-                Tasty.Type.Function(params.map(substituteRecThis(_, recNode)), substituteRecThis(result, recNode), ctx)
+            case Tasty.Type.Function(params, result) =>
+                Tasty.Type.Function(params.map(substituteRecThis(_, recNode)), substituteRecThis(result, recNode))
             case Tasty.Type.ContextFunction(params, result) =>
                 Tasty.Type.ContextFunction(params.map(substituteRecThis(_, recNode)), substituteRecThis(result, recNode))
             case other => other

@@ -549,38 +549,222 @@ object Tasty:
       * Scala-source-shaped string. The subtype check `isSubtypeOf` is structural, uses the implicit `Classpath`
       * to resolve parents, and returns a three-way `SubtypeVerdict` rather than a `Boolean`.
       */
-    enum Type derives Schema:
+    enum Type derives Schema, CanEqual:
         case Named(symbolId: SymbolId)
         case TermRef(prefix: Type, name: Name)
         case Applied(base: Type, args: Chunk[Type])
         case TypeLambda(paramIds: Chunk[SymbolId], body: Type)
-        case Function(params: Chunk[Type], result: Type, isContext: Boolean)
+
+        /** Plain function type: `(A1, ..., AN) => R`.
+          *
+          * Wire-level: `APPLIEDtype` whose constructor has FQN `scala.FunctionN`, collapsed by
+          * `TypeOps.applied`. Distinct from `ContextFunction` (which carries `?=>` context-function
+          * types). Callers can pattern-match on this case without testing a Boolean flag; the dedicated
+          * `ContextFunction` case handles the `?=>` variant.
+          *
+          * `params` holds the argument types in declaration order; `result` is the return type. An
+          * empty `params` represents a `Function0` (thunk). The TASTy wire path goes through
+          * `APPLIEDtype(Named(negId: scala.FunctionN), [A1, ..., AN, R])` and is folded during Pass B.
+          */
+        case Function(params: Chunk[Type], result: Type)
 
         /** Context function type: `(A1, ..., AN) ?=> R`.
           *
-          * Wire-level: `APPLIEDtype` whose constructor has FQN `scala.ContextFunctionN`. Dedicated case so callers
-          * can pattern-match `?=>` against `=>` without testing a Boolean flag. Methods decoded from
-          * `scala.ContextFunctionN` produce this case; methods decoded from `scala.FunctionN` produce
-          * `Type.Function(_, _, isContext = false)`.
+          * Wire-level: `APPLIEDtype` whose constructor has FQN `scala.ContextFunctionN`. Dedicated case
+          * so callers can pattern-match `?=>` against `=>` without testing a Boolean flag. Methods decoded
+          * from `scala.ContextFunctionN` produce this case; methods decoded from `scala.FunctionN` produce
+          * `Type.Function`.
           */
         case ContextFunction(params: Chunk[Type], result: Type)
         case Tuple(elements: Chunk[Type])
+
+        /** Call-by-name parameter type: `=> T`. Wire tag: `BYNAMEtpt`.
+          *
+          * Used for call-by-name parameters; the argument expression is not evaluated at the call site
+          * but on each use. `underlying` is the parameter type `T`. Distinct from `Repeated` (varargs).
+          *
+          * Appears in method parameter positions encoded as `BYNAMEtpt(T)` in TASTy. The corresponding
+          * Scala source shape is `def f(x: => T)`.
+          */
         case ByName(underlying: Type)
+
+        /** Varargs element type: `T*`. Wire tag: `REPEATEDtpt` via `ANNOTATEDtpt`.
+          *
+          * Represents the last parameter of a varargs method. `elem` is the element type `T`. The
+          * primary decoding path is `ANNOTATEDtpt(@scala.annotation.internal.Repeated, T)` in
+          * `TreeUnpickler.decodeTptAsType`; a secondary fallback applies for
+          * `APPLIEDtype(scala.<repeated>, [T])` via `TypeOps.applied`.
+          *
+          * Distinct from `ByName` (call-by-name) and `Array` (Java arrays). The corresponding Scala
+          * source shape is `def f(xs: T*)`.
+          */
         case Repeated(elem: Type)
+
+        /** Java array type: `Array[T]`. Wire tag: `APPLIEDtype(scala.Array, [T])`.
+          *
+          * Collapsed by `TypeOps.applied` when the constructor FQN is `scala.Array`. Distinguished
+          * from `Applied` for structural matching without requiring FQN resolution at the use site.
+          * `elem` is the element type. Java arrays also decode to this case via `TypeOps.mkArray`.
+          *
+          * The corresponding Scala source shape is `Array[T]`.
+          */
         case Array(elem: Type)
+
+        /** Structural refinement type: `P { def name: I }`. Wire tag: `REFINEDtype`.
+          *
+          * A structural type adding a member `name` with info type `I` to parent type `P`. Commonly
+          * appears in type-class evidence derivation, anonymous structural types, and object literals.
+          *
+          * `parent` is the base type, `name` is the declared member name, `info` is the member's
+          * declared type. For abstract member refinements, `info` is a `Type.Bounds` value; for
+          * concrete member refinements, `info` is the member type directly.
+          */
         case Refinement(parent: Type, name: Name, info: Type)
+
+        /** Recursive type binding: `mu X. parent[X]`. Wire tag: `RECtype`.
+          *
+          * Marks the binding site of a recursive type variable. Always paired with one or more
+          * `RecThis` references inside `parent` that point back to this `Rec` node. The pattern
+          * `Rec(parent)` reads as "the type `mu X. parent[X]`" where `X` is any `RecThis` inside
+          * `parent`. Hash-consing in `TypeArena` uses a depth counter to prevent infinite recursion on
+          * `Rec`/`RecThis` cycles.
+          *
+          * Callers that unfold recursive types should use `Subtyping.substituteRecThis`.
+          */
         case Rec(parent: Type)
+
+        /** Back-reference inside a `Rec` type. Wire tag: `RECthis`.
+          *
+          * `rec` is the enclosing `Rec` node this reference points back to. Callers should treat
+          * `RecThis` as an opaque back-pointer; traversal via `visit` includes the cycle guard. Direct
+          * structural comparison of `RecThis` values requires the enclosing `Rec` context (see
+          * `Subtyping.typeEquivAlpha`).
+          *
+          * `RecThis` never appears outside a `Rec.parent` subtree in well-formed TASTy.
+          */
         case RecThis(rec: Type)
+
+        /** Intersection type: `A & B`. Wire tag: `ANDtype`.
+          *
+          * Also produced from `APPLIEDtype(scala.&, [A, B])` by `TypeOps.andType`. `left` and `right`
+          * are the operands. `AndType(scala.Singleton, X)` is normalized to `X` by `TypeOps.andType`
+          * (the singleton bound collapses).
+          *
+          * `SubtypeVerdict` for an `AndType` on the supertype side uses three-valued logic: `Sub` only
+          * when `Sub` for both components. The corresponding Scala source shape is `A & B`.
+          */
         case AndType(left: Type, right: Type)
+
+        /** Union type: `A | B`. Wire tag: `ORtype`.
+          *
+          * Also produced from `APPLIEDtype(scala.|, [A, B])` by `TypeOps.applied`. `left` and `right`
+          * are the operands. `SubtypeVerdict` for an `OrType` on the subtype side uses three-valued
+          * logic: `Sub` only when `Sub` for either component.
+          *
+          * The corresponding Scala source shape is `A | B`.
+          */
         case OrType(left: Type, right: Type)
+
+        /** Annotated type: `T @ann`. Wire tag: `ANNOTATEDtype` or `ANNOTATEDtpt`.
+          *
+          * `underlying` is the base type, `annotation` is the `Tasty.Annotation` carrying the
+          * annotation class and arguments. Primary uses include
+          * `@scala.annotation.internal.Repeated` on varargs (decoded to `Type.Repeated` before
+          * reaching the user surface) and user-visible annotations like `@uncheckedVariance`.
+          *
+          * Callers interested only in the structural type should strip the `Annotated` wrapper.
+          */
         case Annotated(underlying: Type, annotation: Annotation)
+
+        /** Literal singleton type. Wire tag: `SINGLETONtpt` or `CONSTANTtype`.
+          *
+          * `value` is the `Tasty.Constant` payload. Represents a compile-time constant promoted to a
+          * type. Examples: `42.type`, `"hello".type`, `true.type`. Appears as a type argument or
+          * return type in code that uses literal types.
+          *
+          * Callers should extract the `Constant` via `value` and dispatch on `Constant` variants to
+          * inspect the payload.
+          */
         case ConstantType(value: Constant)
+
+        /** Self-type reference `C.this` for class `C`. Wire tag: `THIStpe`.
+          *
+          * `clsId` is the `SymbolId` of the enclosing class. Resolves to the actual
+          * `Symbol.ClassLike` via `cp.symbol(clsId)`. Distinct from `SuperType`, which carries both
+          * self and mixin components.
+          *
+          * Appears inside the bodies of class members where `this` is used as a type (common in
+          * self-referential type bounds and type members).
+          */
         case ThisType(clsId: SymbolId)
+
+        /** Super-type reference `C.super[M]`. Wire tag: `SUPERtype`.
+          *
+          * `self` is the `ThisType` of the enclosing class; `mixin` is the type of the linearized
+          * parent being referenced (the explicit `[M]` in `super[M]`, or the first parent when no
+          * explicit mixin is given). Used when a class overrides a method and calls
+          * `super.method(...)`.
+          *
+          * Distinct from `ThisType` (which carries only the self reference).
+          */
         case SuperType(self: Type, mixin: Type)
+
+        /** Reference to a type-lambda or method type parameter by position. Wire tag: `PARAMtype`.
+          *
+          * `binderId` is the `SymbolId` of the enclosing binder's first parameter symbol;
+          * `idx` is the zero-based index of the parameter within that binder. Used inside
+          * `TypeLambda.body` to refer back to the lambda's parameters without creating a recursive
+          * cycle.
+          *
+          * Callers matching inside a `TypeLambda` should use `paramIds(idx)` on the enclosing
+          * `TypeLambda` to resolve the symbol the `ParamRef` points to.
+          */
         case ParamRef(binderId: SymbolId, idx: Int)
+
+        /** Bounded wildcard type: `_ >: lo <: hi`. Wire tag: `WILDCARDtype`.
+          *
+          * Used for existential type arguments and wildcard imports. `lo` and `hi` are the bounds;
+          * `Type.Nothing` stands in for an absent lower bound and `Type.Any` for an absent upper
+          * bound.
+          *
+          * Distinct from `Bounds` (a bounds declaration at an abstract-type site, not a wildcard
+          * argument). The corresponding Scala source shape is `_ >: A <: B`.
+          */
         case Wildcard(lo: Type, hi: Type)
+
+        /** Skolem (existential witness) type. Wire tag: `SKOLEMtype`.
+          *
+          * `underlying` is the type being approximated. Introduced during type inference; represents
+          * an existentially-bound type variable that has been given a concrete identity for
+          * unification purposes. Rarely appears in decoded TASTy; mostly an artifact of the Scala 3
+          * compiler's inference machinery leaking into serialized form for complex GADTs or
+          * existential patterns.
+          *
+          * Callers should generally treat `Skolem` as opaque or unwrap via `underlying`.
+          */
         case Skolem(underlying: Type)
+
+        /** Match type: `scrutinee match { cases }`. Wire tag: `MATCHtype`.
+          *
+          * `bound` is the declared upper bound of the match type (`Type.Any` if absent), `scrutinee`
+          * is the type being matched, `cases` is a `Chunk[Type]` where each element is a
+          * `Type.MatchCase`. Exhaustive matches over `Type` must handle both `MatchType` and
+          * `MatchCase`. The `MatchCase` sub-case carries one arm; `MatchType` carries the full match
+          * expression.
+          *
+          * @see Type.MatchCase
+          */
         case MatchType(bound: Type, scrutinee: Type, cases: Chunk[Type])
+
+        /** Flexible (Java-nullable) type: `T!`. Wire tag: `FLEXIBLEtype`.
+          *
+          * `underlying` is the Scala type `T`. Flexible types appear when the Scala 3 compiler
+          * decodes a Java class whose field or return type has no nullability annotation; the result
+          * is `FlexibleType(T)` rather than `T | Null`. Callers doing Java interop that need to
+          * handle Java-origin `null` should check for this wrapper and treat the value as nullable.
+          *
+          * Rarely seen in pure Scala codebases; mostly an artifact of Java class file decoding.
+          */
         case FlexibleType(underlying: Type)
 
         /** Match-type case: `pat => rhs`. Wire-level TASTy tag MATCHCASEtype (192).
@@ -620,11 +804,11 @@ object Tasty:
           * Used internally by `children` and `foreach` so the hot traversal path does not materialize a
           * Chunk per node.
           */
-        def visit(f: Type => Unit): Unit = this match
+        private[kyo] def visit(f: Type => Unit): Unit = this match
             case Applied(base, args) =>
                 f(base); args.foreach(f)
             case TypeLambda(_, body) => f(body)
-            case Function(params, ret, _) =>
+            case Function(params, ret) =>
                 params.foreach(f); f(ret)
             case ContextFunction(params, ret) =>
                 params.foreach(f); f(ret)
@@ -669,14 +853,69 @@ object Tasty:
         end children
 
         /** Visit this type and every structural descendant in pre-order (self first). */
-        def foreach(f: Type => Unit): Unit =
+        private[kyo] def foreach(f: Type => Unit): Unit =
             f(this)
             visit(_.foreach(f))
         end foreach
-    end Type
 
-    object Type:
-        given CanEqual[Type, Type] = CanEqual.canEqualAny
+        /** Collect all nodes matching `pf` in pre-order. Inline entry delegates to the non-inline body loop. */
+        inline def collect[A](inline pf: PartialFunction[Type, A]): Chunk[A] =
+            collectImpl(pf)
+
+        private def collectImpl[A](pf: PartialFunction[Type, A]): Chunk[A] =
+            val b = Chunk.newBuilder[A]
+            foreach: t =>
+                if pf.isDefinedAt(t) then b += pf(t)
+            b.result()
+        end collectImpl
+
+        /** Find the first node satisfying `p` in pre-order. Inline entry delegates to the non-inline body loop. */
+        inline def find(inline p: Type => Boolean): Maybe[Type] =
+            findImpl(p)
+
+        private def findImpl(p: Type => Boolean): Maybe[Type] =
+            var found: Maybe[Type] = Maybe.Absent
+            def go(t: Type): Boolean =
+                if found.isDefined then true
+                else if p(t) then
+                    found = Maybe(t)
+                    true
+                else
+                    var hit = false
+                    t.visit: c =>
+                        if !hit && go(c) then hit = true
+                    hit
+                end if
+            end go
+            discard(go(this))
+            found
+        end findImpl
+
+        /** Left-fold over all nodes in pre-order. Inline entry delegates to the non-inline body loop. */
+        inline def foldLeft[A](z: A)(inline f: (A, Type) => A): A =
+            foldLeftImpl(z)(f)
+
+        private def foldLeftImpl[A](z: A)(f: (A, Type) => A): A =
+            var acc = z
+            foreach((t: Type) => acc = f(acc, t))
+            acc
+        end foldLeftImpl
+
+        /** True when any node in the subtree (including this node) satisfies `p`. Pre-order short-circuits on first match.
+          * Inline entry delegates to the non-inline body loop.
+          */
+        inline def exists(inline p: Type => Boolean): Boolean =
+            existsImpl(p)
+
+        private def existsImpl(p: Type => Boolean): Boolean =
+            if p(this) then true
+            else
+                var hit = false
+                visit: c =>
+                    if !hit && c.existsImpl(p) then hit = true
+                hit
+        end existsImpl
+
     end Type
 
     // ── Tree ADT ────────────────────────────────────────────────────────────
@@ -3616,8 +3855,8 @@ object Tasty:
                 case Type.Named(id)           => cp.symbol(id).name.asString
                 case Type.Applied(base, args) => s"${renderType(base)}[${args.map(renderType).mkString(", ")}]"
                 case Type.Array(elem)         => s"${renderType(elem)}[]"
-                case Type.Function(ps, r, isCtx) =>
-                    s"(${ps.map(renderType).mkString(", ")}) ${if isCtx then "?=>" else "=>"} ${renderType(r)}"
+                case Type.Function(ps, r) =>
+                    s"(${ps.map(renderType).mkString(", ")}) => ${renderType(r)}"
                 case Type.ContextFunction(ps, r) => s"(${ps.map(renderType).mkString(", ")}) ?=> ${renderType(r)}"
                 case Type.Tuple(es)              => s"(${es.map(renderType).mkString(", ")})"
                 case Type.Nothing                => "Nothing"

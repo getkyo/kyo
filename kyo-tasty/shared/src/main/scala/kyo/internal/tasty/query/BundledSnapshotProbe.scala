@@ -278,8 +278,8 @@ private[kyo] object BundledSnapshotProbe:
                 )
             case Tasty.Type.Applied(base, args) =>
                 Tasty.Type.Applied(remapType(base, offset), args.map(remapType(_, offset)))
-            case Tasty.Type.Function(params, result, isCtx) =>
-                Tasty.Type.Function(params.map(remapType(_, offset)), remapType(result, offset), isCtx)
+            case Tasty.Type.Function(params, result) =>
+                Tasty.Type.Function(params.map(remapType(_, offset)), remapType(result, offset))
             case Tasty.Type.ContextFunction(params, result) =>
                 Tasty.Type.ContextFunction(params.map(remapType(_, offset)), remapType(result, offset))
             case Tasty.Type.Tuple(elements) =>

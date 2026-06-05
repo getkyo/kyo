@@ -273,7 +273,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
         case _: Tasty.Type.AndType            => true
         case Tasty.Type.Applied(b, args)      => reachesAndType(b) || args.exists(reachesAndType)
         case Tasty.Type.TypeLambda(_, body)   => reachesAndType(body)
-        case Tasty.Type.Function(ps, r, _)    => ps.exists(reachesAndType) || reachesAndType(r)
+        case Tasty.Type.Function(ps, r)       => ps.exists(reachesAndType) || reachesAndType(r)
         case Tasty.Type.ContextFunction(p, r) => p.exists(reachesAndType) || reachesAndType(r)
         case Tasty.Type.ByName(u)             => reachesAndType(u)
         case Tasty.Type.OrType(l, r)          => reachesAndType(l) || reachesAndType(r)
@@ -288,7 +288,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
         case _: Tasty.Type.OrType             => true
         case Tasty.Type.Applied(b, args)      => reachesOrType(b) || args.exists(reachesOrType)
         case Tasty.Type.TypeLambda(_, body)   => reachesOrType(body)
-        case Tasty.Type.Function(ps, r, _)    => ps.exists(reachesOrType) || reachesOrType(r)
+        case Tasty.Type.Function(ps, r)       => ps.exists(reachesOrType) || reachesOrType(r)
         case Tasty.Type.ContextFunction(p, r) => p.exists(reachesOrType) || reachesOrType(r)
         case Tasty.Type.ByName(u)             => reachesOrType(u)
         case Tasty.Type.AndType(l, r)         => reachesOrType(l) || reachesOrType(r)
@@ -305,7 +305,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
         case Tasty.Type.Applied(b, args) =>
             collectMatchTypes(b) ++ args.flatMap(collectMatchTypes)
         case Tasty.Type.TypeLambda(_, body) => collectMatchTypes(body)
-        case Tasty.Type.Function(ps, r, _) =>
+        case Tasty.Type.Function(ps, r) =>
             ps.flatMap(collectMatchTypes) ++ collectMatchTypes(r)
         case Tasty.Type.ContextFunction(p, r) =>
             p.flatMap(collectMatchTypes) ++ collectMatchTypes(r)
@@ -323,7 +323,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
         case mt: Tasty.Type.MatchType       => mt.cases.map(countMatchCases).foldLeft(0)(_ + _)
         case Tasty.Type.Applied(b, args)    => countMatchCases(b) + args.map(countMatchCases).foldLeft(0)(_ + _)
         case Tasty.Type.TypeLambda(_, body) => countMatchCases(body)
-        case Tasty.Type.Function(ps, r, _) =>
+        case Tasty.Type.Function(ps, r) =>
             ps.map(countMatchCases).foldLeft(0)(_ + _) + countMatchCases(r)
         case Tasty.Type.ContextFunction(p, r) =>
             p.map(countMatchCases).foldLeft(0)(_ + _) + countMatchCases(r)

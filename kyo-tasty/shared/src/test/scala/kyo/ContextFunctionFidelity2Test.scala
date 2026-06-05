@@ -117,41 +117,44 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
 
     // Leaf 4 (Phase 2.05, migrated Phase 2.13): function-vs-context-function-disjoint
     // Given: embedded classpath (includes ContextFunctionFixture)
-    // When: checking that no parameter or method has Function(_, _, true) in its type
-    // Then: every ContextFunction-carrying parameter/method decodes ContextFunction not Function(_, _, true)
+    // When: checking that Type.Function and Type.ContextFunction are distinct cases
+    // Then: a ContextFunction value does NOT match the Type.Function pattern
     // Cross-platform (Phase 2.13): ContextFunctionFixture embedded.
     // Pins: HARD RULE 4 layered preservation
-    "HARD RULE 4 (Phase 2.05): no symbol has Function(_, _, true) in its type" in run {
+    // Note: isContext field removed in Phase 5 (Cat 10); the Boolean flag is gone.
+    // The test now confirms structural disjointness rather than a flag value.
+    "HARD RULE 4 (Phase 2.05): no symbol has Function used where ContextFunction expected" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
-            var violations = 0
+            // All three symbol subtypes are covered via their type fields.
+            // The invariant is that ContextFunction and Function are structurally distinct:
+            // context-function types decode to Type.ContextFunction, never Type.Function.
+            var contextFunctions = 0
             cp.symbols.foreach: sym =>
                 sym match
                     case p: Tasty.Symbol.Parameter =>
                         p.declaredType.foreach:
-                            case Tasty.Type.Function(_, _, true) => violations += 1
-                            case _                               => ()
+                            case _: Tasty.Type.ContextFunction => contextFunctions += 1
+                            case _                             => ()
                     case m: Tasty.Symbol.Method =>
                         m.declaredType.foreach: dt =>
                             dt.foreach:
-                                case Tasty.Type.Function(_, _, true) => violations += 1
-                                case _                               => ()
+                                case _: Tasty.Type.ContextFunction => contextFunctions += 1
+                                case _                             => ()
                     case c: Tasty.Symbol.ClassLike =>
                         c.parentTypes.foreach: pt =>
                             pt.foreach:
-                                case Tasty.Type.Function(_, _, true) => violations += 1
-                                case _                               => ()
+                                case _: Tasty.Type.ContextFunction => contextFunctions += 1
+                                case _                             => ()
                     case _ => ()
-            assert(
-                violations == 0,
-                s"Expected zero symbols with Type.Function(_, _, isContext=true) after Phase 2.05 fix; found $violations"
-            )
+            // At least one ContextFunction must be found (fixture contains ?=> types).
+            assert(contextFunctions > 0, "Expected at least one ContextFunction type in fixture symbols")
             succeed
     }
 
     // Leaf 5 (Phase 2.05): pattern-match-on-function-still-works
     // Given: a value of Type.ContextFunction (constructed directly)
-    // When: pattern matching on Type.Function(p, r, isCtx) (legacy)
-    // Then: the match does NOT trigger on ContextFunction types (new case is additive, not overlapping)
+    // When: pattern matching on Type.Function(p, r) (post-Cat-10 two-arg form)
+    // Then: the match does NOT trigger on ContextFunction types (cases are structurally disjoint)
     // Cross-platform: uses pure ADT construction; works on JS/Native.
     // Pins: HARD RULE 4
     "HARD RULE 4 (Phase 2.05): Type.Function pattern does not match Type.ContextFunction" in run {
@@ -161,11 +164,11 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
                 Tasty.Type.Named(SymbolId(1))
             )
             val matchedAsFunction = cfType match
-                case Tasty.Type.Function(_, _, _) => true
-                case _                            => false
+                case Tasty.Type.Function(_, _) => true
+                case _                         => false
             assert(
                 !matchedAsFunction,
-                "Type.ContextFunction should not match the Type.Function(_,_,_) pattern"
+                "Type.ContextFunction should not match the Type.Function(_,_) pattern"
             )
             succeed
     }

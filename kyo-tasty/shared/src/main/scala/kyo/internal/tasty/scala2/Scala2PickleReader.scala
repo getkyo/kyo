@@ -305,7 +305,7 @@ object Scala2PickleReader:
       *
       * Simplification: for method symbols (METH_FLAG set), the infoRef points to a NullaryMethodType or MethodType in the type table. Full
       * parsing of the Scala 2 type table is out of scope (see decodeAliasSym for rationale). Instead, a synthetic
-      * `Type.Function(Chunk.empty, Named(sym), false)` placeholder is stored as `declaredType`, representing a zero-argument method
+      * `Type.Function(Chunk.empty, Named(sym))` placeholder is stored as `declaredType`, representing a zero-argument method
       * returning an unknown type. This limitation is documented in PHASE-10-IMPL-NOTES.md and in PROGRESS.md under "Plan deviations during
       * execution".
       */

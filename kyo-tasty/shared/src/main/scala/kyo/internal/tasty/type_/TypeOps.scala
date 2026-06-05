@@ -10,7 +10,7 @@ import kyo.Tasty
   * produce the same canonical form.
   *
   * Normalization table:
-  *   - scala.FunctionN[A1..AN, R] => Function(Chunk(A1..AN), R, false)
+  *   - scala.FunctionN[A1..AN, R] => Function(Chunk(A1..AN), R)
   *   - scala.ContextFunctionN[A1..AN, R] => ContextFunction(Chunk(A1..AN), R)
   *   - scala.TupleN[T1..TN] => Tuple(Chunk(T1..TN))
   *   - scala.Array[T] => Array(T)
@@ -68,12 +68,12 @@ object TypeOps:
         val fqn = if fqnHint != null then fqnHint else ""
         if fqn.nonEmpty then
             if fqn.startsWith(FunctionPrefix) && isDigitSuffix(fqn, FunctionPrefix.length) then
-                if args.nonEmpty then Tasty.Type.Function(args.dropRight(1), args.last, false)
+                if args.nonEmpty then Tasty.Type.Function(args.dropRight(1), args.last)
                 else Tasty.Type.Applied(base, args)
             else if fqn.startsWith(ContextFunctionPrefix) && isDigitSuffix(fqn, ContextFunctionPrefix.length) then
-                // F-A2-005: ContextFunctionN decodes to ContextFunction, not Function(_, _, true).
+                // F-A2-005: ContextFunctionN decodes to ContextFunction, not Function.
                 // This keeps context-function and plain-function types structurally distinct so callers
-                // can pattern-match without testing a Boolean flag, per OQ-005 resolution.
+                // can pattern-match on the dedicated case, per OQ-005 resolution.
                 if args.nonEmpty then Tasty.Type.ContextFunction(args.dropRight(1), args.last)
                 else Tasty.Type.Applied(base, args)
             else if fqn.startsWith(TuplePrefix) && isDigitSuffix(fqn, TuplePrefix.length) then
@@ -108,7 +108,7 @@ object TypeOps:
                     import kyo.Tasty.Name.asString
                     val simpleName = nm.asString
                     if simpleName.startsWith(FunctionSimple) && isDigitSuffix(simpleName, FunctionSimple.length) then
-                        if args.nonEmpty then Tasty.Type.Function(args.dropRight(1), args.last, false)
+                        if args.nonEmpty then Tasty.Type.Function(args.dropRight(1), args.last)
                         else Tasty.Type.Applied(base, args)
                     else if simpleName.startsWith(ContextFunctionSimple) && isDigitSuffix(simpleName, ContextFunctionSimple.length) then
                         if args.nonEmpty then Tasty.Type.ContextFunction(args.dropRight(1), args.last)

@@ -145,7 +145,7 @@ class Scala2PickleTest extends Test:
                 case m: Tasty.Symbol.Method => m.declaredType;
                 case _                      => kyo.Maybe.Absent
             ) match
-                case kyo.Maybe.Present(Tasty.Type.Function(_, _, _)) =>
+                case kyo.Maybe.Present(Tasty.Type.Function(_, _)) =>
                     succeed
                 case kyo.Maybe.Present(other) =>
                     fail(s"Expected Type.Function, got $other")

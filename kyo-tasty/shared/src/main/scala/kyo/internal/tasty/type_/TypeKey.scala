@@ -181,11 +181,12 @@ object TypeKey:
                 work.append(new AddConst(31 * ps.length))
                 work.append(body)
 
-            case Tasty.Type.Function(ps, r, ctx) =>
+            case Tasty.Type.Function(ps, r) =>
                 // psHash = ps.foldLeft(1)((acc, p) => acc * 31 + hash(p))
-                // result  = 31 * psHash + hash(r) + ctxOffset
-                val ctxOffset = if ctx then 1 else 0
-                work.append(new Combine2(ctxOffset))
+                // result  = 31 * psHash + hash(r) + 7
+                // Constant 7 is distinct from the ContextFunction constant (17) to keep
+                // Function and ContextFunction hashes distinguishable after isContext removal.
+                work.append(new Combine2(7))
                 work.append(r)
                 var i = ps.length - 1
                 while i >= 0 do
@@ -379,8 +380,8 @@ object TypeKey:
                     case (Tasty.Type.TypeLambda(ps1, body1), Tasty.Type.TypeLambda(ps2, body2)) =>
                         if ps1.length != ps2.length then result = false
                         else work.addOne((body1, body2))
-                    case (Tasty.Type.Function(ps1, r1, ctx1), Tasty.Type.Function(ps2, r2, ctx2)) =>
-                        if ctx1 != ctx2 || ps1.length != ps2.length then result = false
+                    case (Tasty.Type.Function(ps1, r1), Tasty.Type.Function(ps2, r2)) =>
+                        if ps1.length != ps2.length then result = false
                         else
                             work.addOne((r1, r2))
                             var i = 0

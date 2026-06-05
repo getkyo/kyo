@@ -336,7 +336,7 @@ The cases you will actually write code against are these:
 def classify(tpe: Type): String = tpe match
     case Type.Named(id)                  => "a class/trait/type alias reference"
     case Type.Applied(tycon, args)       => "List[Int], Map[String, Int]"
-    case Type.Function(params, res, _)   => "(Int, String) => Boolean"
+    case Type.Function(params, res)      => "(Int, String) => Boolean"
     case Type.ContextFunction(params, r) => "(using Ctx) => A"
     case Type.Tuple(elems)               => "(Int, String, Boolean)"
     case Type.AndType(l, r)              => "A & B"

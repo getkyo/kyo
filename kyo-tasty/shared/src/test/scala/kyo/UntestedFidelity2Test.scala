@@ -229,7 +229,7 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     private def hasDependentResultRef(t: Tasty.Type, cp: Tasty.Classpath): Boolean =
         given Tasty.Classpath = cp
         t match
-            case Tasty.Type.Function(_, result, _) =>
+            case Tasty.Type.Function(_, result) =>
                 isParameterRef(result, cp) || hasDependentResultRef(result, cp)
             case Tasty.Type.ContextFunction(_, result) =>
                 isParameterRef(result, cp) || hasDependentResultRef(result, cp)

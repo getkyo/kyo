@@ -12,8 +12,8 @@ private[kyo] object TreeShow:
             case Tasty.Type.Named(id)           => cp.symbol(id).name.asString
             case Tasty.Type.Applied(base, args) => s"${showType(base, cp)}[${args.map(showType(_, cp)).mkString(", ")}]"
             case Tasty.Type.Array(elem)         => s"${showType(elem, cp)}[]"
-            case Tasty.Type.Function(ps, r, isCtx) =>
-                s"(${ps.map(showType(_, cp)).mkString(", ")}) ${if isCtx then "?=>" else "=>"} ${showType(r, cp)}"
+            case Tasty.Type.Function(ps, r) =>
+                s"(${ps.map(showType(_, cp)).mkString(", ")}) => ${showType(r, cp)}"
             case Tasty.Type.ContextFunction(ps, r) => s"(${ps.map(showType(_, cp)).mkString(", ")}) ?=> ${showType(r, cp)}"
             case Tasty.Type.Tuple(es)              => s"(${es.map(showType(_, cp)).mkString(", ")})"
             case Tasty.Type.Nothing                => "Nothing"
