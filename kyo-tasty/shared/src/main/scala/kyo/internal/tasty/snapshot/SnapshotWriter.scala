@@ -450,16 +450,17 @@ object SnapshotWriter:
 
     /** Serialize errors as: [4-byte count LE] followed by count typed entries.
       *
-      * Each entry (minor=7 typed format):
-      *   [1-byte tag == TastyError ordinal] [variant-specific fields]
+      * Each entry (minor=10 string-tag format):
+      *   [varint-length-prefixed UTF-8 tag == TastyError.productPrefix] [variant-specific fields]
+      *
+      * The tag is encoded as: [LEB128 varint: tag byte count] [UTF-8 tag bytes]. This encoding is stable against future
+      * enum variant additions because the tag is the case name string, not an ordinal.
       *
       * String fields: [4-byte len LE][UTF-8 bytes].
       * Long fields:   [8-byte Int64 LE].
       * Version:       [4-byte major LE][4-byte minor LE].
       * UUID:          [8-byte MSB LE][8-byte LSB LE].
       * Int fields:    [4-byte Int32 LE].
-      *
-      * ClasspathClosed(ctx) and ClasspathBuilding(ctx): tag byte followed by one string field (context). Updated in minor=9.
       */
     private def serializeErrors(errors: Chunk[TastyError]): Array[Byte] =
         // Pre-size to 4 KB: errors are rare (decode failures, file-not-found, etc.) and messages are short.
@@ -492,8 +493,30 @@ object SnapshotWriter:
             writeLong(u.getMostSignificantBits)
             writeLong(u.getLeastSignificantBits)
 
+        // Standard LEB128 (little-endian base-128) varint encoder. Each 7-bit group is written
+        // with the continuation bit (0x80) set in all but the last byte. Values 0-127 fit in one
+        // byte; values 128-16383 fit in two bytes (e.g. 200 encodes as 0xC8 0x01).
+        def writeVarint(value: Int): Unit =
+            var v = value
+            while
+                val b = v & 0x7f
+                v = v >>> 7
+                if v != 0 then
+                    baos.write(b | 0x80)
+                    true
+                else
+                    baos.write(b)
+                    false
+                end if
+            do ()
+            end while
+        end writeVarint
+
         for err <- errors do
-            baos.write(err.ordinal)
+            val tag: String           = err.productPrefix
+            val tagBytes: Array[Byte] = tag.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            writeVarint(tagBytes.length)
+            baos.write(tagBytes)
             err match
                 case TastyError.FileNotFound(path)              => writeStr(path)
                 case TastyError.CorruptedFile(path, at, reason) => writeStr(path); writeLong(at); writeStr(reason)

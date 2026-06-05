@@ -94,6 +94,7 @@ object SnapshotReader:
             // minor=6 is a breaking bump (FQNMAP__): reject to force cold re-decode.
             // minor=7 is a breaking bump (ERRORS typed format).
             // minor=8 is a breaking bump (SUBCIDX_/COMPIDX_): reject to force cold re-decode.
+            // minor=10 is a breaking bump (ERRORS string-tag format): reject to force cold re-decode.
             throw new VersionMismatchException(
                 Tasty.Version(fileMajor, fileMinor, 0),
                 Tasty.Version(SnapshotFormat.majorVersion, SnapshotFormat.minorVersion, 0)
@@ -136,6 +137,10 @@ object SnapshotReader:
                     // string field. Old snapshots encode these as tag-only; reading them with the new
                     // deserializer would consume the next error's tag as the context string.
                     // Reject to force cold re-decode.
+                    // minor=10 is a breaking bump: the ERRORS section tag encoding changed from a single-byte
+                    // ordinal to a varint-length-prefixed UTF-8 string (the case productPrefix). Reading a
+                    // minor=9 snapshot's ERRORS with the new reader would misinterpret the first ordinal byte
+                    // as a tag-length varint, producing garbage. Reject to force cold re-decode.
                     Abort.fail(
                         TastyError.SnapshotVersionMismatch(
                             Tasty.Version(fileMajor, fileMinor, 0),
@@ -1413,18 +1418,19 @@ object SnapshotReader:
         )
     end readSymbols
 
-    /** Read errors from the ERRORS section (minor=7 typed format).
+    /** Read errors from the ERRORS section (minor=10 string-tag format).
       *
       * Layout: [4-byte count LE] followed by count typed entries. Each entry:
-      *   [1-byte tag == TastyError.ordinal] [variant-specific fields]
+      *   [LEB128 varint: tag byte count] [UTF-8 tag bytes == TastyError.productPrefix] [variant-specific fields]
+      *
+      * The tag is a varint-length-prefixed UTF-8 string (the case name). This format is stable against future enum
+      * variant additions; unknown tags fall back to TastyError.NotImplemented carrying the unknown tag string.
       *
       * String fields: [4-byte len LE][UTF-8 bytes].
       * Long fields:   [8-byte Int64 LE].
       * Version:       [4-byte major LE][4-byte minor LE].
       * UUID:          [8-byte MSB LE][8-byte LSB LE].
       * Int fields:    [4-byte Int32 LE].
-      *
-      * Unknown tags are decoded as TastyError.NotImplemented carrying the tag ordinal (forward-compat fallback).
       */
     private def readErrors(bytes: Array[Byte], offset: Int, length: Int): Chunk[TastyError] =
         val count = SnapshotFormat.readInt32LE(bytes, offset)
@@ -1466,30 +1472,74 @@ object SnapshotReader:
                 new java.util.UUID(msb, lsb)
             end readUUID
 
+            // Standard LEB128 (little-endian base-128) varint decoder. Each byte contributes 7 bits
+            // to the result; the high bit (0x80) signals continuation. Values 0-127 read as one byte;
+            // values 128-16383 read as two bytes (e.g. 0xC8 0x01 decodes to 200).
+            def readVarint(): Int =
+                var result = 0
+                var shift  = 0
+                var more   = true
+                while more do
+                    val b = bytes(pos) & 0xff
+                    pos += 1
+                    result |= (b & 0x7f) << shift
+                    shift += 7
+                    if (b & 0x80) == 0 then more = false
+                end while
+                result
+            end readVarint
+
             while i < count do
-                val tag = bytes(pos) & 0xff
-                pos += 1
+                val tagLen   = readVarint()
+                val tagBytes = new Array[Byte](tagLen)
+                var j        = 0
+                while j < tagLen do
+                    tagBytes(j) = bytes(pos)
+                    pos += 1
+                    j += 1
+                end while
+                val tag: String = new String(tagBytes, java.nio.charset.StandardCharsets.UTF_8)
                 val err: TastyError = tag match
-                    case 0  => TastyError.FileNotFound(readStr())
-                    case 1  => val p = readStr(); val at = readLong(); val r = readStr(); TastyError.CorruptedFile(p, at, r)
-                    case 2  => val f = readVersion(); val s = readVersion(); TastyError.UnsupportedVersion(f, s)
-                    case 3  => val f = readStr(); val e = readUUID(); val fd = readUUID(); TastyError.InconsistentClasspath(f, e, fd)
-                    case 4  => TastyError.FqnCollisionError(readStr())
-                    case 5  => val n = readStr(); val r = readStr(); val at = readLong(); TastyError.MalformedSection(n, r, at)
-                    case 6  => TastyError.SymbolNotFound(readStr())
-                    case 7  => TastyError.NotFound(readStr())
-                    case 8  => val p = readStr(); val r = readStr(); val at = readLong(); TastyError.ClassfileFormatError(p, r, at)
-                    case 9  => TastyError.ClasspathClosed(readStr())
-                    case 10 => TastyError.ClasspathBuilding(readStr())
-                    case 11 => val p = readStr(); val r = readStr(); val at = readLong(); TastyError.SnapshotFormatError(p, r, at)
-                    case 12 => val f = readVersion(); val s = readVersion(); TastyError.SnapshotVersionMismatch(f, s)
-                    case 13 => TastyError.SnapshotIoError(readStr())
-                    case 14 => TastyError.NotImplemented(readStr())
-                    case 15 => TastyError.UnsupportedPlatform(readStr())
-                    case 16 => val t = readInt(); val p = readStr(); TastyError.UnknownTagInPosition(t, p)
-                    case 17 => val fqn = readStr(); val reason = readStr(); TastyError.InvalidFqn(fqn, reason)
-                    case 18 => val exp = readStr(); val act = readStr(); TastyError.DigestMismatch(exp, act)
-                    case _  => TastyError.NotImplemented(s"unknown error tag=$tag in snapshot")
+                    case "FileNotFound" => TastyError.FileNotFound(readStr())
+                    case "CorruptedFile" =>
+                        val p = readStr(); val at = readLong(); val r = readStr()
+                        TastyError.CorruptedFile(p, at, r)
+                    case "UnsupportedVersion" =>
+                        val f = readVersion(); val s = readVersion()
+                        TastyError.UnsupportedVersion(f, s)
+                    case "InconsistentClasspath" =>
+                        val f = readStr(); val e = readUUID(); val fd = readUUID()
+                        TastyError.InconsistentClasspath(f, e, fd)
+                    case "FqnCollisionError" => TastyError.FqnCollisionError(readStr())
+                    case "MalformedSection" =>
+                        val n = readStr(); val r = readStr(); val at = readLong()
+                        TastyError.MalformedSection(n, r, at)
+                    case "SymbolNotFound" => TastyError.SymbolNotFound(readStr())
+                    case "NotFound"       => TastyError.NotFound(readStr())
+                    case "ClassfileFormatError" =>
+                        val p = readStr(); val r = readStr(); val at = readLong()
+                        TastyError.ClassfileFormatError(p, r, at)
+                    case "ClasspathClosed"   => TastyError.ClasspathClosed(readStr())
+                    case "ClasspathBuilding" => TastyError.ClasspathBuilding(readStr())
+                    case "SnapshotFormatError" =>
+                        val p = readStr(); val r = readStr(); val at = readLong()
+                        TastyError.SnapshotFormatError(p, r, at)
+                    case "SnapshotVersionMismatch" =>
+                        val f = readVersion(); val s = readVersion()
+                        TastyError.SnapshotVersionMismatch(f, s)
+                    case "SnapshotIoError"     => TastyError.SnapshotIoError(readStr())
+                    case "NotImplemented"      => TastyError.NotImplemented(readStr())
+                    case "UnsupportedPlatform" => TastyError.UnsupportedPlatform(readStr())
+                    case "UnknownTagInPosition" =>
+                        val t = readInt(); val p = readStr()
+                        TastyError.UnknownTagInPosition(t, p)
+                    case "InvalidFqn" =>
+                        val fqn = readStr(); val reason = readStr()
+                        TastyError.InvalidFqn(fqn, reason)
+                    case "DigestMismatch" =>
+                        val exp = readStr(); val act = readStr()
+                        TastyError.DigestMismatch(exp, act)
+                    case other => TastyError.NotImplemented(s"unknown TastyError wire tag: $other")
                 buf += err
                 i += 1
             end while
