@@ -3656,12 +3656,15 @@ private[kyo] object ChartLower:
         // Stacked area: fall through to plain lowerArea (no per-group path tracking yet).
         val isStacked = mark.y.isDefined && mark.stack.group.isDefined
         if isStacked then
-            val elems = lowerArea(rows, mark, layout, xs, ys, defaultColor)
+            val elems = lowerArea(rows, mark, layout, xs, ys, defaultColor, Present(spec))
             (elems, newGeom)
         else
             val animOk = spec.animateCfg.enabled
             val durStr = formatDur(spec.animateCfg.duration)
-            val rawPaths: Chunk[Svg.Path] = lowerArea(rows, mark, layout, xs, ys, defaultColor).collect:
+            // FIX 1 (P9b): forward Present(spec) so the non-stacked color-channel arm resolves the
+            // palette via resolvePalette (honoring an explicit colorScale) instead of defaulting to
+            // DefaultPalette. Mirrors the lowerLineWithTransitions FIX B pattern.
+            val rawPaths: Chunk[Svg.Path] = lowerArea(rows, mark, layout, xs, ys, defaultColor, Present(spec)).collect:
                 case p: Svg.Path => p
             // pathKey = "area-$markIdx-$seriesIdx" is stable per (mark identity, series position),
             // so a prior mark's geometry-count change does NOT shift this mark's key (INV-036).

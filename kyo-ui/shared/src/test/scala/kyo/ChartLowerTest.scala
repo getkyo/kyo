@@ -2530,4 +2530,263 @@ class ChartLowerTest extends Test:
         assert(legendSwatchRects(root).isEmpty, "L22c: no legend swatches for no-color text mark")
     }
 
+    // ---- FIX 1 (P9b): animated non-stacked area with colorScale honors the scale colors ----
+    // Reproduce-before-fix: lowerAreaWithTransitions called lowerArea with spec=Absent, so the
+    // animated path resolved the palette from DefaultPalette by index (blue/orange), ignoring the
+    // explicit colorScale. The fix forwards Present(spec) into both lowerArea calls inside
+    // lowerAreaWithTransitions, mirroring the lowerLineWithTransitions FIX B pattern.
+
+    "animated non-stacked area with categorical colorScale honors the scale colors (FIX 1, P9b)" in run {
+        case class ARow(x: Double, y: Double, series: String) derives CanEqual
+        val cyan  = Style.Color.rgb(6, 182, 212)
+        val amber = Style.Color.rgb(245, 158, 11)
+        // DefaultPalette entries for comparison.
+        val blueCss   = "#3b82f6"
+        val orangeCss = "#f97316"
+        val rows = Chunk(
+            ARow(0.0, 1.0, "a"),
+            ARow(1.0, 2.0, "a"),
+            ARow(0.0, 3.0, "b"),
+            ARow(1.0, 4.0, "b")
+        )
+        for
+            ref <- Signal.initRef(rows)
+            // .animate routes lowering through lowerAreaWithTransitions (the path under test).
+            spec = UI.chart(ref: Signal[Chunk[ARow]])(area(x = _.x, y = _.y, color = _.series))
+                .animate(_.ease(300.millis))
+                .legend(_.colorScale {
+                    case "a" => cyan
+                    case _   => amber
+                })
+            root = summon[Conversion[ChartSpec[ARow], Svg.Root]](spec)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // Extract each <path ...> element's fill colour in document order.
+            // lowerAreaWithTransitions emits one path per series in encounter order (a=0 then b=1).
+            val fills: Chunk[String] = Chunk.from(
+                "<path[^>]*".r.findAllIn(html).toSeq.flatMap { tag =>
+                    "fill=\"([^\"]+)\"".r.findFirstMatchIn(tag).map(_.group(1))
+                }
+            )
+            assert(
+                fills.size == 2,
+                s"FIX 1 (P9b): expected 2 area-path fills (one per series) but got ${fills.size}:\n$html"
+            )
+            // Series "a" (seriesIdx 0) must carry the colorScale cyan, NOT DefaultPalette blue.
+            val cyanCss  = "rgb(6, 182, 212)"
+            val amberCss = "rgb(245, 158, 11)"
+            assert(
+                fills(0) == cyanCss,
+                s"FIX 1 (P9b): animated area series 'a' must use colorScale cyan $cyanCss but got ${fills(0)}:\n$html"
+            )
+            // Series "b" (seriesIdx 1) must carry the colorScale amber, NOT DefaultPalette orange.
+            assert(
+                fills(1) == amberCss,
+                s"FIX 1 (P9b): animated area series 'b' must use colorScale amber $amberCss but got ${fills(1)}:\n$html"
+            )
+            // DefaultPalette colours must not appear as area fills.
+            assert(
+                !fills.exists(_ == blueCss),
+                s"FIX 1 (P9b): DefaultPalette blue $blueCss must not be an area fill under a colorScale:\n$html"
+            )
+            assert(
+                !fills.exists(_ == orangeCss),
+                s"FIX 1 (P9b): DefaultPalette orange $orangeCss must not be an area fill under a colorScale:\n$html"
+            )
+        end for
+    }
+
+    // ---- L10 (P9b): Sequential colorScale arm regression guards ----
+    // These four tests lock the working Sequential branch in resolvePalette for each newly-fixed
+    // color-split mark. Two rows at the domain endpoints [0.0, 100.0] map to exact low/high colors:
+    //   value 0.0  -> t=0.0 -> lerpColor(black, white, 0.0) = rgb(0,0,0)
+    //   value 100.0 -> t=1.0 -> lerpColor(black, white, 1.0) = rgb(255,255,255)
+    // The auto-derived domain equals [0.0, 100.0] when data is exactly [0.0, 100.0].
+
+    "grouped bar with Sequential colorScale honors the scale colors (L10, P9b)" in {
+        // Low=black(0,0,0), High=white(255,255,255); data values 0.0 and 100.0 are the domain endpoints.
+        case class HeatRow(month: String, revenue: Double, level: Double) derives CanEqual
+        val rows = Chunk(
+            HeatRow("Jan", 1000.0, 0.0),
+            HeatRow("Jan", 2000.0, 100.0)
+        )
+        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue, color = _.level))
+            .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
+        val root  = summon[Conversion[ChartSpec[HeatRow], Svg.Root]](spec)
+        val rects = rectsIn(root)
+        assert(rects.size == 2, s"L10 bar: expected 2 bar rects but got ${rects.size}")
+        val byX = rects.toSeq.sortBy(r => numOf(r.svgAttrs.x))
+        def fillOf(r: Svg.Rect): Style.Color = r.svgAttrs.fill match
+            case Present(Svg.Paint.Color(c)) => c
+            case other                       => fail(s"L10 bar: expected color fill but got $other")
+        val fills = byX.map(fillOf)
+        // value 0.0 (first bar by x) maps to low=black; value 100.0 maps to high=white.
+        assert(
+            fills(0) == Style.Color.rgb(0, 0, 0),
+            s"L10 bar: low-value bar must be low color rgb(0,0,0) but got ${fills(0)}"
+        )
+        assert(
+            fills(1) == Style.Color.rgb(255, 255, 255),
+            s"L10 bar: high-value bar must be high color rgb(255,255,255) but got ${fills(1)}"
+        )
+        // Both colors are distinct and concrete (neither equals a DefaultPalette entry).
+        assert(
+            fills(0) != fills(1),
+            s"L10 bar: low and high colors must differ but both were ${fills(0)}"
+        )
+        assert(
+            !fills.exists(c => c == Style.Color.blue || c == Style.Color.orange),
+            s"L10 bar: fills must not be DefaultPalette colors but got $fills"
+        )
+    }
+
+    "non-stacked area with Sequential colorScale honors the scale colors (L10, P9b)" in {
+        // Low=black(0,0,0), High=white(255,255,255); data values 0.0 and 100.0 are domain endpoints.
+        case class SeqRow(x: String, y: Double, level: Double) derives CanEqual
+        val rows = Chunk(
+            SeqRow("a", 1.0, 0.0),
+            SeqRow("b", 2.0, 100.0)
+        )
+        val spec = UI.chart(rows)(area(x = _.x, y = _.y, color = _.level))
+            .yScale(_.linear(0.0, 4.0))
+            .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
+        val root      = summon[Conversion[ChartSpec[SeqRow], Svg.Root]](spec)
+        val marks     = marksGroup(root)
+        val areaPaths = marks.children.collect { case p: Svg.Path => p }
+        assert(areaPaths.size == 2, s"L10 area: expected 2 area paths but got ${areaPaths.size}")
+        // Paths are emitted in category encounter order (level 0.0 first, then 100.0).
+        val fills = areaPaths.map(p => fillColorOf(p.svgAttrs.fill))
+        assert(
+            fills(0) == Style.Color.rgb(0, 0, 0),
+            s"L10 area: low-value path must be low color rgb(0,0,0) but got ${fills(0)}"
+        )
+        assert(
+            fills(1) == Style.Color.rgb(255, 255, 255),
+            s"L10 area: high-value path must be high color rgb(255,255,255) but got ${fills(1)}"
+        )
+        // Both colors are distinct and concrete.
+        assert(
+            fills(0) != fills(1),
+            s"L10 area: low and high colors must differ but both were ${fills(0)}"
+        )
+        assert(
+            !fills.exists(c => c == Style.Color.blue || c == Style.Color.orange),
+            s"L10 area: fills must not be DefaultPalette colors but got $fills"
+        )
+        // Sequential legend renders a single continuous gradient swatch (not per-category line swatches).
+        // The L10 property is on the mark fills (two distinct concrete interpolated colors at the domain
+        // endpoints); the gradient swatch itself is covered by INV-028 Leaf 16.
+    }
+
+    "text mark with Sequential colorScale honors the scale colors (L10, P9b)" in {
+        // Low=black(0,0,0), High=white(255,255,255); data values 0.0 and 100.0 are domain endpoints.
+        case class TextSeqRow(x: String, y: Double, level: Double) derives CanEqual
+        val rows = Chunk(
+            TextSeqRow("a", 1.0, 0.0),
+            TextSeqRow("b", 2.0, 100.0)
+        )
+        val spec = UI.chart(rows)(text(x = _.x, y = _.y, label = _.x, color = _.level))
+            .yScale(_.linear(0.0, 4.0))
+            .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
+        val root  = summon[Conversion[ChartSpec[TextSeqRow], Svg.Root]](spec)
+        val marks = marksGroup(root)
+        val texts = marks.children.collect { case t: Svg.Text => t }
+        assert(texts.size >= 2, s"L10 text: expected at least 2 text glyphs but got ${texts.size}")
+        val byX   = texts.toSeq.sortBy(t => numOf(t.svgAttrs.x))
+        val fill0 = fillColorOf(byX(0).svgAttrs.fill)
+        val fill1 = fillColorOf(byX(1).svgAttrs.fill)
+        // Glyphs sorted by x: "a" at lower band-center (level=0.0, low color), "b" at higher (level=100.0, high color).
+        assert(
+            fill0 == Style.Color.rgb(0, 0, 0),
+            s"L10 text: glyph 'a' (level=0.0) must be low color rgb(0,0,0) but got $fill0"
+        )
+        assert(
+            fill1 == Style.Color.rgb(255, 255, 255),
+            s"L10 text: glyph 'b' (level=100.0) must be high color rgb(255,255,255) but got $fill1"
+        )
+        // Distinct and concrete.
+        assert(
+            fill0 != fill1,
+            s"L10 text: low and high fills must differ but both were $fill0"
+        )
+        assert(
+            fill0 != Style.Color.blue && fill0 != Style.Color.orange,
+            s"L10 text: fill0 must not be DefaultPalette but got $fill0"
+        )
+        assert(
+            fill1 != Style.Color.blue && fill1 != Style.Color.orange,
+            s"L10 text: fill1 must not be DefaultPalette but got $fill1"
+        )
+        // Sequential legend renders a single continuous gradient swatch (not per-category rect swatches).
+        // The L10 property is on the mark fills (two distinct concrete interpolated colors at the domain
+        // endpoints); the gradient swatch itself is covered by INV-028 Leaf 16.
+    }
+
+    "errorBar with Sequential colorScale honors the scale colors (L10, P9b)" in {
+        // Low=black(0,0,0), High=white(255,255,255); data values 0.0 and 100.0 are domain endpoints.
+        case class EbSeqRow(x: String, mean: Double, lo: Double, hi: Double, level: Double) derives CanEqual
+        val rows = Chunk(
+            EbSeqRow("a", 2.0, 1.0, 3.0, 0.0),
+            EbSeqRow("b", 5.0, 4.0, 6.0, 100.0)
+        )
+        val spec = UI.chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi, color = _.level))
+            .yScale(_.linear(0.0, 10.0))
+            .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
+        val root    = summon[Conversion[ChartSpec[EbSeqRow], Svg.Root]](spec)
+        val marks   = marksGroup(root)
+        val lines   = marks.children.collect { case l: Svg.Line => l }
+        val circles = marks.children.collect { case c: Svg.Circle => c }
+        // 2 rows x 3 lines each = 6 lines total.
+        assert(lines.size == 6, s"L10 errorBar: expected 6 lines (3 per row x 2 rows) but got ${lines.size}")
+        assert(circles.size == 2, s"L10 errorBar: expected 2 center marker circles but got ${circles.size}")
+        def strokeOf(l: Svg.Line): Style.Color = l.svgAttrs.stroke match
+            case Present(Svg.Paint.Color(c)) => c
+            case other                       => fail(s"L10 errorBar: expected stroke Color but got $other")
+        // Group lines by center-x to separate the two rows.
+        def lineCoord(m: Maybe[Double]): Double = m match
+            case Present(v) => v
+            case Absent     => fail("L10 errorBar: coordinate absent")
+        def centerX(l: Svg.Line): Double =
+            (lineCoord(l.svgAttrs.x1) + lineCoord(l.svgAttrs.x2)) / 2.0
+        val byCenter = lines.toSeq.groupBy(l => math.round(centerX(l)).toInt)
+        assert(byCenter.size == 2, s"L10 errorBar: expected 2 center groups but got ${byCenter.size}")
+        val groups = byCenter.values.toSeq.sortBy(_.map(centerX).min)
+        val groupA = groups(0) // lower x -> row "a", level=0.0 -> low=black
+        val groupB = groups(1) // higher x -> row "b", level=100.0 -> high=white
+        groupA.foreach(l =>
+            assert(
+                strokeOf(l) == Style.Color.rgb(0, 0, 0),
+                s"L10 errorBar: row 'a' (level=0.0) lines must be low color rgb(0,0,0) but got ${strokeOf(l)}"
+            )
+        )
+        groupB.foreach(l =>
+            assert(
+                strokeOf(l) == Style.Color.rgb(255, 255, 255),
+                s"L10 errorBar: row 'b' (level=100.0) lines must be high color rgb(255,255,255) but got ${strokeOf(l)}"
+            )
+        )
+        // Center marker circle fills must match the row stroke.
+        def circleCoord(m: Maybe[Double]): Double = m match
+            case Present(v) => v
+            case Absent     => fail("L10 errorBar: circle coord absent")
+        val circlesByX = circles.toSeq.sortBy(c => circleCoord(c.svgAttrs.cx))
+        val fillA = circlesByX(0).svgAttrs.fill match
+            case Present(Svg.Paint.Color(c)) => c
+            case other                       => fail(s"L10 errorBar: circle fill expected Color but got $other")
+        val fillB = circlesByX(1).svgAttrs.fill match
+            case Present(Svg.Paint.Color(c)) => c
+            case other                       => fail(s"L10 errorBar: circle fill expected Color but got $other")
+        assert(fillA == Style.Color.rgb(0, 0, 0), s"L10 errorBar: row 'a' circle fill must be rgb(0,0,0) but got $fillA")
+        assert(fillB == Style.Color.rgb(255, 255, 255), s"L10 errorBar: row 'b' circle fill must be rgb(255,255,255) but got $fillB")
+        // DefaultPalette guard.
+        assert(
+            groupA.forall(l => strokeOf(l) != Style.Color.blue && strokeOf(l) != Style.Color.orange),
+            "L10 errorBar: row 'a' lines must not use DefaultPalette colors"
+        )
+        assert(
+            groupB.forall(l => strokeOf(l) != Style.Color.blue && strokeOf(l) != Style.Color.orange),
+            "L10 errorBar: row 'b' lines must not use DefaultPalette colors"
+        )
+    }
+
 end ChartLowerTest
