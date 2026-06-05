@@ -6,6 +6,7 @@ import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.scala2.Scala2PickleReader
 import kyo.internal.tasty.symbol.Flags as FlagsHelper
 import kyo.internal.tasty.symbol.FqnCanonicalizer
+import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.Symbol as SymbolFactory
 import kyo.internal.tasty.symbol.SymbolDescriptor
 import kyo.internal.tasty.symbol.SymbolKind
@@ -26,29 +27,52 @@ object ClassfileUnpickler:
     import ConstantPool.readU2
     import ConstantPool.readU4
 
+    /** Per-decode id counter for LoadingSymbol.Materialising instances.
+      *
+      * Each ClassfileUnpickler decode session creates one counter. Ids are assigned sequentially from 0. Counter is NOT shared across
+      * concurrent decodes (each callsite in ClasspathOrchestrator creates a fresh ClassfileUnpickler decode, so the counter is single-use).
+      */
+    private class IdCounter:
+        private var _next: Int = 0
+        def nextId(): Int =
+            val id = _next
+            _next += 1
+            id
+        end nextId
+    end IdCounter
+
     def read(
         bytes: Array[Byte],
-        arena: TypeArena
+        arena: TypeArena,
+        nextGlobalId: () => Int = null
     )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
         val view = ByteView(bytes)
         val path = "<classfile>"
-        readFrom(view, arena, path)
+        readFrom(view, arena, path, nextGlobalId)
     end read
 
     def readFrom(
         view: ByteView,
         arena: TypeArena,
-        path: String
+        path: String,
+        nextGlobalId: () => Int = null
     )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
         // ClasspathOrchestrator Pass C constructs fully-populated Symbols from ClassfileResult data via materializeSymbols.
-        readFromRaw(view, arena, path)
+        readFromRaw(view, arena, path, nextGlobalId)
 
     private def readFromRaw(
         view: ByteView,
         arena: TypeArena,
-        path: String
+        path: String,
+        nextGlobalId: () => Int = null
     )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
-
+        // Use the external global counter when provided (for ClasspathOrchestrator multi-file decodes).
+        // Fall back to a local per-file counter otherwise (unit tests, standalone decodes).
+        val idCounter: IdCounter =
+            if nextGlobalId != null then
+                new IdCounter:
+                    override def nextId(): Int = nextGlobalId()
+            else new IdCounter()
         // Magic
         Sync.defer(readU4(view)).map: magic =>
             if magic != ClassfileFormat.Magic then
@@ -75,13 +99,15 @@ object ClassfileUnpickler:
                     else
                         // Constant pool
                         ConstantPool.read(view, path).map: pool =>
-                            readBody(view, pool, arena, path)
+                            readBody(view, pool, arena, path, idCounter)
+    end readFromRaw
 
     private def readBody(
         view: ByteView,
         pool: ConstantPool,
         arena: TypeArena,
-        path: String
+        path: String,
+        idCounter: IdCounter
     )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
         Sync.defer {
             val accessFlags = readU2(view)
@@ -93,7 +119,7 @@ object ClassfileUnpickler:
                 // module-info.class: skip entirely
                 if thisBinaryName.endsWith("module-info") then
                     ClassfileResult(
-                        makeUnresolvedSymbol(thisBinaryName, accessFlags),
+                        makeUnresolvedLoading(thisBinaryName, accessFlags, idCounter),
                         Chunk.empty,
                         Map.empty,
                         Chunk.empty,
@@ -102,24 +128,46 @@ object ClassfileUnpickler:
                         Map.empty
                     )
                 else
-                    readClassBody(view, pool, arena, path, accessFlags, thisBinaryName, superIdx)
+                    readClassBody(view, pool, arena, path, accessFlags, thisBinaryName, superIdx, idCounter)
 
-    private def makeUnresolvedSymbol(binaryName: String, accessFlags: Int)(using AllowUnsafe): Tasty.Symbol =
+    /** Create a LoadingSymbol.Materialising placeholder for unknown/module-info class symbols. */
+    private def makeUnresolvedLoading(binaryName: String, accessFlags: Int, idCounter: IdCounter)(using
+        AllowUnsafe
+    ): LoadingSymbol.Materialising =
         val simpleName = binaryName.split("[./]").last
         SymbolFactory.makeSymbol(
-            SymbolKind.Unresolved,
-            Tasty.Flags(Tasty.Flag.JavaDefined),
-            Tasty.Name(simpleName)
+            id = idCounter.nextId(),
+            kind = SymbolKind.Class,
+            flags = Tasty.Flags(Tasty.Flag.JavaDefined),
+            name = Tasty.Name(simpleName)
         )
+    end makeUnresolvedLoading
+
+    /** Create a final Tasty.Symbol placeholder (id=-1) for owner chain symbols that go into public Tasty.Java.* types. */
+    private def makeUnresolvedSymbol(binaryName: String, accessFlags: Int)(using AllowUnsafe): Tasty.Symbol =
+        val simpleName = binaryName.split("[./]").last
+        TypedSymbolFactory.from(new SymbolDescriptor(
+            id = -1,
+            kind = SymbolKind.Class,
+            flags = Tasty.Flags(Tasty.Flag.JavaDefined),
+            name = Tasty.Name(simpleName),
+            ownerId = -1,
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            body = Maybe.Absent
+        ))
     end makeUnresolvedSymbol
 
     private def unresolvedType(binaryName: String)(using AllowUnsafe): Tasty.Type =
-        val sym = SymbolFactory.makeSymbol(
-            SymbolKind.Unresolved,
-            Tasty.Flags(Tasty.Flag.JavaDefined),
-            Tasty.Name(binaryName.replace('/', '.'))
-        )
-        Tasty.Type.Named(sym.id)
+        // Type.Named(SymbolId(-1)): sentinel for unresolved type references from classfiles.
+        // The symbol is not added to allSyms; the id -1 is the canonical unresolved sentinel.
+        Tasty.Type.Named(kyo.Tasty.SymbolId(-1))
     end unresolvedType
 
     private def readClassBody(
@@ -129,7 +177,8 @@ object ClassfileUnpickler:
         path: String,
         accessFlags: Int,
         thisBinaryName: String,
-        superIdx: Int
+        superIdx: Int,
+        idCounter: IdCounter
     )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
         // Read parent types: super class + interfaces
         resolveOptionalSuperTypePair(pool, superIdx).map: superPairOpt =>
@@ -166,7 +215,8 @@ object ClassfileUnpickler:
                                     parentBinaryNames,
                                     fieldInfos,
                                     methodInfos,
-                                    classAttrs
+                                    classAttrs,
+                                    idCounter
                                 )
 
     private def resolveOptionalSuperType(
@@ -997,7 +1047,8 @@ object ClassfileUnpickler:
         parentBinaryNames: Chunk[String],
         fieldInfos: Chunk[MemberInfo],
         methodInfos: Chunk[MemberInfo],
-        classAttrs: ClassAttributes
+        classAttrs: ClassAttributes,
+        idCounter: IdCounter
     )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
 
         val isInterface  = (accessFlags & ClassfileFormat.ACC_INTERFACE) != 0
@@ -1080,52 +1131,65 @@ object ClassfileUnpickler:
                                                             ),
                                                             body = Maybe.Absent
                                                         )
-                                                        val classSym = TypedSymbolFactory.from(classDesc)
+                                                        val classSym = LoadingSymbol.Materialising(
+                                                            id = idCounter.nextId(),
+                                                            kind = classDesc.kind,
+                                                            flags = classDesc.flags,
+                                                            name = classDesc.name,
+                                                            javaMetadata = classDesc.javaMetadata,
+                                                            permittedSubclassIds = classDesc.permittedSubclassIds
+                                                        )
                                                         // Parse class-level Signature attribute to extract type parameters.
-                                                        parseClassTypeParams(pool, classAttrs.signatureIdx).map: classTypeParams =>
-                                                            // Build member symbols (returns pairs of (Symbol, DeclaredType))
-                                                            buildMemberSymbols(
-                                                                pool,
-                                                                path,
-                                                                classSym,
-                                                                fieldInfos,
-                                                                isMethods = false
-                                                            ).map: fieldPairs =>
+                                                        parseClassTypeParams(pool, classAttrs.signatureIdx, idCounter).map:
+                                                            classTypeParams =>
+                                                                // Build member symbols (returns pairs of (LoadingSymbol.Materialising, DeclaredType))
                                                                 buildMemberSymbols(
                                                                     pool,
                                                                     path,
                                                                     classSym,
-                                                                    methodInfos,
-                                                                    isMethods = true
-                                                                ).map: methodPairs =>
-                                                                    val allPairs   = fieldPairs ++ methodPairs
-                                                                    val allSymbols = allPairs.map(_._1)
-                                                                    val memberTypes =
-                                                                        allPairs.foldLeft(Map.empty[Tasty.Symbol, Tasty.Type]):
-                                                                            case (acc, (sym, tpe)) => acc + (sym -> tpe)
-                                                                    val javaResult = ClassfileResult(
+                                                                    fieldInfos,
+                                                                    isMethods = false,
+                                                                    idCounter
+                                                                ).map: fieldPairs =>
+                                                                    buildMemberSymbols(
+                                                                        pool,
+                                                                        path,
                                                                         classSym,
-                                                                        parents,
-                                                                        innerTable,
-                                                                        allSymbols,
-                                                                        classTypeParams,
-                                                                        arena,
-                                                                        memberTypes,
-                                                                        // F-A3-001..004 fix: carry raw binary names of
-                                                                        // parent classes/interfaces so finalizeMerge
-                                                                        // can resolve them via the fqnIndex.
-                                                                        parentBinaryNames,
-                                                                        // Carry permitted subclass FQNs for finalizeMerge
-                                                                        // to resolve permittedSubclassIds.
-                                                                        permittedSubFqns
-                                                                    )
-                                                                    // Dispatch to Scala2PickleReader if a ScalaSig or Scala attribute is present.
-                                                                    mergeScala2Pickle(
-                                                                        javaResult,
-                                                                        arena,
-                                                                        classAttrs.scalaSigBytes,
-                                                                        classAttrs.scalaAttrBytes
-                                                                    )
+                                                                        methodInfos,
+                                                                        isMethods = true,
+                                                                        idCounter
+                                                                    ).map: methodPairs =>
+                                                                        val allPairs   = fieldPairs ++ methodPairs
+                                                                        val allSymbols = allPairs.map(_._1)
+                                                                        val memberTypes =
+                                                                            allPairs.foldLeft(Map.empty[
+                                                                                LoadingSymbol.Materialising,
+                                                                                Tasty.Type
+                                                                            ]):
+                                                                                case (acc, (sym, tpe)) => acc + (sym -> tpe)
+                                                                        val javaResult = ClassfileResult(
+                                                                            classSym,
+                                                                            parents,
+                                                                            innerTable,
+                                                                            allSymbols,
+                                                                            classTypeParams,
+                                                                            arena,
+                                                                            memberTypes,
+                                                                            // F-A3-001..004 fix: carry raw binary names of
+                                                                            // parent classes/interfaces so finalizeMerge
+                                                                            // can resolve them via the fqnIndex.
+                                                                            parentBinaryNames,
+                                                                            // Carry permitted subclass FQNs for finalizeMerge
+                                                                            // to resolve permittedSubclassIds.
+                                                                            permittedSubFqns
+                                                                        )
+                                                                        // Dispatch to Scala2PickleReader if a ScalaSig or Scala attribute is present.
+                                                                        mergeScala2Pickle(
+                                                                            javaResult,
+                                                                            arena,
+                                                                            classAttrs.scalaSigBytes,
+                                                                            classAttrs.scalaAttrBytes
+                                                                        )
     end buildResult
 
     /** If Scala 2 pickle bytes are present, add Flag.Scala2 to the class symbol and merge the decoded symbols into the result.
@@ -1164,7 +1228,7 @@ object ClassfileUnpickler:
                         javaResult
 
     /** Add Flag.Scala2 to the class symbol of a result without merging pickle symbols. */
-    private def markScala2Flag(result: ClassfileResult): ClassfileResult =
+    private def markScala2Flag(result: ClassfileResult)(using AllowUnsafe): ClassfileResult =
         val scala2Flags = result.classSymbol.flags.union(Tasty.Flags(Tasty.Flag.Scala2))
         // We cannot mutate the existing symbol's flags (it's a val). Build a new symbol with the added flag.
         // Since the existing symbol is already allocated and shared, we instead create a lightweight wrapper here.
@@ -1188,7 +1252,7 @@ object ClassfileUnpickler:
     private def mergePickleResult(
         javaResult: ClassfileResult,
         pickleResult: kyo.internal.tasty.scala2.Scala2PickleResult
-    )(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): ClassfileResult < (Sync & Abort[TastyError]) =
         // Build a new class symbol with Flag.Scala2 added.
         // The flags field on Symbol is an immutable val flags on the case class.
         // We can't mutate flags post-construction. Instead, note that ClassfileResult.classSymbol already
@@ -1212,12 +1276,30 @@ object ClassfileUnpickler:
         //
         // Final design: classSymbol = pickleResult.classSymbol if present (it has Flag.Scala2), else javaResult.classSymbol.
         // We keep the Java class symbol in the symbols list too.
+        // Convert Tasty.Symbol instances from Scala2PickleReader to LoadingSymbol.Materialising.
+        // Scala2PickleReader still produces Tasty.Symbol; convert by extracting fields.
+        // Use a local counter starting at high negative values to avoid collision with the main idCounter.
+        var pickleId = Int.MinValue
+        def pickleNextId(): Int =
+            val id = pickleId
+            pickleId += 1
+            id
+        end pickleNextId
+
+        def symToLoading(sym: Tasty.Symbol): LoadingSymbol.Materialising =
+            LoadingSymbol.Materialising(
+                id = pickleNextId(),
+                kind = sym.kind,
+                flags = sym.flags,
+                name = sym.name
+            )
+
         val mergedClassSym = pickleResult.classSymbol match
-            case Present(pickleSym) => pickleSym
+            case Present(pickleSym) => symToLoading(pickleSym)
             case Absent             => javaResult.classSymbol
 
-        // All symbols: Java symbols (minus the class itself) + pickle symbols
-        val mergedSymbols = javaResult.symbols ++ pickleResult.symbols
+        // All symbols: Java symbols (minus the class itself) + pickle symbols converted to LoadingSymbol
+        val mergedSymbols = javaResult.symbols ++ pickleResult.symbols.map(symToLoading)
 
         // Parents: prefer pickle parents if available
         val mergedParents =
@@ -1242,16 +1324,26 @@ object ClassfileUnpickler:
       */
     private def parseClassTypeParams(
         pool: ConstantPool,
-        signatureIdx: Maybe[Int]
-    )(using Frame, AllowUnsafe): Chunk[Tasty.Symbol] < (Sync & Abort[TastyError]) =
+        signatureIdx: Maybe[Int],
+        idCounter: IdCounter
+    )(using Frame, AllowUnsafe): Chunk[LoadingSymbol.Materialising] < (Sync & Abort[TastyError]) =
+        // Type params from classfile signatures are converted to LoadingSymbol.Materialising for Phase C.
+        // On parse failure, graceful degradation returns an empty chunk.
         signatureIdx match
             case Absent => Chunk.empty
             case Present(idx) =>
                 pool.utf8(idx).map: sig =>
                     Abort.run(JavaSignatures.parseClassSignature(sig)).map:
-                        case Result.Success((typeParams, _)) => typeParams
-                        case Result.Failure(_)               => Chunk.empty
-                        case Result.Panic(t)                 => Abort.panic(t)
+                        case Result.Success((typeParams, _)) =>
+                            typeParams.map: sym =>
+                                LoadingSymbol.Materialising(
+                                    id = idCounter.nextId(),
+                                    kind = sym.kind,
+                                    flags = sym.flags,
+                                    name = sym.name
+                                )
+                        case Result.Failure(_) => Chunk.empty
+                        case Result.Panic(t)   => Abort.panic(t)
 
     /** Resolve the symbol name and owner symbol for a class, using the inner class table.
       *
@@ -1297,23 +1389,35 @@ object ClassfileUnpickler:
                 if outerOuterBinaryName.nonEmpty && outerSimpleName.nonEmpty =>
                 // Nested inner class: recurse
                 val grandParent = buildPackageOwnerChain(outerOuterBinaryName, innerTable)
-                SymbolFactory.makeSymbol(
-                    SymbolKind.Class,
-                    Tasty.Flags(Tasty.Flag.JavaDefined),
-                    Tasty.Name(outerSimpleName)
-                )
+                makeOwnerStub(SymbolKind.Class, outerSimpleName)
             case _ =>
                 // Top-level outer class: parse the package prefix and class name
                 val segments  = outerBinaryName.split("/")
                 val className = segments.last
                 val pkgSymbol = buildPackageSymbol(segments.dropRight(1))
-                SymbolFactory.makeSymbol(
-                    SymbolKind.Class,
-                    Tasty.Flags(Tasty.Flag.JavaDefined),
-                    Tasty.Name(className)
-                )
+                makeOwnerStub(SymbolKind.Class, className)
         end match
     end buildPackageOwnerChain
+
+    /** Create a final Tasty.Symbol placeholder (id=-1) for owner chain / enclosing symbols stored in public Tasty.Java.* types. */
+    private def makeOwnerStub(kind: SymbolKind, simpleName: String)(using AllowUnsafe): Tasty.Symbol =
+        TypedSymbolFactory.from(new SymbolDescriptor(
+            id = -1,
+            kind = kind,
+            flags = Tasty.Flags(Tasty.Flag.JavaDefined),
+            name = Tasty.Name(simpleName),
+            ownerId = -1,
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            body = Maybe.Absent
+        ))
+    end makeOwnerStub
 
     /** Build a chain of Package symbols for a package path (e.g., Array("java", "util")). Returns the innermost package symbol. If segments
       * is empty, returns null.
@@ -1326,11 +1430,7 @@ object ClassfileUnpickler:
             var cur: Tasty.Symbol = null
             var i                 = 0
             while i < segments.length do
-                cur = SymbolFactory.makeSymbol(
-                    SymbolKind.Package,
-                    Tasty.Flags(Tasty.Flag.JavaDefined),
-                    Tasty.Name(segments(i))
-                )
+                cur = makeOwnerStub(SymbolKind.Package, segments(i))
                 i += 1
             end while
             cur
@@ -1348,14 +1448,10 @@ object ClassfileUnpickler:
             case Absent => Absent
             case Present(classIdx) =>
                 pool.classRef(classIdx).map: enclosingBinaryName =>
-                    val enclosingFqn   = FqnCanonicalizer.toFullName(enclosingBinaryName, innerTable)
-                    val enclosingName  = enclosingFqn.split("\\.").last
-                    val enclosingOwner = buildPackageOwnerChain(enclosingBinaryName, innerTable)
-                    val enclosingClassSym = SymbolFactory.makeSymbol(
-                        SymbolKind.Unresolved,
-                        Tasty.Flags(Tasty.Flag.JavaDefined),
-                        Tasty.Name(enclosingName)
-                    )
+                    val enclosingFqn      = FqnCanonicalizer.toFullName(enclosingBinaryName, innerTable)
+                    val enclosingName     = enclosingFqn.split("\\.").last
+                    val enclosingOwner    = buildPackageOwnerChain(enclosingBinaryName, innerTable)
+                    val enclosingClassSym = makeOwnerStub(SymbolKind.Class, enclosingName)
                     enclosingMethodIdx match
                         case Absent =>
                             // The EnclosingMethod attribute is present but method_index == 0,
@@ -1439,12 +1535,8 @@ object ClassfileUnpickler:
                 unresolvedType(other)
 
     private def primType(fqn: String)(using AllowUnsafe): Tasty.Type =
-        val sym = SymbolFactory.makeSymbol(
-            SymbolKind.Class,
-            Tasty.Flags(Tasty.Flag.JavaDefined),
-            Tasty.Name(fqn.split("\\.").last)
-        )
-        Tasty.Type.Named(sym.id)
+        // Sentinel id -1 for primitive type references (not resolved against classpath).
+        Tasty.Type.Named(kyo.Tasty.SymbolId(-1))
     end primType
 
     private def decodeAnnotations(
@@ -1474,33 +1566,36 @@ object ClassfileUnpickler:
     private def buildMemberSymbols(
         pool: ConstantPool,
         path: String,
-        owner: Tasty.Symbol,
+        owner: LoadingSymbol.Materialising,
         infos: Chunk[MemberInfo],
-        isMethods: Boolean
-    )(using Frame, AllowUnsafe): Chunk[(Tasty.Symbol, Tasty.Type)] < (Sync & Abort[TastyError]) =
-        buildMemberList(pool, path, owner, infos, 0, Chunk.empty, isMethods)
+        isMethods: Boolean,
+        idCounter: IdCounter
+    )(using Frame, AllowUnsafe): Chunk[(LoadingSymbol.Materialising, Tasty.Type)] < (Sync & Abort[TastyError]) =
+        buildMemberList(pool, path, owner, infos, 0, Chunk.empty, isMethods, idCounter)
 
     private def buildMemberList(
         pool: ConstantPool,
         path: String,
-        owner: Tasty.Symbol,
+        owner: LoadingSymbol.Materialising,
         infos: Chunk[MemberInfo],
         idx: Int,
-        acc: Chunk[(Tasty.Symbol, Tasty.Type)],
-        isMethods: Boolean
-    )(using Frame, AllowUnsafe): Chunk[(Tasty.Symbol, Tasty.Type)] < (Sync & Abort[TastyError]) =
+        acc: Chunk[(LoadingSymbol.Materialising, Tasty.Type)],
+        isMethods: Boolean,
+        idCounter: IdCounter
+    )(using Frame, AllowUnsafe): Chunk[(LoadingSymbol.Materialising, Tasty.Type)] < (Sync & Abort[TastyError]) =
         if idx >= infos.length then acc
         else
-            buildOneMemberSymbol(pool, path, owner, infos(idx), isMethods).map: pair =>
-                buildMemberList(pool, path, owner, infos, idx + 1, acc.appended(pair), isMethods)
+            buildOneMemberSymbol(pool, path, owner, infos(idx), isMethods, idCounter).map: pair =>
+                buildMemberList(pool, path, owner, infos, idx + 1, acc.appended(pair), isMethods, idCounter)
 
     private def buildOneMemberSymbol(
         pool: ConstantPool,
         path: String,
-        owner: Tasty.Symbol,
+        owner: LoadingSymbol.Materialising,
         info: MemberInfo,
-        isMethod: Boolean
-    )(using Frame, AllowUnsafe): (Tasty.Symbol, Tasty.Type) < (Sync & Abort[TastyError]) =
+        isMethod: Boolean,
+        idCounter: IdCounter
+    )(using Frame, AllowUnsafe): (LoadingSymbol.Materialising, Tasty.Type) < (Sync & Abort[TastyError]) =
         pool.utf8(info.nameIdx).map: memberName =>
             val accessFlags = info.accessFlags
             val isStatic    = (accessFlags & ClassfileFormat.ACC_STATIC) != 0
@@ -1543,23 +1638,14 @@ object ClassfileUnpickler:
                                 runtimeTypeAnnotations = Chunk.empty
                             )
 
-                            val memberDesc = new SymbolDescriptor(
-                                id = -1,
+                            val sym = LoadingSymbol.Materialising(
+                                id = idCounter.nextId(),
                                 kind = kind,
                                 flags = memberFlags,
                                 name = Tasty.Name(memberName),
-                                ownerId = -1,
                                 declaredType = Maybe(memberType),
-                                scaladoc = Maybe.Absent,
-                                sourcePosition = Maybe.Absent,
-                                javaMetadata = Maybe(metadata),
-                                parentTypes = Chunk.empty,
-                                typeParamIds = Chunk.empty,
-                                declarationIds = Chunk.empty,
-                                permittedSubclassIds = Maybe.Absent,
-                                body = Maybe.Absent
+                                javaMetadata = Maybe(metadata)
                             )
-                            val sym = TypedSymbolFactory.from(memberDesc)
                             (sym, memberType)
 
     private def resolveThrowsTypes(
@@ -1579,12 +1665,8 @@ object ClassfileUnpickler:
         if i >= idxs.length then acc
         else
             pool.classRef(idxs(i)).map: binaryName =>
-                val exSym = SymbolFactory.makeSymbol(
-                    SymbolKind.Unresolved,
-                    Tasty.Flags(Tasty.Flag.JavaDefined),
-                    Tasty.Name(binaryName.replace('/', '.'))
-                )
-                resolveThrowsList(pool, path, idxs, i + 1, acc.appended(Tasty.Type.Named(exSym.id)))
+                // Sentinel id -1 for throws types (not resolved against classpath here).
+                resolveThrowsList(pool, path, idxs, i + 1, acc.appended(Tasty.Type.Named(kyo.Tasty.SymbolId(-1))))
 
     private def buildInnerClassTable(
         pool: ConstantPool,

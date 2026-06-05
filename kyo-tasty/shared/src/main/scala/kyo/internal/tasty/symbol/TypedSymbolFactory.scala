@@ -209,8 +209,10 @@ private[kyo] object TypedSymbolFactory:
                     javaAnnotations = d.javaAnnotations,
                     body = d.body
                 )
-            case SymbolKind.Unresolved =>
-                Tasty.Symbol.Unresolved(sid, d.name, ownerSid, d.flags)
+            // SymbolKind.Unresolved was removed in Phase 08; this case is retained for backward compatibility
+            // with SnapshotReader (ordinal 14 -> Package fallback). Treat as Package.
+            case _ =>
+                Tasty.Symbol.Package(sid, d.name, d.flags, ownerSid, Chunk.empty)
         end match
     end from
 

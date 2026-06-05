@@ -1,5 +1,6 @@
 package kyo.internal.tasty.symbol
 
+import kyo.Maybe
 import kyo.Tasty
 import kyo.Tasty.Name.asString
 import kyo.Tasty.SymbolId.value
@@ -31,18 +32,20 @@ private[kyo] object BinaryName:
             // Root: emit the accumulated segments joined appropriately.
             suffix.mkString
         else
-            val owner = cp.symbol(sym.ownerId)
-            if owner.ownerId == owner.id || owner.ownerId.value == -1 || owner.id == cp.rootSymbolId then
-                // sym is a top-level declaration; its name connects to the owner (package) via '/'.
-                if suffix.isEmpty then nameStr
-                else nameStr + suffix.mkString
-            else
-                val ownerKind = owner.kind
-                val sep =
-                    if ownerKind == SymbolKind.Package then "/"
-                    else "$"
-                buildSegments(owner, cp, sep :: nameStr :: suffix)
-            end if
+            cp.symbol(sym.ownerId) match
+                case Maybe.Absent => suffix.mkString // no owner: treat as root
+                case Maybe.Present(owner) =>
+                    if owner.ownerId == owner.id || owner.ownerId.value == -1 || owner.id == cp.rootSymbolId then
+                        // sym is a top-level declaration; its name connects to the owner (package) via '/'.
+                        if suffix.isEmpty then nameStr
+                        else nameStr + suffix.mkString
+                    else
+                        val ownerKind = owner.kind
+                        val sep =
+                            if ownerKind == SymbolKind.Package then "/"
+                            else "$"
+                        buildSegments(owner, cp, sep :: nameStr :: suffix)
+                    end if
         end if
     end buildSegments
 

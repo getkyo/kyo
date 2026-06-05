@@ -170,7 +170,7 @@ class SymbolFieldPreservationTest extends Test:
                 SymbolId(0),
                 Chunk.empty
             ),
-            14 -> Tasty.Symbol.Unresolved(SymbolId(14), Tasty.Name("u"), SymbolId(0))
+            14 -> Tasty.Symbol.Package(SymbolId(14), Tasty.Name("u"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         )
         for (expectedId, sym) <- syms do
             assert(sym.id == SymbolId(expectedId), s"Expected id=${expectedId} for ${sym.getClass.getSimpleName} but got ${sym.id.value}")
@@ -334,7 +334,7 @@ class SymbolFieldPreservationTest extends Test:
                 Chunk.empty
             ),
             Tasty.Symbol.Package(SymbolId(13), Tasty.Name("pkg"), sf, SymbolId(0), Chunk.empty),
-            Tasty.Symbol.Unresolved(SymbolId(14), Tasty.Name("u"), SymbolId(0))
+            Tasty.Symbol.Package(SymbolId(14), Tasty.Name("u"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         )
         // Note: Unresolved ignores constructor flags and returns Flags.empty (by design).
         val subtypesWithFlags = syms.dropRight(1)

@@ -1,12 +1,13 @@
 package kyo.internal.tasty.classfile
 
 import kyo.*
+import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.type_.TypeArena
 
 /** Result produced by ClassfileUnpickler for a single .class file.
   *
   * @param classSymbol
-  *   The Tasty.Symbol for the class or interface defined by this file.
+  *   The loading-phase symbol for the class or interface defined by this file.
   * @param parents
   *   Unresolved parent types: super class (if any) followed by implemented interfaces. The classpath orchestrator resolves these to real
   *   symbols during the merge pass.
@@ -18,13 +19,13 @@ import kyo.internal.tasty.type_.TypeArena
   *   The TypeArena used during decoding; retained so the orchestrator can merge per-file arenas into the canonical arena.
   */
 final case class ClassfileResult(
-    classSymbol: Tasty.Symbol,
+    classSymbol: LoadingSymbol.Materialising,
     parents: Chunk[Tasty.Type],
     innerClassTable: Map[String, (String, String)],
-    symbols: Chunk[Tasty.Symbol],
-    typeParams: Chunk[Tasty.Symbol],
+    symbols: Chunk[LoadingSymbol.Materialising],
+    typeParams: Chunk[LoadingSymbol.Materialising],
     arena: TypeArena,
-    memberTypes: Map[Tasty.Symbol, Tasty.Type],
+    memberTypes: Map[LoadingSymbol.Materialising, Tasty.Type],
     /** F-A3-001..004 fix: raw binary class names of parent types (e.g. "java/lang/Object", "java/io/Serializable").
       *
       * Parallel to `parents`: `parentBinaryNames(i)` is the binary name for `parents(i)`. Empty string entries indicate

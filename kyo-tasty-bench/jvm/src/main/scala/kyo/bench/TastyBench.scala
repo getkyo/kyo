@@ -281,7 +281,7 @@ object TastyBench:
         // Workload 5: declarations enumeration on a class with declared members.
         bench("W5 declarations enumeration (PlainClass)", warmupIter, measureIter):
             val count = warmCp.findClass("kyo.fixtures.PlainClass") match
-                case Present(sym) => sym.declarationIds.map(warmCp.symbol).size
+                case Present(sym) => sym.declarationIds.flatMap(id => warmCp.symbol(id).toChunk).size
                 case Absent       => 0
             val _ = count
 
@@ -292,7 +292,7 @@ object TastyBench:
             val tops  = warmCp.topLevelClasses
             var total = 0
             for cls <- tops do
-                val decls = cls.declarationIds.map(warmCp.symbol)
+                val decls = cls.declarationIds.flatMap(id => warmCp.symbol(id).toChunk)
                 total += decls.count(_.kind == SymbolKind.Method)
                 if cls.kind == SymbolKind.Method then total += 1
             end for
@@ -307,7 +307,7 @@ object TastyBench:
             var result = ""
             var found  = false
             for cls <- tops if !found do
-                for sym <- cls.declarationIds.map(warmCp.symbol) if !found do
+                for sym <- cls.declarationIds.flatMap(id => warmCp.symbol(id).toChunk) if !found do
                     if sym.kind == SymbolKind.Method then
                         val sig  = sym.name.asString
                         val doc  = sym.scaladoc.getOrElse("")
@@ -329,7 +329,7 @@ object TastyBench:
                 Tasty.withClasspath(warmCp):
                     val tops = warmCp.topLevelClasses
                     val methods: Chunk[Tasty.Symbol.Method] =
-                        tops.flatMap(_.declarationIds.map(warmCp.symbol)).collect:
+                        tops.flatMap(_.declarationIds.flatMap(id => warmCp.symbol(id).toChunk)).collect:
                             case m: Tasty.Symbol.Method => m
                     val counts: Chunk[Int] < (Sync & Abort[TastyError]) =
                         Kyo.foreach(methods): (m: Tasty.Symbol.Method) =>

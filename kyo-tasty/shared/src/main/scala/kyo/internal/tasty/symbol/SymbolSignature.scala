@@ -31,22 +31,23 @@ private[kyo] object SymbolSignature:
             case t: Tasty.Symbol.TypeParam    => t.simpleName
             case p: Tasty.Symbol.Parameter    => s"${p.simpleName}: ${renderType(p.declaredType)}"
             case p: Tasty.Symbol.Package      => s"package ${p.simpleName}"
-            case u: Tasty.Symbol.Unresolved   => s"<unresolved ${u.simpleName}>"
+            case _                            => s"<unknown ${sym.simpleName}>"
         end match
     end computeUnsafe
 
     private def methodSig(m: Tasty.Symbol.Method)(using cp: Tasty.Classpath)(using AllowUnsafe): String =
         val tps =
             if m.typeParamIds.isEmpty then ""
-            else m.typeParamIds.map(cp.symbol(_).simpleName).mkString("[", ", ", "]")
+            else m.typeParamIds.flatMap(id => cp.symbol(id).map(_.simpleName).toList).mkString("[", ", ", "]")
         val plists = m.paramListIds.map: pl =>
-            pl.map: pid =>
-                val p = cp.symbol(pid)
-                p match
-                    case param: Tasty.Symbol.Parameter =>
-                        s"${param.simpleName}: ${renderType(param.declaredType)}"
-                    case other => other.simpleName
-                end match
+            pl.flatMap: pid =>
+                cp.symbol(pid).map: p =>
+                    p match
+                        case param: Tasty.Symbol.Parameter =>
+                            s"${param.simpleName}: ${renderType(param.declaredType)}"
+                        case other => other.simpleName
+                    end match
+                .toList
             .mkString("(", ", ", ")")
         .mkString
         val rt = m.declaredType match
@@ -59,9 +60,10 @@ private[kyo] object SymbolSignature:
     private def classlikeSig(kw: String, c: Tasty.Symbol.ClassLike)(using cp: Tasty.Classpath)(using AllowUnsafe): String =
         val tps =
             if c.typeParamIds.isEmpty then ""
-            else c.typeParamIds.map(cp.symbol(_).simpleName).mkString("[", ", ", "]")
-        val parentSyms = c.parentTypes.collect:
-            case Tasty.Type.Named(pid) => cp.symbol(pid)
+            else c.typeParamIds.flatMap(id => cp.symbol(id).map(_.simpleName).toList).mkString("[", ", ", "]")
+        val parentSyms = c.parentTypes.flatMap:
+            case Tasty.Type.Named(pid) => cp.symbol(pid).toList
+            case _                     => Nil
         val parents =
             if parentSyms.isEmpty then ""
             else " extends " + parentSyms.map(_.simpleName).mkString(", ")
@@ -77,7 +79,7 @@ private[kyo] object SymbolSignature:
             case Tasty.Type.Named(id) =>
                 // Resolve symbol and produce its FQN string using the unsafe kernel.
                 import Tasty.Name.asString
-                cp.fullNameUnsafe(cp.symbol(id)).asString
+                cp.symbol(id).map(s => cp.fullNameUnsafe(s).asString).getOrElse("<unresolved>")
             case _ => t.toString
 
 end SymbolSignature

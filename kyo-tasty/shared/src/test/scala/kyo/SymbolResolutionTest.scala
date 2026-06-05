@@ -329,7 +329,7 @@ class SymbolResolutionTest extends Test:
             )
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(symA, symB, symC)).map: cp =>
-            val parents = symC.parentTypes.collect { case Tasty.Type.Named(pid) => cp.symbol(pid) }
+            val parents = symC.parentTypes.flatMap { case Tasty.Type.Named(pid) => cp.symbol(pid).toChunk; case _ => Chunk.empty }
             assert(
                 parents.length == 1,
                 s"Expected 1 parent (Named only) but got ${parents.length}"
@@ -350,7 +350,7 @@ class SymbolResolutionTest extends Test:
         val varSym    = makeVarSym9(id = 4, name = "y", ownerId = 0)
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2), SymbolId(3), SymbolId(4)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1, method2, valSym, varSym)).map: cp =>
-            val methods = withDecls.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method])
+            val methods = withDecls.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method])
             assert(methods.length == 2, s"Expected 2 methods but got ${methods.length}")
             val methodNames = methods.map(_.name.asString).toSet
             assert(methodNames == Set("foo", "bar"), s"Expected {foo, bar} but got $methodNames")
@@ -363,22 +363,25 @@ class SymbolResolutionTest extends Test:
         val memberSym = makeMethodSym9(id = 1, name = "existingMethod", ownerId = 0)
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, memberSym)).map: cp =>
-            val absent  = Maybe.fromOption(withDecls.declarationIds.map(cp.symbol).find(_.simpleName == "nope"))
-            val present = Maybe.fromOption(withDecls.declarationIds.map(cp.symbol).find(_.simpleName == "existingMethod"))
+            val absent = Maybe.fromOption(withDecls.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "nope"))
+            val present =
+                Maybe.fromOption(withDecls.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "existingMethod"))
             assert(absent == Maybe.Absent, s"Expected Absent for 'nope' but got $absent")
             assert(present.isDefined, s"Expected Present for 'existingMethod' but got $present")
     }
 
-    // Phase 09 Leaf 5: sym.parents, Tasty.owner(sym), sym.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method]) are direct member calls.
+    // Phase 09 Leaf 5: sym.parents, Tasty.owner(sym), sym.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method]) are direct member calls.
     // Pins: API discipline rule
-    "Phase09: sym.parents, Tasty.owner(sym), sym.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method]) compile as direct member calls" in run {
+    "Phase09: sym.parents, Tasty.owner(sym), sym.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method]) compile as direct member calls" in run {
         val pkgSym = makePkgSym9(id = 0, name = "pkg")
         val fooSym = makeClassSym9(id = 1, name = "Foo", ownerId = 0)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(pkgSym, fooSym)).flatMap: cp =>
             Tasty.withClasspath(cp):
                 Tasty.owner(fooSym).map: ownerSym =>
-                    val parentList: Chunk[Tasty.Symbol] = fooSym.parentTypes.collect { case Tasty.Type.Named(pid) => cp.symbol(pid) }
-                    val methodList: Chunk[Tasty.Symbol] = fooSym.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method])
+                    val parentList: Chunk[Tasty.Symbol] =
+                        fooSym.parentTypes.flatMap { case Tasty.Type.Named(pid) => cp.symbol(pid).toChunk; case _ => Chunk.empty }
+                    val methodList: Chunk[Tasty.Symbol] =
+                        fooSym.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method])
                     assert(ownerSym.isDefined && ownerSym.get.id == pkgSym.id, "owner id mismatch")
                     assert(parentList.isEmpty, s"Expected empty parents got ${parentList.length}")
                     assert(methodList.isEmpty, s"Expected empty methods got ${methodList.length}")
@@ -392,22 +395,27 @@ class SymbolResolutionTest extends Test:
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).flatMap: cp =>
             Tasty.withClasspath(cp):
                 // All resolution accessors via Tasty.* free functions (Phase 06 API)
-                val _typeParams: Chunk[Tasty.Symbol] = sym.typeParamIds.map(cp.symbol)
-                val _decls: Chunk[Tasty.Symbol]      = sym.declarationIds.map(cp.symbol)
-                val _methods: Chunk[Tasty.Symbol]    = sym.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method])
-                val _vals: Chunk[Tasty.Symbol]       = sym.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Val])
-                val _vars: Chunk[Tasty.Symbol]       = sym.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Var])
-                val _fields: Chunk[Tasty.Symbol]     = sym.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Field])
-                val _nested: Chunk[Tasty.Symbol] = sym.declarationIds.map(cp.symbol).filter(s =>
+                val _typeParams: Chunk[Tasty.Symbol] = sym.typeParamIds.flatMap(id => cp.symbol(id).toChunk)
+                val _decls: Chunk[Tasty.Symbol]      = sym.declarationIds.flatMap(id => cp.symbol(id).toChunk)
+                val _methods: Chunk[Tasty.Symbol] =
+                    sym.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method])
+                val _vals: Chunk[Tasty.Symbol] =
+                    sym.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Val])
+                val _vars: Chunk[Tasty.Symbol] =
+                    sym.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Var])
+                val _fields: Chunk[Tasty.Symbol] =
+                    sym.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Field])
+                val _nested: Chunk[Tasty.Symbol] = sym.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(s =>
                     s.isInstanceOf[Tasty.Symbol.Class] || s.isInstanceOf[Tasty.Symbol.Trait] || s.isInstanceOf[Tasty.Symbol.Object]
                 )
-                val _typeM: Chunk[Tasty.Symbol] = sym.declarationIds.map(cp.symbol).filter(s =>
+                val _typeM: Chunk[Tasty.Symbol] = sym.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(s =>
                     s.isInstanceOf[Tasty.Symbol.TypeAlias] ||
                         s.isInstanceOf[Tasty.Symbol.OpaqueType] ||
                         s.isInstanceOf[Tasty.Symbol.AbstractType]
                 )
-                val _find: Maybe[Tasty.Symbol] = Maybe.fromOption(sym.declarationIds.map(cp.symbol).find(_.simpleName == "anything"))
-                val _showEff: String < Sync    = Tasty.show(sym)
+                val _find: Maybe[Tasty.Symbol] =
+                    Maybe.fromOption(sym.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "anything"))
+                val _showEff: String < Sync = Tasty.show(sym)
                 for
                     _owner   <- Tasty.owner(sym)
                     _parents <- Tasty.parents(sym.asInstanceOf[Tasty.Symbol.ClassLike])

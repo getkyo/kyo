@@ -74,7 +74,9 @@ object Subtyping:
         else
             // Any is supertype of everything
             sup match
-                case Tasty.Type.Named(supId) if { import Tasty.Name.asString; cp.symbol(supId).name.asString == AnyName } =>
+                case Tasty.Type.Named(supId) if {
+                        import Tasty.Name.asString; cp.symbol(supId).map(_.name.asString).getOrElse("") == AnyName
+                    } =>
                     Sub
                 // T <: OrType(L, R): Sub if either side is Sub; NotSub only if both are NotSub; else Indeterminate
                 case Tasty.Type.OrType(supLeft, supRight) =>
@@ -89,7 +91,9 @@ object Subtyping:
                 case _ =>
                     sub match
                         // Nothing is subtype of everything
-                        case Tasty.Type.Named(subId) if { import Tasty.Name.asString; cp.symbol(subId).name.asString == NothingName } =>
+                        case Tasty.Type.Named(subId) if {
+                                import Tasty.Name.asString; cp.symbol(subId).map(_.name.asString).getOrElse("") == NothingName
+                            } =>
                             Sub
 
                         // Named reflexivity and nominal subtyping
@@ -112,10 +116,8 @@ object Subtyping:
                                     else
                                         // Resolve base symbol for variance lookup; available since Phase 09.
                                         val baseSymOpt: Maybe[Tasty.Symbol] = subBase match
-                                            case Tasty.Type.Named(id) =>
-                                                val s = cp.symbol(id)
-                                                if s.kind == SymbolKind.Unresolved then Maybe.Absent else Maybe(s)
-                                            case _ => Maybe.Absent
+                                            case Tasty.Type.Named(id) => cp.symbol(id)
+                                            case _                    => Maybe.Absent
                                         checkAppliedArgs(subArgs, supArgs, baseSymOpt, cp, budget, errAcc)
                                     end if
                                 case _ =>
@@ -269,7 +271,7 @@ object Subtyping:
                 case ta: Tasty.Symbol.TypeAlias  => ta.typeParamIds
                 case ot: Tasty.Symbol.OpaqueType => ot.typeParamIds
                 case _                           => Chunk.empty
-            ).map(cp.symbol)
+            ).flatMap(id => cp.symbol(id).toChunk)
             if tps.nonEmpty then Maybe(tps) else Maybe.Absent
         checkArgPairs(subArgs, supArgs, typeParamsOpt, 0, cp, budget, errAcc)
     end checkAppliedArgs

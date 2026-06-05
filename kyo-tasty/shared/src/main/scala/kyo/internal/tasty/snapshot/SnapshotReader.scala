@@ -1601,8 +1601,9 @@ object SnapshotReader:
             case 11 => TypeParam
             case 12 => Parameter
             case 13 => EnumCase
-            case 14 => Unresolved
-            case _  => Unresolved
+            // ordinal 14 was Unresolved (removed in Phase 08); map to Package for backward compatibility
+            // until Phase 11 bumps the snapshot wire format minor version.
+            case _ => Package
         end match
     end kindFromOrd
 

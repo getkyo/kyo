@@ -275,13 +275,13 @@ class DecoderFidelity5Phase04Test extends Test:
     "P04.8 F-W2-19: cp.symbol returns sentinel for id=-1, id=-2, and id=Int.MinValue" in run {
         Abort.run[TastyError]:
             snapshotRoundTrip().map: cp =>
-                import kyo.Tasty.SymbolId.value as symIdValue
+                // Phase 08: cp.symbol now returns Maybe[Symbol]; out-of-range/negative ids return Maybe.Absent
                 val s1 = cp.symbol(SymbolId(-1))
                 val s2 = cp.symbol(SymbolId(-2))
                 val s3 = cp.symbol(SymbolId(Int.MinValue))
-                assert(s1.id.symIdValue == -1, s"symbol(id=-1) must be sentinel; got id=${s1.id.symIdValue}")
-                assert(s2.id.symIdValue == -1, s"symbol(id=-2) must be sentinel; got id=${s2.id.symIdValue}")
-                assert(s3.id.symIdValue == -1, s"symbol(id=MIN_INT) must be sentinel; got id=${s3.id.symIdValue}")
+                assert(s1 == Maybe.Absent, s"symbol(id=-1) must be Absent but was $s1")
+                assert(s2 == Maybe.Absent, s"symbol(id=-2) must be Absent but was $s2")
+                assert(s3 == Maybe.Absent, s"symbol(id=MIN_INT) must be Absent but was $s3")
                 succeed
         .map:
             case Result.Success(r) => r
@@ -363,12 +363,12 @@ class DecoderFidelity5Phase04Test extends Test:
         Abort.run[TastyError]:
             Scope.run:
                 ClasspathOrchestrator.init(Seq.empty, Tasty.ErrorMode.SoftFail, MemSrc(), 1).map: cp =>
-                    import kyo.Tasty.SymbolId.value as symIdValue
                     assert(cp.symbols.isEmpty, s"Expected empty classpath; got ${cp.symbols.length} symbols")
                     val root = cp.symbol(cp.rootSymbolId)
+                    // Phase 08: empty classpath means rootSymbolId=-1, cp.symbol returns Maybe.Absent
                     assert(
-                        root.id.symIdValue == -1,
-                        s"cp.symbol(rootSymbolId) must be sentinel on empty cp; got id=${root.id.symIdValue}"
+                        root == Maybe.Absent,
+                        s"cp.symbol(rootSymbolId) must be Absent on empty cp; got $root"
                     )
                     succeed
         .map:

@@ -31,11 +31,11 @@ class SealedAdtCompletenessTest extends Test:
     private inline def enumVariantCount[T](using m: Mirror.SumOf[T]): Int =
         constValue[Tuple.Size[m.MirroredElemTypes]]
 
-    // ── ADT-001: TastyError (enum - 20 variants) ─────────────────────────────
+    // ── ADT-001: TastyError (enum - 21 variants) ─────────────────────────────
 
     // EXPECTED_TASTY_ERROR_COUNT: update this constant whenever a new TastyError variant is added.
     // Compile failure here means a variant was added without updating this guard.
-    private inline val EXPECTED_TASTY_ERROR_COUNT = 20
+    private inline val EXPECTED_TASTY_ERROR_COUNT = 21
 
     // Verify at compile time that the actual count matches the pinned expectation.
     // summonInline resolves the Mirror at compile time; Tuple.Size on the concrete
@@ -73,11 +73,12 @@ class SealedAdtCompletenessTest extends Test:
         "UnknownTagInPosition"    -> "TastyPropertyTest",
         "InvalidFqn"              -> "TastyErrorTest",
         "DigestMismatch"          -> "TastyErrorMaybeTest",
-        "UnhandledSubtypingCase"  -> "IsSubtypeOfTest"
+        "UnhandledSubtypingCase"  -> "IsSubtypeOfTest",
+        "UnresolvedReference"     -> "TastyErrorMaybeTest"
     )
 
-    // ADT-001: TastyError - all 20 variants covered by tests.
-    "ADT-001: TastyError - all 20 variants are covered by at least one named test" in {
+    // ADT-001: TastyError - all 21 variants covered by tests.
+    "ADT-001: TastyError - all 21 variants are covered by at least one named test" in {
         val variantNames = enumVariantNames[TastyError]
         assert(
             variantNames.size == EXPECTED_TASTY_ERROR_COUNT,
@@ -351,7 +352,7 @@ class SealedAdtCompletenessTest extends Test:
 
     // Summary: verifies the union of covered + uncovered equals allVariants for each ADT.
     "ADT-SUMMARY: all 4 ADTs enumerated with correct total counts" in {
-        // TastyError: 19 variants
+        // TastyError: 21 variants
         assert(
             tastyErrorCoveredByTest.size == EXPECTED_TASTY_ERROR_COUNT,
             s"TastyError coverage map has ${tastyErrorCoveredByTest.size} entries, expected $EXPECTED_TASTY_ERROR_COUNT"

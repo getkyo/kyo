@@ -8,14 +8,16 @@ import kyo.internal.tasty.reader.TastyFormat
   * Ordinal values are written to snapshot byte streams by SnapshotWriter (sym.kind.ordinal.toByte) and
   * decoded by SnapshotReader.kindFromOrd. The ordinal-to-case mapping must never change:
   * Package=0, Class=1, Trait=2, Object=3, Method=4, Field=5, Val=6, Var=7,
-  * TypeAlias=8, OpaqueType=9, AbstractType=10, TypeParam=11, Parameter=12, EnumCase=13, Unresolved=14.
+  * TypeAlias=8, OpaqueType=9, AbstractType=10, TypeParam=11, Parameter=12, EnumCase=13.
+  * Ordinal 14 was Unresolved (removed in Phase 08); SnapshotReader maps it to Package for backward
+  * compatibility until Phase 11 bumps the snapshot wire format.
   *
   * User code should pattern-match on Symbol subtypes rather than on SymbolKind directly.
   */
 private[kyo] enum SymbolKind derives CanEqual:
     case Package, Class, Trait, Object, Method, Field, Val, Var,
         TypeAlias, OpaqueType, AbstractType, TypeParam, Parameter,
-        EnumCase, Unresolved
+        EnumCase
 end SymbolKind
 
 /** TASTy-tag-to-SymbolKind mapping.
@@ -90,7 +92,7 @@ object SymbolKind:
             case DEFDEF    => SymbolKind.Method
             case TYPEPARAM => SymbolKind.TypeParam
             case PARAM     => SymbolKind.Parameter
-            case _         => SymbolKind.Unresolved
+            case _         => SymbolKind.Package // fallback: treat unknown tags as Package (rare; caller responsible for filtering)
         end match
     end fromTagAndFlags
 

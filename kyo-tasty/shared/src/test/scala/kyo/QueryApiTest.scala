@@ -3,6 +3,7 @@ import kyo.Tasty.SymbolId
 import kyo.internal.tasty.classfile.ClassfileUnpickler
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
+import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
@@ -42,6 +43,9 @@ class QueryApiTest extends Test:
         case ta: Tasty.Symbol.TypeAlias  => Maybe(ta.body)
         case ot: Tasty.Symbol.OpaqueType => Maybe(ot.body)
         case _                           => Maybe.Absent
+
+    // Overloads for LoadingSymbol.Materialising (from ClassfileResult)
+    private def symDeclaredType(sym: LoadingSymbol.Materialising): Maybe[Tasty.Type] = sym.declaredType
 
     /** An in-memory FileSource backed by a mutable map of path -> bytes. */
     final class MemoryFileSource(files: mutable.HashMap[String, Array[Byte]] = mutable.HashMap.empty) extends FileSource:
@@ -537,7 +541,7 @@ class QueryApiTest extends Test:
     }
 
     // Phase 3 Test 2 (G22): sym.typeParamIds for GenericBox[A] returns a Chunk of length 1.
-    // plan: phase-02 update; sym.typeParamIds.map(cp.symbol) (Chunk[Symbol]) becomes sym.typeParamIds (Chunk[SymbolId]).
+    // plan: phase-02 update; sym.typeParamIds.flatMap(id => cp.symbol(id).toChunk) (Chunk[Symbol]) becomes sym.typeParamIds (Chunk[SymbolId]).
     // Resolve SymbolId to Symbol via allSymbols for name check.
     "Phase 3: sym.typeParamIds for GenericBox[A] returns length 1 (phase-02 inline)" in run {
         val src = MemoryFileSource()
@@ -619,10 +623,10 @@ class QueryApiTest extends Test:
     }
 
     // Phase 3 Test 5 (G21/G22/G23 classfile): for ArrayRecord.class (Java record), sym.parents includes
-    // java.lang.Record; sym.typeParamIds.map(cp.symbol) is empty (non-generic); sym.declarationIds.map(cp.symbol) is non-empty.
+    // java.lang.Record; sym.typeParamIds.flatMap(id => cp.symbol(id).toChunk) is empty (non-generic); sym.declarationIds.flatMap(id => cp.symbol(id).toChunk) is non-empty.
     // Note: this test uses ClassfileUnpickler directly (pre-finalizeMerge). The relational fields
     // (parentTypes/typeParamIds/declarationIds) on the partial classSymbol are empty at this stage;
-    // we read the pre-merge ClassfileResult fields (cr.parents, cr.typeParamIds.map(cp.symbol), cr.symbols) directly.
+    // we read the pre-merge ClassfileResult fields (cr.parents, cr.typeParamIds.flatMap(id => cp.symbol(id).toChunk), cr.symbols) directly.
     // Phase 09 adds sym.parents/typeParams/declarations as member methods accessible post-finalizeMerge.
     "Phase 3: Java classfile symbol parents, typeParams, declarations are accessible" in run {
         val bytes = kyo.fixtures.Embedded.arrayRecordClass

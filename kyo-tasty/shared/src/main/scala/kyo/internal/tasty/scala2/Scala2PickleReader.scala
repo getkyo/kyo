@@ -401,7 +401,7 @@ object Scala2PickleReader:
         val ownerFqn    = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries, Set.empty[Int])).filter(_.nonEmpty)
         val fqn         = ownerFqn.fold(symName)(q => q + "." + symName)
         // declaredType=Absent (Named(sym) self-ref approximation).
-        makePickleSym(SymbolKind.Unresolved, baseFlags, fqn)
+        makePickleSym(SymbolKind.Class, baseFlags, fqn)
     end decodeExtRef
 
     /** EXTMODCLASSref data layout: nameRef(nat) [ownerRef(nat)]
@@ -424,7 +424,7 @@ object Scala2PickleReader:
         val ownerFqn        = ownerRefOpt.map(resolveExtFqn(_, nameTable, entries, Set.empty[Int])).filter(_.nonEmpty)
         val fqn             = ownerFqn.fold(moduleClassName)(q => q + "." + moduleClassName)
         // declaredType=Absent (Named(sym) self-ref approximation).
-        makePickleSym(SymbolKind.Unresolved, baseFlags, fqn)
+        makePickleSym(SymbolKind.Class, baseFlags, fqn)
     end decodeExtModClassRef
 
     /** Resolve the FQN string for an EXTref or EXTMODCLASSref owner entry index.
@@ -471,13 +471,8 @@ object Scala2PickleReader:
     // -------------------------------------------------------------------------
 
     private def buildAnyRefParent()(using AllowUnsafe): Tasty.Type =
-        // declaredType=Absent (Named(sym) self-ref approximation).
-        val anyRefSym = SymbolFactory.makeSymbol(
-            SymbolKind.Class,
-            Tasty.Flags(Tasty.Flag.Scala2, Tasty.Flag.JavaDefined),
-            Tasty.Name("AnyRef")
-        )
-        Tasty.Type.Named(anyRefSym.id)
+        // Sentinel id -1 for AnyRef parent type (not in-classpath reference; resolved externally).
+        Tasty.Type.Named(kyo.Tasty.SymbolId(-1))
     end buildAnyRefParent
 
     private def makePickleSym(
@@ -485,7 +480,23 @@ object Scala2PickleReader:
         flags: Tasty.Flags,
         name: String
     )(using AllowUnsafe): Tasty.Symbol =
-        SymbolFactory.makeSymbol(kind, flags, Tasty.Name(name))
+        val desc = new SymbolDescriptor(
+            id = -1,
+            kind = kind,
+            flags = flags,
+            name = Tasty.Name(name),
+            ownerId = -1,
+            declaredType = kyo.Maybe.Absent,
+            scaladoc = kyo.Maybe.Absent,
+            sourcePosition = kyo.Maybe.Absent,
+            javaMetadata = kyo.Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = kyo.Maybe.Absent,
+            body = kyo.Maybe.Absent
+        )
+        TypedSymbolFactory.from(desc)
     end makePickleSym
 
     /** Variant of makePickleSym with a specified declaredType. */

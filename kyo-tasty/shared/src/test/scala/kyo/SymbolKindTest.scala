@@ -9,20 +9,20 @@ import kyo.internal.tasty.symbol.SymbolKind
   * can still access it directly.
   *
   * Actual SymbolKind cases: Package, Class, Trait, Object, Method, Field, Val, Var, TypeAlias, OpaqueType, AbstractType, TypeParam,
-  * Parameter, EnumCase, Unresolved. Total: 15 cases.
+  * Parameter, EnumCase. Total: 14 cases (Unresolved removed in Phase 08).
   */
 class SymbolKindTest extends Test:
 
     // Test 8 (T2, SymbolKind): enum contains every documented case and has the expected count.
     // Given: SymbolKind.values array.
     // When: converted to a Set.
-    // Then: the set contains all 15 documented cases (Phase 07 added EnumCase); values.length == 15.
-    // Pins: T2, F-E-007 (Phase 07).
-    "SymbolKind.values contains all 15 documented cases" in {
+    // Then: the set contains all 14 documented cases (Phase 08 removed Unresolved); values.length == 14.
+    // Pins: T2, F-E-007 (Phase 07), Phase 08.
+    "SymbolKind.values contains all 14 documented cases" in {
         val values = SymbolKind.values
         assert(
-            values.length == 15,
-            s"Expected 15 SymbolKind cases but got ${values.length}: ${values.mkString(", ")}"
+            values.length == 14,
+            s"Expected 14 SymbolKind cases but got ${values.length}: ${values.mkString(", ")}"
         )
         val kindSet = values.toSet
         val expected: List[SymbolKind] = List(
@@ -39,8 +39,7 @@ class SymbolKindTest extends Test:
             SymbolKind.AbstractType,
             SymbolKind.TypeParam,
             SymbolKind.Parameter,
-            SymbolKind.EnumCase,
-            SymbolKind.Unresolved
+            SymbolKind.EnumCase
         )
         val missing = expected.filterNot(kindSet.contains)
         assert(

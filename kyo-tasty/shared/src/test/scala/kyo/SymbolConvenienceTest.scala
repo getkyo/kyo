@@ -167,7 +167,7 @@ class SymbolConvenienceTest extends Test:
                 moduleIndex = Dict.empty,
                 errors = Chunk.empty
             )
-            (if m.ownerId.value == -1 then Maybe.Absent else Maybe(cp.symbol(m.ownerId))) match
+            (if m.ownerId.value == -1 then Maybe.Absent else cp.symbol(m.ownerId)) match
                 case Maybe.Present(a) =>
                     assert(a.simpleName == "A", s"Expected A but got ${a.simpleName}")
                     succeed

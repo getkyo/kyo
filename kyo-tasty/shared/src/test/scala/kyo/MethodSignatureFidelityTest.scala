@@ -107,10 +107,10 @@ class MethodSignatureFidelityTest extends Test:
                         t match
                             case Tasty.Type.ThisType(id) =>
                                 totalThisCount += 1
-                                val sym = classpath.symbol(id)
-                                val isClassLike = sym.kind == SymbolKind.Class ||
-                                    sym.kind == SymbolKind.Trait ||
-                                    sym.kind == SymbolKind.Object
+                                val isClassLike = classpath.symbol(id).exists: sym =>
+                                    sym.kind == SymbolKind.Class ||
+                                        sym.kind == SymbolKind.Trait ||
+                                        sym.kind == SymbolKind.Object
                                 if !isClassLike then badThisCount += 1
                             case _ => ()
                     }
@@ -181,7 +181,7 @@ class MethodSignatureFidelityTest extends Test:
             val caseClassMaybe = classpath.findSymbol("kyo.fixtures.SomeCaseClass")
             assert(caseClassMaybe.isDefined, "kyo.fixtures.SomeCaseClass not found in classpath")
             val caseClass = caseClassMaybe.get.asInstanceOf[Tasty.Symbol.ClassLike]
-            val methods = caseClass.declarationIds.map(classpath.symbol)
+            val methods = caseClass.declarationIds.flatMap(id => classpath.symbol(id).toChunk)
                 .collect { case m: Tasty.Symbol.Method => m }
                 .filter(!_.isJava)
             val resolvedTypes = methods.flatMap(_.declaredType.toList).filter {
@@ -210,7 +210,7 @@ class MethodSignatureFidelityTest extends Test:
             assert(traitMaybe.isDefined, "kyo.fixtures.SomeTrait not found in classpath")
             val traitSym = traitMaybe.get.asInstanceOf[Tasty.Symbol.ClassLike]
             val computeMaybe =
-                Maybe.fromOption(traitSym.declarationIds.map(classpath.symbol).find(_.simpleName == "compute"))
+                Maybe.fromOption(traitSym.declarationIds.flatMap(id => classpath.symbol(id).toChunk).find(_.simpleName == "compute"))
             assert(computeMaybe.isDefined, "kyo.fixtures.SomeTrait.compute not found in SomeTrait")
             val method = computeMaybe.get.asInstanceOf[Tasty.Symbol.Method]
             val dt     = method.declaredType
@@ -343,10 +343,10 @@ class MethodSignatureFidelityTest extends Test:
                     tpe.foreach:
                         case Tasty.Type.ThisType(id) =>
                             totalCount += 1
-                            val sym = cp.symbol(id)
-                            val isClassLike = sym.kind == SymbolKind.Class ||
-                                sym.kind == SymbolKind.Trait ||
-                                sym.kind == SymbolKind.Object
+                            val isClassLike = cp.symbol(id).exists: sym =>
+                                sym.kind == SymbolKind.Class ||
+                                    sym.kind == SymbolKind.Trait ||
+                                    sym.kind == SymbolKind.Object
                             if !isClassLike then badCount += 1
                         case _ => ()
             val badFraction = if totalCount > 0 then badCount.toDouble / totalCount else 0.0

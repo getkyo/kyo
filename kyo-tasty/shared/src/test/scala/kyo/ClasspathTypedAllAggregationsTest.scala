@@ -332,16 +332,16 @@ class ClasspathTypedAllAggregationsTest extends Test:
             succeed
     }
 
-    // ── Leaf 127: allUnresolved-typed ─────────────────────────────────────────
-    // Given: fixture with no Unresolved symbols.
-    // When: cp.allUnresolved.size
-    // Then: 0; typed return compiles
-    // Pins: INV-005
-    "Leaf 127: allUnresolved returns Chunk[Unresolved] of size 0 when no unresolved symbols exist" in run {
-        buildFixture.map: cp =>
-            val us: Chunk[Tasty.Symbol.Unresolved] = cp.allUnresolved
-            assert(us.size == 0, s"Expected 0 unresolved symbols but got ${us.size}")
-            succeed
+    // ── Leaf 127: allUnresolved removed (Phase 08) ────────────────────────────
+    // allUnresolved was deleted in Phase 08 (Cat 19). Symbol.Unresolved no longer exists.
+    // The test is replaced with a compile-time check that allUnresolved does not exist.
+    // Pins: Cat 19
+    "Leaf 127: allUnresolved and Symbol.Unresolved are gone (Phase 08 Cat 19)" in {
+        assert(
+            compiletime.testing.typeCheckErrors("val _: kyo.Chunk[kyo.Tasty.Symbol.Unresolved] = ???").nonEmpty,
+            "Symbol.Unresolved should not exist"
+        )
+        succeed
     }
 
 end ClasspathTypedAllAggregationsTest

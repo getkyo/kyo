@@ -4,6 +4,7 @@ import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TypeUnpickler
 import kyo.internal.tasty.symbol.Constant
+import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 import scala.collection.mutable
@@ -43,7 +44,7 @@ class ConstantTest extends Test:
 
     private def makeSession(names: Array[Tasty.Name]): TypeUnpickler.DecodeSession =
         val arena   = TypeArena.canonical()
-        val addrMap = new mutable.HashMap[Int, Tasty.Symbol]()
+        val addrMap = new mutable.HashMap[Int, LoadingSymbol.Materialising]()
         new TypeUnpickler.DecodeSession(names, addrMap, arena)
     end makeSession
 

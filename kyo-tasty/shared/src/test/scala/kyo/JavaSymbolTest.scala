@@ -42,13 +42,16 @@ class JavaSymbolTest extends Test:
         case tp: Tasty.Symbol.TypeParam    => tp.copy(id = id, ownerId = ownerId)
         case p: Tasty.Symbol.Parameter     => p.copy(id = id, ownerId = ownerId)
         case pk: Tasty.Symbol.Package      => pk.copy(id = id, ownerId = ownerId)
-        case u: Tasty.Symbol.Unresolved    => u.copy(id = id, ownerId = ownerId)
+        case _                             => sym
 
     private def symJavaMetadata(sym: Tasty.Symbol): Maybe[Tasty.Java.Metadata] = sym match
         case c: Tasty.Symbol.ClassLike => c.javaMetadata
         case f: Tasty.Symbol.Field     => f.javaMetadata
         case m: Tasty.Symbol.Method    => m.javaMetadata
         case _                         => Maybe.Absent
+
+    private def symJavaMetadata(m: kyo.internal.tasty.symbol.LoadingSymbol.Materialising): Maybe[Tasty.Java.Metadata] =
+        m.javaMetadata
 
     /** Load JDK class bytes by binary path from EmbeddedClassfiles (cross-platform). */
     private def loadJdkClass(binaryPath: String): Array[Byte] =
@@ -65,7 +68,32 @@ class JavaSymbolTest extends Test:
     private def loadResourceBytes(resourcePath: String): Array[Byte] =
         TestResourceLoader.loadBytes(resourcePath)
 
-    /** Run TASTy pass 1 on raw TASTy bytes and return the first non-root class symbol. */
+    /** Convert a LoadingSymbol.Materialising to a final Tasty.Symbol, optionally overriding id and ownerId. */
+    private def toFinalSym(
+        m: kyo.internal.tasty.symbol.LoadingSymbol.Materialising,
+        idOverride: Int = -1,
+        ownerOverride: Int = -1
+    )(using AllowUnsafe): Tasty.Symbol =
+        val finalId      = if idOverride >= 0 then idOverride else m.id.max(0)
+        val finalOwnerId = if ownerOverride >= 0 then ownerOverride else m.ownerId
+        kyo.internal.tasty.symbol.TypedSymbolFactory.from(new kyo.internal.tasty.symbol.SymbolDescriptor(
+            id = finalId,
+            kind = m.kind,
+            flags = m.flags,
+            name = m.name,
+            ownerId = finalOwnerId,
+            declaredType = m.declaredType,
+            scaladoc = m.scaladoc,
+            sourcePosition = m.sourcePosition,
+            javaMetadata = m.javaMetadata,
+            parentTypes = m.parentTypes,
+            typeParamIds = m.typeParamIds,
+            declarationIds = m.declarationIds,
+            permittedSubclassIds = m.permittedSubclassIds,
+            body = Maybe.Absent
+        ))
+    end toFinalSym
+
     private def firstClassSymbolFromTasty(resourceName: String)(using Frame): Tasty.Symbol < (Sync & Abort[TastyError]) =
         val bytes = resourceName match
             case "PlainClass.tasty" => kyo.fixtures.Embedded.plainClassTasty
@@ -83,7 +111,9 @@ class JavaSymbolTest extends Test:
                     AstUnpickler.readPass1(astView, names, attrs, arena)
                 case Absent =>
                     Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found", 0L))
-        yield result.symbols.find(_.kind == SymbolKind.Class).getOrElse(result.rootSymbol)
+        yield
+            import AllowUnsafe.embrace.danger
+            toFinalSym(result.symbols.find(_.kind == SymbolKind.Class).getOrElse(result.rootSymbol))
         end for
     end firstClassSymbolFromTasty
 
@@ -96,7 +126,7 @@ class JavaSymbolTest extends Test:
         val bytes = kyo.fixtures.Embedded.arrayRecordClass
         Abort.run[TastyError]:
             ClassfileUnpickler.read(bytes, new TypeArena).flatMap: cr =>
-                val sym = symWithId(cr.classSymbol, SymbolId(0), SymbolId(0))
+                val sym = toFinalSym(cr.classSymbol, idOverride = 0, ownerOverride = 0)
                 Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).flatMap: cp =>
                     val s = cp.symbols(0)
                     Sync.defer(cp.fullNameUnsafe(s).asString).map: fqn =>
@@ -115,7 +145,7 @@ class JavaSymbolTest extends Test:
         val bytes = kyo.fixtures.Embedded.arrayRecordClass
         Abort.run[TastyError]:
             ClassfileUnpickler.read(bytes, new TypeArena).flatMap: cr =>
-                val sym = symWithId(cr.classSymbol, SymbolId(0), SymbolId(0))
+                val sym = toFinalSym(cr.classSymbol, idOverride = 0, ownerOverride = 0)
                 Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).map: cp =>
                     val s  = cp.symbols(0)
                     val bn = kyo.internal.tasty.symbol.BinaryName.compute(s, cp)
@@ -230,7 +260,7 @@ class JavaSymbolTest extends Test:
         import kyo.Tasty.SymbolId
         Abort.run[TastyError]:
             readClass(fooBarClassBytes).flatMap: cr =>
-                val sym = symWithId(cr.classSymbol, SymbolId(0), SymbolId(0))
+                val sym = toFinalSym(cr.classSymbol, idOverride = 0, ownerOverride = 0)
                 Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).map: cp =>
                     val s  = cp.symbols(0)
                     val bn = kyo.internal.tasty.symbol.BinaryName.compute(s, cp)

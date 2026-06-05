@@ -3,6 +3,7 @@ package kyo.internal.tasty.reader
 import kyo.*
 import kyo.Tasty.Name.asString
 import kyo.internal.tasty.binary.ByteView
+import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
@@ -56,16 +57,38 @@ object TreeUnpickler:
     private[kyo] def decodeAnnotationTerm(
         pickle: Array[Byte],
         names: Array[Tasty.Name],
-        addrMap: scala.collection.Map[Int, Tasty.Symbol],
+        loadingAddrMap: scala.collection.Map[Int, LoadingSymbol.Materialising],
         sectionBytes: Array[Byte],
         sectionOffset: Int
     )(using AllowUnsafe): Tasty.Tree =
         val view       = ByteView(pickle, 0, pickle.length)
         val dummyArena = TypeArena.canonical()
         val typeSession =
-            new TypeUnpickler.TreeTypeSession(names, addrMap, dummyArena, sectionBytes, sectionOffset)
+            new TypeUnpickler.TreeTypeSession(names, loadingAddrMap, dummyArena, sectionBytes, sectionOffset)
         val treeAddrCache = new mutable.HashMap[Int, Tasty.Tree]()
-        val decodeCtx     = DecodeCtx(names, addrMap, typeSession, treeAddrCache)
+        // Build a Tasty.Symbol addrMap for tree-node embedding by materialising each LoadingSymbol.
+        val symAddrMap: scala.collection.Map[Int, Tasty.Symbol] = loadingAddrMap.map {
+            case (addr, m) =>
+                addr -> kyo.internal.tasty.symbol.TypedSymbolFactory.from(
+                    new kyo.internal.tasty.symbol.SymbolDescriptor(
+                        id = m.id,
+                        kind = m.kind,
+                        flags = m.flags,
+                        name = m.name,
+                        ownerId = -1,
+                        declaredType = Maybe.Absent,
+                        scaladoc = Maybe.Absent,
+                        sourcePosition = Maybe.Absent,
+                        javaMetadata = Maybe.Absent,
+                        parentTypes = Chunk.empty,
+                        typeParamIds = Chunk.empty,
+                        declarationIds = Chunk.empty,
+                        permittedSubclassIds = Maybe.Absent,
+                        body = Maybe.Absent
+                    )
+                )
+        }
+        val decodeCtx = DecodeCtx(names, symAddrMap, typeSession, treeAddrCache)
         readTree(view, decodeCtx)
     end decodeAnnotationTerm
 
@@ -94,11 +117,17 @@ object TreeUnpickler:
         end if
         val view = ByteView(bytes, body.bodyStart, body.bodyEnd)
         // Build addrMap: convert IntMap[SymbolId] -> Map[Int, Symbol] via symbolLookup.
+        // Build addrMap: convert IntMap[SymbolId] -> Map[Int, Tasty.Symbol] via symbolLookup.
         val addrMap: scala.collection.Map[Int, Tasty.Symbol] =
             body.addrMap.map { case (addr, sid) => (addr, symbolLookup(sid.value)) }
+        // Wrap for TreeTypeSession: TypeUnpickler uses LoadingSymbol.Materialising internally.
+        val loadingAddrMap: scala.collection.Map[Int, LoadingSymbol.Materialising] =
+            addrMap.map { case (addr, sym) =>
+                addr -> LoadingSymbol.Materialising(id = sym.id.value, kind = sym.kind, flags = sym.flags, name = sym.name)
+            }
         val treeAddrCache = new mutable.HashMap[Int, Tasty.Tree]()
         val dummyArena    = TypeArena.canonical()
-        val typeSession   = new TypeUnpickler.TreeTypeSession(names, addrMap, dummyArena, bytes, body.sectionOffset)
+        val typeSession   = new TypeUnpickler.TreeTypeSession(names, loadingAddrMap, dummyArena, bytes, body.sectionOffset)
         val ctx = DecodeCtx(
             names,
             addrMap,
@@ -1316,11 +1345,23 @@ object TreeUnpickler:
     end nameFromRef
 
     private def makeUnresolvedSym(name: String)(using AllowUnsafe): Tasty.Symbol =
-        InternalSymbol.makeSymbol(
-            SymbolKind.Unresolved,
-            Tasty.Flags.empty,
-            Tasty.Name(name)
-        )
+        // Unsafe: tree-decode context (§839 case 3); creates a placeholder symbol for tree embedding.
+        kyo.internal.tasty.symbol.TypedSymbolFactory.from(new kyo.internal.tasty.symbol.SymbolDescriptor(
+            id = -1,
+            kind = SymbolKind.Package,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name(name),
+            ownerId = -1,
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            body = Maybe.Absent
+        ))
     end makeUnresolvedSym
 
     /** Resolve a SymbolId back to a Symbol by scanning the addrMap.
@@ -1500,11 +1541,12 @@ object TreeUnpickler:
                     val nameRef = view.readNat()
                     val symName = session.names(nameRef)
                     val sym = InternalSymbol.makeSymbol(
-                        SymbolKind.TypeParam,
-                        Tasty.Flags.empty,
-                        symName
+                        id = session.nextUnresolvedId(),
+                        kind = SymbolKind.TypeParam,
+                        flags = Tasty.Flags.empty,
+                        name = symName
                     )
-                    tparamIds += sym.id
+                    tparamIds += kyo.Tasty.SymbolId(sym.id)
                     view.goto(tpEnd)
                 end while
                 val body = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)

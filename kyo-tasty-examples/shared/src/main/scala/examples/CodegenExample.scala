@@ -44,7 +44,7 @@ object CodegenExample:
             case cl: Tasty.Symbol.ClassLike => cl.parentTypes
             case _                          => Chunk.empty[Tasty.Type]
         val decls = sym match
-            case cl: Tasty.Symbol.ClassLike => cl.declarationIds.map(cp.symbol)
+            case cl: Tasty.Symbol.ClassLike => cl.declarationIds.flatMap(id => cp.symbol(id).toChunk)
             case _                          => Chunk.empty[Tasty.Symbol]
         val methods = decls.collect { case m: Tasty.Symbol.Method => buildFacadeMethod(m) }
         FacadeType(sym.name, sym.flags, parents, methods)

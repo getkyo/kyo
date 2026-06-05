@@ -30,10 +30,9 @@ class SymbolExhaustiveMatchTest extends Test:
             case _: Tasty.Symbol.TypeParam    => "TypeParam"
             case _: Tasty.Symbol.Parameter    => "Parameter"
             case _: Tasty.Symbol.Package      => "Package"
-            case _: Tasty.Symbol.Unresolved   => "Unresolved"
 
-        val sym: Tasty.Symbol = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name("x"), SymbolId(-1))
-        assert(kindLabel(sym) == "Unresolved")
+        val sym: Tasty.Symbol = Tasty.Symbol.Package(SymbolId(-1), Tasty.Name("x"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
+        assert(kindLabel(sym) == "Package")
         succeed
     }
 

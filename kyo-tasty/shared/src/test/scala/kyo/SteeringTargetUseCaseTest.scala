@@ -101,16 +101,22 @@ class SteeringTargetUseCaseTest extends Test:
     // ── Leaf 175: target-use-case-compiles-and-runs ───────────────────────────
     // Given: fixture with pkg.A having method foo, val x, parent B
     // When: run the steering snippet
-    // Then: cls is Present(c); c.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method]) includes "foo"; c.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Val]) includes "x"; c.parents includes "pkg.B"
+    // Then: cls is Present(c); c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method]) includes "foo"; c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Val]) includes "x"; c.parents includes "pkg.B"
     "Leaf 175: steering target use case runs end-to-end" in run {
         buildFixture.flatMap: cp =>
             val cls = cp.findClass("pkg.A")
             assert(cls.isDefined, "findClass(\"pkg.A\") must return Present")
             cls match
                 case Maybe.Present(c) =>
-                    val methodNames = c.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method]).map(_.name)
-                    val valNames    = c.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Val]).map(_.name)
-                    Kyo.foreach(c.parentTypes.collect { case Tasty.Type.Named(pid) => cp.symbol(pid) })(p =>
+                    val methodNames =
+                        c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method]).map(_.name)
+                    val valNames =
+                        c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Val]).map(_.name)
+                    val resolvedParents: Chunk[Tasty.Symbol] =
+                        c.parentTypes.flatMap:
+                            case Tasty.Type.Named(pid) => cp.symbol(pid).toChunk
+                            case _                     => Chunk.empty
+                    Kyo.foreach(resolvedParents)(p =>
                         Sync.defer(cp.fullNameUnsafe(p).asString)
                     ).map: parentFqns =>
                         assert(
@@ -132,14 +138,16 @@ class SteeringTargetUseCaseTest extends Test:
 
     // ── Leaf 176: fluent-Methods-typed ────────────────────────────────────────
     // Given: same fixture
-    // When: bind val ms: Chunk[Tasty.Symbol.Method] = c.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method])
+    // When: bind val ms: Chunk[Tasty.Symbol.Method] = c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method])
     // Then: compiles; ms.size == 1 (buildFixture declares exactly one method "foo" in class A)
-    "Leaf 176: c.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method]) returns Chunk[Symbol.Method] with size == 1" in run {
+    "Leaf 176: c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method]) returns Chunk[Symbol.Method] with size == 1" in run {
         buildFixture.map: cp =>
             cp.findClass("pkg.A") match
                 case Maybe.Present(c) =>
                     val ms =
-                        c.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method]).asInstanceOf[Chunk[Tasty.Symbol.Method]]
+                        c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(
+                            _.isInstanceOf[Tasty.Symbol.Method]
+                        ).asInstanceOf[Chunk[Tasty.Symbol.Method]]
                     // Exact: buildFixture declares pkg.A with declarationIds=[SymbolId(2)=foo, SymbolId(3)=x].
                     // Filtering for Method yields exactly [foo]. Measured structurally 2026-06-04.
                     assert(ms.length == 1, s"Expected exactly 1 method (foo), got ${ms.length}")

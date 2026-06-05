@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileUnpickler
 import kyo.internal.tasty.reader.CommentsUnpickler
+import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
@@ -49,13 +50,13 @@ class CommentsUnpicklerTest extends Test:
     private def buildSection(entries: (Int, String)*): Array[Byte] =
         entries.toArray.flatMap((addr, text) => encEntry(addr, text))
 
-    /** Create a minimal Tasty.Symbol for testing. plan: phase-02 bridge; uses Symbol.make(kind, flags, name). */
-    private def makeTestSymbol(nameStr: String): Tasty.Symbol =
-        import AllowUnsafe.embrace.danger
-        Tasty.Symbol.makePlaceholder(
-            SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name(nameStr)
+    /** Create a minimal LoadingSymbol.Materialising for testing (replaces makePlaceholder). */
+    private def makeTestSymbol(nameStr: String): LoadingSymbol.Materialising =
+        LoadingSymbol.Materialising(
+            id = nameStr.hashCode.abs % 1000,
+            kind = SymbolKind.Class,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name(nameStr)
         )
     end makeTestSymbol
 

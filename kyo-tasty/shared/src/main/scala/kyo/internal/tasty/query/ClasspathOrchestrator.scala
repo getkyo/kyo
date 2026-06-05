@@ -15,6 +15,7 @@ import kyo.internal.tasty.reader.PositionsUnpickler
 import kyo.internal.tasty.reader.SectionIndex
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
+import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 import kyo.internal.tasty.symbol.SymbolDescriptor
 import kyo.internal.tasty.symbol.SymbolKind
@@ -62,43 +63,43 @@ object ClasspathOrchestrator:
       * Fields ownerBySymbol, bodyDataByAddr, sectionBytes, sectionOffset, names are fed from AstUnpickler Pass1Result to ClasspathOrchestrator Pass C.
       */
     final private case class FileResult(
-        fqns: Chunk[(String, Tasty.Symbol)],
+        fqns: Chunk[(String, LoadingSymbol.Materialising)],
         /** All symbols from this file in TASTy parse order (deterministic depth-first traversal of the AST).
           *
           * Used in mergeOneInto to accumulate allSyms in a stable order across runs, ensuring that symbol IDs
           * are deterministic for byte-equal snapshot idempotency (F-A4-005). Previously allSyms was populated
           * from ownerBySymbol.keys which uses identity-hash order and is non-deterministic.
           */
-        symbolsInOrder: Chunk[Tasty.Symbol],
+        symbolsInOrder: Chunk[LoadingSymbol.Materialising],
         arena: TypeArena,
         errors: Seq[TastyError],
         placeholders: Chunk[Nothing], // placeholder field; always empty after Phase 07
-        parentsBySymbol: java.util.IdentityHashMap[Tasty.Symbol, Chunk[Tasty.Type]],
-        childrenByOwner: java.util.IdentityHashMap[Tasty.Symbol, Chunk[Tasty.Symbol]],
-        typeBySymbol: java.util.IdentityHashMap[Tasty.Symbol, Tasty.Type],
-        commentsBySymbol: Map[Tasty.Symbol, String],
-        positionsBySymbol: Map[Tasty.Symbol, Tasty.Position],
-        ownerBySymbol: java.util.IdentityHashMap[Tasty.Symbol, Tasty.Symbol],
-        bodyDataByAddr: java.util.IdentityHashMap[Tasty.Symbol, (Int, Int)],
+        parentsBySymbol: mutable.LongMap[Chunk[Tasty.Type]],
+        childrenByOwner: mutable.LongMap[Chunk[LoadingSymbol.Materialising]],
+        typeBySymbol: mutable.LongMap[Tasty.Type],
+        commentsBySymbol: Map[LoadingSymbol.Materialising, String],
+        positionsBySymbol: Map[LoadingSymbol.Materialising, Tasty.Position],
+        ownerBySymbol: mutable.LongMap[LoadingSymbol.Materialising],
+        bodyDataByAddr: mutable.LongMap[(Int, Int)],
         sectionBytes: Array[Byte],
         sectionOffset: Int,
         fileNames: Array[Tasty.Name],
         /** Per-file TASTy address -> partial symbol map, used in Phase C to remap Phase-B temporary SymbolIds (PHASE_B_ADDR_OFFSET + addr)
           * to final SymbolIds.
           */
-        addrMap: scala.collection.immutable.IntMap[Tasty.Symbol],
+        addrMap: scala.collection.immutable.IntMap[LoadingSymbol.Materialising],
         /** Cross-file unresolved FQN tracking: maps unique negative SymbolIds to FQNs for Phase C parent type resolution. */
         unresolvedIdToFqn: mutable.HashMap[Int, String],
         /** F-G-001 fix: per-symbol annotation lists decoded from ANNOTATION modifier blocks. Populated in Phase B by AstUnpickler;
           * consumed by finalizeMerge to write descs(idx).annotations.
           */
-        annotationsBySymbol: java.util.IdentityHashMap[Tasty.Symbol, mutable.ArrayBuffer[Tasty.Annotation]],
-        /** F-G-002 fix: javaMetadata from the companion .class file, keyed by the partial (pre-finalize) TASTy symbol.
+        annotationsBySymbol: mutable.LongMap[mutable.ArrayBuffer[Tasty.Annotation]],
+        /** F-G-002 fix: javaMetadata from the companion .class file, keyed by the loading-symbol id of the partial (pre-finalize) TASTy symbol.
           *
           * Populated during readAndDecodeTastyFile when a same-named .class file exists alongside the .tasty file.
           * Consumed by finalizeMerge to write descs(idx).javaMetadata for TASTy-loaded class symbols.
           */
-        companionJavaMeta: java.util.IdentityHashMap[Tasty.Symbol, Tasty.Java.Metadata]
+        companionJavaMeta: mutable.LongMap[Tasty.Java.Metadata]
     )
 
     /** Tagged union for results flowing through the result channel.
@@ -126,16 +127,14 @@ object ClasspathOrchestrator:
       * once the merger has drained the result channel.
       */
     final private class MergeState:
-        val fqnIndex: mutable.HashMap[String, Tasty.Symbol]     = mutable.HashMap.empty
-        val packageIndex: mutable.HashMap[String, Tasty.Symbol] = mutable.HashMap.empty
-        val allSyms: mutable.ArrayBuffer[Tasty.Symbol]          = mutable.ArrayBuffer.empty
-        // IdentityHashMap-backed set: placeholder symbols (id=-1) require identity-based containment checks.
-        // Field-based equality (Phase 03) would cause structurally-equal placeholders to collide.
-        val allSymsSet: java.util.Set[Tasty.Symbol] = java.util.Collections.newSetFromMap(
-            new java.util.IdentityHashMap[Tasty.Symbol, java.lang.Boolean]()
-        )
-        val topLevelCls: mutable.ArrayBuffer[Tasty.Symbol]                     = mutable.ArrayBuffer.empty
-        val packages: mutable.ArrayBuffer[Tasty.Symbol]                        = mutable.ArrayBuffer.empty
+        val fqnIndex: mutable.HashMap[String, LoadingSymbol.Materialising]     = mutable.HashMap.empty
+        val packageIndex: mutable.HashMap[String, LoadingSymbol.Materialising] = mutable.HashMap.empty
+        val allSyms: mutable.ArrayBuffer[LoadingSymbol.Materialising]          = mutable.ArrayBuffer.empty
+        // LongSet (LongMap[Unit]) keyed on LoadingSymbol.Materialising.id: unique per-instance, cross-platform.
+        // Replaces the earlier IdentityHashMap-backed set (JVM-only).
+        val allSymsSet: mutable.LongMap[Unit]                                  = mutable.LongMap.empty
+        val topLevelCls: mutable.ArrayBuffer[LoadingSymbol.Materialising]      = mutable.ArrayBuffer.empty
+        val packages: mutable.ArrayBuffer[LoadingSymbol.Materialising]         = mutable.ArrayBuffer.empty
         val accErrors: mutable.ArrayBuffer[TastyError]                         = mutable.ArrayBuffer.empty
         val fileResults: mutable.ArrayBuffer[FileResult]                       = mutable.ArrayBuffer.empty
         val moduleIndex: mutable.HashMap[String, Tasty.Java.Module.Descriptor] = mutable.HashMap.empty
@@ -150,7 +149,7 @@ object ClasspathOrchestrator:
           * that FQN; the last entry is the current winner (last-write-wins). Populated by `mergeOneInto` when it encounters a new structural
           * symbol for an FQN that already has a different structural symbol.
           */
-        val collisions: mutable.HashMap[String, mutable.ArrayBuffer[Tasty.Symbol]] = mutable.HashMap.empty
+        val collisions: mutable.HashMap[String, mutable.ArrayBuffer[LoadingSymbol.Materialising]] = mutable.HashMap.empty
     end MergeState
 
     /** Init a new classpath from a set of root paths.
@@ -213,6 +212,16 @@ object ClasspathOrchestrator:
         val resultCap         = decodeConcurrency * 2
         val numShards         = 128
         val mergeState        = new MergeState()
+        // Global id counter for LoadingSymbol.Materialising instances across all concurrent decode sessions.
+        // Each decode session (TASTy file or classfile) gets a unique id per symbol by calling getAndIncrement.
+        // AtomicInt.Unsafe is cross-platform (Kyo provides JS and Native implementations).
+        // Unsafe: constructed once per init() call inside the Sync.Unsafe.defer block below; not a module-level val.
+        val globalSymbolIdCounter: AtomicInt.Unsafe =
+            import AllowUnsafe.embrace.danger
+            AtomicInt.Unsafe.init(0)
+        val nextGlobalId: () => Int = () =>
+            import AllowUnsafe.embrace.danger
+            globalSymbolIdCounter.getAndIncrement()
         // Heuristic: 128 entries per shard accommodates classpaths up to ~12K entries (75% load).
         // This avoids the per-cold-load pre-walk cost that exceeds the resize savings on small classpaths.
         val sizeHint = 128
@@ -247,7 +256,7 @@ object ClasspathOrchestrator:
                                 val decoderStage = Async.foreach(Chunk.fill(decodeConcurrency)(()), decodeConcurrency): _ =>
                                     TastyStat.scope.traceSpan("decoder") {
                                         entryCh.streamUntilClosed().foreach: (entryPath, kind) =>
-                                            decodeOneEntry(entryPath, kind, source, mode).flatMap: result =>
+                                            decodeOneEntry(entryPath, kind, source, mode, nextGlobalId).flatMap: result =>
                                                 // If resultCh closed early (FailFast abort), silently discard
                                                 Abort.run[Closed](resultCh.put(result)).unit
                                     }
@@ -367,7 +376,8 @@ object ClasspathOrchestrator:
         entryPath: String,
         kind: String,
         source: FileSource,
-        mode: Tasty.ErrorMode
+        mode: Tasty.ErrorMode,
+        nextGlobalId: () => Int
     )(using Frame): DecodeResult < (Sync & Async & Abort[TastyError]) =
         if kind == "module-info.class" then
             Abort.run[TastyError](
@@ -402,7 +412,7 @@ object ClasspathOrchestrator:
                         // Unsafe: ClassfileUnpickler reads an immutable byte array inside a Sync.Unsafe.defer block; no suspension required (§839 case 3).
                         given AllowUnsafe = AllowUnsafe.embrace.danger
                         val arena         = kyo.internal.tasty.type_.TypeArena.canonical()
-                        ClassfileUnpickler.read(bytes, arena)
+                        ClassfileUnpickler.read(bytes, arena, nextGlobalId)
             ).flatMap:
                 case Result.Success(cfResult) =>
                     val fqn = classfilePathToFqn(entryPath)
@@ -423,7 +433,7 @@ object ClasspathOrchestrator:
                     else FileResultCase(emptyFileResultWithError(entryPath, err))
         else
             Scope.run:
-                readAndDecodeTastyFile(entryPath, source, mode).map(FileResultCase.apply)
+                readAndDecodeTastyFile(entryPath, source, mode, nextGlobalId).map(FileResultCase.apply)
 
     /** Merge one DecodeResult into the MergeState. Single-threaded (only the merger fiber calls it). */
     private def mergeOneInto(state: MergeState, result: DecodeResult): Unit =
@@ -436,15 +446,13 @@ object ClasspathOrchestrator:
                 // hashCodes vary across JVM runs, making symbol IDs non-deterministic and breaking
                 // byte-equal snapshot idempotency. symbolsInOrder preserves the AstUnpickler traversal
                 // order, which is deterministic given the same input bytes.
-                // IdentityHashMap-backed set: placeholder symbols require identity-based dedup.
-                // Field-based equality (Phase 03) would cause structurally-equal placeholders to collide.
-                val seenSyms = java.util.Collections.newSetFromMap(
-                    new java.util.IdentityHashMap[Tasty.Symbol, java.lang.Boolean]()
-                )
+                // LongMap keyed on sym.id (unique per-instance) for dedup within and across files.
+                val seenSymIds = mutable.LongMap.empty[Unit]
                 for sym <- fr.symbolsInOrder do
-                    if seenSyms.add(sym) then
+                    if !seenSymIds.contains(sym.id.toLong) then
+                        seenSymIds(sym.id.toLong) = ()
                         state.allSyms += sym
-                        discard(state.allSymsSet.add(sym))
+                        state.allSymsSet(sym.id.toLong) = ()
                 end for
 
                 for (fqn, sym) <- fr.fqns do
@@ -513,9 +521,11 @@ object ClasspathOrchestrator:
                             if storeSource then state.fqnIndex(sourceFqn) = sym
                         end if
                     end if
-                    if seenSyms.add(sym) then
+                    if !seenSymIds.contains(sym.id.toLong) then
+                        seenSymIds(sym.id.toLong) = ()
                         state.allSyms += sym
-                        discard(state.allSymsSet.add(sym))
+                        state.allSymsSet(sym.id.toLong) = ()
+                    end if
                     sym.kind match
                         case SymbolKind.Package =>
                             state.packages += sym
@@ -547,15 +557,18 @@ object ClasspathOrchestrator:
                         state.fqnIndex(sourceFqn) = classSym
                 end if
                 // Add classSymbol and all member symbols to allSyms for finalizeMerge.
-                // allSymsSet provides O(1) membership checks to avoid the O(N^2) indexOf scan
-                // over the growing global list (critical for JPMS paths with 27k+ classes).
-                if state.allSymsSet.add(classSym) then
+                // allSymsSet is a LongMap keyed on id; O(1) membership checks to avoid O(N^2) indexOf scan
+                // (critical for JPMS paths with 27k+ classes).
+                if !state.allSymsSet.contains(classSym.id.toLong) then
+                    state.allSymsSet(classSym.id.toLong) = ()
                     state.allSyms += classSym
                     state.topLevelCls += classSym
                 end if
                 for memberSym <- cfResult.symbols do
-                    if state.allSymsSet.add(memberSym) then
+                    if !state.allSymsSet.contains(memberSym.id.toLong) then
+                        state.allSymsSet(memberSym.id.toLong) = ()
                         state.allSyms += memberSym
+                    end if
                 end for
                 // Keep classfile result for parent-type wiring in finalizeMerge.
                 state.javaClassfileResults += ((fqn, cfResult))
@@ -586,13 +599,12 @@ object ClasspathOrchestrator:
         }.andThen:
             TastyStat.scope.traceSpan("finalize.materializeSymbols") {
                 Sync.Unsafe.defer:
-                    // Build a map from partial Symbol -> its final SymbolId (index in allPartial).
-                    // IdentityHashMap required: placeholder symbols (id=-1) use identity-based keys.
-                    // Field-based equality (Phase 03) would cause structurally-equal placeholders to collide.
-                    val symbolIdMap = new java.util.IdentityHashMap[Tasty.Symbol, Int](allPartial.length * 2)
+                    // Build a map from LoadingSymbol.Materialising.id -> final SymbolId (index in allPartial).
+                    // LongMap keyed on m.id (unique per-instance); replaces the former IdentityHashMap approach.
+                    val symbolIdMap = mutable.LongMap.empty[Int]
                     var i           = 0
                     for sym <- allPartial do
-                        discard(symbolIdMap.put(sym, i))
+                        symbolIdMap(sym.id.toLong) = i
                         i += 1
                     end for
 
@@ -653,9 +665,9 @@ object ClasspathOrchestrator:
                     end for
 
                     for fr <- fileResults do
-                        fr.ownerBySymbol.forEach { (sym, owner) =>
-                            val symIdx   = symbolIdMap.getOrDefault(sym, -1)
-                            val ownerIdx = symbolIdMap.getOrDefault(owner, symIdx)
+                        fr.ownerBySymbol.foreach { case (symId, owner) =>
+                            val symIdx   = symbolIdMap.getOrElse(symId, -1)
+                            val ownerIdx = symbolIdMap.getOrElse(owner.id.toLong, symIdx)
                             if symIdx >= 0 && symIdx < count then
                                 descs(symIdx).ownerId = ownerIdx
                         }
@@ -688,7 +700,7 @@ object ClasspathOrchestrator:
                         // Map 1: addr -> finalId (for PHASE_B_ADDR_OFFSET refs)
                         val addrToFinal = new java.util.HashMap[Int, Int](fr.addrMap.size * 2)
                         fr.addrMap.foreach { case (addr, partialSym) =>
-                            val finalIdx = symbolIdMap.getOrDefault(partialSym, -1)
+                            val finalIdx = symbolIdMap.getOrElse(partialSym.id.toLong, -1)
                             if finalIdx >= 0 then discard(addrToFinal.put(addr, finalIdx))
                         }
                         // Map 2: negId -> finalId (for cross-file FQN refs)
@@ -697,7 +709,7 @@ object ClasspathOrchestrator:
                             // Look up FQN in the partial fqnIndex and then get the final SymbolId
                             state.fqnIndex.get(fqn) match
                                 case Some(partialSym) =>
-                                    val finalIdx = symbolIdMap.getOrDefault(partialSym, -1)
+                                    val finalIdx = symbolIdMap.getOrElse(partialSym.id.toLong, -1)
                                     if finalIdx >= 0 then discard(negIdToFinal.put(negId, finalIdx))
                                 case None =>
                                     // FQN not found: the defining library is absent from the classpath.
@@ -809,8 +821,8 @@ object ClasspathOrchestrator:
                     var frIdx2 = 0
                     for fr <- fileResults do
                         val frRemap = fileRemaps(frIdx2)
-                        fr.parentsBySymbol.forEach { (sym, parents) =>
-                            val idx = symbolIdMap.getOrDefault(sym, -1)
+                        fr.parentsBySymbol.foreach { case (symId, parents) =>
+                            val idx = symbolIdMap.getOrElse(symId, -1)
                             if idx >= 0 && idx < count then
                                 descs(idx).parentTypes = parents.map(remapType(_, frRemap))
                         }
@@ -818,13 +830,13 @@ object ClasspathOrchestrator:
                     end for
 
                     for fr <- fileResults do
-                        fr.childrenByOwner.forEach { (sym, children) =>
-                            val idx = symbolIdMap.getOrDefault(sym, -1)
+                        fr.childrenByOwner.foreach { case (symId, children) =>
+                            val idx = symbolIdMap.getOrElse(symId, -1)
                             if idx >= 0 && idx < count then
                                 val typeParams   = children.filter(_.kind == SymbolKind.TypeParam)
                                 val declarations = children.filter(_.kind != SymbolKind.TypeParam)
-                                descs(idx).typeParamIds = typeParams.map(c => symbolIdMap.getOrDefault(c, -1)).filter(_ >= 0)
-                                descs(idx).declarationIds = declarations.map(c => symbolIdMap.getOrDefault(c, -1)).filter(_ >= 0)
+                                descs(idx).typeParamIds = typeParams.map(c => symbolIdMap.getOrElse(c.id.toLong, -1)).filter(_ >= 0)
+                                descs(idx).declarationIds = declarations.map(c => symbolIdMap.getOrElse(c.id.toLong, -1)).filter(_ >= 0)
                             end if
                         }
                     end for
@@ -832,8 +844,8 @@ object ClasspathOrchestrator:
                     var frIdx3 = 0
                     for fr <- fileResults do
                         val frRemap3 = fileRemaps(frIdx3)
-                        fr.typeBySymbol.forEach { (sym, t) =>
-                            val idx = symbolIdMap.getOrDefault(sym, -1)
+                        fr.typeBySymbol.foreach { case (symId, t) =>
+                            val idx = symbolIdMap.getOrElse(symId, -1)
                             if idx >= 0 && idx < count && descs(idx).declaredType.isEmpty then
                                 descs(idx).declaredType = Maybe(remapType(t, frRemap3))
                         }
@@ -889,7 +901,7 @@ object ClasspathOrchestrator:
 
                     for fr <- fileResults do
                         for (sym, text) <- fr.commentsBySymbol do
-                            val idx = symbolIdMap.getOrDefault(sym, -1)
+                            val idx = symbolIdMap.getOrElse(sym.id.toLong, -1)
                             if idx >= 0 && idx < count && descs(idx).scaladoc.isEmpty then
                                 descs(idx).scaladoc = Maybe(text)
                         end for
@@ -897,7 +909,7 @@ object ClasspathOrchestrator:
 
                     for fr <- fileResults do
                         for (sym, pos) <- fr.positionsBySymbol do
-                            val idx = symbolIdMap.getOrDefault(sym, -1)
+                            val idx = symbolIdMap.getOrElse(sym.id.toLong, -1)
                             if idx >= 0 && idx < count && descs(idx).sourcePosition.isEmpty then
                                 descs(idx).sourcePosition = Maybe(pos)
                         end for
@@ -909,8 +921,8 @@ object ClasspathOrchestrator:
                     var frIdxAnn = 0
                     for fr <- fileResults do
                         val frRemapAnn = fileRemaps(frIdxAnn)
-                        fr.annotationsBySymbol.forEach { (sym, annBuf) =>
-                            val idx = symbolIdMap.getOrDefault(sym, -1)
+                        fr.annotationsBySymbol.foreach { case (symId, annBuf) =>
+                            val idx = symbolIdMap.getOrElse(symId, -1)
                             if idx >= 0 && idx < count then
                                 val remapped = annBuf.map: ann =>
                                     Tasty.Annotation(remapType(ann.annotationType, frRemapAnn), ann.arguments)
@@ -921,12 +933,12 @@ object ClasspathOrchestrator:
                     end for
 
                     // F-G-002 fix: populate javaMetadata from companion .class files decoded during readAndDecodeTastyFile.
-                    // The companion decode runs before finalizeMerge and stores JavaMetadata keyed by partial (Phase B) symbols.
-                    // Here we look up each partial symbol in symbolIdMap and write into descs(idx).javaMetadata.
+                    // The companion decode runs before finalizeMerge and stores JavaMetadata keyed by partial (Phase B) symbol id.
+                    // Here we look up each partial symbol id in symbolIdMap and write into descs(idx).javaMetadata.
                     // HARD RULE 7: this write happens before materializeSymbols converts descriptors to immutable Symbols.
                     for fr <- fileResults do
-                        fr.companionJavaMeta.forEach { (sym, meta) =>
-                            val idx = symbolIdMap.getOrDefault(sym, -1)
+                        fr.companionJavaMeta.foreach { case (symId, meta) =>
+                            val idx = symbolIdMap.getOrElse(symId, -1)
                             if idx >= 0 && idx < count && descs(idx).javaMetadata.isEmpty then
                                 descs(idx).javaMetadata = Maybe(meta)
                         }
@@ -943,7 +955,7 @@ object ClasspathOrchestrator:
                     // flags (stored in JavaMetadata.accessFlags) survive into the final Symbol.
                     for (fqn, cfResult) <- state.javaClassfileResults do
                         val classSym = cfResult.classSymbol
-                        val classIdx = symbolIdMap.getOrDefault(classSym, -1)
+                        val classIdx = symbolIdMap.getOrElse(classSym.id.toLong, -1)
                         if classIdx >= 0 && classIdx < count then
                             // Resolve parent types using cfResult.parentBinaryNames.
                             // Binary names use '/' as separator (e.g. "java/lang/Object"); convert to dotted.
@@ -952,7 +964,7 @@ object ClasspathOrchestrator:
                                 val dottedFqn = bn.replace('/', '.')
                                 state.fqnIndex.get(dottedFqn) match
                                     case Some(parentSym) =>
-                                        val parentIdx = symbolIdMap.getOrDefault(parentSym, sentinelId)
+                                        val parentIdx = symbolIdMap.getOrElse(parentSym.id.toLong, sentinelId)
                                         if parentIdx >= 0 then Tasty.Type.Named(SymbolId(parentIdx))
                                         else Tasty.Type.Named(SymbolId(sentinelId))
                                     case None =>
@@ -960,7 +972,7 @@ object ClasspathOrchestrator:
                                         val srcFqn = kyo.internal.tasty.symbol.FqnNormalizer.canonicalSourceFqn(dottedFqn)
                                         state.fqnIndex.get(srcFqn) match
                                             case Some(parentSym) =>
-                                                val parentIdx = symbolIdMap.getOrDefault(parentSym, sentinelId)
+                                                val parentIdx = symbolIdMap.getOrElse(parentSym.id.toLong, sentinelId)
                                                 if parentIdx >= 0 then Tasty.Type.Named(SymbolId(parentIdx))
                                                 else Tasty.Type.Named(SymbolId(sentinelId))
                                             case None => Tasty.Type.Named(SymbolId(sentinelId))
@@ -968,22 +980,19 @@ object ClasspathOrchestrator:
                                 end match
                             if descs(classIdx).parentTypes.isEmpty then
                                 descs(classIdx).parentTypes = wirableParents
-                            // Populate javaMetadata from the classSymbol so flags survive finalizeMerge.
-                            classSym match
-                                case c: Tasty.Symbol.ClassLike =>
-                                    c.javaMetadata match
-                                        case Maybe.Present(meta) =>
-                                            if descs(classIdx).javaMetadata.isEmpty then
-                                                descs(classIdx).javaMetadata = Maybe(meta)
-                                        case Maybe.Absent => ()
-                                case _ => ()
+                            // Populate javaMetadata from the classSymbol's javaMetadata field.
+                            classSym.javaMetadata match
+                                case Maybe.Present(meta) =>
+                                    if descs(classIdx).javaMetadata.isEmpty then
+                                        descs(classIdx).javaMetadata = Maybe(meta)
+                                case Maybe.Absent => ()
                             end match
                             // Wire member symbols' ownerId to classIdx and populate declarationIds.
                             // declarationIds is required by the declarations(using cp) API so that
                             // sym.declarations / sym.methods / sym.fields return the correct members.
                             val memberIdxBuf = new scala.collection.mutable.ArrayBuffer[Int]()
                             for memberSym <- cfResult.symbols do
-                                val memberIdx = symbolIdMap.getOrDefault(memberSym, -1)
+                                val memberIdx = symbolIdMap.getOrElse(memberSym.id.toLong, -1)
                                 if memberIdx >= 0 && memberIdx < count then
                                     descs(memberIdx).ownerId = classIdx
                                     memberIdxBuf += memberIdx
@@ -998,13 +1007,13 @@ object ClasspathOrchestrator:
                                 for fqn <- cfResult.permittedSubclassFqns do
                                     state.fqnIndex.get(fqn) match
                                         case Some(permSym) =>
-                                            val permIdx = symbolIdMap.getOrDefault(permSym, -1)
+                                            val permIdx = symbolIdMap.getOrElse(permSym.id.toLong, -1)
                                             if permIdx >= 0 then permBuf += permIdx
                                         case None =>
                                             val srcFqn = kyo.internal.tasty.symbol.FqnNormalizer.canonicalSourceFqn(fqn)
                                             state.fqnIndex.get(srcFqn) match
                                                 case Some(permSym) =>
-                                                    val permIdx = symbolIdMap.getOrDefault(permSym, -1)
+                                                    val permIdx = symbolIdMap.getOrElse(permSym.id.toLong, -1)
                                                     if permIdx >= 0 then permBuf += permIdx
                                                 case None => ()
                                             end match
@@ -1039,7 +1048,7 @@ object ClasspathOrchestrator:
                     // This is a lightweight reverse of state.fqnIndex used only for permit extraction.
                     val idToFqnForPermits = new java.util.HashMap[Int, String](state.fqnIndex.size * 2)
                     for (fqn, partialSym) <- state.fqnIndex do
-                        val idx = symbolIdMap.getOrDefault(partialSym, -1)
+                        val idx = symbolIdMap.getOrElse(partialSym.id.toLong, -1)
                         if idx >= 0 && !idToFqnForPermits.containsKey(idx) then
                             discard(idToFqnForPermits.put(idx, fqn))
                     end for
@@ -1064,11 +1073,11 @@ object ClasspathOrchestrator:
                     def fqnToId(fqn: String): Int =
                         state.fqnIndex.get(fqn) match
                             case Some(p) =>
-                                val rawId = symbolIdMap.getOrDefault(p, -1)
+                                val rawId = symbolIdMap.getOrElse(p.id.toLong, -1)
                                 if rawId >= 0 && rawId < count && descs(rawId).kind == SymbolKind.Val then
                                     state.fqnIndex.get(fqn + "$") match
                                         case Some(p2) =>
-                                            val moduleId = symbolIdMap.getOrDefault(p2, -1)
+                                            val moduleId = symbolIdMap.getOrElse(p2.id.toLong, -1)
                                             if moduleId >= 0 then moduleId else rawId
                                         case None => rawId
                                 else rawId
@@ -1076,7 +1085,7 @@ object ClasspathOrchestrator:
                             case None =>
                                 // Fallback: try the module class FQN (for singleton objects encoded as "$").
                                 state.fqnIndex.get(fqn + "$") match
-                                    case Some(p) => symbolIdMap.getOrDefault(p, -1)
+                                    case Some(p) => symbolIdMap.getOrElse(p.id.toLong, -1)
                                     case None    => -1
                     end fqnToId
 
@@ -1250,7 +1259,7 @@ object ClasspathOrchestrator:
 
                     def lookupFqnFinalId(fqn: String): Int =
                         state.fqnIndex.get(fqn) match
-                            case Some(p) => symbolIdMap.getOrDefault(p, -1)
+                            case Some(p) => symbolIdMap.getOrElse(p.id.toLong, -1)
                             case None    => -1
                     end lookupFqnFinalId
 
@@ -1288,10 +1297,10 @@ object ClasspathOrchestrator:
                     end while
 
                     for fr <- fileResults do
-                        fr.bodyDataByAddr.forEach { (sym, bodyData) =>
+                        fr.bodyDataByAddr.foreach { case (symId, bodyData) =>
                             val bodyStart = bodyData._1
                             val bodyEnd   = bodyData._2
-                            val idx       = symbolIdMap.getOrDefault(sym, -1)
+                            val idx       = symbolIdMap.getOrElse(symId, -1)
                             if idx >= 0 && idx < count && bodyStart > 0 && bodyEnd > bodyStart then
                                 descs(idx).body = Maybe(Tasty.SymbolBody(
                                     bodyStart = bodyStart,
@@ -1308,7 +1317,7 @@ object ClasspathOrchestrator:
                     val finalSymbols = materializeSymbols(descs, count)
 
                     val newFqnIndex = state.fqnIndex.map { case (fqn, partial) =>
-                        val idx = symbolIdMap.getOrDefault(partial, -1)
+                        val idx = symbolIdMap.getOrElse(partial.id.toLong, -1)
                         if idx >= 0 then (fqn, finalSymbols(idx))
                         else
                             // F-A4-001 fix: binary-alias FQN keys (e.g. "scala.Predef$") store a partial
@@ -1320,20 +1329,20 @@ object ClasspathOrchestrator:
                             val fallbackIdx =
                                 if canonFqn != fqn then
                                     state.fqnIndex.get(canonFqn) match
-                                        case Some(canonPartial) => symbolIdMap.getOrDefault(canonPartial, -1)
+                                        case Some(canonPartial) => symbolIdMap.getOrElse(canonPartial.id.toLong, -1)
                                         case None               => -1
                                 else -1
                             if fallbackIdx >= 0 then (fqn, finalSymbols(fallbackIdx))
-                            else (fqn, partial)
+                            else (fqn, _sentinelUnresolved)
                         end if
                     }
                     val newPackageIndex = state.packageIndex.map { case (pkg, partial) =>
-                        val idx = symbolIdMap.getOrDefault(partial, -1)
-                        if idx >= 0 then (pkg, finalSymbols(idx)) else (pkg, partial)
+                        val idx = symbolIdMap.getOrElse(partial.id.toLong, -1)
+                        if idx >= 0 then (pkg, finalSymbols(idx)) else (pkg, _sentinelUnresolved)
                     }
                     val newPackages = packages.map { partial =>
-                        val idx = symbolIdMap.getOrDefault(partial, -1)
-                        if idx >= 0 then finalSymbols(idx) else partial
+                        val idx = symbolIdMap.getOrElse(partial.id.toLong, -1)
+                        if idx >= 0 then finalSymbols(idx) else _sentinelUnresolved
                     }
 
                     val finalErrors = Chunk.from(accErrors)
@@ -1367,7 +1376,7 @@ object ClasspathOrchestrator:
                     val collisionDiagnostics: Chunk[Tasty.Classpath.Diagnostic] =
                         Chunk.from(
                             state.collisions.flatMap { case (colFqn, syms) =>
-                                val ids = Chunk.from(syms.toSeq.map(s => SymbolId(symbolIdMap.getOrDefault(s, -1))))
+                                val ids = Chunk.from(syms.toSeq.map(s => SymbolId(symbolIdMap.getOrElse(s.id.toLong, -1))))
                                 Seq(Tasty.Classpath.FqnCollision(colFqn, ids))
                             }
                         )
@@ -1507,14 +1516,15 @@ object ClasspathOrchestrator:
     private def readAndDecodeTastyFile(
         file: String,
         source: FileSource,
-        mode: Tasty.ErrorMode
+        mode: Tasty.ErrorMode,
+        nextGlobalId: () => Int = null
     )(using Frame): FileResult < (Sync & Abort[TastyError]) =
         Abort.run[TastyError](
             source.read(file).flatMap: bytes =>
                 Sync.Unsafe.defer {
                     TastyPerfStats.entryReads.inc()
                     TastyPerfStats.bytesRead.add(bytes.length.toLong)
-                    decodeTastyBytes(file, bytes)
+                    decodeTastyBytes(file, bytes, nextGlobalId)
                 }
         ).flatMap:
             case Result.Success(fr) =>
@@ -1528,22 +1538,19 @@ object ClasspathOrchestrator:
                                 Sync.Unsafe.defer:
                                     // Unsafe: ClassfileUnpickler reads an immutable byte array inside a Sync.Unsafe.defer block; no suspension required (§839 case 3).
                                     given AllowUnsafe = AllowUnsafe.embrace.danger
-                                    ClassfileUnpickler.read(classBytes, fr.arena)
+                                    ClassfileUnpickler.read(classBytes, fr.arena, nextGlobalId)
                         ).map:
                             case Result.Success(cfResult) =>
-                                cfResult.classSymbol match
-                                    case c: Tasty.Symbol.ClassLike =>
-                                        c.javaMetadata match
-                                            case Maybe.Present(meta) =>
-                                                // Populate companionJavaMeta for all top-level symbols in this file
-                                                // that match the classfile's symbol name. The fqns list maps each
-                                                // TASTy partial symbol to its FQN; we populate all of them since
-                                                // a single .tasty file may declare exactly one top-level class.
-                                                for (_, sym) <- fr.fqns do
-                                                    discard(fr.companionJavaMeta.put(sym, meta))
-                                                end for
-                                            case Maybe.Absent => ()
-                                    case _ => ()
+                                // cfResult.classSymbol is now LoadingSymbol.Materialising; use its javaMetadata directly.
+                                cfResult.classSymbol.javaMetadata match
+                                    case Maybe.Present(meta) =>
+                                        // Populate companionJavaMeta for all top-level symbols in this file.
+                                        // The fqns list maps each TASTy partial symbol to its FQN; we populate all since
+                                        // a single .tasty file may declare exactly one top-level class.
+                                        for (_, sym) <- fr.fqns do
+                                            fr.companionJavaMeta(sym.id.toLong) = meta
+                                        end for
+                                    case Maybe.Absent => ()
                                 end match
                                 fr
                             case _ => fr
@@ -1575,20 +1582,20 @@ object ClasspathOrchestrator:
             TypeArena.canonical(),
             Seq(err),
             Chunk.empty[Nothing],
-            new java.util.IdentityHashMap[Tasty.Symbol, Chunk[Tasty.Type]](),
-            new java.util.IdentityHashMap[Tasty.Symbol, Chunk[Tasty.Symbol]](),
-            new java.util.IdentityHashMap[Tasty.Symbol, Tasty.Type](),
+            mutable.LongMap.empty[Chunk[Tasty.Type]],
+            mutable.LongMap.empty[Chunk[LoadingSymbol.Materialising]],
+            mutable.LongMap.empty[Tasty.Type],
             Map.empty,
             Map.empty,
-            new java.util.IdentityHashMap[Tasty.Symbol, Tasty.Symbol](),
-            new java.util.IdentityHashMap[Tasty.Symbol, (Int, Int)](),
+            mutable.LongMap.empty[LoadingSymbol.Materialising],
+            mutable.LongMap.empty[(Int, Int)],
             Array.empty[Byte],
             0,
             Array.empty[Tasty.Name],
-            scala.collection.immutable.IntMap.empty[Tasty.Symbol],
+            scala.collection.immutable.IntMap.empty[LoadingSymbol.Materialising],
             mutable.HashMap.empty[Int, String],
-            new java.util.IdentityHashMap[Tasty.Symbol, mutable.ArrayBuffer[Tasty.Annotation]](),
-            new java.util.IdentityHashMap[Tasty.Symbol, Tasty.Java.Metadata]()
+            mutable.LongMap.empty[mutable.ArrayBuffer[Tasty.Annotation]],
+            mutable.LongMap.empty[Tasty.Java.Metadata]
         )
 
     /** Wrap a synchronous Kyo computation, adding elapsed nanoseconds to `counter` after it completes.
@@ -1610,7 +1617,8 @@ object ClasspathOrchestrator:
     /** Decode TASTy bytes into a FileResult (fqn-symbol pairs + arena). */
     private def decodeTastyBytes(
         file: String,
-        bytes: Array[Byte]
+        bytes: Array[Byte],
+        nextGlobalId: () => Int = null
     )(using Frame, AllowUnsafe): FileResult < (Sync & Abort[TastyError]) =
         val view  = ByteView(bytes)
         val arena = new TypeArena
@@ -1627,7 +1635,7 @@ object ClasspathOrchestrator:
             pass1Result <- timed(TastyPerfStats.astPass1Ns)(sections.get(TastyFormat.ASTsSection) match
                 case Present((offset, length)) =>
                     val astView = view.subView(offset, offset + length)
-                    AstUnpickler.readPass1(astView, names, attrs, arena)
+                    AstUnpickler.readPass1(astView, names, attrs, arena, nextGlobalId)
                 case Absent =>
                     // no cursor: missing section detected at orchestration level, before stream access
                     Abort.fail(TastyError.MalformedSection("ASTs", s"$file: ASTs section not found", 0L)))
@@ -1636,13 +1644,13 @@ object ClasspathOrchestrator:
                     val commentsView = view.subView(offset, offset + length)
                     CommentsUnpickler.read(commentsView, pass1Result.addrMap)
                 case Absent =>
-                    Sync.defer(Map.empty[Tasty.Symbol, String]))
+                    Sync.defer(Map.empty[LoadingSymbol.Materialising, String]))
             positionsBySymbol <- timed(TastyPerfStats.positionsUnpicklerNs)(sections.get(TastyFormat.PositionsSection) match
                 case Present((offset, length)) =>
                     val posView = view.subView(offset, offset + length)
                     PositionsUnpickler.read(posView, pass1Result.addrMap, attrs.sourceFile)
                 case Absent =>
-                    Sync.defer(Map.empty[Tasty.Symbol, Tasty.Position]))
+                    Sync.defer(Map.empty[LoadingSymbol.Materialising, Tasty.Position]))
         yield
             // computeFqn walks the ownerBySymbol chain to build the dotted FQN.
             val ownerBySymbol = pass1Result.ownerBySymbol
@@ -1675,7 +1683,7 @@ object ClasspathOrchestrator:
                 pass1Result.annotationsBySymbol,
                 // companionJavaMeta is populated by readAndDecodeTastyFile AFTER decodeTastyBytes returns,
                 // so this field starts empty here and is filled in the caller.
-                new java.util.IdentityHashMap[Tasty.Symbol, Tasty.Java.Metadata]()
+                mutable.LongMap.empty[Tasty.Java.Metadata]
             )
         end for
     end decodeTastyBytes
@@ -1722,25 +1730,26 @@ object ClasspathOrchestrator:
       * Internal FQN computation used during Pass C construction (before Classpath is fully assembled).
       */
     private def computeFqn(
-        sym: Tasty.Symbol,
-        ownerBySymbol: java.util.IdentityHashMap[Tasty.Symbol, Tasty.Symbol]
-    )(using AllowUnsafe): String =
+        sym: LoadingSymbol.Materialising,
+        ownerBySymbol: mutable.LongMap[LoadingSymbol.Materialising]
+    ): String =
         import Tasty.Name.asString
-        val parts = new scala.collection.mutable.ArrayBuffer[String]()
-        var cur   = sym
-        // Sentinel: the root symbol owns itself (added as self-ref) or doesn't appear in ownerBySymbol.
-        // IdentityHashMap used for cycle detection to match ownerBySymbol's identity-based keys.
-        val visited = new java.util.IdentityHashMap[Tasty.Symbol, java.lang.Boolean]()
+        val parts                                   = new scala.collection.mutable.ArrayBuffer[String]()
+        var cur: LoadingSymbol.Materialising | Null = sym
+        // LongSet for cycle detection keyed on loading id.
+        val visited = mutable.LongMap.empty[Unit]
         var done    = false
-        while !done && cur != null && visited.put(cur, java.lang.Boolean.TRUE) == null do
-            val n = cur.name.asString
+        while !done && (cur ne null) && !visited.contains(cur.nn.id.toLong) do
+            val c = cur.nn
+            visited(c.id.toLong) = ()
+            val n = c.name.asString
             if n.nonEmpty then parts.prepend(n)
             // Package symbols store the full dotted package name (e.g. "scala.collection.immutable")
             // in a single Name field. Walking further up through package owners would re-prepend the
             // individual package segments that are already embedded in that flat name, doubling them.
             // Stop here: the flat name is the entire package prefix for this symbol.
-            if cur.kind == SymbolKind.Package then done = true
-            else cur = ownerBySymbol.get(cur)
+            if c.kind == SymbolKind.Package then done = true
+            else cur = ownerBySymbol.get(c.id.toLong).orNull
         end while
         parts.filter(_.nonEmpty).mkString(".")
     end computeFqn
@@ -1757,23 +1766,27 @@ object ClasspathOrchestrator:
       * cp.symbols.filter(_.id.value == -1).map(_.name.asString).toSet.size decreases from the Phase 01 baseline.
       * Phase 11 completes the interning by routing the remaining TypeUnpickler call sites.
       */
-    @volatile private var _sentinelUnresolvedCached: Tasty.Symbol | Null = null
-
-    private def makeUnresolvedSym(fqn: String)(using AllowUnsafe): Tasty.Symbol =
-        // Return the shared sentinel regardless of the fqn argument; the fqn is only used for diagnostics
-        // in logging. All unresolved-FQN symbols share id.value == -1 via InternalSymbol.makeSymbol.
-        // Using a single interned object collapses the sentinel name-set size toward 1.
-        var cached = _sentinelUnresolvedCached
-        if cached == null then
-            cached = InternalSymbol.makeSymbol(
-                SymbolKind.Unresolved,
-                Tasty.Flags.empty,
-                Tasty.Name("<unresolved>")
-            )
-            _sentinelUnresolvedCached = cached
-        end if
-        cached.asInstanceOf[Tasty.Symbol]
-    end makeUnresolvedSym
+    // Sentinel Tasty.Symbol for unresolved FQN fallbacks (id.value == -1).
+    // Used by finalizeMerge when a partial symbol cannot be resolved to a final SymbolId.
+    private val _sentinelUnresolved: Tasty.Symbol =
+        import AllowUnsafe.embrace.danger
+        TypedSymbolFactory.from(new SymbolDescriptor(
+            id = -1,
+            kind = SymbolKind.Package,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name("<unresolved>"),
+            ownerId = -1,
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            body = Maybe.Absent
+        ))
+    end _sentinelUnresolved
 
     /** Test helper: trigger a `TastyError.ClasspathBuilding` abort via a synthetic degenerate MergeState.
       *
@@ -1791,12 +1804,13 @@ object ClasspathOrchestrator:
         // This simulates the invariant-violation scenario: fqnIndex references a symbol object that
         // was never registered in the merge pipeline's allSyms accumulator.
         val ghost = kyo.internal.tasty.symbol.Symbol.makeSymbol(
-            SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("GhostClass")
+            id = Int.MaxValue, // unique id not in allSyms
+            kind = SymbolKind.Class,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name("GhostClass")
         )
         state.fqnIndex("test.GhostClass") = ghost
-        // allSyms intentionally left empty so symbolIdMap.getOrDefault(ghost, -1) == -1.
+        // allSyms intentionally left empty so symbolIdMap.getOrElse(ghost.id.toLong, -1) == -1.
         // canonicalSourceFqn("test.GhostClass") == "test.GhostClass" (no mangling), so OQ-003
         // fallback also returns -1. Both checks fail -> ClasspathBuilding fires under FailFast.
         val platSrc = kyo.internal.tasty.query.PlatformFileSource.get

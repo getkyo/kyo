@@ -61,7 +61,7 @@ class ParameterTypedAccessorsTest extends Test:
         val param            = makeParameter(1, "x", Tasty.Type.Unknown, defaultArgId = Maybe(SymbolId(0)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(defaultArgMethod, param)).map: cp =>
             given Tasty.Classpath       = cp
-            val da: Maybe[Tasty.Symbol] = param.defaultArgId.map(id => cp.symbol(id))
+            val da: Maybe[Tasty.Symbol] = param.defaultArgId.flatMap(id => cp.symbol(id))
             assert(da.isDefined, "defaultArg must be Present when defaultArgId is Present")
             succeed
     }
@@ -75,7 +75,7 @@ class ParameterTypedAccessorsTest extends Test:
         val param = makeParameter(0, "x", Tasty.Type.Unknown, defaultArgId = Maybe.Absent)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(param)).map: cp =>
             given Tasty.Classpath       = cp
-            val da: Maybe[Tasty.Symbol] = param.defaultArgId.map(id => cp.symbol(id))
+            val da: Maybe[Tasty.Symbol] = param.defaultArgId.flatMap(id => cp.symbol(id))
             assert(!da.isDefined, "defaultArg must be Absent when defaultArgId is Absent")
             succeed
     }

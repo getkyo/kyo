@@ -65,17 +65,19 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
 
             def hasEnumCase(e: Tasty.Symbol.ClassLike): Boolean =
                 if (e match
-                        case c: Tasty.Symbol.Class => c.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty);
-                        case t: Tasty.Symbol.Trait => t.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty);
-                        case _                     => Chunk.empty
+                        case c: Tasty.Symbol.Class =>
+                            c.permittedSubclassIds.map(_.flatMap(id => cp.symbol(id).toChunk)).getOrElse(Chunk.empty);
+                        case t: Tasty.Symbol.Trait =>
+                            t.permittedSubclassIds.map(_.flatMap(id => cp.symbol(id).toChunk)).getOrElse(Chunk.empty);
+                        case _ => Chunk.empty
                     ).exists(_.isInstanceOf[Tasty.Symbol.EnumCase])
                 then
                     true
                 else
-                    e.declarationIds.map(cp.symbol).exists: decl =>
+                    e.declarationIds.flatMap(id => cp.symbol(id).toChunk).exists: decl =>
                         decl match
                             case companion: Tasty.Symbol.Object =>
-                                companion.declarationIds.map(cp.symbol).exists(_.isInstanceOf[Tasty.Symbol.EnumCase])
+                                companion.declarationIds.flatMap(id => cp.symbol(id).toChunk).exists(_.isInstanceOf[Tasty.Symbol.EnumCase])
                             case _ => false
                 end if
             end hasEnumCase
@@ -127,7 +129,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
             val knownEnumNames = Set("SymbolKind", "Color")
             val knownValueFormCases = cp.symbols.collect:
                 case e: Tasty.Symbol.EnumCase
-                    if knownEnumNames.exists(cp.symbol(e.ownerId).name.asString.startsWith) =>
+                    if knownEnumNames.exists(n => cp.symbol(e.ownerId).map(_.name.asString.startsWith(n)).getOrElse(false)) =>
                     e
 
             if knownValueFormCases.isEmpty then
@@ -164,13 +166,16 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
             val target = cp.findClass("kyo.TastyError").orElse(cp.findClass("kyo.fixtures.Shape"))
             target match
                 case Maybe.Present(enumClass) =>
-                    val permSubEnumCases = enumClass.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty).collect:
-                        case e: Tasty.Symbol.EnumCase => e
+                    val permSubEnumCases =
+                        enumClass.permittedSubclassIds.map(_.flatMap(id => cp.symbol(id).toChunk)).getOrElse(Chunk.empty).collect:
+                            case e: Tasty.Symbol.EnumCase => e
                     cp.fullName(enumClass).map: name =>
                         assert(
                             permSubEnumCases.nonEmpty,
                             s"${name.asString} has no EnumCase permitted subclasses after Phase 2.06 " +
-                                s"(regression: permittedSubclasses = ${enumClass.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty)})"
+                                s"(regression: permittedSubclasses = ${enumClass.permittedSubclassIds.map(_.flatMap(id =>
+                                        cp.symbol(id).toChunk
+                                    )).getOrElse(Chunk.empty)})"
                         )
                         succeed
                 case Maybe.Absent =>
@@ -209,7 +214,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
 
             cp.findClass("java.lang.annotation.RetentionPolicy") match
                 case Maybe.Present(rp) =>
-                    val allDecls = rp.declarationIds.map(cp.symbol)
+                    val allDecls = rp.declarationIds.flatMap(id => cp.symbol(id).toChunk)
                     val enumCaseDecls = allDecls.collect:
                         case e: Tasty.Symbol.EnumCase => e
                     assert(

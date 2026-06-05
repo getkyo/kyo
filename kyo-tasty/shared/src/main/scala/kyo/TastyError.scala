@@ -176,4 +176,16 @@ enum TastyError derives CanEqual:
       * support when the snapshot minor version is bumped from 10 to 11).
       */
     case UnhandledSubtypingCase(shape: String, lhs: kyo.Tasty.Type, rhs: kyo.Tasty.Type, file: String)
+
+    /** A loading-phase symbol placeholder survived to `finalizeMerge` without being resolved.
+      *
+      * Accumulated in `decodeCtx.errors` (not a hard failure) when a `LoadingSymbol.Placeholder` instance
+      * is encountered at the conversion boundary in `ClasspathOrchestrator.materializeSymbols`. This means
+      * a cross-file symbol reference whose defining file was absent from the loaded classpath was never
+      * replaced by a real `LoadingSymbol.Materialising` during Pass C.
+      *
+      * `name` is the symbol's simple name (or FQN when available). `idx` is the 0-based position of the
+      * placeholder in the loading array at the time the error was recorded.
+      */
+    case UnresolvedReference(name: String, idx: Int)
 end TastyError

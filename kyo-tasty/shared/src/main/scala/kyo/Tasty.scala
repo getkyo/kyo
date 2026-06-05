@@ -1692,7 +1692,6 @@ object Tasty:
             case _: Symbol.AbstractType => SymbolKind.AbstractType
             case _: Symbol.TypeParam    => SymbolKind.TypeParam
             case _: Symbol.Parameter    => SymbolKind.Parameter
-            case _: Symbol.Unresolved   => SymbolKind.Unresolved
 
         /** Typed grouped queries derived from flags (pure, no Classpath). */
         def visibility: Visibility =
@@ -2078,54 +2077,6 @@ object Tasty:
             def scaladoc: Maybe[String]         = Maybe.Absent
             def sourcePosition: Maybe[Position] = Maybe.Absent
         end Package
-
-        /** An unresolved or placeholder symbol.
-          *
-          * `flags` always equals `Flags.empty` in practice; the default is intentional so that call sites that construct a minimal sentinel
-          * (id, name, ownerId) do not need to supply flags explicitly. The `copy` method will preserve `Flags.empty` when flags is omitted,
-          * which is the correct behavior for unresolved symbols.
-          */
-        final case class Unresolved(
-            id: SymbolId,
-            name: Name,
-            ownerId: SymbolId,
-            flags: Flags = Flags.empty
-        ) extends Symbol derives Schema, CanEqual:
-            def scaladoc: Maybe[String]         = Maybe.Absent
-            def sourcePosition: Maybe[Position] = Maybe.Absent
-        end Unresolved
-
-        // ── Placeholder factory ────────────────────────────────────────────────
-
-        /** Produce a placeholder typed Symbol with `id=SymbolId(-1)` and only `kind`, `flags`, and `name` populated.
-          *
-          * All relational fields are left at empty defaults. Pass C replaces placeholder symbols with fully-populated ones via
-          * `materializeSymbols`. Used by AstUnpickler, TypeUnpickler, TreeUnpickler, ClassfileUnpickler, JavaAnnotationUnpickler, and the
-          * `InternalSymbol.makeSymbol` shim.
-          *
-          * Delegates to `TypedSymbolFactory.from` with a minimal descriptor so that `isClass` / `isTrait` / `isObject` predicates return
-          * the correct value on placeholder symbols.
-          */
-        private[kyo] def makePlaceholder(kind: SymbolKind, flags: Flags, name: Name): Symbol =
-            import kyo.internal.tasty.symbol.SymbolDescriptor
-            import kyo.internal.tasty.symbol.TypedSymbolFactory
-            TypedSymbolFactory.from(new SymbolDescriptor(
-                id = -1,
-                kind = kind,
-                flags = flags,
-                name = name,
-                ownerId = -1,
-                declaredType = Maybe.Absent,
-                scaladoc = Maybe.Absent,
-                sourcePosition = Maybe.Absent,
-                javaMetadata = Maybe.Absent,
-                parentTypes = Chunk.empty,
-                typeParamIds = Chunk.empty,
-                declarationIds = Chunk.empty,
-                permittedSubclassIds = Maybe.Absent,
-                body = Maybe.Absent
-            ))
-        end makePlaceholder
 
     end Symbol
 
@@ -2527,27 +2478,22 @@ object Tasty:
                     case _                => ()
                 b.result()
 
-        /** O(1) Symbol lookup by SymbolId. Returns the Symbol at index `id.value`. Returns a sentinel Unresolved symbol for out-of-range or
-          * unassigned ids.
+        /** O(1) Symbol lookup by SymbolId. Returns the Symbol at index `id.value`, or `Maybe.Absent` for out-of-range or negative ids.
           *
           * SymbolIds are only valid within the Classpath that produced them. Passing a SymbolId from one classpath into another classpath's
           * `symbol(id)` returns whatever Symbol happens to sit at that index in the receiving classpath (usually an unrelated symbol),
           * not the originating one. Cross-classpath operations should resolve by FQN via `findSymbol` / `findClass` / `findObject`, not
           * by SymbolId.
           *
-          * Sentinel cases:
-          *   - `id.value == -1`: the canonical sentinel value (SymbolId.sentinel); returns `sentinelUnresolved`.
-          *   - `id.value < 0` (including `Int.MinValue`): any negative index is treated identically to -1 and returns `sentinelUnresolved`.
-          *     Only -1 is documented as the sentinel by convention, but all negative values are safe.
-          *   - `id.value >= symbols.length`: out-of-range positive index; returns `sentinelUnresolved`.
-          *   - Empty classpath (`symbols.isEmpty`, `rootSymbolId.value == -1`): `cp.symbol(cp.rootSymbolId)` returns `sentinelUnresolved`
-          *     because `rootSymbolId` is -1 when no symbols were loaded. Callers that expect a synthetic root Package should check
-          *     `symbols.nonEmpty` first.
+          * Returns `Maybe.Absent` for:
+          *   - `id.value < 0`: any negative index including the canonical sentinel -1.
+          *   - `id.value >= symbols.length`: out-of-range positive index.
+          *   - Empty classpath (`symbols.isEmpty`, `rootSymbolId.value == -1`): `cp.symbol(cp.rootSymbolId)` returns `Maybe.Absent`.
           */
-        def symbol(id: SymbolId): Symbol =
+        def symbol(id: SymbolId): Maybe[Symbol] =
             val idx = SymbolId.value(id)
-            if idx >= 0 && idx < symbols.length then symbols(idx)
-            else Classpath.sentinelUnresolved
+            if idx >= 0 && idx < symbols.length then Maybe.Present(symbols(idx))
+            else Maybe.Absent
         end symbol
 
         /** Look up any symbol by fully-qualified dotted name.
@@ -2560,7 +2506,7 @@ object Tasty:
           */
         def findSymbol(fqn: String): Maybe[Symbol] =
             indices.byFqn.get(fqn) match
-                case Maybe.Present(id) => Maybe(symbol(id))
+                case Maybe.Present(id) => symbol(id)
                 case Maybe.Absent      => Maybe.Absent
 
         /** Look up a class symbol by fully-qualified dotted name.
@@ -2580,11 +2526,8 @@ object Tasty:
           */
         def findClass(fqn: String): Maybe[Symbol.Class] =
             indices.byFqn.get(fqn) match
-                case Maybe.Present(id) =>
-                    symbol(id) match
-                        case c: Symbol.Class => Maybe(c)
-                        case _               => Maybe.Absent
-                case Maybe.Absent => Maybe.Absent
+                case Maybe.Present(id) => symbol(id).flatMap { case c: Symbol.Class => Maybe(c); case _ => Maybe.Absent }
+                case Maybe.Absent      => Maybe.Absent
 
         /** Look up a concrete (non-abstract) class symbol by fully-qualified dotted name.
           *
@@ -2618,12 +2561,19 @@ object Tasty:
           * it lazily on the next access of the new Classpath.
           */
         def unresolvedTypeReferenceCount: Int =
-            val sentinelId = Classpath.sentinelUnresolved.id.value
+            // Count parent-type references that point to a symbol not on this classpath.
+            // Negative SymbolIds fall into two categories:
+            //   (a) ids tracked in unresolvedFqnByNegId: FQN-tracked cross-classpath refs
+            //       whose defining library was absent. These are "truly unresolved."
+            //   (b) other negative ids (e.g., decode-phase TERMREFdirect misses, -1 sentinel):
+            //       internal artifacts; not user-visible cross-classpath gaps.
+            // Only category (a) is counted here.
+            val tracked = indices.unresolvedFqnByNegId
             symbols.foldLeft(0): (acc, sym) =>
                 sym match
                     case c: Symbol.ClassLike =>
                         acc + c.parentTypes.count:
-                            case Type.Named(id) => id.value == sentinelId
+                            case Type.Named(id) => id.value < 0 && tracked.contains(id)
                             case _              => false
                     case _ => acc
         end unresolvedTypeReferenceCount
@@ -2634,11 +2584,8 @@ object Tasty:
           */
         def findTrait(fqn: String): Maybe[Symbol.Trait] =
             indices.byFqn.get(fqn) match
-                case Maybe.Present(id) =>
-                    symbol(id) match
-                        case t: Symbol.Trait => Maybe(t)
-                        case _               => Maybe.Absent
-                case Maybe.Absent => Maybe.Absent
+                case Maybe.Present(id) => symbol(id).flatMap { case t: Symbol.Trait => Maybe(t); case _ => Maybe.Absent }
+                case Maybe.Absent      => Maybe.Absent
 
         /** Look up an object symbol by fully-qualified dotted name.
           *
@@ -2653,31 +2600,27 @@ object Tasty:
           * Returns `Absent` when neither key resolves to an Object symbol.
           */
         def findObject(fqn: String): Maybe[Symbol.Object] =
+            def lookupObj(id: SymbolId): Maybe[Symbol.Object] =
+                symbol(id).flatMap { case o: Symbol.Object => Maybe(o); case _ => Maybe.Absent }
+            def tryDollar(f: String): Maybe[Symbol.Object] =
+                if f.endsWith("$") then Maybe.Absent
+                else
+                    indices.byFqn.get(f + "$") match
+                        case Maybe.Present(id2) => lookupObj(id2)
+                        case Maybe.Absent       => Maybe.Absent
             indices.byFqn.get(fqn) match
                 case Maybe.Present(id) =>
-                    symbol(id) match
-                        case o: Symbol.Object => Maybe(o)
-                        case _                =>
-                            // Source-form FQN is taken by a non-Object (e.g. the case class itself).
-                            // Fall back to the binary $-suffixed key where the companion Object lives.
-                            if fqn.endsWith("$") then Maybe.Absent
-                            else
-                                indices.byFqn.get(fqn + "$") match
-                                    case Maybe.Present(id2) =>
-                                        symbol(id2) match
-                                            case o: Symbol.Object => Maybe(o)
-                                            case _                => Maybe.Absent
-                                    case Maybe.Absent => Maybe.Absent
+                    val direct = lookupObj(id)
+                    if direct.isDefined then direct
+                    // Source-form FQN is taken by a non-Object (e.g. the case class itself).
+                    // Fall back to the binary $-suffixed key where the companion Object lives.
+                    else tryDollar(fqn)
+                    end if
                 case Maybe.Absent =>
                     // No entry at the source-form key; try the binary $-suffixed key directly.
-                    if fqn.endsWith("$") then Maybe.Absent
-                    else
-                        indices.byFqn.get(fqn + "$") match
-                            case Maybe.Present(id2) =>
-                                symbol(id2) match
-                                    case o: Symbol.Object => Maybe(o)
-                                    case _                => Maybe.Absent
-                            case Maybe.Absent => Maybe.Absent
+                    tryDollar(fqn)
+            end match
+        end findObject
 
         /** Look up a class-like symbol (Class, Trait, or Object) by fully-qualified dotted name.
           *
@@ -2685,11 +2628,8 @@ object Tasty:
           */
         def findClassLike(fqn: String): Maybe[Symbol.ClassLike] =
             indices.byFqn.get(fqn) match
-                case Maybe.Present(id) =>
-                    symbol(id) match
-                        case c: Symbol.ClassLike => Maybe(c)
-                        case _                   => Maybe.Absent
-                case Maybe.Absent => Maybe.Absent
+                case Maybe.Present(id) => symbol(id).flatMap { case c: Symbol.ClassLike => Maybe(c); case _ => Maybe.Absent }
+                case Maybe.Absent      => Maybe.Absent
 
         /** Look up a package symbol by fully-qualified dotted name.
           *
@@ -2697,11 +2637,8 @@ object Tasty:
           */
         def findPackage(fqn: String): Maybe[Symbol.Package] =
             indices.packageIndex.get(fqn) match
-                case Maybe.Present(id) =>
-                    symbol(id) match
-                        case p: Symbol.Package => Maybe(p)
-                        case _                 => Maybe.Absent
-                case Maybe.Absent => Maybe.Absent
+                case Maybe.Present(id) => symbol(id).flatMap { case p: Symbol.Package => Maybe(p); case _ => Maybe.Absent }
+                case Maybe.Absent      => Maybe.Absent
 
         /** Find all `Symbol.Class` instances whose simple name equals `simpleName`.
           *
@@ -2714,8 +2651,8 @@ object Tasty:
         def findClassesByName(simpleName: String): Chunk[Symbol.Class] =
             indices.bySimpleName.getOrElse(simpleName, Chunk.empty).flatMap: id =>
                 symbol(id) match
-                    case c: Symbol.Class => Chunk(c)
-                    case _               => Chunk.empty
+                    case Maybe.Present(c: Symbol.Class) => Chunk(c)
+                    case _                              => Chunk.empty
         end findClassesByName
 
         /** All package symbols in this classpath.
@@ -2726,8 +2663,8 @@ object Tasty:
         def packages: Chunk[Symbol.Package] =
             indices.packageIds.flatMap: id =>
                 symbol(id) match
-                    case p: Symbol.Package => Chunk(p)
-                    case _                 => Chunk.empty
+                    case Maybe.Present(p: Symbol.Package) => Chunk(p)
+                    case _                                => Chunk.empty
 
         /** All top-level class-like symbols (not packages) in this classpath.
           *
@@ -2737,8 +2674,8 @@ object Tasty:
         def topLevelClasses: Chunk[Symbol.ClassLike] =
             indices.topLevelClassIds.flatMap: id =>
                 symbol(id) match
-                    case c: Symbol.ClassLike => Chunk(c)
-                    case _                   => Chunk.empty
+                    case Maybe.Present(c: Symbol.ClassLike) => Chunk(c)
+                    case _                                  => Chunk.empty
 
         /** Look up a JPMS module descriptor by module name (e.g., "java.base").
           *
@@ -2912,9 +2849,6 @@ object Tasty:
         /** All Package symbols in the classpath. O(n) scan over `symbols`. */
         def allPackages: Chunk[Symbol.Package] = symbolsOfKind(SymbolKind.Package)
 
-        /** All Unresolved symbols in the classpath. O(n) scan over `symbols`. */
-        def allUnresolved: Chunk[Symbol.Unresolved] = symbolsOfKind(SymbolKind.Unresolved)
-
         /** All symbols carrying the Scala or Java annotation whose fully-qualified name is `annotationFqn`.
           *
           * Checks Scala `annotations` (via `Annotation.annotationType`: must be `Type.Named(id)` whose FQN matches `annotationFqn`) and
@@ -2965,14 +2899,13 @@ object Tasty:
             import Name.asString
             t match
                 case Type.Named(id) =>
-                    val sym = symbol(id)
-                    if sym eq Classpath.sentinelUnresolved then
-                        // The type resolved to the sentinel. For annotation types that reference
-                        // external symbols (e.g. scala.deprecated when scala-library is absent),
-                        // the negative SymbolId may have a known FQN in unresolvedFqnByNegId.
-                        indices.unresolvedFqnByNegId.getOrElse(id, "")
-                    else fullNameUnsafe(sym).asString
-                    end if
+                    symbol(id) match
+                        case Maybe.Absent =>
+                            // Out-of-range or negative id: check unresolvedFqnByNegId for annotation types
+                            // that reference external symbols (e.g. scala.deprecated on JS/Native).
+                            indices.unresolvedFqnByNegId.getOrElse(id, "")
+                        case Maybe.Present(sym) => fullNameUnsafe(sym).asString
+                    end match
                 case Type.TermRef(qual, name) =>
                     val q = typeFqnStringUnsafe(qual)
                     if q.nonEmpty then q + "." + name.asString else name.asString
@@ -2994,7 +2927,7 @@ object Tasty:
           */
         def companion(sym: Symbol): Maybe[Symbol] =
             indices.companionIndex.get(sym.id) match
-                case Maybe.Present(cid) => Maybe(symbol(cid))
+                case Maybe.Present(cid) => symbol(cid)
                 case Maybe.Absent       => Maybe.Absent
 
         /** Compute the fully-qualified dotted name of `sym` by walking the owner chain.
@@ -3023,9 +2956,10 @@ object Tasty:
                     val ownerIdCur = cur.ownerId
                     if ownerIdCur == cur.id || ownerIdCur.value == -1 then nextAcc
                     else
-                        val ownerSym = symbol(ownerIdCur)
-                        if ownerSym.id == cur.id || ownerSym.name.asString.isEmpty then nextAcc
-                        else go(ownerSym, depth + 1, nextAcc)
+                        symbol(ownerIdCur) match
+                            case Maybe.Present(ownerSym) if ownerSym.id != cur.id && ownerSym.name.asString.nonEmpty =>
+                                go(ownerSym, depth + 1, nextAcc)
+                            case _ => nextAcc
                     end if
             val parts = go(sym, 0, Nil)
             (parts.mkString("."): Name)
@@ -3039,8 +2973,8 @@ object Tasty:
         def directSubclassesOf(sym: Symbol.ClassLike): Chunk[Symbol.ClassLike] =
             indices.subclassIndex.getOrElse(sym.id, Chunk.empty).flatMap: id =>
                 symbol(id) match
-                    case c: Symbol.ClassLike => Chunk(c)
-                    case _                   => Chunk.empty
+                    case Maybe.Present(c: Symbol.ClassLike) => Chunk(c)
+                    case _                                  => Chunk.empty
 
         /** All transitive `ClassLike` subclasses of `sym` (BFS closure over the subclass index).
           *
@@ -3070,7 +3004,7 @@ object Tasty:
                         indices.subclassIndex.getOrElse(curId, Chunk.empty).flatMap: childId =>
                             if visited.add(childId) then
                                 symbol(childId) match
-                                    case c: Symbol.ClassLike =>
+                                    case Maybe.Present(c: Symbol.ClassLike) =>
                                         out += c
                                         Chunk(childId)
                                     case _ => Chunk.empty[SymbolId]
@@ -3083,11 +3017,6 @@ object Tasty:
     end Classpath
 
     object Classpath:
-
-        /** Sentinel symbol returned by `Classpath.symbol` for out-of-range or unassigned ids. */
-        val sentinelUnresolved: Symbol =
-            Symbol.Unresolved(SymbolId(-1), ("<unresolved>": Name), SymbolId(-1))
-        end sentinelUnresolved
 
         /** Sealed hierarchy for structured build-time observations accumulated in `Classpath.Indices.diagnostics`.
           *
@@ -3533,8 +3462,8 @@ object Tasty:
                     import Name.asString
                     Maybe.fromOption(cl.declarationIds.flatMap: id =>
                         cp.symbol(id) match
-                            case m: Symbol.Method if m.name.asString == methodName => Chunk(m)
-                            case _                                                 => Chunk.empty
+                            case Maybe.Present(m: Symbol.Method) if m.name.asString == methodName => Chunk(m)
+                            case _                                                                => Chunk.empty
                     .headOption)
                 case _ => Maybe.Absent
 
@@ -3624,9 +3553,7 @@ object Tasty:
 
     /** Return the lexically enclosing symbol. Absent for root symbols (ownerId == -1). */
     def owner(sym: Symbol)(using Frame): Maybe[Symbol] < Sync =
-        classpath.map: cp =>
-            if sym.ownerId.value == -1 then Maybe.Absent
-            else Maybe(cp.symbol(sym.ownerId))
+        classpath.map(_.symbol(sym.ownerId))
 
     /** Compute the dotted fully-qualified name of sym. */
     def fullName(sym: Symbol)(using Frame): Name < Sync =
@@ -3656,9 +3583,9 @@ object Tasty:
                 if depth >= 64 || !visited.add(cur.id.value) then ()
                 else
                     out += cur
-                    val ownerSym = cp.symbol(cur.ownerId)
-                    if ownerSym.id == cur.id || ownerSym.id.value == -1 then ()
-                    else go(ownerSym, depth + 1)
+                    cp.symbol(cur.ownerId) match
+                        case Maybe.Present(ownerSym) if ownerSym.id != cur.id => go(ownerSym, depth + 1)
+                        case _                                                => ()
             go(sym, 0)
             out.result()
 
@@ -3679,7 +3606,7 @@ object Tasty:
                 case ta: Symbol.TypeAlias  => ta.typeParamIds
                 case ot: Symbol.OpaqueType => ot.typeParamIds
                 case _                     => Chunk.empty
-            ).map(cp.symbol)
+            ).flatMap(id => cp.symbol(id).toChunk)
 
     /** Return the declared members of sym (ClassLike: declarationIds; Package: memberIds; else empty). */
     def declarations(sym: Symbol)(using Frame): Chunk[Symbol] < Sync =
@@ -3688,7 +3615,7 @@ object Tasty:
                 case c: Symbol.ClassLike => c.declarationIds
                 case p: Symbol.Package   => p.memberIds
                 case _                   => Chunk.empty
-            ).map(cp.symbol)
+            ).flatMap(id => cp.symbol(id).toChunk)
 
     /** Return the permitted subclasses of a sealed Class or Trait. Returns empty for non-sealed. */
     def permittedSubclasses(sym: Symbol)(using Frame): Chunk[Symbol] < Sync =
@@ -3697,12 +3624,12 @@ object Tasty:
                 case c: Symbol.Class => c.permittedSubclassIds
                 case t: Symbol.Trait => t.permittedSubclassIds
                 case _               => Maybe.Absent
-            ).map(_.map(cp.symbol)).getOrElse(Chunk.empty)
+            ).map(_.flatMap(id => cp.symbol(id).toChunk)).getOrElse(Chunk.empty)
 
     /** Direct parent ClassLike symbols of a ClassLike. */
     def parents(cl: Symbol.ClassLike)(using Frame): Chunk[Symbol] < Sync =
         classpath.map: cp =>
-            cl.parentTypes.collect { case Type.Named(pid) => cp.symbol(pid) }
+            cl.parentTypes.flatMap { case Type.Named(pid) => cp.symbol(pid).toChunk; case _ => Chunk.empty }
 
     /** Members of sym filtered by scope.
       *
@@ -3718,14 +3645,14 @@ object Tasty:
                         case c: Symbol.ClassLike => c.declarationIds
                         case p: Symbol.Package   => p.memberIds
                         case _                   => Chunk.empty
-                    ).map(cp.symbol)
+                    ).flatMap(id => cp.symbol(id).toChunk)
                 case MemberScope.Inherited =>
                     val declIds = sym match
                         case c: Symbol.ClassLike => c.declarationIds
                         case p: Symbol.Package   => p.memberIds
                         case _                   => Chunk.empty
                     val directNames = scala.collection.mutable.HashSet.empty[String]
-                    declIds.foreach(id => discard(directNames.add(cp.symbol(id).simpleName)))
+                    declIds.foreach(id => cp.symbol(id).foreach(s => discard(directNames.add(s.simpleName))))
                     allMembersOf(sym, cp).filter(s => !directNames.contains(s.simpleName))
                 case MemberScope.All => allMembersOf(sym, cp)
 
@@ -3857,7 +3784,7 @@ object Tasty:
     def typeSymbol(tpe: Type)(using Frame): Maybe[Symbol] < Sync =
         classpath.map: cp =>
             tpe match
-                case Type.Named(id) => Maybe(cp.symbol(id))
+                case Type.Named(id) => cp.symbol(id)
                 case _              => Maybe.Absent
 
     /** Structural subtype check. Returns Sub, NotSub, or Indeterminate.
@@ -3881,7 +3808,7 @@ object Tasty:
         classpath.map: cp =>
             import Name.asString
             def renderType(t: Type): String = t match
-                case Type.Named(id)           => cp.symbol(id).name.asString
+                case Type.Named(id)           => cp.symbol(id).map(_.name.asString).getOrElse("<unresolved>")
                 case Type.Applied(base, args) => s"${renderType(base)}[${args.map(renderType).mkString(", ")}]"
                 case Type.Array(elem)         => s"${renderType(elem)}[]"
                 case Type.Function(ps, r) =>
@@ -3907,12 +3834,15 @@ object Tasty:
                 val out  = Chunk.newBuilder[Symbol]
                 def visit(cl: Symbol.ClassLike): Unit =
                     cl.declarationIds.foreach: id =>
-                        val d  = cp.symbol(id)
-                        val nm = d.simpleName
-                        if seen.add(nm) then out += d
-                    cl.parentTypes.collect { case Type.Named(pid) => cp.symbol(pid) }.foreach:
-                        case pcl: Symbol.ClassLike => visit(pcl)
-                        case _                     => ()
+                        cp.symbol(id).foreach: d =>
+                            val nm = d.simpleName
+                            if seen.add(nm) then out += d
+                    cl.parentTypes.foreach:
+                        case Type.Named(pid) =>
+                            cp.symbol(pid).foreach:
+                                case pcl: Symbol.ClassLike => visit(pcl)
+                                case _                     => ()
+                        case _ => ()
                 end visit
                 visit(c)
                 out.result()

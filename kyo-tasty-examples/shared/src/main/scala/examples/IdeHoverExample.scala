@@ -40,7 +40,7 @@ object IdeHoverExample:
                 var i                        = 0
                 while i < classes.size && result.isEmpty do
                     val cls   = classes(i)
-                    val decls = cls.declarationIds.map(cp.symbol)
+                    val decls = cls.declarationIds.flatMap(id => cp.symbol(id).toChunk)
                     var j     = 0
                     while j < decls.size && result.isEmpty do
                         val sym = decls(j)
@@ -70,7 +70,7 @@ object IdeHoverExample:
                 cp.findClass(fqn) match
                     case Absent => Absent
                     case Present(cls) =>
-                        val decls = cls.declarationIds.map(cp.symbol)
+                        val decls = cls.declarationIds.flatMap(id => cp.symbol(id).toChunk)
                         decls.find(_.name.asString == member) match
                             case None    => Absent
                             case Some(s) => Present(s"${s.name.asString}: ${symbolSignature(s, cp)}")

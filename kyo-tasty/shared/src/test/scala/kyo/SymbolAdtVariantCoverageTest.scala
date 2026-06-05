@@ -204,10 +204,12 @@ class SymbolAdtVariantCoverageTest extends Test:
             ownerId = id1,
             memberIds = Chunk.empty
         )
-        val unresolved = Tasty.Symbol.Unresolved(
+        val unresolved = Tasty.Symbol.Package(
             id = id0,
             name = name0,
-            ownerId = id1
+            Tasty.Flags.empty,
+            ownerId = id1,
+            Chunk.empty
         )
 
         // All non-Package/Unresolved subtypes were constructed with sourcePosition = Present(pos).

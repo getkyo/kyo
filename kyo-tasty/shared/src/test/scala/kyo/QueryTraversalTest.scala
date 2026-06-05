@@ -24,14 +24,17 @@ class QueryTraversalTest extends Test:
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Tasty.withClasspath(cp):
-                    val rootPkg = cp.symbol(cp.rootSymbolId)
-                    Tasty.owner(rootPkg).map: ownerResult =>
-                        // The root package (ownerId == -1 or ownerId == self) returns Absent
-                        assert(
-                            !ownerResult.isDefined || ownerResult.get.id == rootPkg.id,
-                            "owner of root package must be Absent or self"
-                        )
-                        succeed).map:
+                    cp.symbol(cp.rootSymbolId) match
+                        case Maybe.Absent =>
+                            Sync.defer(fail("root symbol not found in classpath"))
+                        case Maybe.Present(rootPkg) =>
+                            Tasty.owner(rootPkg).map: ownerResult =>
+                                // The root package (ownerId == -1 or ownerId == self) returns Absent
+                                assert(
+                                    !ownerResult.isDefined || ownerResult.get.id == rootPkg.id,
+                                    "owner of root package must be Absent or self"
+                                )
+                                succeed).map:
                 case Result.Success(_) => succeed
                 case Result.Failure(e) => fail(s"Unexpected failure: $e")
                 case Result.Panic(t)   => throw t

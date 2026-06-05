@@ -2,6 +2,7 @@ package kyo.internal.tasty.reader
 
 import kyo.*
 import kyo.internal.tasty.binary.ByteView
+import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.Symbol as InternalSymbol
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
@@ -38,11 +39,6 @@ final private[reader] class TastyErrorException(val error: TastyError)
 
 object TypeUnpickler:
 
-    /** Synthetic sentinel symbol for MatchCaseType representation.
-      *
-      * Each MATCHCASEtype node is decoded as Applied(Named(MatchCaseSentinel), Chunk(pat, rhs)). Consumers extract pat and rhs by position
-      * from the args chunk.
-      */
     /** Phase-B temporary SymbolId offset.
       *
       * During Phase B decode, `TERMREFdirect` and `TYPEREFdirect` type nodes reference local symbols by TASTy byte address. Instead of
@@ -54,50 +50,12 @@ object TypeUnpickler:
       */
     private[kyo] val PHASE_B_ADDR_OFFSET: Int = 1 << 28
 
-    val MatchCaseSentinel: Tasty.Symbol =
-        // Unsafe: module-level sentinel; InternalSymbol.makeSymbol requires AllowUnsafe (§839 case 3).
-        import AllowUnsafe.embrace.danger
-        InternalSymbol.makeSymbol(
-            SymbolKind.Unresolved,
-            Tasty.Flags.empty,
-            Tasty.Name("$$MatchCase")
-        )
-    end MatchCaseSentinel
-
-    /** Interned sentinel symbol for unresolved-type fallbacks (F-G-007 partial).
+    /** Sentinel SymbolId for unresolved-type fallbacks.
       *
-      * A single shared symbol with name "<unresolved>" is reused for ALL unresolved-type placeholder positions
-      * (RECthis miss, this-unknown, unknown-tag, etc.) so that the entire fabricated-name family collapses to
-      * one shared sentinel with id.value == -1. Phase 11 finishes the full interning; Phase 04 routes RECthis
-      * and THIS-unknown through this sentinel.
+      * Used in places where `session` is null (body decode path) and a unique tracked id is not available. The value -1 is the canonical
+      * unresolved sentinel. Phase C remapType leaves ids == -1 unchanged.
       */
-    private[kyo] val sentinelUnresolved: Tasty.Symbol =
-        // Unsafe: module-level sentinel; InternalSymbol.makeSymbol requires AllowUnsafe (§839 case 3).
-        import AllowUnsafe.embrace.danger
-        InternalSymbol.makeSymbol(
-            SymbolKind.Unresolved,
-            Tasty.Flags.empty,
-            Tasty.Name("<unresolved>")
-        )
-    end sentinelUnresolved
-
-    /** Interned sentinel for RECtype cycle-breaker placeholders (F-G-007 pass B).
-      *
-      * A single shared instance replaces the per-address `rec-placeholder@N` symbols that Phase 04 introduced.
-      * The RECtype handler installs this as the placeholder Rec during cycle decoding; after the Rec resolves,
-      * RECthis nodes find the real result in addrCache and the placeholder is never exposed to cp.symbols.
-      * Using a single interned instance rather than per-address instances is safe because the RECtype handler
-      * discards the placeholder from inProgressRec once decoding completes.
-      */
-    private[kyo] val sentinelRecPlaceholder: Tasty.Symbol =
-        // Unsafe: module-level sentinel; InternalSymbol.makeSymbol requires AllowUnsafe (§839 case 3).
-        import AllowUnsafe.embrace.danger
-        InternalSymbol.makeSymbol(
-            SymbolKind.Unresolved,
-            Tasty.Flags.empty,
-            Tasty.Name("<rec-placeholder>")
-        )
-    end sentinelRecPlaceholder
+    private[kyo] val sentinelId: kyo.Tasty.SymbolId = kyo.Tasty.SymbolId(-1)
 
     /** Decode a single type node from `view`.
       *
@@ -117,7 +75,7 @@ object TypeUnpickler:
     def readType(
         view: ByteView,
         names: Array[Tasty.Name],
-        addrMap: IntMap[Tasty.Symbol],
+        addrMap: IntMap[LoadingSymbol.Materialising],
         arena: TypeArena,
         sectionBytes: Array[Byte],
         sectionOffset: Int
@@ -126,7 +84,7 @@ object TypeUnpickler:
             try
                 val addrCache     = new mutable.HashMap[Int, Tasty.Type]()
                 val inProgressRec = new mutable.HashMap[Int, Tasty.Type.Rec]()
-                val binderAddrMap = new mutable.HashMap[Int, Chunk[Tasty.Symbol]]()
+                val binderAddrMap = new mutable.HashMap[Int, Chunk[LoadingSymbol.Materialising]]()
                 val ctx =
                     DecodeCtx(
                         names,
@@ -167,14 +125,14 @@ object TypeUnpickler:
       */
     final private[tasty] class TreeTypeSession(
         val names: Array[Tasty.Name],
-        val addrMap: scala.collection.Map[Int, Tasty.Symbol],
+        val addrMap: scala.collection.Map[Int, LoadingSymbol.Materialising],
         val arena: TypeArena,
         val sectionBytes: Array[Byte],
         val sectionOffset: Int
     ):
-        val addrCache: mutable.HashMap[Int, Tasty.Type]              = new mutable.HashMap()
-        val inProgressRec: mutable.HashMap[Int, Tasty.Type.Rec]      = new mutable.HashMap()
-        val binderAddrMap: mutable.HashMap[Int, Chunk[Tasty.Symbol]] = new mutable.HashMap()
+        val addrCache: mutable.HashMap[Int, Tasty.Type]                             = new mutable.HashMap()
+        val inProgressRec: mutable.HashMap[Int, Tasty.Type.Rec]                     = new mutable.HashMap()
+        val binderAddrMap: mutable.HashMap[Int, Chunk[LoadingSymbol.Materialising]] = new mutable.HashMap()
     end TreeTypeSession
 
     /** Read one type node using a shared TreeTypeSession (called by TreeUnpickler).
@@ -303,13 +261,13 @@ object TypeUnpickler:
       */
     final private[kyo] class DecodeSession(
         val names: Array[Tasty.Name],
-        val liveAddrMap: mutable.HashMap[Int, Tasty.Symbol],
+        val liveAddrMap: mutable.HashMap[Int, LoadingSymbol.Materialising],
         val arena: TypeArena
     ):
-        val addrCache: mutable.HashMap[Int, Tasty.Type]              = new mutable.HashMap()
-        val inProgressRec: mutable.HashMap[Int, Tasty.Type.Rec]      = new mutable.HashMap()
-        val binderAddrMap: mutable.HashMap[Int, Chunk[Tasty.Symbol]] = new mutable.HashMap()
-        val unresolvedIdToFqn: mutable.HashMap[Int, String]          = new mutable.HashMap()
+        val addrCache: mutable.HashMap[Int, Tasty.Type]                             = new mutable.HashMap()
+        val inProgressRec: mutable.HashMap[Int, Tasty.Type.Rec]                     = new mutable.HashMap()
+        val binderAddrMap: mutable.HashMap[Int, Chunk[LoadingSymbol.Materialising]] = new mutable.HashMap()
+        val unresolvedIdToFqn: mutable.HashMap[Int, String]                         = new mutable.HashMap()
         // Accumulates errors from eager annotation arg decodes in ANNOTATEDtype. Drained into
         // FileResult.errors at the end of AstUnpickler.runPass1 via Pass1Result.annotationDecodeErrors.
         val annotationDecodeErrors: mutable.ArrayBuffer[TastyError] = new mutable.ArrayBuffer()
@@ -318,7 +276,7 @@ object TypeUnpickler:
 
         // F-A-005 fix: owner stack maintained by AstUnpickler as it enters/exits DEFDEF and TYPEDEF nodes.
         // The THIS-type branch reads this to resolve THIS to the enclosing class/trait/object symbol.
-        val ownerStack: mutable.ArrayDeque[Tasty.Symbol] = new mutable.ArrayDeque()
+        val ownerStack: mutable.ArrayDeque[LoadingSymbol.Materialising] = new mutable.ArrayDeque()
 
         // Parallel stack with the ABSOLUTE node address (from addrMap) of each owner symbol.
         // This allows the THIS-type branch to emit ThisType(PHASE_B_ADDR_OFFSET + addr) for
@@ -341,23 +299,26 @@ object TypeUnpickler:
     // session: reference to the owning DecodeSession for cross-file FQN tracking (null in body decode path).
     final private class DecodeCtx(
         val names: Array[Tasty.Name],
-        val addrMap: scala.collection.Map[Int, Tasty.Symbol],
+        val addrMap: scala.collection.Map[Int, LoadingSymbol.Materialising],
         val arena: TypeArena,
         val addrCache: mutable.HashMap[Int, Tasty.Type],
         val inProgressRec: mutable.HashMap[Int, Tasty.Type.Rec],
-        val binderAddrMap: mutable.HashMap[Int, Chunk[Tasty.Symbol]],
+        val binderAddrMap: mutable.HashMap[Int, Chunk[LoadingSymbol.Materialising]],
         val sectionBytes: Array[Byte],
         val sectionOffset: Int,
         val frame: Frame,
         val session: DecodeSession | Null = null
-    )
-
-    private def makeUnresolvedSym(fqn: String)(using AllowUnsafe): Tasty.Symbol =
-        InternalSymbol.makeSymbol(
-            SymbolKind.Unresolved,
-            Tasty.Flags.empty,
-            Tasty.Name(fqn)
-        )
+    ):
+        // Local id counter for lambda-param Materialising instances created when addrMap lookup misses.
+        // These are never placed in allSyms; their ids only need to be unique within this DecodeCtx.
+        // Using large positive values avoids collision with Phase-B addr-offset or final ids.
+        private var _localIdCounter: Int = Int.MaxValue
+        def nextLocalId(): Int =
+            val id = _localIdCounter
+            _localIdCounter -= 1
+            id
+        end nextLocalId
+    end DecodeCtx
 
     /** Make a unique negative SymbolId for a cross-file FQN reference and record it in `fqns`.
       *
@@ -436,7 +397,7 @@ object TypeUnpickler:
                                 case s: DecodeSession =>
                                     Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
                                 case null =>
-                                    Tasty.Type.Named(sentinelUnresolved.id)
+                                    Tasty.Type.Named(sentinelId)
                         end if
                     }
                 )
@@ -454,7 +415,7 @@ object TypeUnpickler:
                     // remains as a unique unresolved ref (value < -1) rather than colliding with the -1 sentinel.
                     ctx.session match
                         case s: DecodeSession => Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
-                        case null             => Tasty.Type.Named(sentinelUnresolved.id)
+                        case null             => Tasty.Type.Named(sentinelId)
                 end if
 
             case TastyFormat.TYPEREFdirect =>
@@ -470,7 +431,7 @@ object TypeUnpickler:
                     // This is the root cause of the scala.Tuple.splitAt Named(-1) in probe-001.log line 39872.
                     ctx.session match
                         case s: DecodeSession => Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
-                        case null             => Tasty.Type.Named(sentinelUnresolved.id)
+                        case null             => Tasty.Type.Named(sentinelId)
                 end if
 
             case TastyFormat.TERMREFpkg =>
@@ -481,7 +442,7 @@ object TypeUnpickler:
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
                     case null =>
                         // F-G-007 pass B: no session context -- use interned sentinel instead of per-fqn name
-                        Tasty.Type.Named(sentinelUnresolved.id)
+                        Tasty.Type.Named(sentinelId)
                 end match
 
             case TastyFormat.TYPEREFpkg =>
@@ -492,7 +453,7 @@ object TypeUnpickler:
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
                     case null =>
                         // F-G-007 pass B: no session context -- use interned sentinel instead of per-fqn name
-                        Tasty.Type.Named(sentinelUnresolved.id)
+                        Tasty.Type.Named(sentinelId)
                 end match
 
             case TastyFormat.RECthis =>
@@ -510,7 +471,7 @@ object TypeUnpickler:
                                 // unresolvable but does not collide with the INV-005 Named(-1) sentinel check.
                                 val placeholderId = ctx.session match
                                     case s: DecodeSession => kyo.Tasty.SymbolId(s.nextUnresolvedId())
-                                    case null             => sentinelUnresolved.id
+                                    case null             => sentinelId
                                 Tasty.Type.RecThis(Tasty.Type.Named(placeholderId))
                 end match
 
@@ -559,10 +520,10 @@ object TypeUnpickler:
                                     case Some((_, addr)) =>
                                         Tasty.Type.ThisType(kyo.Tasty.SymbolId(PHASE_B_ADDR_OFFSET + addr))
                                     case None =>
-                                        Tasty.Type.ThisType(sentinelUnresolved.id)
+                                        Tasty.Type.ThisType(sentinelId)
                                 end match
                             case null =>
-                                Tasty.Type.ThisType(sentinelUnresolved.id)
+                                Tasty.Type.ThisType(sentinelId)
                         end match
                 end match
 
@@ -578,10 +539,10 @@ object TypeUnpickler:
                 // Cycle-break: allocate a typed placeholder Rec before decoding parent.
                 // inProgressRec is keyed by the RECtype node's start addr so RECthis nodes
                 // encountered during parent decoding can find the placeholder.
-                // F-G-007 pass B: use the single interned sentinelRecPlaceholder instead of per-address fabricated name.
+                // F-G-007 pass B: use sentinel id for the RECtype cycle-breaker placeholder.
                 // This is safe because the placeholder is installed in inProgressRec keyed by startAddr and is
                 // removed via inProgressRec.remove BEFORE the result is returned. No per-address identity needed.
-                val placeholder: Tasty.Type.Rec = Tasty.Type.Rec(Tasty.Type.Named(sentinelRecPlaceholder.id))
+                val placeholder: Tasty.Type.Rec = Tasty.Type.Rec(Tasty.Type.Named(sentinelId))
                 ctx.inProgressRec(startAddr) = placeholder
                 val parent = readTypeNode(view, ctx)
                 discard(ctx.inProgressRec.remove(startAddr))
@@ -659,7 +620,7 @@ object TypeUnpickler:
                 val endInt    = Math.toIntExact(end)
                 skipToEnd(view, end)
                 // F-G-007 pass B: use interned sentinelUnresolved for the annotation-tycon placeholder position
-                val annotationType = Tasty.Type.Named(sentinelUnresolved.id)
+                val annotationType = Tasty.Type.Named(sentinelId)
                 val annotation =
                     if ctx.sectionBytes == null then
                         Tasty.Annotation(annotationType, Chunk.empty)
@@ -760,7 +721,7 @@ object TypeUnpickler:
                 ctx.binderAddrMap(startAddr) = Chunk.from(paramSyms)
                 val resultType = readTypeNode(view, ctx)
                 view.goto(end)
-                Tasty.Type.TypeLambda(Chunk.from(paramSyms.map(_.id)), resultType)
+                Tasty.Type.TypeLambda(Chunk.from(paramSyms.map(m => kyo.Tasty.SymbolId(m.id))), resultType)
 
             case TastyFormat.POLYtype =>
                 val end       = view.readEnd()
@@ -768,7 +729,7 @@ object TypeUnpickler:
                 ctx.binderAddrMap(startAddr) = Chunk.from(paramSyms)
                 val resultType = readTypeNode(view, ctx)
                 view.goto(end)
-                Tasty.Type.TypeLambda(Chunk.from(paramSyms.map(_.id)), resultType)
+                Tasty.Type.TypeLambda(Chunk.from(paramSyms.map(m => kyo.Tasty.SymbolId(m.id))), resultType)
 
             case TastyFormat.METHODtype =>
                 val end       = view.readEnd()
@@ -776,7 +737,7 @@ object TypeUnpickler:
                 ctx.binderAddrMap(startAddr) = Chunk.from(paramSyms)
                 val resultType = readTypeNode(view, ctx)
                 view.goto(end)
-                Tasty.Type.TypeLambda(Chunk.from(paramSyms.map(_.id)), resultType)
+                Tasty.Type.TypeLambda(Chunk.from(paramSyms.map(m => kyo.Tasty.SymbolId(m.id))), resultType)
 
             case TastyFormat.PARAMtype =>
                 val end        = view.readEnd()
@@ -787,13 +748,13 @@ object TypeUnpickler:
                 // Add sectionOffset to convert to the absolute key registered by the enclosing lambda handler.
                 val absBinderAddr = ctx.sectionOffset + binderAddr
                 ctx.binderAddrMap.get(absBinderAddr) match
-                    case Some(params) if paramNum < params.length => Tasty.Type.ParamRef(params(paramNum).id, paramNum)
+                    case Some(params) if paramNum < params.length => Tasty.Type.ParamRef(kyo.Tasty.SymbolId(params(paramNum).id), paramNum)
                     // F-A2-002 fix: binder addr miss -- assign unique tracked ID so the result is Named(SymbolId(uniqueNeg))
                     // with uniqueNeg < -1, not the Named(-1) sentinel that would fail INV-005.
                     case _ =>
                         ctx.session match
                             case s: DecodeSession => Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
-                            case null             => Tasty.Type.Named(sentinelUnresolved.id)
+                            case null             => Tasty.Type.Named(sentinelId)
                 end match
 
             case TastyFormat.TYPEREFin =>
@@ -818,7 +779,7 @@ object TypeUnpickler:
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fullFqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
                     case null =>
                         // F-G-007 pass B: no session context -- use interned sentinel
-                        Tasty.Type.Named(sentinelUnresolved.id)
+                        Tasty.Type.Named(sentinelId)
                 end match
 
             case TastyFormat.TERMREFin =>
@@ -892,7 +853,7 @@ object TypeUnpickler:
                     case s: DecodeSession =>
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fullFqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
                     case null =>
-                        Tasty.Type.Named(sentinelUnresolved.id)
+                        Tasty.Type.Named(sentinelId)
                 end match
 
             case TastyFormat.APPLIEDtpt =>
@@ -941,7 +902,7 @@ object TypeUnpickler:
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fullFqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
                     case null =>
                         // F-G-007 pass B: no session context -- use interned sentinel
-                        Tasty.Type.Named(sentinelUnresolved.id)
+                        Tasty.Type.Named(sentinelId)
                 end match
 
             case TastyFormat.REFINEDtpt =>
@@ -962,11 +923,12 @@ object TypeUnpickler:
                     val nameRef = view.readNat()
                     val symName = nameAt(ctx.names, nameRef)
                     val sym = InternalSymbol.makeSymbol(
-                        SymbolKind.TypeParam,
-                        Tasty.Flags.empty,
-                        symName
+                        id = ctx.nextLocalId(),
+                        kind = SymbolKind.TypeParam,
+                        flags = Tasty.Flags.empty,
+                        name = symName
                     )
-                    tparamIds += sym.id
+                    tparamIds += kyo.Tasty.SymbolId(sym.id)
                     view.goto(tpEnd)
                 end while
                 val body = readTypeNode(view, ctx)
@@ -1005,7 +967,7 @@ object TypeUnpickler:
                     absRef, {
                         ctx.session match
                             case s: DecodeSession => Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
-                            case null             => Tasty.Type.Named(sentinelUnresolved.id)
+                            case null             => Tasty.Type.Named(sentinelId)
                     }
                 )
 
@@ -1039,7 +1001,7 @@ object TypeUnpickler:
                         val id = s.nextUnresolvedId()
                         s.unresolvedIdToFqn(id) = fullFqn
                         Tasty.Type.Named(kyo.Tasty.SymbolId(id))
-                    case null => Tasty.Type.Named(sentinelUnresolved.id)
+                    case null => Tasty.Type.Named(sentinelId)
                 end match
 
             case TastyFormat.APPLY =>
@@ -1064,10 +1026,10 @@ object TypeUnpickler:
                 view.goto(end)
                 val loId = ctx.session match
                     case s: DecodeSession => s.nextUnresolvedId()
-                    case null             => sentinelUnresolved.id.value
+                    case null             => sentinelId.value
                 val hiId = ctx.session match
                     case s: DecodeSession => s.nextUnresolvedId()
-                    case null             => sentinelUnresolved.id.value
+                    case null             => sentinelId.value
                 Tasty.Type.Wildcard(
                     Tasty.Type.Named(kyo.Tasty.SymbolId(loId)),
                     Tasty.Type.Named(kyo.Tasty.SymbolId(hiId))
@@ -1083,7 +1045,7 @@ object TypeUnpickler:
                 view.goto(end)
                 ctx.session match
                     case s: DecodeSession => Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
-                    case null             => Tasty.Type.Named(sentinelUnresolved.id)
+                    case null             => Tasty.Type.Named(sentinelId)
 
             // ── Unknown tag: fail loudly (HARD RULE 13 / Phase 2.04-strict) ─────────
 
@@ -1133,14 +1095,14 @@ object TypeUnpickler:
         view: ByteView,
         end: Long,
         ctx: DecodeCtx
-    )(using AllowUnsafe): mutable.ArrayBuffer[Tasty.Symbol] =
+    )(using AllowUnsafe): mutable.ArrayBuffer[LoadingSymbol.Materialising] =
         val resultStart = view.position
         // Skip result type to find TypesNames start.
         skipOneType(view)
         // Collect TypesNames = (typeOrBounds_ASTRef paramName_NameRef)*
         // F-A-001 fix: typeRef from TypesNames is section-relative; addrMap keys are absolute.
         // Add ctx.sectionOffset to convert before lookup.
-        val paramSyms = new mutable.ArrayBuffer[Tasty.Symbol]()
+        val paramSyms = new mutable.ArrayBuffer[LoadingSymbol.Materialising]()
         while view.position < end do
             val typeRef = view.readNat()
             val nameRef = view.readNat()
@@ -1148,10 +1110,11 @@ object TypeUnpickler:
             val sym = ctx.addrMap.get(ctx.sectionOffset + typeRef) match
                 case Some(existingSym) => existingSym
                 case None =>
-                    InternalSymbol.makeSymbol(
-                        SymbolKind.TypeParam,
-                        Tasty.Flags.empty,
-                        symName
+                    LoadingSymbol.Materialising(
+                        id = ctx.nextLocalId(),
+                        kind = SymbolKind.TypeParam,
+                        flags = Tasty.Flags.empty,
+                        name = symName
                     )
             paramSyms += sym
         end while
@@ -1170,14 +1133,14 @@ object TypeUnpickler:
         view: ByteView,
         end: Long,
         ctx: DecodeCtx
-    )(using AllowUnsafe): mutable.ArrayBuffer[Tasty.Symbol] =
+    )(using AllowUnsafe): mutable.ArrayBuffer[LoadingSymbol.Materialising] =
         val resultStart = view.position
         // Skip result type.
         skipOneType(view)
         // Collect TypesNames until we hit modifiers or end.
         // F-A-001 fix: typeRef from TypesNames is section-relative; addrMap keys are absolute.
         // Add ctx.sectionOffset to convert before lookup.
-        val paramSyms = new mutable.ArrayBuffer[Tasty.Symbol]()
+        val paramSyms = new mutable.ArrayBuffer[LoadingSymbol.Materialising]()
         while view.position < end do
             val tag = view.peekByte(view.position) & 0xff
             if isModifierOrVarianceTag(tag) then
@@ -1189,10 +1152,11 @@ object TypeUnpickler:
                 val sym = ctx.addrMap.get(ctx.sectionOffset + typeRef) match
                     case Some(existingSym) => existingSym
                     case None =>
-                        InternalSymbol.makeSymbol(
-                            SymbolKind.Parameter,
-                            Tasty.Flags.empty,
-                            symName
+                        LoadingSymbol.Materialising(
+                            id = ctx.nextLocalId(),
+                            kind = SymbolKind.Parameter,
+                            flags = Tasty.Flags.empty,
+                            name = symName
                         )
                 paramSyms += sym
             end if
@@ -1282,7 +1246,7 @@ object TypeUnpickler:
         ctx.binderAddrMap(startAddr) = Chunk.from(paramSyms)
         val resultType = readTypeNode(view, ctx)
         view.goto(end)
-        val t = Tasty.Type.TypeLambda(Chunk.from(paramSyms.map(_.id)), resultType)
+        val t = Tasty.Type.TypeLambda(Chunk.from(paramSyms.map(m => kyo.Tasty.SymbolId(m.id))), resultType)
         ctx.arena.intern(t)
     end decodeMethodType
 
@@ -1316,7 +1280,7 @@ object TypeUnpickler:
         ctx.binderAddrMap(startAddr) = Chunk.from(paramSyms)
         val resultType = readTypeNode(view, ctx)
         view.goto(end)
-        val t = Tasty.Type.TypeLambda(Chunk.from(paramSyms.map(_.id)), resultType)
+        val t = Tasty.Type.TypeLambda(Chunk.from(paramSyms.map(m => kyo.Tasty.SymbolId(m.id))), resultType)
         ctx.arena.intern(t)
     end decodePolyType
 

@@ -13,7 +13,7 @@ class TastyAnnotationTest extends Test with TastyTestSupport:
     import AllowUnsafe.embrace.danger
 
     // Test 6 (INV: T1, Annotation): synthetic factory produces correct field values.
-    // Phase 09: Type.Named(id).show resolves cp.symbol(id).name.asString; the symbol must
+    // Phase 09: Type.Named(id).show resolves cp.symbol(id).map(_.name.asString).getOrElse("<unresolved>"); the symbol must
     // be registered in the classpath at index id.value.
     "Annotation case class: annotationType.show returns leaf name 'deprecated', arguments is empty" in run {
         import kyo.Tasty.SymbolId
@@ -72,7 +72,7 @@ class TastyAnnotationTest extends Test with TastyTestSupport:
     // INV-006: arguments is a plain Chunk[Tree] field; no effect row needed.
     "Annotation with a non-empty arguments chunk holds the trees as a plain field" in run {
         import AllowUnsafe.embrace.danger
-        val sym  = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Foo"))
+        val sym  = Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name("Foo"), Tasty.Flags.empty, Tasty.SymbolId(-1), Chunk.empty)
         val tree = Tasty.Tree.Literal(Tasty.Constant.UnitConst)
         val a    = Tasty.Annotation(Tasty.Type.Named(sym.id), Chunk(tree))
         assert(

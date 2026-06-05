@@ -31,7 +31,7 @@ object JavaScalaBridgeExample:
                         cp.fullName(cls).map: fullNameVal =>
                             given Classpath = cp
                             val parents     = cls.parentTypes.map(_.toString)
-                            val decls       = cls.declarationIds.map(cp.symbol)
+                            val decls       = cls.declarationIds.flatMap(id => cp.symbol(id).toChunk)
                             Present(ClassSummary(
                                 name = fullNameVal.asString,
                                 isJava = cls.isJava,

@@ -237,7 +237,7 @@ class ClassLikeAccessorsTest extends Test:
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(anyRefSym, traitT, classSym)).map: cp =>
             val parents: Chunk[Tasty.Symbol] =
-                classSym.parentTypes.collect { case Tasty.Type.Named(pid) => cp.symbol(pid) }
+                classSym.parentTypes.flatMap { case Tasty.Type.Named(pid) => cp.symbol(pid).toList; case _ => Nil }
             assert(parents.length == 2, s"Expected 2 parents but got ${parents.length}")
             parents(0) match
                 case c: Tasty.Symbol.Class =>
@@ -267,7 +267,7 @@ class ClassLikeAccessorsTest extends Test:
         val valSym    = makeVal(id = 3, name = "x", ownerId = 0)
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2), SymbolId(3)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1, method2, valSym)).map: cp =>
-            val ms = withDecls.declarationIds.map(cp.symbol).collect { case m: Tasty.Symbol.Method => m }
+            val ms = withDecls.declarationIds.flatMap(id => cp.symbol(id).toChunk).collect { case m: Tasty.Symbol.Method => m }
             assert(ms.length == 2, s"Expected 2 methods but got ${ms.length}")
             val names = ms.map(_.name.asString).toSet
             assert(names == Set("foo", "bar"), s"Expected foo/bar but got $names")
@@ -286,7 +286,7 @@ class ClassLikeAccessorsTest extends Test:
         val valSym    = makeVal(id = 2, name = "x", ownerId = 0)
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1, valSym)).map: cp =>
-            val vs = withDecls.declarationIds.map(cp.symbol).collect { case v: Tasty.Symbol.Val => v }
+            val vs = withDecls.declarationIds.flatMap(id => cp.symbol(id).toChunk).collect { case v: Tasty.Symbol.Val => v }
             assert(vs.length == 1, s"Expected 1 val but got ${vs.length}")
             assert(vs(0).name.asString == "x", s"Expected name 'x' but got '${vs(0).name.asString}'")
             succeed
@@ -303,7 +303,7 @@ class ClassLikeAccessorsTest extends Test:
         val varSym    = makeVar(id = 1, name = "y", ownerId = 0)
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, varSym)).map: cp =>
-            val vs = withDecls.declarationIds.map(cp.symbol).collect { case v: Tasty.Symbol.Var => v }
+            val vs = withDecls.declarationIds.flatMap(id => cp.symbol(id).toChunk).collect { case v: Tasty.Symbol.Var => v }
             assert(vs.length == 1, s"Expected 1 var but got ${vs.length}")
             assert(vs(0).name.asString == "y", s"Expected name 'y' but got '${vs(0).name.asString}'")
             succeed
@@ -321,7 +321,7 @@ class ClassLikeAccessorsTest extends Test:
         val field2    = makeField(id = 2, name = "F2", ownerId = 0)
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, field1, field2)).map: cp =>
-            val fs = withDecls.declarationIds.map(cp.symbol).collect { case f: Tasty.Symbol.Field => f }
+            val fs = withDecls.declarationIds.flatMap(id => cp.symbol(id).toChunk).collect { case f: Tasty.Symbol.Field => f }
             assert(fs.length == 2, s"Expected 2 fields but got ${fs.length}")
             val names = fs.map(_.name.asString).toSet
             assert(names == Set("F1", "F2"), s"Expected F1/F2 but got $names")
@@ -340,7 +340,7 @@ class ClassLikeAccessorsTest extends Test:
         val innerObject = makeObject(id = 3, name = "InnerO", ownerId = 0)
         val withDecls   = outerClass.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2), SymbolId(3)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, innerClass, innerTrait, innerObject)).map: cp =>
-            val nested = withDecls.declarationIds.map(cp.symbol).filter(s =>
+            val nested = withDecls.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(s =>
                 s.isInstanceOf[Tasty.Symbol.Class] || s.isInstanceOf[Tasty.Symbol.Trait] || s.isInstanceOf[Tasty.Symbol.Object]
             )
             assert(nested.length == 3, s"Expected 3 nested types but got ${nested.length}")
@@ -359,7 +359,8 @@ class ClassLikeAccessorsTest extends Test:
         val typeAlias2 = makeTypeAlias(id = 2, name = "B", ownerId = 0)
         val withDecls  = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, typeAlias1, typeAlias2)).map: cp =>
-            val tas: Chunk[Tasty.Symbol.TypeAlias] = withDecls.declarationIds.map(cp.symbol).collect { case t: Tasty.Symbol.TypeAlias => t }
+            val tas: Chunk[Tasty.Symbol.TypeAlias] =
+                withDecls.declarationIds.flatMap(id => cp.symbol(id).toChunk).collect { case t: Tasty.Symbol.TypeAlias => t }
             assert(tas.length == 2, s"Expected 2 type aliases but got ${tas.length}")
             val names = tas.map(_.name.asString).toSet
             assert(names == Set("A", "B"), s"Expected A/B but got $names")
@@ -378,7 +379,7 @@ class ClassLikeAccessorsTest extends Test:
         val withDecls    = traitSym.copy(declarationIds = Chunk(SymbolId(1)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, abstractType)).map: cp =>
             val ats: Chunk[Tasty.Symbol.AbstractType] =
-                withDecls.declarationIds.map(cp.symbol).collect { case t: Tasty.Symbol.AbstractType => t }
+                withDecls.declarationIds.flatMap(id => cp.symbol(id).toChunk).collect { case t: Tasty.Symbol.AbstractType => t }
             assert(ats.length == 1, s"Expected 1 abstract type but got ${ats.length}")
             assert(ats(0).name.asString == "X", s"Expected name 'X' but got '${ats(0).name.asString}'")
             succeed
@@ -395,8 +396,9 @@ class ClassLikeAccessorsTest extends Test:
         val opaqueType = makeOpaqueType(id = 1, name = "Money", ownerId = 0)
         val withDecls  = objectSym.copy(declarationIds = Chunk(SymbolId(1)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, opaqueType)).map: cp =>
-            val ots: Chunk[Tasty.Symbol.OpaqueType] = withDecls.declarationIds.map(cp.symbol).collect { case t: Tasty.Symbol.OpaqueType =>
-                t
+            val ots: Chunk[Tasty.Symbol.OpaqueType] = withDecls.declarationIds.flatMap(id => cp.symbol(id).toChunk).collect {
+                case t: Tasty.Symbol.OpaqueType =>
+                    t
             }
             assert(ots.length == 1, s"Expected 1 opaque type but got ${ots.length}")
             assert(ots(0).name.asString == "Money", s"Expected name 'Money' but got '${ots(0).name.asString}'")
@@ -415,7 +417,9 @@ class ClassLikeAccessorsTest extends Test:
         val tpC         = makeTypeParamContra(id = 3, name = "C", ownerId = 0)
         val withTParams = classSym.copy(typeParamIds = Chunk(SymbolId(1), SymbolId(2), SymbolId(3)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withTParams, tpA, tpB, tpC)).map: cp =>
-            val tps = withTParams.typeParamIds.map(cp.symbol).asInstanceOf[Chunk[Tasty.Symbol.TypeParam]]
+            val tps = withTParams.typeParamIds.flatMap(id => cp.symbol(id).toChunk).filter(
+                _.isInstanceOf[Tasty.Symbol.TypeParam]
+            ).asInstanceOf[Chunk[Tasty.Symbol.TypeParam]]
             assert(tps.length == 3, s"Expected 3 type params but got ${tps.length}")
             assert(tps(0).variance == Tasty.Variance.Invariant, s"Expected Invariant for A but got ${tps(0).variance}")
             assert(tps(1).variance == Tasty.Variance.Covariant, s"Expected Covariant for B but got ${tps(1).variance}")
@@ -436,7 +440,7 @@ class ClassLikeAccessorsTest extends Test:
         val field1    = makeField(id = 4, name = "F", ownerId = 0)
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2), SymbolId(3), SymbolId(4)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, method1, valSym, varSym, field1)).map: cp =>
-            val ds: Chunk[Tasty.Symbol] = withDecls.declarationIds.map(cp.symbol)
+            val ds: Chunk[Tasty.Symbol] = withDecls.declarationIds.flatMap(id => cp.symbol(id).toChunk)
             assert(ds.length == 4, s"Expected 4 declarations but got ${ds.length}")
             succeed
     }
@@ -455,7 +459,9 @@ class ClassLikeAccessorsTest extends Test:
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1), SymbolId(2), SymbolId(3)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(withDecls, ctor1, ctor2, applyM)).map: cp =>
             val ctors: Chunk[Tasty.Symbol.Method] =
-                withDecls.declarationIds.map(cp.symbol).collect { case m: Tasty.Symbol.Method if m.name.asString == "<init>" => m }
+                withDecls.declarationIds.flatMap(id => cp.symbol(id).toChunk).collect {
+                    case m: Tasty.Symbol.Method if m.name.asString == "<init>" => m
+                }
             assert(ctors.length == 2, s"Expected 2 constructors but got ${ctors.length}")
             assert(
                 ctors.map(_.name.asString).forall(_ == "<init>"),
@@ -476,7 +482,8 @@ class ClassLikeAccessorsTest extends Test:
             parentTypes = Chunk(Tasty.Type.Named(SymbolId(0)))
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(traitU, traitT)).map: cp =>
-            val parents: Chunk[Tasty.Symbol] = traitT.parentTypes.collect { case Tasty.Type.Named(pid) => cp.symbol(pid) }
+            val parents: Chunk[Tasty.Symbol] =
+                traitT.parentTypes.flatMap { case Tasty.Type.Named(pid) => cp.symbol(pid).toList; case _ => Nil }
             assert(parents.length == 1, s"Expected 1 parent but got ${parents.length}")
             parents(0) match
                 case t: Tasty.Symbol.Trait =>

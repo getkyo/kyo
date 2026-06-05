@@ -335,7 +335,7 @@ class DecoderFidelity5ExplorationTest extends Test:
                 case None =>
                     succeed // no methods in fixture; vacuously green
                 case Some(m) =>
-                    val tps = m.typeParamIds.map(cp.symbol)
+                    val tps = m.typeParamIds.flatMap(id => cp.symbol(id).toChunk)
                     val sentinelTps = tps.filter: tp =>
                         idVal(tp.id) == -1
                     assert(

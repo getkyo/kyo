@@ -12,11 +12,7 @@ class DeclarationTableTest extends Test:
     private def makeSymbol(nameStr: String): Tasty.Symbol =
         // plan: phase-02 bridge; Symbol.make creates a partial Symbol with just kind/flags/name.
         import AllowUnsafe.embrace.danger
-        Tasty.Symbol.makePlaceholder(
-            SymbolKind.Val,
-            Tasty.Flags.empty,
-            Tasty.Name(nameStr)
-        )
+        Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name(nameStr), Tasty.Flags.empty, Tasty.SymbolId(-1), Chunk.empty)
     end makeSymbol
 
     // Test 21: 4 members use flat-array Dict path; all retrievable by name.

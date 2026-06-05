@@ -292,7 +292,9 @@ class ClasspathTypedSymbolsTest extends Test:
     }
 
     // Leaf 38: orchestrator-returns-typed-Unresolved-on-out-of-range
-    // Given: real cp; When: cp.symbol(SymbolId(999999)); Then: Symbol.Unresolved sentinel
+    // Given: real cp; When: cp.symbol(SymbolId(999999)); Then: Maybe.Absent (out-of-range)
+    // Phase 08: cp.symbol now returns Maybe[Symbol]. An out-of-range id returns Absent.
+    // Previously the sentinel Symbol.Unresolved (now deleted) was returned for out-of-range ids.
     // Pins: INV-004
     "orchestrator-returns-typed-Unresolved-on-out-of-range: sentinel is Symbol.Unresolved" in run {
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
@@ -301,8 +303,8 @@ class ClasspathTypedSymbolsTest extends Test:
                 Kyo.lift(cp.symbol(kyo.Tasty.SymbolId(999999)))).map:
                 case Result.Success(sym) =>
                     assert(
-                        sym.isInstanceOf[Tasty.Symbol.Unresolved],
-                        s"Expected Symbol.Unresolved for out-of-range id but got ${sym.getClass.getSimpleName}"
+                        sym.isEmpty,
+                        s"Expected Maybe.Absent for out-of-range id but got $sym"
                     )
                     succeed
                 case Result.Failure(e) => fail(s"Unexpected failure: $e")

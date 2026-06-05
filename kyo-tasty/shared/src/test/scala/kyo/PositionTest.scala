@@ -2,6 +2,7 @@ package kyo
 
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.reader.PositionsUnpickler
+import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.SymbolKind
 import scala.collection.immutable.IntMap
 
@@ -50,7 +51,12 @@ class PositionTest extends Test:
             (12 | 0x80).toByte, // header: addrDelta=1, hasStart=1 (Nat)
             (0 | 0x80).toByte   // start_delta = 0 (signed Int)
         )
-        val sym     = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Foo"))
+        val sym = LoadingSymbol.Materialising(
+            id = "Foo".hashCode.abs % 1000,
+            kind = SymbolKind.Class,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name("Foo")
+        )
         val addrMap = IntMap(1 -> sym)
         val view    = ByteView(payload)
         Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Maybe.Absent)).map:
@@ -80,7 +86,12 @@ class PositionTest extends Test:
             (12 | 0x80).toByte, // header: addrDelta=1, hasStart=1
             (0 | 0x80).toByte   // start_delta = 0
         )
-        val sym     = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Foo"))
+        val sym = LoadingSymbol.Materialising(
+            id = "Foo".hashCode.abs % 1000,
+            kind = SymbolKind.Class,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name("Foo")
+        )
         val addrMap = IntMap(1 -> sym)
         val view    = ByteView(payload)
         Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Maybe.Present("Foo.scala"))).map:

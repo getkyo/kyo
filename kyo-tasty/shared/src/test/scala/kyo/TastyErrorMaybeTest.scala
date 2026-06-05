@@ -163,6 +163,8 @@ class TastyErrorMaybeTest extends Test:
                 case TastyError.DigestMismatch(exp, act)       => writeStr(exp); writeStr(act)
                 // Phase 11 wire-format note: UnhandledSubtypingCase is not yet serializable; write no fields.
                 case TastyError.UnhandledSubtypingCase(_, _, _, _) => ()
+                // Phase 08: UnresolvedReference is a loading-phase error; not serializable in Phase 11 yet; write no fields.
+                case TastyError.UnresolvedReference(_, _) => ()
             end match
         end for
         baos.toByteArray
@@ -285,10 +287,17 @@ class TastyErrorMaybeTest extends Test:
         val natZero: Byte             = 0x80.toByte // TASTy single-byte Nat: high bit set, value = low 7 bits = 0
         val sectionBytes: Array[Byte] = Array(unknownCat2Tag, natZero)
 
-        val sym = Tasty.Symbol.makePlaceholder(
-            SymbolKind.Unresolved,
+        // TypeParam kind falls into the generic `case _` arm in decodeSymBody, invoking readTree directly.
+        // Package was previously used (wrong: Package has special dispatch to PackageDef).
+        // Unresolved was used originally but was deleted in Phase 08; TypeParam is the correct replacement.
+        val sym = Tasty.Symbol.TypeParam(
+            Tasty.SymbolId(-1),
+            Tasty.Name("testSym"),
             Tasty.Flags.empty,
-            Tasty.Name("testSym")
+            Tasty.SymbolId(-1),
+            Maybe.Absent,
+            Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown),
+            Tasty.Variance.Invariant
         )
         val body = Tasty.SymbolBody(
             bodyStart = 0,
@@ -355,6 +364,22 @@ class TastyErrorMaybeTest extends Test:
             case Result.Success(r) => r
             case Result.Failure(e) => fail(s"Unexpected failure loading snapshot: $e")
             case Result.Panic(t)   => throw t
+    }
+
+    // ── Leaf 4: UnresolvedReference is a valid TastyError variant ────────────
+    //
+    // TastyError.UnresolvedReference is produced by ClasspathOrchestrator.finalizeMerge
+    // when a LoadingSymbol.Placeholder survives to the merge boundary (cross-file reference
+    // that was never resolved). This test pins the variant shape and confirms it is a
+    // TastyError (not some other error type).
+
+    "INV-008 leaf-4: TastyError.UnresolvedReference carries name and idx fields" in {
+        val err: TastyError.UnresolvedReference = TastyError.UnresolvedReference("MissingClass", 42)
+        assert(err.name == "MissingClass", s"Expected name 'MissingClass' but got '${err.name}'")
+        assert(err.idx == 42, s"Expected idx 42 but got ${err.idx}")
+        val isTastyError: TastyError = err
+        assert(isTastyError.isInstanceOf[TastyError], "UnresolvedReference must be a TastyError")
+        succeed
     }
 
 end TastyErrorMaybeTest

@@ -72,8 +72,9 @@ class SubtypeTest extends Test:
         val maxId = syms.foldLeft(-1)((m, s) => math.max(m, s.id.value))
         val arr   = new Array[Tasty.Symbol](maxId + 1)
         // Fill with sentinel first
-        val sentinel = Tasty.Symbol.makePlaceholder(SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("<sentinel>"))
-        var fi       = 0
+        val sentinel =
+            Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name("<sentinel>"), Tasty.Flags.empty, Tasty.SymbolId(-1), Chunk.empty)
+        var fi = 0
         while fi <= maxId do
             arr(fi) = sentinel
             fi += 1

@@ -23,7 +23,7 @@ object RuntimeReflectionExample:
                 cp  <- Tasty.classpath
                 cls <- requireFoundClass(cp.findClass(fqn), fqn)
             yield
-                val decls = cls.declarationIds.map(cp.symbol)
+                val decls = cls.declarationIds.flatMap(id => cp.symbol(id).toChunk)
                 val vals  = decls.collect { case v: Tasty.Symbol.Val => v }
                 vals.map(f => (f.name.asString, f.declaredType.getOrElse(Tasty.Type.Unknown)))
     end fieldsOf

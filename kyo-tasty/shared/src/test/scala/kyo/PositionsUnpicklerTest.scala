@@ -2,6 +2,7 @@ package kyo
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileUnpickler
 import kyo.internal.tasty.reader.PositionsUnpickler
+import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
@@ -48,13 +49,13 @@ class PositionsUnpicklerTest extends Test:
         ((n & 0x3f) | 0x80).toByte
     end encNegInt
 
-    /** Create a minimal Tasty.Symbol for testing. plan: phase-02 bridge. */
-    private def makeTestSymbol(nameStr: String): Tasty.Symbol =
-        import AllowUnsafe.embrace.danger
-        Tasty.Symbol.makePlaceholder(
-            SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name(nameStr)
+    /** Create a minimal LoadingSymbol.Materialising for testing (Phase 08: replaces makePlaceholder). */
+    private def makeTestSymbol(nameStr: String): LoadingSymbol.Materialising =
+        LoadingSymbol.Materialising(
+            id = nameStr.hashCode.abs % 1000,
+            kind = SymbolKind.Class,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name(nameStr)
         )
     end makeTestSymbol
 
@@ -233,10 +234,10 @@ class PositionsUnpicklerTest extends Test:
         val N = 10000
 
         // Build 10,000 symbols, one per addr index 1..N
-        val syms: Array[Tasty.Symbol] =
+        val syms: Array[LoadingSymbol.Materialising] =
             Array.tabulate(N)(i => makeTestSymbol(s"sym$i"))
 
-        val addrMap: IntMap[Tasty.Symbol] =
+        val addrMap: IntMap[LoadingSymbol.Materialising] =
             IntMap.from((0 until N).map(i => (i + 1) -> syms(i)))
 
         // Build the payload bytes:

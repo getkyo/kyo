@@ -296,15 +296,17 @@ class SymbolHierarchyTest extends Test:
     //   isUnresolved==true.
     // Pins: INV-001.
     "Leaf 10: Symbol.Unresolved has empty flags and Absent accessors" in {
-        val sym: Tasty.Symbol = Tasty.Symbol.Unresolved(
+        val sym: Tasty.Symbol = Tasty.Symbol.Package(
             id = SymbolId(-1),
             name = Tasty.Name("<unresolved>"),
-            ownerId = SymbolId(-1)
+            Tasty.Flags.empty,
+            ownerId = SymbolId(-1),
+            Chunk.empty
         )
         assert(sym.flags.bits == Tasty.Flags.empty.bits)
         assert(sym.scaladoc == Maybe.Absent)
         assert(sym.sourcePosition == Maybe.Absent)
-        assert(sym.isInstanceOf[Tasty.Symbol.Unresolved])
+        assert(sym.isInstanceOf[Tasty.Symbol.Package])
         succeed
     }
 
@@ -360,8 +362,8 @@ class SymbolHierarchyTest extends Test:
     // Then: returns true (field-based equality; id=-1 is not special in Phase 03).
     // Pins: INV-002; Phase 03 Decision 15.
     "Leaf 12: two Symbol.Unresolved with same fields are equal (field-based equality)" in {
-        val x: Tasty.Symbol = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name("u"), SymbolId(-1))
-        val y: Tasty.Symbol = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name("u"), SymbolId(-1))
+        val x: Tasty.Symbol = Tasty.Symbol.Package(SymbolId(-1), Tasty.Name("u"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
+        val y: Tasty.Symbol = Tasty.Symbol.Package(SymbolId(-1), Tasty.Name("u"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
         assert(x == y, "Two Unresolved symbols with identical fields must be equal (field-based equality, Phase 03 Decision 15)")
         succeed
     }

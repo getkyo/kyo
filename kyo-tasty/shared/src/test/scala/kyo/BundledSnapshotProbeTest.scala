@@ -22,11 +22,12 @@ class BundledSnapshotProbeTest extends Test:
     "Leaf 8: remap-at-merge shifts partial ids by existing classpath size" in run {
         val existingSyms: Chunk[Tasty.Symbol] = Chunk.from(
             (0 until 100).map: i =>
-                Tasty.Symbol.Unresolved(
+                Tasty.Symbol.Package(
                     id = Tasty.SymbolId(i),
                     name = Tasty.Name(s"ex$i"),
+                    flags = Tasty.Flags.empty,
                     ownerId = Tasty.SymbolId(0),
-                    flags = Tasty.Flags.empty
+                    memberIds = Chunk.empty
                 )
         )
         val existing = Tasty.Classpath(
@@ -49,11 +50,12 @@ class BundledSnapshotProbeTest extends Test:
         )
         val partialSyms: Chunk[Tasty.Symbol] = Chunk.from(
             (0 until 3).map: i =>
-                Tasty.Symbol.Unresolved(
+                Tasty.Symbol.Package(
                     id = Tasty.SymbolId(i),
                     name = Tasty.Name(s"partial$i"),
+                    flags = Tasty.Flags.empty,
                     ownerId = Tasty.SymbolId(0),
-                    flags = Tasty.Flags.empty
+                    memberIds = Chunk.empty
                 )
         )
         val partial = Tasty.Classpath(
@@ -96,11 +98,12 @@ class BundledSnapshotProbeTest extends Test:
         def makePartial(prefix: String, n: Int): Tasty.Classpath =
             val syms: Chunk[Tasty.Symbol] = Chunk.from(
                 (0 until n).map: i =>
-                    Tasty.Symbol.Unresolved(
+                    Tasty.Symbol.Package(
                         id = Tasty.SymbolId(i),
                         name = Tasty.Name(s"$prefix$i"),
+                        flags = Tasty.Flags.empty,
                         ownerId = Tasty.SymbolId(0),
-                        flags = Tasty.Flags.empty
+                        memberIds = Chunk.empty
                     )
             )
             Tasty.Classpath(

@@ -141,7 +141,7 @@ class SymbolMemberSearchTest extends Test:
     "Leaf 145: declaredMembers returns direct declarations of ClassLike" in run {
         buildClassA.map: cp =>
             val a     = cp.findClass("A").get
-            val names = a.declarationIds.map(cp.symbol).map(_.simpleName)
+            val names = a.declarationIds.flatMap(id => cp.symbol(id).toChunk).map(_.simpleName)
             assert(names == Chunk("foo", "x"), s"Unexpected names: $names")
             succeed
     }
@@ -171,9 +171,9 @@ class SymbolMemberSearchTest extends Test:
                 val _out  = Chunk.newBuilder[Tasty.Symbol]
                 def _visit(cl: Tasty.Symbol.ClassLike): Unit =
                     cl.declarationIds.foreach: id =>
-                        val d = cp.symbol(id)
-                        if _seen.add(d.simpleName) then _out += d
-                    cl.parentTypes.collect { case Tasty.Type.Named(pid) => cp.symbol(pid) }.foreach:
+                        cp.symbol(id).foreach: d =>
+                            if _seen.add(d.simpleName) then _out += d
+                    cl.parentTypes.flatMap { case Tasty.Type.Named(pid) => cp.symbol(pid).toChunk; case _ => Chunk.empty }.foreach:
                         case pcl: Tasty.Symbol.ClassLike => _visit(pcl)
                         case _                           => ()
                 end _visit
@@ -188,29 +188,29 @@ class SymbolMemberSearchTest extends Test:
 
     // ── Leaf 148: findDeclaredMember-vs-findInheritedMember ───────────────────
     // Given: same fixture as leaf 147.
-    // When: Maybe.fromOption(b.declarationIds.map(cp.symbol).find(_.simpleName == "foo")) and b.findInheritedMember("foo").
+    // When: Maybe.fromOption(b.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "foo")) and b.findInheritedMember("foo").
     // Then: declared returns Absent; inherited returns Present.
     // Pins: INV-005
     "Leaf 148: findDeclaredMember vs findInheritedMember for inherited method" in run {
         buildInheritanceFixture.map: cp =>
             val b        = cp.findClass("B").get
-            val declared = Maybe.fromOption(b.declarationIds.map(cp.symbol).find(_.simpleName == "foo"))
+            val declared = Maybe.fromOption(b.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "foo"))
             val inherited =
-                val directs     = b.declarationIds.map(cp.symbol)
+                val directs     = b.declarationIds.flatMap(id => cp.symbol(id).toChunk)
                 val directNames = scala.collection.mutable.HashSet.empty[String]
                 directs.foreach(d => directNames.add(d.simpleName))
                 // Walk parent chain for inherited
                 var _foundInh: Maybe[Tasty.Symbol] = Maybe.Absent
                 def _visitInh(cl: Tasty.Symbol.ClassLike): Unit =
                     cl.declarationIds.foreach: id =>
-                        val d = cp.symbol(id)
-                        if !directNames.contains(d.simpleName) && d.simpleName == "foo" then
-                            _foundInh = Maybe(d)
-                    cl.parentTypes.collect { case Tasty.Type.Named(pid) => cp.symbol(pid) }.foreach:
+                        cp.symbol(id).foreach: d =>
+                            if !directNames.contains(d.simpleName) && d.simpleName == "foo" then
+                                _foundInh = Maybe(d)
+                    cl.parentTypes.flatMap { case Tasty.Type.Named(pid) => cp.symbol(pid).toChunk; case _ => Chunk.empty }.foreach:
                         case pcl: Tasty.Symbol.ClassLike => if _foundInh.isEmpty then _visitInh(pcl)
                         case _                           => ()
                 end _visitInh
-                b.parentTypes.collect { case Tasty.Type.Named(pid) => cp.symbol(pid) }.foreach:
+                b.parentTypes.flatMap { case Tasty.Type.Named(pid) => cp.symbol(pid).toChunk; case _ => Chunk.empty }.foreach:
                     case pcl: Tasty.Symbol.ClassLike => _visitInh(pcl)
                     case _                           => ()
                 _foundInh
@@ -233,9 +233,9 @@ class SymbolMemberSearchTest extends Test:
                 val _all2  = Chunk.newBuilder[Tasty.Symbol]
                 def _visitAny(cl: Tasty.Symbol.ClassLike): Unit =
                     cl.declarationIds.foreach: id =>
-                        val d = cp.symbol(id)
-                        if _seen2.add(d.simpleName) then _all2 += d
-                    cl.parentTypes.collect { case Tasty.Type.Named(pid) => cp.symbol(pid) }.foreach:
+                        cp.symbol(id).foreach: d =>
+                            if _seen2.add(d.simpleName) then _all2 += d
+                    cl.parentTypes.flatMap { case Tasty.Type.Named(pid) => cp.symbol(pid).toChunk; case _ => Chunk.empty }.foreach:
                         case pcl: Tasty.Symbol.ClassLike => _visitAny(pcl)
                         case _                           => ()
                 end _visitAny
@@ -256,7 +256,7 @@ class SymbolMemberSearchTest extends Test:
     "Leaf 150: collectMembers returns all overloaded declarations" in run {
         buildOverloadedFixture.map: cp =>
             val a       = cp.findClass("A").get
-            val members = a.declarationIds.map(cp.symbol).filter(_.simpleName == "foo")
+            val members = a.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.simpleName == "foo")
             assert(members.size == 2, s"Expected 2 but got ${members.size}")
             succeed
     }

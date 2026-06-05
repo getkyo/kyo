@@ -3,6 +3,7 @@ package kyo
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TypeUnpickler
+import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
@@ -34,9 +35,9 @@ class TypeUnpicklerTest extends Test:
 
     private def makeArena(): TypeArena = TypeArena.canonical()
 
-    // plan: phase-02 bridge; Symbol.make(kind, flags, name).
-    private def makeSym(name: String, kind: SymbolKind = SymbolKind.Class): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(kind, Tasty.Flags.empty, Tasty.Name(name))
+    // Phase 08: makePlaceholder removed; create LoadingSymbol.Materialising
+    private def makeSym(name: String, kind: SymbolKind = SymbolKind.Class): LoadingSymbol.Materialising =
+        LoadingSymbol.Materialising(id = name.hashCode.abs % 1000, kind = kind, flags = Tasty.Flags.empty, name = Tasty.Name(name))
 
     /** Encode an unsigned Nat in dotty's TASTy big-endian base-128 format.
       *
@@ -75,7 +76,7 @@ class TypeUnpicklerTest extends Test:
       */
     private def decodeType(
         bytes: Array[Byte],
-        addrMap: IntMap[Tasty.Symbol] = IntMap.empty,
+        addrMap: IntMap[LoadingSymbol.Materialising] = IntMap.empty,
         names: Array[Tasty.Name] = Array.empty
     )(using Frame): Tasty.Type < (Sync & Abort[TastyError]) =
         val view  = ByteView(bytes)
@@ -196,7 +197,7 @@ class TypeUnpicklerTest extends Test:
         val view     = ByteView(combined)
         val arena    = makeArena()
         // Build a shared DecodeSession so addrCache is shared between both reads.
-        val liveAddrMap = new mutable.HashMap[Int, Tasty.Symbol]()
+        val liveAddrMap = new mutable.HashMap[Int, LoadingSymbol.Materialising]()
         addrMap.foreach { case (k, v) => liveAddrMap(k) = v }
         val session = new TypeUnpickler.DecodeSession(names, liveAddrMap, arena)
         // Decode first type: positions view at 0, reads TYPEREFsymbol, records addrCache(0) = result.
@@ -297,7 +298,7 @@ class TypeUnpicklerTest extends Test:
     // Test 18c: Annotation constructed directly with Chunk.empty has no arguments (synthetic annotation).
     // Phase 08 (INV-006): pure case class, no decode context needed.
     "Annotation(type, Chunk.empty).arguments is empty without any effect" in run {
-        val ann = Tasty.Annotation(Tasty.Type.Named(makeSym("Foo").id), Chunk.empty)
+        val ann = Tasty.Annotation(Tasty.Type.Named(Tasty.SymbolId(makeSym("Foo").id)), Chunk.empty)
         assert(ann.arguments.isEmpty, s"Expected empty arguments but got ${ann.arguments}")
         succeed
     }
@@ -429,7 +430,7 @@ class TypeUnpicklerTest extends Test:
             try
                 val view        = ByteView(bytes)
                 val arena       = makeArena()
-                val liveAddrMap = new mutable.HashMap[Int, Tasty.Symbol]()
+                val liveAddrMap = new mutable.HashMap[Int, LoadingSymbol.Materialising]()
                 val session     = new TypeUnpickler.DecodeSession(Array.empty, liveAddrMap, arena)
                 // Decode RECtype/RECthis via the shared session.
                 // This exercises inProgressRec cycle-break: TypeUnpickler.scala lines 257-269.
@@ -445,7 +446,7 @@ class TypeUnpicklerTest extends Test:
             case other             => fail(s"Expected Tasty.Type.Rec(...) but got $other")
         // Also verify TypeArena merge handles Rec/RecThis without overflow.
         val arena    = makeArena()
-        val sentinel = Tasty.Symbol.makePlaceholder(SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("s"))
+        val sentinel = Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name("s"), Tasty.Flags.empty, Tasty.SymbolId(-1), Chunk.empty)
         val rec      = Tasty.Type.Rec(Tasty.Type.Named(sentinel.id))
         val recThis  = Tasty.Type.RecThis(rec)
         arena.intern(rec)
@@ -522,7 +523,7 @@ class TypeUnpicklerTest extends Test:
         val bytes = cat5(TastyFormat.ANNOTATEDtype, Array(TastyFormat.UNITconst.toByte))
         // Decode via readTypeIntoSessionWithBytes so ctx.sectionBytes != null AND ctx.session != null.
         val arena       = makeArena()
-        val liveAddrMap = new mutable.HashMap[Int, Tasty.Symbol]()
+        val liveAddrMap = new mutable.HashMap[Int, LoadingSymbol.Materialising]()
         val session     = new TypeUnpickler.DecodeSession(Array.empty, liveAddrMap, arena)
         val view        = ByteView(bytes)
         given Frame     = summon[Frame]

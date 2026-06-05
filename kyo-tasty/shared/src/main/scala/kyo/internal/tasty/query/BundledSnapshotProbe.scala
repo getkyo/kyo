@@ -251,8 +251,6 @@ private[kyo] object BundledSnapshotProbe:
                     declaredType = remapType(pr.declaredType, offset),
                     annotations = pr.annotations.map(remapAnnotation(_, offset))
                 )
-            case u: Tasty.Symbol.Unresolved =>
-                u.copy(id = newId, ownerId = newOwnerId)
         end match
     end remapSymbol
 

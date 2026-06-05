@@ -8,6 +8,7 @@ import kyo.internal.tasty.reader.SectionIndex
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
 import kyo.internal.tasty.reader.TreeUnpickler
+import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 
@@ -49,9 +50,8 @@ class TreeAdtVariantCoverageTest extends Test:
         end for
     end runPass1
 
-    private def symbolBody(sym: Tasty.Symbol, pass1: AstUnpickler.Pass1Result): Maybe[Tasty.SymbolBody] =
-        val bodyDataEntry = pass1.bodyDataByAddr.get(sym)
-        (if bodyDataEntry == null then None else Some(bodyDataEntry)) match
+    private def symbolBody(sym: LoadingSymbol.Materialising, pass1: AstUnpickler.Pass1Result): Maybe[Tasty.SymbolBody] =
+        pass1.bodyDataByAddr.get(sym.id.toLong) match
             case Some((bodyStart, bodyEnd)) =>
                 Maybe(Tasty.SymbolBody(
                     bodyStart = bodyStart,
@@ -62,11 +62,36 @@ class TreeAdtVariantCoverageTest extends Test:
                     addrMap = scala.collection.immutable.IntMap.empty
                 ))
             case None => Maybe.Absent
-        end match
     end symbolBody
 
     private val dummyLookup: Int => Tasty.Symbol =
-        _ => Tasty.Symbol.makePlaceholder(SymbolKind.Unresolved, Tasty.Flags.empty, Tasty.Name("unresolved"))
+        _ =>
+            import AllowUnsafe.embrace.danger
+            toFinalSym(LoadingSymbol.Materialising(
+                id = 20,
+                kind = SymbolKind.Class,
+                flags = Tasty.Flags.empty,
+                name = Tasty.Name("unresolved")
+            ))
+
+    // Convert LoadingSymbol.Materialising to Tasty.Symbol for TreeUnpickler.decodeSync
+    private def toFinalSym(m: LoadingSymbol.Materialising)(using AllowUnsafe): Tasty.Symbol =
+        kyo.internal.tasty.symbol.TypedSymbolFactory.from(new kyo.internal.tasty.symbol.SymbolDescriptor(
+            id = m.id.max(0),
+            kind = m.kind,
+            flags = m.flags,
+            name = m.name,
+            ownerId = -1,
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            body = Maybe.Absent
+        ))
 
     // ── Byte-pickle decode helper ─────────────────────────────────────────────
 
@@ -74,7 +99,7 @@ class TreeAdtVariantCoverageTest extends Test:
     private def decodePickle(
         pickle: Array[Byte],
         names: Array[Tasty.Name],
-        addrMap: scala.collection.Map[Int, Tasty.Symbol]
+        addrMap: scala.collection.Map[Int, LoadingSymbol.Materialising]
     ): Result[TastyError, Tasty.Tree] =
         try Result.Success(TreeUnpickler.decodeAnnotationTerm(pickle, names, addrMap, pickle, 0))
         catch
@@ -83,12 +108,18 @@ class TreeAdtVariantCoverageTest extends Test:
             case ex: ArrayIndexOutOfBoundsException =>
                 Result.Failure(TastyError.MalformedSection("ASTs", "truncated", 0L))
 
-    private def noSym: scala.collection.immutable.IntMap[Tasty.Symbol] =
-        scala.collection.immutable.IntMap.empty[Tasty.Symbol]
+    private def noSym: scala.collection.immutable.IntMap[LoadingSymbol.Materialising] =
+        scala.collection.immutable.IntMap.empty[LoadingSymbol.Materialising]
 
-    private def sym1(name: String): (Array[Tasty.Name], scala.collection.immutable.IntMap[Tasty.Symbol]) =
-        val s = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(name))
+    private def sym1(name: String): (Array[Tasty.Name], scala.collection.immutable.IntMap[LoadingSymbol.Materialising]) =
+        val s = LoadingSymbol.Materialising(
+            id = name.hashCode.abs % 100,
+            kind = SymbolKind.Class,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name(name)
+        )
         (Array(Tasty.Name(name)), scala.collection.immutable.IntMap(1 -> s))
+    end sym1
 
     // ── Approach 1: body-sweep sees TypeDef, Template, TypeRefTree ────────────
 
@@ -106,7 +137,7 @@ class TreeAdtVariantCoverageTest extends Test:
                     symbolBody(sym, pass1) match
                         case Present(body) =>
                             try
-                                val tree = TreeUnpickler.decodeSync(body, sym, dummyLookup)
+                                val tree = TreeUnpickler.decodeSync(body, toFinalSym(sym), dummyLookup)
                                 tree.foreach(t => seen += t.getClass.getSimpleName.stripSuffix("$"))
                             catch
                                 case _: Exception => ()
@@ -185,8 +216,8 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── SuperType (cat-5: SUPERtype=158 + length + thistpe + supertpe) ─────────
     // SUPERtype 158 is cat-5. Pickle: SUPERtype(158=0x9E) length(4=0x84) TERMREFdirect(62) addr(1) TERMREFdirect(62) addr(2).
     "SuperType: SUPERtype tag decodes to Tree.SuperType" in run {
-        val s1      = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("This"))
-        val s2      = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Super"))
+        val s1      = LoadingSymbol.Materialising(id = 49, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("This"))
+        val s2      = LoadingSymbol.Materialising(id = 20, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("Super"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
         val pickle = Array[Byte](
             TastyFormat.SUPERtype.toByte,
@@ -231,8 +262,8 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── AndType (cat-5: ANDtype=165 + length + left + right) ───────────────────
     // Pickle: ANDtype(165=0xA5) length(4=0x84) TERMREFdirect(62) addr(1) TERMREFdirect(62) addr(2).
     "AndType: ANDtype tag decodes to Tree.AndType" in run {
-        val s1      = Tasty.Symbol.makePlaceholder(SymbolKind.Trait, Tasty.Flags.empty, Tasty.Name("A"))
-        val s2      = Tasty.Symbol.makePlaceholder(SymbolKind.Trait, Tasty.Flags.empty, Tasty.Name("B"))
+        val s1      = LoadingSymbol.Materialising(id = 66, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("A"))
+        val s2      = LoadingSymbol.Materialising(id = 55, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("B"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
         val pickle = Array[Byte](
             TastyFormat.ANDtype.toByte,
@@ -254,8 +285,8 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── OrType (cat-5: ORtype=167 + length + left + right) ─────────────────────
     // Pickle: ORtype(167=0xA7) length(4=0x84) TERMREFdirect(62) addr(1) TERMREFdirect(62) addr(2).
     "OrType: ORtype tag decodes to Tree.OrType" in run {
-        val s1      = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("A"))
-        val s2      = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("B"))
+        val s1      = LoadingSymbol.Materialising(id = 66, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("A"))
+        val s2      = LoadingSymbol.Materialising(id = 55, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("B"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
         val pickle = Array[Byte](
             TastyFormat.ORtype.toByte,
@@ -454,8 +485,8 @@ class TreeAdtVariantCoverageTest extends Test:
     // Decoded as: addr=readNat, qual=readTree -> Tree.TypeRefSymbol(addr, qual).
     // Pickle: TYPEREFsymbol(116=0x74) addr(1=0x81) TERMREFdirect(62) addr(2=0x82).
     "TypeRefSymbol: TYPEREFsymbol tag decodes to Tree.TypeRefSymbol" in run {
-        val s1      = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("A"))
-        val s2      = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("B"))
+        val s1      = LoadingSymbol.Materialising(id = 66, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("A"))
+        val s2      = LoadingSymbol.Materialising(id = 55, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("B"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
         val pickle = Array[Byte](
             TastyFormat.TYPEREFsymbol.toByte,
@@ -477,8 +508,8 @@ class TreeAdtVariantCoverageTest extends Test:
     // Decoded as: addr=readNat, qual=readTree -> Tree.TermRefSymbol(addr, qual).
     // Pickle: TERMREFsymbol(114=0x72) addr(1=0x81) TERMREFdirect(62) addr(2=0x82).
     "TermRefSymbol: TERMREFsymbol tag decodes to Tree.TermRefSymbol" in run {
-        val s1      = Tasty.Symbol.makePlaceholder(SymbolKind.Val, Tasty.Flags.empty, Tasty.Name("x"))
-        val s2      = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Owner"))
+        val s1      = LoadingSymbol.Materialising(id = 52, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("x"))
+        val s2      = LoadingSymbol.Materialising(id = 37, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("Owner"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
         val pickle = Array[Byte](
             TastyFormat.TERMREFsymbol.toByte,
@@ -559,8 +590,8 @@ class TreeAdtVariantCoverageTest extends Test:
     // SELECTouter 148 is cat-5. Decoded as: end=readEnd, levels=readNat, nm=nameFromRef(readNat), qual=readTree, tpe=readType.
     // Pickle: SELECTouter(148=0x94) length(6=0x86) levels(1=0x81) nameRef(0=0x80) qual=TERMREFdirect(62) addr(1=0x81) tpe=TERMREFdirect(62) addr(2=0x82).
     "SelectOuter: SELECTouter tag decodes to Tree.SelectOuter" in run {
-        val s1      = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Outer"))
-        val s2      = Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name("Inner"))
+        val s1      = LoadingSymbol.Materialising(id = 30, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("Outer"))
+        val s2      = LoadingSymbol.Materialising(id = 7, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("Inner"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
         val names   = Array(Tasty.Name("outerVal"))
         val pickle = Array[Byte](

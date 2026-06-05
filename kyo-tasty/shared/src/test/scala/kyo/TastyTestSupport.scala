@@ -1,30 +1,21 @@
 package kyo
-import kyo.internal.tasty.symbol.SymbolKind
 
 /** Shared test helpers for kyo-tasty test files.
   *
   * Phase 21g cleanup: extracts the makeNamed helper that was duplicated verbatim in TastyAnnotationTest and TastyTypeTest. Both files now
   * extend this trait.
   *
-  * plan: phase-02 update; Symbol is now a case class; owner chaining replaced by simple synthetic Symbols.
+  * Phase 08 update: makePlaceholder is deleted; makeNamed now returns Type.Named(SymbolId(-1)) directly.
   */
 trait TastyTestSupport:
 
-    import AllowUnsafe.embrace.danger
-
-    /** Build a synthetic Named type for the given dotted FQN.
+    /** Build a synthetic Named type.
       *
-      * plan: phase-02 bridge; produces a synthetic Symbol with the leaf name from the FQN. The full owner chain is not reconstructed since
-      * Symbol.make only takes (kind, flags, name). Phase 09 restores full FQN via Symbol.fullName.
+      * Returns Type.Named(SymbolId(-1)) -- the sentinel unresolved id. All tests that call makeNamed only use
+      * the returned type for structural assertions, never for symbol lookup.
       */
     protected def makeNamed(fqn: String): Tasty.Type.Named =
-        val leafName = fqn.split("\\.").last
-        val sym = Tasty.Symbol.makePlaceholder(
-            SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name(leafName)
-        )
-        Tasty.Type.Named(sym.id)
+        Tasty.Type.Named(Tasty.SymbolId(-1))
     end makeNamed
 
 end TastyTestSupport

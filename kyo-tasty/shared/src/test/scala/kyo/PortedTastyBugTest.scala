@@ -98,7 +98,7 @@ class PortedTastyBugTest extends Test:
                 .orElse(cp.findClass(s"$FixturePkg.PortedBug195$$Parent"))
             parent match
                 case kyo.Maybe.Present(p) =>
-                    val yMember = Maybe.fromOption(p.declarationIds.map(cp.symbol).find(_.simpleName == "y"))
+                    val yMember = Maybe.fromOption(p.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "y"))
                     assert(yMember.isDefined, s"Parent.y must be findable; got $yMember")
                     succeed
                 case kyo.Maybe.Absent =>
@@ -134,7 +134,7 @@ class PortedTastyBugTest extends Test:
             cp.findClassLike(s"$FixturePkg.PortedBug380Foo") match
                 case kyo.Maybe.Present(sym) =>
                     // Touching declarations forces decode of constructor / parent.
-                    val decls = sym.declarationIds.map(cp.symbol)
+                    val decls = sym.declarationIds.flatMap(id => cp.symbol(id).toChunk)
                     assert(decls != null, "decoded declarations chunk must not be null")
                     succeed
                 case kyo.Maybe.Absent =>
@@ -152,7 +152,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug415Holder") match
                 case kyo.Maybe.Present(holder) =>
-                    val methods = holder.declarationIds.map(cp.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method])
+                    val methods = holder.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method])
                     assert(
                         methods.exists(_.name.asString == "makeF"),
                         s"makeF must be visible; got ${methods.map(_.name.asString)}"
@@ -171,7 +171,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClass(s"$FixturePkg.PortedBug428ValueClass") match
                 case kyo.Maybe.Present(cls) =>
-                    val doubled = Maybe.fromOption(cls.declarationIds.map(cp.symbol).find(_.simpleName == "doubled"))
+                    val doubled = Maybe.fromOption(cls.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "doubled"))
                     assert(doubled.isDefined, "value class method 'doubled' must be findable")
                     succeed
                 case kyo.Maybe.Absent =>
@@ -189,7 +189,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug134") match
                 case kyo.Maybe.Present(holder) =>
-                    val v = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "v"))
+                    val v = Maybe.fromOption(holder.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "v"))
                     assert(v.isDefined, "val v must be visible inside PortedBug134")
                     succeed
                 case kyo.Maybe.Absent =>
@@ -207,7 +207,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClass(s"$FixturePkg.PortedBug187OverloadedApply") match
                 case kyo.Maybe.Present(cls) =>
-                    val foos = cls.declarationIds.map(cp.symbol).filter(_.name.asString == "foo")
+                    val foos = cls.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.name.asString == "foo")
                     assert(
                         foos.length >= 2,
                         s"expected at least 2 overloads of foo, found ${foos.length}: ${foos.map(_.simpleName)}"
@@ -228,7 +228,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug125") match
                 case kyo.Maybe.Present(holder) =>
-                    val v = holder.declarationIds.map(cp.symbol).find(_.name.asString == "asContextFn")
+                    val v = holder.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.name.asString == "asContextFn")
                     assert(v.isDefined, "asContextFn must be a declared member")
                     succeed
                 case kyo.Maybe.Absent =>
@@ -257,7 +257,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClass(s"$FixturePkg.PortedBug224C") match
                 case kyo.Maybe.Present(cls) =>
-                    val m = Maybe.fromOption(cls.declarationIds.map(cp.symbol).find(_.simpleName == "m"))
+                    val m = Maybe.fromOption(cls.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "m"))
                     assert(m.isDefined, "C.m must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug224C missing")
@@ -274,7 +274,8 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug357") match
                 case kyo.Maybe.Present(holder) =>
-                    val classify = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "classify"))
+                    val classify =
+                        Maybe.fromOption(holder.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "classify"))
                     assert(classify.isDefined, "classify method must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug357 missing")
@@ -303,7 +304,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug414") match
                 case kyo.Maybe.Present(holder) =>
-                    val parsed = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "parsed"))
+                    val parsed = Maybe.fromOption(holder.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "parsed"))
                     assert(parsed.isDefined, "val parsed (calls Color.valueOf) must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug414 missing")
@@ -319,7 +320,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug424") match
                 case kyo.Maybe.Present(holder) =>
-                    val proxy = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "proxy"))
+                    val proxy = Maybe.fromOption(holder.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "proxy"))
                     assert(proxy.isDefined, "inline def proxy must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug424 missing")
@@ -337,7 +338,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug464") match
                 case kyo.Maybe.Present(holder) =>
-                    val m = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "m"))
+                    val m = Maybe.fromOption(holder.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "m"))
                     assert(m.isDefined, "val m typed as Map[String, Int] must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug464 missing")
@@ -354,7 +355,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug401") match
                 case kyo.Maybe.Present(holder) =>
-                    val x = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "x"))
+                    val x = Maybe.fromOption(holder.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "x"))
                     assert(x.isDefined, "val x typed as Flatten[Int] must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug401 missing")
@@ -370,7 +371,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClass(s"$FixturePkg.PortedBug108") match
                 case kyo.Maybe.Present(cls) =>
-                    val poly = Maybe.fromOption(cls.declarationIds.map(cp.symbol).find(_.simpleName == "poly"))
+                    val poly = Maybe.fromOption(cls.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "poly"))
                     assert(poly.isDefined, "poly method must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug108 missing")
@@ -387,7 +388,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug7") match
                 case kyo.Maybe.Present(holder) =>
-                    val inst = holder.declarationIds.map(cp.symbol).find(_.name.asString == "Inst")
+                    val inst = holder.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.name.asString == "Inst")
                     assert(inst.isDefined, "type Inst must be a declared member")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug7 missing")
@@ -404,7 +405,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug213") match
                 case kyo.Maybe.Present(holder) =>
-                    val r = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "r"))
+                    val r = Maybe.fromOption(holder.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "r"))
                     assert(r.isDefined, "val r (refined type) must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug213 missing")
@@ -420,7 +421,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClass(s"$FixturePkg.PortedBug172Outer") match
                 case kyo.Maybe.Present(cls) =>
-                    val make = Maybe.fromOption(cls.declarationIds.map(cp.symbol).find(_.simpleName == "make"))
+                    val make = Maybe.fromOption(cls.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "make"))
                     assert(make.isDefined, "method make returning Outer#Inner must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug172Outer missing")
@@ -436,7 +437,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClass(s"$FixturePkg.PortedBug403Container") match
                 case kyo.Maybe.Present(cls) =>
-                    val wrap = Maybe.fromOption(cls.declarationIds.map(cp.symbol).find(_.simpleName == "wrap"))
+                    val wrap = Maybe.fromOption(cls.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "wrap"))
                     assert(wrap.isDefined, "wrap method must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug403Container missing")
@@ -452,7 +453,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findTrait(s"$FixturePkg.PortedBug116IArraySig") match
                 case kyo.Maybe.Present(trt) =>
-                    val from = Maybe.fromOption(trt.declarationIds.map(cp.symbol).find(_.simpleName == "from"))
+                    val from = Maybe.fromOption(trt.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "from"))
                     assert(from.isDefined, "from method must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug116IArraySig missing")
@@ -470,7 +471,7 @@ class PortedTastyBugTest extends Test:
             cp.findClass(s"$FixturePkg.PortedBug405ParamValueClass") match
                 case kyo.Maybe.Present(cls) =>
                     val ctors =
-                        cls.declarationIds.map(cp.symbol).filter(s =>
+                        cls.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(s =>
                             s.isInstanceOf[Tasty.Symbol.Method] && s.simpleName == "<init>"
                         ).asInstanceOf[Chunk[
                             Tasty.Symbol.Method
@@ -490,7 +491,8 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug178") match
                 case kyo.Maybe.Present(holder) =>
-                    val getEntry = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "getEntry"))
+                    val getEntry =
+                        Maybe.fromOption(holder.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "getEntry"))
                     assert(getEntry.isDefined, "getEntry method must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug178 missing")
@@ -507,7 +509,7 @@ class PortedTastyBugTest extends Test:
             cp.findClass(s"$FixturePkg.PortedBug80UsesRawAware") match
                 case kyo.Maybe.Present(cls) =>
                     val ctors =
-                        cls.declarationIds.map(cp.symbol).filter(s =>
+                        cls.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(s =>
                             s.isInstanceOf[Tasty.Symbol.Method] && s.simpleName == "<init>"
                         ).asInstanceOf[Chunk[
                             Tasty.Symbol.Method
@@ -530,8 +532,8 @@ class PortedTastyBugTest extends Test:
             val con = cp.findClass(s"$FixturePkg.PortedBug11075B")
             (abs, con) match
                 case (kyo.Maybe.Present(a), kyo.Maybe.Present(c)) =>
-                    val aMethod = Maybe.fromOption(a.declarationIds.map(cp.symbol).find(_.simpleName == "a"))
-                    val cMethod = Maybe.fromOption(c.declarationIds.map(cp.symbol).find(_.simpleName == "a"))
+                    val aMethod = Maybe.fromOption(a.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "a"))
+                    val cMethod = Maybe.fromOption(c.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "a"))
                     assert(aMethod.isDefined, "abstract inline a must be visible")
                     assert(cMethod.isDefined, "concrete inline a must be visible")
                     succeed
@@ -548,7 +550,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug16843") match
                 case kyo.Maybe.Present(holder) =>
-                    val go = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "go"))
+                    val go = Maybe.fromOption(holder.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "go"))
                     assert(go.isDefined, "method go must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug16843 missing")
@@ -565,7 +567,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClass(s"$FixturePkg.PortedBug7022C") match
                 case kyo.Maybe.Present(c) =>
-                    val foos = c.declarationIds.map(cp.symbol).filter(_.name.asString == "foo")
+                    val foos = c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.name.asString == "foo")
                     assert(foos.nonEmpty, "C must declare at least one foo")
                     // Inherited generic foo[T] is in P[Int]; the override in C is mono.
                     succeed
@@ -586,10 +588,10 @@ class PortedTastyBugTest extends Test:
             obj match
                 case kyo.Maybe.Present(o) =>
                     // The Scala 3 companion exposes apply$default$1 for the default value.
-                    val defaultMethod = o.declarationIds.map(cp.symbol).find(_.name.asString.contains("default"))
+                    val defaultMethod = o.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.name.asString.contains("default"))
                     assert(
                         defaultMethod.isDefined,
-                        s"default-arg method must be visible on companion; got ${o.declarationIds.map(cp.symbol).map(_.name.asString)}"
+                        s"default-arg method must be visible on companion; got ${o.declarationIds.flatMap(id => cp.symbol(id).toChunk).map(_.name.asString)}"
                     )
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug12704CaseClass companion missing")
@@ -606,8 +608,8 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug25801") match
                 case kyo.Maybe.Present(holder) =>
-                    val aux       = holder.declarationIds.map(cp.symbol).find(_.name.asString == "Aux")
-                    val mapResTrt = holder.declarationIds.map(cp.symbol).find(_.name.asString == "MapRes")
+                    val aux       = holder.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.name.asString == "Aux")
+                    val mapResTrt = holder.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.name.asString == "MapRes")
                     assert(aux.isDefined, "type Aux must be visible")
                     assert(mapResTrt.isDefined, "trait MapRes must be visible")
                     succeed
@@ -624,7 +626,7 @@ class PortedTastyBugTest extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug284") match
                 case kyo.Maybe.Present(holder) =>
-                    val v = Maybe.fromOption(holder.declarationIds.map(cp.symbol).find(_.simpleName == "v"))
+                    val v = Maybe.fromOption(holder.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "v"))
                     assert(v.isDefined, "val v (Bounded[String]) must be visible")
                     succeed
                 case kyo.Maybe.Absent => fail("PortedBug284 missing")

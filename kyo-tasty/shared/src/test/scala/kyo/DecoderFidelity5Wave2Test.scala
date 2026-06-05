@@ -86,11 +86,12 @@ class DecoderFidelity5Wave2Test extends Test:
             val c = cp.symbol(SymbolId(Int.MinValue))
             val d = cp.symbol(SymbolId(cp.symbols.length))
             val e = cp.symbol(SymbolId(cp.symbols.length - 1))
-            assert(a eq Tasty.Classpath.sentinelUnresolved, "id=-1 should be sentinel")
-            assert(b eq Tasty.Classpath.sentinelUnresolved, "id=MAX_INT should be sentinel")
-            assert(c eq Tasty.Classpath.sentinelUnresolved, "id=MIN_INT should be sentinel")
-            assert(d eq Tasty.Classpath.sentinelUnresolved, "id=length should be sentinel")
-            assert(!(e eq Tasty.Classpath.sentinelUnresolved), "id=length-1 should be a real symbol")
+            // Phase 08: cp.symbol now returns Maybe[Symbol]; out-of-range/negative ids return Maybe.Absent
+            assert(a == Maybe.Absent, "id=-1 should return Absent")
+            assert(b == Maybe.Absent, "id=MAX_INT should return Absent")
+            assert(c == Maybe.Absent, "id=MIN_INT should return Absent")
+            assert(d == Maybe.Absent, "id=length should return Absent")
+            assert(e.isDefined, "id=length-1 should return Present")
             succeed
     }
 
@@ -99,20 +100,19 @@ class DecoderFidelity5Wave2Test extends Test:
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             import Tasty.Name.asString
             import Tasty.SymbolId.value
-            var maxChainSym = cp.symbols.headOption.getOrElse(Tasty.Classpath.sentinelUnresolved)
+            var maxChainSym = cp.symbols.headOption.getOrElse(cp.symbols.head)
             var maxChainLen = 0
             cp.symbols.foreach: s =>
                 var cur   = s
                 var depth = 0
                 val seen  = scala.collection.mutable.HashSet.empty[Int]
                 while seen.add(cur.id.value) && depth < 128 do
-                    val o = cp.symbol(cur.ownerId)
-                    if (o eq cur) || o.id.value == cur.id.value then
-                        depth = 1024
-                    else
-                        cur = o
-                        depth += 1
-                    end if
+                    cp.symbol(cur.ownerId) match
+                        case Maybe.Present(o) if o.id.value != cur.id.value =>
+                            cur = o
+                            depth += 1
+                        case _ =>
+                            depth = 1024
                 end while
                 if depth > maxChainLen && depth < 1024 then
                     maxChainLen = depth

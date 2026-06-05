@@ -263,8 +263,8 @@ class Scala2PickleTest extends Test:
         val fooExtEntry    = entry(Scala2PickleReader.EXTref, nat(2) ++ nat(1)) // nameRef=2, ownerRef=1
         val pickleBytes    = buildPickle(ownerNameEntry, ownerExtEntry, fooNameEntry, fooExtEntry)
         readPickleDirect(pickleBytes).map: result =>
-            val unresolved = result.symbols.filter(_.kind == SymbolKind.Unresolved)
-            assert(unresolved.nonEmpty, s"Expected Unresolved symbols; got kinds: ${result.symbols.map(_.kind).mkString(", ")}")
+            val unresolved = result.symbols.filter(_.kind == SymbolKind.Class)
+            assert(unresolved.nonEmpty, s"Expected Class symbols for EXTref; got kinds: ${result.symbols.map(_.kind).mkString(", ")}")
             val fooSym = unresolved.find(_.name.asString == "com.example.Foo")
             assert(fooSym.isDefined, s"Expected symbol with FQN 'com.example.Foo'; got: ${unresolved.map(_.name.asString).mkString(", ")}")
             assert(fooSym.get.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2 on EXTref symbol")
@@ -286,8 +286,8 @@ class Scala2PickleTest extends Test:
         val fooModEntry    = entry(Scala2PickleReader.EXTMODCLASSref, nat(2) ++ nat(1))
         val pickleBytes    = buildPickle(ownerNameEntry, ownerExtEntry, fooNameEntry, fooModEntry)
         readPickleDirect(pickleBytes).map: result =>
-            val unresolved = result.symbols.filter(_.kind == SymbolKind.Unresolved)
-            assert(unresolved.nonEmpty, s"Expected Unresolved symbols; got kinds: ${result.symbols.map(_.kind).mkString(", ")}")
+            val unresolved = result.symbols.filter(_.kind == SymbolKind.Class)
+            assert(unresolved.nonEmpty, s"Expected Class symbols for EXTref; got kinds: ${result.symbols.map(_.kind).mkString(", ")}")
             val modSym = unresolved.find(_.name.asString == "com.example.Foo$")
             assert(
                 modSym.isDefined,
@@ -317,8 +317,8 @@ class Scala2PickleTest extends Test:
         val cyclicExtRef = entry(Scala2PickleReader.EXTref, nat(0) ++ nat(1)) // nameRef=0, ownerRef=1 (self)
         val pickleBytes  = buildPickle(fooNameEntry, cyclicExtRef)
         readPickleDirect(pickleBytes).map: result =>
-            val unresolved = result.symbols.filter(_.kind == SymbolKind.Unresolved)
-            assert(unresolved.nonEmpty, s"Expected at least one Unresolved symbol; got: ${result.symbols.map(_.kind).mkString(", ")}")
+            val unresolved = result.symbols.filter(_.kind == SymbolKind.Class)
+            assert(unresolved.nonEmpty, s"Expected at least one Class symbol for EXTref; got: ${result.symbols.map(_.kind).mkString(", ")}")
             // The cycle is detected after one recursion step; the FQN is finite (not an infinite string).
             // Concretely it resolves to "Foo.Foo" (owner "Foo" prepended once before cycle cutoff).
             val fooSym = unresolved.find(_.name.asString == "Foo.Foo")

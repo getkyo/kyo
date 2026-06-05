@@ -84,22 +84,23 @@ class FlagPredicatePreservationTest extends Test:
         assert(!sym.isInstanceOf[Tasty.Symbol.Method], "isMethod must be false")
         assert(!sym.isInstanceOf[Tasty.Symbol.Val], "isVal must be false")
         assert(!sym.isInstanceOf[Tasty.Symbol.Var], "isVar must be false")
-        assert(!sym.isInstanceOf[Tasty.Symbol.Unresolved], "isUnresolved must be false")
+        // Phase 08: Symbol.Unresolved deleted; isPackage is false for all non-Package sym kinds.
+        assert(!sym.isInstanceOf[Tasty.Symbol.Class], "isClass on Package must be false")
         succeed
     }
 
-    // Leaf 46: 40-predicates-on-unresolved
-    // Given: Classpath.sentinelUnresolved; When: invoke all 40 predicates; Then: isUnresolved true; 39 others false
+    // Leaf 46: 40-predicates-on-sentinel-package
+    // Phase 08: Symbol.Unresolved is deleted; the former Classpath.sentinelUnresolved is now a Package(id=-1).
+    // Verifies that a negative-id Package still passes basic predicate checks.
     // Pins: INV-003
-    "40-predicates-on-unresolved: isUnresolved true; all class-like predicates false" in {
-        val sym = Tasty.Symbol.Unresolved(SymbolId(-1), Tasty.Name("<unresolved>"), SymbolId(-1))
-        assert(sym.isInstanceOf[Tasty.Symbol.Unresolved], "isUnresolved must be true")
+    "40-predicates-on-unresolved: sentinel Package(id=-1) is Package kind, not ClassLike" in {
+        val sym = Tasty.Symbol.Package(SymbolId(-1), Tasty.Name("<unresolved>"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
+        assert(sym.isInstanceOf[Tasty.Symbol.Package], "sentinel must still be a Package")
         assert(!sym.isInstanceOf[Tasty.Symbol.Class], "isClass must be false")
         assert(!sym.isInstanceOf[Tasty.Symbol.Trait], "isTrait must be false")
         assert(!sym.isInstanceOf[Tasty.Symbol.Object], "isObject must be false")
         assert(!sym.isInstanceOf[Tasty.Symbol.Method], "isMethod must be false")
         assert(!sym.isInstanceOf[Tasty.Symbol.Val], "isVal must be false")
-        assert(!sym.isInstanceOf[Tasty.Symbol.Package], "isPackage must be false")
         assert(!sym.isFinal, "isFinal must be false (no flags)")
         succeed
     }

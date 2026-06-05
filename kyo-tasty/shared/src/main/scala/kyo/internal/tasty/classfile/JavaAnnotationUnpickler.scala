@@ -4,7 +4,9 @@ import kyo.*
 import kyo.Tasty.Java.Annotation as JavaAnnotation
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.symbol.Symbol as SymbolFactory
+import kyo.internal.tasty.symbol.SymbolDescriptor
 import kyo.internal.tasty.symbol.SymbolKind
+import kyo.internal.tasty.symbol.TypedSymbolFactory
 
 /** Decodes RuntimeVisibleAnnotations and RuntimeInvisibleAnnotations attribute bodies into JavaAnnotation values.
   *
@@ -188,19 +190,31 @@ object JavaAnnotationUnpickler:
             readElementValue(view, pool, depth).map: v =>
                 readElementValueArray(view, pool, total, idx + 1, acc.appended(v), depth)
 
-    /** Convert a field descriptor like "Ljava/lang/Deprecated;" to an Unresolved symbol. */
+    /** Convert a field descriptor like "Ljava/lang/Deprecated;" to an unresolved Tasty.Symbol (id=-1). */
     private def descriptorToUnresolvedSymbol(descriptor: String)(using AllowUnsafe): Tasty.Symbol =
         val fqn = descriptorToFqn(descriptor)
-        SymbolFactory.makeSymbol(
-            SymbolKind.Unresolved,
-            Tasty.Flags.empty,
-            Tasty.Name(fqn)
-        )
+        TypedSymbolFactory.from(new SymbolDescriptor(
+            id = -1,
+            kind = SymbolKind.Class,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name(fqn),
+            ownerId = -1,
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            body = Maybe.Absent
+        ))
     end descriptorToUnresolvedSymbol
 
-    /** Convert a class descriptor to a Tasty.Type.Named wrapping an Unresolved symbol. */
+    /** Convert a class descriptor to a Tasty.Type.Named wrapping the sentinel unresolved id. */
     private def descriptorToType(descriptor: String)(using AllowUnsafe): Tasty.Type =
-        Tasty.Type.Named(descriptorToUnresolvedSymbol(descriptor).id)
+        // Sentinel id -1 for annotation type references (not resolved against classpath here).
+        Tasty.Type.Named(kyo.Tasty.SymbolId(-1))
 
     /** Strip "L" prefix and ";" suffix, replace "/" with ".". For non-L descriptors (primitives), return as-is.
       */

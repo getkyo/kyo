@@ -3,6 +3,7 @@ package kyo
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TypeUnpickler
+import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
@@ -19,8 +20,8 @@ class AnnotationEagerArgsTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private def makeSym(name: String): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(name))
+    private def makeSym(name: String): LoadingSymbol.Materialising =
+        LoadingSymbol.Materialising(id = 0, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name(name))
 
     private def encodeNat(n: Int): Array[Byte] =
         if n < 128 then Array((n | 0x80).toByte)
@@ -35,7 +36,7 @@ class AnnotationEagerArgsTest extends Test:
 
     private def decodeType(
         bytes: Array[Byte],
-        addrMap: IntMap[Tasty.Symbol] = IntMap.empty,
+        addrMap: IntMap[LoadingSymbol.Materialising] = IntMap.empty,
         names: Array[Tasty.Name] = Array.empty
     )(using Frame): Tasty.Type < (Sync & Abort[TastyError]) =
         val view  = ByteView(bytes)
@@ -113,7 +114,7 @@ class AnnotationEagerArgsTest extends Test:
     // Two Annotation values with equal annotationType and equal arguments compare equal via ==.
     "INV-006 leaf 4: Annotation case-class equality is structural" in {
         val sym  = makeSym("Foo")
-        val tpe  = Tasty.Type.Named(sym.id)
+        val tpe  = Tasty.Type.Named(Tasty.SymbolId(sym.id))
         val ann1 = Tasty.Annotation(tpe, Chunk.empty)
         val ann2 = Tasty.Annotation(tpe, Chunk.empty)
         assert(ann1 == ann2, s"Expected equal Annotations but $ann1 != $ann2")

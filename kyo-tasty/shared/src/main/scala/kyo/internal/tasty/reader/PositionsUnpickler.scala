@@ -2,6 +2,7 @@ package kyo.internal.tasty.reader
 
 import kyo.*
 import kyo.internal.tasty.binary.ByteView
+import kyo.internal.tasty.symbol.LoadingSymbol
 import scala.collection.immutable.IntMap
 
 /** Reads the TASTy Positions section.
@@ -51,9 +52,9 @@ object PositionsUnpickler:
       */
     def read(
         view: ByteView,
-        addrMap: IntMap[Tasty.Symbol],
+        addrMap: IntMap[LoadingSymbol.Materialising],
         sourceFile: Maybe[String]
-    )(using Frame, AllowUnsafe): Map[Tasty.Symbol, Tasty.Position] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Map[LoadingSymbol.Materialising, Tasty.Position] < (Sync & Abort[TastyError]) =
         val result =
             try Right(readSync(view, addrMap, sourceFile))
             catch
@@ -70,9 +71,9 @@ object PositionsUnpickler:
 
     private def readSync(
         view: ByteView,
-        addrMap: IntMap[Tasty.Symbol],
+        addrMap: IntMap[LoadingSymbol.Materialising],
         sourceFile: Maybe[String]
-    )(using AllowUnsafe): Map[Tasty.Symbol, Tasty.Position] =
+    )(using AllowUnsafe): Map[LoadingSymbol.Materialising, Tasty.Position] =
         // An empty section has no data at all; return an empty map immediately without trying to read.
         if view.remaining == 0 then return Map.empty
 
@@ -118,7 +119,7 @@ object PositionsUnpickler:
         end while
 
         // Decode the Assoc stream.
-        val builder  = Map.newBuilder[Tasty.Symbol, Tasty.Position]
+        val builder  = Map.newBuilder[LoadingSymbol.Materialising, Tasty.Position]
         var curIndex = 0
         var curStart = 0
         var curEnd   = 0

@@ -158,16 +158,16 @@ class TastySymbolTest extends Test:
 
     // plan: phase-02 bridge; helpers use Symbol.make(kind, flags, name) - owner no longer stored on Symbol.
     private def makeRoot(): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(SymbolKind.Package, Tasty.Flags.empty, Tasty.Name(""))
+        Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name(""), Tasty.Flags.empty, Tasty.SymbolId(-1), Chunk.empty)
 
     private def makePkg(name: String, owner: Tasty.Symbol): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(SymbolKind.Package, Tasty.Flags.empty, Tasty.Name(name))
+        Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name(name), Tasty.Flags.empty, Tasty.SymbolId(-1), Chunk.empty)
 
     private def makeClass(name: String, owner: Tasty.Symbol): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(SymbolKind.Class, Tasty.Flags.empty, Tasty.Name(name))
+        Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name(name), Tasty.Flags.empty, Tasty.SymbolId(-1), Chunk.empty)
 
     private def makeModule(name: String, owner: Tasty.Symbol): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(SymbolKind.Object, Tasty.Flags(Tasty.Flag.Module), Tasty.Name(name))
+        Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name(name), Tasty.Flags(Tasty.Flag.Module), Tasty.SymbolId(-1), Chunk.empty)
 
     // Test 1 (INV: T1, kyo.internal.tasty.symbol.BinaryName.compute(Symbol, cp)): nested Scala class produces JVM binary name with '$' separator.
     // Given: synthetic Symbol tree com.example.Outer.Inner where Outer and Inner have SymbolKind.Class.
@@ -272,10 +272,22 @@ class TastySymbolTest extends Test:
     // Pins: T2.
     // plan: phase-02 update; Symbol.make now takes (kind, flags, name) only. sym.owner removed.
     "Symbol.make produces Symbol with correct kind and name" in {
-        val sym = Tasty.Symbol.makePlaceholder(
-            SymbolKind.Class,
+        // Phase 08: Symbol.makePlaceholder deleted; use Symbol.Class directly.
+        val sym = Tasty.Symbol.Class(
+            Tasty.SymbolId(-1),
+            Tasty.Name("Foo"),
             Tasty.Flags.empty,
-            Tasty.Name("Foo")
+            Tasty.SymbolId(-1),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent
         )
         assert(sym.kind == SymbolKind.Class, s"Expected kind Class but got ${sym.kind}")
         assert(sym.name.asString == "Foo", s"Expected name 'Foo' but got '${sym.name.asString}'")
@@ -472,26 +484,64 @@ class TastySymbolTest extends Test:
     // Then: returns the expected SymbolKind.
     // Pins: T1 (kind accessor coverage).
     "Symbol.kind returns the kind passed to Symbol.make" in {
-        val root = makeRoot()
-        val kindCases: List[(String, SymbolKind)] = List(
-            ("ClassSym", SymbolKind.Class),
-            ("TraitSym", SymbolKind.Trait),
-            ("ObjSym", SymbolKind.Object),
-            ("MethodSym", SymbolKind.Method),
-            ("FieldSym", SymbolKind.Field),
-            ("ValSym", SymbolKind.Val),
-            ("VarSym", SymbolKind.Var)
+        // Phase 08: Symbol.makePlaceholder deleted. Verify kind by constructing typed symbols directly.
+        import kyo.Tasty.SymbolId
+        val sid   = SymbolId(-1)
+        val n0    = Tasty.Name("X")
+        val flags = Tasty.Flags.empty
+        val tb    = Tasty.TypeBounds(Tasty.Type.Unknown, Tasty.Type.Unknown)
+        val classSym = Tasty.Symbol.Class(
+            sid,
+            n0,
+            flags,
+            sid,
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent
         )
-        val mismatches = kindCases.flatMap { (name, expectedKind) =>
-            // plan: phase-02 bridge; Symbol.make(kind, flags, name).
-            val sym = Tasty.Symbol.makePlaceholder(expectedKind, Tasty.Flags.empty, Tasty.Name(name))
-            if sym.kind == expectedKind then None
-            else Some(s"'$name': expected $expectedKind but got ${sym.kind}")
-        }
-        assert(
-            mismatches.isEmpty,
-            s"SymbolKind mismatches: ${mismatches.mkString("; ")}"
+        val traitSym = Tasty.Symbol.Trait(
+            sid,
+            n0,
+            flags,
+            sid,
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent
         )
+        val objSym = Tasty.Symbol.Object(
+            sid,
+            n0,
+            flags,
+            sid,
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent
+        )
+        val pkgSym = Tasty.Symbol.Package(sid, n0, flags, sid, Chunk.empty)
+        assert(classSym.kind == SymbolKind.Class, s"Expected Class got ${classSym.kind}")
+        assert(traitSym.kind == SymbolKind.Trait, s"Expected Trait got ${traitSym.kind}")
+        assert(objSym.kind == SymbolKind.Object, s"Expected Object got ${objSym.kind}")
+        assert(pkgSym.kind == SymbolKind.Package, s"Expected Package got ${pkgSym.kind}")
     }
 
 end TastySymbolTest

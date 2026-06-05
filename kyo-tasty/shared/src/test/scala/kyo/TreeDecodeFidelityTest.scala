@@ -50,7 +50,7 @@ class TreeDecodeFidelityTest extends Test:
             classpath.findClassLike("kyo.fixtures.SomeCaseClass") match
                 case Maybe.Absent => fail("kyo.fixtures.SomeCaseClass not found in classpath; fixture must be present")
                 case Maybe.Present(cls) =>
-                    val methods = cls.declarationIds.map(classpath.symbol).filter(_.isInstanceOf[Tasty.Symbol.Method])
+                    val methods = cls.declarationIds.flatMap(id => classpath.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method])
                     assert(methods.nonEmpty, "kyo.fixtures.SomeCaseClass should have methods (copy, hashCode, equals)")
                     succeed
             end match
@@ -140,7 +140,7 @@ class TreeDecodeFidelityTest extends Test:
                 def walkType(t: Tasty.Type): Unit =
                     t match
                         case Tasty.Type.Applied(Tasty.Type.Named(id), _) =>
-                            if classpath.symbol(id).name.asString == matchCaseSentinelName then
+                            if classpath.symbol(id).map(_.name.asString).getOrElse("<unresolved>") == matchCaseSentinelName then
                                 sentinelCount += 1
                         case _ => ()
                     end match

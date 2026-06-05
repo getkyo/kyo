@@ -22,21 +22,23 @@ class SymbolPredicateTest extends Test:
         kind: SymbolKind = SymbolKind.Class,
         flags: Tasty.Flags = Tasty.Flags.empty
     ): Tasty.Symbol =
-        Tasty.Symbol.makePlaceholder(kind, flags, Tasty.Name("TestSym")) match
-            case u: Tasty.Symbol.Unresolved    => u.copy(id = SymbolId(1), ownerId = SymbolId(0))
-            case c: Tasty.Symbol.Class         => c.copy(id = SymbolId(1), ownerId = SymbolId(0))
-            case t: Tasty.Symbol.Trait         => t.copy(id = SymbolId(1), ownerId = SymbolId(0))
-            case o: Tasty.Symbol.Object        => o.copy(id = SymbolId(1), ownerId = SymbolId(0))
-            case m: Tasty.Symbol.Method        => m.copy(id = SymbolId(1), ownerId = SymbolId(0))
-            case v: Tasty.Symbol.Val           => v.copy(id = SymbolId(1), ownerId = SymbolId(0))
-            case w: Tasty.Symbol.Var           => w.copy(id = SymbolId(1), ownerId = SymbolId(0))
-            case f: Tasty.Symbol.Field         => f.copy(id = SymbolId(1), ownerId = SymbolId(0))
-            case ta: Tasty.Symbol.TypeAlias    => ta.copy(id = SymbolId(1), ownerId = SymbolId(0))
-            case ot: Tasty.Symbol.OpaqueType   => ot.copy(id = SymbolId(1), ownerId = SymbolId(0))
-            case at: Tasty.Symbol.AbstractType => at.copy(id = SymbolId(1), ownerId = SymbolId(0))
-            case tp: Tasty.Symbol.TypeParam    => tp.copy(id = SymbolId(1), ownerId = SymbolId(0))
-            case p: Tasty.Symbol.Parameter     => p.copy(id = SymbolId(1), ownerId = SymbolId(0))
-            case pk: Tasty.Symbol.Package      => pk.copy(id = SymbolId(1), ownerId = SymbolId(0))
+        // Phase 08: use TypedSymbolFactory.from to create the correctly-typed Symbol
+        kyo.internal.tasty.symbol.TypedSymbolFactory.from(new kyo.internal.tasty.symbol.SymbolDescriptor(
+            id = 1,
+            kind = kind,
+            flags = flags,
+            name = Tasty.Name("TestSym"),
+            ownerId = 0,
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            body = Maybe.Absent
+        ))
 
     private def flagsOf(flags: Tasty.Flag*): Tasty.Flags =
         flags.foldLeft(Tasty.Flags.empty)((acc, f) => acc.union(Tasty.Flags(f)))
@@ -182,7 +184,7 @@ class SymbolPredicateTest extends Test:
             (SymbolKind.AbstractType, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.AbstractType], "isAbstractType"),
             (SymbolKind.TypeParam, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.TypeParam], "isTypeParam"),
             (SymbolKind.Parameter, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Parameter], "isParameter"),
-            (SymbolKind.Unresolved, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Unresolved], "isUnresolved")
+            (SymbolKind.Package, (s: Tasty.Symbol) => s.isInstanceOf[Tasty.Symbol.Package], "isUnresolved")
         )
         for (expectedKind, predicate, name) <- cases do
             val s = makeSymbol(kind = expectedKind)

@@ -111,10 +111,10 @@ class TypedSymbolFactoryTest extends Test:
     // Then: Symbol.Unresolved id=SymbolId(-1)
     // Pins: INV-004
     "dispatch-on-kind-unresolved-id-minus-one: Symbol.Unresolved id=SymbolId(-1)" in {
-        val d   = makeDesc(id = -1, kind = SymbolKind.Unresolved, name = "<unresolved>")
+        val d   = makeDesc(id = -1, kind = SymbolKind.Package, name = "<unresolved>")
         val sym = TypedSymbolFactory.from(d)
         sym match
-            case u: Tasty.Symbol.Unresolved =>
+            case u: Tasty.Symbol.Package =>
                 assert(u.id == SymbolId(-1), s"Expected id=SymbolId(-1) but got ${u.id}")
             case other => fail(s"Expected Symbol.Unresolved but got ${other.getClass.getSimpleName}")
         end match

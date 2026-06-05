@@ -9,7 +9,7 @@ private[kyo] object TreeShow:
     private def showType(tpe: Tasty.Type, cp: Tasty.Classpath): String =
         import Tasty.Name.asString
         tpe match
-            case Tasty.Type.Named(id)           => cp.symbol(id).name.asString
+            case Tasty.Type.Named(id)           => cp.symbol(id).map(_.name.asString).getOrElse("<unresolved>")
             case Tasty.Type.Applied(base, args) => s"${showType(base, cp)}[${args.map(showType(_, cp)).mkString(", ")}]"
             case Tasty.Type.Array(elem)         => s"${showType(elem, cp)}[]"
             case Tasty.Type.Function(ps, r) =>

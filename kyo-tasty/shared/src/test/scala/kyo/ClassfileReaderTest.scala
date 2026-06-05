@@ -9,6 +9,7 @@ import kyo.internal.tasty.reader.NameUnpickler
 import kyo.internal.tasty.reader.SectionIndex
 import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.reader.TastyHeader
+import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 
@@ -34,10 +35,16 @@ class ClassfileReaderTest extends Test:
         case m: Tasty.Symbol.Method    => m.javaMetadata
         case _                         => Maybe.Absent
 
+    private def symJavaMetadata(sym: kyo.internal.tasty.symbol.LoadingSymbol.Materialising): Maybe[Tasty.Java.Metadata] =
+        sym.javaMetadata
+
     private def symPermittedSubclassIds(sym: Tasty.Symbol): Maybe[Chunk[kyo.Tasty.SymbolId]] = sym match
         case c: Tasty.Symbol.Class => c.permittedSubclassIds
         case t: Tasty.Symbol.Trait => t.permittedSubclassIds
         case _                     => Maybe.Absent
+
+    private def symPermittedSubclassIds(sym: kyo.internal.tasty.symbol.LoadingSymbol.Materialising): Maybe[Chunk[kyo.Tasty.SymbolId]] =
+        sym.permittedSubclassIds.map(_.map(kyo.Tasty.SymbolId(_)))
 
     /** Load raw bytes for a JDK class by binary path from EmbeddedClassfiles (cross-platform). */
     private def loadClassBytes(binaryPath: String): Array[Byte] =
@@ -52,7 +59,7 @@ class ClassfileReaderTest extends Test:
         TestResourceLoader.loadBytes(resourcePath)
 
     /** Run TASTy pass 1 on raw TASTy bytes and return the first non-root class symbol. */
-    private def firstClassSymbolFromTasty(bytes: Array[Byte])(using Frame): Tasty.Symbol < (Sync & Abort[TastyError]) =
+    private def firstClassSymbolFromTasty(bytes: Array[Byte])(using Frame): LoadingSymbol.Materialising < (Sync & Abort[TastyError]) =
         val view  = ByteView(bytes)
         val arena = new TypeArena
         for

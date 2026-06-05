@@ -250,12 +250,12 @@ class AstUnpicklerTest extends Test:
                     assert(methodSymOpt.isDefined, "No Method symbol")
                     val classSym  = classSymOpt.get
                     val methodSym = methodSymOpt.get
-                    // Method's owner is tracked in ownerBySymbol (java.util.IdentityHashMap)
-                    val ownerSym = r.ownerBySymbol.get(methodSym)
+                    // Method's owner is tracked in ownerBySymbol (LongMap keyed on id)
+                    val ownerSym = r.ownerBySymbol.get(methodSym.id.toLong)
                     assert(
-                        ownerSym eq classSym,
+                        ownerSym.contains(classSym),
                         s"Method owner in ownerBySymbol should be PlainClass but was ${
-                                if ownerSym == null then "null" else ownerSym.name.asString
+                                ownerSym.map(_.name.asString).getOrElse("absent")
                             }"
                     )
                 case Result.Failure(e) =>
@@ -278,11 +278,11 @@ class AstUnpicklerTest extends Test:
                         s"No symbol named 'Inner'. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
                     )
                     val inner    = innerOpt.get
-                    val ownerSym = r.ownerBySymbol.get(inner)
-                    assert(ownerSym != null, s"Inner class has no owner in ownerBySymbol")
+                    val ownerSym = r.ownerBySymbol.get(inner.id.toLong)
+                    assert(ownerSym.isDefined, s"Inner class has no owner in ownerBySymbol")
                     assert(
-                        ownerSym.name.asString == "Outer",
-                        s"Inner class owner expected 'Outer' but was '${ownerSym.name.asString}'"
+                        ownerSym.get.name.asString == "Outer",
+                        s"Inner class owner expected 'Outer' but was '${ownerSym.get.name.asString}'"
                     )
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
@@ -301,9 +301,9 @@ class AstUnpicklerTest extends Test:
                     val methodOpt = r.symbols.find(_.kind == SymbolKind.Method)
                     assert(methodOpt.isDefined, "No Method symbol found")
                     val method   = methodOpt.get
-                    val bodyData = r.bodyDataByAddr.get(method)
-                    assert(bodyData != null, "Method symbol not found in bodyDataByAddr")
-                    val (bodyStart, bodyEnd) = bodyData
+                    val bodyData = r.bodyDataByAddr.get(method.id.toLong)
+                    assert(bodyData.isDefined, "Method symbol not found in bodyDataByAddr")
+                    val (bodyStart, bodyEnd) = bodyData.get
                     assert(bodyStart > 0, s"bodyStart should be > 0 but was $bodyStart")
                     assert(bodyEnd > bodyStart, s"bodyEnd ($bodyEnd) should be > bodyStart ($bodyStart)")
                 case Result.Failure(e) =>
@@ -424,13 +424,13 @@ class AstUnpicklerTest extends Test:
                         s"No PlainClass symbol found. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
                     )
                     val classSym = classSymOpt.get
-                    val parents  = r.parentsBySymbol.get(classSym)
+                    val parents  = r.parentsBySymbol.get(classSym.id.toLong)
                     assert(
-                        parents != null,
+                        parents.isDefined,
                         s"parentsBySymbol does not contain PlainClass"
                     )
                     assert(
-                        parents.nonEmpty,
+                        parents.get.nonEmpty,
                         "parentsBySymbol(PlainClass) should be non-empty but was empty"
                     )
                 case Result.Failure(e) =>
@@ -455,12 +455,12 @@ class AstUnpicklerTest extends Test:
                         s"No PlainClass symbol found. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
                     )
                     val classSym = classSymOpt.get
-                    val children = r.childrenByOwner.get(classSym)
+                    val children = r.childrenByOwner.get(classSym.id.toLong)
                     assert(
-                        children != null,
+                        children.isDefined,
                         s"childrenByOwner does not contain PlainClass"
                     )
-                    val childNames = children.map(_.name.asString).toSeq
+                    val childNames = children.get.map(_.name.asString).toSeq
                     assert(
                         childNames.contains("<init>"),
                         s"childrenByOwner(PlainClass) should contain '<init>' but childNames were: ${childNames.mkString(", ")}"
@@ -523,17 +523,17 @@ class AstUnpicklerTest extends Test:
                         s"No 'compute' method symbol in SomeTrait. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
                     )
                     val computeSym = computeOpt.get
-                    val decoded    = r.typeBySymbol.get(computeSym)
+                    val decoded    = r.typeBySymbol.get(computeSym.id.toLong)
                     assert(
-                        decoded != null,
+                        decoded.isDefined,
                         s"typeBySymbol does not contain 'compute' symbol"
                     )
                     // Phase 03 update: IDENTtpt-wrapped return types now decode to their resolved
                     // type (TermRef, Named, Applied, etc.) rather than the old Named(-1) placeholder.
-                    // Accept any decoded type that is not null (i.e. the symbol is in typeBySymbol).
+                    // Accept any decoded type that is defined (i.e. the symbol is in typeBySymbol).
                     assert(
-                        decoded != null,
-                        s"typeBySymbol(compute) returned null"
+                        decoded.isDefined,
+                        s"typeBySymbol(compute) returned absent"
                     )
                     succeed
                 case Result.Failure(e) =>
@@ -559,12 +559,12 @@ class AstUnpicklerTest extends Test:
                         s"No 'content' symbol in GenericBox. Symbols: ${r.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
                     )
                     val contentSym  = contentOpt.get
-                    val contentType = r.typeBySymbol.get(contentSym)
+                    val contentType = r.typeBySymbol.get(contentSym.id.toLong)
                     assert(
-                        contentType != null,
+                        contentType.isDefined,
                         s"typeBySymbol does not contain 'content' symbol"
                     )
-                    contentType match
+                    contentType.get match
                         case Tasty.Type.Named(_) =>
                             // Type is Named (a type-param or proxy symbol reference) -- correct
                             // structure for val content: A in raw Pass1Result before Phase C.
@@ -579,29 +579,30 @@ class AstUnpicklerTest extends Test:
         }
     }
 
-    // T-P4-1: Pass1Result map fields are IdentityHashMap instances (Phase 03 regression fix).
-    // Phase 03 changed Symbol equality to field-based. Internal placeholder maps must use
-    // IdentityHashMap to prevent structurally-equal placeholder symbols from colliding.
-    // Assigns the four map fields to explicitly typed IdentityHashMap variables; the assignment
-    // compiles only if the field types are correct. Asserts structural invariants.
-    "T-P4-1: Pass1Result map fields are mutable.HashMap instances" in run {
+    // T-P4-1: Pass1Result map fields are LongMap instances (Phase 08: IdentityHashMap replaced by LongMap).
+    // Phase 08 changed internal maps from JVM-only IdentityHashMap to cross-platform LongMap keyed on
+    // LoadingSymbol.Materialising.id. Assigns the four map fields to explicitly typed LongMap variables;
+    // the assignment compiles only if the field types are correct. Asserts structural invariants.
+    "T-P4-1: Pass1Result map fields are LongMap instances (Phase 08)" in run {
+        import scala.collection.mutable
+        import kyo.internal.tasty.symbol.LoadingSymbol
         val bytes = loadFixtureBytes("GenericBox.tasty")
         val arena = TypeArena.canonical()
         Abort.run[TastyError](runPass1WithArena(bytes, arena)).map { result =>
             result match
                 case Result.Success(r) =>
-                    val addrMapH: IntMap[Tasty.Symbol]                                            = r.addrMap
-                    val parentsByH: java.util.IdentityHashMap[Tasty.Symbol, Chunk[Tasty.Type]]    = r.parentsBySymbol
-                    val childrenByH: java.util.IdentityHashMap[Tasty.Symbol, Chunk[Tasty.Symbol]] = r.childrenByOwner
-                    val typeByH: java.util.IdentityHashMap[Tasty.Symbol, Tasty.Type]              = r.typeBySymbol
+                    val addrMapH: IntMap[LoadingSymbol.Materialising]                    = r.addrMap
+                    val parentsByH: mutable.LongMap[Chunk[Tasty.Type]]                   = r.parentsBySymbol
+                    val childrenByH: mutable.LongMap[Chunk[LoadingSymbol.Materialising]] = r.childrenByOwner
+                    val typeByH: mutable.LongMap[Tasty.Type]                             = r.typeBySymbol
                     assert(addrMapH.nonEmpty, "addrMap should be non-empty for GenericBox.tasty")
                     val aOpt = addrMapH.find { case (_, sym) =>
                         sym.name.asString == "A" && sym.kind == SymbolKind.TypeParam
                     }
                     assert(aOpt.isDefined, "addrMap should contain the TypeParam A symbol")
-                    assert(parentsByH != null, "parentsBySymbol should not be null")
-                    assert(childrenByH != null, "childrenByOwner should not be null")
-                    assert(typeByH != null, "typeBySymbol should not be null")
+                    assert(parentsByH ne null, "parentsBySymbol should not be null")
+                    assert(childrenByH ne null, "childrenByOwner should not be null")
+                    assert(typeByH ne null, "typeBySymbol should not be null")
                 case Result.Failure(e) =>
                     fail(s"Expected success but got failure: $e")
                 case Result.Panic(t) =>
