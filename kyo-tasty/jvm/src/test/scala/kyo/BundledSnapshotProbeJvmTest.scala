@@ -102,7 +102,7 @@ class BundledSnapshotProbeJvmTest extends Test:
                 packageIndex = Dict.from(syms.toSeq.zipWithIndex.map((s, i) => s"pkg$i" -> Tasty.SymbolId(i)).toMap),
                 subclassIndex = Dict.empty[Tasty.SymbolId, Chunk[Tasty.SymbolId]],
                 companionIndex = Dict.empty[Tasty.SymbolId, Tasty.SymbolId],
-                modulesIndex = Dict.empty[String, Tasty.ModuleDescriptor],
+                modulesIndex = Dict.empty[String, Tasty.Java.Module.Descriptor],
                 topLevelClassIds = Chunk.empty,
                 packageIds = Chunk.from(syms.map(_.id)),
                 unresolvedFqnByNegId = Dict.empty[Tasty.SymbolId, String],

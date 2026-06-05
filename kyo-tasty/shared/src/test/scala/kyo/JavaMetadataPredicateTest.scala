@@ -8,7 +8,7 @@ import kyo.Tasty.SymbolId
   */
 class JavaMetadataPredicateTest extends Test:
 
-    private def meta(flags: Int): Tasty.JavaMetadata = Tasty.JavaMetadata(
+    private def meta(flags: Int): Tasty.Java.Metadata = Tasty.Java.Metadata(
         throwsTypes = Chunk.empty,
         annotations = Chunk.empty,
         enclosingMethod = Maybe.Absent,

@@ -44,7 +44,7 @@ class JavaSymbolTest extends Test:
         case pk: Tasty.Symbol.Package      => pk.copy(id = id, ownerId = ownerId)
         case u: Tasty.Symbol.Unresolved    => u.copy(id = id, ownerId = ownerId)
 
-    private def symJavaMetadata(sym: Tasty.Symbol): Maybe[Tasty.JavaMetadata] = sym match
+    private def symJavaMetadata(sym: Tasty.Symbol): Maybe[Tasty.Java.Metadata] = sym match
         case c: Tasty.Symbol.ClassLike => c.javaMetadata
         case f: Tasty.Symbol.Field     => f.javaMetadata
         case m: Tasty.Symbol.Method    => m.javaMetadata

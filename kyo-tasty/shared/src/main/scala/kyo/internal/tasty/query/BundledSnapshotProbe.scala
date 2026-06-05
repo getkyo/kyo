@@ -100,8 +100,8 @@ private[kyo] object BundledSnapshotProbe:
             Dict.from(b.toMap)
         end mergedSimple
         // Merge errors and modules.
-        val mergedErrors: Chunk[TastyError]              = existing.errors ++ partial.errors
-        val mergedModules: Chunk[Tasty.ModuleDescriptor] = existing.modules ++ partial.modules
+        val mergedErrors: Chunk[TastyError]                    = existing.errors ++ partial.errors
+        val mergedModules: Chunk[Tasty.Java.Module.Descriptor] = existing.modules ++ partial.modules
         // rootSymbolId: keep existing if valid, else use partial shifted.
         val rootId =
             if existing.symbols.nonEmpty then existing.rootSymbolId

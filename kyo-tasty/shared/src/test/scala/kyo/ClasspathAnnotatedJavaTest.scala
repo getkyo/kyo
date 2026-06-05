@@ -45,7 +45,7 @@ class ClasspathAnnotatedJavaTest extends Test:
                 Maybe.Absent
             )
             // Symbol 3: class "A" carrying a JavaAnnotation whose annotationClass is symbol 2
-            val javaAnnot = Tasty.JavaAnnotation(annotCls, Chunk.empty)
+            val javaAnnot = Tasty.Java.Annotation(annotCls, Chunk.empty)
             val clsA = Tasty.Symbol.Class(
                 SymbolId(3),
                 Tasty.Name("A"),

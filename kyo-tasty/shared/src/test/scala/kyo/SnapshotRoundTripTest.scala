@@ -812,7 +812,7 @@ class SnapshotRoundTripTest extends Test:
     // Snapshot-loaded body bytes lack the name table and type context from the original TASTy
     // section, so actual tree decode produces MalformedSection. The failure IS memoized: after
     // one decodeBody call, the DecodeContext bodyMemo has size 1, confirming the per-invocation memo works.
-    // Uses DecodeContext (via Tasty.bindingLocal) to verify memoization.
+    // Uses DecodeContext (via TastyState.bindingLocal) to verify memoization.
     "snapshot body decode invokes Tasty.bodyTree and memoizes result in DecodeContext (size == 1 after call)" in run {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0xd0.toByte, 0xd1.toByte, 0xd2.toByte, 0xd3.toByte, 0xd4.toByte, 0xd5.toByte, 0xd6.toByte, 0xd7.toByte)

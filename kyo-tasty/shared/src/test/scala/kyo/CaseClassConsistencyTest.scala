@@ -39,7 +39,7 @@ class CaseClassConsistencyTest extends Test:
     }
 
     "ModuleDescriptor is a case class" in {
-        val md = Tasty.ModuleDescriptor(
+        val md = Tasty.Java.Module.Descriptor(
             name = "java.base",
             version = Maybe("17"),
             requires = Chunk.empty,

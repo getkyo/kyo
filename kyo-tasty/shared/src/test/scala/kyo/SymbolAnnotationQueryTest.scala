@@ -59,7 +59,7 @@ class SymbolAnnotationQueryTest extends Test:
         name: String,
         ownerId: Int,
         annots: Chunk[Tasty.Annotation] = Chunk.empty,
-        jannots: Chunk[Tasty.JavaAnnotation] = Chunk.empty
+        jannots: Chunk[Tasty.Java.Annotation] = Chunk.empty
     ): Tasty.Symbol.Class =
         Tasty.Symbol.Class(
             SymbolId(id),
@@ -82,7 +82,7 @@ class SymbolAnnotationQueryTest extends Test:
         id: Int,
         name: String,
         ownerId: Int,
-        jannots: Chunk[Tasty.JavaAnnotation]
+        jannots: Chunk[Tasty.Java.Annotation]
     ): Tasty.Symbol.Field =
         Tasty.Symbol.Field(
             SymbolId(id),
@@ -118,7 +118,7 @@ class SymbolAnnotationQueryTest extends Test:
                 Tasty.Type.Named(SymbolId(2)),
                 Chunk.empty
             )
-            val javaDeprecatedAnnot = Tasty.JavaAnnotation(
+            val javaDeprecatedAnnot = Tasty.Java.Annotation(
                 annotationClass = jDeprecated,
                 values = Chunk.empty
             )
@@ -263,14 +263,14 @@ class SymbolAnnotationQueryTest extends Test:
     // ── Leaf 143: findAnnotation-java-present ──────────────────────────────────
     // Given: Symbol.Field with one @java.lang.Deprecated.
     // When: f.findAnnotation("java.lang.Deprecated").
-    // Then: returns Maybe.Present(a) where a.isInstanceOf[Tasty.JavaAnnotation].
+    // Then: returns Maybe.Present(a) where a.isInstanceOf[Tasty.Java.Annotation].
     // Pins: INV-003
     "Leaf 143: findAnnotation returns Present JavaAnnotation for matching Java annotation" in run {
         buildFixture.flatMap: cp =>
             val f = cp.symbol(SymbolId(7)).asInstanceOf[Tasty.Symbol.Field]
             Tasty.withClasspath(cp):
                 Tasty.findAnnotation(f, "java.lang.Deprecated").map:
-                    case Maybe.Present(a: Tasty.JavaAnnotation) =>
+                    case Maybe.Present(a: Tasty.Java.Annotation) =>
                         assert(
                             a.annotationClass.id == SymbolId(4),
                             s"Expected annotationClass id SymbolId(4) but got ${a.annotationClass.id}"
@@ -278,7 +278,7 @@ class SymbolAnnotationQueryTest extends Test:
                         assert(a.values.isEmpty, s"Expected empty values but got ${a.values}")
                         succeed
                     case other =>
-                        fail(s"Expected Present Tasty.JavaAnnotation but got $other")
+                        fail(s"Expected Present Tasty.Java.Annotation but got $other")
     }
 
     // ── Leaf 144: findAnnotation-absent ────────────────────────────────────────

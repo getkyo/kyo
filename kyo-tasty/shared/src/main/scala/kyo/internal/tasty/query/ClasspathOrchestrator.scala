@@ -98,7 +98,7 @@ object ClasspathOrchestrator:
           * Populated during readAndDecodeTastyFile when a same-named .class file exists alongside the .tasty file.
           * Consumed by finalizeMerge to write descs(idx).javaMetadata for TASTy-loaded class symbols.
           */
-        companionJavaMeta: java.util.IdentityHashMap[Tasty.Symbol, Tasty.JavaMetadata]
+        companionJavaMeta: java.util.IdentityHashMap[Tasty.Symbol, Tasty.Java.Metadata]
     )
 
     /** Tagged union for results flowing through the result channel.
@@ -107,8 +107,8 @@ object ClasspathOrchestrator:
       * `JavaClassfileCase` carries a decoded standalone JVM .class file (F-A3-001..004 fix).
       */
     sealed private trait DecodeResult
-    final private case class FileResultCase(fr: FileResult)                           extends DecodeResult
-    final private case class ModuleInfoCase(name: String, md: Tasty.ModuleDescriptor) extends DecodeResult
+    final private case class FileResultCase(fr: FileResult)                                 extends DecodeResult
+    final private case class ModuleInfoCase(name: String, md: Tasty.Java.Module.Descriptor) extends DecodeResult
 
     /** Carries a decoded standalone .class file result and its computed binary FQN.
       *
@@ -134,11 +134,11 @@ object ClasspathOrchestrator:
         val allSymsSet: java.util.Set[Tasty.Symbol] = java.util.Collections.newSetFromMap(
             new java.util.IdentityHashMap[Tasty.Symbol, java.lang.Boolean]()
         )
-        val topLevelCls: mutable.ArrayBuffer[Tasty.Symbol]               = mutable.ArrayBuffer.empty
-        val packages: mutable.ArrayBuffer[Tasty.Symbol]                  = mutable.ArrayBuffer.empty
-        val accErrors: mutable.ArrayBuffer[TastyError]                   = mutable.ArrayBuffer.empty
-        val fileResults: mutable.ArrayBuffer[FileResult]                 = mutable.ArrayBuffer.empty
-        val moduleIndex: mutable.HashMap[String, Tasty.ModuleDescriptor] = mutable.HashMap.empty
+        val topLevelCls: mutable.ArrayBuffer[Tasty.Symbol]                     = mutable.ArrayBuffer.empty
+        val packages: mutable.ArrayBuffer[Tasty.Symbol]                        = mutable.ArrayBuffer.empty
+        val accErrors: mutable.ArrayBuffer[TastyError]                         = mutable.ArrayBuffer.empty
+        val fileResults: mutable.ArrayBuffer[FileResult]                       = mutable.ArrayBuffer.empty
+        val moduleIndex: mutable.HashMap[String, Tasty.Java.Module.Descriptor] = mutable.HashMap.empty
 
         /** F-A3-001..004 fix: decoded standalone .class files accumulated for finalizeMerge parent-type wiring. */
         val javaClassfileResults: mutable.ArrayBuffer[(String, kyo.internal.tasty.classfile.ClassfileResult)] =
@@ -1588,7 +1588,7 @@ object ClasspathOrchestrator:
             scala.collection.immutable.IntMap.empty[Tasty.Symbol],
             mutable.HashMap.empty[Int, String],
             new java.util.IdentityHashMap[Tasty.Symbol, mutable.ArrayBuffer[Tasty.Annotation]](),
-            new java.util.IdentityHashMap[Tasty.Symbol, Tasty.JavaMetadata]()
+            new java.util.IdentityHashMap[Tasty.Symbol, Tasty.Java.Metadata]()
         )
 
     /** Wrap a synchronous Kyo computation, adding elapsed nanoseconds to `counter` after it completes.
@@ -1675,7 +1675,7 @@ object ClasspathOrchestrator:
                 pass1Result.annotationsBySymbol,
                 // companionJavaMeta is populated by readAndDecodeTastyFile AFTER decodeTastyBytes returns,
                 // so this field starts empty here and is filled in the caller.
-                new java.util.IdentityHashMap[Tasty.Symbol, Tasty.JavaMetadata]()
+                new java.util.IdentityHashMap[Tasty.Symbol, Tasty.Java.Metadata]()
             )
         end for
     end decodeTastyBytes

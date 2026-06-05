@@ -3,7 +3,7 @@ package kyo.internal.tasty.classfile
 import kyo.*
 import kyo.internal.tasty.binary.ByteView
 
-/** Reads a JVM 9+ module-info.class file and produces a Tasty.ModuleDescriptor.
+/** Reads a JVM 9+ module-info.class file and produces a Tasty.Java.Module.Descriptor.
   *
   * A module-info.class is a standard JVM classfile where: - The class access_flags includes ACC_MODULE (0x8000). - The class has a single
   * "Module" attribute (JVMS §4.7.25) containing the module declaration. - The class may have a "ModuleMainClass" and "ModulePackages"
@@ -25,11 +25,11 @@ object ModuleInfoReader:
 
     /** Read a module-info.class from raw bytes.
       *
-      * Returns a Tasty.ModuleDescriptor on success. Fails with TastyError.ClassfileFormatError if: - The magic number is not 0xCAFEBABE. -
+      * Returns a Tasty.Java.Module.Descriptor on success. Fails with TastyError.ClassfileFormatError if: - The magic number is not 0xCAFEBABE. -
       * The major version is less than 53 (Java 9). - The Module attribute is missing or malformed. - Any required constant pool index is
       * out of range.
       */
-    def read(bytes: Array[Byte])(using Frame): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
+    def read(bytes: Array[Byte])(using Frame): Tasty.Java.Module.Descriptor < (Sync & Abort[TastyError]) =
         val view = ByteView(bytes)
         val path = "<module-info.class>"
         // Sync.Unsafe.defer provides AllowUnsafe for readFrom, which calls
@@ -43,7 +43,7 @@ object ModuleInfoReader:
     private[classfile] def readFrom(
         view: ByteView,
         path: String
-    )(using Frame, AllowUnsafe): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Tasty.Java.Module.Descriptor < (Sync & Abort[TastyError]) =
         checkHeader(view, path).flatMap: _ =>
             ConstantPool.read(view, path).flatMap: pool =>
                 skipClassStructure(view)
@@ -137,7 +137,7 @@ object ModuleInfoReader:
         pool: ConstantPool,
         path: String,
         attrCount: Int
-    )(using Frame, AllowUnsafe): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Tasty.Java.Module.Descriptor < (Sync & Abort[TastyError]) =
         // We need to iterate over attributes and, for "Module", call decodeModuleAttribute.
         // Because this is an effectful loop, we convert to a Kyo-effect-based approach:
         // read attribute names one by one; when we hit "Module", decode it and return.
@@ -152,8 +152,8 @@ object ModuleInfoReader:
         path: String,
         total: Int,
         idx: Int,
-        found: Maybe[Tasty.ModuleDescriptor]
-    )(using Frame, AllowUnsafe): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
+        found: Maybe[Tasty.Java.Module.Descriptor]
+    )(using Frame, AllowUnsafe): Tasty.Java.Module.Descriptor < (Sync & Abort[TastyError]) =
         if idx >= total then
             found match
                 case Present(desc) => desc
@@ -195,7 +195,7 @@ object ModuleInfoReader:
         view: ByteView,
         pool: ConstantPool,
         path: String
-    )(using Frame, AllowUnsafe): Tasty.ModuleDescriptor < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Tasty.Java.Module.Descriptor < (Sync & Abort[TastyError]) =
         // module_name_index: CONSTANT_Module -> points to CONSTANT_Utf8 with module name (e.g., "java.base")
         val moduleNameIdx = readU2(view)
         val moduleFlags   = readU2(view)
@@ -213,7 +213,7 @@ object ModuleInfoReader:
                             readUses(view, pool, path, usesCount, 0, Chunk.empty).flatMap: uses =>
                                 val providesCount = readU2(view)
                                 readProvides(view, pool, path, providesCount, 0, Chunk.empty).map: provides =>
-                                    Tasty.ModuleDescriptor(
+                                    Tasty.Java.Module.Descriptor(
                                         name = moduleName,
                                         version = moduleVersion,
                                         requires = requires,
@@ -256,8 +256,8 @@ object ModuleInfoReader:
         path: String,
         total: Int,
         idx: Int,
-        acc: Chunk[Tasty.ModuleRequires]
-    )(using Frame, AllowUnsafe): Chunk[Tasty.ModuleRequires] < (Sync & Abort[TastyError]) =
+        acc: Chunk[Tasty.Java.Module.Requires]
+    )(using Frame, AllowUnsafe): Chunk[Tasty.Java.Module.Requires] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             val requiresIdx    = readU2(view)
@@ -267,7 +267,7 @@ object ModuleInfoReader:
                 resolveVersion(pool, requiresVerIdx, path).flatMap: version =>
                     val isTransitive  = (requiresFlags & ACC_TRANSITIVE) != 0
                     val isStaticPhase = (requiresFlags & ACC_STATIC_PHASE) != 0
-                    val req           = Tasty.ModuleRequires(name, version, isTransitive, isStaticPhase)
+                    val req           = Tasty.Java.Module.Requires(name, version, isTransitive, isStaticPhase)
                     readRequires(view, pool, path, total, idx + 1, acc.appended(req))
 
     /** Read `count` exports entries. */
@@ -277,8 +277,8 @@ object ModuleInfoReader:
         path: String,
         total: Int,
         idx: Int,
-        acc: Chunk[Tasty.ModuleExports]
-    )(using Frame, AllowUnsafe): Chunk[Tasty.ModuleExports] < (Sync & Abort[TastyError]) =
+        acc: Chunk[Tasty.Java.Module.Exports]
+    )(using Frame, AllowUnsafe): Chunk[Tasty.Java.Module.Exports] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             val exportsIdx   = readU2(view)
@@ -286,7 +286,7 @@ object ModuleInfoReader:
             val toCount      = readU2(view)
             resolvePackageName(pool, exportsIdx, path).flatMap: packageName =>
                 readModuleRefs(view, pool, path, toCount, 0, Chunk.empty).flatMap: targets =>
-                    val exp = Tasty.ModuleExports(packageName, targets, exportsFlags.toLong)
+                    val exp = Tasty.Java.Module.Exports(packageName, targets, exportsFlags.toLong)
                     readExports(view, pool, path, total, idx + 1, acc.appended(exp))
 
     /** Read `count` opens entries (same structure as exports). */
@@ -296,8 +296,8 @@ object ModuleInfoReader:
         path: String,
         total: Int,
         idx: Int,
-        acc: Chunk[Tasty.ModuleOpens]
-    )(using Frame, AllowUnsafe): Chunk[Tasty.ModuleOpens] < (Sync & Abort[TastyError]) =
+        acc: Chunk[Tasty.Java.Module.Opens]
+    )(using Frame, AllowUnsafe): Chunk[Tasty.Java.Module.Opens] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             val opensIdx   = readU2(view)
@@ -305,7 +305,7 @@ object ModuleInfoReader:
             val toCount    = readU2(view)
             resolvePackageName(pool, opensIdx, path).flatMap: packageName =>
                 readModuleRefs(view, pool, path, toCount, 0, Chunk.empty).flatMap: targets =>
-                    val op = Tasty.ModuleOpens(packageName, targets, opensFlags.toLong)
+                    val op = Tasty.Java.Module.Opens(packageName, targets, opensFlags.toLong)
                     readOpens(view, pool, path, total, idx + 1, acc.appended(op))
 
     /** Read `count` uses entries (each is a CONSTANT_Class index). */
@@ -330,15 +330,15 @@ object ModuleInfoReader:
         path: String,
         total: Int,
         idx: Int,
-        acc: Chunk[Tasty.ModuleProvides]
-    )(using Frame, AllowUnsafe): Chunk[Tasty.ModuleProvides] < (Sync & Abort[TastyError]) =
+        acc: Chunk[Tasty.Java.Module.Provides]
+    )(using Frame, AllowUnsafe): Chunk[Tasty.Java.Module.Provides] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             val providesIdx       = readU2(view)
             val providesWithCount = readU2(view)
             pool.classRef(providesIdx).flatMap: interfaceName =>
                 readClassRefs(view, pool, path, providesWithCount, 0, Chunk.empty).flatMap: impls =>
-                    val prov = Tasty.ModuleProvides(interfaceName.replace('/', '.'), impls)
+                    val prov = Tasty.Java.Module.Provides(interfaceName.replace('/', '.'), impls)
                     readProvides(view, pool, path, total, idx + 1, acc.appended(prov))
 
     /** Read `count` CONSTANT_Module indices and resolve each to a module name string. */

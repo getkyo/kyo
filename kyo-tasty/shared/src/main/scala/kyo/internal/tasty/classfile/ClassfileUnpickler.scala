@@ -1045,7 +1045,7 @@ object ClassfileUnpickler:
                                                 // Resolve PermittedSubclasses: symbols (for metadata) and FQNs (for finalizeMerge).
                                                 resolveClassSymbolsWithFqns(pool, classAttrs.permittedSubclassIdxs).map:
                                                     (permittedSubSym, permittedSubFqns) =>
-                                                        val classMetadata = Tasty.JavaMetadata(
+                                                        val classMetadata = Tasty.Java.Metadata(
                                                             throwsTypes = Chunk.empty,
                                                             annotations = classAnnotations,
                                                             enclosingMethod = enclosingMethodMaybe,
@@ -1343,7 +1343,7 @@ object ClassfileUnpickler:
         enclosingClassIdx: Maybe[Int],
         enclosingMethodIdx: Maybe[Int],
         innerTable: Map[String, (String, String)]
-    )(using Frame, AllowUnsafe): Maybe[Tasty.EnclosingMethod] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Maybe[Tasty.Java.EnclosingMethod] < (Sync & Abort[TastyError]) =
         enclosingClassIdx match
             case Absent => Absent
             case Present(classIdx) =>
@@ -1365,7 +1365,7 @@ object ClassfileUnpickler:
                             Absent
                         case Present(methodIdx) =>
                             pool.nameAndType(methodIdx).map: (methodName, _) =>
-                                Present(Tasty.EnclosingMethod(enclosingClassSym, Tasty.Name(methodName)))
+                                Present(Tasty.Java.EnclosingMethod(enclosingClassSym, Tasty.Name(methodName)))
                     end match
 
     private def buildRecordComponents(
@@ -1373,7 +1373,7 @@ object ClassfileUnpickler:
         path: String,
         components: Chunk[(Int, Int, Maybe[Int])],
         isRecord: Boolean
-    )(using Frame, AllowUnsafe): Chunk[Tasty.RecordComponent] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.Java.RecordComponent] < (Sync & Abort[TastyError]) =
         if !isRecord || components.isEmpty then Chunk.empty
         else buildRecordComponentList(pool, path, components, 0, Chunk.empty)
 
@@ -1382,8 +1382,8 @@ object ClassfileUnpickler:
         path: String,
         components: Chunk[(Int, Int, Maybe[Int])],
         idx: Int,
-        acc: Chunk[Tasty.RecordComponent]
-    )(using Frame, AllowUnsafe): Chunk[Tasty.RecordComponent] < (Sync & Abort[TastyError]) =
+        acc: Chunk[Tasty.Java.RecordComponent]
+    )(using Frame, AllowUnsafe): Chunk[Tasty.Java.RecordComponent] < (Sync & Abort[TastyError]) =
         if idx >= components.length then acc
         else
             val (nameIdx, descIdx, sigIdx) = components(idx)
@@ -1396,7 +1396,7 @@ object ClassfileUnpickler:
                             path,
                             components,
                             idx + 1,
-                            acc.appended(Tasty.RecordComponent(name, compType))
+                            acc.appended(Tasty.Java.RecordComponent(name, compType))
                         )
 
     private def resolveComponentType(
@@ -1451,8 +1451,8 @@ object ClassfileUnpickler:
         pool: ConstantPool,
         visibleBytes: Maybe[Array[Byte]],
         invisibleBytes: Maybe[Array[Byte]]
-    )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
-        val visibleEffect: Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.Java.Annotation] < (Sync & Abort[TastyError]) =
+        val visibleEffect: Chunk[Tasty.Java.Annotation] < (Sync & Abort[TastyError]) =
             visibleBytes match
                 case Absent => Chunk.empty
                 case Present(bytes) =>
@@ -1460,7 +1460,7 @@ object ClassfileUnpickler:
                     JavaAnnotationUnpickler.readAnnotations(annView, pool)
 
         visibleEffect.map: visible =>
-            val invisibleEffect: Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
+            val invisibleEffect: Chunk[Tasty.Java.Annotation] < (Sync & Abort[TastyError]) =
                 invisibleBytes match
                     case Absent => Chunk.empty
                     case Present(bytes) =>
@@ -1523,14 +1523,14 @@ object ClassfileUnpickler:
                     resolveThrowsTypes(pool, path, info.exceptionIdxs).map: throwsTypes =>
                         decodeAnnotations(pool, info.visibleAnnotationBytes, info.invisibleAnnotationBytes).map: memberAnnotations =>
                             // Wrap MethodParameters as paramNames entry: ParamGroup(methodName, paramName chunk)
-                            val paramNamesEntry: Chunk[Tasty.ParamGroup] =
+                            val paramNamesEntry: Chunk[Tasty.Java.ParamGroup] =
                                 if info.paramNames.isEmpty then Chunk.empty
                                 else
-                                    Chunk(Tasty.ParamGroup(
+                                    Chunk(Tasty.Java.ParamGroup(
                                         Tasty.Name(memberName),
                                         info.paramNames.map(n => Tasty.Name(n))
                                     ))
-                            val metadata = Tasty.JavaMetadata(
+                            val metadata = Tasty.Java.Metadata(
                                 throwsTypes = throwsTypes,
                                 annotations = memberAnnotations,
                                 enclosingMethod = Absent,
@@ -1678,7 +1678,7 @@ object ClassfileUnpickler:
     private def decodeTypeAnnotations(
         bytes: Maybe[Array[Byte]],
         pool: ConstantPool
-    )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.Java.Annotation] < (Sync & Abort[TastyError]) =
         bytes match
             case Absent        => Chunk.empty
             case Present(data) => decodeTypeAnnotations(data, pool)
@@ -1823,7 +1823,7 @@ object ClassfileUnpickler:
     private def decodeTypeAnnotations(
         bytes: Array[Byte],
         pool: ConstantPool
-    )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[Tasty.Java.Annotation] < (Sync & Abort[TastyError]) =
         val typeAnnView = ByteView(bytes)
         Sync.defer(readU2(typeAnnView)).map: count =>
             decodeTypeAnnotationList(typeAnnView, pool, count, 0, Chunk.empty)
@@ -1834,8 +1834,8 @@ object ClassfileUnpickler:
         pool: ConstantPool,
         total: Int,
         idx: Int,
-        acc: Chunk[Tasty.JavaAnnotation]
-    )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
+        acc: Chunk[Tasty.Java.Annotation]
+    )(using Frame, AllowUnsafe): Chunk[Tasty.Java.Annotation] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             Sync.defer(skipTypeAnnotationTargetAndPath(view)).map: _ =>

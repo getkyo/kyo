@@ -132,16 +132,16 @@ class JavaAnnotationUnpicklerTest extends Test:
                         val valueOpt = ann.values.find(_._1 == key)
                         assert(valueOpt.isDefined, s"Expected key Name('value') in values: ${ann.values}")
                         valueOpt.get._2 match
-                            case Tasty.JavaAnnotation.Value.ArrayVal(elems) =>
+                            case Tasty.Java.Annotation.Value.ArrayVal(elems) =>
                                 assert(elems.size == 2, s"Expected 2 array elements, got ${elems.size}")
                                 elems(0) match
-                                    case Tasty.JavaAnnotation.Value.StringVal(s) =>
+                                    case Tasty.Java.Annotation.Value.StringVal(s) =>
                                         assert(s == "a", s"Expected first element 'a', got '$s'")
                                     case other =>
                                         fail(s"Expected StringVal('a'), got $other")
                                 end match
                                 elems(1) match
-                                    case Tasty.JavaAnnotation.Value.StringVal(s) =>
+                                    case Tasty.Java.Annotation.Value.StringVal(s) =>
                                         assert(s == "b", s"Expected second element 'b', got '$s'")
                                     case other =>
                                         fail(s"Expected StringVal('b'), got $other")

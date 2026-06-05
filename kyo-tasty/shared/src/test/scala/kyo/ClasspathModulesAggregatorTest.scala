@@ -13,8 +13,8 @@ class ClasspathModulesAggregatorTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private def makeModule(name: String): Tasty.ModuleDescriptor =
-        Tasty.ModuleDescriptor(
+    private def makeModule(name: String): Tasty.Java.Module.Descriptor =
+        Tasty.Java.Module.Descriptor(
             name = name,
             version = Maybe.Absent,
             requires = Chunk.empty,

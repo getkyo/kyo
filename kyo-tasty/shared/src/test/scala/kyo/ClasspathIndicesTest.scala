@@ -52,7 +52,7 @@ class ClasspathIndicesTest extends Test:
             packageIndex = Dict("test" -> SymbolId(1)),
             subclassIndex = Dict.empty[SymbolId, Chunk[SymbolId]],
             companionIndex = Dict.empty[SymbolId, SymbolId],
-            moduleIndex = Dict.empty[String, Tasty.ModuleDescriptor],
+            moduleIndex = Dict.empty[String, Tasty.Java.Module.Descriptor],
             errors = Chunk.empty
         )
         val knownFqn = "test.Foo"
@@ -93,7 +93,7 @@ class ClasspathIndicesTest extends Test:
             packageIndex = Dict.empty[String, SymbolId],
             subclassIndex = Dict.empty[SymbolId, Chunk[SymbolId]],
             companionIndex = Dict.empty[SymbolId, SymbolId],
-            moduleIndex = Dict.empty[String, Tasty.ModuleDescriptor],
+            moduleIndex = Dict.empty[String, Tasty.Java.Module.Descriptor],
             errors = Chunk.empty
         )
         val result = cp.indices.bySimpleName.get("Bar")

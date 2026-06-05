@@ -650,7 +650,7 @@ object SnapshotWriter:
         val tmp  = new Array[Byte](4)
 
         val entries = symbols.zipWithIndex.flatMap: (sym, idx) =>
-            val metaOpt: kyo.Maybe[Tasty.JavaMetadata] = sym match
+            val metaOpt: kyo.Maybe[Tasty.Java.Metadata] = sym match
                 case c: Tasty.Symbol.ClassLike => c.javaMetadata
                 case f: Tasty.Symbol.Field     => f.javaMetadata
                 case m: Tasty.Symbol.Method    => m.javaMetadata

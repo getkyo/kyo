@@ -168,7 +168,7 @@ class FallbackBindingTest extends Test:
         val _findObject: Maybe[Tasty.Symbol.Object] < Sync                         = Tasty.findObject("x")
         val _findSymbol: Maybe[Tasty.Symbol] < Sync                                = Tasty.findSymbol("x")
         val _findPackage: Maybe[Tasty.Symbol.Package] < Sync                       = Tasty.findPackage("x")
-        val _findModule: Maybe[Tasty.ModuleDescriptor] < Sync                      = Tasty.findModule("x")
+        val _findModule: Maybe[Tasty.Java.Module.Descriptor] < Sync                = Tasty.findModule("x")
         val _findConcreteClass: Maybe[Tasty.Symbol.Class] < Sync                   = Tasty.findConcreteClass("x")
         val _findClassesByName: Chunk[Tasty.Symbol.Class] < Sync                   = Tasty.findClassesByName("x")
         val _findMethod: Maybe[Tasty.Symbol.Method] < Sync                         = Tasty.findMethod("x", "y")

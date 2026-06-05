@@ -23,7 +23,7 @@ import scala.collection.immutable.IntMap
   * **What lives here.** `Symbol` (and its sealed subtypes) is the declaration model: classes, traits, objects,
   * methods, vals, vars, fields, type aliases, type parameters, parameters, packages. `Type` is the type model:
   * named references, applied constructors, function shapes, intersections and unions, refinements. `Tree` is the
-  * AST model returned by `Symbol.bodyTree` for method and val bodies. `Annotation` / `JavaAnnotation` cover Scala
+  * AST model returned by `Symbol.bodyTree` for method and val bodies. `Annotation` / `Java.Annotation` cover Scala
   * and JVM annotations as parallel ADTs. `Classpath` is the in-memory index that resolves cross-symbol references
   * and answers subclass / annotation / FQN queries.
   *
@@ -522,226 +522,6 @@ object Tasty:
       * Equality and hashing are structural over both fields (case class auto-generation).
       */
     final case class Annotation(annotationType: Type, arguments: Chunk[Tree]) derives Schema, CanEqual
-
-    /** A single declared field of a Java record (JVMS `Record` attribute entry).
-      *
-      * Carried by `JavaMetadata.recordComponents: Chunk[RecordComponent]` on the symbol of the record
-      * class itself. Java records expose their components in declaration order; the loader preserves that
-      * order so the chunk index aligns with the canonical constructor parameter list.
-      *
-      * `name` is the component's source-level name; `tpe` is its declared type as resolved against the
-      * classpath at load time. Equality is structural across both fields. Present only on JVM symbols
-      * (the attribute is JVMS-defined); `Absent` on TASTy-sourced symbols even if they happen to be record
-      * classes, because the record-ness lives in the JVM attribute and not in the TASTy ADT.
-      */
-    final case class RecordComponent(name: Name, tpe: Type) derives CanEqual
-
-    /** Parameter-name table for one method overload: the method's name plus the names of its parameters in source order.
-      *
-      * Carried by `JavaMetadata.parameterNames: Chunk[ParamGroup]` on the owning class symbol. Java classfiles
-      * record parameter names in a `MethodParameters` attribute when compiled with `-parameters`; the loader
-      * groups those entries by their owning method so each `ParamGroup` corresponds to one overload of
-      * `methodName`. `parameterNames` is in source order and may be empty (no `MethodParameters` attribute or
-      * a zero-arity method).
-      *
-      * Equality is structural across both fields (case class auto-generation).
-      */
-    final case class ParamGroup(methodName: Name, parameterNames: Chunk[Name]) derives CanEqual
-
-    /** The enclosing-method context for a local or anonymous class (JVMS `EnclosingMethod` attribute).
-      *
-      * Carried by `JavaMetadata.enclosingMethod: Maybe[EnclosingMethod]` on the symbol of a local or
-      * anonymous class. The JVMS records the immediately enclosing method for any class that was declared
-      * inside one; absent otherwise. `owner` is the enclosing method's owner class symbol, and `methodName`
-      * is the enclosing method's source-level name. Use this to walk back from an anonymous inner class
-      * symbol to the method that declared it.
-      *
-      * Equality is structural across both fields (case class auto-generation).
-      */
-    final case class EnclosingMethod(owner: Symbol, methodName: Name) derives CanEqual
-
-    /** JVM-only metadata attached to symbols sourced from `.class` files.
-      *
-      * Carried by `Symbol.javaMetadata: Maybe[JavaMetadata]` and `Absent` on symbols that come from TASTy
-      * sources only (where the equivalent information lives in `Symbol.flags`, `Annotation`, etc.). This
-      * companion exposes the JVM-specific attributes that have no clean TASTy analogue: the JVM access flag
-      * word, the `throws` clause, the `EnclosingMethod` attribute for local / anonymous classes, the `Record`
-      * component table for Java records, the bootstrap method table, the nest host / nest members for
-      * Java 11+ nestmates, parameter-name groups, and runtime type annotations.
-      *
-      * **Annotations.** `annotations` carries `RuntimeVisibleAnnotations` and `RuntimeInvisibleAnnotations`
-      * decoded into the `JavaAnnotation` ADT; `runtimeTypeAnnotations` covers the type-annotation flavour
-      * (`RuntimeVisibleTypeAnnotations` and its invisible sibling). Scala-side annotations on the same symbol
-      * still live in the symbol's `annotations` field, not here.
-      *
-      * **Access flags.** `accessFlags` is the raw 16-bit access flag word; `isJvmPublic`, `isJvmPrivate`,
-      * `isJvmProtected`, `isJvmStatic`, and `isJvmFinal` are the common predicates. For flags without a
-      * predicate, mask `accessFlags` against the JVMS constants directly.
-      */
-    final case class JavaMetadata(
-        throwsTypes: Chunk[Type],
-        annotations: Chunk[JavaAnnotation],
-        enclosingMethod: Maybe[EnclosingMethod],
-        accessFlags: Int,
-        recordComponents: Chunk[RecordComponent],
-        bootstrapMethods: Chunk[Chunk[Int]],
-        nestHost: Maybe[Symbol],
-        nestMembers: Chunk[Symbol],
-        paramNames: Chunk[ParamGroup],
-        runtimeTypeAnnotations: Chunk[JavaAnnotation]
-    ) derives Schema, CanEqual
-
-    /** A Java retention-class annotation decoded from a `.class` file's
-      * `RuntimeVisibleAnnotations` / `RuntimeInvisibleAnnotations` attribute.
-      *
-      * Kept structurally separate from `Annotation` (the Scala-source annotation type) because the value
-      * spaces are different: a Java annotation's element values are primitive constants, class literals, enum
-      * constants, nested annotations, and arrays thereof, while a Scala annotation carries arbitrary
-      * `Tree.Apply` arguments. Mixing the two into a single ADT would require either lossy normalisation or
-      * a sum type at every callsite; keeping them parallel keeps each side honest.
-      *
-      * `annotationClass` is the resolved `Symbol` for the annotation interface (e.g. the symbol of
-      * `java.lang.SuppressWarnings`). `values` is the ordered list of `(elementName, value)` pairs as they
-      * appeared in the classfile; element names are interned `Name` values and ordering matches the source
-      * declaration. Element values are typed via the `JavaAnnotation.Value` enum nested in the companion.
-      *
-      * **Querying.** `Symbol.hasAnnotation(fqn)` and `Symbol.findAnnotation(fqn)` walk both this list and the
-      * Scala `annotations` list (where applicable), so the common "is this symbol annotated with X" question
-      * does not need to branch on the value space.
-      */
-    final case class JavaAnnotation(annotationClass: Symbol, values: Chunk[(Name, JavaAnnotation.Value)])
-        derives CanEqual
-    object JavaAnnotation:
-        /** Typed value space for a Java annotation element. Mirrors the `element_value` shapes defined by
-          * JVMS §4.7.16.1: every primitive constant, string, class literal, enum constant, nested annotation,
-          * and array of any of those. Cases nest recursively through `ArrayVal` and `AnnotationVal`.
-          *
-          * Note: the JVM annotation format collapses `char`, `byte`, and `short` element values into
-          * `IntVal`, so there are no separate `CharVal`, `ByteVal`, or `ShortVal` cases.
-          */
-        enum Value derives CanEqual:
-            case StringVal(s: String)
-            case IntVal(i: Int)
-            case LongVal(l: Long)
-            case FloatVal(f: Float)
-            case DoubleVal(d: Double)
-            case BoolVal(b: Boolean)
-            case ClassVal(tpe: Type)
-            case EnumVal(enumType: Symbol, constant: Name)
-            case ArrayVal(elements: Chunk[Value])
-            case AnnotationVal(nested: JavaAnnotation)
-        end Value
-
-        // Schema for JavaAnnotation.Value: recursive type requires a lazy given.
-        // JavaAnnotation.Value.AnnotationVal contains JavaAnnotation which contains Value.
-        // The lazy initialization breaks the compile-time recursion.
-        private var _schemaValue: Schema[JavaAnnotation.Value] = null.asInstanceOf[Schema[JavaAnnotation.Value]]
-        given schemaValue: Schema[JavaAnnotation.Value] =
-            if _schemaValue == null then
-                _schemaValue = Schema.derived[JavaAnnotation.Value]
-            _schemaValue
-        end schemaValue
-
-        private var _schema: Schema[JavaAnnotation] = null.asInstanceOf[Schema[JavaAnnotation]]
-        given schema: Schema[JavaAnnotation] =
-            if _schema == null then
-                _schema = Schema.derived[JavaAnnotation]
-            _schema
-        end schema
-    end JavaAnnotation
-
-    // ── JPMS Module ADT ─────────────────────────────────────────────────────
-
-    /** Describes a JPMS `requires` directive (one dependency of a module).
-      *
-      * @param name
-      *   The required module name (e.g., "java.base").
-      * @param version
-      *   The required module version, if specified.
-      * @param isTransitive
-      *   True if the requires has `ACC_TRANSITIVE` (0x0020) set.
-      * @param isStaticPhase
-      *   True if the requires has `ACC_STATIC_PHASE` (0x0040) set.
-      */
-    final case class ModuleRequires(
-        name: String,
-        version: Maybe[String],
-        isTransitive: Boolean,
-        isStaticPhase: Boolean
-    )
-
-    /** Describes a JPMS `exports` directive (a package exported to zero or more modules).
-      *
-      * @param packageName
-      *   The exported package name in dotted form (e.g., "java.lang").
-      * @param targets
-      *   The module names this package is exported to. Empty chunk means exported unconditionally (unqualified export).
-      * @param flags
-      *   The raw `exports_flags` value from the classfile Module attribute (JVMS §4.7.25). The `ACC_EXPORTS_SYNTHETIC` bit (0x1000)
-      *   indicates the directive was generated by the compiler and not present in the source.
-      */
-    final case class ModuleExports(
-        packageName: String,
-        targets: Chunk[String],
-        flags: Long
-    )
-
-    /** Describes a JPMS `opens` directive (a package opened for deep reflection).
-      *
-      * @param packageName
-      *   The opened package name in dotted form.
-      * @param targets
-      *   The module names this package is opened to. Empty chunk means opened unconditionally.
-      * @param flags
-      *   The raw `opens_flags` value from the classfile Module attribute (JVMS §4.7.25). The `ACC_OPENS_SYNTHETIC` bit (0x1000) indicates
-      *   the directive was generated by the compiler and not present in the source.
-      */
-    final case class ModuleOpens(
-        packageName: String,
-        targets: Chunk[String],
-        flags: Long
-    )
-
-    /** Describes a JPMS `provides` directive (a service implementation).
-      *
-      * @param serviceName
-      *   The service interface class name in dotted form.
-      * @param implementations
-      *   The implementation class names in dotted form.
-      */
-    final case class ModuleProvides(
-        serviceName: String,
-        implementations: Chunk[String]
-    )
-
-    /** Parsed content of a module-info.class file.
-      *
-      * Produced by `ModuleInfoReader.read` and stored in the classpath `moduleIndex` after a successful parse.
-      *
-      * @param name
-      *   The module name (e.g., "java.base").
-      * @param version
-      *   The module version string, if present in the `module-info.class`.
-      * @param requires
-      *   All requires directives.
-      * @param exports
-      *   All exports directives.
-      * @param opens
-      *   All opens directives.
-      * @param uses
-      *   Service interfaces used by this module (dotted class names).
-      * @param provides
-      *   Service implementations provided by this module.
-      */
-    final case class ModuleDescriptor(
-        name: String,
-        version: Maybe[String],
-        requires: Chunk[ModuleRequires],
-        exports: Chunk[ModuleExports],
-        opens: Chunk[ModuleOpens],
-        uses: Chunk[String],
-        provides: Chunk[ModuleProvides]
-    ) derives Schema, CanEqual
 
     // ── Type ADT ────────────────────────────────────────────────────────────
 
@@ -1714,12 +1494,12 @@ object Tasty:
           * classlike subtypes uniformly: `case c: Symbol.ClassLike => ...`.
           */
         sealed trait ClassLike extends Symbol:
-            def javaMetadata: Maybe[JavaMetadata]
+            def javaMetadata: Maybe[Java.Metadata]
             def parentTypes: Chunk[Type]
             def typeParamIds: Chunk[SymbolId]
             def declarationIds: Chunk[SymbolId]
             def annotations: Chunk[Annotation]
-            def javaAnnotations: Chunk[JavaAnnotation]
+            def javaAnnotations: Chunk[Java.Annotation]
             def body: Maybe[SymbolBody]
 
         end ClassLike
@@ -1741,13 +1521,13 @@ object Tasty:
             ownerId: SymbolId,
             scaladoc: Maybe[String],
             sourcePosition: Maybe[Position],
-            javaMetadata: Maybe[JavaMetadata],
+            javaMetadata: Maybe[Java.Metadata],
             parentTypes: Chunk[Type],
             typeParamIds: Chunk[SymbolId],
             declarationIds: Chunk[SymbolId],
             permittedSubclassIds: Maybe[Chunk[SymbolId]],
             annotations: Chunk[Annotation],
-            javaAnnotations: Chunk[JavaAnnotation],
+            javaAnnotations: Chunk[Java.Annotation],
             body: Maybe[SymbolBody]
         ) extends ClassLike derives Schema, CanEqual
 
@@ -1764,13 +1544,13 @@ object Tasty:
             ownerId: SymbolId,
             scaladoc: Maybe[String],
             sourcePosition: Maybe[Position],
-            javaMetadata: Maybe[JavaMetadata],
+            javaMetadata: Maybe[Java.Metadata],
             parentTypes: Chunk[Type],
             typeParamIds: Chunk[SymbolId],
             declarationIds: Chunk[SymbolId],
             permittedSubclassIds: Maybe[Chunk[SymbolId]],
             annotations: Chunk[Annotation],
-            javaAnnotations: Chunk[JavaAnnotation],
+            javaAnnotations: Chunk[Java.Annotation],
             body: Maybe[SymbolBody]
         ) extends ClassLike derives Schema, CanEqual
 
@@ -1795,13 +1575,13 @@ object Tasty:
             ownerId: SymbolId,
             scaladoc: Maybe[String],
             sourcePosition: Maybe[Position],
-            javaMetadata: Maybe[JavaMetadata],
+            javaMetadata: Maybe[Java.Metadata],
             parentTypes: Chunk[Type],
             typeParamIds: Chunk[SymbolId],
             declarationIds: Chunk[SymbolId],
             permittedSubclassIds: Maybe[Chunk[SymbolId]],
             annotations: Chunk[Annotation],
-            javaAnnotations: Chunk[JavaAnnotation],
+            javaAnnotations: Chunk[Java.Annotation],
             body: Maybe[SymbolBody]
         ) extends ClassLike derives Schema, CanEqual
 
@@ -1824,12 +1604,12 @@ object Tasty:
             ownerId: SymbolId,
             scaladoc: Maybe[String],
             sourcePosition: Maybe[Position],
-            javaMetadata: Maybe[JavaMetadata],
+            javaMetadata: Maybe[Java.Metadata],
             parentTypes: Chunk[Type],
             typeParamIds: Chunk[SymbolId],
             declarationIds: Chunk[SymbolId],
             annotations: Chunk[Annotation],
-            javaAnnotations: Chunk[JavaAnnotation],
+            javaAnnotations: Chunk[Java.Annotation],
             body: Maybe[SymbolBody]
         ) extends ClassLike derives Schema, CanEqual
 
@@ -1861,7 +1641,7 @@ object Tasty:
             typeParamIds: Chunk[SymbolId],
             annotations: Chunk[Annotation],
             body: Maybe[SymbolBody],
-            javaMetadata: Maybe[JavaMetadata]
+            javaMetadata: Maybe[Java.Metadata]
         ) extends Symbol derives Schema, CanEqual
 
         /** A Scala `val`: an immutable value member of a class, trait, object, or top-level package. Also represents
@@ -1921,8 +1701,8 @@ object Tasty:
             scaladoc: Maybe[String],
             sourcePosition: Maybe[Position],
             declaredType: Maybe[Type],
-            javaMetadata: Maybe[JavaMetadata],
-            javaAnnotations: Chunk[JavaAnnotation]
+            javaMetadata: Maybe[Java.Metadata],
+            javaAnnotations: Chunk[Java.Annotation]
         ) extends Symbol derives Schema, CanEqual
 
         /** A Scala `type X[T] = Body` declaration: a transparent name for another type. `body` is the right-hand
@@ -2118,6 +1898,248 @@ object Tasty:
     // which Scala 3 implicit lookup finds via companion object rules when expanding Schema[Symbol].
     given schemaSymbol: Schema[Symbol] = Schema.derived
 
+    // ── Java namespace ──────────────────────────────────────────────────────
+
+    /** Namespace for all Java/JVM-specific types decoded from `.class` files.
+      *
+      * All types that are specific to the JVM binary format and have no Scala-source equivalent live here.
+      * `Java.Annotation` and `Java.Metadata` cover the JVM annotation and classfile metadata models;
+      * `Java.Module.*` covers the JPMS module-info.class descriptors. Scala-source annotations on the
+      * same symbols still live in the `Annotation` type (not here).
+      */
+    object Java:
+
+        /** A single declared field of a Java record (JVMS `Record` attribute entry).
+          *
+          * Carried by `Java.Metadata.recordComponents: Chunk[RecordComponent]` on the symbol of the record
+          * class itself. Java records expose their components in declaration order; the loader preserves that
+          * order so the chunk index aligns with the canonical constructor parameter list.
+          *
+          * `name` is the component's source-level name; `tpe` is its declared type as resolved against the
+          * classpath at load time. Equality is structural across both fields. Present only on JVM symbols
+          * (the attribute is JVMS-defined); `Absent` on TASTy-sourced symbols even if they happen to be record
+          * classes, because the record-ness lives in the JVM attribute and not in the TASTy ADT.
+          */
+        final case class RecordComponent(name: Name, tpe: Type) derives Schema, CanEqual
+
+        /** Parameter-name table for one method overload: the method's name plus the names of its parameters in source order.
+          *
+          * Carried by `Java.Metadata.paramNames: Chunk[ParamGroup]` on the owning class symbol. Java classfiles
+          * record parameter names in a `MethodParameters` attribute when compiled with `-parameters`; the loader
+          * groups those entries by their owning method so each `ParamGroup` corresponds to one overload of
+          * `methodName`. `parameterNames` is in source order and may be empty (no `MethodParameters` attribute or
+          * a zero-arity method).
+          *
+          * Equality is structural across both fields (case class auto-generation).
+          */
+        final case class ParamGroup(methodName: Name, parameterNames: Chunk[Name]) derives Schema, CanEqual
+
+        /** The enclosing-method context for a local or anonymous class (JVMS `EnclosingMethod` attribute).
+          *
+          * Carried by `Java.Metadata.enclosingMethod: Maybe[EnclosingMethod]` on the symbol of a local or
+          * anonymous class. The JVMS records the immediately enclosing method for any class that was declared
+          * inside one; absent otherwise. `owner` is the enclosing method's owner class symbol, and `methodName`
+          * is the enclosing method's source-level name. Use this to walk back from an anonymous inner class
+          * symbol to the method that declared it.
+          *
+          * Equality is structural across both fields (case class auto-generation).
+          */
+        final case class EnclosingMethod(owner: Symbol, methodName: Name) derives Schema, CanEqual
+
+        /** JVM-only metadata attached to symbols sourced from `.class` files.
+          *
+          * Carried by `Symbol.javaMetadata: Maybe[Java.Metadata]` and `Absent` on symbols that come from TASTy
+          * sources only (where the equivalent information lives in `Symbol.flags`, `Annotation`, etc.). This
+          * companion exposes the JVM-specific attributes that have no clean TASTy analogue: the JVM access flag
+          * word, the `throws` clause, the `EnclosingMethod` attribute for local / anonymous classes, the `Record`
+          * component table for Java records, the bootstrap method table, the nest host / nest members for
+          * Java 11+ nestmates, parameter-name groups, and runtime type annotations.
+          *
+          * **Annotations.** `annotations` carries `RuntimeVisibleAnnotations` and `RuntimeInvisibleAnnotations`
+          * decoded into the `Java.Annotation` ADT; `runtimeTypeAnnotations` covers the type-annotation flavour
+          * (`RuntimeVisibleTypeAnnotations` and its invisible sibling). Scala-side annotations on the same symbol
+          * still live in the symbol's `annotations` field, not here.
+          *
+          * **Access flags.** `accessFlags` is the raw 16-bit access flag word; `isJvmPublic`, `isJvmPrivate`,
+          * `isJvmProtected`, `isJvmStatic`, and `isJvmFinal` are the common predicates. For flags without a
+          * predicate, mask `accessFlags` against the JVMS constants directly.
+          */
+        final case class Metadata(
+            throwsTypes: Chunk[Type],
+            annotations: Chunk[Annotation],
+            enclosingMethod: Maybe[EnclosingMethod],
+            accessFlags: Int,
+            recordComponents: Chunk[RecordComponent],
+            bootstrapMethods: Chunk[Chunk[Int]],
+            nestHost: Maybe[Symbol],
+            nestMembers: Chunk[Symbol],
+            paramNames: Chunk[ParamGroup],
+            runtimeTypeAnnotations: Chunk[Annotation]
+        ) derives Schema, CanEqual
+
+        /** A Java retention-class annotation decoded from a `.class` file's
+          * `RuntimeVisibleAnnotations` / `RuntimeInvisibleAnnotations` attribute.
+          *
+          * Kept structurally separate from `Tasty.Annotation` (the Scala-source annotation type) because the value
+          * spaces are different: a Java annotation's element values are primitive constants, class literals, enum
+          * constants, nested annotations, and arrays thereof, while a Scala annotation carries arbitrary
+          * `Tree.Apply` arguments. Mixing the two into a single ADT would require either lossy normalisation or
+          * a sum type at every callsite; keeping them parallel keeps each side honest.
+          *
+          * `annotationClass` is the resolved `Symbol` for the annotation interface (e.g. the symbol of
+          * `java.lang.SuppressWarnings`). `values` is the ordered list of `(elementName, value)` pairs as they
+          * appeared in the classfile; element names are interned `Name` values and ordering matches the source
+          * declaration. Element values are typed via the `Java.Annotation.Value` enum nested in the companion.
+          *
+          * **Querying.** `Symbol.hasAnnotation(fqn)` and `Symbol.findAnnotation(fqn)` walk both this list and the
+          * Scala `annotations` list (where applicable), so the common "is this symbol annotated with X" question
+          * does not need to branch on the value space.
+          */
+        final case class Annotation(annotationClass: Symbol, values: Chunk[(Name, Annotation.Value)])
+            derives CanEqual
+        object Annotation:
+            /** Typed value space for a Java annotation element. Mirrors the `element_value` shapes defined by
+              * JVMS §4.7.16.1: every primitive constant, string, class literal, enum constant, nested annotation,
+              * and array of any of those. Cases nest recursively through `ArrayVal` and `AnnotationVal`.
+              *
+              * Note: the JVM annotation format collapses `char`, `byte`, and `short` element values into
+              * `IntVal`, so there are no separate `CharVal`, `ByteVal`, or `ShortVal` cases.
+              */
+            enum Value derives CanEqual:
+                case StringVal(s: String)
+                case IntVal(i: Int)
+                case LongVal(l: Long)
+                case FloatVal(f: Float)
+                case DoubleVal(d: Double)
+                case BoolVal(b: Boolean)
+                case ClassVal(tpe: Type)
+                case EnumVal(enumType: Symbol, constant: Name)
+                case ArrayVal(elements: Chunk[Value])
+                case AnnotationVal(nested: Annotation)
+            end Value
+        end Annotation
+
+        // Schema for Java.Annotation.Value: recursive type requires a lazy given.
+        // Java.Annotation.Value.AnnotationVal contains Annotation which contains Value.
+        // The lazy initialization breaks the compile-time recursion.
+        // Unsafe: null.asInstanceOf is used here intentionally to break the mutual-recursion cycle
+        // between Java.Annotation and Java.Annotation.Value at Schema derivation time (Q-004 / RI-004).
+        private var _schemaAnnotationValue: Schema[Annotation.Value] =
+            null.asInstanceOf[Schema[Annotation.Value]]
+        given schemaAnnotationValue: Schema[Annotation.Value] =
+            if _schemaAnnotationValue == null then
+                _schemaAnnotationValue = Schema.derived[Annotation.Value]
+            _schemaAnnotationValue
+        end schemaAnnotationValue
+
+        private var _schemaAnnotation: Schema[Annotation] = null.asInstanceOf[Schema[Annotation]]
+        given schemaAnnotation: Schema[Annotation] =
+            if _schemaAnnotation == null then
+                _schemaAnnotation = Schema.derived[Annotation]
+            _schemaAnnotation
+        end schemaAnnotation
+
+        given canEqualAnnotationValue: CanEqual[Annotation.Value, Annotation.Value] = CanEqual.canEqualAny
+        given canEqualAnnotation: CanEqual[Annotation, Annotation]                  = CanEqual.canEqualAny
+
+        /** JPMS module-info.class types. */
+        object Module:
+
+            /** Parsed content of a module-info.class file.
+              *
+              * Produced by `ModuleInfoReader.read` and stored in the classpath `moduleIndex` after a successful parse.
+              *
+              * @param name
+              *   The module name (e.g., "java.base").
+              * @param version
+              *   The module version string, if present in the `module-info.class`.
+              * @param requires
+              *   All requires directives.
+              * @param exports
+              *   All exports directives.
+              * @param opens
+              *   All opens directives.
+              * @param uses
+              *   Service interfaces used by this module (dotted class names).
+              * @param provides
+              *   Service implementations provided by this module.
+              */
+            final case class Descriptor(
+                name: String,
+                version: Maybe[String],
+                requires: Chunk[Requires],
+                exports: Chunk[Exports],
+                opens: Chunk[Opens],
+                uses: Chunk[String],
+                provides: Chunk[Provides]
+            ) derives Schema, CanEqual
+
+            /** Describes a JPMS `requires` directive (one dependency of a module).
+              *
+              * @param name
+              *   The required module name (e.g., "java.base").
+              * @param version
+              *   The required module version, if specified.
+              * @param isTransitive
+              *   True if the requires has `ACC_TRANSITIVE` (0x0020) set.
+              * @param isStaticPhase
+              *   True if the requires has `ACC_STATIC_PHASE` (0x0040) set.
+              */
+            final case class Requires(
+                name: String,
+                version: Maybe[String],
+                isTransitive: Boolean,
+                isStaticPhase: Boolean
+            ) derives Schema, CanEqual
+
+            /** Describes a JPMS `exports` directive (a package exported to zero or more modules).
+              *
+              * @param packageName
+              *   The exported package name in dotted form (e.g., "java.lang").
+              * @param targets
+              *   The module names this package is exported to. Empty chunk means exported unconditionally (unqualified export).
+              * @param flags
+              *   The raw `exports_flags` value from the classfile Module attribute (JVMS §4.7.25). The `ACC_EXPORTS_SYNTHETIC` bit (0x1000)
+              *   indicates the directive was generated by the compiler and not present in the source.
+              */
+            final case class Exports(
+                packageName: String,
+                targets: Chunk[String],
+                flags: Long
+            ) derives Schema, CanEqual
+
+            /** Describes a JPMS `opens` directive (a package opened for deep reflection).
+              *
+              * @param packageName
+              *   The opened package name in dotted form.
+              * @param targets
+              *   The module names this package is opened to. Empty chunk means opened unconditionally.
+              * @param flags
+              *   The raw `opens_flags` value from the classfile Module attribute (JVMS §4.7.25). The `ACC_OPENS_SYNTHETIC` bit (0x1000) indicates
+              *   the directive was generated by the compiler and not present in the source.
+              */
+            final case class Opens(
+                packageName: String,
+                targets: Chunk[String],
+                flags: Long
+            ) derives Schema, CanEqual
+
+            /** Describes a JPMS `provides` directive (a service implementation).
+              *
+              * @param serviceName
+              *   The service interface class name in dotted form.
+              * @param implementations
+              *   The implementation class names in dotted form.
+              */
+            final case class Provides(
+                serviceName: String,
+                implementations: Chunk[String]
+            ) derives Schema, CanEqual
+
+        end Module
+
+    end Java
+
     // ── Pickle (in-memory TASTy + classfile bytes) ──────────────────────────
 
     /** In-memory TASTy pickle: header UUID, format version, and raw `.tasty` bytes.
@@ -2183,9 +2205,9 @@ object Tasty:
       * Decodes the pickles sequentially using an in-memory FileSource. The resulting Binding carries
       * a fresh DecodeContext so `Tasty.bodyTree` can decode body bytes on demand.
       *
-      * INV-009 site-2 (alt-init): constructs an anonymous in-memory FileSource from the pickle bytes
-      * map; never reads `PlatformFileSource.get` and never touches the real file system. All
-      * `Tasty.*` query methods called inside `f` are pure and perform no IO.
+      * INV-009 site-1-related (in-memory alt-init; no real-FS contact): constructs an anonymous
+      * in-memory FileSource from the pickle bytes map; never reads `PlatformFileSource.get` and
+      * never touches the real file system. All `Tasty.*` query methods called inside `f` are pure and perform no IO.
       *
       * Effect row: `A < (Async & Abort[TastyError] & S)`.
       */
@@ -2236,7 +2258,7 @@ object Tasty:
         symbols: Chunk[Symbol],
         indices: Classpath.Indices,
         errors: Chunk[TastyError],
-        modules: Chunk[ModuleDescriptor],
+        modules: Chunk[Java.Module.Descriptor],
         rootSymbolId: SymbolId
     ):
 
@@ -2469,7 +2491,7 @@ object Tasty:
           *
           * O(1) lookup via the modulesIndex in Indices.
           */
-        def findModule(name: String): Maybe[ModuleDescriptor] =
+        def findModule(name: String): Maybe[Java.Module.Descriptor] =
             indices.modulesIndex.get(name)
 
         /** Find a class symbol by JVM binary name (e.g., "com/example/Foo$Inner").
@@ -2545,7 +2567,7 @@ object Tasty:
         /** Require a JPMS module descriptor by name; fails with `TastyError.InvalidFqn` when `name` is empty, or `TastyError.NotFound`
           * when absent.
           */
-        def requireModule(name: String)(using Frame): ModuleDescriptor < Abort[TastyError] =
+        def requireModule(name: String)(using Frame): Java.Module.Descriptor < Abort[TastyError] =
             if name.isEmpty then Abort.fail(TastyError.InvalidFqn(name, "fqn must be non-empty"))
             else
                 findModule(name) match
@@ -2852,7 +2874,7 @@ object Tasty:
             packageIndex: Dict[String, SymbolId],
             subclassIndex: Dict[SymbolId, Chunk[SymbolId]],
             companionIndex: Dict[SymbolId, SymbolId],
-            modulesIndex: Dict[String, ModuleDescriptor],
+            modulesIndex: Dict[String, Java.Module.Descriptor],
             topLevelClassIds: Chunk[SymbolId],
             packageIds: Chunk[SymbolId],
             unresolvedFqnByNegId: Dict[SymbolId, String],
@@ -2905,7 +2927,7 @@ object Tasty:
                 packageIndex = Dict.empty[String, SymbolId],
                 subclassIndex = Dict.empty[SymbolId, Chunk[SymbolId]],
                 companionIndex = Dict.empty[SymbolId, SymbolId],
-                modulesIndex = Dict.empty[String, ModuleDescriptor],
+                modulesIndex = Dict.empty[String, Java.Module.Descriptor],
                 topLevelClassIds = Chunk.empty,
                 packageIds = Chunk.empty,
                 unresolvedFqnByNegId = Dict.empty[SymbolId, String],
@@ -2967,7 +2989,7 @@ object Tasty:
                     jdkModules <- PlatformModuleOps.readJdkModuleDescriptors
                 yield
                     val newModulesIndex = cp.indices.modulesIndex ++ Dict.from(jdkModules)
-                    val newModulesBuf   = Chunk.newBuilder[ModuleDescriptor]
+                    val newModulesBuf   = Chunk.newBuilder[Java.Module.Descriptor]
                     newModulesIndex.foreach((_, v) => newModulesBuf += v)
                     val newModules = newModulesBuf.result()
                     cp.copy(
@@ -3052,7 +3074,7 @@ object Tasty:
             packageIndex: Dict[String, SymbolId],
             subclassIndex: Dict[SymbolId, Chunk[SymbolId]],
             companionIndex: Dict[SymbolId, SymbolId],
-            moduleIndex: Dict[String, ModuleDescriptor],
+            moduleIndex: Dict[String, Java.Module.Descriptor],
             errors: Chunk[TastyError],
             diagnostics: Chunk[Classpath.Diagnostic] = Chunk.empty,
             unresolvedFqnByNegId: Dict[SymbolId, String] = Dict.empty[SymbolId, String]
@@ -3067,7 +3089,7 @@ object Tasty:
                 Dict.from(b.map((k, v) => k -> Chunk.from(v)).toMap)
             end bySimpleName
             val moduleValues =
-                val buf = Chunk.newBuilder[ModuleDescriptor]
+                val buf = Chunk.newBuilder[Java.Module.Descriptor]
                 moduleIndex.foreach((_, v) => buf += v)
                 buf.result()
             end moduleValues
@@ -3236,7 +3258,7 @@ object Tasty:
         classpath.map(_.findPackage(fqn))
 
     /** Look up a JPMS module descriptor by module name. */
-    def findModule(name: String)(using Frame): Maybe[ModuleDescriptor] < Sync =
+    def findModule(name: String)(using Frame): Maybe[Java.Module.Descriptor] < Sync =
         classpath.map(_.findModule(name))
 
     /** Look up a concrete (non-abstract) class by FQN. Returns Absent for abstract classes. */
@@ -3465,7 +3487,7 @@ object Tasty:
             Sync.Unsafe.defer:
                 def matchScala(a: Annotation): Boolean =
                     cp.typeFqnStringUnsafe(a.annotationType) == fqn
-                def matchJava(a: JavaAnnotation): Boolean =
+                def matchJava(a: Java.Annotation): Boolean =
                     import Name.asString
                     cp.fullNameUnsafe(a.annotationClass).asString == fqn
                 sym match
@@ -3482,12 +3504,12 @@ object Tasty:
                 end match
 
     /** Find the first Scala or Java annotation matching the given FQN on sym. */
-    def findAnnotation(sym: Symbol, fqn: String)(using Frame): Maybe[Annotation | JavaAnnotation] < Sync =
+    def findAnnotation(sym: Symbol, fqn: String)(using Frame): Maybe[Annotation | Java.Annotation] < Sync =
         classpath.flatMap: cp =>
             Sync.Unsafe.defer:
                 def matchScala(a: Annotation): Boolean =
                     cp.typeFqnStringUnsafe(a.annotationType) == fqn
-                def matchJava(a: JavaAnnotation): Boolean =
+                def matchJava(a: Java.Annotation): Boolean =
                     import Name.asString
                     cp.fullNameUnsafe(a.annotationClass).asString == fqn
                 sym match

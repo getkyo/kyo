@@ -1,11 +1,12 @@
 package kyo.internal.tasty.classfile
 
 import kyo.*
+import kyo.Tasty.Java.Annotation as JavaAnnotation
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.symbol.Symbol as SymbolFactory
 import kyo.internal.tasty.symbol.SymbolKind
 
-/** Decodes RuntimeVisibleAnnotations and RuntimeInvisibleAnnotations attribute bodies into Tasty.JavaAnnotation values.
+/** Decodes RuntimeVisibleAnnotations and RuntimeInvisibleAnnotations attribute bodies into JavaAnnotation values.
   *
   * The caller passes a ByteView already positioned at the annotation data (after the attribute_name_index and attribute_length fields have
   * been consumed). Invoked twice per symbol (visible and invisible), then results are concatenated.
@@ -32,7 +33,7 @@ object JavaAnnotationUnpickler:
     def readAnnotations(
         view: ByteView,
         pool: ConstantPool
-    )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[JavaAnnotation] < (Sync & Abort[TastyError]) =
         Sync.defer(readU2(view)).map: numAnnotations =>
             readAnnotationList(view, pool, numAnnotations, 0, Chunk.empty, depth = 0)
 
@@ -41,9 +42,9 @@ object JavaAnnotationUnpickler:
         pool: ConstantPool,
         total: Int,
         idx: Int,
-        acc: Chunk[Tasty.JavaAnnotation],
+        acc: Chunk[JavaAnnotation],
         depth: Int
-    )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[JavaAnnotation] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             readOneAnnotation(view, pool, depth).map: ann =>
@@ -53,7 +54,7 @@ object JavaAnnotationUnpickler:
         view: ByteView,
         pool: ConstantPool,
         depth: Int
-    )(using Frame, AllowUnsafe): Tasty.JavaAnnotation < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): JavaAnnotation < (Sync & Abort[TastyError]) =
         if depth > MaxAnnotationDepth then
             Abort.fail(TastyError.ClassfileFormatError(
                 pool.path,
@@ -66,16 +67,16 @@ object JavaAnnotationUnpickler:
                     val annotationClassSym = descriptorToUnresolvedSymbol(typeDescriptor)
                     Sync.defer(readU2(view)).map: numPairs =>
                         readElementValuePairs(view, pool, numPairs, 0, Chunk.empty, depth).map: values =>
-                            Tasty.JavaAnnotation(annotationClassSym, values)
+                            JavaAnnotation(annotationClassSym, values)
 
     private def readElementValuePairs(
         view: ByteView,
         pool: ConstantPool,
         total: Int,
         idx: Int,
-        acc: Chunk[(Tasty.Name, Tasty.JavaAnnotation.Value)],
+        acc: Chunk[(Tasty.Name, JavaAnnotation.Value)],
         depth: Int
-    )(using Frame, AllowUnsafe): Chunk[(Tasty.Name, Tasty.JavaAnnotation.Value)] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[(Tasty.Name, JavaAnnotation.Value)] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             Sync.defer(readU2(view)).map: nameIdx =>
@@ -88,53 +89,53 @@ object JavaAnnotationUnpickler:
         view: ByteView,
         pool: ConstantPool,
         depth: Int
-    )(using Frame, AllowUnsafe): Tasty.JavaAnnotation.Value < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): JavaAnnotation.Value < (Sync & Abort[TastyError]) =
         Sync.defer(readU1(view)).map: tag =>
             tag match
                 case 'B' =>
                     // byte: stored as CONSTANT_Integer; narrow to byte
                     Sync.defer(readU2(view)).map: idx =>
-                        pool.integer(idx).map(v => Tasty.JavaAnnotation.Value.IntVal(v.toByte.toInt))
+                        pool.integer(idx).map(v => JavaAnnotation.Value.IntVal(v.toByte.toInt))
 
                 case 'C' =>
                     // char: stored as CONSTANT_Integer; raw int value
                     Sync.defer(readU2(view)).map: idx =>
-                        pool.integer(idx).map(v => Tasty.JavaAnnotation.Value.IntVal(v))
+                        pool.integer(idx).map(v => JavaAnnotation.Value.IntVal(v))
 
                 case 'D' =>
                     // double: stored as CONSTANT_Double.
                     Sync.defer(readU2(view)).map: idx =>
-                        pool.double_(idx).map(v => Tasty.JavaAnnotation.Value.DoubleVal(v))
+                        pool.double_(idx).map(v => JavaAnnotation.Value.DoubleVal(v))
 
                 case 'F' =>
                     // float: stored as CONSTANT_Float.
                     Sync.defer(readU2(view)).map: idx =>
-                        pool.float_(idx).map(v => Tasty.JavaAnnotation.Value.FloatVal(v))
+                        pool.float_(idx).map(v => JavaAnnotation.Value.FloatVal(v))
 
                 case 'I' =>
                     // int: CONSTANT_Integer
                     Sync.defer(readU2(view)).map: idx =>
-                        pool.integer(idx).map(v => Tasty.JavaAnnotation.Value.IntVal(v))
+                        pool.integer(idx).map(v => JavaAnnotation.Value.IntVal(v))
 
                 case 'J' =>
                     // long: CONSTANT_Long
                     Sync.defer(readU2(view)).map: idx =>
-                        pool.long_(idx).map(v => Tasty.JavaAnnotation.Value.LongVal(v))
+                        pool.long_(idx).map(v => JavaAnnotation.Value.LongVal(v))
 
                 case 'S' =>
                     // short: CONSTANT_Integer; narrow to short
                     Sync.defer(readU2(view)).map: idx =>
-                        pool.integer(idx).map(v => Tasty.JavaAnnotation.Value.IntVal(v.toShort.toInt))
+                        pool.integer(idx).map(v => JavaAnnotation.Value.IntVal(v.toShort.toInt))
 
                 case 'Z' =>
                     // boolean: CONSTANT_Integer; 0=false, 1=true
                     Sync.defer(readU2(view)).map: idx =>
-                        pool.integer(idx).map(v => Tasty.JavaAnnotation.Value.BoolVal(v != 0))
+                        pool.integer(idx).map(v => JavaAnnotation.Value.BoolVal(v != 0))
 
                 case 's' =>
                     // String: CONSTANT_Utf8
                     Sync.defer(readU2(view)).map: idx =>
-                        pool.utf8(idx).map(s => Tasty.JavaAnnotation.Value.StringVal(s))
+                        pool.utf8(idx).map(s => JavaAnnotation.Value.StringVal(s))
 
                 case 'e' =>
                     // Enum constant
@@ -146,25 +147,25 @@ object JavaAnnotationUnpickler:
                         pool.utf8(typeNameIdx).map: typeDescriptor =>
                             pool.utf8(constNameIdx).map: constName =>
                                 val enumTypeSym = descriptorToUnresolvedSymbol(typeDescriptor)
-                                Tasty.JavaAnnotation.Value.EnumVal(enumTypeSym, Tasty.Name(constName))
+                                JavaAnnotation.Value.EnumVal(enumTypeSym, Tasty.Name(constName))
 
                 case 'c' =>
                     // Class literal: cp -> Utf8 class descriptor e.g. "Ljava/lang/String;"
                     Sync.defer(readU2(view)).map: idx =>
                         pool.utf8(idx).map: classDesc =>
                             val tpe = descriptorToType(classDesc)
-                            Tasty.JavaAnnotation.Value.ClassVal(tpe)
+                            JavaAnnotation.Value.ClassVal(tpe)
 
                 case '@' =>
                     // Nested annotation
                     readOneAnnotation(view, pool, depth + 1).map: nested =>
-                        Tasty.JavaAnnotation.Value.AnnotationVal(nested)
+                        JavaAnnotation.Value.AnnotationVal(nested)
 
                 case '[' =>
                     // Array of element_values
                     Sync.defer(readU2(view)).map: numValues =>
                         readElementValueArray(view, pool, numValues, 0, Chunk.empty, depth).map: elems =>
-                            Tasty.JavaAnnotation.Value.ArrayVal(elems)
+                            JavaAnnotation.Value.ArrayVal(elems)
 
                 case unknown =>
                     Abort.fail(TastyError.ClassfileFormatError(
@@ -179,9 +180,9 @@ object JavaAnnotationUnpickler:
         pool: ConstantPool,
         total: Int,
         idx: Int,
-        acc: Chunk[Tasty.JavaAnnotation.Value],
+        acc: Chunk[JavaAnnotation.Value],
         depth: Int
-    )(using Frame, AllowUnsafe): Chunk[Tasty.JavaAnnotation.Value] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): Chunk[JavaAnnotation.Value] < (Sync & Abort[TastyError]) =
         if idx >= total then acc
         else
             readElementValue(view, pool, depth).map: v =>

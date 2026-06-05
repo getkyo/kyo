@@ -14,22 +14,9 @@ import kyo.internal.tasty.query.TastyState
   */
 class TestProbeFileSourceTest extends Test:
 
-    // ── Leaf 1: INV009-fourSites-preserved ───────────────────────────────────
-    // Given: TastyState.global is the relocated lazy fallback (INV-009 site-2).
-    // When: Tasty.findClass("scala.Predef$") is called outside any withClasspath scope.
-    // Then: the call does not panic; on JVM it may return Present, on JS/Native it returns Absent.
-    //       The critical invariant is that TastyState.global is used (not Tasty.current) and
-    //       the four INV-009 site count is preserved (site-1 withClasspath, site-2 global lazy,
-    //       site-3 bodyTree, site-4 evictOlderThan).
-    // Pins: INV-009 site-2 relocation; PRESERVE-I.
-    "Leaf 1: INV-009 fourSites preserved -- TastyState.global callable without panic" in runJVM {
-        // Force TastyState.global initialization (INV-009 site-2).
-        val binding = TastyState.global
-        assert(binding != null, "TastyState.global must not be null")
-        // The Classpath from global is valid (non-null cp field).
-        assert(binding.cp != null, "TastyState.global.cp must not be null")
-        succeed
-    }
+    // Leaf 1 (removed in Phase 04 sweep): the original leaf forced TastyState.global and asserted
+    // non-null, but did not actually probe the four INV-009 sites. Behavioral coverage for all four
+    // sites lives in Inv009BehavioralTest (14 leaves). That test is the authoritative INV-009 gate.
 
     // ── Leaf 2: globalReadResolvesToTastyState ───────────────────────────────
     // Given: no withClasspath scope is active.

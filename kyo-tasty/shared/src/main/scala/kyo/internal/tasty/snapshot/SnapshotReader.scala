@@ -414,7 +414,7 @@ object SnapshotReader:
                 sourcePosition = partial.sourcePosition,
                 javaMetadata = javaMetaByIdx(si) match
                     case kyo.Maybe.Present(flags) =>
-                        kyo.Maybe(Tasty.JavaMetadata(
+                        kyo.Maybe(Tasty.Java.Metadata(
                             throwsTypes = Chunk.empty,
                             annotations = Chunk.empty,
                             enclosingMethod = kyo.Maybe.Absent,
@@ -516,7 +516,7 @@ object SnapshotReader:
             packageIndex = pkgIdIdx,
             subclassIndex = warmSubclassIndex,
             companionIndex = warmCompanionIndex,
-            moduleIndex = Dict.empty[String, Tasty.ModuleDescriptor],
+            moduleIndex = Dict.empty[String, Tasty.Java.Module.Descriptor],
             errors = errors,
             diagnostics = Chunk.empty,
             unresolvedFqnByNegId = unresolvedFqnByNegId
@@ -868,7 +868,7 @@ object SnapshotReader:
                 sourcePosition = partial.sourcePosition,
                 javaMetadata = javaMetaByIdxM(j) match
                     case kyo.Maybe.Present(flags) =>
-                        kyo.Maybe(Tasty.JavaMetadata(
+                        kyo.Maybe(Tasty.Java.Metadata(
                             throwsTypes = Chunk.empty,
                             annotations = Chunk.empty,
                             enclosingMethod = kyo.Maybe.Absent,
@@ -966,7 +966,7 @@ object SnapshotReader:
             packageIndex = pkgIdIdx2,
             subclassIndex = warmSubclassIndex2,
             companionIndex = warmCompanionIndex2,
-            moduleIndex = Dict.empty[String, Tasty.ModuleDescriptor],
+            moduleIndex = Dict.empty[String, Tasty.Java.Module.Descriptor],
             errors = errors,
             unresolvedFqnByNegId = unresolvedFqnByNegId2
         )

@@ -540,7 +540,7 @@ class DecoderFidelity5Wave2Test extends Test:
     // W2.30: bodyMemo lives in DecodeContext, not Classpath. cp.copy produces a structurally equal Classpath.
     // The bodyMemo in the active DecodeContext accumulates entries across bodyTree calls (INV-004).
     "W2.30: bodyMemo accumulates in DecodeContext after bodyTree decode (INV-004 pin)" in run {
-        // Must use the full callback form so Tasty.bodyTree and Tasty.bindingLocal run inside the binding scope.
+        // Must use the full callback form so Tasty.bodyTree and TastyState.bindingLocal run inside the binding scope.
         TestClasspaths.withClasspath():
             Tasty.classpath.flatMap: cp =>
                 given Tasty.Classpath = cp

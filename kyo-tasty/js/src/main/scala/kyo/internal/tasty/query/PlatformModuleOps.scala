@@ -9,7 +9,7 @@ import kyo.*
   * `initWithPlatformModules` degrades gracefully on JS without JDK class entries.
   */
 private[kyo] object PlatformModuleOps:
-    def readJdkModuleDescriptors(using Frame): Map[String, Tasty.ModuleDescriptor] < (Sync & Abort[TastyError]) =
+    def readJdkModuleDescriptors(using Frame): Map[String, Tasty.Java.Module.Descriptor] < (Sync & Abort[TastyError]) =
         Abort.fail(TastyError.UnsupportedPlatform("initWithPlatformModules is JVM-only"))
 
     /** Returns Chunk.empty on JS: jrt:/ filesystem is not available. */

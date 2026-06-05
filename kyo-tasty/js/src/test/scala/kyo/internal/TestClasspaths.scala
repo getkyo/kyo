@@ -29,7 +29,7 @@ private[kyo] object TestClasspaths:
 
     /** Run `f` in a fresh classpath scope built from the embedded TASTy fixtures.
       *
-      * Builds the classpath from an in-memory MemoryFileSource, installs the Binding in `Tasty.bindingLocal`,
+      * Builds the classpath from an in-memory MemoryFileSource, installs the Binding in `TastyState.bindingLocal`,
       * and runs `f` in that scope. Call inside a `run { ... }` test body. The `roots` parameter is ignored on
       * JS (no filesystem); embedded fixtures are always used.
       */

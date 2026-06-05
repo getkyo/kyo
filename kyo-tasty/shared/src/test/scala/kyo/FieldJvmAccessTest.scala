@@ -18,7 +18,7 @@ class FieldJvmAccessTest extends Test:
     // ACC_STATIC = 0x0008, ACC_FINAL = 0x0010
 
     private def makeFieldWithAccess(id: Int, name: String, accessFlags: Int): Tasty.Symbol.Field =
-        val meta = Tasty.JavaMetadata(
+        val meta = Tasty.Java.Metadata(
             throwsTypes = Chunk.empty,
             annotations = Chunk.empty,
             enclosingMethod = Maybe.Absent,

@@ -28,7 +28,7 @@ class ClassfileReaderTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private def symJavaMetadata(sym: Tasty.Symbol): Maybe[Tasty.JavaMetadata] = sym match
+    private def symJavaMetadata(sym: Tasty.Symbol): Maybe[Tasty.Java.Metadata] = sym match
         case c: Tasty.Symbol.ClassLike => c.javaMetadata
         case f: Tasty.Symbol.Field     => f.javaMetadata
         case m: Tasty.Symbol.Method    => m.javaMetadata

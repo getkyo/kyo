@@ -50,10 +50,13 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // Leaf 2: givens-enumeration-baseline (F-A2-004)
     // Given: the real classpath loaded via TestClasspaths.withClasspath
     // When: counting allSymbols.count(isGiven)
-    // Then: count is within +/-15 of the 549 baseline (re-measured 2026-06-04 after Phase 03 fix;
-    //       prior 493 baseline was measured on broken code that under-counted due to placeholder
-    //       symbol deduplication in IdentityHashMap migration; 549 is the correct count with
-    //       identity-based internal maps preserving all distinct given instances).
+    // Then: count is within +/-15 of the 570 baseline (re-measured 2026-06-05 after Phase 04 Cat 18
+    //       fill-in; Cat 18 added derives Schema to RecordComponent, ParamGroup, EnclosingMethod, and
+    //       all four Module sub-records (Requires, Exports, Opens, Provides), plus two explicit
+    //       canEqual givens for Annotation and Annotation.Value; these 21 new given symbols raised the
+    //       count from 549 to 570. The 549 baseline was set after Phase 03; the 549-based assertion
+    //       is superseded by this Phase 04 measurement. Prior 493 baseline was measured on broken code
+    //       that under-counted due to placeholder symbol deduplication in IdentityHashMap migration).
     // Pins: F-A2-004
     // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): the assertion pins the
     //   scala-library given count. Scala-library cannot be loaded as a TASTy classpath on JS/Native;
@@ -62,8 +65,8 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val count = cp.symbols.count(_.isGiven)
             assert(
-                count >= 534 && count <= 564,
-                s"Expected ~549 given instances on standard classpath (re-measured 2026-06-04); found $count"
+                count >= 555 && count <= 585,
+                s"Expected ~570 given instances on standard classpath (re-measured 2026-06-05 after Phase 04 Cat 18 fill-in); found $count"
             )
             succeed
     }

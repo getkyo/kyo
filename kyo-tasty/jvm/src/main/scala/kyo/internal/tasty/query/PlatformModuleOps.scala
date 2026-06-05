@@ -19,16 +19,16 @@ private[kyo] object PlatformModuleOps:
 
     /** Read all JDK module descriptors from the `jrt:/` virtual filesystem.
       *
-      * Returns a `Map[String, Tasty.ModuleDescriptor]` keyed by module name (e.g., "java.base"). Each module whose `module-info.class`
+      * Returns a `Map[String, Tasty.Java.Module.Descriptor]` keyed by module name (e.g., "java.base"). Each module whose `module-info.class`
       * decodes successfully is included; modules with decode errors are silently skipped (soft-fail per the existing classpath contract).
       */
-    def readJdkModuleDescriptors(using Frame): Map[String, Tasty.ModuleDescriptor] < (Sync & Abort[TastyError]) =
+    def readJdkModuleDescriptors(using Frame): Map[String, Tasty.Java.Module.Descriptor] < (Sync & Abort[TastyError]) =
         Sync.defer:
             val jrtFs       = FileSystems.getFileSystem(URI.create("jrt:/"))
             val modulesRoot = jrtFs.getPath("/modules")
             Files.list(modulesRoot).iterator().asScala.toList
         .flatMap: moduleDirs =>
-            val builder = scala.collection.mutable.Map.empty[String, Tasty.ModuleDescriptor]
+            val builder = scala.collection.mutable.Map.empty[String, Tasty.Java.Module.Descriptor]
             Kyo.foreachDiscard(moduleDirs): moduleDir =>
                 val moduleInfoPath = moduleDir.resolve("module-info.class")
                 Sync.defer(Files.exists(moduleInfoPath)).flatMap: exists =>
