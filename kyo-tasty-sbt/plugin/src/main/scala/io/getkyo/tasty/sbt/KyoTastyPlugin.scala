@@ -5,17 +5,20 @@ import sbt.Keys._
 
 /** sbt plugin that generates a kyo-tasty snapshot at compile time by forking a JVM.
   *
-  * The forked JVM runs [[io.getkyo.tasty.sbt.runner.SnapshotRunner]] with the project's compile classpath and writes a
-  * `.krfl` snapshot to [[tastySnapshotDir]]. Subsequent calls to `Tasty.withClasspath` with a `cacheDir` pointing at
-  * [[tastySnapshotDir]] find the snapshot on the first stat check instead of paying the full cold-load cost.
+  * The forked JVM runs [[io.getkyo.tasty.sbt.runner.SnapshotRunner]] with the project's compile classpath. The
+  * snapshot is written to `META-INF/kyo-tasty/snapshot.krfl` inside the managed resource directory, so `sbt package`
+  * automatically includes it in the published JAR.
   *
   * Enable on a project with:
   * {{{
   * lazy val myProject = (project in file("..."))
   *     .enablePlugins(KyoTastyPlugin)
-  *     .settings(
-  *         tastyRunnerClasspath := Seq(file("/path/to/kyo-tasty-sbt-runner-assembly.jar"))
-  *     )
+  * }}}
+  *
+  * The runner JAR is bundled inside the plugin; no separate dependency is needed. To opt out of the auto-hook into
+  * `Compile / resourceGenerators` (and therefore keep the snapshot out of the published JAR), set:
+  * {{{
+  *     tastySnapshotEnabled := false
   * }}}
   */
 object KyoTastyPlugin extends AutoPlugin {
@@ -25,27 +28,37 @@ object KyoTastyPlugin extends AutoPlugin {
 
     object autoImport {
 
-        /** Directory where the `.krfl` snapshot file is written.
-          * Defaults to `target/kyo-tasty-snapshots/` inside the project's compile target.
+        /** Directory where the `.krfl` snapshot file was previously written.
+          * Retained for backward compatibility. After Phase 14 the snapshot is written to
+          * `(Compile / resourceManaged).value / META-INF / kyo-tasty / snapshot.krfl`.
           */
         val tastySnapshotDir: SettingKey[File] = settingKey[File](
-            "Directory where kyo-tasty snapshot files are written (default: target/kyo-tasty-snapshots/)."
+            "Snapshot staging directory (retained for backward compat; snapshot now goes to resourceManaged)."
         )
 
         /** Produces the snapshot file by forking a JVM that runs SnapshotRunner.
-          * Returns the snapshot directory (the runner writes the actual .krfl file inside it).
+          * Returns the snapshot file path.
           */
         val tastySnapshot: TaskKey[File] = taskKey[File](
             "Generate a kyo-tasty snapshot of the project's compile classpath."
         )
 
         /** Classpath entries (JARs and directories) for the forked SnapshotRunner JVM.
-          * Set this to the runner assembly JAR plus any additional dependencies.
-          * Defaults to empty; the task fails with a helpful message if left empty.
+          * Defaults to the bundled runner JAR extracted from the plugin classpath
+          * (item 23 / Q-026 / BIND-017). Override with `Seq.empty` to disable; the task
+          * then fails with a message directing users to either remove the override or supply
+          * a runner JAR.
           */
         val tastyRunnerClasspath: SettingKey[Seq[File]] = settingKey[Seq[File]](
-            "Classpath entries for the forked SnapshotRunner JVM. " +
-                "Set to the kyo-tasty-sbt-runner assembly JAR path(s). Defaults to empty."
+            "Runner classpath; defaults to bundled runner JAR (item 23 / Q-026 BIND-017)."
+        )
+
+        /** Toggle the auto-hook into `Compile / resourceGenerators` (item 24 / Q-011 RI-002).
+          * When true (default), `sbt package` automatically includes `META-INF/kyo-tasty/snapshot.krfl`
+          * in the output JAR. Set to false to opt out.
+          */
+        val tastySnapshotEnabled: SettingKey[Boolean] = settingKey[Boolean](
+            "Toggle the auto-hook into Compile / resourceGenerators (item 24 / Q-011 RI-002). Defaults to true."
         )
     }
 
@@ -54,76 +67,97 @@ object KyoTastyPlugin extends AutoPlugin {
     private val runnerMainClass = "io.getkyo.tasty.sbt.runner.SnapshotRunner"
 
     override lazy val projectSettings: Seq[Setting[_]] = Seq(
-        tastySnapshotDir := (Compile / target).value / "kyo-tasty-snapshots",
+        tastySnapshotDir     := (Compile / target).value / "kyo-tasty-snapshots",
+        tastySnapshotEnabled := true,
         tastyRunnerClasspath := {
-            // Option B: read runner JAR from the runner.jar system property if set,
-            // otherwise fall back to the tastyRunnerClasspath setting value (empty by default).
-            sys.props.get("runner.jar") match {
-                case Some(path) => Seq(file(path))
-                case None       => Seq.empty
+            val extractDir: File       = (LocalRootProject / target).value / "kyo-tasty-runner-extract"
+            IO.createDirectory(extractDir)
+            val extracted: File        = extractDir / "runner.jar"
+            val resource: java.net.URL = getClass.getResource("/kyo-tasty/runner.jar")
+            if (resource == null)
+                sys.error(
+                    "kyo-tasty-sbt: bundled runner.jar resource not found on plugin classpath; " +
+                        "this is a plugin packaging bug, not a user error."
+                )
+            else {
+                IO.transfer(resource.openStream(), extracted)
+                Seq(extracted)
             }
         },
         tastySnapshot := {
-            val log          = streams.value.log
-            val snapshotDir  = tastySnapshotDir.value
-            val runnerCp     = tastyRunnerClasspath.value
-            val compileRoots = (Compile / fullClasspath).value.map(_.data.getAbsolutePath)
-            val javaHomeOpt  = javaHome.value
-            val baseDir      = baseDirectory.value
-
-            // Validate runner classpath before forking.
-            if (runnerCp.isEmpty) {
+            val log         = streams.value.log
+            val rc          = tastyRunnerClasspath.value
+            // Use dependencyClasspath (not fullClasspath) to avoid a circular dependency:
+            // fullClasspath depends on resourceGenerators which may include tastySnapshot
+            // itself when tastySnapshotEnabled := true. dependencyClasspath excludes
+            // resourceGenerators output and breaks the cycle.
+            val roots       = (Compile / dependencyClasspath).value.map(_.data.getAbsolutePath)
+            val out         = (Compile / resourceManaged).value / "META-INF" / "kyo-tasty" / "snapshot.krfl"
+            val cacheDir    = streams.value.cacheDirectory / "tasty-snapshot"
+            val javaHomeVal = javaHome.value
+            val baseDirVal  = baseDirectory.value
+            if (rc.isEmpty)
                 throw new sbt.internal.util.MessageOnlyException(
-                    "kyo-tasty-sbt: tastyRunnerClasspath is empty. " +
-                        "Set tastyRunnerClasspath to the kyo-tasty-sbt-runner assembly JAR, " +
-                        "or pass -Drunner.jar=<path> to sbt."
+                    "kyo-tasty-sbt: tastyRunnerClasspath is empty. Either remove the explicit " +
+                        "`:= Seq.empty` override (to use the bundled runner) or supply a runner JAR."
                 )
+            else {
+                val cpSet = roots.map(file(_)).toSet
+                FileFunction.cached(cacheDir) { _ =>
+                    log.info(
+                        s"kyo-tasty-sbt: generating snapshot for ${roots.size} classpath entries into ${out.getAbsolutePath}"
+                    )
+                    forkRunnerAndWrite(rc, roots, out, javaHomeVal, baseDirVal)
+                    Set(out)
+                }(cpSet)
+                out
             }
-
-            val missingJars = runnerCp.filterNot(_.exists())
-            if (missingJars.nonEmpty) {
-                throw new sbt.internal.util.MessageOnlyException(
-                    "kyo-tasty-sbt: runner JAR(s) not found: " +
-                        missingJars.map(_.getAbsolutePath).mkString(", ") + ". " +
-                        "Run `kyo-tasty-sbt-runner/assembly` first."
-                )
-            }
-
-            // Ensure snapshot directory exists.
-            IO.createDirectory(snapshotDir)
-
-            val runnerClasspathStr = runnerCp.map(_.getAbsolutePath).mkString(java.io.File.pathSeparator)
-            val rootsArg           = compileRoots.mkString(java.io.File.pathSeparator)
-            val snapshotDirArg     = snapshotDir.getAbsolutePath
-
-            log.info(
-                s"kyo-tasty-sbt: generating snapshot for ${compileRoots.size} classpath entries " +
-                    s"into $snapshotDirArg"
-            )
-
-            val forkOpts = ForkOptions()
-                .withJavaHome(javaHomeOpt)
-                .withOutputStrategy(Some(StdoutOutput))
-                .withWorkingDirectory(Some(baseDir))
-
-            val exitCode = Fork.java(
-                forkOpts,
-                Seq(
-                    "-classpath", runnerClasspathStr,
-                    runnerMainClass,
-                    rootsArg,
-                    snapshotDirArg
-                )
-            )
-
-            if (exitCode != 0) {
-                throw new sbt.internal.util.MessageOnlyException(
-                    s"kyo-tasty-sbt: SnapshotRunner exited with code $exitCode. " +
-                        s"Check output above for details."
-                )
-            }
-
-            snapshotDir
+        },
+        Compile / resourceGenerators ++= {
+            if (tastySnapshotEnabled.value) Seq(tastySnapshot.taskValue.map(Seq(_)))
+            else Nil
         }
     )
+
+    /** Fork the SnapshotRunner JVM. Passes the compile-classpath roots and a staging
+      * directory. After the fork completes, copies the produced `.krfl` file to the
+      * fixed `out` path (item 23 staging-then-rename approach, Decision 1).
+      */
+    private def forkRunnerAndWrite(
+        rc: Seq[File],
+        roots: Seq[String],
+        out: File,
+        javaHomeOpt: Option[File],
+        workDir: File
+    ): Unit = {
+        val stagingDir = out.getParentFile / "staging"
+        IO.createDirectory(out.getParentFile)
+        IO.createDirectory(stagingDir)
+
+        val exitCode = Fork.java(
+            ForkOptions()
+                .withJavaHome(javaHomeOpt)
+                .withOutputStrategy(Some(StdoutOutput))
+                .withWorkingDirectory(Some(workDir)),
+            Seq(
+                "-classpath", rc.map(_.getAbsolutePath).mkString(java.io.File.pathSeparator),
+                runnerMainClass,
+                roots.mkString(java.io.File.pathSeparator),
+                stagingDir.getAbsolutePath
+            )
+        )
+
+        if (exitCode != 0)
+            throw new sbt.internal.util.MessageOnlyException(
+                s"kyo-tasty-sbt: SnapshotRunner exited with code $exitCode. Check output above for details."
+            )
+
+        val krflFiles = Option(stagingDir.listFiles()).getOrElse(Array.empty[File])
+            .filter(_.getName.endsWith(".krfl"))
+        if (krflFiles.isEmpty)
+            throw new sbt.internal.util.MessageOnlyException(
+                s"kyo-tasty-sbt: SnapshotRunner produced no .krfl file in $stagingDir"
+            )
+        IO.copyFile(krflFiles.head, out)
+    }
 }

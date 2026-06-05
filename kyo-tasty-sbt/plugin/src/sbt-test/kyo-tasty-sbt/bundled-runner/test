@@ -1,0 +1,10 @@
+# Leaf 1: bundled runner extracted on first invocation; task green.
+# Leaf 2: second invocation is idempotent; same runner.jar reused.
+> compile
+> tastySnapshot
+> checkRunnerExtracted
+> checkSnapshot
+# Second run: extraction is idempotent (no error on re-run).
+> tastySnapshot
+> checkRunnerExtracted
+> checkSnapshot

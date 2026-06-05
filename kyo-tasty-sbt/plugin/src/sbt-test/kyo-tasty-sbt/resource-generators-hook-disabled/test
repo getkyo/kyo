@@ -1,0 +1,3 @@
+# Leaf 5: tastySnapshotEnabled := false opts out; jar must NOT contain snapshot.
+> compile
+> checkJarMissingSnapshot

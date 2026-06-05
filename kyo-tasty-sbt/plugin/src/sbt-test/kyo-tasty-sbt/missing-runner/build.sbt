@@ -4,6 +4,7 @@ lazy val root = (project in file("."))
     .enablePlugins(KyoTastyPlugin)
     .settings(
         name := "missing-runner-scripted-test",
-        // Override to a non-existent path so the plugin fails with a useful message.
-        tastyRunnerClasspath := Seq(file("/nonexistent/kyo-tasty-sbt-runner-assembly.jar"))
+        // Explicit empty override: exercises the "tastyRunnerClasspath is empty" error path.
+        // The default (bundled runner) is bypassed; the task must fail with a helpful message.
+        tastyRunnerClasspath := Seq.empty
     )

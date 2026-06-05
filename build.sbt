@@ -1618,23 +1618,22 @@ lazy val `kyo-tasty-sbt-plugin` = (project in file("kyo-tasty-sbt/plugin"))
         scalaVersion       := "2.12.20",
         crossScalaVersions := Seq("2.12.20"),
         sbtPlugin          := true,
-        // The runner JAR path is injected via -Drunner.jar in scriptedLaunchOpts.
-        // assemblyOutputPath is a TaskKey so it cannot appear in a SettingKey directly;
-        // instead we construct the deterministic output path from pure settings.
-        scriptedLaunchOpts := {
-            // Construct the runner assembly JAR path from pure settings (no task deps).
-            // The jar name mirrors the assemblyJarName setting in kyo-tasty-sbt-runner.
-            val runnerScalaVer = (`kyo-tasty-sbt-runner` / scalaVersion).value
-            val runnerVersion  = version.value
-            val runnerJar = (`kyo-tasty-sbt-runner` / target).value /
-                s"scala-$runnerScalaVer" /
-                s"kyo-tasty-sbt-runner-assembly-$runnerVersion.jar"
-            Seq(
-                "-Xmx1024M",
-                "-Dplugin.version=" + version.value,
-                "-Drunner.jar=" + runnerJar.getAbsolutePath
-            )
-        },
+        // Bundle the runner fat JAR as a plugin resource so users need no separate dependency.
+        // At plugin compile time the assembly task runs and the JAR is copied into
+        // resource_managed/main/kyo-tasty/runner.jar. At runtime the plugin extracts it via
+        // getClass.getResource("/kyo-tasty/runner.jar").
+        Compile / resourceGenerators += Def.task[Seq[File]] {
+            val runnerJar: File   = (`kyo-tasty-sbt-runner` / assembly).value
+            val resourceDir: File = (Compile / resourceManaged).value / "kyo-tasty"
+            IO.createDirectory(resourceDir)
+            val out: File = resourceDir / "runner.jar"
+            IO.copyFile(runnerJar, out)
+            Seq(out)
+        }.taskValue,
+        scriptedLaunchOpts := Seq(
+            "-Xmx1024M",
+            "-Dplugin.version=" + version.value
+        ),
         scripted := scripted.dependsOn(`kyo-tasty-sbt-runner` / assembly).evaluated,
         scriptedBufferLog := false
     )
