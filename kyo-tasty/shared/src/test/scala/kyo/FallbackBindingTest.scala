@@ -23,7 +23,7 @@ class FallbackBindingTest extends Test:
     // When: Tasty.classpath.map(_.symbols.size) without any withClasspath scope.
     // Then: returns a value >= 1; lazy init runs once and is cached.
     // Pins: item 32 JVM fallback.
-    "Leaf 1: JVM fallback yields non-empty Classpath when no withClasspath scope is active" taggedAs jvmOnly in run {
+    "Leaf 1: JVM fallback yields non-empty Classpath when no withClasspath scope is active" in runJVM {
         Tasty.classpath.map: cp =>
             val n = cp.symbols.size
             assert(n >= 1, s"JVM fallback must load at least 1 symbol from java.class.path; got $n")
@@ -62,7 +62,7 @@ class FallbackBindingTest extends Test:
     // Pins: item 32 lazy-once semantics.
     // JVM only: JS/Native fallback always returns Binding.empty (static); the eq check is trivially true
     //           but has no observable "init" meaning. Test is gated jvmOnly for semantic clarity.
-    "Leaf 4: Tasty.current lazy val is initialized at most once (reference equality)" taggedAs jvmOnly in run {
+    "Leaf 4: Tasty.current lazy val is initialized at most once (reference equality)" in runJVM {
         // Access current twice; both must return the same object reference.
         val b1 = Tasty.current
         val b2 = Tasty.current
@@ -108,7 +108,7 @@ class FallbackBindingTest extends Test:
     // When: Tasty.classpath.map(_.symbols.nonEmpty) using the module-level JVM fallback.
     // Then: fallback classpath is non-empty (verified by leaf 1); Tasty.findClassLike on a fixture class succeeds.
     // Pins: item 32 script/REPL ergonomic.
-    "Leaf 6: Tasty query works under JVM fallback: non-empty classpath implies findable symbols" taggedAs jvmOnly in run {
+    "Leaf 6: Tasty query works under JVM fallback: non-empty classpath implies findable symbols" in runJVM {
         // The JVM fallback loads java.class.path which includes kyo-tasty-fixtures.
         // Verify that the fallback classpath is non-empty and allClasses returns at least one symbol.
         Tasty.allClasses.map: classes =>

@@ -59,7 +59,7 @@ class AnnotationFidelityTest extends Test:
     //   therefore requires the scala-library jar (containing scala/annotation/tailrec.class) on the loaded
     //   classpath so the addr resolves to a real SymbolId. JS/Native cannot supply scala-library as a TASTy
     //   classpath; the proper fix is TYPEREFsymbol cross-file FQN tracking, a non-trivial decoder refactor.
-    "F-G-001 (Phase 05): cp.symbolsAnnotatedWith(scala.annotation.tailrec).size >= 1" taggedAs jvmOnly in run {
+    "F-G-001 (Phase 05): cp.symbolsAnnotatedWith(scala.annotation.tailrec).size >= 1" in runJVM {
         TestClasspaths.withClasspath():
             Tasty.classpath.flatMap: classpath =>
                 classpath.symbolsAnnotatedWith("scala.annotation.tailrec").map: annotated =>

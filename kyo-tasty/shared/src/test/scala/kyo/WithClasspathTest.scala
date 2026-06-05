@@ -29,7 +29,7 @@ class WithClasspathTest extends Test:
     // Then: returns n > 0 (non-empty classpath loaded and bound by withClasspath(roots))
     // Pins: item 31 roots-form happy path
     // JVM only: TestClasspaths.standard uses java.class.path discovery (JVM-only).
-    "Leaf 1: withClasspath(roots) cold-loads classpath and binds; symbols.size > 0" taggedAs jvmOnly in run {
+    "Leaf 1: withClasspath(roots) cold-loads classpath and binds; symbols.size > 0" in runJVM {
         TestClasspaths.withClasspath():
             Tasty.classpath.map: cp =>
                 val n = cp.symbols.size

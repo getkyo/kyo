@@ -132,7 +132,7 @@ class TypeArenaTest extends Test:
     //   Applied types so that the JVM call stack (configured to -Xss10M in CI) can reach the depth-guard check at
     //   TypeArena.MaxDepth (1024). The JS engine call stack and Scala Native default stack overflow well before depth
     //   1024 (RangeError on JS, native SOE on Native), so the assertion would not exercise the depth-guard branch.
-    "B8/INV-019: Applied chain at MaxDepth+1 throws DepthExceededException during merge" taggedAs jvmOnly in run {
+    "B8/INV-019: Applied chain at MaxDepth+1 throws DepthExceededException during merge" in runJVM {
         nextId = 0
         val baseSym       = makeSym("DepthBase")
         val argSym        = makeSym("DepthArg")
@@ -164,7 +164,7 @@ class TypeArenaTest extends Test:
     //   require a JVM-sized call stack (-Xss10M in CI). JS engines and Scala Native have substantially smaller
     //   default stacks and would overflow before reaching depth 1023, so the "merges successfully" property
     //   cannot be observed there.
-    "B8: nesting at MaxDepth-1 (1023 levels) merges successfully" taggedAs jvmOnly in run {
+    "B8: nesting at MaxDepth-1 (1023 levels) merges successfully" in runJVM {
         nextId = 0
         val baseSym       = makeSym("BoundBase")
         val argSym        = makeSym("BoundArg")
@@ -190,7 +190,7 @@ class TypeArenaTest extends Test:
     // Test 8 (T4, Rec depth boundary): Rec-type nesting at MaxDepth-1 succeeds.
     // JVM-only (exception condition 3: test asserts JVM-specific behavior): 1023 levels of nested Rec types require
     //   the JVM call stack size; JS/Native default stacks overflow before reaching depth 1023.
-    "T4: Rec nesting at MaxDepth-1 merges successfully without DepthExceededException" taggedAs jvmOnly in run {
+    "T4: Rec nesting at MaxDepth-1 merges successfully without DepthExceededException" in runJVM {
         nextId = 0
         val leafSym          = makeSym("RecDepthLeaf")
         val leaf: Tasty.Type = Tasty.Type.Named(leafSym.id)

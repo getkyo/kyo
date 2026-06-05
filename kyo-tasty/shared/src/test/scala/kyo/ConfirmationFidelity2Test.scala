@@ -57,7 +57,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): the assertion pins the
     //   scala-library given count. Scala-library cannot be loaded as a TASTy classpath on JS/Native;
     //   the embedded fixture set contains no `given` instances, so the count would always be 0 there.
-    "F-A2-004 leaf 2 (Phase 2.09): allSymbols.count(isGiven) ~= 493 baseline on standard classpath" taggedAs jvmOnly in run {
+    "F-A2-004 leaf 2 (Phase 2.09): allSymbols.count(isGiven) ~= 493 baseline on standard classpath" in runJVM {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val count = cp.symbols.count(_.isGiven)
             assert(
@@ -76,7 +76,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     //   takes a real filesystem cacheDir and uses java.nio.file atomic-rename for one-writer-wins. MemoryFileSource
     //   has no atomic-rename or concurrent-write semantics, so it cannot exercise the JVM rename-collision path
     //   that this leaf pins.
-    "F-A4-003 leaf 3 (Phase 2.09): two concurrent cold-init writers to same cacheDir produce one .krfl file" taggedAs jvmOnly in run {
+    "F-A4-003 leaf 3 (Phase 2.09): two concurrent cold-init writers to same cacheDir produce one .krfl file" in runJVM {
         val cacheDir = TestClasspaths2.createTempDir("kyo-df2-concurrent-writers")
         val roots    = TestClasspaths2.standardRoots
         Async.zip(
@@ -195,7 +195,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // JVM-only (exception condition 3: test asserts JVM-specific behavior): the assertion pins cold-init wall-time
     //   on a 79,567-symbol stdlib classpath, a perf characteristic of the JVM real-classpath loader. The embedded
     //   fixture set holds ~150 symbols; a <5000ms bound there is vacuous (typical load is <500ms).
-    "F-A1-009 leaf 7 (Phase 2.09): standard 81,569-symbol classpath cold-init median < 5,000 ms" taggedAs jvmOnly in run {
+    "F-A1-009 leaf 7 (Phase 2.09): standard 81,569-symbol classpath cold-init median < 5,000 ms" in runJVM {
         val roots = TestClasspaths2.standardRoots
         def timedLoad: Long < (Async & Abort[TastyError]) =
             val start = java.lang.System.nanoTime()
@@ -223,7 +223,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // Pins: F-A3-005
     // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): jrt:/ JPMS module filesystem
     //   is a JVM-only loader scheme; JS/Native have no equivalent module system to enumerate.
-    "F-A3-005 leaf 8 (Phase 2.09): JPMS module count == 69 on platform-modules classpath" taggedAs jvmOnly in run {
+    "F-A3-005 leaf 8 (Phase 2.09): JPMS module count == 69 on platform-modules classpath" in runJVM {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
             val count = cp.indices.modulesIndex.size
             assert(

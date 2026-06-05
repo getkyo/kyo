@@ -81,7 +81,7 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     // JVM-only (exception condition 1: dev tool, user is a developer on their dev machine): the leaf walks the
     //   source tree under kyo-tasty/shared/src/test and greps for ScalaTest pending markers. It is a TDD
     //   discipline guard for developers running tests in-tree; not a property of the kyo-tasty runtime decoder.
-    "INV-001 (Phase 2.10, updated 2026-06-02): zero pending fidelity-2 leaves remain after backlog resolution" taggedAs jvmOnly in run {
+    "INV-001 (Phase 2.10, updated 2026-06-02): zero pending fidelity-2 leaves remain after backlog resolution" in runJVM {
         val pendingCount = TestClasspaths2.pendingLeafCount
         assert(
             pendingCount == 0,
@@ -109,15 +109,15 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf: jvm-only-leaf-gated-with-tag
-    // Given: leaves that exercise JVM-only primitives (jrt:/, real stdlib classpath, JVM filesystem) carry
-    //        taggedAs jvmOnly so JS/Native skip them cleanly.
+    // Leaf: jvm-only-leaf-gated-with-runJVM
+    // Given: leaves that exercise JVM-only primitives (jrt:/, real stdlib classpath, JVM filesystem) use
+    //        runJVM { ... } so JS/Native compile away the body at link time.
     // When: the test framework selects a leaf on a non-JVM platform
-    // Then: the leaf is skipped via the jvmOnly tag rather than failing
+    // Then: the leaf is skipped via runJVM rather than failing
     // This meta-leaf is always passing; it documents the gating convention for auditors.
     // Pins: HARD RULE 12 test-level platform gate; Phase 2.10 leaf 2
-    "Phase-2.10 (HARD RULE 12): JVM-only leaves are gated with the jvmOnly tag (cited per-leaf)" in run {
-        // The gating convention is enforced structurally by taggedAs jvmOnly on each
+    "Phase-2.10 (HARD RULE 12): JVM-only leaves are gated with runJVM (cited per-leaf)" in run {
+        // The gating convention is enforced structurally by runJVM { ... } on each
         // JVM-only leaf, each carrying a per-leaf rationale citing one of three exception conditions.
         succeed
     }

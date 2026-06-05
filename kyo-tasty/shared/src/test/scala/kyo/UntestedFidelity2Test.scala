@@ -77,7 +77,7 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     //   built from two scala-library jars at distinct versions discovered via JVM classpath. The FqnCollisionError
     //   detection pins same-FQN-different-version collision, which requires real version-divergent stdlib jars; no
     //   embedded-fixture equivalent exists.
-    "F-A1-OPEN-MULTI leaf 12 (Phase 2.09): multi-version stdlib FailFast init aborts with FqnCollisionError" taggedAs jvmOnly in run {
+    "F-A1-OPEN-MULTI leaf 12 (Phase 2.09): multi-version stdlib FailFast init aborts with FqnCollisionError" in runJVM {
         val multiRoots  = TestClasspaths2.multiVersionStdlibRoots
         val src         = PlatformFileSource.get
         val concurrency = java.lang.Runtime.getRuntime.availableProcessors().max(1)
@@ -125,7 +125,7 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     //   cross-platform way would require building a real atomic FileSource impl with cross-platform write
     //   isolation, which would itself become the system-under-test and undermine the pin.
     // Delegates to TestClasspaths2.runConcurrentReaderWriterTest to avoid JVM-specific imports in shared.
-    "F-A4-OPEN-RW leaf 14 (Phase 2.09): concurrent snapshot reader+writer: reader sees pre- or post-write, not corrupt" taggedAs jvmOnly in run {
+    "F-A4-OPEN-RW leaf 14 (Phase 2.09): concurrent snapshot reader+writer: reader sees pre- or post-write, not corrupt" in runJVM {
         val digest = Array[Byte](0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57)
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             Sync.defer:
