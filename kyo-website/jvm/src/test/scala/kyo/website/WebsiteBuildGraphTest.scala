@@ -80,7 +80,7 @@ class WebsiteBuildGraphTest extends Test:
     // shared/js/bundle source trees. The grep is scoped to import/dependency forms so prose
     // mentions of "scalameta" in scaladoc comments (e.g. DocsMarkdown.scala:11) do not trigger it.
     // Pattern: `import scala.meta` (import form) or `org.scalameta` (libraryDependencies form).
-    // This mirrors the flexmark guard at lines 39-57 exactly (INV-001, WARN-2 fix).
+    // This mirrors the flexmark guard at lines 39-57 exactly (INV-001).
     "scalameta JVM-only import grep (INV-001 Guard A)" - {
 
         "zero scalameta in kyo-website/shared" in {

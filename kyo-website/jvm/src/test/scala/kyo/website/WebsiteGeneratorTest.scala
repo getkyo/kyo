@@ -226,9 +226,9 @@ class WebsiteGeneratorTest extends Test:
             result <- Abort.run[WebsiteException](emit(oneVersion, tmp, bundleDir))
         yield
             result match
-                // negative-path test 8; Failure(WebsiteEmitException) is the expected pass, all other arms fail()
+                // Failure(WebsiteEmitException) is the expected pass, all other arms fail()
                 case Result.Failure(e: WebsiteEmitException) =>
-                    // NOTE-3: the typed failure must carry a non-empty route so the caller can locate it.
+                    // The typed failure must carry a non-empty route so the caller can locate it.
                     assert(e.route.nonEmpty, "WebsiteEmitException.route must be non-empty")
                     assert(e.route.contains("index.html"), s"route must name the failed file, got: ${e.route}")
                     succeed
@@ -495,9 +495,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- latest mirrors newest stable, not the RC (Q-005) ----
+    // ---- latest mirrors newest stable, not the RC ----
 
-    "latest mirrors newest stable, not the RC (Q-005)" in run {
+    "latest mirrors newest stable, not the RC" in run {
         val stableV1 = WebsiteContent(
             "intro",
             Chunk(WebsiteContent.Group(
@@ -532,9 +532,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- latest falls back to newest pre-release (Q-005) ----
+    // ---- latest falls back to newest pre-release ----
 
-    "latest falls back to newest pre-release when no stable tag (Q-005)" in run {
+    "latest falls back to newest pre-release when no stable tag" in run {
         val rc1 = WebsiteContent(
             "intro",
             Chunk(WebsiteContent.Group(
@@ -662,9 +662,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test NOTE-2: escJson escapes quote and backslash in versions.json ----
+    // ---- escJson escapes quote and backslash in versions.json ----
 
-    "escJson escapes quote and backslash in versions.json (NOTE-2)" in run {
+    "escJson escapes quote and backslash in versions.json" in run {
         val specialVersion = WebsiteContent(
             "intro",
             Chunk.empty,
@@ -747,9 +747,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test WARN-1: the latest version's own v<X>/ pages link within v<X>/, not latest/ ----
+    // ---- the latest version's own v<X>/ pages link within v<X>/, not latest/ ----
 
-    "latest version's own v<X> tree links within v<X> not latest (WARN-1 regression)" in run {
+    "latest version's own v<X> tree links within v<X> not latest" in run {
         // The single version is flagged latest=true, so emit writes it under BOTH v1.0.0/ (emitVersion)
         // and latest/ (emitLatest). The v1.0.0/ copy must link within /v1.0.0/, not /latest/.
         val readme  = "# kyo-data\n## Overview\nData types.\n"
@@ -1050,7 +1050,7 @@ class WebsiteGeneratorTest extends Test:
         count
     end countOccurrences
 
-    // ---- content.html, INV-004, island reshape, landing seed, RI-003, sitemap, manifest, escape ----
+    // ---- content.html, INV-004, island reshape, landing seed, sitemap, manifest, escape ----
 
     "content.html written per route with html + headings" in run {
         for
@@ -1127,7 +1127,7 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    "content.md still emitted per route (RI-003)" in run {
+    "content.md still emitted per route" in run {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -1139,9 +1139,9 @@ class WebsiteGeneratorTest extends Test:
             // Latest mirror.
             latestMd <- readFile(out / "latest" / "kyo-data" / "content.md")
         yield
-            assert(dataMd == dataReadme, s"RI-003: content.md must equal module.readme, got: $dataMd")
-            assert(introMd == "intro", s"RI-003: intro content.md must equal content.intro, got: $introMd")
-            assert(latestMd == dataReadme, s"RI-003: latest content.md must equal module.readme, got: $latestMd")
+            assert(dataMd == dataReadme, s"content.md must equal module.readme, got: $dataMd")
+            assert(introMd == "intro", s"intro content.md must equal content.intro, got: $introMd")
+            assert(latestMd == dataReadme, s"latest content.md must equal module.readme, got: $latestMd")
         end for
     }
 

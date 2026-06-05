@@ -22,7 +22,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- GFM pipe table ----
 
-    "GFM pipe table -> UI.table subtree (leaf 1)" in run {
+    "GFM pipe table -> UI.table subtree" in run {
         val source =
             "| Name | Type |\n" +
                 "| ---- | ---- |\n" +
@@ -41,7 +41,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Heading slugs == headings slugs (INV-004) ----
 
-    "heading id slugs equal headings slugs (INV-004) (leaf 2)" in run {
+    "heading id slugs equal headings slugs (INV-004)" in run {
         val source =
             "# Alpha\n" +
                 "## Beta\n" +
@@ -62,7 +62,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Slug rule ----
 
-    "slug lowercases and replaces non-alnum (leaf 3)" in run {
+    "slug lowercases and replaces non-alnum" in run {
         for rendered <- transpile("## Composing: map, flatMap\n")
         yield
             assert(rendered.headings.size == 1)
@@ -72,7 +72,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Duplicate heading deduplication ----
 
-    "duplicate headings get -2 suffix on both sides (leaf 4)" in run {
+    "duplicate headings get -2 suffix on both sides" in run {
         val source = "## Note\n## Note\n"
         for
             rendered <- transpile(source)
@@ -87,7 +87,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Two-space nested list ----
 
-    "two-space nested list does not flatten (leaf 5)" in run {
+    "two-space nested list does not flatten" in run {
         val source = "- Exception\n  - FileException\n  - TimeoutException\n"
         for html <- transpileHtml(source)
         yield
@@ -100,19 +100,19 @@ class DocsMarkdownTest extends Test:
 
     // ---- Callouts ----
 
-    "blockquote Note becomes callout callout-note (leaf 6)" in run {
+    "blockquote Note becomes callout callout-note" in run {
         for html <- transpileHtml("> **Note:** be careful\n")
         yield assert(html.contains("callout-note"), s"HTML: $html")
         end for
     }
 
-    "blockquote Caution becomes callout callout-caution (leaf 7)" in run {
+    "blockquote Caution becomes callout callout-caution" in run {
         for html <- transpileHtml("> **Caution:** danger\n")
         yield assert(html.contains("callout-caution"), s"HTML: $html")
         end for
     }
 
-    "other blockquote labels become plain blockquote (leaf 8)" in run {
+    "other blockquote labels become plain blockquote" in run {
         for html <- transpileHtml("> **Sequential vs parallel:** some text\n")
         yield
             assert(html.contains("blockquote"), s"HTML: $html")
@@ -123,7 +123,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Form-B bold opener stays plain prose ----
 
-    "Form-B bold opener in a paragraph stays plain prose (leaf 9)" in run {
+    "Form-B bold opener in a paragraph stays plain prose" in run {
         for html <- transpileHtml("**Note:** inline text here\n")
         yield
             assert(html.contains("<p"), s"Expected paragraph: $html")
@@ -134,7 +134,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Blockquote-wrapped fenced code ----
 
-    "blockquote-wrapped fenced code is a real pre/code block (leaf 10)" in run {
+    "blockquote-wrapped fenced code is a real pre/code block" in run {
         val source =
             "> **Note:** see below\n" +
                 ">\n" +
@@ -151,7 +151,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Doctest comment stripping ----
 
-    "doctest:setup comment is stripped (leaf 11)" in run {
+    "doctest:setup comment is stripped" in run {
         val source =
             "<!-- doctest:setup\n" +
                 "```scala\n" +
@@ -265,7 +265,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Doctest info-string suffix stripping ----
 
-    "doctest info-string suffix is stripped (leaf 12)" in run {
+    "doctest info-string suffix is stripped" in run {
         val source = "```scala doctest:scope=inherited\nval x = 1\n```\n"
         for html <- transpileHtml(source)
         yield
@@ -276,7 +276,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Scala token highlighting ----
 
-    "scala fence gets tok-* token spans (leaf 13)" in run {
+    "scala fence gets tok-* token spans" in run {
         val source = "```scala\nval x = 1\ndef foo: Int = x\n```\n"
         for html <- transpileHtml(source)
         yield assert(html.contains("tok-keyword"), s"Expected tok-keyword: $html")
@@ -285,7 +285,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- SBT and bash token highlighting ----
 
-    "sbt and bash fences get tok-* spans (leaf 14)" in run {
+    "sbt and bash fences get tok-* spans" in run {
         // With the scalameta highlighter, sbt operators like +=, %%, % are symbolic idents
         // that classify as tok-operator (not tok-keyword as in the old hand-written lexer).
         // Bash still uses the keyword-Set lexer, so 'if', 'then', 'fi' are tok-keyword.
@@ -304,7 +304,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Bare/other fence: no token spans ----
 
-    "bare and other fences produce plain pre/code with no tok-* spans (leaf 15)" in run {
+    "bare and other fences produce plain pre/code with no tok-* spans" in run {
         val bareSource = "```\nsome plain text\n```\n"
         val textSource = "```text\nsome plain text\n```\n"
         for
@@ -319,7 +319,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Shield.io badge (linked image) ----
 
-    "shield.io badge -> UI.a containing UI.img (leaf 16)" in run {
+    "shield.io badge -> UI.a containing UI.img" in run {
         val source = "[![Version](https://img.shields.io/badge/v-1.0)](https://getkyo.io)\n"
         for html <- transpileHtml(source)
         yield
@@ -331,7 +331,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Root README inline <img> passthrough ----
 
-    "root README inline img becomes UI.rawHtml leaf (leaf 17)" in run {
+    "root README inline img becomes UI.rawHtml leaf" in run {
         val snippet = """<img src="kyo.png" width="200" alt="Kyo">"""
         val source  = snippet + "\nSome regular text here.\n"
         for html <- transpileHtml(source)
@@ -347,7 +347,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Empty source edge case ----
 
-    "empty source returns UI.empty and Chunk.empty headings (leaf 18)" in run {
+    "empty source returns UI.empty and Chunk.empty headings" in run {
         for rendered <- transpile("")
         yield assert(rendered == DocsMarkdownRender.Rendered(UI.empty, "", Chunk.empty))
         end for
@@ -355,7 +355,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- HTML comment before heading (RI-002 trap 5) ----
 
-    "leading HTML comment is skipped; first heading is the H1 (leaf 19)" in run {
+    "leading HTML comment is skipped; first heading is the H1" in run {
         val source = "<!-- This is a comment -->\n# kyo-core\nSome text.\n"
         for rendered <- transpile(source)
         yield assert(rendered.headings.headMaybe.map(_.text) == Present("kyo-core"))
@@ -397,7 +397,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Multi-line <a><img></a> video embed (R4 regression, leaf 20) ----
 
-    "multi-line <a><img></a> video embed is coalesced into one wrapped rawHtml node (leaf 20)" in run {
+    "multi-line <a><img></a> video embed is coalesced into one wrapped rawHtml node" in run {
         val source =
             "<a href=\"http://www.youtube.com/watch?v=uA2_TWP5WF4\" title=\"Kyo Tour\">\n" +
                 "    <img src=\"https://img.youtube.com/vi/uA2_TWP5WF4/maxresdefault.jpg\" alt=\"Kyo\" width=\"500\" height=\"300\">\n" +
@@ -507,7 +507,7 @@ class DocsMarkdownTest extends Test:
         val source = "```scala\n" + code + "\n```\n"
         transpileHtml(source)
 
-    "INV-006 every TokenKind cssClass is in the docsTokens stylesheet (leaf P2-1)" in run {
+    "INV-006 every TokenKind cssClass is in the docsTokens stylesheet" in run {
         // Collect all css classes from the token kinds.
         val tokenClasses = DocsMarkdownRender.TokenKind.values.map(_.cssClass).toSet
         // The stylesheet includes: tok-keyword, tok-string, tok-comment, tok-type, tok-number,
@@ -530,7 +530,7 @@ class DocsMarkdownTest extends Test:
         )
     }
 
-    "cssClass mapping is exact per kind (leaf P2-2)" in run {
+    "cssClass mapping is exact per kind" in run {
         assert(DocsMarkdownRender.TokenKind.Keyword.cssClass == "tok-keyword")
         assert(DocsMarkdownRender.TokenKind.Str.cssClass == "tok-string")
         assert(DocsMarkdownRender.TokenKind.Comment.cssClass == "tok-comment")
@@ -541,7 +541,7 @@ class DocsMarkdownTest extends Test:
         assert(DocsMarkdownRender.TokenKind.Operator.cssClass == "tok-operator")
     }
 
-    "INV-007 keyword/number classification: val x = 1 (leaf P2-3)" in run {
+    "INV-007 keyword/number classification: val x = 1" in run {
         for html <- highlightScalaHtml("val x = 1")
         yield
             assert(html.contains("tok-keyword"), s"Expected tok-keyword for val: $html")
@@ -555,7 +555,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-007 string and char literals (leaf P2-4)" in run {
+    "INV-007 string and char literals" in run {
         for html <- highlightScalaHtml("val s = \"hi\"\nval c = 'a'")
         yield
             assert(html.contains("tok-string"), s"Expected tok-string for string literal: $html")
@@ -564,7 +564,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-007 line and block comments (leaf P2-5)" in run {
+    "INV-007 line and block comments" in run {
         for html <- highlightScalaHtml("// note\n/* block */\nval x = 1")
         yield
             assert(html.contains("tok-comment"), s"Expected tok-comment: $html")
@@ -573,7 +573,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-007 numeric literals Int/Long/Float/Double (leaf P2-6)" in run {
+    "INV-007 numeric literals Int/Long/Float/Double" in run {
         for html <- highlightScalaHtml("val a = 1\nval b = 2L\nval c = 3.0\nval d = 4.5d")
         yield
             // Each of 1, 2L, 3.0, 4.5d should be in tok-number spans.
@@ -585,7 +585,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-007 interpolation parts and id: s\"x=$x\" (leaf P2-7)" in run {
+    "INV-007 interpolation parts and id: s\"x=$x\"" in run {
         for html <- highlightScalaHtml("s\"x=$x\"")
         yield
             // The interpolator id 's' should be in tok-interpolation.
@@ -597,7 +597,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-007 annotation marker and name: @main def run = () (leaf P2-8)" in run {
+    "INV-007 annotation marker and name: @main def run = ()" in run {
         for html <- highlightScalaHtml("@main def run = ()")
         yield
             // @ should be in tok-annotation.
@@ -610,7 +610,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-007 operator punctuation: val f: Int => Int = _ + 1 (leaf P2-9)" in run {
+    "INV-007 operator punctuation: val f: Int => Int = _ + 1" in run {
         for html <- highlightScalaHtml("val f: Int => Int = _ + 1")
         yield
             // : should be in tok-operator.
@@ -627,7 +627,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-007 Type heuristic arm (a) capitalized idents (leaf P2-10)" in run {
+    "INV-007 Type heuristic arm (a) capitalized idents" in run {
         for html <- highlightScalaHtml("val o: Option = ???\nval n = Int.MaxValue")
         yield
             // Option and Int should be classified as tok-type (arm a: uppercase first char).
@@ -638,7 +638,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-007 Type heuristic arm (b) lowercase after context tokens (leaf P2-11)" in run {
+    "INV-007 Type heuristic arm (b) lowercase after context tokens" in run {
         // type alias = Int: 'alias' after KwType -> tok-type (arm b).
         // extends Foo with Bar: Bar after KwWith -> tok-type.
         // def f[a](x: a): a = x: 'a' after [ and : -> tok-type.
@@ -656,7 +656,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "Type arm (b) supertype/subtype bounds: type T >: lo <: hi (leaf P2-12)" in run {
+    "Type arm (b) supertype/subtype bounds: type T >: lo <: hi" in run {
         for html <- highlightScalaHtml("type T >: lo <: hi")
         yield
             // lo (after >:) and hi (after <:) should both be in tok-type via arm (b).
@@ -665,7 +665,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    // INV-007 regression: boolean and null literals must classify as tok-keyword (WARN-1 fix).
+    // INV-007 regression: boolean and null literals must classify as tok-keyword.
     // KwTrue, KwFalse, KwNull extend BooleanConstant/Literal, not Token$Keyword in scalameta 4.13.4.
     // Without the dedicated arm they fall through to Absent and render unhighlighted.
     "INV-007 boolean and null literals classify as tok-keyword" in run {
@@ -678,7 +678,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-008 any snippet completes without exception or Abort (leaf P2-13)" in run {
+    "INV-008 any snippet completes without exception or Abort" in run {
         // INV-008: no input may panic the build. Scalameta 4.13.4 in Scala3 dialect is
         // lenient and returns Right (tokens) even for partial/malformed snippets (empirically
         // verified: unterminated strings, multi-char char literals, invalid unicode escapes all
@@ -705,7 +705,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "INV-008 partial expression still tokenizes (not a degrade) (leaf P2-14)" in run {
+    "INV-008 partial expression still tokenizes (not a degrade)" in run {
         // scalameta can tokenize expressions like x.map(_ + 1) even without a complete compilation
         // unit. The result should be a fragment with tok- spans, not a single Ast.Text degrade.
         for html <- highlightScalaHtml("x.map(_ + 1)")
@@ -717,7 +717,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "byte-preserving fold round-trip (leaf P2-15)" in run {
+    "byte-preserving fold round-trip" in run {
         // All token texts are emitted (including whitespace/trivia), so stripping HTML tags from
         // the rendered output recovers the original body. We verify each element is present in
         // the HTML: tokens are in spans and trivia/whitespace is plain text between them.
@@ -737,7 +737,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "sbt fence uses the scala highlighter (leaf P2-16)" in run {
+    "sbt fence uses the scala highlighter" in run {
         val source = "```sbt\nversion := \"1.0\"\n```\n"
         for html <- transpileHtml(source)
         yield
@@ -748,7 +748,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "large-README highlight pass does not panic (leaf P2-17)" in run {
+    "large-README highlight pass does not panic" in run {
         // Build a large source with many scala fences.
         val sb = new StringBuilder()
         sb.append("# Large README\n\n")

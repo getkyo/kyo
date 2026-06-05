@@ -111,7 +111,7 @@ class ChromeParityTest extends Test:
             rendered <- DocsMarkdownRender.transpile(intro)
             route    <- Signal.initRef[String]("/latest/")
             reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
-            // Constant-false contentLoading: see the docs-route parity leaf above.
+            // Constant-false contentLoading: see the docs-route parity test above.
             body  <- DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), reactive, Signal.initConst(false))
             view  <- siteShell(versions2, docsHomeRoute, body)
             ssg   <- UI.runRender(view).take(1).run.map(_.headMaybe.getOrElse(""))
@@ -174,8 +174,7 @@ class ChromeParityTest extends Test:
             version = WebsiteVersion("latest", "latest", true)
         )
 
-    // Leaf 13: docs body SSG path renders the article inside data-kyo-reactive (INV-003)
-    "docs body SSG runRenderPage contains data-kyo-reactive wrapping article (INV-003, leaf 13)" in run {
+    "docs body SSG runRenderPage contains data-kyo-reactive wrapping article (INV-003)" in run {
         val src = "## Scope\n\nSome text.\n"
         for
             rendered <- DocsMarkdownRender.transpile(src)
@@ -189,8 +188,7 @@ class ChromeParityTest extends Test:
         end for
     }
 
-    // Leaf 13b: article is a UI subtree not a raw-HTML string at article-body level
-    "article is a UI subtree not a raw-HTML string at article-body level (leaf 13b)" in run {
+    "article is a UI subtree not a raw-HTML string at article-body level" in run {
         val src = "## Scope\n\nSome text.\n"
         for
             rendered <- DocsMarkdownRender.transpile(src)
@@ -205,8 +203,7 @@ class ChromeParityTest extends Test:
         end for
     }
 
-    // Leaf 13c: same Markdown gives byte-identical article HTML in both SSG calls (INV-003)
-    "same Markdown gives byte-identical article in two runRenderPage calls (leaf 13c)" in run {
+    "same Markdown gives byte-identical article in two runRenderPage calls (INV-003)" in run {
         val src = "## Scope\n\n- item one\n- item two\n"
         for
             rendered1 <- DocsMarkdownRender.transpile(src)
@@ -220,11 +217,11 @@ class ChromeParityTest extends Test:
         end for
     }
 
-    // Leaf 8 (INV-003): SSG article HTML equals the client-injected article HTML.
+    // INV-003: SSG article HTML equals the client-injected article HTML.
     // The SSG side produces articleHtml via renderArticle (UI.runRender of the article subtree).
     // The client injection side wraps that HTML in UI.rawHtml and renders it via RecordingBackend.
     // HtmlRenderer emits RawHtml verbatim (no escaping), so both sides return the same string.
-    // This leaf crosses the real RecordingBackend/HtmlRenderer path and confirms the rawHtml
+    // This crosses the real RecordingBackend/HtmlRenderer path and confirms the rawHtml
     // injection is byte-identical to the SSG article string (INV-003).
     "INV-003 SSG article HTML equals injected article HTML (RecordingBackend rawHtml path)" in run {
         val src = "# Title\n## Section\n\nCode: ```scala\nval x = true\nval n = null\n```\n"

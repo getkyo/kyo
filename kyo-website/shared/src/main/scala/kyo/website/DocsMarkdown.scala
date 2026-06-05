@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC cross-platform heading-outline carrier consumed by DocsApp + DocsClient
+// PUBLIC cross-platform heading-outline carrier consumed by DocsApp + DocsClient
 package kyo.website
 
 import kyo.*

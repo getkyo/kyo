@@ -20,10 +20,10 @@ import kyo.*
   * {{{
   *   <outDir>/index.html             -- landing page (INV-009)
   *   <outDir>/<prefix>/index.html    -- per-version overview page (chrome + rendered root-README intro)
-  *   <outDir>/<prefix>/content.md    -- raw root-README intro Markdown (== content.intro, RI-003 kept)
+  *   <outDir>/<prefix>/content.md    -- raw root-README intro Markdown (== content.intro, kept)
   *   <outDir>/<prefix>/content.html  -- pre-rendered article JSON ({html, headings}) for the SPA
   *   <outDir>/<prefix>/<slug>/index.html  -- per-module docs page (chrome + rendered article)
-  *   <outDir>/<prefix>/<slug>/content.md  -- raw README Markdown (== module.readme, RI-003 kept)
+  *   <outDir>/<prefix>/<slug>/content.md  -- raw README Markdown (== module.readme, kept)
   *   <outDir>/<prefix>/<slug>/content.html -- pre-rendered article JSON ({html, headings}) for the SPA
   *   <outDir>/<prefix>/manifest.json      -- module/slug list + TOC outlines + prev/next (D5)
   *   <outDir>/versions.json   -- version manifest (INV-010)
@@ -95,10 +95,10 @@ object WebsiteGenerator:
 
     /** Emit one version's full route set under `prefix` (the version's own tag, e.g. `v1.0.0-RC2`):
       *   - `<prefix>/index.html`: the version overview page (chrome + the rendered root-README intro).
-      *   - `<prefix>/content.md`: the raw root-README intro Markdown (== `content.intro`, RI-003 kept).
+      *   - `<prefix>/content.md`: the raw root-README intro Markdown (== `content.intro`, kept).
       *   - `<prefix>/content.html`: pre-rendered article JSON `{"html": ..., "headings": [...]}`.
       *   - `<prefix>/<slug>/index.html`: each module's docs page (chrome + rendered UI article).
-      *   - `<prefix>/<slug>/content.md`: the raw README Markdown (== `module.readme`, RI-003 kept).
+      *   - `<prefix>/<slug>/content.md`: the raw README Markdown (== `module.readme`, kept).
       *   - `<prefix>/<slug>/content.html`: pre-rendered article JSON for the SPA navigator.
       *   - `<prefix>/manifest.json`: the module/slug list with TOC outlines and prev/next order.
       *
@@ -131,7 +131,7 @@ object WebsiteGenerator:
         // /latest/<slug>/, so its module pages canonicalize to /latest/ rather than self.
         emitDocs(c, versions, c.version.tag, outDir, isCurrentLatest = latestTag.contains(c.version.tag))
 
-    /** Mirror the newest stable version (or the newest pre-release when no stable tag exists, Q-005)
+    /** Mirror the newest stable version (or the newest pre-release when no stable tag exists)
       * under `latest/`, as a duplicate emission (Pages serves files, not symlinks). The mirrored
       * version is re-rendered with the `latest` prefix so its intra-page links resolve under
       * `latest/` and its content carries the latest `WebsiteVersion` record.
@@ -154,7 +154,7 @@ object WebsiteGenerator:
     /** The version to serve as `latest`. The caller (the deploy flow / `WebsiteMain.parseContent`)
       * marks the chosen version with `version.latest = true`, so that explicit flag wins. When no
       * version carries the flag, fall back to the newest stable (non-pre-release) version, then to the
-      * newest pre-release (Q-005). The content `Chunk` is ordered oldest-first by semantic version
+      * newest pre-release. The content `Chunk` is ordered oldest-first by semantic version
       * (`WebsiteMain.listTagDirs` sorts via `WebsiteVersion.tagOrdering`, independent of the deploy
       * workflow's `sort -V`), so "newest" is the last matching entry.
       */
@@ -182,8 +182,8 @@ object WebsiteGenerator:
         for
             // The intro route renders the root-README overview as its article (no longer an empty
             // article), so the page is real content: SEO-indexable, with its OWN heading outline driving
-            // the rail's Overview sections. The raw `content.intro` is written as the route's content.md
-            // (RI-003 kept). The pre-rendered article HTML ships in the island and as content.html.
+            // the rail's Overview sections. The raw `content.intro` is written as the route's content.md.
+            // The pre-rendered article HTML ships in the island and as content.html.
             rendered   <- DocsMarkdownRender.renderArticle(c.intro)
             fixedRoute <- Signal.initRef(route)
             // The SSG emits one fully-loaded static page per route, so content is never mid-load:

@@ -1,4 +1,4 @@
-// flow-allow: PUBLIC JVM-only build-time render/transpile/highlight object, consumed by WebsiteGenerator
+// PUBLIC JVM-only build-time render/transpile/highlight object, consumed by WebsiteGenerator
 package kyo.website
 
 import kyo.*
@@ -452,7 +452,7 @@ object DocsMarkdownRender:
     /** Parse a GFM pipe-table row into trimmed cell strings via a `Parse[Char]` grammar. A GFM row is
       * `| c1 | c2 |`: a leading `|` followed by a run of `cell` then `|` pairs. A cell is a run of
       * characters up to the next pipe, with a `\|` escape contributing a literal `|` to the cell
-      * (addressing the NOTE-1 naive-split limitation: an escaped pipe stays inside the cell rather
+      * (addressing the naive-split limitation: an escaped pipe stays inside the cell rather
       * than splitting it).
       */
     private def parseRowCells(line: String)(using Frame): Chunk[String] =
@@ -870,7 +870,7 @@ object DocsMarkdownRender:
             Present(TokenKind.Operator)
         case _: MetaToken.At => Present(TokenKind.Annotation)
         // KwTrue, KwFalse, and KwNull extend BooleanConstant/Literal, not Token$Keyword in scalameta
-        // 4.13.4, so they do not match the Keyword arm below. Place this arm first (INV-007, WARN-1).
+        // 4.13.4, so they do not match the Keyword arm below. Place this arm first (INV-007).
         case _: MetaToken.KwTrue | _: MetaToken.KwFalse | _: MetaToken.KwNull =>
             Present(TokenKind.Keyword)
         case _: MetaToken.Keyword => Present(TokenKind.Keyword)

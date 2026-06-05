@@ -189,11 +189,11 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         end for
     }
 
-    // WARN-2 regression: a manifest whose string VALUES carry unbalanced structural brackets
+    // Regression: a manifest whose string VALUES carry unbalanced structural brackets
     // (`[`, `]`, `{`, `}`) and an escaped `\"` must still split into the correct number of elements
     // with each bracket-laden value intact. Before the fix, splitJsonArray counted brackets inside
     // string literals, so a lone `]` in a title desynced the depth counter and merged elements.
-    "parseManifest splits correctly when titles contain unbalanced brackets and escaped quotes (WARN-2)" in run {
+    "parseManifest splits correctly when titles contain unbalanced brackets and escaped quotes" in run {
         // title 0 has a lone `]` then a lone `[` (unbalanced); title 1 has `{`/`}` plus an escaped `\"`.
         val manifestJson =
             """[""" +
@@ -225,9 +225,9 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         }
     }
 
-    // WARN-2 regression (versions side): a versions array whose label values carry unbalanced
+    // Regression (versions side): a versions array whose label values carry unbalanced
     // brackets must split into the correct number of versions with labels intact.
-    "parseVersions splits correctly when labels contain unbalanced brackets (WARN-2)" in run {
+    "parseVersions splits correctly when labels contain unbalanced brackets" in run {
         val versionsJson =
             """[""" +
                 """{"tag":"v1.0.0","label":"1.0.0 ]edge[","latest":true},""" +
