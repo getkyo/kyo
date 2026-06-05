@@ -1,7 +1,5 @@
 package kyo.test.runner
 
-import java.io.ByteArrayOutputStream
-import java.io.PrintStream
 import kyo.*
 import kyo.Chunk
 import kyo.test.LeafInfo
@@ -13,6 +11,10 @@ import kyo.test.TestReporter
 import kyo.test.TestResult
 
 /** Tests for [[CombinedReporter]] strict mode: 4 leaves covering fan-out, strict throw, non-strict warning, and clean run.
+  *
+  * Diagnostics are captured by injecting a per-instance `diagnostics` sink into the reporter under test, never by mutating
+  * process-global `java.lang.System.err`. Under the runner's concurrent leaf pool, overlapping `System.setErr` swaps from
+  * sibling leaves stomp each other, which made the stderr-capture variant of these tests flaky.
   */
 class CombinedReporterStrictTest extends kyo.test.Test[Any]:
 
@@ -45,31 +47,25 @@ class CombinedReporterStrictTest extends kyo.test.Test[Any]:
         val sr = SuiteReport("suite", Chunk((Chunk("leaf"), dummyResult)), 1L.millis)
         TestReport(Chunk(sr))
 
-    /** Redirect System.err for the duration of `body`, return captured output. */
-    private def captureStderr(body: => Unit): String =
-        val baos = new ByteArrayOutputStream()
-        val ps   = new PrintStream(baos, true, "UTF-8")
-        val old  = java.lang.System.err
-        java.lang.System.setErr(ps)
-        try
-            body
-        finally
-            java.lang.System.setErr(old)
-        end try
-        baos.toString("UTF-8")
-    end captureStderr
+    /** A diagnostics sink that records every line, for assertions; and a no-op sink for tests that only need suppression. */
+    final private class RecordingSink extends (String => Unit):
+        private val lines = new StringBuilder
+        def apply(s: String): Unit =
+            lines.append(s).append('\n'); ()
+        def text: String = lines.toString
+    end RecordingSink
+
+    private val silent: String => Unit = _ => ()
 
     // ── Test 3: okReporter still sees every event when failingReporter is first ────────────────
 
     "test-3: CombinedReporter(failingReporter, okReporter): okReporter receives every event" in {
-        val ok      = new CountingReporter
-        val failing = new FailingReporter
-        val _ = captureStderr { // suppress the per-event stderr lines
-            val combined = CombinedReporter(failing, ok)
-            combined.onRunStart(dummyRun)
-            combined.onLeafComplete(dummyLeaf, dummyResult)
-            combined.onLeafComplete(dummyLeaf, dummyResult)
-        }
+        val ok       = new CountingReporter
+        val failing  = new FailingReporter
+        val combined = new CombinedReporter(Chunk(failing, ok), diagnostics = silent)
+        combined.onRunStart(dummyRun)
+        combined.onLeafComplete(dummyLeaf, dummyResult)
+        combined.onLeafComplete(dummyLeaf, dummyResult)
         assert(ok.leafCount == 2, s"ok reporter saw ${ok.leafCount} leaf events, expected 2")
     }
 
@@ -77,42 +73,35 @@ class CombinedReporterStrictTest extends kyo.test.Test[Any]:
 
     "test-4: CombinedReporter(strict=true): onRunComplete throws the first accumulated exception" in {
         val failing  = new FailingReporter
-        val combined = new CombinedReporter(Chunk(failing), strict = true)
-        val _ = captureStderr {
-            combined.onLeafComplete(dummyLeaf, dummyResult) // accumulate boom
-        }
+        val combined = new CombinedReporter(Chunk(failing), strict = true, diagnostics = silent)
+        combined.onLeafComplete(dummyLeaf, dummyResult) // accumulate boom
         val thrown = intercept[RuntimeException] {
-            captureStderr {
-                combined.onRunComplete(dummyReport)
-            }
+            combined.onRunComplete(dummyReport)
         }
         assert(thrown.getMessage == "reporter-boom", s"expected 'reporter-boom', got '${thrown.getMessage}'")
     }
 
-    // ── Test 5: strict=false: onRunComplete returns normally; stderr has warning ───────────────
+    // ── Test 5: strict=false: onRunComplete returns normally; diagnostics has warning ──────────
 
     "test-5: CombinedReporter(strict=false): onRunComplete returns; stderr has warning" in {
         val failing  = new FailingReporter
-        val combined = new CombinedReporter(Chunk(failing), strict = false)
-        val _ = captureStderr {
-            combined.onLeafComplete(dummyLeaf, dummyResult) // accumulate boom
-        }
-        val stderr = captureStderr {
-            combined.onRunComplete(dummyReport) // should NOT throw
-        }
-        assert(stderr.contains("kyo-test: warning:") && stderr.contains("reporter(s) failed"), s"stderr was: $stderr")
+        val sink     = new RecordingSink
+        val combined = new CombinedReporter(Chunk(failing), strict = false, diagnostics = sink)
+        combined.onLeafComplete(dummyLeaf, dummyResult) // accumulate boom
+        combined.onRunComplete(dummyReport)             // should NOT throw
+        val diag = sink.text
+        assert(diag.contains("kyo-test: warning:") && diag.contains("reporter(s) failed"), s"diagnostics were: $diag")
     }
 
     // ── Test 6: no failing reporters: no warning, no throw ───────────────────────────────────
 
     "test-6: CombinedReporter with no failing reporters: no stderr warning, no throw" in {
         val ok       = new CountingReporter
-        val combined = new CombinedReporter(Chunk(ok), strict = true)
-        val stderr = captureStderr {
-            combined.onLeafComplete(dummyLeaf, dummyResult)
-            combined.onRunComplete(dummyReport)
-        }
-        assert(!stderr.contains("kyo-test: warning"), s"unexpected warning in stderr: $stderr")
+        val sink     = new RecordingSink
+        val combined = new CombinedReporter(Chunk(ok), strict = true, diagnostics = sink)
+        combined.onLeafComplete(dummyLeaf, dummyResult)
+        combined.onRunComplete(dummyReport)
+        assert(!sink.text.contains("kyo-test: warning"), s"unexpected warning in diagnostics: ${sink.text}")
     }
 
 end CombinedReporterStrictTest

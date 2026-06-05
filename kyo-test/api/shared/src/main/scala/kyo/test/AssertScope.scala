@@ -20,6 +20,9 @@ import scala.annotation.implicitNotFound
   *
   * @param path
   *   the full name path of the leaf this scope belongs to
+  * @param diagnostics
+  *   sink for the after-close "fiber outlived its test" warning; defaults to `java.lang.System.err`. Injectable so the api
+  *   self-test can capture it deterministically without mutating process-global `System.err`, which races under concurrent leaves.
   */
 @implicitNotFound(
     """no given kyo.test.AssertScope is in scope, so `assert`, `fail`, and `intercept` cannot be used here.
@@ -30,7 +33,10 @@ To fix, one of:
   - move this assertion inside an `in { ... }` leaf body (it cannot sit in a `-` group builder or the suite class body);
   - if it lives in a helper method, give the helper a `(using kyo.test.AssertScope)` parameter so it shares the calling leaf's scope."""
 )
-final class AssertScope private[kyo] (val path: Chunk[String]):
+final class AssertScope private[kyo] (
+    val path: Chunk[String],
+    diagnostics: String => Unit = (s: String) => java.lang.System.err.println(s)
+):
 
     private val sink: ConcurrentLinkedQueue[AssertionFailed] = new ConcurrentLinkedQueue[AssertionFailed]()
 
@@ -39,11 +45,12 @@ final class AssertScope private[kyo] (val path: Chunk[String]):
     @volatile private var closed: Boolean = false
 
     /** Record an assertion failure. While the scope is open the failure is queued for the runner to drain. After close (the leaf was already
-      * scored) a failure can only come from a fiber that outlived its test, so it is logged to stderr instead of queued.
+      * scored) a failure can only come from a fiber that outlived its test, so it is logged via the `diagnostics` sink (default stderr)
+      * instead of queued.
       */
     def record(failure: AssertionFailed): Unit =
         if closed then
-            java.lang.System.err.println(
+            diagnostics(
                 s"[kyo-test] assertion failure after leaf '${path.mkString(" > ")}' was scored (a fiber outlived its test): ${failure.diagram}"
             )
             // Best-effort: also enqueue into the process-global collector so the runner can turn this into a failed leaf

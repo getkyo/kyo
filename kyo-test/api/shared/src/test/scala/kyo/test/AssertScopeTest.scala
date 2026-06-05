@@ -44,22 +44,18 @@ class AssertScopeTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
 
         "record after close drops the failure, emits a stderr warning naming the leaf path" in {
-            val scope = new AssertScope(Chunk("outer", "inner-leaf"))
+            val captured = new StringBuilder
+            val scope = new AssertScope(
+                Chunk("outer", "inner-leaf"),
+                s =>
+                    captured.append(s).append('\n'); ()
+            )
             val frame = summon[Frame]
             scope.close()
-            val captured  = new java.io.ByteArrayOutputStream()
-            val savedErr  = java.lang.System.err
-            val newStream = new java.io.PrintStream(captured, true, "UTF-8")
-            try
-                java.lang.System.setErr(newStream)
-                scope.record(new AssertionFailed("late-boom", frame, Maybe.empty[String], Maybe.empty[Throwable]))
-            finally
-                java.lang.System.setErr(savedErr)
-                newStream.flush()
-            end try
-            val warning = captured.toString("UTF-8")
+            scope.record(new AssertionFailed("late-boom", frame, Maybe.empty[String], Maybe.empty[Throwable]))
+            val warning = captured.toString
             assert(scope.drain().isEmpty, "expected nothing queued after close")
-            assert(warning.nonEmpty, "expected a stderr warning when recording after close")
+            assert(warning.nonEmpty, "expected a diagnostics warning when recording after close")
             assert(
                 warning.contains("a fiber outlived its test"),
                 s"expected the outlived-fiber warning text, got:\n$warning"
@@ -75,22 +71,19 @@ class AssertScopeTest extends AsyncFreeSpec with NonImplicitAssertions:
             // GOAL B part 1: the CLOSED branch keeps the stderr warning AND enqueues (path, failure) into the process-global
             // collector so the runner can turn it into a synthetic failed leaf. This collector is process-global, so drain it
             // first to avoid pollution and leave it empty at the end.
-            val _     = AssertScope.drainLeakedAfterClose()
-            val scope = new AssertScope(Chunk("p", "leaf-after"))
+            val _ = AssertScope.drainLeakedAfterClose()
+            // Capture the (expected) warning into a per-instance sink so it does not clutter test output and the assertion is
+            // deterministic; we only assert the enqueue and the warning here.
+            val sink = new StringBuilder
+            val scope = new AssertScope(
+                Chunk("p", "leaf-after"),
+                s =>
+                    sink.append(s).append('\n'); ()
+            )
             val frame = summon[Frame]
             scope.close()
-            // Silence the (expected) stderr warning so it does not clutter test output; we only assert the enqueue here.
-            val savedErr  = java.lang.System.err
-            val sink      = new java.io.ByteArrayOutputStream()
-            val newStream = new java.io.PrintStream(sink, true, "UTF-8")
-            try
-                java.lang.System.setErr(newStream)
-                scope.record(new AssertionFailed("after-close-boom", frame, Maybe.empty[String], Maybe.empty[Throwable]))
-            finally
-                java.lang.System.setErr(savedErr)
-                newStream.flush()
-            end try
-            assert(sink.toString("UTF-8").contains("a fiber outlived its test"), "expected the stderr warning to still fire")
+            scope.record(new AssertionFailed("after-close-boom", frame, Maybe.empty[String], Maybe.empty[Throwable]))
+            assert(sink.toString.contains("a fiber outlived its test"), "expected the diagnostics warning to still fire")
             val drained = AssertScope.drainLeakedAfterClose()
             assert(drained.size == 1, s"expected exactly 1 entry enqueued into the global collector, got ${drained.size}")
             val (path, failure) = drained.head

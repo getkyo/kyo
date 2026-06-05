@@ -14,15 +14,19 @@ import kyo.test.TestResult
   * If a reporter throws during a lifecycle call, the exception is caught, accumulated into an internal queue, and subsequent reporters
   * still receive the event. This ensures that a misbehaving reporter cannot suppress output from healthy ones.
   *
-  * In `onRunComplete`, after delegating to all reporters: if any errors were accumulated, a warning is printed to `java.lang.System.err`;
-  * if `strict` is `true`, the first accumulated exception is rethrown.
+  * In `onRunComplete`, after delegating to all reporters: if any errors were accumulated, a warning is emitted via the `diagnostics`
+  * sink (default `java.lang.System.err`); if `strict` is `true`, the first accumulated exception is rethrown.
   *
   * Thread-safe: delegates to the underlying reporters and relies on each reporter's own thread-safety guarantees.
   *
   * @param reporters
   *   the delegate reporters; called in the order provided
   * @param strict
-  *   when `true`, `onRunComplete` rethrows the first accumulated reporter exception after emitting the stderr warning
+  *   when `true`, `onRunComplete` rethrows the first accumulated reporter exception after emitting the diagnostics warning
+  * @param diagnostics
+  *   sink for reporter-failure diagnostics (the per-reporter throw notices and the run-complete summary warning); defaults to
+  *   `java.lang.System.err`. Injectable so callers and tests can capture diagnostics deterministically without mutating
+  *   process-global `System.err`, which races under concurrent leaf execution.
   * @see
   *   [[kyo.test.TestReporter]] the reporter interface that CombinedReporter implements
   * @see
@@ -32,7 +36,11 @@ import kyo.test.TestResult
   * @see
   *   [[kyo.test.runner.JUnitXmlReporter]] another typical delegate reporter for JUnit XML files
   */
-final class CombinedReporter(reporters: Chunk[TestReporter], strict: Boolean = false) extends TestReporter:
+final class CombinedReporter(
+    reporters: Chunk[TestReporter],
+    strict: Boolean = false,
+    diagnostics: String => Unit = (s: String) => java.lang.System.err.println(s)
+) extends TestReporter:
 
     private[runner] val errors = new java.util.concurrent.ConcurrentLinkedQueue[Throwable]()
 
@@ -55,7 +63,7 @@ final class CombinedReporter(reporters: Chunk[TestReporter], strict: Boolean = f
         dispatch(_.onRunComplete(report))
         val errorCount = errors.size
         if errorCount > 0 then
-            java.lang.System.err.println(
+            diagnostics(
                 s"kyo-test: warning: $errorCount reporter(s) failed during the run; see stderr for details"
             )
             if strict then
@@ -70,7 +78,7 @@ final class CombinedReporter(reporters: Chunk[TestReporter], strict: Boolean = f
             catch
                 case t: Throwable =>
                     errors.add(t): Unit
-                    java.lang.System.err.println(
+                    diagnostics(
                         s"[kyo-test] CombinedReporter: reporter ${r.getClass.getSimpleName} threw: $t"
                     )
 
