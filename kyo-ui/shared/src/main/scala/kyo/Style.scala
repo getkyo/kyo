@@ -461,19 +461,45 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
 
     /** A linear-gradient background. Each stop is a `(Color, percentage-along-the-axis)` pair; at least two stops are required. This
       * overload takes the direction as a `GradientDirection.type => GradientDirection` selector for inline use (`bgGradient(_.toRight, ...)`).
+      * Interpolates in sRGB (the CSS default); use the [[GradientColorSpace]] overload to interpolate in OKLCH/OKLAB.
       */
     def bgGradient(
         direction: GradientDirection.type => GradientDirection,
         stop1: (Color, Length.Pct),
         stop2: (Color, Length.Pct),
         stops: (Color, Length.Pct)*
-    ): Style = bgGradient(direction(GradientDirection), stop1, stop2, stops*)
+    ): Style = bgGradient(direction(GradientDirection), GradientColorSpace.srgb, stop1, stop2, stops*)
 
     /** A linear-gradient background with an explicit [[kyo.Style.GradientDirection]]. Each stop is a `(Color, percentage)` pair; at least
-      * two stops are required.
+      * two stops are required. Interpolates in sRGB (the CSS default).
       */
     def bgGradient(
         direction: GradientDirection,
+        stop1: (Color, Length.Pct),
+        stop2: (Color, Length.Pct),
+        stops: (Color, Length.Pct)*
+    ): Style = bgGradient(direction, GradientColorSpace.srgb, stop1, stop2, stops*)
+
+    /** A linear-gradient background interpolated in the given [[kyo.Style.GradientColorSpace]]. The selector overload takes the direction
+      * inline (`bgGradient(_.toBottom, GradientColorSpace.oklch, ...)`). Interpolating in `oklch`/`oklab` keeps the path between two colors
+      * perceptually even, so a transition from a tinted color to a near-black does not sag through a muddy grey midtone and bands far less at
+      * 8-bit sRGB output than the default `srgb` interpolation.
+      */
+    def bgGradient(
+        direction: GradientDirection.type => GradientDirection,
+        colorSpace: GradientColorSpace,
+        stop1: (Color, Length.Pct),
+        stop2: (Color, Length.Pct),
+        stops: (Color, Length.Pct)*
+    ): Style = bgGradient(direction(GradientDirection), colorSpace, stop1, stop2, stops*)
+
+    /** A linear-gradient background with an explicit [[kyo.Style.GradientDirection]] and an explicit [[kyo.Style.GradientColorSpace]] to
+      * interpolate in. Each stop is a `(Color, percentage)` pair; at least two stops are required. This is the canonical overload the others
+      * delegate to.
+      */
+    def bgGradient(
+        direction: GradientDirection,
+        colorSpace: GradientColorSpace,
         stop1: (Color, Length.Pct),
         stop2: (Color, Length.Pct),
         stops: (Color, Length.Pct)*
@@ -487,7 +513,7 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
                 positions(i) = math.max(0.0, math.min(100.0, allStops(i)._2.value))
                 loop(i + 1)
         loop(0)
-        appendProp(Prop.BgGradientProp(direction, Chunk.from(colors), Chunk.from(positions)))
+        appendProp(Prop.BgGradientProp(direction, colorSpace, Chunk.from(colors), Chunk.from(positions)))
     end bgGradient
 
     // Motion
@@ -684,6 +710,20 @@ object Style:
         stop2: (Color, Length.Pct),
         stops: (Color, Length.Pct)*
     ): Style = empty.bgGradient(direction, stop1, stop2, stops*)
+    def bgGradient(
+        direction: GradientDirection,
+        colorSpace: GradientColorSpace,
+        stop1: (Color, Length.Pct),
+        stop2: (Color, Length.Pct),
+        stops: (Color, Length.Pct)*
+    ): Style = empty.bgGradient(direction, colorSpace, stop1, stop2, stops*)
+    def bgGradient(
+        direction: GradientDirection.type => GradientDirection,
+        colorSpace: GradientColorSpace,
+        stop1: (Color, Length.Pct),
+        stop2: (Color, Length.Pct),
+        stops: (Color, Length.Pct)*
+    ): Style = empty.bgGradient(direction, colorSpace, stop1, stop2, stops*)
     def transition(property: TransitionProperty, durationMs: Int, easing: Easing): Style =
         empty.transition(property, durationMs, easing)
     def transition(property: TransitionProperty.type => TransitionProperty, durationMs: Int, easing: Easing.type => Easing): Style =
@@ -813,9 +853,17 @@ object Style:
     enum TextOverflow derives CanEqual:
         case clip, ellipsis
 
-    /** Maps to the CSS `text-wrap` / `white-space` behavior. */
+    /** Maps to the CSS `text-wrap` / `white-space` behavior.
+      *
+      *   - `wrap`: allow long words to break so an overflowing token wraps within the box (`overflow-wrap: break-word`).
+      *   - `noWrap`: keep words intact, never breaking inside one (`overflow-wrap: normal`).
+      *   - `ellipsis`: keep words intact and mark clipped overflow with an ellipsis.
+      *   - `balance`: balance the lines of a short block (a heading) so each line is close to the same width (`text-wrap: balance`),
+      *     avoiding a last line stranding a single short word.
+      *   - `pretty`: optimize the last few lines of a longer block (body prose) to avoid orphans and bad breaks (`text-wrap: pretty`).
+      */
     enum TextWrap derives CanEqual:
-        case wrap, noWrap, ellipsis
+        case wrap, noWrap, ellipsis, balance, pretty
 
     /** Maps to the CSS `font-family` property; `Custom` carries an arbitrary family name. */
     enum FontFamily derives CanEqual:
@@ -884,6 +932,17 @@ object Style:
     /** Direction of a background gradient (the `to ...` keyword of a CSS `linear-gradient`). */
     enum GradientDirection derives CanEqual:
         case toRight, toLeft, toTop, toBottom, toTopRight, toTopLeft, toBottomRight, toBottomLeft
+
+    /** The color space a `linear-gradient` interpolates its stops in (the `in <space>` keyword of a CSS gradient).
+      *
+      *   - `srgb`: the CSS default. Interpolation is linear in the sRGB channels, which can sag through a muddy desaturated midtone
+      *     between a saturated color and a dark/near-black, and bands visibly at 8-bit output across a long, low-contrast span.
+      *   - `oklch`: interpolates in the perceptually-uniform OKLCH space (lightness, chroma, hue). The path between two colors stays even
+      *     and the hue does not pass through grey, so the same two stops read smooth instead of muddy and band far less.
+      *   - `oklab`: the Cartesian OKLAB sibling of `oklch`; also perceptually uniform, interpolating the a/b axes rather than chroma/hue.
+      */
+    enum GradientColorSpace derives CanEqual:
+        case srgb, oklch, oklab
 
     /** A CSS timing function for a `transition` or `animation`.
       *
@@ -995,7 +1054,7 @@ object Style:
         case HueRotateProp(value: Double)
         case BlurProp(value: Length)
         // Background gradient
-        case BgGradientProp(direction: GradientDirection, colors: Chunk[Color], positions: Chunk[Double])
+        case BgGradientProp(direction: GradientDirection, colorSpace: GradientColorSpace, colors: Chunk[Color], positions: Chunk[Double])
         // Motion
         case TransitionProp(property: TransitionProperty, durationMs: Int, easing: Easing)
         case AnimationProp(name: String, durationMs: Int, easing: Easing)

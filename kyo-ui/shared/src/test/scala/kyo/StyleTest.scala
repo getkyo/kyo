@@ -434,6 +434,22 @@ class StyleTest extends Test:
             assert(Style.textOverflow(Style.TextOverflow.clip).toCss == "text-overflow: clip;")
             assert(Style.textOverflow(Style.TextOverflow.ellipsis).toCss == "text-overflow: ellipsis;")
         }
+
+        "textWrap wrap/noWrap/ellipsis render overflow-wrap" in {
+            assert(Style.textWrap(Style.TextWrap.wrap).toCss == "overflow-wrap: break-word;")
+            assert(Style.textWrap(Style.TextWrap.noWrap).toCss == "overflow-wrap: normal;")
+            assert(Style.textWrap(Style.TextWrap.ellipsis).toCss == "overflow-wrap: normal; text-overflow: ellipsis;")
+        }
+
+        "textWrap balance and pretty render the CSS text-wrap property" in {
+            assert(Style.textWrap(Style.TextWrap.balance).toCss == "text-wrap: balance;")
+            assert(Style.textWrap(Style.TextWrap.pretty).toCss == "text-wrap: pretty;")
+        }
+
+        "textWrap selector overload builds the same prop as the direct form" in {
+            assert(Style.textWrap(_.balance).props(0) == Style.textWrap(Style.TextWrap.balance).props(0))
+            assert(Style.textWrap(_.pretty).toCss == "text-wrap: pretty;")
+        }
     }
 
     "borders" - {
@@ -1103,6 +1119,58 @@ class StyleTest extends Test:
                 (Color.hex("#000").get, 100.pct)
             )
             assert(s.props.size == 2)
+        }
+
+        "default color space is srgb" in {
+            val s = Style.bgGradient(GradientDirection.toBottom, (Color.hex("#fff").get, 0.pct), (Color.hex("#000").get, 100.pct))
+            val prop = s.props(0) match
+                case p: Style.Prop.BgGradientProp => p
+                case other                        => fail(s"Expected BgGradientProp, got ${other.getClass.getSimpleName}")
+            assert(prop.colorSpace == GradientColorSpace.srgb)
+        }
+
+        "explicit oklch color space is stored on the prop" in {
+            val s = Style.bgGradient(
+                GradientDirection.toBottom,
+                GradientColorSpace.oklch,
+                (Color.hex("#fff").get, 0.pct),
+                (Color.hex("#000").get, 100.pct)
+            )
+            val prop = s.props(0) match
+                case p: Style.Prop.BgGradientProp => p
+                case other                        => fail(s"Expected BgGradientProp, got ${other.getClass.getSimpleName}")
+            assert(prop.colorSpace == GradientColorSpace.oklch)
+            assert(prop.colors.size == 2)
+        }
+
+        "oklab color space via the inline-direction overload" in {
+            val s = Style.bgGradient(
+                _.toBottom,
+                GradientColorSpace.oklab,
+                (Color.hex("#fff").get, 0.pct),
+                (Color.hex("#123").get, 40.pct),
+                (Color.hex("#000").get, 100.pct)
+            )
+            val prop = s.props(0) match
+                case p: Style.Prop.BgGradientProp => p
+                case other                        => fail(s"Expected BgGradientProp, got ${other.getClass.getSimpleName}")
+            assert(prop.colorSpace == GradientColorSpace.oklab)
+            assert(prop.direction == GradientDirection.toBottom)
+            assert(prop.colors.size == 3)
+        }
+
+        "color space renders to the `in <space>` gradient prelude" in {
+            val srgb = Style.bgGradient(GradientDirection.toBottom, (Color.red, 0.pct), (Color.blue, 100.pct)).toCss
+            assert(srgb.contains("linear-gradient(to bottom"), srgb)
+            assert(!srgb.contains("in oklch"), srgb)
+            val oklch = Style.bgGradient(
+                GradientDirection.toBottom,
+                GradientColorSpace.oklch,
+                (Color.red, 0.pct),
+                (Color.blue, 100.pct)
+            ).toCss
+            // CSS spec order: the color-interpolation-method follows the direction.
+            assert(oklch.contains("linear-gradient(to bottom in oklch,"), oklch)
         }
     }
 

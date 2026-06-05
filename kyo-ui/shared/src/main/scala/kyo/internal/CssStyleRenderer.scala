@@ -197,6 +197,8 @@ private[kyo] object CssStyleRenderer:
                 case TextWrap.wrap     => "overflow-wrap: break-word;"
                 case TextWrap.noWrap   => "overflow-wrap: normal;"
                 case TextWrap.ellipsis => "overflow-wrap: normal; text-overflow: ellipsis;"
+                case TextWrap.balance  => "text-wrap: balance;"
+                case TextWrap.pretty   => "text-wrap: pretty;"
         case BorderColorProp(t, r, b, l)      => s"border-color: ${color(t)} ${color(r)} ${color(b)} ${color(l)};"
         case BorderWidthProp(t, r, b, l)      => s"border-width: ${size(t)} ${size(r)} ${size(b)} ${size(l)};"
         case BorderStyleProp(v)               => s"border-style: ${borderStyle(v)};"
@@ -237,7 +239,7 @@ private[kyo] object CssStyleRenderer:
         case FlexBasisProp(v)  => s"flex-basis: ${size(v)};"
         case _: BrightnessProp | _: ContrastProp | _: GrayscaleProp | _: SepiaProp |
             _: InvertProp | _: SaturateProp | _: HueRotateProp | _: BlurProp => ""
-        case BgGradientProp(dir, colors, positions) =>
+        case BgGradientProp(dir, space, colors, positions) =>
             val cssDir = dir match
                 case GradientDirection.toRight       => "to right"
                 case GradientDirection.toLeft        => "to left"
@@ -247,7 +249,15 @@ private[kyo] object CssStyleRenderer:
                 case GradientDirection.toTopLeft     => "to top left"
                 case GradientDirection.toBottomRight => "to bottom right"
                 case GradientDirection.toBottomLeft  => "to bottom left"
-            val sb = new StringBuilder(s"background: linear-gradient($cssDir")
+            // The default sRGB space emits the bare direction; oklch/oklab append `in <space>` after the
+            // direction so the browser interpolates perceptually (no muddy grey midtone, far less 8-bit
+            // banding). The CSS spec order is `linear-gradient([<direction>] [in <color-space>]?, <stops>)`,
+            // so the color-interpolation-method comes AFTER the direction; the reversed form is rejected.
+            val prelude = space match
+                case GradientColorSpace.srgb  => cssDir
+                case GradientColorSpace.oklch => s"$cssDir in oklch"
+                case GradientColorSpace.oklab => s"$cssDir in oklab"
+            val sb = new StringBuilder(s"background: linear-gradient($prelude")
             (0 until colors.size).foreach { i =>
                 sb.append(s", ${color(colors(i))} ${fmt(positions(i))}%")
             }
