@@ -61,14 +61,62 @@ private[kyo] object DomBackend:
                 Sync.defer {
                     val el = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
                     if el != null && el.outerHTML != finalHtml then
+                        // Capture focus and caret of the active element inside the replaced region,
+                        // keyed on data-kyo-path identity (mirrors HtmlRenderer.clientJs:576-583 on
+                        // the JS DOM API). Plain DOM inside the already-suspended Sync.defer; no new
+                        // AllowUnsafe crossing.
+                        val ae = document.activeElement
+                        val insideRegion = ae != null && (ae ne document.body) &&
+                            (ae.getAttribute("data-kyo-path") == pathAttr || el.contains(ae))
+                        // Use the active element's own data-kyo-path when it carries one (nested
+                        // reactive region), otherwise fall back to pathAttr so the region wrapper
+                        // itself is queried (common case: value-bound input inside the region has
+                        // no data-kyo-path of its own).
+                        val activePath =
+                            if insideRegion then
+                                if ae.hasAttribute("data-kyo-path") then ae.getAttribute("data-kyo-path")
+                                else pathAttr
+                            else null
+                        val (selStart, selEnd) = if insideRegion then readSelection(ae) else (Absent, Absent)
                         el.outerHTML = finalHtml
                         val updated = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
                         if updated != null then
                             applyJsPropsSync(updated)
+                        if activePath != null then
+                            restoreFocus(activePath, selStart, selEnd)
                     end if
                 }
             }
     end LocalExchange
+
+    private def readSelection(el: dom.Element): (Maybe[Int], Maybe[Int]) =
+        val dyn = el.asInstanceOf[scalajs.js.Dynamic]
+        def asInt(v: scalajs.js.Dynamic): Maybe[Int] =
+            if scalajs.js.typeOf(v) == "number" then Present(v.asInstanceOf[Int]) else Absent
+        (asInt(dyn.selectionStart), asInt(dyn.selectionEnd))
+    end readSelection
+
+    private def restoreFocus(capturedPath: String, selStart: Maybe[Int], selEnd: Maybe[Int]): Unit =
+        val located = document.querySelector(s"""[data-kyo-path="$capturedPath"]""")
+        if located != null then
+            val focusTarget =
+                if located.hasAttribute("data-kyo-reactive") then
+                    val inner = located.querySelector("input,textarea,select,[contenteditable]")
+                    if inner != null then inner else located
+                else located
+            val _ = focusTarget.asInstanceOf[scalajs.js.Dynamic].focus()
+            (selStart, selEnd) match
+                case (Present(s), Present(e)) =>
+                    val dyn = focusTarget.asInstanceOf[scalajs.js.Dynamic]
+                    if scalajs.js.typeOf(dyn.setSelectionRange) == "function" then
+                        try
+                            val _ = dyn.setSelectionRange(s, e)
+                        catch case _: scalajs.js.JavaScriptException => ()
+                    end if
+                case _ => ()
+            end match
+        end if
+    end restoreFocus
 
     /** Bridge a Kyo Async computation from a JS callback boundary.
       *

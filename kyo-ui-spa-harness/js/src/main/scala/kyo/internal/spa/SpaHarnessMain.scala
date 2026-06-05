@@ -371,6 +371,52 @@ object SpaHarnessMain:
                     end for
                 }
         )
+        // 9. Reactive value-bound input keeps focus and caret across keystrokes (JS mount path).
+        // Mounts UI.input.value(ref).id("focus-input") via UI.runMount, focuses it, drives
+        // k->ky->kyo by writing .value + dispatching a real input event mirrored into the ref.
+        // Returns "<activeElement.id>:<selectionStart>".
+        // Pre-fix: "body:null" (outerHTML replace destroys the focused input, focus falls to body).
+        // Post-fix: "focus-input:3".
+        UITestEntry.register(
+            "runmount.reactive.input.focus",
+            () =>
+                bridge {
+                    val target = "kyo-spa-runmount-focus-target"
+                    for
+                        ref <- Signal.initRef[String]("")
+                        ui = UI.input.value(ref).id("focus-input")
+                        _ <- Sync.defer {
+                            val existing = dom.document.getElementById(target)
+                            if existing != null && existing.parentNode != null then
+                                val _ = existing.parentNode.removeChild(existing)
+                            val c = dom.document.createElement("div")
+                            c.setAttribute("id", target)
+                            val _ = dom.document.body.appendChild(c)
+                        }
+                        _ <- Fiber.initUnscoped(Scope.run(UI.runMount(ui, s"#$target")))
+                        _ <- pollValue("focus-input", "", 100)
+                        _ <- Sync.defer {
+                            val el = dom.document.getElementById("focus-input").asInstanceOf[dom.html.Input]
+                            if el != null then el.focus()
+                        }
+                        _ <- typeChar("focus-input", "k", ref)
+                        _ <- typeChar("focus-input", "ky", ref)
+                        _ <- typeChar("focus-input", "kyo", ref)
+                        out <- Sync.defer {
+                            val ae = dom.document.activeElement
+                            val id = if ae != null then ae.id else "null"
+                            val caret =
+                                val dyn = ae.asInstanceOf[scalajs.js.Dynamic]
+                                if ae != null && scalajs.js.typeOf(dyn.selectionStart) == "number" then
+                                    dyn.selectionStart.asInstanceOf[Int].toString
+                                else "null"
+                            end caret
+                            s"$id:$caret"
+                        }
+                    yield out
+                    end for
+                }
+        )
         ()
     end main
 
@@ -391,6 +437,45 @@ object SpaHarnessMain:
                 }
         }
     end pollText
+
+    /** Write `text` into the input with the given `id`, position the caret at the end, dispatch a
+      * bubbling `input` event so kyo-ui's capture-phase delegation fires the `UIEvent.Input` path,
+      * then mirror the value into `ref` as a deterministic settle. Polls until the DOM `.value`
+      * matches `text` before returning so the reactive re-render completes before the next step.
+      */
+    private def typeChar(id: String, text: String, ref: SignalRef[String])(using Frame): Unit < (Async & Abort[Throwable]) =
+        for
+            _ <- Sync.defer {
+                val el = dom.document.getElementById(id).asInstanceOf[dom.html.Input]
+                if el != null then
+                    el.value = text
+                    val len = text.length
+                    el.setSelectionRange(len, len)
+                    val _ = el.dispatchEvent(new dom.Event("input"))
+                end if
+            }
+            _ <- ref.set(text)
+            _ <- pollValue(id, text, 100)
+        yield ()
+    end typeChar
+
+    /** Poll `getElementById(id).value` until it equals `expected` or `attempts` 20ms ticks elapse, whichever comes first.
+      * Returns on exhaustion so the scenario surfaces a wrong-value assertion rather than an opaque timeout.
+      * A null (absent) element is treated as not-yet-ready, not as empty string, so the poll waits even when `expected == ""`.
+      */
+    private def pollValue(id: String, expected: String, attempts: Int)(using Frame): Unit < Async =
+        Loop(0) { n =>
+            if n >= attempts then Loop.done(())
+            else
+                Sync.defer {
+                    val el = dom.document.getElementById(id).asInstanceOf[dom.html.Input]
+                    el != null && el.value == expected
+                }.map { found =>
+                    if found then Loop.done(())
+                    else Async.sleep(20.millis).andThen(Loop.continue(n + 1))
+                }
+        }
+    end pollValue
 
     /** Insert an `<a href={href}>label</a>` into `document.body` and return it. The href is set via JS-property assignment so the
       * browser parses it into `pathname`/`search` etc.
