@@ -7,15 +7,13 @@ import kyo.UI.Ast.*
 // (kyo.UI.Ast.Encoding). This is distinct from kyo-core's concurrency `kyo.Channel`.
 import kyo.UI.Ast.Encoding
 
-/** Lowers a `ChartSpec[A]` to an `Svg.Root` for static data.
+/** Lowers a `ChartSpec[A]` to an `Svg.Root` for static or live (reactive) data.
   *
-  * This is the single internal function that produces a real SVG tree from the immutable chart intermediate
-  * representation. Layout is computed from `size` and margin constants; scales are resolved from the marks'
-  * channels via `Plottable` and `Scale.fit`; each mark is lowered to its corresponding SVG primitive. The
+  * Multiple `private[kyo]` entry points cover the static path (`lowerStatic`), the live path
+  * (`lowerLive`), and the transition-aware animated path (`marksRegionWithTransitions`). Layout is
+  * computed from `size` and margin constants; scales are resolved from the marks' channels via
+  * `Plottable` and `Scale.fit`; each mark is lowered to its corresponding SVG primitive. The
   * static frame (axes, gridlines, tick marks, tick labels, legend) is built by `buildFrame`.
-  *
-  * Phase 04 adds: static frame chrome (axes/gridlines/ticks/labels/legend), two-y-scale resolution,
-  * theme application, scale-override plumbing, and stacked-bar / stacked-area lowering.
   */
 private[kyo] object ChartLower:
 

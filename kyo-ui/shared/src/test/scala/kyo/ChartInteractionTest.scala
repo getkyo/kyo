@@ -366,9 +366,10 @@ class ChartInteractionTest extends Test:
             root             = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
             paths            = pathsIn(root)
             interactivePaths = paths.toSeq.filter(p => p.attrs.onClick.isDefined)
+            // 4 distinct revenue values -> 4 stack groups -> one interactive path per group segment.
             _ = assert(
-                interactivePaths.nonEmpty,
-                s"Stacked area must have at least one path with onClick, got ${paths.size} paths total"
+                interactivePaths.size == 4,
+                s"Stacked area with 4 stack groups must have exactly 4 paths with onClick, got ${interactivePaths.size} (${paths.size} total paths)"
             )
         yield succeed
     }
@@ -646,7 +647,7 @@ class ChartInteractionTest extends Test:
     // Domain type for errorBar tests (needs low/high accessors).
     case class EB(x: String, y: Double, lo: Double, hi: Double) derives CanEqual
 
-    // Test 16 (L20): line with highlightSelect — the active series path carries stroke="#000000" (INV-024)
+    // Test 16 (L20): line with highlightSelect: the active series path carries stroke="#000000" (INV-024)
     "line with highlightSelect: after the select ref is set, the active series path carries the select style (L20)" in run {
         // 2-row chart: Jan and Feb. Select Jan; the single-series line path must carry the dark stroke.
         // Before fix: withHighlight is not called in lowerLine, so no stroke appears after selection.
@@ -677,7 +678,7 @@ class ChartInteractionTest extends Test:
             )
     }
 
-    // Test 17 (L20): area with highlightSelect — the active series path carries stroke="#000000" (INV-024)
+    // Test 17 (L20): area with highlightSelect: the active series path carries stroke="#000000" (INV-024)
     "area with highlightSelect: after the select ref is set, the active series path carries the select style (L20)" in run {
         // 2-row chart: Jan and Feb. Select Jan; the single-series area path must carry the dark stroke.
         // Before fix: withHighlight is not called in lowerArea, so no stroke appears after selection.
@@ -709,7 +710,7 @@ class ChartInteractionTest extends Test:
             )
     }
 
-    // Test 18 (L20): text with highlightSelect — the active glyph carries stroke="#000000" (INV-024)
+    // Test 18 (L20): text with highlightSelect: the active glyph carries stroke="#000000" (INV-024)
     "text with highlightSelect: after the select ref is set, the active glyph carries the select style (L20)" in run {
         // 2-row chart: Jan and Feb. Select Jan; only the Jan glyph must carry the dark stroke.
         // Before fix: withHighlight is not called in lowerText, so no stroke appears after selection.
@@ -741,7 +742,7 @@ class ChartInteractionTest extends Test:
             )
     }
 
-    // Test 19 (L20): errorBar with highlightSelect — the active row GROUP carries stroke="#000000" once (INV-024)
+    // Test 19 (L20): errorBar with highlightSelect: the active row GROUP carries stroke="#000000" once (INV-024)
     "errorBar with highlightSelect: after the select ref is set, the active row group carries the select style once (L20)" in run {
         // 2-row chart: Jan and Feb. Select Jan; the Jan error-bar GROUP must carry the dark stroke exactly once.
         // Before fix: withHighlight is not called in lowerErrorBar, so no stroke appears after selection.

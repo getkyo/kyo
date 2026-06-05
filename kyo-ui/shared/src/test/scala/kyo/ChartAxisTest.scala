@@ -248,11 +248,13 @@ class ChartAxisTest extends Test:
         assert(legendLabels.size == 3, s"Expected 3 legend labels but got ${legendLabels.size}")
 
         // Colors must be in ordinal order: NA=blue, EU=green, APAC=orange
-        assertClose(
-            swatches(0).svgAttrs.x.map { case Coord.Num(v) => v; case _ => -1.0 }.getOrElse(-1.0),
-            swatches(0).svgAttrs.x.map { case Coord.Num(v) => v; case _ => -1.0 }.getOrElse(-1.0),
-            "swatch x sanity"
-        ) // just ensure present
+        // Legend flows left-to-right: each successive swatch x must be greater than the previous.
+        val swatch0x = swatches(0).svgAttrs.x.map { case Coord.Num(v) => v; case _ => -1.0 }.getOrElse(-1.0)
+        val swatch1x = swatches(1).svgAttrs.x.map { case Coord.Num(v) => v; case _ => -1.0 }.getOrElse(-1.0)
+        assert(
+            swatch1x > swatch0x,
+            s"swatch(1).x ($swatch1x) must be greater than swatch(0).x ($swatch0x): legend items must flow left-to-right"
+        )
         assert(swatches(0).svgAttrs.fill.isDefined, "NA swatch must have fill")
         assert(swatches(1).svgAttrs.fill.isDefined, "EU swatch must have fill")
         assert(swatches(2).svgAttrs.fill.isDefined, "APAC swatch must have fill")

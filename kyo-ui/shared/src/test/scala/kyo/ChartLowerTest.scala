@@ -1012,7 +1012,8 @@ class ChartLowerTest extends Test:
         val spec                   = UI.chart(rows)(area(x = _.t, y0 = _.lo, y1 = _.hi))
         val root                   = summon[Conversion[ChartSpec[Band], Svg.Root]](spec)
         val ps                     = deepPathsIn(root).filter(p => p.svgAttrs.d.isDefined && hasCloseCmd(p))
-        assert(ps.nonEmpty, "area y0/y1 band must emit a non-empty closed ribbon path")
+        // Exactly one closed ribbon path: the band form always produces a single continuous path.
+        assert(ps.size == 1, s"area y0/y1 band must emit exactly 1 closed ribbon path but got ${ps.size}")
     }
 
     // --- Test 17: invalid area combo emits empty, siblings render (INV-017) ---
@@ -1025,6 +1026,8 @@ class ChartLowerTest extends Test:
         val root = summon[Conversion[ChartSpec[Datum], Svg.Root]](spec)
         val rs   = rectsIn(root)
         assert(rs.nonEmpty, "bar sibling must still render when area mark is invalid")
+        // The invalid area mark must have emitted no path elements at all.
+        assert(pathsIn(root).isEmpty, "area with only y1 (invalid combo) must emit no path elements")
     }
 
     // --- Test 18: single y wins over y+y0/y1 (INV-017) ---
@@ -1036,7 +1039,15 @@ class ChartLowerTest extends Test:
         val root                   = summon[Conversion[ChartSpec[Band], Svg.Root]](spec)
         // When y is supplied, the factory sets yMaybe=Present, so area renders the single-y form.
         val ps = deepPathsIn(root).filter(_.svgAttrs.d.isDefined)
-        assert(ps.nonEmpty, "area with single y must render a path")
+        // Exactly 1 path: the y channel wins, so a single series path is emitted (not a y0/y1 ribbon).
+        assert(ps.size == 1, s"area with single y must render exactly 1 path but got ${ps.size}")
+        // The single-y linear form does not emit CubicTo commands. The band form (y0+y1+curve) would emit
+        // cubics on both edges; the linear single-y path only has MoveTo/LineTo/Close. This distinguishes
+        // single-y from a band-with-curve path.
+        assert(
+            !ps.toSeq.exists(hasCubicCmd),
+            "area single-y linear form must not contain CubicTo commands (those appear in the band+curve form)"
+        )
     }
 
     // --- Test 19: curve applies to BOTH area band edges (INV-016, INV-017) ---
@@ -2592,6 +2603,101 @@ class ChartLowerTest extends Test:
             assert(
                 !fills.exists(_ == orangeCss),
                 s"FIX 1 (P9b): DefaultPalette orange $orangeCss must not be an area fill under a colorScale:\n$html"
+            )
+        end for
+    }
+
+    // ---- FIX 1b (P9c): animated STACKED area honors custom theme.palette and categorical colorScale ----
+    // The P9b addendum identified a second spec-drop locus: lowerAreaWithTransitions line ~3659 (the
+    // stacked fallthrough). lowerArea forwards spec into lowerAreaStacked, which uses resolvePalette
+    // when spec is Present. resolvePalette honors: (1) categorical colorScale; (2) sequential colorScale;
+    // (3) theme.palette when no colorScale; (4) DefaultPalette as final fallback.
+    // Before the fix, lowerAreaWithTransitions called lowerArea with spec=Absent at 3659, routing
+    // lowerAreaStacked to resolvePaletteFromCfg (DefaultPalette only), dropping BOTH colorScale AND
+    // custom theme.palette. After the fix, Present(spec) is forwarded and resolvePalette is used.
+    //
+    // Test A: custom theme.palette (no colorScale). The animated stacked area must produce the same
+    // per-group fills as the static twin (leaf 19 above).
+    "animated stacked area honors custom theme.palette colors, matching the static twin (FIX 1b, P9c)" in run {
+        val purple = Style.Color.hex("#cc00cc").getOrElse(fail("bad hex"))
+        val teal   = Style.Color.hex("#00cccc").getOrElse(fail("bad hex"))
+        val rows = Chunk(
+            Sale("Jan", Usd(1000), Region.NA),
+            Sale("Feb", Usd(1500), Region.NA),
+            Sale("Jan", Usd(2000), Region.EU),
+            Sale("Feb", Usd(2500), Region.EU)
+        )
+        for
+            ref <- Signal.initRef(rows)
+            // .animate routes lowering through lowerAreaWithTransitions (the stacked arm at ~3659).
+            spec = UI.chart(ref: Signal[Chunk[Sale]])(area(x = _.month, y = _.revenue, stack = by(_.region)))
+                .yScale(_.linear(0.0, 6000.0))
+                .animate(_.ease(300.millis))
+                .theme(_.palette(Chunk(purple, teal)))
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            assert(
+                html.contains("fill=\"#cc00cc\""),
+                s"FIX 1b (P9c): animated stacked area group 0 must use theme.palette purple #cc00cc:\n$html"
+            )
+            assert(
+                html.contains("fill=\"#00cccc\""),
+                s"FIX 1b (P9c): animated stacked area group 1 must use theme.palette teal #00cccc:\n$html"
+            )
+            // DefaultPalette blue/orange must not appear: they are the resolvePaletteFromCfg (spec=Absent) fallback.
+            assert(
+                !html.contains("fill=\"#3b82f6\""),
+                s"FIX 1b (P9c): DefaultPalette blue must not appear in animated stacked area under a custom theme:\n$html"
+            )
+            assert(
+                !html.contains("fill=\"#f97316\""),
+                s"FIX 1b (P9c): DefaultPalette orange must not appear in animated stacked area under a custom theme:\n$html"
+            )
+        end for
+    }
+
+    // Test B: categorical colorScale. resolvePalette honors it; resolvePaletteFromCfg ignores it.
+    "animated stacked area honors a categorical colorScale, not DefaultPalette (FIX 1b, P9c)" in run {
+        val crimson   = Style.Color.rgb(220, 38, 38)
+        val indigo    = Style.Color.rgb(99, 102, 241)
+        val blueCss   = "#3b82f6"
+        val orangeCss = "#f97316"
+        val rows = Chunk(
+            Sale("Jan", Usd(1000), Region.NA),
+            Sale("Feb", Usd(1500), Region.NA),
+            Sale("Jan", Usd(2000), Region.EU),
+            Sale("Feb", Usd(2500), Region.EU)
+        )
+        for
+            ref <- Signal.initRef(rows)
+            spec = UI.chart(ref: Signal[Chunk[Sale]])(area(x = _.month, y = _.revenue, stack = by(_.region)))
+                .yScale(_.linear(0.0, 6000.0))
+                .animate(_.ease(300.millis))
+                .legend(_.colorScale[Region](
+                    Region.NA -> crimson,
+                    Region.EU -> indigo
+                ))
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            val crimsonCss = "rgb(220, 38, 38)"
+            val indigoCss  = "rgb(99, 102, 241)"
+            assert(
+                html.contains(s"fill=\"$crimsonCss\""),
+                s"FIX 1b (P9c): animated stacked area NA group must use colorScale crimson $crimsonCss:\n$html"
+            )
+            assert(
+                html.contains(s"fill=\"$indigoCss\""),
+                s"FIX 1b (P9c): animated stacked area EU group must use colorScale indigo $indigoCss:\n$html"
+            )
+            assert(
+                !html.contains(s"fill=\"$blueCss\""),
+                s"FIX 1b (P9c): DefaultPalette blue must not appear in animated stacked area under a colorScale:\n$html"
+            )
+            assert(
+                !html.contains(s"fill=\"$orangeCss\""),
+                s"FIX 1b (P9c): DefaultPalette orange must not appear in animated stacked area under a colorScale:\n$html"
             )
         end for
     }
