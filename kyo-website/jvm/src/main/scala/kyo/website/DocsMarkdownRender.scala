@@ -31,22 +31,26 @@ import scala.meta.tokens.Token as MetaToken
   */
 object DocsMarkdownRender:
 
-    /** The article subtree and heading outline produced by [[transpile]].
+    /** The article subtree, pre-rendered HTML string, and heading outline produced by [[transpile]]
+      * and [[renderArticle]].
       *
-      * `article` is a `UI` value ready to embed into a `UI.runRenderPage` document. `headings` is
-      * the ordered outline; each entry carries the same `slug` that was set as the `id` attribute
-      * on the corresponding `UI.h1`..`UI.h4` element, so `article` id attributes and `headings`
-      * slugs are always consistent (INV-004). Duplicate heading texts are disambiguated with a `-2`
-      * suffix on both sides.
+      * `article` is a `UI` value ready to embed into a `UI.runRenderPage` document. `articleHtml`
+      * is the pre-rendered HTML string of the article subtree; it is `""` (the build-path-internal
+      * sentinel) when produced by [[transpile]] alone, and filled with the full rendered HTML by
+      * [[renderArticle]]. `headings` is the ordered outline; each entry carries the same `slug`
+      * that was set as the `id` attribute on the corresponding `UI.h1`..`UI.h4` element, so
+      * `article` id attributes and `headings` slugs are always consistent (INV-004). Duplicate
+      * heading texts are disambiguated with a `-2` suffix on both sides.
       */
-    final case class Rendered(article: UI, headings: Chunk[DocsMarkdown.Heading]) derives CanEqual
+    final case class Rendered(article: UI, articleHtml: String, headings: Chunk[DocsMarkdown.Heading])
+        derives CanEqual
 
     /** Transpile a single README Markdown source to a [[Rendered]] value.
       *
       * The effect row is `Sync` only (no `Abort`). Malformed input degrades rather than failing:
       * unknown inline constructs become plain `UI.text` (via kyo-parse `recoverWith`), unknown
       * block constructs become a `UI.p` carrying the verbatim line, and an empty source returns
-      * `Rendered(UI.empty, Chunk.empty)`. The bounded RI-002 grammar plus those total fall-throughs
+      * `Rendered(UI.empty, "", Chunk.empty)`. The bounded RI-002 grammar plus those total fall-throughs
       * are designed so no malformed-corpus path reaches an undefined evaluation; the row stays
       * `Sync`.
       *
@@ -55,9 +59,36 @@ object DocsMarkdownRender:
       */
     def transpile(source: String)(using Frame): Rendered < Sync =
         Sync.defer {
-            if source.isBlank then Rendered(UI.empty, Chunk.empty)
+            if source.isBlank then Rendered(UI.empty, "", Chunk.empty)
             else parseArticle(stripDoctest(source))
         }
+
+    /** Render a `UI` article subtree to an HTML string by draining the first emission of
+      * `UI.runRender`. This is the one-shot idiom: `.take(1).run.map(_.headMaybe.getOrElse(""))`
+      * captures the initial (and for a static article, only) render and releases the underlying
+      * channel resource.
+      *
+      * @param article
+      *   The article `UI` value produced by [[transpile]]. Must be 100% static (no `Signal`/
+      *   `Reactive` nodes), which is guaranteed by the bounded RI-002 grammar (D3).
+      */
+    def renderArticleHtml(article: UI)(using Frame): String < Async =
+        UI.runRender(article).take(1).run.map(_.headMaybe.getOrElse(""))
+
+    /** Transpile a Markdown source and render the article to HTML in one step.
+      *
+      * Calls [[transpile]] (`< Sync`) then [[renderArticleHtml]] (`< Async`), yielding a
+      * [[Rendered]] whose `articleHtml` is fully populated. The effect row is `< Async` because
+      * `renderArticleHtml` uses `UI.runRender` internally.
+      *
+      * @param source
+      *   The Markdown text to transpile. May be empty.
+      */
+    def renderArticle(source: String)(using Frame): Rendered < Async =
+        for
+            t    <- transpile(source)
+            html <- renderArticleHtml(t.article)
+        yield t.copy(articleHtml = html)
 
     // ---- doctest pre-pass (string cleanup, not parsing) ----
 
@@ -339,7 +370,7 @@ object DocsMarkdownRender:
         val article: UI =
             if uiBlocks.isEmpty then UI.empty
             else UI.fragment(uiBlocks.toSeq*)
-        Rendered(article, Chunk.from(headings.toSeq))
+        Rendered(article, "", Chunk.from(headings.toSeq))
     end parseArticle
 
     // ---- block-level kyo-parse parsers ----

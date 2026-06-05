@@ -4,7 +4,7 @@ import java.nio.file.Files
 import java.nio.file.Paths
 import kyo.*
 
-/** Tests for `WebsiteGenerator.emit` (Phase 4 scope: landing route + artifact-root files).
+/** Tests for `WebsiteGenerator.emit`.
   *
   * Each test emits into a fresh temp directory. Tests assert concrete file contents, not just
   * existence. No git commits; output directories are ephemeral.
@@ -24,7 +24,7 @@ class WebsiteGeneratorTest extends Test:
         WebsiteContent("intro3", Chunk.empty, v2)
     )
 
-    // ---- Docs-route fixtures (Phase 7) ----
+    // ---- Docs-route fixtures ----
 
     private val dataReadme   = "# kyo-data\n## Overview\nData types.\n"
     private val kernelReadme = "# kyo-kernel\n## Effects\nThe effect kernel.\n"
@@ -735,11 +735,14 @@ class WebsiteGeneratorTest extends Test:
             assert(html.contains("""<script type="application/json" id="versions-island">"""), s"versions-island script missing: $html")
             val islandJson = extractIsland(html, "docs-island")
             // The emitted island JSON, when its <-escape is reversed, carries the version, the module,
-            // and the route's raw Markdown so the bundle parser (DocsClient.parseDocsIsland) seeds it.
+            // the pre-rendered article HTML, and the heading outline.
             val decoded = islandJson.replace("\\u003c", "<").replace("\\u003e", ">")
             assert(decoded.contains("\"tag\": \"v1.0.0-RC2\""), s"island must carry the version tag: $decoded")
             assert(decoded.contains("\"slug\": \"kyo-data\""), s"island must carry the kyo-data module: $decoded")
-            assert(decoded.contains("kyo-data"), "island markdown must carry the module heading")
+            // The island carries "article" + "headings", not "markdown".
+            assert(decoded.contains("\"article\""), s"island must carry article field: $decoded")
+            assert(decoded.contains("\"headings\""), s"island must carry headings field: $decoded")
+            assert(!decoded.contains("\"markdown\""), s"island must NOT contain markdown field: $decoded")
             assert(!islandJson.contains("</script>"), "island JSON must not contain a literal </script> that closes the element")
         end for
     }
@@ -1046,5 +1049,156 @@ class WebsiteGeneratorTest extends Test:
             idx = haystack.indexOf(needle, idx + 1)
         count
     end countOccurrences
+
+    // ---- content.html, INV-004, island reshape, landing seed, RI-003, sitemap, manifest, escape ----
+
+    "content.html written per route with html + headings" in run {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(vWithModules), out, bundleDir)
+            // Read the content.html for the kyo-data module.
+            contentHtml <- readFile(out / "v1.0.0-RC2" / "kyo-data" / "content.html")
+        yield
+            assert(contentHtml.contains("\"html\""), s"content.html must carry an html field: $contentHtml")
+            assert(contentHtml.contains("\"headings\""), s"content.html must carry a headings array: $contentHtml")
+            // The html field must contain heading tags from the rendered README.
+            val raw = contentHtml.replace("\\u003c", "<").replace("\\u003e", ">").replace("\\\"", "\"")
+            assert(raw.contains("<h"), s"html field must contain rendered heading elements: $raw")
+            // The headings array must carry level entries.
+            assert(contentHtml.contains("\"level\""), s"headings must carry level entries: $contentHtml")
+        end for
+    }
+
+    "INV-004 article ids equal shipped heading slugs in content.html" in run {
+        val readme = "# Title\n## Section One\n### Sub\n"
+        val mod    = WebsiteModule("inv004", "Foundation", "inv004", readme, WebsiteModule.Platforms(true, true, true))
+        val content =
+            WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
+        for
+            out         <- tmpDir
+            bundleDir   <- stubBundleDir
+            _           <- emit(Chunk(content), out, bundleDir)
+            indexHtml   <- readFile(out / "v1.0.0" / "inv004" / "index.html")
+            contentHtml <- readFile(out / "v1.0.0" / "inv004" / "content.html")
+        yield
+            // Extract all id="..." values from the article HTML in index.html.
+            val idPattern  = """id="([^"]+)"""".r
+            val articleIds = idPattern.findAllMatchIn(indexHtml).map(_.group(1)).toSet
+            // Extract all slug values from the headings array in content.html.
+            val slugPattern = """"slug":\s*"([^"]+)"""".r
+            val slugs       = slugPattern.findAllMatchIn(contentHtml).map(_.group(1)).toSet
+            assert(articleIds.nonEmpty, s"Expected article id attributes in index.html: $indexHtml")
+            assert(slugs.nonEmpty, s"Expected slug entries in content.html: $contentHtml")
+            assert(
+                slugs.subsetOf(articleIds),
+                s"INV-004: every heading slug must have a matching article id; slugs=$slugs, ids=$articleIds"
+            )
+        end for
+    }
+
+    "island carries article + headings, not markdown field" in run {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(vWithModules), out, bundleDir)
+            html      <- readFile(out / "latest" / "kyo-data" / "index.html")
+        yield
+            val islandJson = extractIsland(html, "docs-island")
+            val decoded    = islandJson.replace("\\u003c", "<").replace("\\u003e", ">")
+            assert(decoded.contains("\"article\""), s"island must carry an article field: $decoded")
+            assert(decoded.contains("\"headings\""), s"island must carry a headings array: $decoded")
+            assert(!decoded.contains("\"markdown\""), s"island must NOT carry a markdown field: $decoded")
+        end for
+    }
+
+    "landing seeds an empty-article island" in run {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(vWithModules), out, bundleDir)
+            html      <- readFile(out / "index.html")
+        yield
+            val islandJson = extractIsland(html, "docs-island")
+            val decoded    = islandJson.replace("\\u003c", "<").replace("\\u003e", ">")
+            // The landing island has article="" and headings=[] (empty seeds; no article to render).
+            assert(decoded.contains(""""article": """""), s"landing island must have empty article field: $decoded")
+            assert(decoded.contains(""""headings": []"""), s"landing island must have empty headings array: $decoded")
+        end for
+    }
+
+    "content.md still emitted per route (RI-003)" in run {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(vWithModules, vIntroOnly), out, bundleDir)
+            // Module page.
+            dataMd <- readFile(out / "v1.0.0-RC2" / "kyo-data" / "content.md")
+            // Intro page.
+            introMd <- readFile(out / "v1.0.0-RC2" / "content.md")
+            // Latest mirror.
+            latestMd <- readFile(out / "latest" / "kyo-data" / "content.md")
+        yield
+            assert(dataMd == dataReadme, s"RI-003: content.md must equal module.readme, got: $dataMd")
+            assert(introMd == "intro", s"RI-003: intro content.md must equal content.intro, got: $introMd")
+            assert(latestMd == dataReadme, s"RI-003: latest content.md must equal module.readme, got: $latestMd")
+        end for
+    }
+
+    "sitemap excludes content.html as well as content.md" in run {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(vWithModules, vIntroOnly), out, bundleDir)
+            sitemap   <- readFile(out / "sitemap.xml")
+        yield
+            assert(!sitemap.contains("content.md"), s"sitemap must NOT list content.md: $sitemap")
+            assert(!sitemap.contains("content.html"), s"sitemap must NOT list content.html: $sitemap")
+        end for
+    }
+
+    "manifest toc level-carrying, unchanged after island reshape" in run {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(vWithModules), out, bundleDir)
+            manifest  <- readFile(out / "v1.0.0-RC2" / "manifest.json")
+        yield
+            // The manifest carries level-carrying toc entries (shape from manifestEntry, unchanged).
+            assert(manifest.contains("\"level\""), s"manifest toc must carry level entries: $manifest")
+            assert(manifest.contains("\"text\""), s"manifest toc must carry text entries: $manifest")
+            assert(manifest.contains("\"slug\""), s"manifest toc must carry slug entries: $manifest")
+            assert(manifest.contains("kyo-data"), s"manifest must list kyo-data module: $manifest")
+        end for
+    }
+
+    "island article HTML round-trips an escaped < tag on emit (INV-005 emit-side)" in run {
+        // Build a README whose rendered article will contain < characters (via a heading with a code
+        // snippet; the backtick renders to <code>, so the rendered HTML contains <code>...</code>).
+        val readme = "# Test\n## Usage\n`myFunc` does things.\n"
+        val mod    = WebsiteModule("escape-test", "Foundation", "escape-test", readme, WebsiteModule.Platforms(true, true, true))
+        val content =
+            WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(content), out, bundleDir)
+            html      <- readFile(out / "v1.0.0" / "escape-test" / "index.html")
+        yield
+            val islandJson = extractIsland(html, "docs-island")
+            // The rendered article HTML contains <p> tags; those must be unicode-escaped in the island.
+            // escJson escapes < as literal <; escScript then replaces < with <.
+            // So the raw island text must contain < where < appeared in the HTML.
+            assert(
+                islandJson.contains("\\u003c"),
+                s"INV-005 emit-side: island must contain unicode-escaped < (\\u003c) from the article HTML: $islandJson"
+            )
+            // No literal </script> must appear in the raw island text.
+            assert(
+                !islandJson.contains("</script>"),
+                s"INV-005: island must not contain literal </script>: $islandJson"
+            )
+        end for
+    }
 
 end WebsiteGeneratorTest

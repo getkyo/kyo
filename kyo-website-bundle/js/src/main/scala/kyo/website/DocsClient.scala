@@ -8,16 +8,15 @@ import scala.scalajs.js.Thenable.Implicits.*
 
 /** JS-only docs SPA fetch client.
   *
-  * Fetches per-route Markdown text and the route table (versions + modules) from static files
-  * emitted by the SSG. Used by `WebsiteBundleMain` to supply the reactive content region with
-  * the raw Markdown the client transpiles via `DocsMarkdown.transpile` on each navigation.
+  * Fetches pre-rendered article content and the route table (versions + modules) from static files
+  * emitted by the SSG. The SPA consumes pre-rendered article HTML emitted by the SSG; it does not
+  * call the Markdown transpiler on navigation. Per-route article HTML and heading outlines are
+  * fetched from `content.html` files co-located with each route.
   *
   * The `fetch` helper is `private[website]` so tests can replace `fetchFn` with a stub without
   * involving the real DOM Fetch API. In production, `fetchFn` is `defaultFetch` (an identity
   * sentinel) and `fetch` issues a real GET via `org.scalajs.dom.Fetch.fetch`.
   *
-  * @see
-  *   [[DocsClient.fetchMarkdown]] to fetch a route's raw Markdown
   * @see
   *   [[DocsClient.routeTable]] to fetch the versions and module manifest
   */

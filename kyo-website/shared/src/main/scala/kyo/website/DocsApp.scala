@@ -19,8 +19,9 @@ import kyo.UI.Href
   * navigates elsewhere.
   *
   * The body is a pure composition of kyo-ui elements styled via `WebsiteStyles.sheet` CSS classes.
-  * No raw CSS or raw HTML is used here; the sole `UI.rawHtml` exception lives inside
-  * `DocsMarkdown.transpile` for the few inline image/link snippets in READMEs.
+  * No raw CSS or raw HTML is used here; the sole `UI.rawHtml` exception lives inside the
+  * build-time render pipeline for the few inline image/link snippets in READMEs. The `article`
+  * parameter carries the pre-rendered article subtree.
   *
   * Navigation links in the sidebar (module links AND in-page section links) are plain `<a>`
   * elements; `UILocation`'s capture-phase anchor interceptor (JS-only) converts same-origin clicks
@@ -39,7 +40,7 @@ object DocsApp:
       * `article` directly; when `article` is a `Reactive` node the kyo-ui renderer makes that region
       * reactive without additional wrapping (INV-013).
       *
-      * For SSG call sites: pass the pre-transpiled `DocsMarkdown.Rendered.article` as `article`.
+      * For SSG call sites: pass the pre-rendered article from `DocsMarkdownRender.Rendered.article` as `article`.
       * For the bundle: pass `articleRef.render(a => a)` as `article` so the region re-renders on
       * navigation (the `Reactive` node is a valid `UI`).
       *
@@ -54,7 +55,7 @@ object DocsApp:
       * @param route
       *   Signal tracking the current pathname, used to compute active sidebar state and prev/next.
       * @param tocSignal
-      *   The current page's heading outline (from `DocsMarkdown.Rendered.headings`), as a `Signal`
+      *   The current page's heading outline (from `DocsMarkdownRender.Rendered.headings`), as a `Signal`
       *   so the active module's nested section list re-renders on client navigation. Pass
       *   `Signal.initConst(headings)` for a static page (the SSG generator), or a `SignalRef` updated
       *   per route for the client bundle. The sidebar combines this with the active-route signal so

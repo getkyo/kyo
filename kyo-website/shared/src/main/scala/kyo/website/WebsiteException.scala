@@ -27,7 +27,7 @@ object WebsiteReadmeException:
 end WebsiteReadmeException
 
 /** The build-time transpile of a module README to the UI article subtree failed. Rare: the kyo-parse
-  * transpiler ([[DocsMarkdown.transpile]]) degrades unknown constructs to plain text rather than
+  * transpiler ([[DocsMarkdownRender.transpile]]) degrades unknown constructs to plain text rather than
   * raising, so this signals a genuinely unexpected failure in the render pipeline.
   */
 final case class WebsiteMarkdownException(slug: String, detail: String)(using Frame)

@@ -349,7 +349,7 @@ class DocsMarkdownTest extends Test:
 
     "empty source returns UI.empty and Chunk.empty headings (leaf 18)" in run {
         for rendered <- transpile("")
-        yield assert(rendered == DocsMarkdownRender.Rendered(UI.empty, Chunk.empty))
+        yield assert(rendered == DocsMarkdownRender.Rendered(UI.empty, "", Chunk.empty))
         end for
     }
 
@@ -759,6 +759,72 @@ class DocsMarkdownTest extends Test:
             // Non-empty Rendered produced, no exception thrown (test completing proves this).
             assert(rendered.headings.nonEmpty, s"Expected headings in large README: $rendered")
             assert(html.contains("<h2"), s"Expected headings in rendered HTML: $html")
+        end for
+    }
+
+    // ---- renderArticleHtml + renderArticle + transpile sentinel ----
+
+    "renderArticleHtml renders a static article to HTML" in run {
+        for
+            rendered <- DocsMarkdownRender.transpile("# Intro\n\nHello.")
+            html     <- DocsMarkdownRender.renderArticleHtml(rendered.article)
+        yield
+            // The rendered HTML carries data-kyo-path attributes from the kyo-ui renderer.
+            assert(html.contains("""id="intro""""), s"Expected h1 with id=intro: $html")
+            assert(html.contains("<h1"), s"Expected h1 element: $html")
+            assert(html.contains("Intro"), s"Expected Intro text: $html")
+            assert(html.contains("<p"), s"Expected paragraph element: $html")
+            assert(html.contains("Hello."), s"Expected Hello. text: $html")
+        end for
+    }
+
+    "renderArticle fills articleHtml on Rendered" in run {
+        for
+            rendered      <- DocsMarkdownRender.renderArticle("## A\n\nB")
+            htmlViaHelper <- renderHtml(rendered.article)
+        yield
+            assert(rendered.articleHtml.nonEmpty, "articleHtml must be non-empty after renderArticle")
+            assert(
+                rendered.articleHtml == htmlViaHelper,
+                s"articleHtml must equal renderHtml(article); got articleHtml=${rendered.articleHtml}, helper=$htmlViaHelper"
+            )
+            assert(
+                rendered.headings == Chunk(DocsMarkdown.Heading(2, "A", "a")),
+                s"headings must be Chunk(Heading(2,A,a)), got: ${rendered.headings}"
+            )
+        end for
+    }
+
+    "transpile leaves articleHtml as empty sentinel" in run {
+        for rendered <- DocsMarkdownRender.transpile("# X")
+        yield
+            assert(rendered.articleHtml == "", s"transpile must leave articleHtml as empty sentinel, got: ${rendered.articleHtml}")
+            assert(rendered.article != UI.empty, "transpile must populate the article UI")
+        end for
+    }
+
+    "empty source renders empty article HTML via renderArticle" in run {
+        for rendered <- DocsMarkdownRender.renderArticle("")
+        yield assert(
+            rendered == DocsMarkdownRender.Rendered(UI.empty, "", Chunk.empty),
+            s"empty source must yield Rendered(UI.empty, \"\", Chunk.empty), got: $rendered"
+        )
+        end for
+    }
+
+    "INV-003 SSG article HTML equals injected article HTML (parity unit assertion)" in run {
+        // INV-003: the SSG-emitted article HTML equals the client-injected article, byte-identical.
+        // Unit assertion: renderArticle produces articleHtml == renderHtml(article). This is trivially
+        // true by construction (renderArticleHtml IS runRender(article).take(1)...), but is pinned as a
+        // permanent regression guard. The full Chrome-backed parity test is in a later phase.
+        val source = "## Scope\n\nSome text.\n"
+        for
+            rendered        <- DocsMarkdownRender.renderArticle(source)
+            htmlFromArticle <- renderHtml(rendered.article)
+        yield assert(
+            rendered.articleHtml == htmlFromArticle,
+            s"INV-003: articleHtml must equal renderHtml(article) byte-for-byte; got articleHtml=${rendered.articleHtml}, renderHtml=$htmlFromArticle"
+        )
         end for
     }
 

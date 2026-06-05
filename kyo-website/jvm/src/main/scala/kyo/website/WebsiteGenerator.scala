@@ -19,10 +19,12 @@ import kyo.*
   * Output directory layout:
   * {{{
   *   <outDir>/index.html             -- landing page (INV-009)
-  *   <outDir>/<prefix>/index.html    -- per-version overview page (chrome + transpiled root-README intro)
-  *   <outDir>/<prefix>/content.md    -- raw root-README intro Markdown (== content.intro, D6)
-  *   <outDir>/<prefix>/<slug>/index.html  -- per-module docs page (chrome + transpiled article)
-  *   <outDir>/<prefix>/<slug>/content.md  -- raw README Markdown (== module.readme, D6)
+  *   <outDir>/<prefix>/index.html    -- per-version overview page (chrome + rendered root-README intro)
+  *   <outDir>/<prefix>/content.md    -- raw root-README intro Markdown (== content.intro, RI-003 kept)
+  *   <outDir>/<prefix>/content.html  -- pre-rendered article JSON ({html, headings}) for the SPA
+  *   <outDir>/<prefix>/<slug>/index.html  -- per-module docs page (chrome + rendered article)
+  *   <outDir>/<prefix>/<slug>/content.md  -- raw README Markdown (== module.readme, RI-003 kept)
+  *   <outDir>/<prefix>/<slug>/content.html -- pre-rendered article JSON ({html, headings}) for the SPA
   *   <outDir>/<prefix>/manifest.json      -- module/slug list + TOC outlines + prev/next (D5)
   *   <outDir>/versions.json   -- version manifest (INV-010)
   *   <outDir>/sitemap.xml     -- canonical-indexable route set (SEO-3)
@@ -89,15 +91,15 @@ object WebsiteGenerator:
         end for
     end emit
 
-    // ---- Private helpers: docs routes (Phase 7) ----
+    // ---- Private helpers: docs routes ----
 
     /** Emit one version's full route set under `prefix` (the version's own tag, e.g. `v1.0.0-RC2`):
-      *   - `<prefix>/index.html`: the version overview page (chrome + the transpiled root-README intro).
-      *   - `<prefix>/content.md`: the raw root-README intro Markdown (== `content.intro`), the single
-      *     source the SPA fetches and re-transpiles client-side for the overview (D6/INV-009).
-      *   - `<prefix>/<slug>/index.html`: each module's docs page (chrome + transpiled UI article).
-      *   - `<prefix>/<slug>/content.md`: the raw README Markdown (== `module.readme`), the single
-      *     source the SPA fetches and re-transpiles client-side (D6/INV-009).
+      *   - `<prefix>/index.html`: the version overview page (chrome + the rendered root-README intro).
+      *   - `<prefix>/content.md`: the raw root-README intro Markdown (== `content.intro`, RI-003 kept).
+      *   - `<prefix>/content.html`: pre-rendered article JSON `{"html": ..., "headings": [...]}`.
+      *   - `<prefix>/<slug>/index.html`: each module's docs page (chrome + rendered UI article).
+      *   - `<prefix>/<slug>/content.md`: the raw README Markdown (== `module.readme`, RI-003 kept).
+      *   - `<prefix>/<slug>/content.html`: pre-rendered article JSON for the SPA navigator.
       *   - `<prefix>/manifest.json`: the module/slug list with TOC outlines and prev/next order.
       *
       * An intro-only version (empty groups, INV-007) emits its overview page (and its content.md) and
@@ -181,8 +183,8 @@ object WebsiteGenerator:
             // The intro route renders the root-README overview as its article (no longer an empty
             // article), so the page is real content: SEO-indexable, with its OWN heading outline driving
             // the rail's Overview sections. The raw `content.intro` is written as the route's content.md
-            // so the bundle fetches and re-transpiles it exactly like a module page (D6/INV-009).
-            rendered   <- DocsMarkdownRender.transpile(c.intro)
+            // (RI-003 kept). The pre-rendered article HTML ships in the island and as content.html.
+            rendered   <- DocsMarkdownRender.renderArticle(c.intro)
             fixedRoute <- Signal.initRef(route)
             // The SSG emits one fully-loaded static page per route, so content is never mid-load:
             // `contentLoading` is constant false and the prev/next pager renders exactly as the bundle's
@@ -190,9 +192,14 @@ object WebsiteGenerator:
             body <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(rendered.headings), rendered.article, Signal.initConst(false))
             view <- siteShell(versions, docsHome(c, prefix), body)
             html <- wrapFirst(introOpts(c, prefix, route, rendered.headings, isCurrentLatest), view)
-            island = docsIsland(c, versions, c.intro)
+            island = docsIsland(c, versions, rendered.articleHtml, rendered.headings)
             _ <- writeRoute(outDir / prefix / "index.html", injectIslands(html, island, versions))
             _ <- writeString(s"$prefix/content.md", outDir / prefix / "content.md", c.intro)
+            _ <- writeString(
+                s"$prefix/content.html",
+                outDir / prefix / "content.html",
+                articleEndpointJson(rendered.articleHtml, rendered.headings)
+            )
         yield ()
         end for
     end emitIntroPage
@@ -207,18 +214,23 @@ object WebsiteGenerator:
     )(using Frame): Unit < (Async & Abort[WebsiteException]) =
         val route = s"/$prefix/${module.slug}/"
         for
-            rendered   <- DocsMarkdownRender.transpile(module.readme)
+            rendered   <- DocsMarkdownRender.renderArticle(module.readme)
             fixedRoute <- Signal.initRef(route)
             // Constant-false `contentLoading`: a static SSG page is always loaded (see emitIntroPage).
             body <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(rendered.headings), rendered.article, Signal.initConst(false))
             view <- siteShell(versions, docsHome(c, prefix), body)
             html <- wrapFirst(docOpts(c, prefix, module.slug, route, isCurrentLatest), view)
-            island = docsIsland(c, versions, module.readme)
+            island = docsIsland(c, versions, rendered.articleHtml, rendered.headings)
             _ <- writeRoute(outDir / prefix / module.slug / "index.html", injectIslands(html, island, versions))
             _ <- writeString(
                 s"$prefix/${module.slug}/content.md",
                 outDir / prefix / module.slug / "content.md",
                 module.readme
+            )
+            _ <- writeString(
+                s"$prefix/${module.slug}/content.html",
+                outDir / prefix / module.slug / "content.html",
+                articleEndpointJson(rendered.articleHtml, rendered.headings)
             )
         yield ()
         end for
@@ -375,10 +387,18 @@ object WebsiteGenerator:
     // ---- Boot islands (Phase 6 forward-dep: the schema DocsClient parses) ----
 
     /** Build the `#docs-island` JSON payload for a route: the version record, intro, grouped modules
-      * (slug/group/title), the full version list, and the route's raw Markdown. `WebsiteBundleMain`
-      * reads this at bundle entry to seed the SPA with the current page's content before navigation.
+      * (slug/group/title), the full version list, the pre-rendered article HTML, and the heading
+      * outline. `WebsiteBundleMain` reads this at bundle entry to seed the SPA with the current
+      * page's content before navigation. The `article` field carries the pre-rendered HTML so the
+      * client never needs to call the transpiler (INV-002). The `headings` array carries the
+      * level-carrying outline entries (INV-010).
       */
-    private def docsIsland(c: WebsiteContent, versions: Chunk[WebsiteVersion], markdown: String): String =
+    private def docsIsland(
+        c: WebsiteContent,
+        versions: Chunk[WebsiteVersion],
+        articleHtml: String,
+        headings: Chunk[DocsMarkdown.Heading]
+    ): String =
         val v          = c.version
         val versionObj = s"""{"tag": "${escJson(v.tag)}", "label": "${escJson(v.label)}", "latest": ${v.latest}}"""
         val groupsJson = c.groups.toSeq.map { g =>
@@ -389,7 +409,7 @@ object WebsiteGenerator:
         }.mkString("[", ", ", "]")
         s"""{"version": $versionObj, "intro": "${escJson(c.intro)}", "groups": $groupsJson, "versions": ${buildVersionsJson(
                 versions
-            )}, "markdown": "${escJson(markdown)}"}"""
+            )}, "article": "${escJson(articleHtml)}", "headings": ${headingsJson(headings)}}"""
     end docsIsland
 
     /** Inject the `#docs-island` and `#versions-island` `<script type="application/json">` elements
@@ -411,6 +431,19 @@ object WebsiteGenerator:
 
     private def escScript(json: String): String =
         json.replace("<", "\\u003c").replace(">", "\\u003e")
+
+    // Serialize a heading outline to a JSON array of `{"level": N, "text": "...", "slug": "..."}`
+    // objects. Mirrors the `tocJson` pattern in `manifestEntry` verbatim (prep doc lines 122-127).
+    private def headingsJson(headings: Chunk[DocsMarkdown.Heading]): String =
+        headings.toSeq.map { h =>
+            s"""{"level": ${h.level}, "text": "${escJson(h.text)}", "slug": "${escJson(h.slug)}"}"""
+        }.mkString("[", ", ", "]")
+
+    // Build the JSON body for the per-route `content.html` navigation endpoint.
+    // The `html` field carries the pre-rendered article HTML; `headings` carries the level-carrying
+    // outline. The client `fetchArticle` reads `"html"` via `extractString` + `unescapeJson`.
+    private def articleEndpointJson(articleHtml: String, headings: Chunk[DocsMarkdown.Heading]): String =
+        s"""{"html": "${escJson(articleHtml)}", "headings": ${headingsJson(headings)}}"""
 
     // ---- Private helpers ----
 
@@ -436,7 +469,7 @@ object WebsiteGenerator:
             body <- LandingApp.body(landingHome)
             view <- siteShell(versions, landingHome, body)
             html <- wrapFirst(opts, view)
-            island      = latest.fold("")(c => docsIsland(c.copy(version = c.version.copy(latest = true)), versions, ""))
+            island      = latest.fold("")(c => docsIsland(c.copy(version = c.version.copy(latest = true)), versions, "", Chunk.empty))
             withIslands = if island.isEmpty then html else injectIslands(html, island, versions)
             _ <- writeRoute(outDir / "index.html", withIslands)
         yield ()
