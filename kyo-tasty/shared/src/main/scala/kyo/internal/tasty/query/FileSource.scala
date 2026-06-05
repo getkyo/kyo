@@ -74,6 +74,18 @@ trait FileSource:
     def withReadBatch[A, S](body: A < S)(using Frame): A < (S & Sync & Scope) =
         body
 
+    /** Open a zip or jar root for entry-level reads.
+      *
+      * Returns `Maybe.Absent` when the platform cannot open the zip (e.g. browser JS, or when the root is a directory rather than a jar).
+      * The returned `ZipHandle` is Scope-bound; its backing resources are released when the enclosing Scope exits.
+      *
+      * The default implementation returns `Maybe.Absent`. Platform-specific overrides (JVM) open the jar bytes and serve entries from an
+      * in-memory map. JS and Native implementations return `Maybe.Absent` in Phase 13; transparent zip parsing may be added in a later
+      * phase.
+      */
+    def openZip(root: String)(using Frame): Maybe[ZipHandle] < (Sync & Scope & Abort[TastyError]) =
+        Maybe.Absent
+
 end FileSource
 
 object FileSource:

@@ -103,6 +103,41 @@ object SnapshotReader:
         deserializeMapped(path, view)
     end readMappedView
 
+    /** Deserialize a KRFL snapshot from raw bytes without a FileSource.
+      *
+      * Used by `BundledSnapshotProbe` to decode a snapshot that was read from a jar entry (not a standalone file). Delegates to the same
+      * `readBytes` path as the file-backed `read` overload. The `path` argument is used only in error messages.
+      */
+    private[kyo] def readFromBytes(
+        bytes: Array[Byte],
+        path: String = "<bundled>"
+    )(using Frame): Tasty.Classpath < (Sync & Abort[TastyError]) =
+        readBytes(path, bytes)
+
+    /** Read the inputDigest field from the KRFL header at bytes [16..23] (little-endian Int64).
+      *
+      * Returns 0L if the bytes array is shorter than 24 bytes. No full deserialization is performed; only the 8-byte header field is
+      * extracted.
+      */
+    private[kyo] def readInputDigest(bytes: Array[Byte]): Long =
+        if bytes.length < 24 then 0L
+        else DigestComputer.bytesToLong(java.util.Arrays.copyOfRange(bytes, 16, 24))
+
+    /** Read the KRFL format version from the snapshot header.
+      *
+      * Returns the version encoded at bytes [4..5] (major, minor). Returns `Tasty.Version(0, 0, 0)` if the array is shorter than 6 bytes.
+      */
+    private[kyo] def readPickleVersion(bytes: Array[Byte]): Tasty.Version =
+        if bytes.length < 6 then Tasty.Version(0, 0, 0)
+        else Tasty.Version(bytes(4) & 0xff, bytes(5) & 0xff, 0)
+
+    /** Read a display UUID from the snapshot.
+      *
+      * The KRFL header does not store a per-file TASTy UUID; bytes [6..15] are reserved padding. Returns an empty string as a placeholder.
+      * The `Pickle.uuid` field is used only for the `show` display, not for correctness.
+      */
+    private[kyo] def readPickleUuid(bytes: Array[Byte]): String = ""
+
     /** Thrown by readMappedView when the snapshot major version doesn't match. */
     final private[snapshot] class VersionMismatchException(
         val found: Tasty.Version,

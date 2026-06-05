@@ -1822,37 +1822,94 @@ object ClasspathOrchestrator:
     )(using Frame): Binding < (Sync & Async & Scope & Abort[TastyError]) =
         val source      = PlatformFileSource.get
         val concurrency = java.lang.Runtime.getRuntime.availableProcessors().max(1)
-        cacheDir match
-            case Maybe.Absent =>
-                init(roots, mode, source, concurrency).map: cp =>
-                    Binding(cp, Maybe.Present(DecodeContext.fresh()))
-            case Maybe.Present(dir) =>
-                import kyo.internal.tasty.snapshot.DigestComputer as SnapshotDigest
-                import kyo.internal.tasty.snapshot.SnapshotReader
-                import kyo.internal.tasty.snapshot.SnapshotWriter
-                Abort.run[TastyError](SnapshotDigest.compute(roots, source)).flatMap:
-                    case Result.Failure(_) | Result.Panic(_) =>
-                        // Digest failed (e.g. browser platform): fall through to cold load.
-                        init(roots, mode, source, concurrency).map: cp =>
-                            Binding(cp, Maybe.Present(DecodeContext.fresh()))
-                    case Result.Success(digest) =>
-                        val hexDigest    = SnapshotDigest.toHexString(digest)
-                        val snapshotPath = s"$dir/$hexDigest.krfl"
-                        source.exists(snapshotPath).flatMap: exists =>
-                            if exists then
-                                Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath, source)).flatMap:
-                                    case Result.Success(cp) =>
-                                        Binding(cp, Maybe.Present(DecodeContext.fresh()))
-                                    case Result.Failure(_) | Result.Panic(_) =>
-                                        // Snapshot unreadable; fall through to cold load.
-                                        init(roots, mode, source, concurrency).map: cp =>
-                                            Binding(cp, Maybe.Present(DecodeContext.fresh()))
-                            else
-                                init(roots, mode, source, concurrency).flatMap: cp =>
-                                    Abort.run[TastyError](SnapshotWriter.write(cp, dir, digest, source)).andThen:
-                                        Binding(cp, Maybe.Present(DecodeContext.fresh()))
-        end match
+        // INV-004: ALWAYS probe each root for a bundled snapshot before cold-loading.
+        // Partition roots into bundled (probe hit) and cold (probe miss or non-jar).
+        // SoftFail: DigestMismatch from a stale snapshot is caught and the root is cold-loaded.
+        // FailFast: DigestMismatch propagates as Abort[TastyError].
+        probeAndLoadBundled(roots, mode, source).flatMap: (bundledCp, coldRoots) =>
+            val coldLoad: Binding < (Sync & Async & Scope & Abort[TastyError]) =
+                cacheDir match
+                    case Maybe.Absent =>
+                        init(coldRoots, mode, source, concurrency).map: coldCp =>
+                            val merged = if bundledCp.symbols.isEmpty then coldCp
+                            else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
+                            Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                    case Maybe.Present(dir) =>
+                        import kyo.internal.tasty.snapshot.DigestComputer as SnapshotDigest
+                        import kyo.internal.tasty.snapshot.SnapshotReader
+                        import kyo.internal.tasty.snapshot.SnapshotWriter
+                        Abort.run[TastyError](SnapshotDigest.compute(coldRoots, source)).flatMap:
+                            case Result.Failure(_) | Result.Panic(_) =>
+                                // Digest failed (e.g. browser platform): fall through to cold load.
+                                init(coldRoots, mode, source, concurrency).map: coldCp =>
+                                    val merged = if bundledCp.symbols.isEmpty then coldCp
+                                    else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
+                                    Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                            case Result.Success(digest) =>
+                                val hexDigest    = SnapshotDigest.toHexString(digest)
+                                val snapshotPath = s"$dir/$hexDigest.krfl"
+                                source.exists(snapshotPath).flatMap: exists =>
+                                    if exists then
+                                        Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath, source)).flatMap:
+                                            case Result.Success(coldCp) =>
+                                                val merged = if bundledCp.symbols.isEmpty then coldCp
+                                                else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
+                                                Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                                            case Result.Failure(_) | Result.Panic(_) =>
+                                                // Snapshot unreadable; fall through to cold load.
+                                                init(coldRoots, mode, source, concurrency).map: coldCp =>
+                                                    val merged = if bundledCp.symbols.isEmpty then coldCp
+                                                    else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
+                                                    Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                                    else
+                                        init(coldRoots, mode, source, concurrency).flatMap: coldCp =>
+                                            Abort.run[TastyError](SnapshotWriter.write(coldCp, dir, digest, source)).andThen:
+                                                val merged = if bundledCp.symbols.isEmpty then coldCp
+                                                else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
+                                                Binding(merged, Maybe.Present(DecodeContext.fresh()))
+            // If no cold roots remain (all roots had bundled snapshots), return the merged bundled classpath directly.
+            if coldRoots.isEmpty then Binding(bundledCp, Maybe.Present(DecodeContext.fresh()))
+            else coldLoad
     end coldLoadBinding
+
+    /** Probe each root for a bundled snapshot (INV-004).
+      *
+      * For each root: call BundledSnapshotProbe.probe. On a hit, decode the snapshot bytes into a partial Classpath and merge it into
+      * the running accumulator (INV-005 remap-at-merge). On a miss, add the root to the coldRoots list. DigestMismatch handling follows
+      * the error mode: SoftFail silently falls back to cold load; FailFast propagates the error.
+      *
+      * Returns a tuple of (mergedBundledClasspath, coldRoots). The caller cold-loads coldRoots and merges the result with
+      * mergedBundledClasspath.
+      */
+    private def probeAndLoadBundled(
+        roots: Seq[String],
+        mode: Tasty.ErrorMode,
+        source: FileSource
+    )(using Frame): (Tasty.Classpath, Seq[String]) < (Sync & Scope & Abort[TastyError]) =
+        import kyo.internal.tasty.snapshot.SnapshotReader
+        var bundled: Tasty.Classpath = Tasty.Classpath.empty
+        val coldRoots                = scala.collection.mutable.ArrayBuffer.empty[String]
+        Kyo.foreach(Chunk.from(roots)): root =>
+            val probeResult: Maybe[Array[Byte]] < (Sync & Scope & Abort[TastyError]) =
+                if mode == Tasty.ErrorMode.SoftFail then
+                    Abort.run[TastyError](BundledSnapshotProbe.probe(root, source)).map:
+                        case Result.Success(r)                                => r
+                        case Result.Failure(_: TastyError.DigestMismatch) | _ => Maybe.Absent
+                else
+                    BundledSnapshotProbe.probe(root, source)
+            probeResult.map:
+                case Maybe.Absent =>
+                    Sync.defer(coldRoots += root)
+                case Maybe.Present(snapshotBytes) =>
+                    Abort.run[TastyError](SnapshotReader.readFromBytes(snapshotBytes, root)).map:
+                        case Result.Success(partial) =>
+                            Sync.defer:
+                                bundled = BundledSnapshotProbe.mergePartialInto(bundled, partial)
+                        case Result.Failure(_) | Result.Panic(_) =>
+                            // Snapshot bytes unreadable; fall back to cold load for this root.
+                            Sync.defer(coldRoots += root)
+        .andThen(Sync.defer((bundled, coldRoots.toSeq)))
+    end probeAndLoadBundled
 
     /** Load a Binding from in-memory pickles.
       *
