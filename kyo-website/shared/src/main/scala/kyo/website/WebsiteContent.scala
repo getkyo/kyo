@@ -2,9 +2,14 @@ package kyo.website
 
 import kyo.*
 
-/** The complete render input for one documentation version: the root-README intro text, the
+/** The complete render input for one documentation version: the full root-README markdown, the
   * grouped modules, and the version record. A value (not files) so the renderer on `main` can
   * render any tag's content (render-from-tags, INV-006).
+  *
+  * `intro` holds the entire root README verbatim. It is rendered as the Overview page with fidelity
+  * (the transpiler is the only transformation); no section is sliced out. `groups` is the module
+  * catalog parsed from the README's `## Modules` table, which drives the sidebar navigation; reading
+  * the table for navigation does not change what the Overview renders.
   */
 final case class WebsiteContent(
     intro: String,
@@ -37,7 +42,12 @@ object WebsiteContent:
     def fromRepo(root: Path, version: WebsiteVersion)(using Frame): WebsiteContent < (Sync & Abort[WebsiteException]) =
         for
             rootReadme <- readRequired(root / "README.md")
-            intro = parseIntro(rootReadme)
+            // The Overview renders the root README with fidelity: the whole file, transpiled as-is, no
+            // slicing. An earlier version kept only the `## Introduction`-to-`## Modules` slice, which
+            // silently dropped the title and every section after `## Modules` (Getting Started, Required
+            // Compiler Flags, IDE Support, Talks, License, ...). The `## Modules` table still drives the
+            // sidebar via parseGroups; that reads the table for navigation but does not alter the Overview.
+            intro = rootReadme
             groups <- parseGroups(root, rootReadme)
         yield WebsiteContent(intro, groups, version)
 
@@ -49,19 +59,6 @@ object WebsiteContent:
             case Result.Failure(_) => Abort.fail(WebsiteReadmeException(path, WebsiteReadmeException.ReadmeFailure.Missing))
             case p: Result.Panic   => Abort.error(p)
         }
-
-    /** The text between `## Introduction` and `## Modules`, or the whole body up to `## Modules`
-      * when `## Introduction` is absent, or the whole body when neither is present. Pure string slice.
-      */
-    private def parseIntro(rootReadme: String): String =
-        val afterIntro = sectionMarker(rootReadme, "## Introduction") match
-            case Present(idx) => rootReadme.substring(idx)
-            case Absent       => rootReadme
-        sectionMarker(afterIntro, "## Modules") match
-            case Present(idx) => afterIntro.substring(0, idx).trim
-            case Absent       => afterIntro.trim
-        end match
-    end parseIntro
 
     /** Find the `## Modules` section; if absent, return `Chunk.empty` (INV-007 degrade). When present,
       * parse each `### <Group>` heading and its following GFM pipe table into a `Group`, reading each

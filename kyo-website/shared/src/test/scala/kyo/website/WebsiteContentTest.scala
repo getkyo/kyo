@@ -226,7 +226,7 @@ class WebsiteContentTest extends Test:
         end for
     }
 
-    "fromRepo intro is between Introduction and Modules (P7-6)" in run {
+    "fromRepo overview is the full root README, rendered with fidelity not sliced (P7-6)" in run {
         val readme =
             """# Kyo
               |
@@ -240,6 +240,10 @@ class WebsiteContentTest extends Test:
               || Module | JVM | JS | Native | Identity |
               || ------ | --- | -- | ------ | -------- |
               || [kyo-data](kyo-data/README.md) | ✅ | ✅ | ✅ | Data |
+              |
+              |## Getting Started
+              |
+              |Add the dependency and go.
               |""".stripMargin
         for
             result <- fromRepoResult(Seq(
@@ -248,9 +252,19 @@ class WebsiteContentTest extends Test:
             ))
         yield result match
             case Result.Success(content) =>
-                assert(content.intro.contains("My intro text."), s"intro: ${content.intro}")
-                assert(!content.intro.contains("## Modules"), s"intro must not contain the modules table: ${content.intro}")
-                assert(!content.intro.contains("kyo-data"), s"intro must not contain module rows: ${content.intro}")
+                // Fidelity: the Overview is the entire README verbatim. Nothing is dropped: the title,
+                // the introduction, the `## Modules` section, the module rows, AND every section after
+                // `## Modules` are all kept. The post-Modules section is the regression guard: an earlier
+                // slice silently truncated everything after the module table (Getting Started here).
+                assert(content.intro == readme, s"overview must equal the full README verbatim: ${content.intro}")
+                assert(content.intro.contains("# Kyo"), "overview keeps the title")
+                assert(content.intro.contains("My intro text."), "overview keeps the introduction")
+                assert(content.intro.contains("## Modules"), "overview keeps the modules section (no slicing)")
+                assert(content.intro.contains("kyo-data"), "overview keeps the module rows")
+                assert(content.intro.contains("## Getting Started"), "overview keeps sections after ## Modules")
+                assert(content.intro.contains("Add the dependency and go."), "overview keeps post-modules prose")
+                // The catalog still drives the sidebar (parseGroups), unaffected by the overview change.
+                assert(content.groups.head.modules.head.slug == "kyo-data", "modules still parsed for the sidebar")
             case other => fail(s"expected Success, got $other")
         end for
     }
