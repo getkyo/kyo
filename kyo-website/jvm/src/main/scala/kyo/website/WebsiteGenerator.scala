@@ -56,7 +56,7 @@ object WebsiteGenerator:
       */
     final case class Config(repoRoot: Path, bundleDir: Path) derives CanEqual
 
-    /** Emits all Phase-4 artifact files into `outDir`.
+    /** Emits all artifact files into `outDir`.
       *
       * @param content
       *   The list of documentation versions to include in the version manifest and the version
@@ -384,7 +384,7 @@ object WebsiteGenerator:
             )}", "prev": $prevJson, "next": $nextJson, "toc": $tocJson}"""
     end manifestEntry
 
-    // ---- Boot islands (Phase 6 forward-dep: the schema DocsClient parses) ----
+    // ---- Boot islands (first-paint payload; the schema DocsClient parses) ----
 
     /** Build the `#docs-island` JSON payload for a route: the version record, intro, grouped modules
       * (slug/group/title), the full version list, the pre-rendered article HTML, and the heading

@@ -665,6 +665,19 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
+    // INV-007 regression: boolean and null literals must classify as tok-keyword (WARN-1 fix).
+    // KwTrue, KwFalse, KwNull extend BooleanConstant/Literal, not Token$Keyword in scalameta 4.13.4.
+    // Without the dedicated arm they fall through to Absent and render unhighlighted.
+    "INV-007 boolean and null literals classify as tok-keyword" in run {
+        val snippet = "val b = true\nval n = null\nval f = false"
+        for html <- highlightScalaHtml(snippet)
+        yield
+            assert(html.contains("tok-keyword\">true</"), s"true must render with tok-keyword: $html")
+            assert(html.contains("tok-keyword\">null</"), s"null must render with tok-keyword: $html")
+            assert(html.contains("tok-keyword\">false</"), s"false must render with tok-keyword: $html")
+        end for
+    }
+
     "INV-008 any snippet completes without exception or Abort (leaf P2-13)" in run {
         // INV-008: no input may panic the build. Scalameta 4.13.4 in Scala3 dialect is
         // lenient and returns Right (tokens) even for partial/malformed snippets (empirically

@@ -20,8 +20,8 @@ import scala.meta.tokens.Token as MetaToken
   * cells, fence info-strings, badge/link/image inline tokens) are genuine kyo-parse parsers run via
   * `Parse.runResult`.
   *
-  * This object lives in `kyo-website/jvm/` so scalameta (added in Phase 2) never reaches the JS
-  * link classpath (D2, INV-001). The shared [[DocsMarkdown]] object holds only the cross-platform
+  * This object lives in `kyo-website/jvm/` so scalameta never reaches the JS link classpath
+  * (D2, INV-001). The shared [[DocsMarkdown]] object holds only the cross-platform
   * [[DocsMarkdown.Heading]] carrier type.
   *
   * @see
@@ -868,14 +868,18 @@ object DocsMarkdownRender:
             _: MetaToken.Interpolation.End => Present(TokenKind.Str)
         case _: MetaToken.Interpolation.SpliceStart | _: MetaToken.Interpolation.SpliceEnd =>
             Present(TokenKind.Operator)
-        case _: MetaToken.At      => Present(TokenKind.Annotation)
+        case _: MetaToken.At => Present(TokenKind.Annotation)
+        // KwTrue, KwFalse, and KwNull extend BooleanConstant/Literal, not Token$Keyword in scalameta
+        // 4.13.4, so they do not match the Keyword arm below. Place this arm first (INV-007, WARN-1).
+        case _: MetaToken.KwTrue | _: MetaToken.KwFalse | _: MetaToken.KwNull =>
+            Present(TokenKind.Keyword)
         case _: MetaToken.Keyword => Present(TokenKind.Keyword)
         case _: MetaToken.Colon | _: MetaToken.Equals | _: MetaToken.RightArrow |
             _: MetaToken.FunctionArrow | _: MetaToken.Underscore | _: MetaToken.Hash |
             _: MetaToken.Subtype | _: MetaToken.Supertype =>
             Present(TokenKind.Operator)
         case id: MetaToken.Ident if isOperatorIdent(id.text) => Present(TokenKind.Operator)
-        case id: MetaToken.Ident if prev.exists { case _: MetaToken.At => true; case _ => false } =>
+        case _: MetaToken.Ident if prev.exists { case _: MetaToken.At => true; case _ => false } =>
             Present(TokenKind.Annotation)
         case id: MetaToken.Ident if isTypeIdent(id.text, prev) => Present(TokenKind.Type)
         case _                                                 => Absent

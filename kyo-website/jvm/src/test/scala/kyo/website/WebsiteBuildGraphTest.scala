@@ -76,4 +76,122 @@ class WebsiteBuildGraphTest extends Test:
         }
     }
 
+    // Guard A: scalameta must appear ONLY in the kyo-website .jvmSettings block, never in the
+    // shared/js/bundle source trees. The grep is scoped to import/dependency forms so prose
+    // mentions of "scalameta" in scaladoc comments (e.g. DocsMarkdown.scala:11) do not trigger it.
+    // Pattern: `import scala.meta` (import form) or `org.scalameta` (libraryDependencies form).
+    // This mirrors the flexmark guard at lines 39-57 exactly (INV-001, WARN-2 fix).
+    "scalameta JVM-only import grep (INV-001 Guard A)" - {
+
+        "zero scalameta in kyo-website/shared" in {
+            val lines      = sourceLines("kyo-website/shared")
+            val importHits = lines.filter(_.contains("import scala.meta"))
+            val depHits    = lines.filter(_.contains("org.scalameta"))
+            assert(
+                importHits.isEmpty,
+                s"unexpected scala.meta import in kyo-website/shared: ${importHits.mkString(", ")}"
+            )
+            assert(
+                depHits.isEmpty,
+                s"unexpected org.scalameta dependency in kyo-website/shared: ${depHits.mkString(", ")}"
+            )
+        }
+
+        "zero scalameta in kyo-website/js" in {
+            val lines      = sourceLines("kyo-website/js")
+            val importHits = lines.filter(_.contains("import scala.meta"))
+            val depHits    = lines.filter(_.contains("org.scalameta"))
+            assert(
+                importHits.isEmpty,
+                s"unexpected scala.meta import in kyo-website/js: ${importHits.mkString(", ")}"
+            )
+            assert(
+                depHits.isEmpty,
+                s"unexpected org.scalameta dependency in kyo-website/js: ${depHits.mkString(", ")}"
+            )
+        }
+
+        "zero scalameta in kyo-website-bundle" in {
+            val lines      = sourceLines("kyo-website-bundle")
+            val importHits = lines.filter(_.contains("import scala.meta"))
+            val depHits    = lines.filter(_.contains("org.scalameta"))
+            assert(
+                importHits.isEmpty,
+                s"unexpected scala.meta import in kyo-website-bundle: ${importHits.mkString(", ")}"
+            )
+            assert(
+                depHits.isEmpty,
+                s"unexpected org.scalameta dependency in kyo-website-bundle: ${depHits.mkString(", ")}"
+            )
+        }
+
+        "scalameta declared only in kyo-website .jvmSettings block (not in kyo-website-bundle)" in {
+            val lines        = buildSbtLines()
+            val projectStart = lines.indexWhere(l => l.contains("lazy val `kyo-website`") && !l.contains("bundle"))
+            assert(projectStart >= 0, "kyo-website project not found in build.sbt")
+            val nextProject  = lines.indexWhere(l => l.startsWith("lazy val") && !l.contains("kyo-website"), projectStart + 1)
+            val projectEnd   = if nextProject > 0 then nextProject else lines.length
+            val projectBlock = lines.slice(projectStart, projectEnd)
+            assert(
+                projectBlock.exists(l => l.contains("org.scalameta")),
+                "org.scalameta must appear in the kyo-website project block in build.sbt"
+            )
+            // The bundle must not declare a scalameta dependency.
+            val bundleStart = lines.indexWhere(l => l.contains("lazy val `kyo-website-bundle`"))
+            if bundleStart >= 0 then
+                val nextBundle  = lines.indexWhere(l => l.startsWith("lazy val") && !l.contains("kyo-website-bundle"), bundleStart + 1)
+                val bundleEnd   = if nextBundle > 0 then nextBundle else lines.length
+                val bundleBlock = lines.slice(bundleStart, bundleEnd)
+                assert(
+                    bundleBlock.forall(l => !l.contains("org.scalameta")),
+                    s"org.scalameta must NOT appear in the kyo-website-bundle project block in build.sbt"
+                )
+            else
+                succeed
+            end if
+        }
+    }
+
+    // Guard B (INV-013): if the fullLinkJS-optimized bundle output is present, grep it for
+    // any scala_meta symbol references and assert zero occurrences. The file is only present
+    // after `sbt kyo-website-bundleJS/fullLinkJS`; when absent the test is cancelled (not failed).
+    "INV-013 Guard B: zero scala_meta in bundle-opt main.js (skip when absent)" in {
+        val ver = scala.util.Properties.versionNumberString
+        val jsPath = repoRoot().resolve(
+            s"kyo-website-bundle/js/target/scala-$ver/kyo-website-bundle-opt/main.js"
+        )
+        if !Files.exists(jsPath) then
+            cancel("Guard B skipped: bundle-opt main.js not present (run fullLinkJS first)")
+        else
+            val text              = new String(Files.readAllBytes(jsPath))
+            val scalaMetaCount    = text.sliding("scala_meta".length).count(_ == "scala_meta")
+            val docsMarkdownCount = text.sliding("DocsMarkdown".length).count(_ == "DocsMarkdown")
+            assert(
+                scalaMetaCount == 0,
+                s"INV-013: bundle-opt main.js must contain zero scala_meta symbols, found $scalaMetaCount"
+            )
+            assert(
+                docsMarkdownCount > 0,
+                s"INV-013 control: bundle-opt main.js must contain DocsMarkdown (proves file is a real linked output), found $docsMarkdownCount"
+            )
+        end if
+    }
+
+    // INV-002: the client-side trees (bundle/js) must not reference the JVM-only transpiler surface.
+    // Grep for the method/type names that must never appear in the JS compilation unit.
+    "INV-002 zero transpile/highlightScala/DocsMarkdownRender in bundle and js source" in {
+        val bundleLines = sourceLines("kyo-website-bundle")
+        val jsLines     = sourceLines("kyo-website/js")
+        val allLines    = bundleLines ++ jsLines
+        val renderHits = allLines.filter(l =>
+            l.contains("DocsMarkdownRender") ||
+                l.contains("highlightScala") ||
+                l.contains(".transpile(")
+        )
+        assert(
+            renderHits.isEmpty,
+            s"INV-002: DocsMarkdownRender/highlightScala/transpile must not appear in bundle or js source: ${renderHits.mkString(", ")}"
+        )
+    }
+
 end WebsiteBuildGraphTest

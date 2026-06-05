@@ -58,8 +58,8 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
         }
     }
 
-    // Leaf 20: routeTable parses versions.json + manifest.json
-    "routeTable parses versions.json and manifest.json (leaf 20)" in run {
+    // routeTable parses versions.json + manifest.json
+    "routeTable parses versions.json and manifest.json" in run {
         val versionsJson =
             """[{"tag":"v1.0.0","label":"1.0.0","latest":true},{"tag":"v0.9.3","label":"0.9.3","latest":false}]"""
         val manifestJson =
@@ -323,13 +323,20 @@ class DocsClientTest extends AsyncFreeSpec with NonImplicitAssertions with BaseK
 
     // INV-005: island round-trip survives </script> break-out and < > in article HTML
     "INV-005 island round-trip survives </script> break-out" in run {
-        // The SSG escapes `<` as `<` and `>` as `>` via escScript, and `"` as `\"` via escJson.
-        // Simulate the escaped JSON the SSG would embed in the island for an article containing </script>.
+        // In production, injectIslands wraps the entire island JSON in escScript, which replaces
+        // `<` with `<` and `>` with `>` (6-char JSON unicode escape sequences).
+        // el.textContent delivers these sequences verbatim to parseDocsIsland, because the
+        // HTML parser leaves JSON unicode escapes untouched (they are not HTML entities).
+        // unescapeJson's `\u` arm must decode `<` -> `<` and `>` -> `>`.
+        // This fixture uses the escScript output form (the bytes el.textContent actually yields),
+        // so the test exercises the real decode path rather than the no-backslash fast path.
+        val lt = "\\u003c"
+        val gt = "\\u003e"
         val escapedIslandJson =
-            """{"version": {"tag": "v1.0.0", "label": "1.0.0", "latest": true}, """ +
-                """"intro": "", "groups": [], "versions": [], """ +
-                """"article": "</script><p>a < b</p>", """ +
-                """"headings": []}"""
+            s"""{"version": {"tag": "v1.0.0", "label": "1.0.0", "latest": true}, """ +
+                s""""intro": "", "groups": [], "versions": [], """ +
+                s""""article": "${lt}/script${gt}${lt}p${gt}a ${lt} b${lt}/p${gt}", """ +
+                s""""headings": []}"""
         for
             island <- DocsClient.parseDocsIsland(escapedIslandJson)
         yield assert(

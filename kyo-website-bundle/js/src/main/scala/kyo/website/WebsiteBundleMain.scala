@@ -58,11 +58,12 @@ object WebsiteBundleMain:
       *
       * The SSG writes a `<script id="docs-island" type="application/json">` element whose text
       * content is the JSON object `WebsiteGenerator.docsIsland` produced (the current route's content
-      * metadata, version list, and raw Markdown source). When the element is PRESENT, its payload is
-      * parsed via `DocsClient.parseDocsIsland`. When the element is ABSENT (a non-docs page or a test
-      * harness without the SSG island), a safe empty island is returned and the SPA still mounts with
-      * no pre-seeded content. The absent-element branch (here) and the empty-parse branch (inside
-      * `parseDocsIsland`) are distinct: this method decides absence, the parser decides malformedness.
+      * metadata, version list, pre-rendered article HTML, and heading outline). When the element is
+      * PRESENT, its payload is parsed via `DocsClient.parseDocsIsland`. When the element is ABSENT (a
+      * non-docs page or a test harness without the SSG island), a safe empty island is returned and the
+      * SPA still mounts with no pre-seeded content. The absent-element branch (here) and the
+      * empty-parse branch (inside `parseDocsIsland`) are distinct: this method decides absence, the
+      * parser decides malformedness.
       */
     private def readDocsIsland(): DocsClient.DocsIsland =
         val el = dom.document.querySelector("#docs-island")

@@ -399,9 +399,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test P7-7: full route set + per-route content.md + per-version manifest.json (INV-009) ----
+    // ---- full route set + per-route content.md + per-version manifest.json (INV-009) ----
 
-    "full route set + per-route content.md + per-version manifest.json (INV-009) (P7-7)" in run {
+    "full route set + per-route content.md + per-version manifest.json (INV-009)" in run {
         for
             out           <- tmpDir
             bundleDir     <- stubBundleDir
@@ -478,9 +478,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test P7-8: intro-only version emits intro alone (INV-007 consumer) ----
+    // ---- intro-only version emits intro alone (INV-007 consumer) ----
 
-    "intro-only version emits intro alone, zero per-module pages (INV-007) (P7-8)" in run {
+    "intro-only version emits intro alone, zero per-module pages (INV-007)" in run {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -495,9 +495,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test P7-9: latest mirrors newest stable, not the RC (Q-005) ----
+    // ---- latest mirrors newest stable, not the RC (Q-005) ----
 
-    "latest mirrors newest stable, not the RC (Q-005) (P7-9)" in run {
+    "latest mirrors newest stable, not the RC (Q-005)" in run {
         val stableV1 = WebsiteContent(
             "intro",
             Chunk(WebsiteContent.Group(
@@ -532,9 +532,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test P7-10: latest falls back to newest pre-release (Q-005) ----
+    // ---- latest falls back to newest pre-release (Q-005) ----
 
-    "latest falls back to newest pre-release when no stable tag (Q-005) (P7-10)" in run {
+    "latest falls back to newest pre-release when no stable tag (Q-005)" in run {
         val rc1 = WebsiteContent(
             "intro",
             Chunk(WebsiteContent.Group(
@@ -568,9 +568,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test P7-10b: stable wins over a NEWER pre-release (pickLatest stability consolidation) ----
+    // ---- stable wins over a NEWER pre-release (pickLatest stability consolidation) ----
 
-    "latest mirrors an older stable over a newer pre-release (stability via WebsiteVersion.parse) (P7-10b)" in run {
+    "latest mirrors an older stable over a newer pre-release (stability via WebsiteVersion.parse)" in run {
         // pickLatest's stable filter is `WebsiteVersion.parse(tag).exists(_.preRelease.isEmpty)` (one
         // shared stability definition, not a substring-marker list). Here v1.0.1-RC1 is a NEWER triple
         // than the stable v1.0.0 but carries a pre-release suffix, so the stable v1.0.0 must still be
@@ -611,9 +611,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test P7-11: docs page embeds transpiled article AND content.md equals source (INV-005/INV-009) ----
+    // ---- docs page embeds transpiled article AND content.md equals source (INV-005/INV-009) ----
 
-    "docs page embeds transpiled article AND content.md equals the source (INV-005/INV-009) (P7-11)" in run {
+    "docs page embeds transpiled article AND content.md equals the source (INV-005/INV-009)" in run {
         val readme = "# MyModule\n## Scope\nDoes things.\n```scala\nval x = 1\n```\n"
         val mod    = WebsiteModule("my-module", "Foundation", "my-module", readme, WebsiteModule.Platforms(true, true, true))
         val content =
@@ -632,9 +632,9 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    // ---- Test P7-12: rail section links resolve to article anchors (INV-004 e2e) ----
+    // ---- rail section links resolve to article anchors (INV-004 e2e) ----
 
-    "rail section links resolve to article anchors (INV-004 e2e) (P7-12)" in run {
+    "rail section links resolve to article anchors (INV-004 e2e)" in run {
         val readme = "# Alpha\n## Beta\nText.\n### Gamma\nMore.\n"
         val mod    = WebsiteModule("anchors", "Foundation", "anchors", readme, WebsiteModule.Platforms(true, true, true))
         val content =
@@ -1197,6 +1197,56 @@ class WebsiteGeneratorTest extends Test:
             assert(
                 !islandJson.contains("</script>"),
                 s"INV-005: island must not contain literal </script>: $islandJson"
+            )
+        end for
+    }
+
+    // INV-010 no-regression roll-up: concrete level==2 check across island, content.html,
+    // content.md, sitemap, manifest, and article ids in a single multi-version emit.
+    // The individual checks (a)-(d) from the plan are all exercised here as a bundle.
+    "INV-010 no-regression: level-carrying headings in island, content.html, and manifest" in run {
+        // Use a README with explicit level-2 headings so the level==2 assertion is concrete.
+        val readme = "# Alpha\n## Beta\nText.\n## Gamma\nMore.\n"
+        val mod    = WebsiteModule("inv010", "Foundation", "inv010", readme, WebsiteModule.Platforms(true, true, true))
+        val content =
+            WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
+        for
+            out         <- tmpDir
+            bundleDir   <- stubBundleDir
+            _           <- emit(Chunk(content), out, bundleDir)
+            indexHtml   <- readFile(out / "v1.0.0" / "inv010" / "index.html")
+            contentHtml <- readFile(out / "v1.0.0" / "inv010" / "content.html")
+            contentMd   <- readFile(out / "v1.0.0" / "inv010" / "content.md")
+            manifest    <- readFile(out / "v1.0.0" / "manifest.json")
+            sitemap     <- readFile(out / "sitemap.xml")
+        yield
+            // (a) island JSON carries level==2 heading entry.
+            val islandJson    = extractIsland(indexHtml, "docs-island")
+            val decodedIsland = islandJson.replace("\\u003c", "<").replace("\\u003e", ">")
+            assert(decodedIsland.contains("\"level\": 2"), s"island must carry a level==2 heading entry: $decodedIsland")
+            // (a) content.html headings array carries level==2 entry.
+            val decodedContent = contentHtml.replace("\\u003c", "<").replace("\\u003e", ">")
+            assert(decodedContent.contains("\"level\": 2"), s"content.html must carry a level==2 heading entry: $decodedContent")
+            // (b) content.md still emitted and equals the source.
+            assert(contentMd == readme, s"INV-010 (b): content.md must equal module.readme, got: $contentMd")
+            // (b) sitemap excludes both content.md and content.html.
+            assert(!sitemap.contains("content.md"), s"INV-010 (b): sitemap must not list content.md: $sitemap")
+            assert(!sitemap.contains("content.html"), s"INV-010 (b): sitemap must not list content.html: $sitemap")
+            // (c) manifest toc carries level, text, and slug fields.
+            assert(manifest.contains("\"level\""), s"INV-010 (c): manifest toc must carry level: $manifest")
+            assert(manifest.contains("\"text\""), s"INV-010 (c): manifest toc must carry text: $manifest")
+            assert(manifest.contains("\"slug\""), s"INV-010 (c): manifest toc must carry slug: $manifest")
+            // (c) manifest toc carries a level==2 entry (sidebar auto-expand requires this).
+            assert(manifest.contains("\"level\": 2"), s"INV-010 (c): manifest toc must carry a level==2 entry: $manifest")
+            // (d) article ids equal shipped slugs: extract id="..." from index.html and slug values from content.html.
+            val idPattern   = """id="([^"]+)"""".r
+            val slugPattern = """"slug":\s*"([^"]+)"""".r
+            val articleIds  = idPattern.findAllMatchIn(indexHtml).map(_.group(1)).toSet
+            val slugs       = slugPattern.findAllMatchIn(contentHtml).map(_.group(1)).toSet
+            assert(slugs.nonEmpty, s"INV-010 (d): content.html must carry slug entries: $contentHtml")
+            assert(
+                slugs.subsetOf(articleIds),
+                s"INV-010 (d): all heading slugs must have matching article ids; slugs=$slugs, ids=$articleIds"
             )
         end for
     }

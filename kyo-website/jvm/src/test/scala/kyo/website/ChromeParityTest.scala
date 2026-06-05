@@ -220,4 +220,23 @@ class ChromeParityTest extends Test:
         end for
     }
 
+    // Leaf 8 (INV-003): SSG article HTML equals the client-injected article HTML.
+    // The SSG side produces articleHtml via renderArticle (UI.runRender of the article subtree).
+    // The client injection side wraps that HTML in UI.rawHtml and renders it via RecordingBackend.
+    // HtmlRenderer emits RawHtml verbatim (no escaping), so both sides return the same string.
+    // This leaf crosses the real RecordingBackend/HtmlRenderer path and confirms the rawHtml
+    // injection is byte-identical to the SSG article string (INV-003).
+    "INV-003 SSG article HTML equals injected article HTML (RecordingBackend rawHtml path)" in run {
+        val src = "# Title\n## Section\n\nCode: ```scala\nval x = true\nval n = null\n```\n"
+        for
+            rendered <- DocsMarkdownRender.renderArticle(src)
+            ssgHtml = rendered.articleHtml
+            injectedHtml <- RecordingBackend.render(UI.rawHtml(ssgHtml))
+        yield assert(
+            normalize(ssgHtml) == normalize(injectedHtml),
+            s"SSG article HTML and injected rawHtml must be byte-identical after normalization (INV-003)\nSSG: $ssgHtml\nInjected: $injectedHtml"
+        )
+        end for
+    }
+
 end ChromeParityTest
