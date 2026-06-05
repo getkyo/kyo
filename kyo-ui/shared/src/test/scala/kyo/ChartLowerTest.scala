@@ -1249,6 +1249,67 @@ class ChartLowerTest extends Test:
         assert(withFill.nonEmpty, "Center marker circle must have fill set")
     }
 
+    // L21-A: errorBar on a Band x must be centered on the band, not at the left edge (GAP-ERRORBAR-BANDCENTER).
+    "errorBar on a Band x is centered (x1 == band-left + bandwidth/2), not at the left edge (L21)" in {
+        // Band: n=2 ["a","b"], slot=280, bandW=252, pad=14.
+        // apply("a") = 74.0 (left edge); center = 74.0 + 126.0 = 200.0.
+        case class EbRow(cat: String, mean: Double, lo: Double, hi: Double)
+        val rows = Chunk(EbRow("a", 5.0, 3.0, 7.0), EbRow("b", 5.0, 3.0, 7.0))
+        val spec = UI.chart(rows)(errorBar(x = _.cat, y = _.mean, low = _.lo, high = _.hi, capWidth = 10.0))
+            .yScale(_.linear(0.0, 10.0))
+        val root = summon[Conversion[ChartSpec[EbRow], Svg.Root]](spec)
+        val ls   = linesIn(root)
+        // 2 rows * 3 lines each (vLine + capLow + capHigh) = 6 lines total.
+        assert(ls.size == 6, s"Expected 6 lines (2 rows * 3 each) but got ${ls.size}")
+        // Band scale geometry: n=2, slot=280, bandW=252, pad=14. center("a") = 200.0.
+        val slot    = 280.0
+        val bandW   = 252.0
+        val pad     = (slot - bandW) / 2.0                 // 14.0
+        val center  = PlotX + 0 * slot + pad + bandW / 2.0 // 200.0
+        val halfCap = 5.0                                  // capWidth=10 / 2
+        // Helper to extract a plain Maybe[Double] value.
+        def dbl(m: Maybe[Double], lbl: String): Double = m match
+            case Present(v) => v
+            case Absent     => fail(s"$lbl absent")
+        // vLine for "a" (index 0): vertical line; x1 and x2 must both equal band center 200.0.
+        val vLine = ls(0)
+        assertClose(dbl(vLine.svgAttrs.x1, "vLine x1"), center, "vLine x1 for 'a'")
+        assertClose(dbl(vLine.svgAttrs.x2, "vLine x2"), center, "vLine x2 for 'a'")
+        // capLow for "a" (index 1): low cap; x1 = center - halfCap, x2 = center + halfCap.
+        val capLow = ls(1)
+        assertClose(dbl(capLow.svgAttrs.x1, "capLow x1"), center - halfCap, "capLow x1 for 'a'")
+        assertClose(dbl(capLow.svgAttrs.x2, "capLow x2"), center + halfCap, "capLow x2 for 'a'")
+        // Marker circle for "a" (index 0) must be at center.
+        val cs = circlesIn(root)
+        assert(cs.nonEmpty, "Expected center marker circles")
+        assertClose(dbl(cs(0).svgAttrs.cx, "marker cx"), center, "marker cx for 'a'")
+    }
+
+    // L21-B: continuous-x errorBar x position is unchanged (bandwidth == 0, no-op co-pin).
+    "errorBar on a continuous x is unaffected by the band-centering fix (bandwidth==0 co-pin) (L21)" in {
+        // 2 rows at x=2.0 and x=8.0. Linear x scale [0,10] -> [60,620].
+        // pixel(2.0) = 60 + (2/10)*560 = 172.0; pixel(8.0) = 60 + (8/10)*560 = 508.0.
+        case class EbRow(x: Double, mean: Double, lo: Double, hi: Double)
+        val rows = Chunk(EbRow(2.0, 5.0, 3.0, 7.0), EbRow(8.0, 5.0, 3.0, 7.0))
+        val spec = UI.chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi))
+            .xScale(_.linear(0.0, 10.0))
+            .yScale(_.linear(0.0, 10.0))
+        val root = summon[Conversion[ChartSpec[EbRow], Svg.Root]](spec)
+        val ls   = linesIn(root)
+        assert(ls.size == 6, s"Expected 6 lines but got ${ls.size}")
+        val px2 = PlotX + (2.0 / 10.0) * PlotW // 172.0
+        val px8 = PlotX + (8.0 / 10.0) * PlotW // 508.0
+        def dbl(m: Maybe[Double], lbl: String): Double = m match
+            case Present(v) => v
+            case Absent     => fail(s"$lbl absent")
+        // vLine for first row (x=2.0): x1 and x2 must both be 172.0.
+        assertClose(dbl(ls(0).svgAttrs.x1, "vLine x1"), px2, "vLine x1 continuous x=2")
+        assertClose(dbl(ls(0).svgAttrs.x2, "vLine x2"), px2, "vLine x2 continuous x=2")
+        // vLine for second row (x=8.0): x1 and x2 must both be 508.0.
+        assertClose(dbl(ls(3).svgAttrs.x1, "vLine x1 x8"), px8, "vLine x1 continuous x=8")
+        assertClose(dbl(ls(3).svgAttrs.x2, "vLine x2 x8"), px8, "vLine x2 continuous x=8")
+    }
+
     // Test 36 (plan leaf 3): text contributes to the extent fold (INV-021)
     "text mark contributes its data coordinates to the extent fold (INV-021)" in {
         // A chart whose only mark is text at y=100. The y-axis must include 100.

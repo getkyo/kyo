@@ -2455,7 +2455,7 @@ private[kyo] object ChartLower:
                 val highD = mark.high.plottable.toDomain(mark.high.accessor(row))
                 val nextAcc = (xd, yd, lowD, highD) match
                     case (Present(x), Present(y), Present(lo), Present(hi)) =>
-                        val px     = xs.apply(x)
+                        val px     = xs.apply(x) + xs.bandwidth / 2.0
                         val py     = ys.apply(y)
                         val pyLow  = ys.apply(lo)
                         val pyHigh = ys.apply(hi)
