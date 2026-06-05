@@ -1,63 +1,18 @@
 package kyo
 
-import java.io.FileOutputStream
-import java.nio.file.Files
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.DigestComputer.JarDigestEntry
 
 /** Tests for DigestComputer xxh3 content-addressed digest (Phase 12, item 25).
   *
-  * Leaf 1: digestForRoot stable across mtime-only copy (INV-003). JVM-only; real JARs on disk.
-  * Leaf 2: digestForRoot changes when class bytes change (INV-003 sensitivity). JVM-only.
-  * Leaf 3: digestForJar is order-independent for same-name same-crc entries. Cross-platform.
-  * Leaf 4: JarEntry.crc32 from CEN+16 matches ZIP spec. JVM-only.
-  * Leaf 5: digestForJar(Chunk.empty) = 0L (empty-input vector). Cross-platform.
-  * Leaf 6: directory root compute is deterministic and mtime-sensitive. Cross-platform.
-  * Leaf 7: jrt:/ compute returns stable 8-byte result. JVM-only.
-  * Leaf 8: digestForJar with JarDigestEntry is deterministic across platforms. Cross-platform.
-  * Leaf 9: longToBytes/bytesToLong round-trip is lossless (8 bytes, little-endian). Cross-platform.
+  * Cross-platform leaves (3, 4, 5, 6, 8, 9) run on JVM, JS, and Native. JVM-only leaves (1, 2, 7) are
+  * in DigestComputerJvmTest.scala (jvm/src/test), as they require real JARs on disk and
+  * java.nio.file / java.util.zip APIs not available on JS/Native.
   *
   * Scaladoc: 8-35 lines.
   */
 class DigestComputerTest extends Test:
-
-    // Leaf 1: digestForRoot for byte-identical JARs with different mtimes returns equal values (INV-003).
-    // Pins: INV-003 content-addressed identity; leaf 1; JVM-only
-    "Leaf 1: digestForRoot stable across mtime-only copy of real JAR (INV-003)" in runJVM {
-        val dir     = Files.createTempDirectory("kyo-dct-leaf1").toAbsolutePath.toString
-        val jarA    = s"$dir/A.jar"
-        val jarB    = s"$dir/B.jar"
-        val content = Array[Byte](0xca.toByte, 0xfe.toByte, 0xba.toByte, 0xbe.toByte)
-        writeJar(jarA, Seq("foo.class" -> content))
-        writeJar(jarB, Seq("foo.class" -> content))
-        Files.setLastModifiedTime(
-            java.nio.file.Paths.get(jarA),
-            java.nio.file.attribute.FileTime.fromMillis(1_700_000_000_000L)
-        )
-        Files.setLastModifiedTime(
-            java.nio.file.Paths.get(jarB),
-            java.nio.file.attribute.FileTime.fromMillis(1_700_000_000_000L + 3_600_000L)
-        )
-        val dA = DigestComputer.digestForRoot(jarA)
-        val dB = DigestComputer.digestForRoot(jarB)
-        assert(dA == dB, s"mtime-only copy must produce same CEN-CRC digest: $dA vs $dB")
-    }
-
-    // Leaf 2: digestForRoot changes when class bytes differ (CRC32 in CEN changes).
-    // Pins: INV-003 sensitivity; leaf 2; JVM-only
-    "Leaf 2: digestForRoot changes when class bytes change (CEN CRC32 differs)" in runJVM {
-        val dir    = Files.createTempDirectory("kyo-dct-leaf2").toAbsolutePath.toString
-        val jarA   = s"$dir/A.jar"
-        val jarMod = s"$dir/A_mod.jar"
-        writeJar(jarA, Seq("foo.class" -> Array[Byte](1, 2, 3)))
-        writeJar(jarMod, Seq("foo.class" -> Array[Byte](1, 2, 4)))
-        val dA = DigestComputer.digestForRoot(jarA)
-        val dM = DigestComputer.digestForRoot(jarMod)
-        assert(dA != dM, s"byte-content change must produce different digestForRoot: $dA vs $dM")
-    }
 
     // Leaf 3: digestForJar is stable for identical entries in any insertion order.
     // Pins: Q-009 sort-by-name determinism; leaf 3; cross-platform
@@ -108,22 +63,6 @@ class DigestComputerTest extends Test:
             case Result.Panic(t)   => throw t
     }
 
-    // Leaf 7: jrt:/ compute returns a stable non-empty 8-byte result.
-    // Pins: Q-009 jrt:/ preservation; leaf 7; JVM-only
-    "Leaf 7: jrt:/ compute returns a stable 8-byte result" in runJVM {
-        import kyo.internal.tasty.query.PlatformFileSource
-        val src = PlatformFileSource.get
-        Abort.run[TastyError]:
-            DigestComputer.compute(Seq("jrt:/"), src).flatMap: d1 =>
-                DigestComputer.compute(Seq("jrt:/"), src).map: d2 =>
-                    assert(d1.length == 8, s"digest must be 8 bytes, got ${d1.length}")
-                    assert(d1.sameElements(d2), "jrt:/ digest must be stable")
-        .map:
-            case Result.Success(_) => succeed
-            case Result.Failure(e) => fail(s"Unexpected failure: $e")
-            case Result.Panic(t)   => throw t
-    }
-
     // Leaf 8: digestForJar with JarDigestEntry is deterministic across platforms.
     // Pins: INV-006 cross-platform; leaf 8
     "Leaf 8: digestForJar with JarDigestEntry is deterministic across platforms" in run {
@@ -146,20 +85,5 @@ class DigestComputerTest extends Test:
         assert(bytes.length == 8, s"expected 8 bytes, got ${bytes.length}")
         assert(roundTrip == digest, s"round-trip failed: $roundTrip != $digest")
     }
-
-    private def writeJar(path: String, entries: Seq[(String, Array[Byte])]): Unit =
-        val fos = new FileOutputStream(path)
-        val zos = new ZipOutputStream(fos)
-        try
-            for (name, bytes) <- entries do
-                val entry = new ZipEntry(name)
-                zos.putNextEntry(entry)
-                zos.write(bytes)
-                zos.closeEntry()
-        finally
-            zos.close()
-            fos.close()
-        end try
-    end writeJar
 
 end DigestComputerTest
