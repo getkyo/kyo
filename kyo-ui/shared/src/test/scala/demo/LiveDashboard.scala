@@ -15,9 +15,9 @@ import scala.language.implicitConversions
   *   - KPI tiles: plain reactive `UI` (not charts) via `signalRef.render`, recoloring the big number by threshold.
   *   - Throughput: a bar chart over a `Signal[Chunk[Endpoint]]` with a FIXED y-domain so the axis never jumps and the
   *     bars animate to new heights.
-  *   - Latency: one line mark split by a `series` color channel (p50 / p99) over a FIXED-LENGTH rolling window
+  *   - Latency: one line mark split by a `series` color encoding (p50 / p99) over a FIXED-LENGTH rolling window
   *     (31 slots, t-30..t0); each tick shifts values left and appends the newest at t0, so the path structure is
-  *     constant and the lines morph smoothly. The color channel gives the chart a two-entry legend.
+  *     constant and the lines morph smoothly. The color encoding gives the chart a two-entry legend.
   *   - Status: a stacked bar (2xx/4xx/5xx per endpoint) grouped by status code, colored by monitoring convention
   *     (2xx green, 4xx amber, 5xx red) via a `colorScale`.
   *   - Error rate: a line over a rolling window of the overall error percentage, filling the bottom-right cell.
@@ -40,7 +40,7 @@ object LiveDashboard extends KyoApp:
 
     /** One slot of the rolling latency window in long form: `t` is the relative index (-30..0), `series` is
       * "p50" or "p99", and `ms` is the latency in milliseconds. Long form lets a single line mark split into
-      * one line per series via a `color` channel, so the chart layer derives a two-entry legend.
+      * one line per series via a `color` encoding, so the chart layer derives a two-entry legend.
       */
     case class LatPoint(t: Int, series: String, ms: Double) derives CanEqual
 
@@ -312,7 +312,7 @@ object LiveDashboard extends KyoApp:
                 .size(chartW, chartH)
                 .lower
 
-            // Latency lines over the fixed 31-slot rolling window: one line per series via the color channel,
+            // Latency lines over the fixed 31-slot rolling window: one line per series via the color encoding,
             // so the layer derives a p50/p99 legend. Cyan p50 and amber p99 stay distinct from the bars.
             latencyChart = Chart(latency)(line(x = _.t, y = _.ms, color = _.series))
                 .yAxis(_.grid.ticks(4))

@@ -21,7 +21,7 @@ import scala.language.implicitConversions
   *      same-structure datasets via `.animate`. Showcases the animated-area-colorScale fix (colors persist
   *      through the morph).
   *   4. Animated bars with per-bar opacity + text labels: `.animate` on bars with `opacity` and `label`
-  *      channels that update live (value annotations float above the bars).
+  *      encodings that update live (value annotations float above the bars).
   *
   * All four panels are driven by one "Animate & Highlight" button: clicking it swaps every chart's Signal
   * to its end dataset (the `.animate` charts tween) and selects a real Beta row (the line chart highlights
@@ -277,7 +277,7 @@ object ChartShowcase extends KyoApp:
                 ),
                 chartCell(
                     "4. Animated Bars: opacity + text labels",
-                    "per-bar opacity channel + floating text annotations, live update",
+                    "per-bar opacity encoding + floating text annotations, live update",
                     barsChart
                 )
             )

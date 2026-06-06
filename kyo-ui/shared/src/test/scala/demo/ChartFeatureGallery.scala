@@ -9,7 +9,7 @@ import kyo.UI.*
   *
   * Each cell isolates one feature over a small, readable dataset so the visual point is obvious:
   *
-  *   1. Sequential color scale: a numeric color channel mapped to a low/high gradient via
+  *   1. Sequential color scale: a numeric color encoding mapped to a low/high gradient via
   *      `.legend(_.colorScaleSequential(low, high))`.
   *   2. Error bars: `Chart.errorBar(x, y, low, high, capWidth)` over a series with variance.
   *   3. Text annotations: a bar chart plus `Chart.text(x, y, label, anchor)` labeling each value.
@@ -74,7 +74,7 @@ object ChartFeatureGallery extends KyoApp:
     )
 
     /** One value per region for the colored-text-annotation demo. Region is the x category (one bar per
-      * band), so a text mark's per-band label centers over its bar. A text mark positions by its x channel
+      * band), so a text mark's per-band label centers over its bar. A text mark positions by its x encoding
       * and does NOT dodge to follow a grouped bar, so labeling dodged sub-bars (region inside a shared
       * month band) would land the labels at the band centre, not over each sub-bar.
       */
@@ -99,7 +99,7 @@ object ChartFeatureGallery extends KyoApp:
 
     // ---- feature charts ----
 
-    /** 1. Numeric color channel + sequential gradient (cool to warm).
+    /** 1. Numeric color encoding + sequential gradient (cool to warm).
       *
       * Uses a `point` mark: its per-row fills are the concrete interpolated colors of the sequential
       * scale (low at the data minimum, high at the maximum). One gradient legend, with min/mid/max value
