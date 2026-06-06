@@ -1,3 +1,4 @@
+import WasmCrossProject.*
 import sbt.*
 import sbt.Keys.*
 import sbtcrossproject.CrossPlugin.autoImport.*
@@ -51,14 +52,24 @@ object WithKyoTest {
                             new TestFramework("kyo.test.runner.JsFramework")
                     )
                 else base
-            if (cp.projects.contains(NativePlatform))
-                withJs.nativeSettings(
+            val withNative =
+                if (cp.projects.contains(NativePlatform))
+                    withJs.nativeSettings(
+                        Test / unmanagedClasspath ++=
+                            (LocalProject("kyo-test-runnerNative") / Test / fullClasspath).value,
+                        Test / testFrameworks +=
+                            new TestFramework("kyo.test.runner.NativeFramework")
+                    )
+                else withJs
+            // WASM is a Scala.js linker backend, so it reuses the Scala.js test Framework (JsFramework).
+            if (cp.projects.contains(WasmPlatform))
+                withNative.wasmSettings(
                     Test / unmanagedClasspath ++=
-                        (LocalProject("kyo-test-runnerNative") / Test / fullClasspath).value,
+                        (LocalProject("kyo-test-runnerWasm") / Test / fullClasspath).value,
                     Test / testFrameworks +=
-                        new TestFramework("kyo.test.runner.NativeFramework")
+                        new TestFramework("kyo.test.runner.JsFramework")
                 )
-            else withJs
+            else withNative
         }
     }
 }

@@ -12,7 +12,7 @@ import scala.sys.process.*
   */
 object TestKyo {
 
-    private val platformNames = Set("JVM", "JS", "Native")
+    private val platformNames = Set("JVM", "JS", "Native", "Wasm")
 
     private def log(msg: String): Unit = println(s"[testKyo] $msg")
 
@@ -85,7 +85,7 @@ object TestKyo {
         val allRefs   = structure.allProjectRefs
 
         // Exclude aggregate projects
-        val excluded = Set("kyoJVM", "kyoJS", "kyoNative")
+        val excluded = Set("kyoJVM", "kyoJS", "kyoNative", "kyoWasm")
         val testable = allRefs.filter { ref =>
             val name        = ref.project
             val versions    = (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
@@ -184,9 +184,10 @@ object TestKyo {
       */
     private def matchesPlatform(name: String, platform: String): Boolean =
         platform match {
-            case "JVM"    => !name.endsWith("JS") && !name.endsWith("Native")
+            case "JVM"    => !name.endsWith("JS") && !name.endsWith("Native") && !name.endsWith("Wasm")
             case "JS"     => name.endsWith("JS")
             case "Native" => name.endsWith("Native")
+            case "Wasm"   => name.endsWith("Wasm")
             case _        => false
         }
 
@@ -199,12 +200,16 @@ object TestKyo {
         val parts = file.split("/").toList
         parts match {
             case module :: sub :: _ =>
+                // Map the platform sub-directory to affected platforms. Handles single
+                // platform dirs (jvm/js/native/wasm), the partially-shared dirs named by
+                // joining identifiers (e.g. js-wasm, jvm-native), shared (all platforms),
+                // and any other layout (all, then filtered by which projects exist).
+                val platformDirs = Map("jvm" -> "JVM", "js" -> "JS", "native" -> "Native", "wasm" -> "Wasm")
+                val allPlatforms = platformDirs.values.toSeq
                 val affectedPlatforms = sub match {
-                    case "shared" => Seq("JVM", "JS", "Native")
-                    case "jvm"    => Seq("JVM")
-                    case "js"     => Seq("JS")
-                    case "native" => Seq("Native")
-                    case _        => Seq("JVM", "JS", "Native")
+                    case "shared"                                        => allPlatforms
+                    case s if s.split("-").forall(platformDirs.contains) => s.split("-").toList.map(platformDirs)
+                    case _                                               => allPlatforms
                 }
                 affectedPlatforms.flatMap { p =>
                     // JVM projects may use bare name (e.g. "kyo-core") or suffixed (e.g. "kyo-coreJVM")
