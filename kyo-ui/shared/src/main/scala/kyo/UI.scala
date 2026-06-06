@@ -475,10 +475,10 @@ object UI:
         case Band
         case Log
         case Linear(lo: Double, hi: Double)
-        case Time    // D11
-        case Ordinal // D11
-        case Point   // D11
-        case Symlog  // D11
+        case Time
+        case Ordinal
+        case Point
+        case Symlog
     end ScaleKind
 
     /** The constant-or-signal carrier for `UI.mark.rule(x = ...)` / `rule(y = ...)`.
@@ -491,7 +491,7 @@ object UI:
     enum RuleValue[C]:
         case Const(value: C, plottable: Plottable[C])
         case Reactive(signal: Signal[C], plottable: Plottable[C])
-        case Unset extends RuleValue[Nothing] // D33: total absence sentinel replacing null
+        case Unset extends RuleValue[Nothing] // total absence sentinel replacing null
     end RuleValue
 
     /** Implicit conversions from plain values and signals to `RuleValue`.
@@ -538,9 +538,9 @@ object UI:
             y: Encoding[A, Y],
             color: Maybe[Encoding[A, ?]],
             stack: Grouping[A],
-            opacity: Maybe[A => Double] = Absent, // D4
-            label: Maybe[A => String] = Absent,   // D5
-            tooltip: Maybe[A => String] = Absent, // D6
+            opacity: Maybe[A => Double] = Absent,
+            label: Maybe[A => String] = Absent,
+            tooltip: Maybe[A => String] = Absent,
             axis: Axis
         ) extends Mark[A]
 
@@ -557,9 +557,9 @@ object UI:
             color: Maybe[Encoding[A, ?]],
             curve: Curve,
             defined: Maybe[A => Boolean],
-            opacity: Maybe[A => Double] = Absent, // D4
-            label: Maybe[A => String] = Absent,   // D5
-            tooltip: Maybe[A => String] = Absent, // D6
+            opacity: Maybe[A => Double] = Absent,
+            label: Maybe[A => String] = Absent,
+            tooltip: Maybe[A => String] = Absent,
             axis: Axis
         ) extends Mark[A]
 
@@ -578,9 +578,9 @@ object UI:
             color: Maybe[Encoding[A, ?]],
             stack: Grouping[A],
             curve: Curve,
-            opacity: Maybe[A => Double] = Absent, // D4
-            label: Maybe[A => String] = Absent,   // D5
-            tooltip: Maybe[A => String] = Absent, // D6
+            opacity: Maybe[A => Double] = Absent,
+            label: Maybe[A => String] = Absent,
+            tooltip: Maybe[A => String] = Absent,
             axis: Axis
         ) extends Mark[A]
 
@@ -597,11 +597,11 @@ object UI:
             y: EncodingMaybe[A, Y],
             color: Maybe[Encoding[A, ?]],
             size: Maybe[A => Double],
-            sizePx: Maybe[A => Double] = Absent, // D7 escape hatch: raw pixel radius
+            sizePx: Maybe[A => Double] = Absent, // raw pixel radius
             symbol: Maybe[A => Symbol],
-            opacity: Maybe[A => Double] = Absent, // D4
-            label: Maybe[A => String] = Absent,   // D5
-            tooltip: Maybe[A => String] = Absent, // D6
+            opacity: Maybe[A => Double] = Absent,
+            label: Maybe[A => String] = Absent,
+            tooltip: Maybe[A => String] = Absent,
             axis: Axis
         ) extends Mark[A]
 
@@ -793,12 +793,12 @@ object UI:
             x: A => X,
             y: A => Y,
             color: A => Any = Unset.of[A, Any],
-            size: A => Double = Unset.of[A, Double],   // D7: sqrt-area scaled magnitude
-            sizePx: A => Double = Unset.of[A, Double], // D7 escape hatch: raw pixel radius
+            size: A => Double = Unset.of[A, Double],   // sqrt-area scaled magnitude
+            sizePx: A => Double = Unset.of[A, Double], // raw pixel radius
             symbol: A => Symbol = Unset.of[A, Symbol],
-            opacity: A => Double = Unset.of[A, Double], // D4
-            label: A => String = Unset.of[A, String],   // D5
-            tooltip: A => String = Unset.of[A, String], // D6
+            opacity: A => Double = Unset.of[A, Double],
+            label: A => String = Unset.of[A, String],
+            tooltip: A => String = Unset.of[A, String],
             axis: Axis = Axis.Left
         )(using Frame): Mark[A] =
             val xCh = Encoding[A, X](x, summon[Plottable[X]], positionalTag[X])
@@ -809,7 +809,7 @@ object UI:
                 else Absent
             val sizeSup   = Unset.supplied(size)
             val sizePxSup = Unset.supplied(sizePx)
-            // Q-005: when both size and sizePx are supplied, size wins and sizePx is dropped.
+            // When both size and sizePx are supplied, size wins and sizePx is dropped.
             val sizeMaybe: Maybe[A => Double]    = if sizeSup then Present(size) else Absent
             val sizePxMaybe: Maybe[A => Double]  = if sizePxSup && !sizeSup then Present(sizePx) else Absent
             val symbolMaybe: Maybe[A => Symbol]  = if Unset.supplied(symbol) then Present(symbol) else Absent
@@ -874,7 +874,7 @@ object UI:
           * extent. `color` optionally groups by category. `capWidth` defaults to 6 pixels.
           *
           * The rendered elements are plain `Svg.line` and `Svg.circle` with no `url(#id)` or `<marker>`
-          * references (INV-022).
+          * references.
           */
         def errorBar[A, X: Plottable, Y: Plottable](
             x: A => X,
@@ -2279,7 +2279,7 @@ object UI:
         /** Companion for `ChartSpec`. Holds nested configuration types. */
         object ChartSpec:
 
-            /** Accessibility metadata emitted into the chart's root `<svg>` (D28, Q-008).
+            /** Accessibility metadata emitted into the chart's root `<svg>`.
               *
               * `title` becomes a `<title>` child and implies `role="img"` on the root so assistive
               * technology announces the chart as a single image with that accessible name. `desc`
@@ -2298,7 +2298,7 @@ object UI:
                 val default: A11y = A11y(Absent, Absent, Absent)
             end A11y
 
-            /** Plot margins in pixels around the inner plot rectangle (D30).
+            /** Plot margins in pixels around the inner plot rectangle.
               *
               * `top`, `right`, `bottom`, and `left` reserve space for axis chrome and labels.
               * The defaults (`20/20/40/60`) match the historical built-in constants; the larger
@@ -2327,7 +2327,7 @@ object UI:
               * All fields default `false`/`Absent`. Set `hoverHighlight` or `selectHighlight` to opt into the
               * built-in opacity boost on the active mark. `hoverStyle` and `selectStyle` let you supply a custom
               * `Style` instead of the default boost. If the relevant ref (`onHover`/`onSelect`) is not configured
-              * on the chart, all highlight settings are no-ops (INV-024).
+              * on the chart, all highlight settings are no-ops.
               *
               * Build via the chaining methods: `_.highlightHover`, `_.highlightSelect`, `_.hoverStyle(s)`,
               * `_.selectStyle(s)`.
@@ -2435,7 +2435,7 @@ object UI:
             /** Configures built-in visual highlight behavior using a builder lambda.
               *
               * Example: `.interaction(_.highlightSelect)` enables the default opacity boost on the selected mark.
-              * If no `onHover`/`onSelect` ref is configured, all highlight settings are no-ops (INV-024).
+              * If no `onHover`/`onSelect` ref is configured, all highlight settings are no-ops.
               */
             def interaction(f: ChartSpec.InteractionConfig => ChartSpec.InteractionConfig): ChartSpec[A] =
                 spec.copy(interactionCfg = f(spec.interactionCfg))
@@ -2512,10 +2512,10 @@ object UI:
             showGrid: Boolean,
             tickCount: Int,
             tickFormat: Maybe[Double => String],
-            tickRotation: Double = 0.0,                 // D17
-            tickAnchor: TextAnchor = TextAnchor.Middle, // D17
-            reversed: Boolean = false,                  // D20
-            padding: Double = 0.0                       // D21
+            tickRotation: Double = 0.0,
+            tickAnchor: TextAnchor = TextAnchor.Middle,
+            reversed: Boolean = false,
+            padding: Double = 0.0
         ):
             def label(s: String): AxisConfig             = copy(axisLabel = Present(s))
             def grid: AxisConfig                         = copy(showGrid = true)
@@ -2717,7 +2717,7 @@ object UI:
           *
           * `nice`, `clamp`, and `pad` are additive knobs that refine the fitted domain. `nice=true` (default) snaps
           * domain bounds to round values; `clamp=false` (default) allows extrapolation beyond the domain. `pad` widens
-          * the domain symmetrically by the given fraction before fitting (INV-007, Q-003).
+          * the domain symmetrically by the given fraction before fitting.
           */
         final case class ScaleOverride(
             kind: Maybe[ScaleKind],
@@ -2742,7 +2742,7 @@ object UI:
         object ScaleOverride:
             val default: ScaleOverride = ScaleOverride(Absent)
 
-        /** Named color palettes for categorical charts (D26).
+        /** Named color palettes for categorical charts.
           *
           * Pass to `_.theme(_.palette(Palette.Okabe))` to select a categorical color set.
           * `Default` is the built-in palette (unchanged for backward compatibility; not optimized
@@ -2799,7 +2799,7 @@ object UI:
                     )
         end Palette
 
-        /** Read-only projection of the resolved scale state after lowering a `ChartSpec` (D32).
+        /** Read-only projection of the resolved scale state after lowering a `ChartSpec`.
           *
           * Obtain one via `spec.toSvgWithScales`. The accessors expose the data-to-pixel projection
           * for both axes and the inner plot rectangle, while the internal `Scale`/`Layout` types stay

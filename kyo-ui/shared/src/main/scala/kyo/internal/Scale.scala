@@ -411,7 +411,7 @@ private[kyo] object Scale:
         val (lo, hi) = extent match
             case Extent.Continuous(mn, mx) => (mn, mx)
             case Extent.Categories(keys)   => (1.0, keys.size.toDouble)
-        // INV-011: non-positive values are filtered upstream in yLeftExtentNoZero; lo is positive by construction.
+        // Non-positive values are filtered upstream in yLeftExtentNoZero; lo is positive by construction.
         // math.max(hi, lo) guards a degenerate empty domain after filtering.
         Log(lo, math.max(hi, lo), rangeLo, rangeHi, clamp)
     end fitLog
@@ -462,7 +462,7 @@ private[kyo] object Scale:
         Symlog(rawLo, rawHi, rangeLo, rangeHi, clamp)
     end fitSymlog
 
-    /** Symmetric-log scale for data spanning negative-to-positive values (catalog #30/D11, Q-001).
+    /** Symmetric-log scale for data spanning negative-to-positive values.
       *
       * Forward transform: f(v) = sign(v) * log10(1 + |v| / C), C=1 fixed. Exact algebraic inverse: g(u) =
       * sign(u) * C * (10^|u| - 1). Finite at zero (f(0)=0), monotone, symmetric about zero. Ticks are

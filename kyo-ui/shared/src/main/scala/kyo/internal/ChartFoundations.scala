@@ -7,11 +7,10 @@ import scala.annotation.targetName
 
 /** Cross-cutting foundation helpers for the charts lowering.
   *
-  * Houses the identity key that replaces `toString` category keying (catalog #6),
-  * the finite guard used at every extent fold (catalog #2), the per-chart id
-  * prefix for `url(#id)`-bearing defs (catalog #20/#23, the N4 constraint), and
-  * the `Chunk`-native ordered-distinct helper (catalog #32/#35). Kept `private[kyo]`:
-  * these are engine internals, never public surface.
+  * Houses the identity key that replaces `toString` category keying, the finite guard
+  * used at every extent fold, the per-chart id prefix for `url(#id)`-bearing defs
+  * (the N4 constraint), and the `Chunk`-native ordered-distinct helper. Kept
+  * `private[kyo]`: these are engine internals, never public surface.
   */
 private[kyo] object ChartFoundations:
 
@@ -63,7 +62,7 @@ private[kyo] object ChartFoundations:
         case other                         => other
 
     /** Insertion-ordered distinct over `rows` keyed by `key`, without any
-      * `toSeq` round-trip and with O(1) membership (catalog #32/#35).
+      * `toSeq` round-trip and with O(1) membership.
       *
       * Returns each first-seen `(CatKey, representativeRow)` in encounter order.
       * Empty and single-element inputs fast-path. Replaces the
@@ -89,7 +88,7 @@ private[kyo] object ChartFoundations:
       * Content-derived from the spec structural hash so two distinct charts on
       * one page never alias the same `url(#id)`; structurally identical specs
       * alias identical defs (benign). NOT `genId(Frame.internal)` (which collides
-      * across all charts in a session). See catalog #20/#23, Q-002.
+      * across all charts in a session).
       */
     def chartIdPrefix(spec: ChartSpec[?]): String =
         "kyo-chart-" + Integer.toHexString(spec.##)
@@ -103,7 +102,7 @@ private[kyo] object ChartFoundations:
       * opaque plumbing (not stable across runs); what matters is that within one chart the gradient def id and
       * its `url(#id)` reference match, and two charts in one document get different ids.
       */
-    // Unsafe: a module-private atomic counter, the standard document-unique id scheme (D3/vega use the same).
+    // Unsafe: a module-private atomic counter, the standard document-unique id scheme.
     // Incremented from the synchronous, pure `lower` projection, so a kyo Atomic primitive is the right tool.
     private val instanceCounter: AtomicInt.Unsafe =
         import AllowUnsafe.embrace.danger

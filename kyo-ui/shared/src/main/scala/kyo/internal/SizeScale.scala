@@ -1,6 +1,6 @@
 package kyo.internal
 
-/** sqrt-area size scale (catalog #22/D7): circle AREA is proportional to the
+/** sqrt-area size scale: circle AREA is proportional to the
   * data magnitude, so `radius = rMin + (rMax - rMin) * sqrt(t)` where
   * `t = clamp01((mag - magMin) / (magMax - magMin))`.
   *

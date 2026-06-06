@@ -3,8 +3,8 @@ package kyo.internal
 import kyo.*
 import kyo.UI.Curve
 
-/** Builds an SVG path through a point sequence under a `Curve` interpolation
-  * (catalog #13/D3). Emits `lineTo`/`hLineTo`/`vLineTo`/`cubicTo` only (no new
+/** Builds an SVG path through a point sequence under a `Curve` interpolation.
+  * Emits `lineTo`/`hLineTo`/`vLineTo`/`cubicTo` only (no new
   * SVG primitives), so `renderPathDataStr` and the SMIL morph keep working.
   * Interpolation applies within one defined-gap segment; fewer than 2 points
   * degrade to linear.
@@ -58,9 +58,9 @@ private[kyo] object CurvePath:
         loop(0, d)
     end stepBefore
 
-    // Fritsch-Carlson monotone cubic Hermite interpolation (catalog #13/D3).
+    // Fritsch-Carlson monotone cubic Hermite interpolation.
     //
-    // Two-pass algorithm (INV-016, prep note 1):
+    // Two-pass algorithm:
     //   Pass 1: initialize per-knot tangents from adjacent secant slopes; set
     //           flat tangents at local extrema (sign change).
     //   Pass 2: Fritsch-Carlson clamp: project (alpha,beta) into the monotonicity
@@ -69,7 +69,7 @@ private[kyo] object CurvePath:
     // Hermite-to-Bezier: control points sit at one-third of the x-interval from
     // each knot. Uses a single mutable Array[Double] tangent scratch buffer (the
     // tightest-scoped local accumulator) because pass 2 clamps tangents in place;
-    // it is filled and updated via @tailrec, never `var` or an index loop (gotcha G2 from prep.md).
+    // it is filled and updated via @tailrec, never `var` or an index loop.
     private def monotone(d: Svg.PathData, pts: Chunk[(Double, Double)]): Svg.PathData =
         val n  = pts.size
         val xs = pts.map(_._1)
@@ -119,12 +119,12 @@ private[kyo] object CurvePath:
         emit(0, d)
     end monotone
 
-    // Uniform cubic B-spline (catalog #13/D3), emitted as cubicTo per segment.
+    // Uniform cubic B-spline, emitted as cubicTo per segment.
     //
-    // Endpoint duplication (prep note 2): p(-1)==p(0) and p(n)==p(n-1) so the
-    // spline anchors at the first and last data points. The clamped index
-    // function handles out-of-range access. Loop runs i=1 to i<n (n-1 segments)
-    // so the last point is reached (gotcha G3 from prep.md).
+    // Endpoint duplication: p(-1)==p(0) and p(n)==p(n-1) so the spline anchors
+    // at the first and last data points. The clamped index function handles
+    // out-of-range access. Loop runs i=1 to i<n (n-1 segments) so the last
+    // point is reached.
     private def basis(d: Svg.PathData, pts: Chunk[(Double, Double)]): Svg.PathData =
         val n = pts.size
         val p: Int => (Double, Double) = idx =>
@@ -147,14 +147,14 @@ private[kyo] object CurvePath:
         loop(1, d)
     end basis
 
-    // Catmull-Rom to cubic Bezier conversion (catalog #13/D3) with endpoint duplication.
+    // Catmull-Rom to cubic Bezier conversion with endpoint duplication.
     //
     // For segment (p(i) -> p(i+1)):
     //   c1 = p(i)   + (p(i+1) - p(i-1)) / 6
     //   c2 = p(i+1) - (p(i+2) - p(i))   / 6
     //
-    // Endpoint duplication: p(idx)=pts(clamp(0, n-1, idx)). Loop runs i=0 to i<n-1
-    // (gotcha G4 from prep.md). The ghost point before the first segment is pts(0).
+    // Endpoint duplication: p(idx)=pts(clamp(0, n-1, idx)). Loop runs i=0 to i<n-1.
+    // The ghost point before the first segment is pts(0).
     private def catmullRom(d: Svg.PathData, pts: Chunk[(Double, Double)]): Svg.PathData =
         val n = pts.size
         val p: Int => (Double, Double) = idx =>
