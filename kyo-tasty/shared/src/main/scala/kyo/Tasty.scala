@@ -121,7 +121,7 @@ object Tasty:
       * `Classpath.errors` field. This makes `cp.errors` the user-visible channel for
       * unhandled-shape diagnostics (Q-003 binding).
       *
-      * Effect row: Sync, because reading the lazy val TastyState.global may trigger initialization.
+      * Effect row: Sync. Suspension is unconditional to keep the contract uniform regardless of whether TastyState.global was already realised.
       */
     def classpath(using Frame): Classpath < Sync =
         TastyState.bindingLocal.use: mbind =>
@@ -483,7 +483,7 @@ object Tasty:
     /** All trait symbols in the loaded classpath.
       *
       * Returns every `Symbol.Trait` across all packages and classpath roots. Sealed traits,
-      * open traits, and abstract class-backed traits are all included.
+      * open traits, and Java interfaces, which the loader normalizes to `Symbol.Trait`, are all included.
       *
       * Effect row: `< Sync` (lazy classpath init on first access).
       *
@@ -2884,7 +2884,7 @@ object Tasty:
           */
         private[kyo] def kind: SymbolKind = this match
             case _: Symbol.Package => SymbolKind.Package
-            // EnumCase check before Class so EnumCase takes priority.
+            // Cases are disjoint final classes; order is informational only.
             case _: Symbol.EnumCase     => SymbolKind.EnumCase
             case _: Symbol.Class        => SymbolKind.Class
             case _: Symbol.Trait        => SymbolKind.Trait
