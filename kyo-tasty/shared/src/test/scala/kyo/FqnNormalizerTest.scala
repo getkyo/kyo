@@ -97,4 +97,35 @@ class FqnNormalizerTest extends Test:
         assert(!FqnNormalizer.isSyntheticName("kyo.Maybe$package$.Maybe"))
     }
 
+    // F-014 boundary checks: leading $ at index 0 is NOT replaced
+    "FqnNormalizer: F-014 leading dollar at index 0 is preserved" in {
+        // atStart == true, so the leading $ is left as-is by replaceInnerDollar;
+        // no other rule strips a leading $.
+        assert(FqnNormalizer.canonicalSourceFqn("$foo.bar") == "$foo.bar")
+    }
+
+    // F-014 boundary checks: trailing $ is stripped by rule 2, inner $ by rule 4
+    "FqnNormalizer: F-014 trailing dollar stripped, inner dollar replaced" in {
+        // Rule 2 strips the trailing $: "a$b$" -> "a$b"
+        // Rule 4 then replaces the inner $: "a$b" -> "a.b"
+        val result = FqnNormalizer.canonicalSourceFqn("a$b$")
+        assert(result == "a.b", s"Expected a.b but got $result")
+    }
+
+    // F-014 pathological: space adjacent to $ does NOT block replacement
+    "FqnNormalizer: F-014 space adjacent to dollar does not block replacement" in {
+        // Pre-fix: the ' \0' sentinel would have treated the space as a boundary,
+        // leaving the $ unreplaced.
+        // Post-fix: only index checks determine boundaries; spaces are ordinary chars.
+        val result = FqnNormalizer.canonicalSourceFqn("foo bar$baz")
+        assert(result == "foo bar.baz", s"Expected 'foo bar.baz' but got '$result'")
+    }
+
+    // F-014 adjacent dollars: $$ pattern is preserved (both chars adjacent to another $)
+    "FqnNormalizer: F-014 double dollar is preserved" in {
+        val expected = "a$$b"
+        val result   = FqnNormalizer.canonicalSourceFqn("a$$b")
+        assert(result == expected, s"Expected $expected but got $result")
+    }
+
 end FqnNormalizerTest
