@@ -75,11 +75,38 @@ private[kyo] object SymbolSignature:
         case Maybe.Absent      => ""
 
     private def renderType(t: Tasty.Type)(using cp: Tasty.Classpath)(using AllowUnsafe): String =
+        // F-005: cover every composite Type ADT case that Tasty.typeShow covers. The shapes
+        // mirror Scala source syntax (Function => "A => B", Applied => "F[X, Y]", Tuple => "(A, B)").
+        import Tasty.Name.asString
         t match
             case Tasty.Type.Named(id) =>
-                // Resolve symbol and produce its FQN string using the unsafe kernel.
-                import Tasty.Name.asString
                 cp.symbol(id).map(s => cp.fullNameUnsafe(s).asString).getOrElse("<unresolved>")
+            case Tasty.Type.Any     => "Any"
+            case Tasty.Type.Nothing => "Nothing"
+            case Tasty.Type.Function(params, result) =>
+                val ps =
+                    if params.length == 1 then renderType(params.head)
+                    else params.map(renderType).mkString("(", ", ", ")")
+                s"$ps => ${renderType(result)}"
+            case Tasty.Type.ContextFunction(params, result) =>
+                val ps =
+                    if params.length == 1 then renderType(params.head)
+                    else params.map(renderType).mkString("(", ", ", ")")
+                s"$ps ?=> ${renderType(result)}"
+            case Tasty.Type.Applied(base, args) =>
+                s"${renderType(base)}[${args.map(renderType).mkString(", ")}]"
+            case Tasty.Type.Tuple(elems) =>
+                elems.map(renderType).mkString("(", ", ", ")")
+            case Tasty.Type.Array(elem) =>
+                s"Array[${renderType(elem)}]"
+            case Tasty.Type.AndType(l, r)   => s"${renderType(l)} & ${renderType(r)}"
+            case Tasty.Type.OrType(l, r)    => s"${renderType(l)} | ${renderType(r)}"
+            case Tasty.Type.ByName(body)    => s"=> ${renderType(body)}"
+            case Tasty.Type.Repeated(elem)  => s"${renderType(elem)}*"
+            case Tasty.Type.ConstantType(c) => c.show
+            // plan: residual ADT cases (Refinement, MatchType, Skolem, etc.) fall through to toString unchanged
             case _ => t.toString
+        end match
+    end renderType
 
 end SymbolSignature

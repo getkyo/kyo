@@ -2,7 +2,7 @@ package kyo
 
 /** Tests for show methods on Symbol, Type, Tree, and Constant.
   *
-  * Leaf id:7. Pins: INV-005.
+  * Leaf id:7. Pins: INV-005, INV-008.
   */
 class ShowMethodTest extends Test with TastyTestSupport:
 
@@ -42,6 +42,79 @@ class ShowMethodTest extends Test with TastyTestSupport:
             )
         }
     end makeClasspath
+
+    // Helper: build a TypeParam symbol that is self-owned so its FQN equals its simple name.
+    private def typeParam(id: Int, name: String): Tasty.Symbol.TypeParam =
+        import kyo.Tasty.SymbolId
+        Tasty.Symbol.TypeParam(
+            SymbolId(id),
+            Tasty.Name(name),
+            Tasty.Flags.empty,
+            SymbolId(id), // self-owned: ownerId == id makes fullNameUnsafe return just the name
+            Maybe.Absent,
+            Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any),
+            Tasty.Variance.Invariant
+        )
+    end typeParam
+
+    // Helper: build a Parameter symbol with the given declared type.
+    private def param(id: Int, name: String, tpe: Tasty.Type): Tasty.Symbol.Parameter =
+        import kyo.Tasty.SymbolId
+        Tasty.Symbol.Parameter(
+            SymbolId(id),
+            Tasty.Name(name),
+            Tasty.Flags.empty,
+            SymbolId(-1),
+            Maybe.Absent,
+            Maybe.Present(tpe),
+            Maybe.Absent,
+            Chunk.empty
+        )
+    end param
+
+    // Helper: build a Class symbol that is self-owned so its FQN equals its simple name.
+    private def selfOwnedClass(id: Int, name: String): Tasty.Symbol.Class =
+        import kyo.Tasty.SymbolId
+        Tasty.Symbol.Class(
+            SymbolId(id),
+            Tasty.Name(name),
+            Tasty.Flags.empty,
+            SymbolId(id), // self-owned
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty
+        )
+    end selfOwnedClass
+
+    // Helper: build a Method symbol.
+    private def method(
+        id: Int,
+        name: String,
+        typeParamIds: Chunk[Tasty.SymbolId],
+        paramListIds: Chunk[Chunk[Tasty.SymbolId]],
+        declaredType: Maybe[Tasty.Type]
+    ): Tasty.Symbol.Method =
+        import kyo.Tasty.SymbolId
+        Tasty.Symbol.Method(
+            SymbolId(id),
+            Tasty.Name(name),
+            Tasty.Flags.empty,
+            SymbolId(-1),
+            Maybe.Absent,
+            Maybe.Absent,
+            declaredType,
+            paramListIds,
+            typeParamIds,
+            Chunk.empty,
+            Maybe.Absent
+        )
+    end method
 
     // Leaf id:7 -- Tasty.show(Symbol), Tasty.show(Type), Tasty.show(Tree), Tasty.show(Constant) emit non-empty strings
     "Tasty.show(Symbol) returns non-empty string" in run {
@@ -84,6 +157,145 @@ class ShowMethodTest extends Test with TastyTestSupport:
         assert(Tasty.Constant.ShortConst(2.toShort).show == "2")
         assert(Tasty.Constant.UnitConst.show == "()")
         assert(Tasty.Constant.NullConst.show == "null")
+    }
+
+    // Leaf F-005-a: renderType renders Function as arrow (INV-008)
+    // Given: method def map[B](f: A => B): List[B]
+    // When: Tasty.signature(mapMethod)
+    // Then: exact string "def map[B](f: A => B): List[B]"
+    "renderType renders Function as Scala arrow syntax in signature" in run {
+        import kyo.Tasty.SymbolId
+        // id=0: TypeParam "A" (self-owned)
+        // id=1: TypeParam "B" (self-owned)
+        // id=2: Class "List" (self-owned)
+        // id=3: Parameter "f" with declaredType = A => B
+        // id=4: Method "map" with typeParamIds=[1], paramListIds=[[3]], declaredType=List[B]
+        val symA    = typeParam(0, "A")
+        val symB    = typeParam(1, "B")
+        val symList = selfOwnedClass(2, "List")
+        val paramF  = param(3, "f", Tasty.Type.Function(Chunk(Tasty.Type.Named(SymbolId(0))), Tasty.Type.Named(SymbolId(1))))
+        val mapMethod = method(
+            4,
+            "map",
+            Chunk(SymbolId(1)),
+            Chunk(Chunk(SymbolId(3))),
+            Maybe.Present(Tasty.Type.Applied(Tasty.Type.Named(SymbolId(2)), Chunk(Tasty.Type.Named(SymbolId(1)))))
+        )
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(symA, symB, symList, paramF, mapMethod)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                Tasty.signature(mapMethod).map: sig =>
+                    assert(sig == "def map[B](f: A => B): List[B]", s"Expected 'def map[B](f: A => B): List[B]' but got: $sig")
+                    succeed
+    }
+
+    // Leaf F-005-b: renderType renders Tuple return type (INV-008)
+    // Given: method def pair: (A, B)
+    // When: Tasty.signature(pairMethod)
+    // Then: exact string "def pair: (A, B)"
+    "renderType renders Tuple return type in signature" in run {
+        import kyo.Tasty.SymbolId
+        // id=0: TypeParam "A" (self-owned)
+        // id=1: TypeParam "B" (self-owned)
+        // id=2: Method "pair" with declaredType=Tuple(A, B)
+        val symA = typeParam(0, "A")
+        val symB = typeParam(1, "B")
+        val pairMethod = method(
+            2,
+            "pair",
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Present(Tasty.Type.Tuple(Chunk(Tasty.Type.Named(SymbolId(0)), Tasty.Type.Named(SymbolId(1)))))
+        )
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(symA, symB, pairMethod)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                Tasty.signature(pairMethod).map: sig =>
+                    assert(sig == "def pair: (A, B)", s"Expected 'def pair: (A, B)' but got: $sig")
+                    succeed
+    }
+
+    // Leaf F-005-c: renderType renders Array param type (INV-008)
+    // Given: method def fill(xs: Array[Int]): Unit
+    // When: Tasty.signature(fillMethod)
+    // Then: exact string "def fill(xs: Array[Int]): Unit"
+    "renderType renders Array param type in signature" in run {
+        import kyo.Tasty.SymbolId
+        // id=0: Class "Int" (self-owned)
+        // id=1: Class "Unit" (self-owned)
+        // id=2: Parameter "xs" with declaredType=Array[Int]
+        // id=3: Method "fill" with declaredType=Unit
+        val symInt  = selfOwnedClass(0, "Int")
+        val symUnit = selfOwnedClass(1, "Unit")
+        val paramXs = param(2, "xs", Tasty.Type.Array(Tasty.Type.Named(SymbolId(0))))
+        val fillMethod = method(
+            3,
+            "fill",
+            Chunk.empty,
+            Chunk(Chunk(SymbolId(2))),
+            Maybe.Present(Tasty.Type.Named(SymbolId(1)))
+        )
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(symInt, symUnit, paramXs, fillMethod)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                Tasty.signature(fillMethod).map: sig =>
+                    assert(sig == "def fill(xs: Array[Int]): Unit", s"Expected 'def fill(xs: Array[Int]): Unit' but got: $sig")
+                    succeed
+    }
+
+    // Leaf F-005-d: renderType renders multi-arg Function param type (INV-008)
+    // Given: method def combine(f: (A, B) => C): C
+    // When: Tasty.signature(combineMethod)
+    // Then: exact string "def combine(f: (A, B) => C): C"
+    "renderType renders multi-arg Function param type in signature" in run {
+        import kyo.Tasty.SymbolId
+        // id=0: TypeParam "A" (self-owned)
+        // id=1: TypeParam "B" (self-owned)
+        // id=2: TypeParam "C" (self-owned)
+        // id=3: Parameter "f" with declaredType=(A, B) => C
+        // id=4: Method "combine" with declaredType=C
+        val symA = typeParam(0, "A")
+        val symB = typeParam(1, "B")
+        val symC = typeParam(2, "C")
+        val paramF = param(
+            3,
+            "f",
+            Tasty.Type.Function(Chunk(Tasty.Type.Named(SymbolId(0)), Tasty.Type.Named(SymbolId(1))), Tasty.Type.Named(SymbolId(2)))
+        )
+        val combineMethod = method(
+            4,
+            "combine",
+            Chunk.empty,
+            Chunk(Chunk(SymbolId(3))),
+            Maybe.Present(Tasty.Type.Named(SymbolId(2)))
+        )
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(symA, symB, symC, paramF, combineMethod)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                Tasty.signature(combineMethod).map: sig =>
+                    assert(sig == "def combine(f: (A, B) => C): C", s"Expected 'def combine(f: (A, B) => C): C' but got: $sig")
+                    succeed
+    }
+
+    // Leaf F-005-e: renderType renders ByName param type (INV-008)
+    // Given: method def eval(x: => Int): Int
+    // When: Tasty.signature(evalMethod)
+    // Then: exact string "def eval(x: => Int): Int"
+    "renderType renders ByName param type in signature" in run {
+        import kyo.Tasty.SymbolId
+        // id=0: Class "Int" (self-owned)
+        // id=1: Parameter "x" with declaredType==> Int
+        // id=2: Method "eval" with declaredType=Int
+        val symInt = selfOwnedClass(0, "Int")
+        val paramX = param(1, "x", Tasty.Type.ByName(Tasty.Type.Named(SymbolId(0))))
+        val evalMethod = method(
+            2,
+            "eval",
+            Chunk.empty,
+            Chunk(Chunk(SymbolId(1))),
+            Maybe.Present(Tasty.Type.Named(SymbolId(0)))
+        )
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(symInt, paramX, evalMethod)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                Tasty.signature(evalMethod).map: sig =>
+                    assert(sig == "def eval(x: => Int): Int", s"Expected 'def eval(x: => Int): Int' but got: $sig")
+                    succeed
     }
 
 end ShowMethodTest
