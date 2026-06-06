@@ -378,7 +378,11 @@ lazy val kyoWasm = project
         `kyo-flow`.wasm,
         `kyo-pod`.wasm,
         `kyo-browser`.wasm,
-        `kyo-ui`.wasm
+        `kyo-ui`.wasm,
+        `kyo-test-api`.wasm,
+        `kyo-test-runner`.wasm,
+        `kyo-test-prop`.wasm,
+        `kyo-test-snapshot`.wasm
     )
 
 lazy val `kyo-scheduler` =
@@ -1691,7 +1695,7 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
 // ===========================================================================
 
 lazy val `kyo-test-api` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data`)
@@ -1733,9 +1737,20 @@ lazy val `kyo-test-api` =
             Test / unmanagedClasspath ++=
                 (LocalProject("kyo-coreJS") / Compile / fullClasspath).value
         )
+        .wasmSettings(
+            `wasm-settings`,
+            Compile / unmanagedClasspath ++=
+                (LocalProject("kyo-preludeWasm") / Compile / fullClasspath).value,
+            Compile / unmanagedClasspath ++=
+                (LocalProject("kyo-coreWasm") / Compile / fullClasspath).value,
+            Test / unmanagedClasspath ++=
+                (LocalProject("kyo-preludeWasm") / Compile / fullClasspath).value,
+            Test / unmanagedClasspath ++=
+                (LocalProject("kyo-coreWasm") / Compile / fullClasspath).value
+        )
 
 lazy val `kyo-test-runner` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-test-api`)
@@ -1783,9 +1798,21 @@ lazy val `kyo-test-runner` =
             Test / unmanagedClasspath ++=
                 (LocalProject("kyo-coreJS") / Compile / fullClasspath).value
         )
+        .wasmSettings(
+            `wasm-settings`,
+            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided,
+            Compile / unmanagedClasspath ++=
+                (LocalProject("kyo-preludeWasm") / Compile / fullClasspath).value,
+            Compile / unmanagedClasspath ++=
+                (LocalProject("kyo-coreWasm") / Compile / fullClasspath).value,
+            Test / unmanagedClasspath ++=
+                (LocalProject("kyo-preludeWasm") / Compile / fullClasspath).value,
+            Test / unmanagedClasspath ++=
+                (LocalProject("kyo-coreWasm") / Compile / fullClasspath).value
+        )
 
 lazy val `kyo-test-prop` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-test-api`)
@@ -1829,9 +1856,20 @@ lazy val `kyo-test-prop` =
             Test / unmanagedClasspath ++=
                 (LocalProject("kyo-coreJS") / Compile / fullClasspath).value
         )
+        .wasmSettings(
+            `wasm-settings`,
+            Compile / unmanagedClasspath ++=
+                (LocalProject("kyo-preludeWasm") / Compile / fullClasspath).value,
+            Compile / unmanagedClasspath ++=
+                (LocalProject("kyo-coreWasm") / Compile / fullClasspath).value,
+            Test / unmanagedClasspath ++=
+                (LocalProject("kyo-preludeWasm") / Compile / fullClasspath).value,
+            Test / unmanagedClasspath ++=
+                (LocalProject("kyo-coreWasm") / Compile / fullClasspath).value
+        )
 
 lazy val `kyo-test-snapshot` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-test-api`)
@@ -1883,6 +1921,19 @@ lazy val `kyo-test-snapshot` =
             Test / unmanagedClasspath ++=
                 (LocalProject("kyo-coreJS") / Compile / fullClasspath).value,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        // WASM keeps WasmPlatform's ESModule linker kind (no CommonJSModule override): the
+        // @JSImport("node:fs") snapshot facade resolves as an ESM import under Node.
+        .wasmSettings(
+            `wasm-settings`,
+            Compile / unmanagedClasspath ++=
+                (LocalProject("kyo-preludeWasm") / Compile / fullClasspath).value,
+            Compile / unmanagedClasspath ++=
+                (LocalProject("kyo-coreWasm") / Compile / fullClasspath).value,
+            Test / unmanagedClasspath ++=
+                (LocalProject("kyo-preludeWasm") / Compile / fullClasspath).value,
+            Test / unmanagedClasspath ++=
+                (LocalProject("kyo-coreWasm") / Compile / fullClasspath).value
         )
 
 lazy val `kyo-test-sbt` =
