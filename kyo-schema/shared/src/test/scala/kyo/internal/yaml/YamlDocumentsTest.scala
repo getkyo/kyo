@@ -30,17 +30,12 @@ class YamlDocumentsTest extends kyo.test.Test[Any]:
                   |name: Bob
                   |""".stripMargin
 
-            assertResult(
-                (
-                    requiresSplit = true,
-                    split = Chunk("name: Alice\n", "", "name: Bob\n")
-                )
-            ) {
-                (
-                    requiresSplit = YamlDocuments.requiresSplit(yaml),
-                    split = YamlDocuments.split(yaml)
-                )
-            }
+            val obtained = (
+                requiresSplit = YamlDocuments.requiresSplit(yaml),
+                split = YamlDocuments.split(yaml)
+            )
+            assert(obtained.requiresSplit == true)
+            assert(obtained.split == Chunk("name: Alice\n", "", "name: Bob\n"))
         }
 
         "ignores directives and comments between documents" in {

@@ -2,7 +2,7 @@ package kyo.internal.yaml
 
 import kyo.*
 
-class YamlCstBuilderTest extends Test:
+class YamlCstBuilderTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -27,23 +27,18 @@ class YamlCstBuilderTest extends Test:
             val events =
                 collect(h => YamlCstBuilder.emitStream(stream, Chunk.empty[Yaml.Events.Event])(h))
 
-            assertResult(
-                (
-                    streamStarts = 1,
-                    streamEnds = 1,
-                    documentStarts = 2,
-                    documentEnds = 2,
-                    scalars = Chunk("name", "Alice", "name", "Bob")
-                )
-            ) {
-                (
-                    streamStarts = events.count(_.isInstanceOf[Yaml.Events.Event.StreamStart]),
-                    streamEnds = events.count(_.isInstanceOf[Yaml.Events.Event.StreamEnd]),
-                    documentStarts = events.count(_.isInstanceOf[Yaml.Events.Event.DocumentStart]),
-                    documentEnds = events.count(_.isInstanceOf[Yaml.Events.Event.DocumentEnd]),
-                    scalars = events.collect { case Yaml.Events.Event.Scalar(value, _) => value }
-                )
-            }
+            val obtained = (
+                streamStarts = events.count(_.isInstanceOf[Yaml.Events.Event.StreamStart]),
+                streamEnds = events.count(_.isInstanceOf[Yaml.Events.Event.StreamEnd]),
+                documentStarts = events.count(_.isInstanceOf[Yaml.Events.Event.DocumentStart]),
+                documentEnds = events.count(_.isInstanceOf[Yaml.Events.Event.DocumentEnd]),
+                scalars = events.collect { case Yaml.Events.Event.Scalar(value, _) => value }
+            )
+            assert(obtained.streamStarts == 1)
+            assert(obtained.streamEnds == 1)
+            assert(obtained.documentStarts == 2)
+            assert(obtained.documentEnds == 2)
+            assert(obtained.scalars == Chunk("name", "Alice", "name", "Bob"))
         }
     }
 
@@ -56,14 +51,16 @@ class YamlCstBuilderTest extends Test:
             val events =
                 collect(h => YamlCstBuilder.emitDocument(document, Chunk.empty[Yaml.Events.Event])(h))
 
-            assertResult((streamStarts = 1, streamEnds = 1, documentStarts = 1, documentEnds = 1)) {
-                (
-                    streamStarts = events.count(_.isInstanceOf[Yaml.Events.Event.StreamStart]),
-                    streamEnds = events.count(_.isInstanceOf[Yaml.Events.Event.StreamEnd]),
-                    documentStarts = events.count(_.isInstanceOf[Yaml.Events.Event.DocumentStart]),
-                    documentEnds = events.count(_.isInstanceOf[Yaml.Events.Event.DocumentEnd])
-                )
-            }
+            val obtained = (
+                streamStarts = events.count(_.isInstanceOf[Yaml.Events.Event.StreamStart]),
+                streamEnds = events.count(_.isInstanceOf[Yaml.Events.Event.StreamEnd]),
+                documentStarts = events.count(_.isInstanceOf[Yaml.Events.Event.DocumentStart]),
+                documentEnds = events.count(_.isInstanceOf[Yaml.Events.Event.DocumentEnd])
+            )
+            assert(obtained.streamStarts == 1)
+            assert(obtained.streamEnds == 1)
+            assert(obtained.documentStarts == 1)
+            assert(obtained.documentEnds == 1)
         }
     }
 

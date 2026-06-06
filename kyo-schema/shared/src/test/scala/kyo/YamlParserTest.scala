@@ -224,13 +224,8 @@ class YamlParserTest extends kyo.test.Test[Any]:
 
             parsed match
                 case Yaml.Node.Mapping(entries, _) =>
-                    assertResult((
-                        keys = Chunk("name", "age"),
-                        values = Chunk("Alice", "30")
-                    ))((
-                        keys = entries.map(_._1.asInstanceOf[Yaml.Node.Scalar].value),
-                        values = entries.map(_._2.asInstanceOf[Yaml.Node.Scalar].value)
-                    ))
+                    assert(entries.map(_._1.asInstanceOf[Yaml.Node.Scalar].value) == Chunk("name", "age"))
+                    assert(entries.map(_._2.asInstanceOf[Yaml.Node.Scalar].value) == Chunk("Alice", "30"))
                 case other => fail(s"Expected mapping, got $other")
             end match
         }
@@ -253,13 +248,8 @@ class YamlParserTest extends kyo.test.Test[Any]:
                         case (Yaml.Node.Scalar(key, _), Yaml.Node.Scalar(value, _)) => key -> value
                         case other                                                  => fail(s"Expected scalar entry, got $other")
                     }.toMap
-                    assertResult((
-                        name = "Bob",
-                        age = "25"
-                    ))((
-                        name = fields("name"),
-                        age = fields("age")
-                    ))
+                    assert(fields("name") == "Bob")
+                    assert(fields("age") == "25")
                 case other => fail(s"Expected mapping, got $other")
             end match
         }
@@ -540,15 +530,9 @@ class YamlParserTest extends kyo.test.Test[Any]:
                   |}
                   |""".stripMargin
 
-            assertResult((
-                person = Result.succeed(MTPerson("Alice", 30)),
-                numbers = Result.succeed(List(1, 2, 3)),
-                text = Result.succeed(YamlFlowText("double quoted", "plain scalar"))
-            ))((
-                person = Yaml.decode[MTPerson](person),
-                numbers = Yaml.decode[List[Int]](numbers),
-                text = Yaml.decode[YamlFlowText](text)
-            ))
+            assert(Yaml.decode[MTPerson](person) == Result.succeed(MTPerson("Alice", 30)))
+            assert(Yaml.decode[List[Int]](numbers) == Result.succeed(List(1, 2, 3)))
+            assert(Yaml.decode[YamlFlowText](text) == Result.succeed(YamlFlowText("double quoted", "plain scalar")))
         }
 
         "keeps parser and schema decode aligned for tricky flow collection scanning" in {
@@ -624,15 +608,9 @@ class YamlParserTest extends kyo.test.Test[Any]:
 
             result match
                 case Result.Failure(e: ParseException) =>
-                    assertResult((
-                        invalidEscape = true,
-                        line = true,
-                        column = true
-                    ))((
-                        invalidEscape = e.getMessage.contains("Invalid escape sequence"),
-                        line = e.getMessage.contains("line 1"),
-                        column = e.getMessage.contains("column")
-                    ))
+                    assert(e.getMessage.contains("Invalid escape sequence"))
+                    assert(e.getMessage.contains("line 1"))
+                    assert(e.getMessage.contains("column"))
                 case other => fail(s"Expected ParseException failure, got $other")
             end match
         }
@@ -739,13 +717,8 @@ class YamlParserTest extends kyo.test.Test[Any]:
 
             Yaml.decode[Map[String, String]](yaml) match
                 case Result.Failure(e: ParseException) =>
-                    assertResult((
-                        indentation = true,
-                        line = true
-                    ))((
-                        indentation = e.getMessage.contains("Expected block scalar indentation"),
-                        line = e.getMessage.contains("line 3")
-                    ))
+                    assert(e.getMessage.contains("Expected block scalar indentation"))
+                    assert(e.getMessage.contains("line 3"))
                 case other => fail(s"Expected ParseException failure, got $other")
             end match
         }
@@ -786,20 +759,15 @@ class YamlParserTest extends kyo.test.Test[Any]:
                 case other                      => fail(s"Expected scalar version, got $other")
             }
 
-            assertResult((
-                versions = Chunk("9.5.25", "9.6.24", "10.23", "12.13"),
-                decoded = Result.succeed(YamlHellConfig(
-                    YamlHellServerConfig(
-                        List("22:22", "80:80", "443:443"),
-                        List("/robots.txt", "/favicon.ico", "*.html", "*.png", "!.git"),
-                        List("dk", "fi", "is", "no", "se"),
-                        YamlHellFlushCache(List("push", "memory_pressure"), "background")
-                    )
-                ))
-            ))((
-                versions = versions,
-                decoded = Yaml.decode[YamlHellConfig](yaml)
-            ))
+            assert(versions == Chunk("9.5.25", "9.6.24", "10.23", "12.13"))
+            assert(Yaml.decode[YamlHellConfig](yaml) == Result.succeed(YamlHellConfig(
+                YamlHellServerConfig(
+                    List("22:22", "80:80", "443:443"),
+                    List("/robots.txt", "/favicon.ico", "*.html", "*.png", "!.git"),
+                    List("dk", "fi", "is", "no", "se"),
+                    YamlHellFlushCache(List("push", "memory_pressure"), "background")
+                )
+            )))
         }
 
         "reports unquoted aliases from the yaml document from hell as unknown aliases" in {
@@ -812,13 +780,8 @@ class YamlParserTest extends kyo.test.Test[Any]:
 
             result match
                 case Result.Failure(e: ParseException) =>
-                    assertResult((
-                        unknownAlias = true,
-                        line = true
-                    ))((
-                        unknownAlias = e.getMessage.contains("Unknown alias '.html'"),
-                        line = e.getMessage.contains("line 3")
-                    ))
+                    assert(e.getMessage.contains("Unknown alias '.html'"))
+                    assert(e.getMessage.contains("line 3"))
                 case other => fail(s"Expected ParseException failure, got $other")
             end match
         }
@@ -853,23 +816,13 @@ class YamlParserTest extends kyo.test.Test[Any]:
 
             val decoded = Yaml.decode[YamlCoreNumbers](yaml).getOrThrow
 
-            assertResult((
-                octal = 7,
-                hex = 58,
-                leadingDot = 0.5,
-                positiveExponent = 12000.0,
-                positiveInfinity = true,
-                negativeInfinity = true,
-                nan = true
-            ))((
-                octal = decoded.octal,
-                hex = decoded.hex,
-                leadingDot = decoded.leadingDot,
-                positiveExponent = decoded.positiveExponent,
-                positiveInfinity = decoded.positiveInfinity.isPosInfinity,
-                negativeInfinity = decoded.negativeInfinity.isNegInfinity,
-                nan = decoded.nan.isNaN
-            ))
+            assert(decoded.octal == 7)
+            assert(decoded.hex == 58)
+            assert(decoded.leadingDot == 0.5)
+            assert(decoded.positiveExponent == 12000.0)
+            assert(decoded.positiveInfinity.isPosInfinity == true)
+            assert(decoded.negativeInfinity.isNegInfinity == true)
+            assert(decoded.nan.isNaN == true)
         }
 
         "honors standard explicit scalar tags during schema decode" in {
@@ -884,21 +837,12 @@ class YamlParserTest extends kyo.test.Test[Any]:
 
             val decoded = Yaml.decode[YamlTaggedScalars](yaml).getOrThrow
 
-            assertResult((
-                stringValue = "true",
-                intValue = 58,
-                boolValue = true,
-                floatValue = true,
-                nullValue = None,
-                disabled = "12"
-            ))((
-                stringValue = decoded.stringValue,
-                intValue = decoded.intValue,
-                boolValue = !decoded.boolValue,
-                floatValue = decoded.floatValue.isPosInfinity,
-                nullValue = decoded.nullValue,
-                disabled = decoded.disabled
-            ))
+            assert(decoded.stringValue == "true")
+            assert(decoded.intValue == 58)
+            assert(!decoded.boolValue == true)
+            assert(decoded.floatValue.isPosInfinity == true)
+            assert(decoded.nullValue == None)
+            assert(decoded.disabled == "12")
         }
 
         "uses YAML 1.1 scalar resolution when configured" in {
@@ -930,21 +874,12 @@ class YamlParserTest extends kyo.test.Test[Any]:
             val config  = Yaml.ReaderConfig(yamlVersion = Yaml.SpecVersion.Yaml11)
             val decoded = Yaml.decode[YamlLegacyNumbers](yaml, config).getOrThrow
 
-            assertResult((
-                octal = 8,
-                binary = 10,
-                sexagesimal = 4830,
-                underscored = 685230,
-                fixed = 685230.15,
-                sexagesimalFloat = 685230.15
-            ))((
-                octal = decoded.octal,
-                binary = decoded.binary,
-                sexagesimal = decoded.sexagesimal,
-                underscored = decoded.underscored,
-                fixed = decoded.fixed,
-                sexagesimalFloat = decoded.sexagesimalFloat
-            ))
+            assert(decoded.octal == 8)
+            assert(decoded.binary == 10)
+            assert(decoded.sexagesimal == 4830)
+            assert(decoded.underscored == 685230)
+            assert(decoded.fixed == 685230.15)
+            assert(decoded.sexagesimalFloat == 685230.15)
         }
 
         "honors YAML 1.1 explicit scalar tags when configured" in {
@@ -957,13 +892,8 @@ class YamlParserTest extends kyo.test.Test[Any]:
 
             val decoded = Yaml.decode[Map[String, String]]("value: NO\n").getOrThrow
 
-            assertResult((
-                untaggedNo = Map("value" -> "NO"),
-                tagged = Result.succeed(YamlLegacyTaggedScalars(8, false, 685230.15))
-            ))((
-                untaggedNo = decoded,
-                tagged = Yaml.decode[YamlLegacyTaggedScalars](yaml, config)
-            ))
+            assert(decoded == Map("value" -> "NO"))
+            assert(Yaml.decode[YamlLegacyTaggedScalars](yaml, config) == Result.succeed(YamlLegacyTaggedScalars(8, false, 685230.15)))
         }
     }
 

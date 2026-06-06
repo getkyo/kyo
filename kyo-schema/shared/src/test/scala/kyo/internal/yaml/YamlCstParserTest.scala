@@ -2,11 +2,11 @@ package kyo.internal.yaml
 
 import kyo.*
 
-class YamlCstParserTest extends Test:
+class YamlCstParserTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
-    private def parseFailure(result: Result[DecodeException, Yaml.Cst.Document]): String =
+    private def parseFailure(result: Result[DecodeException, Yaml.Cst.Document])(using kyo.test.AssertScope): String =
         result match
             case Result.Failure(e: ParseException) => e.getMessage
             case other                             => fail(s"Expected ParseException failure, got $other")
@@ -31,19 +31,14 @@ class YamlCstParserTest extends Test:
 
             val doc = YamlCstParser.document(yaml).getOrThrow
 
-            assertResult(
-                (
-                    rendered = yaml,
-                    sourcePresent = true,
-                    hasRoot = true
-                )
-            ) {
-                (
-                    rendered = doc.render(using Yaml.WriterConfig.Default),
-                    sourcePresent = doc.source.isDefined,
-                    hasRoot = doc.node.isDefined
-                )
-            }
+            val obtained = (
+                rendered = doc.render(using Yaml.WriterConfig.Default),
+                sourcePresent = doc.source.isDefined,
+                hasRoot = doc.node.isDefined
+            )
+            assert(obtained.rendered == yaml)
+            assert(obtained.sourcePresent == true)
+            assert(obtained.hasRoot == true)
         }
 
         "preserves a multi-document stream exactly" in {
@@ -59,9 +54,9 @@ class YamlCstParserTest extends Test:
 
             val stream = YamlCstParser.stream(yaml).getOrThrow
 
-            assertResult((count = 2, rendered = yaml)) {
-                (count = stream.documents.size, rendered = stream.render(using Yaml.WriterConfig.Default))
-            }
+            val obtained = (count = stream.documents.size, rendered = stream.render(using Yaml.WriterConfig.Default))
+            assert(obtained.count == 2)
+            assert(obtained.rendered == yaml)
         }
 
         "uses stream source without assigning split bodies as child document source" in {
@@ -75,19 +70,14 @@ class YamlCstParserTest extends Test:
 
             val stream = YamlCstParser.stream(yaml).getOrThrow
 
-            assertResult(
-                (
-                    streamSource = Maybe(yaml),
-                    rendered = yaml,
-                    childSources = Chunk(false, false)
-                )
-            ) {
-                (
-                    streamSource = stream.source,
-                    rendered = stream.render(using Yaml.WriterConfig.Default),
-                    childSources = stream.documents.map(_.source.isDefined)
-                )
-            }
+            val obtained = (
+                streamSource = stream.source,
+                rendered = stream.render(using Yaml.WriterConfig.Default),
+                childSources = stream.documents.map(_.source.isDefined)
+            )
+            assert(obtained.streamSource == Maybe(yaml))
+            assert(obtained.rendered == yaml)
+            assert(obtained.childSources == Chunk(false, false))
         }
 
         "preserves source and source span for an explicit empty document" in {
@@ -97,13 +87,14 @@ class YamlCstParserTest extends Test:
 
             val doc = YamlCstParser.document(yaml).getOrThrow
 
-            assertResult((source = Maybe(yaml), end = yaml.length, rendered = yaml)) {
-                (
-                    source = doc.source,
-                    end = doc.span.end.index,
-                    rendered = doc.render(using Yaml.WriterConfig.Default)
-                )
-            }
+            val obtained = (
+                source = doc.source,
+                end = doc.span.end.index,
+                rendered = doc.render(using Yaml.WriterConfig.Default)
+            )
+            assert(obtained.source == Maybe(yaml))
+            assert(obtained.end == yaml.length)
+            assert(obtained.rendered == yaml)
         }
 
         "rejects an explicit empty document followed by another document as a single document" in {
@@ -133,17 +124,8 @@ class YamlCstParserTest extends Test:
 
             val message = parseFailure(YamlCstParser.document(yaml))
 
-            assertResult(
-                (
-                    hasIndentationMessage = true,
-                    hasLineNumber = true
-                )
-            ) {
-                (
-                    hasIndentationMessage = message.contains("Expected block scalar indentation"),
-                    hasLineNumber = message.contains("line 3")
-                )
-            }
+            assert(message.contains("Expected block scalar indentation"))
+            assert(message.contains("line 3"))
         }
 
         "rejects a multi-document stream as a single CST document" in {
@@ -165,13 +147,14 @@ class YamlCstParserTest extends Test:
 
             val stream = YamlCstParser.stream(yaml).getOrThrow
 
-            assertResult((count = 2, firstEmpty = true, rendered = yaml)) {
-                (
-                    count = stream.documents.size,
-                    firstEmpty = stream.documents(0).node.isEmpty,
-                    rendered = stream.render(using Yaml.WriterConfig.Default)
-                )
-            }
+            val obtained = (
+                count = stream.documents.size,
+                firstEmpty = stream.documents(0).node.isEmpty,
+                rendered = stream.render(using Yaml.WriterConfig.Default)
+            )
+            assert(obtained.count == 2)
+            assert(obtained.firstEmpty == true)
+            assert(obtained.rendered == yaml)
         }
 
         "preserves an explicit empty document before a mapping document" in {
@@ -183,14 +166,16 @@ class YamlCstParserTest extends Test:
 
             val stream = YamlCstParser.stream(yaml).getOrThrow
 
-            assertResult((count = 2, firstEmpty = true, secondRoot = true, rendered = yaml)) {
-                (
-                    count = stream.documents.size,
-                    firstEmpty = stream.documents(0).node.isEmpty,
-                    secondRoot = stream.documents(1).node.isDefined,
-                    rendered = stream.render(using Yaml.WriterConfig.Default)
-                )
-            }
+            val obtained = (
+                count = stream.documents.size,
+                firstEmpty = stream.documents(0).node.isEmpty,
+                secondRoot = stream.documents(1).node.isDefined,
+                rendered = stream.render(using Yaml.WriterConfig.Default)
+            )
+            assert(obtained.count == 2)
+            assert(obtained.firstEmpty == true)
+            assert(obtained.secondRoot == true)
+            assert(obtained.rendered == yaml)
         }
 
         "captures leading and trailing comments as trivia" in {
@@ -204,22 +189,17 @@ class YamlCstParserTest extends Test:
 
             val doc = YamlCstParser.document(yaml).getOrThrow
 
-            assertResult(
-                (
-                    leading = Chunk("# document comment"),
-                    trailingOwner = Chunk("# owner"),
-                    serviceLeading = Chunk("# service comment")
-                )
-            ) {
-                val Present(root: Yaml.Cst.Node.Mapping) = doc.node: @unchecked
-                val nameEntry                            = root.entries(0)
-                val serviceEntry                         = root.entries(1)
-                (
-                    leading = doc.leadingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text },
-                    trailingOwner = nameEntry.trailingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text.trim },
-                    serviceLeading = serviceEntry.leadingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text }
-                )
-            }
+            val Present(root: Yaml.Cst.Node.Mapping) = doc.node: @unchecked
+            val nameEntry                            = root.entries(0)
+            val serviceEntry                         = root.entries(1)
+            val obtained = (
+                leading = doc.leadingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text },
+                trailingOwner = nameEntry.trailingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text.trim },
+                serviceLeading = serviceEntry.leadingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text }
+            )
+            assert(obtained.leading == Chunk("# document comment"))
+            assert(obtained.trailingOwner == Chunk("# owner"))
+            assert(obtained.serviceLeading == Chunk("# service comment"))
         }
 
         "captures document leading comments before explicit document start" in {
@@ -231,25 +211,20 @@ class YamlCstParserTest extends Test:
 
             val doc = YamlCstParser.document(yaml).getOrThrow
 
-            assertResult(
-                (
-                    leading = Chunk("# document comment"),
-                    rendered = yaml,
-                    rootMark = Yaml.Mark(23, 3, 1),
-                    keyStart = Yaml.Mark(23, 3, 1),
-                    commentSpans = Chunk((Yaml.Mark(0, 1, 1), 18))
-                )
-            ) {
-                val Present(root: Yaml.Cst.Node.Mapping) = doc.node: @unchecked
-                val key                                  = root.entries(0).key.asInstanceOf[Yaml.Cst.Node.Scalar]
-                (
-                    leading = doc.leadingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text },
-                    rendered = doc.render(using Yaml.WriterConfig.Default),
-                    rootMark = root.meta.mark,
-                    keyStart = key.span.start,
-                    commentSpans = doc.leadingTrivia.map(comment => (comment.span.start, comment.span.end.index))
-                )
-            }
+            val Present(root: Yaml.Cst.Node.Mapping) = doc.node: @unchecked
+            val key                                  = root.entries(0).key.asInstanceOf[Yaml.Cst.Node.Scalar]
+            val obtained = (
+                leading = doc.leadingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text },
+                rendered = doc.render(using Yaml.WriterConfig.Default),
+                rootMark = root.meta.mark,
+                keyStart = key.span.start,
+                commentSpans = doc.leadingTrivia.map(comment => (comment.span.start, comment.span.end.index))
+            )
+            assert(obtained.leading == Chunk("# document comment"))
+            assert(obtained.rendered == yaml)
+            assert(obtained.rootMark == Yaml.Mark(23, 3, 1))
+            assert(obtained.keyStart == Yaml.Mark(23, 3, 1))
+            assert(obtained.commentSpans == Chunk((Yaml.Mark(0, 1, 1), 18)))
         }
 
         "captures CRLF document leading comments before explicit document start" in {
@@ -258,23 +233,18 @@ class YamlCstParserTest extends Test:
             val doc       = YamlCstParser.document(yaml).getOrThrow
             val nameIndex = yaml.indexOf("name")
 
-            assertResult(
-                (
-                    leading = Chunk("# document comment"),
-                    rendered = yaml,
-                    rootMark = Yaml.Mark(nameIndex, 3, 1),
-                    keyStart = Yaml.Mark(nameIndex, 3, 1)
-                )
-            ) {
-                val Present(root: Yaml.Cst.Node.Mapping) = doc.node: @unchecked
-                val key                                  = root.entries(0).key.asInstanceOf[Yaml.Cst.Node.Scalar]
-                (
-                    leading = doc.leadingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text },
-                    rendered = doc.render(using Yaml.WriterConfig.Default),
-                    rootMark = root.meta.mark,
-                    keyStart = key.span.start
-                )
-            }
+            val Present(root: Yaml.Cst.Node.Mapping) = doc.node: @unchecked
+            val key                                  = root.entries(0).key.asInstanceOf[Yaml.Cst.Node.Scalar]
+            val obtained = (
+                leading = doc.leadingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text },
+                rendered = doc.render(using Yaml.WriterConfig.Default),
+                rootMark = root.meta.mark,
+                keyStart = key.span.start
+            )
+            assert(obtained.leading == Chunk("# document comment"))
+            assert(obtained.rendered == yaml)
+            assert(obtained.rootMark == Yaml.Mark(nameIndex, 3, 1))
+            assert(obtained.keyStart == Yaml.Mark(nameIndex, 3, 1))
         }
 
         "records scalar syntax for flow quoted and block scalar values" in {
@@ -300,27 +270,13 @@ class YamlCstParserTest extends Test:
             val flowSequence                         = root.entries(5).value.asInstanceOf[Yaml.Cst.Node.Sequence]
             val flowMapping                          = root.entries(6).value.asInstanceOf[Yaml.Cst.Node.Mapping]
 
-            assertResult(
-                (
-                    plain = true,
-                    single = true,
-                    double = true,
-                    literal = true,
-                    folded = true,
-                    flowSeq = true,
-                    flowMap = true
-                )
-            ) {
-                (
-                    plain = plainValue.syntax == Yaml.Cst.ScalarSyntax.Plain,
-                    single = singleValue.syntax == Yaml.Cst.ScalarSyntax.SingleQuoted,
-                    double = doubleValue.syntax == Yaml.Cst.ScalarSyntax.DoubleQuoted,
-                    literal = literalValue.syntax == Yaml.Cst.ScalarSyntax.Literal,
-                    folded = foldedValue.syntax == Yaml.Cst.ScalarSyntax.Folded,
-                    flowSeq = flowSequence.syntax == Yaml.Cst.SequenceSyntax.Flow,
-                    flowMap = flowMapping.syntax == Yaml.Cst.MappingSyntax.Flow
-                )
-            }
+            assert(plainValue.syntax == Yaml.Cst.ScalarSyntax.Plain)
+            assert(singleValue.syntax == Yaml.Cst.ScalarSyntax.SingleQuoted)
+            assert(doubleValue.syntax == Yaml.Cst.ScalarSyntax.DoubleQuoted)
+            assert(literalValue.syntax == Yaml.Cst.ScalarSyntax.Literal)
+            assert(foldedValue.syntax == Yaml.Cst.ScalarSyntax.Folded)
+            assert(flowSequence.syntax == Yaml.Cst.SequenceSyntax.Flow)
+            assert(flowMapping.syntax == Yaml.Cst.MappingSyntax.Flow)
         }
 
         "records a source-backed root span across the full input" in {
@@ -331,13 +287,14 @@ class YamlCstParserTest extends Test:
             val doc                                  = YamlCstParser.document(yaml).getOrThrow
             val Present(root: Yaml.Cst.Node.Mapping) = doc.node: @unchecked
 
-            assertResult((start = 0, end = yaml.length, rendered = yaml)) {
-                (
-                    start = root.span.start.index,
-                    end = root.span.end.index,
-                    rendered = doc.render(using Yaml.WriterConfig.Default)
-                )
-            }
+            val obtained = (
+                start = root.span.start.index,
+                end = root.span.end.index,
+                rendered = doc.render(using Yaml.WriterConfig.Default)
+            )
+            assert(obtained.start == 0)
+            assert(obtained.end == yaml.length)
+            assert(obtained.rendered == yaml)
         }
 
         "records scalar source marks without claiming token extents" in {
@@ -350,17 +307,10 @@ class YamlCstParserTest extends Test:
             val key                                  = root.entries(0).key.asInstanceOf[Yaml.Cst.Node.Scalar]
             val value                                = root.entries(0).value.asInstanceOf[Yaml.Cst.Node.Scalar]
 
-            assertResult(
-                (
-                    key = (start = Yaml.Mark(0, 1, 1), end = Yaml.Mark(0, 1, 1)),
-                    value = (start = Yaml.Mark(6, 1, 7), end = Yaml.Mark(6, 1, 7))
-                )
-            ) {
-                (
-                    key = (start = key.span.start, end = key.span.end),
-                    value = (start = value.span.start, end = value.span.end)
-                )
-            }
+            assert(key.span.start == Yaml.Mark(0, 1, 1))
+            assert(key.span.end == Yaml.Mark(0, 1, 1))
+            assert(value.span.start == Yaml.Mark(6, 1, 7))
+            assert(value.span.end == Yaml.Mark(6, 1, 7))
         }
     }
 end YamlCstParserTest

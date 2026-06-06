@@ -93,14 +93,14 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                   |  line two\nline three"
                   |""".stripMargin
 
-            assertResult(
-                Result.succeed(Chunk(
+            assert(
+                collectScalarEvents(yaml) == Result.succeed(Chunk(
                     ("single", Yaml.ScalarStyle.Plain),
                     ("line one line two\nline three", Yaml.ScalarStyle.SingleQuoted),
                     ("double", Yaml.ScalarStyle.Plain),
                     ("line one line two\nline three", Yaml.ScalarStyle.DoubleQuoted)
                 ))
-            )(collectScalarEvents(yaml))
+            )
         }
 
         "emits inferred and explicit block scalar values as parser events" in {
@@ -115,14 +115,14 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                   |  three
                   |""".stripMargin
 
-            assertResult(
-                Result.succeed(Chunk(
+            assert(
+                collectScalarEvents(yaml) == Result.succeed(Chunk(
                     ("literal", Yaml.ScalarStyle.Plain),
                     ("first\n  deeper", Yaml.ScalarStyle.Literal),
                     ("folded", Yaml.ScalarStyle.Plain),
                     ("one two\nthree\n", Yaml.ScalarStyle.Folded)
                 ))
-            )(collectScalarEvents(yaml))
+            )
         }
 
         "emits compact sequence mappings with continuation fields as nested parser events" in {
@@ -135,8 +135,8 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                   |      REGION: us
                   |""".stripMargin
 
-            assertResult(
-                Result.succeed(Chunk(
+            assert(
+                collectEventLabels(yaml) == Result.succeed(Chunk(
                     "streamStart",
                     "documentStart",
                     "mappingStart::",
@@ -162,7 +162,7 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                     "documentEnd",
                     "streamEnd"
                 ))
-            )(collectEventLabels(yaml))
+            )
         }
 
         "emits directives explicit document starts and empty documents as parser events" in {
@@ -171,15 +171,15 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                   |--- # explicit empty document
                   |""".stripMargin
 
-            assertResult(
-                Result.succeed(Chunk(
+            assert(
+                collectEventLabels(yaml) == Result.succeed(Chunk(
                     "streamStart",
                     "documentStart",
                     "scalar::Plain",
                     "documentEnd",
                     "streamEnd"
                 ))
-            )(collectEventLabels(yaml))
+            )
         }
 
         "emits anchors and tags on inline collection parser events" in {
@@ -189,8 +189,8 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                   |copy: *items
                   |""".stripMargin
 
-            assertResult(
-                Result.succeed(Chunk(
+            assert(
+                collectEventLabels(yaml) == Result.succeed(Chunk(
                     "streamStart",
                     "documentStart",
                     "mappingStart::",
@@ -212,7 +212,7 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                     "documentEnd",
                     "streamEnd"
                 ))
-            )(collectEventLabels(yaml))
+            )
         }
 
         "emits empty mapping values and indentless sequence values as parser events" in {
@@ -223,8 +223,8 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                   |- two
                   |""".stripMargin
 
-            assertResult(
-                Result.succeed(Chunk(
+            assert(
+                collectEventLabels(yaml) == Result.succeed(Chunk(
                     "streamStart",
                     "documentStart",
                     "mappingStart::",
@@ -239,7 +239,7 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                     "documentEnd",
                     "streamEnd"
                 ))
-            )(collectEventLabels(yaml))
+            )
         }
 
         "emits block scalar sequence entries with scalar metadata" in {
@@ -254,13 +254,13 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                   |
                   |""".stripMargin
 
-            assertResult(
-                Result.succeed(Chunk(
+            assert(
+                collectScalarDetails(yaml) == Result.succeed(Chunk(
                     ("notes", Yaml.ScalarStyle.Plain, "", ""),
                     ("hello\n  code", Yaml.ScalarStyle.Literal, "intro", ""),
                     ("folded text\n\n", Yaml.ScalarStyle.Folded, "", "!summary")
                 ))
-            )(collectScalarDetails(yaml))
+            )
         }
 
         "emits flow mapping entries with URL-like keys empty values and quoted JSON-style keys" in {
@@ -274,8 +274,8 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                   |}
                   |""".stripMargin
 
-            assertResult(
-                Result.succeed(Chunk(
+            assert(
+                collectEventLabels(yaml) == Result.succeed(Chunk(
                     "streamStart",
                     "documentStart",
                     "mappingStart::",
@@ -296,7 +296,7 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                     "documentEnd",
                     "streamEnd"
                 ))
-            )(collectEventLabels(yaml))
+            )
         }
 
         "decodes YAML double quoted escape repertoire through parser events" in {
@@ -304,12 +304,12 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                 """escaped: "\0\a\b\t\n\v\f\r\e \"\/\\\N\_\L\P\x41\u263A\U0001F600"
                   |""".stripMargin
 
-            assertResult(
-                Result.succeed(Chunk(
+            assert(
+                collectScalarEvents(yaml) == Result.succeed(Chunk(
                     ("escaped", Yaml.ScalarStyle.Plain),
                     ("\u0000\u0007\b\t\n\u000b\f\r\u001b \"/\\\u0085\u00a0\u2028\u2029A\u263a\uD83D\uDE00", Yaml.ScalarStyle.DoubleQuoted)
                 ))
-            )(collectScalarEvents(yaml))
+            )
         }
 
         "reports invalid double quoted parser escapes with source context" in {
@@ -323,7 +323,8 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                 case other =>
                     fail(s"Expected ParseException failure, got $other")
 
-            assertResult((invalidEscape = true, hasLocation = true))(observed)
+            assert(observed.invalidEscape == true)
+            assert(observed.hasLocation == true)
         }
 
         "lets parser events render empty collections without a node tree" in {
@@ -512,54 +513,46 @@ class YamlEventsTest extends kyo.test.Test[Any]:
 
             summon[Schema[YamlWriterStrings]].writeTo(value, writer)
 
-            assertResult(
-                (
-                    resultString =
-                        """plain: Alice
-                          |truthy: "true"
-                          |comment: "Alice #1"
-                          |url: "https://example.com"
-                          |multiline: |
-                          |  line one
-                          |  line two
-                          |empty: ""
-                          |""".stripMargin,
-                    controlChar = "\"\\u0001\"\n"
-                )
-            ) {
-                (
-                    resultString = writer.resultString,
-                    controlChar = write("\u0001")
-                )
-            }
+            val obtained3 = (
+                resultString = writer.resultString,
+                controlChar = write("\u0001")
+            )
+            assert(
+                obtained3.resultString ==
+                    """plain: Alice
+                      |truthy: "true"
+                      |comment: "Alice #1"
+                      |url: "https://example.com"
+                      |multiline: |
+                      |  line one
+                      |  line two
+                      |empty: ""
+                      |""".stripMargin
+            )
+            assert(obtained3.controlChar == "\"\\u0001\"\n")
         }
 
         "matches production YAML writer for empty collections and scalar roots" in {
-            assertResult(
-                (
-                    emptyList = "[]\n",
-                    emptyMap = "{}\n",
-                    intList = "- 1\n- 2\n- 3\n",
-                    trueStr = "\"true\"\n",
-                    hex = "\"0x3A\"\n",
-                    octal = "\"0o7\"\n",
-                    dotFive = "\".5\"\n",
-                    expNum = "\"+12e03\"\n",
-                    infStr = "\".inf\"\n"
-                )
-            ) {
-                (
-                    emptyList = write(List.empty[Int]),
-                    emptyMap = write(Map.empty[String, Int]),
-                    intList = write(List(1, 2, 3)),
-                    trueStr = write("true"),
-                    hex = write("0x3A"),
-                    octal = write("0o7"),
-                    dotFive = write(".5"),
-                    expNum = write("+12e03"),
-                    infStr = write(".inf")
-                )
-            }
+            val obtained4 = (
+                emptyList = write(List.empty[Int]),
+                emptyMap = write(Map.empty[String, Int]),
+                intList = write(List(1, 2, 3)),
+                trueStr = write("true"),
+                hex = write("0x3A"),
+                octal = write("0o7"),
+                dotFive = write(".5"),
+                expNum = write("+12e03"),
+                infStr = write(".inf")
+            )
+            assert(obtained4.emptyList == "[]\n")
+            assert(obtained4.emptyMap == "{}\n")
+            assert(obtained4.intList == "- 1\n- 2\n- 3\n")
+            assert(obtained4.trueStr == "\"true\"\n")
+            assert(obtained4.hex == "\"0x3A\"\n")
+            assert(obtained4.octal == "\"0o7\"\n")
+            assert(obtained4.dotFive == "\".5\"\n")
+            assert(obtained4.expNum == "\"+12e03\"\n")
+            assert(obtained4.infStr == "\".inf\"\n")
         }
 
         "honors compact sequence mapping layout from writer config" in {
@@ -573,48 +566,38 @@ class YamlEventsTest extends kyo.test.Test[Any]:
         "honors small and fast flow writer profiles" in {
             val value = MTPerson("Alice", 30)
 
-            assertResult(
-                (
-                    smallPerson = "{name: Alice, age: 30}",
-                    fastPerson = "{\"name\":\"Alice\",\"age\":30}",
-                    smallScalar = "Alice",
-                    smallEmptyList = "[]",
-                    fastEmptyMap = "{}",
-                    flowMultiline = "[\"line one\\nline two\\n\"]"
+            val obtained5 = (
+                smallPerson = write(value, Yaml.WriterConfig.Small),
+                fastPerson = write(value, Yaml.WriterConfig.Fast),
+                smallScalar = write("Alice", Yaml.WriterConfig.Small),
+                smallEmptyList = write(List.empty[Int], Yaml.WriterConfig.Small),
+                fastEmptyMap = write(Map.empty[String, Int], Yaml.WriterConfig.Fast),
+                flowMultiline = write(
+                    List("line one\nline two\n"),
+                    Yaml.WriterConfig.Readable.copy(collectionStyle = Yaml.WriterConfig.CollectionStyle.Flow)
                 )
-            ) {
-                (
-                    smallPerson = write(value, Yaml.WriterConfig.Small),
-                    fastPerson = write(value, Yaml.WriterConfig.Fast),
-                    smallScalar = write("Alice", Yaml.WriterConfig.Small),
-                    smallEmptyList = write(List.empty[Int], Yaml.WriterConfig.Small),
-                    fastEmptyMap = write(Map.empty[String, Int], Yaml.WriterConfig.Fast),
-                    flowMultiline = write(
-                        List("line one\nline two\n"),
-                        Yaml.WriterConfig.Readable.copy(collectionStyle = Yaml.WriterConfig.CollectionStyle.Flow)
-                    )
-                )
-            }
+            )
+            assert(obtained5.smallPerson == "{name: Alice, age: 30}")
+            assert(obtained5.fastPerson == "{\"name\":\"Alice\",\"age\":30}")
+            assert(obtained5.smallScalar == "Alice")
+            assert(obtained5.smallEmptyList == "[]")
+            assert(obtained5.fastEmptyMap == "{}")
+            assert(obtained5.flowMultiline == "[\"line one\\nline two\\n\"]")
         }
 
         "matches production YAML writer for finite and special floating point values" in {
-            assertResult(
-                (
-                    bigExp = "1.23E100\n",
-                    minPositive = "5.0E-324\n",
-                    floatMax = "3.4028235E38\n",
-                    doubleSpecials = "- .nan\n- .inf\n- -.inf\n",
-                    floatSpecials = """[!!float ".nan",!!float ".inf",!!float "-.inf"]"""
-                )
-            ) {
-                (
-                    bigExp = write(1.23e100d),
-                    minPositive = write(Double.MinPositiveValue),
-                    floatMax = write(Float.MaxValue),
-                    doubleSpecials = write(List(Double.NaN, Double.PositiveInfinity, Double.NegativeInfinity)),
-                    floatSpecials = write(List(Float.NaN, Float.PositiveInfinity, Float.NegativeInfinity), Yaml.WriterConfig.Fast)
-                )
-            }
+            val obtained6 = (
+                bigExp = write(1.23e100d),
+                minPositive = write(Double.MinPositiveValue),
+                floatMax = write(Float.MaxValue),
+                doubleSpecials = write(List(Double.NaN, Double.PositiveInfinity, Double.NegativeInfinity)),
+                floatSpecials = write(List(Float.NaN, Float.PositiveInfinity, Float.NegativeInfinity), Yaml.WriterConfig.Fast)
+            )
+            assert(obtained6.bigExp == "1.23E100\n")
+            assert(obtained6.minPositive == "5.0E-324\n")
+            assert(obtained6.floatMax == "3.4028235E38\n")
+            assert(obtained6.doubleSpecials == "- .nan\n- .inf\n- -.inf\n")
+            assert(obtained6.floatSpecials == """[!!float ".nan",!!float ".inf",!!float "-.inf"]""")
         }
 
         "honors scalar quoting folded multiline and YAML version config" in {
@@ -623,64 +606,49 @@ class YamlEventsTest extends kyo.test.Test[Any]:
             val legacy       = Yaml.WriterConfig.Readable.copy(yamlVersion = Yaml.SpecVersion.Yaml11)
             val folded       = Yaml.WriterConfig.Readable.copy(multilineStyle = Yaml.WriterConfig.MultilineStyle.Folded)
 
-            assertResult(
-                (
-                    minimalTrue = "true\n",
-                    defaultTrue = "\"true\"\n",
-                    singleQuoted = "'Alice #1'\n",
-                    plainNo = "NO\n",
-                    legacyNo = "\"NO\"\n",
-                    legacyOctal = "\"010\"\n",
-                    foldedMultiline = ">\n  line one\n\n  line two\n"
-                )
-            ) {
-                (
-                    minimalTrue = write("true", minimal),
-                    defaultTrue = write("true"),
-                    singleQuoted = write("Alice #1", singleQuoted),
-                    plainNo = write("NO"),
-                    legacyNo = write("NO", legacy),
-                    legacyOctal = write("010", legacy),
-                    foldedMultiline = write("line one\nline two\n", folded)
-                )
-            }
+            val obtained7 = (
+                minimalTrue = write("true", minimal),
+                defaultTrue = write("true"),
+                singleQuoted = write("Alice #1", singleQuoted),
+                plainNo = write("NO"),
+                legacyNo = write("NO", legacy),
+                legacyOctal = write("010", legacy),
+                foldedMultiline = write("line one\nline two\n", folded)
+            )
+            assert(obtained7.minimalTrue == "true\n")
+            assert(obtained7.defaultTrue == "\"true\"\n")
+            assert(obtained7.singleQuoted == "'Alice #1'\n")
+            assert(obtained7.plainNo == "NO\n")
+            assert(obtained7.legacyNo == "\"NO\"\n")
+            assert(obtained7.legacyOctal == "\"010\"\n")
+            assert(obtained7.foldedMultiline == ">\n  line one\n\n  line two\n")
         }
 
         "honors document marker config" in {
             val start = Yaml.WriterConfig.Readable.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.Start)
             val both  = Yaml.WriterConfig.Readable.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.StartAndEnd)
 
-            assertResult(
-                (
-                    startMarker = "---\nname: Alice\nage: 30\n",
-                    bothMarkers = "---\nname: Alice\nage: 30\n...\n"
-                )
-            ) {
-                (
-                    startMarker = write(MTPerson("Alice", 30), start),
-                    bothMarkers = write(MTPerson("Alice", 30), both)
-                )
-            }
+            val obtained8 = (
+                startMarker = write(MTPerson("Alice", 30), start),
+                bothMarkers = write(MTPerson("Alice", 30), both)
+            )
+            assert(obtained8.startMarker == "---\nname: Alice\nage: 30\n")
+            assert(obtained8.bothMarkers == "---\nname: Alice\nage: 30\n...\n")
         }
 
         "matches production YAML writer direct scalar methods" in {
-            assertResult(
-                (
-                    bytes = "\"AQID\"\n",
-                    bigInt = "\"12345678901234567890\"\n",
-                    bigDecimal = "\"1234567890.0987654321\"\n",
-                    instant = "\"2026-05-30T12:34:56Z\"\n",
-                    duration = "\"PT1H2M3S\"\n"
-                )
-            ) {
-                (
-                    bytes = direct(_.bytes(Span.fromUnsafe(Array[Byte](1, 2, 3)))),
-                    bigInt = direct(_.bigInt(BigInt("12345678901234567890"))),
-                    bigDecimal = direct(_.bigDecimal(BigDecimal("1234567890.0987654321"))),
-                    instant = direct(_.instant(java.time.Instant.parse("2026-05-30T12:34:56Z"))),
-                    duration = direct(_.duration(java.time.Duration.parse("PT1H2M3S")))
-                )
-            }
+            val obtained9 = (
+                bytes = direct(_.bytes(Span.fromUnsafe(Array[Byte](1, 2, 3)))),
+                bigInt = direct(_.bigInt(BigInt("12345678901234567890"))),
+                bigDecimal = direct(_.bigDecimal(BigDecimal("1234567890.0987654321"))),
+                instant = direct(_.instant(java.time.Instant.parse("2026-05-30T12:34:56Z"))),
+                duration = direct(_.duration(java.time.Duration.parse("PT1H2M3S")))
+            )
+            assert(obtained9.bytes == "\"AQID\"\n")
+            assert(obtained9.bigInt == "\"12345678901234567890\"\n")
+            assert(obtained9.bigDecimal == "\"1234567890.0987654321\"\n")
+            assert(obtained9.instant == "\"2026-05-30T12:34:56Z\"\n")
+            assert(obtained9.duration == "\"PT1H2M3S\"\n")
         }
 
         "releases writer state after materializing results" in {
@@ -698,94 +666,69 @@ class YamlEventsTest extends kyo.test.Test[Any]:
         }
 
         "writes all primitive scalar types through events writer" in {
-            assertResult(
-                (
-                    longVal = "9223372036854775807\n",
-                    shortVal = "32767\n",
-                    byteVal = "127\n",
-                    boolTrue = "true\n",
-                    boolFalse = "false\n",
-                    charVal = "\"A\"\n",
-                    nilVal = "null\n"
-                )
-            ) {
-                (
-                    longVal = direct(_.long(Long.MaxValue)),
-                    shortVal = direct(_.short(Short.MaxValue)),
-                    byteVal = direct(_.byte(Byte.MaxValue)),
-                    boolTrue = direct(_.boolean(true)),
-                    boolFalse = direct(_.boolean(false)),
-                    charVal = direct(_.char('A')),
-                    nilVal = direct(_.nil())
-                )
-            }
+            val obtained10 = (
+                longVal = direct(_.long(Long.MaxValue)),
+                shortVal = direct(_.short(Short.MaxValue)),
+                byteVal = direct(_.byte(Byte.MaxValue)),
+                boolTrue = direct(_.boolean(true)),
+                boolFalse = direct(_.boolean(false)),
+                charVal = direct(_.char('A')),
+                nilVal = direct(_.nil())
+            )
+            assert(obtained10.longVal == "9223372036854775807\n")
+            assert(obtained10.shortVal == "32767\n")
+            assert(obtained10.byteVal == "127\n")
+            assert(obtained10.boolTrue == "true\n")
+            assert(obtained10.boolFalse == "false\n")
+            assert(obtained10.charVal == "\"A\"\n")
+            assert(obtained10.nilVal == "null\n")
         }
 
         "writes double-quoted strings for control chars through events writer" in {
-            assertResult(
-                (
-                    controlChar = "\"\\u0001\"\n",
-                    newline = "\"line1\\nline2\"\n",
-                    backslash = "\"\\\\\"\n"
-                )
-            ) {
-                val fastCfg = Yaml.WriterConfig.Fast.copy(trailingNewline = true)
-                (
-                    controlChar = write("", fastCfg),
-                    newline = write("line1\nline2", fastCfg),
-                    backslash = write("\\", fastCfg)
-                )
-            }
+            val fastCfg = Yaml.WriterConfig.Fast.copy(trailingNewline = true)
+            val obtained11 = (
+                controlChar = write("", fastCfg),
+                newline = write("line1\nline2", fastCfg),
+                backslash = write("\\", fastCfg)
+            )
+            assert(obtained11.controlChar == "\"\\u0001\"\n")
+            assert(obtained11.newline == "\"line1\\nline2\"\n")
+            assert(obtained11.backslash == "\"\\\\\"\n")
         }
 
         "writes single-quoted strings that need quoting when single-quote style is configured" in {
             val singleStyle = Yaml.WriterConfig.Readable.copy(quoteStyle = Yaml.WriterConfig.QuoteStyle.Single)
             // "true" is ambiguous and needs quoting; single-quote style applies
             val yaml = write("true", singleStyle)
-            assertResult(
-                (
-                    encoded = "'true'\n",
-                    decoded = Result.succeed("true")
-                )
-            ) {
-                (
-                    encoded = yaml,
-                    decoded = Yaml.decode[String](yaml)
-                )
-            }
+            val obtained12 = (
+                encoded = yaml,
+                decoded = Yaml.decode[String](yaml)
+            )
+            assert(obtained12.encoded == "'true'\n")
+            assert(obtained12.decoded == Result.succeed("true"))
         }
 
         "writes single-quoted strings with embedded single quotes using doubled-quote escaping" in {
             val singleStyle = Yaml.WriterConfig.Readable.copy(quoteStyle = Yaml.WriterConfig.QuoteStyle.Single)
             // "#" in the body forces quoting; single-quote style applies
             val yaml = write("it #1", singleStyle)
-            assertResult(
-                (
-                    encoded = "'it #1'\n",
-                    decoded = Result.succeed("it #1")
-                )
-            ) {
-                (
-                    encoded = yaml,
-                    decoded = Yaml.decode[String](yaml)
-                )
-            }
+            val obtained13 = (
+                encoded = yaml,
+                decoded = Yaml.decode[String](yaml)
+            )
+            assert(obtained13.encoded == "'it #1'\n")
+            assert(obtained13.decoded == Result.succeed("it #1"))
         }
 
         "writes plain-unsafe strings as quoted scalars through events writer" in {
-            assertResult(
-                (
-                    dashDash = "\"---\"\n",
-                    dotDotDot = "\"...\"\n",
-                    percent = "\"%TAG\"\n"
-                )
-            ) {
-                (
-                    dashDash = write("---"),
-                    dotDotDot = write("..."),
-                    percent = write("%TAG")
-                )
-            }
+            val obtained14 = (
+                dashDash = write("---"),
+                dotDotDot = write("..."),
+                percent = write("%TAG")
+            )
+            assert(obtained14.dashDash == "\"---\"\n")
+            assert(obtained14.dotDotDot == "\"...\"\n")
+            assert(obtained14.percent == "\"%TAG\"\n")
         }
 
         "writes Strip chomped literal block scalars through events writer" in {
@@ -826,17 +769,12 @@ class YamlEventsTest extends kyo.test.Test[Any]:
         "writes QuoteAllStrings through events writer" in {
             val config = Yaml.WriterConfig.Readable.copy(scalarQuoting = Yaml.WriterConfig.ScalarQuoting.QuoteAllStrings)
             val yaml   = write("hello", config)
-            assertResult(
-                (
-                    encoded = "\"hello\"\n",
-                    decoded = Result.succeed("hello")
-                )
-            ) {
-                (
-                    encoded = yaml,
-                    decoded = Yaml.decode[String](yaml)
-                )
-            }
+            val obtained15 = (
+                encoded = yaml,
+                decoded = Yaml.decode[String](yaml)
+            )
+            assert(obtained15.encoded == "\"hello\"\n")
+            assert(obtained15.decoded == Result.succeed("hello"))
         }
 
         "writes folded block scalars with Strip chomping using >- header through events writer" in {

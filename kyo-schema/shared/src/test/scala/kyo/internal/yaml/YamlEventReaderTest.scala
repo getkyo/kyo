@@ -4,7 +4,7 @@ import java.util.Base64
 import kyo.*
 import scala.NamedTuple.*
 
-class YamlEventReaderTest extends Test:
+class YamlEventReaderTest extends kyo.test.Test[Any]:
 
     import Yaml.Events.CollectionKind
     import Yaml.Events.Event
@@ -105,7 +105,7 @@ class YamlEventReaderTest extends Test:
             )
             reader.mapEnd()
 
-            assertResult((
+            assert(observed.toSeqMap == (
                 mapStart = -1,
                 hasNameEntry = true,
                 nameField = "name",
@@ -114,7 +114,7 @@ class YamlEventReaderTest extends Test:
                 cityField = "city",
                 cityValue = "Paris",
                 hasMoreEntries = false
-            ).toSeqMap)(observed.toSeqMap)
+            ).toSeqMap)
         }
 
         "reads scalar primitives directly from event values" in {
@@ -135,7 +135,7 @@ class YamlEventReaderTest extends Test:
                 durationValue = reader("PT2H3M").duration()
             )
 
-            assertResult((
+            assert(observed.toSeqMap == (
                 longValue = 9007199254740993L,
                 floatValue = 1.25f,
                 shortValue = 123.toShort,
@@ -146,18 +146,18 @@ class YamlEventReaderTest extends Test:
                 bigDecimalValue = BigDecimal("12345.6789"),
                 instantValue = java.time.Instant.parse("2026-06-01T12:34:56Z"),
                 durationValue = java.time.Duration.parse("PT2H3M")
-            ).toSeqMap)(observed.toSeqMap)
+            ).toSeqMap)
         }
 
         "checks nil without consuming non-null scalar values" in {
             val nullReader  = YamlEventReader(scalarDocument("~"))
             val valueReader = YamlEventReader(scalarDocument("present"))
 
-            assertResult((nullIsNil = true, valueIsNil = false, value = "present").toSeqMap)((
+            assert((
                 nullIsNil = nullReader.isNil(),
                 valueIsNil = valueReader.isNil(),
                 value = valueReader.string()
-            ).toSeqMap)
+            ).toSeqMap == (nullIsNil = true, valueIsNil = false, value = "present").toSeqMap)
         }
 
         "skips one sequence element and continues with the next event value" in {
@@ -180,9 +180,7 @@ class YamlEventReaderTest extends Test:
             )
             reader.arrayEnd()
 
-            assertResult((start = -1, hasFirst = true, hasSecond = true, second = "second", hasMore = false).toSeqMap)(
-                observed.toSeqMap
-            )
+            assert(observed.toSeqMap == (start = -1, hasFirst = true, hasSecond = true, second = "second", hasMore = false).toSeqMap)
         }
 
         "resolves YAML 1.2 scalar values" in {
@@ -193,12 +191,12 @@ class YamlEventReaderTest extends Test:
                 norway = decode[String](scalarDocument("NO"))
             )
 
-            assertResult((
+            assert(observed.toSeqMap == (
                 octal = Result.succeed(7),
                 hex = Result.succeed(58),
                 leadingDot = Result.succeed(0.5d),
                 norway = Result.succeed("NO")
-            ).toSeqMap)(observed.toSeqMap)
+            ).toSeqMap)
         }
 
         "resolves YAML 1.1 scalar values" in {
@@ -207,7 +205,7 @@ class YamlEventReaderTest extends Test:
                 binary = decode[Int](scalarDocument("0b1010"), Yaml.SpecVersion.Yaml11)
             )
 
-            assertResult((legacyBool = Result.succeed(false), binary = Result.succeed(10)).toSeqMap)(observed.toSeqMap)
+            assert(observed.toSeqMap == (legacyBool = Result.succeed(false), binary = Result.succeed(10)).toSeqMap)
         }
 
         "captures a subtree reader and advances the parent" in {
@@ -246,17 +244,7 @@ class YamlEventReaderTest extends Test:
                 parentValue = reader.string()
             )
 
-            assertResult((
-                arrayStart = -1,
-                hasFirstElement = true,
-                firstElement = 1,
-                hasSecondElement = true,
-                secondElement = 2,
-                hasMoreElements = false,
-                parentHasNextField = true,
-                parentField = "next",
-                parentValue = "done"
-            ).toSeqMap)((
+            assert((
                 arrayStart = observed.arrayStart,
                 hasFirstElement = observed.hasFirstElement,
                 firstElement = observed.firstElement,
@@ -266,6 +254,16 @@ class YamlEventReaderTest extends Test:
                 parentHasNextField = parentObserved.parentHasNextField,
                 parentField = parentObserved.parentField,
                 parentValue = parentObserved.parentValue
+            ).toSeqMap == (
+                arrayStart = -1,
+                hasFirstElement = true,
+                firstElement = 1,
+                hasSecondElement = true,
+                secondElement = 2,
+                hasMoreElements = false,
+                parentHasNextField = true,
+                parentField = "next",
+                parentValue = "done"
             ).toSeqMap)
         }
     }

@@ -83,17 +83,8 @@ class YamlTest extends kyo.test.Test[Any]:
         }
 
         "decodes flow mappings and flow sequences" in {
-            assertResult(
-                (
-                    mapping = Result.succeed(MTPerson("Alice", 30)),
-                    sequence = Result.succeed(List(1, 2, 3))
-                )
-            ) {
-                (
-                    mapping = Yaml.decode[MTPerson]("{name: Alice, age: 30}"),
-                    sequence = Yaml.decode[List[Int]]("[1, 2, 3]")
-                )
-            }
+            assert(Yaml.decode[MTPerson]("{name: Alice, age: 30}") == Result.succeed(MTPerson("Alice", 30)))
+            assert(Yaml.decode[List[Int]]("[1, 2, 3]") == Result.succeed(List(1, 2, 3)))
         }
 
         "decodes flow mapping fields with YAML colon edge cases" in {
@@ -183,13 +174,7 @@ class YamlTest extends kyo.test.Test[Any]:
                 trailingSlash = message("\"abc\\\"\n")
             )
 
-            assertResult((
-                unknown = true,
-                shortHex = true,
-                badHex = true,
-                invalidCodePoint = true,
-                trailingSlash = true
-            ).toSeqMap)((
+            assert((
                 unknown = observed.unknown.contains("Invalid escape sequence \\q") && observed.unknown.contains("line 1"),
                 shortHex = observed.shortHex.contains("Invalid escape sequence \\xF") && observed.shortHex.contains("line 1"),
                 badHex = observed.badHex.contains("Invalid escape sequence \\u12xz") && observed.badHex.contains("line 1"),
@@ -197,6 +182,12 @@ class YamlTest extends kyo.test.Test[Any]:
                     observed.invalidCodePoint.contains("line 1"),
                 trailingSlash = observed.trailingSlash.contains("Unterminated double quoted scalar") &&
                     observed.trailingSlash.contains("line")
+            ).toSeqMap == (
+                unknown = true,
+                shortHex = true,
+                badHex = true,
+                invalidCodePoint = true,
+                trailingSlash = true
             ).toSeqMap)
         }
 
@@ -290,17 +281,8 @@ class YamlTest extends kyo.test.Test[Any]:
 
             decoded match
                 case Result.Failure(e: ParseException) =>
-                    assertResult(
-                        (
-                            mentionsIndex = true,
-                            mentionsFound = true
-                        )
-                    ) {
-                        (
-                            mentionsIndex = e.getMessage.contains("document index 1"),
-                            mentionsFound = e.getMessage.contains("found 1")
-                        )
-                    }
+                    assert(e.getMessage.contains("document index 1"))
+                    assert(e.getMessage.contains("found 1"))
                 case other => fail(s"Expected ParseException failure, got $other")
             end match
         }
@@ -421,17 +403,8 @@ class YamlTest extends kyo.test.Test[Any]:
                   |text: next
                   |""".stripMargin
 
-            assertResult(
-                (
-                    first = Result.succeed(Map("text" -> "---\nliteral marker\n")),
-                    second = Result.succeed(Map("text" -> "next"))
-                )
-            ) {
-                (
-                    first = Yaml.decode[Map[String, String]](yaml, Yaml.DocumentIndex(0)),
-                    second = Yaml.decode[Map[String, String]](yaml, Yaml.DocumentIndex(1))
-                )
-            }
+            assert(Yaml.decode[Map[String, String]](yaml, Yaml.DocumentIndex(0)) == Result.succeed(Map("text" -> "---\nliteral marker\n")))
+            assert(Yaml.decode[Map[String, String]](yaml, Yaml.DocumentIndex(1)) == Result.succeed(Map("text" -> "next")))
         }
 
         "single document decode rejects trailing content after an end marker" in {
@@ -558,17 +531,8 @@ class YamlTest extends kyo.test.Test[Any]:
 
             result match
                 case Result.Failure(e: ParseException) =>
-                    assertResult(
-                        (
-                            mentionsLine = true,
-                            mentionsColumn = true
-                        )
-                    ) {
-                        (
-                            mentionsLine = e.getMessage.contains("line 2"),
-                            mentionsColumn = e.getMessage.contains("column")
-                        )
-                    }
+                    assert(e.getMessage.contains("line 2"))
+                    assert(e.getMessage.contains("column"))
                 case other => fail(s"Expected ParseException failure, got $other")
             end match
         }
@@ -578,19 +542,9 @@ class YamlTest extends kyo.test.Test[Any]:
             val second = Yaml.decode[AllNoArgEnumA]("Second: {}\n")
             val third  = Yaml.decode[AllNoArgEnumA]("Third: {}\n")
 
-            assertResult(
-                (
-                    first = Result.succeed(AllNoArgEnumA.First),
-                    second = Result.succeed(AllNoArgEnumA.Second),
-                    third = Result.succeed(AllNoArgEnumA.Third)
-                )
-            ) {
-                (
-                    first = first,
-                    second = second,
-                    third = third
-                )
-            }
+            assert(first == Result.succeed(AllNoArgEnumA.First))
+            assert(second == Result.succeed(AllNoArgEnumA.Second))
+            assert(third == Result.succeed(AllNoArgEnumA.Third))
         }
 
         "decodes mixed enum cases with parameterized and no-arg variants" in {
@@ -599,19 +553,9 @@ class YamlTest extends kyo.test.Test[Any]:
                   |  x: 7
                   |""".stripMargin
 
-            assertResult(
-                (
-                    alpha = Result.succeed(MixedArityEnum.Alpha(7)),
-                    beta = Result.succeed(MixedArityEnum.Beta),
-                    gamma = Result.succeed(MixedArityEnum.Gamma)
-                )
-            ) {
-                (
-                    alpha = Yaml.decode[MixedArityEnum](alpha),
-                    beta = Yaml.decode[MixedArityEnum]("Beta: {}\n"),
-                    gamma = Yaml.decode[MixedArityEnum]("Gamma: {}\n")
-                )
-            }
+            assert(Yaml.decode[MixedArityEnum](alpha) == Result.succeed(MixedArityEnum.Alpha(7)))
+            assert(Yaml.decode[MixedArityEnum]("Beta: {}\n") == Result.succeed(MixedArityEnum.Beta))
+            assert(Yaml.decode[MixedArityEnum]("Gamma: {}\n") == Result.succeed(MixedArityEnum.Gamma))
         }
 
         "decodes sealed trait hierarchies including case objects" in {
@@ -620,17 +564,8 @@ class YamlTest extends kyo.test.Test[Any]:
                   |  name: release
                   |""".stripMargin
 
-            assertResult(
-                (
-                    labeled = Result.succeed(SealedNoArgVariants.Labeled("release")),
-                    unit = Result.succeed(SealedNoArgVariants.Unit2)
-                )
-            ) {
-                (
-                    labeled = Yaml.decode[SealedNoArgVariants](labeled),
-                    unit = Yaml.decode[SealedNoArgVariants]("Unit2: {}\n")
-                )
-            }
+            assert(Yaml.decode[SealedNoArgVariants](labeled) == Result.succeed(SealedNoArgVariants.Labeled("release")))
+            assert(Yaml.decode[SealedNoArgVariants]("Unit2: {}\n") == Result.succeed(SealedNoArgVariants.Unit2))
         }
 
         "decodes recursive sealed trait hierarchies" in {
@@ -730,18 +665,8 @@ class YamlTest extends kyo.test.Test[Any]:
             reader.fieldParse()
             val captured = reader.captureValue()
 
-            val isReader = captured.isInstanceOf[kyo.internal.yaml.YamlReader]
-            assertResult(
-                (
-                    isReader = true,
-                    value = 42
-                )
-            ) {
-                (
-                    isReader = isReader,
-                    value = captured.int()
-                )
-            }
+            assert(captured.isInstanceOf[kyo.internal.yaml.YamlReader])
+            assert(captured.int() == 42)
         }
 
         "reader can pull a requested prefix without parsing later malformed content" in {
@@ -756,17 +681,8 @@ class YamlTest extends kyo.test.Test[Any]:
             reader.fieldParse()
 
             val matchedField = reader.matchField("value".getBytes(java.nio.charset.StandardCharsets.UTF_8))
-            assertResult(
-                (
-                    matchedField = true,
-                    value = 42
-                )
-            ) {
-                (
-                    matchedField = matchedField,
-                    value = reader.int()
-                )
-            }
+            assert(matchedField == true)
+            assert(reader.int() == 42)
         }
 
         "reader folds a requested plain scalar prefix without parsing later malformed content" in {
@@ -782,17 +698,8 @@ class YamlTest extends kyo.test.Test[Any]:
             reader.fieldParse()
 
             val matchedField = reader.matchField("value".getBytes(java.nio.charset.StandardCharsets.UTF_8))
-            assertResult(
-                (
-                    matchedField = true,
-                    value = "hello world"
-                )
-            ) {
-                (
-                    matchedField = matchedField,
-                    value = reader.string()
-                )
-            }
+            assert(matchedField == true)
+            assert(reader.string() == "hello world")
         }
 
         "captureValue buffers only the requested subtree" in {
@@ -840,17 +747,8 @@ class YamlTest extends kyo.test.Test[Any]:
 
             discard(captured.arrayStart())
             val hasElement = captured.hasNextElement()
-            assertResult(
-                (
-                    hasElement = true,
-                    value = 1
-                )
-            ) {
-                (
-                    hasElement = hasElement,
-                    value = captured.int()
-                )
-            }
+            assert(hasElement == true)
+            assert(captured.int() == 1)
         }
 
         "captureValue advances root source by one scalar node" in {
@@ -858,17 +756,8 @@ class YamlTest extends kyo.test.Test[Any]:
 
             val first  = reader.captureValue()
             val second = reader.captureValue()
-            assertResult(
-                (
-                    first = "Alice",
-                    second = "Bob"
-                )
-            ) {
-                (
-                    first = first.string(),
-                    second = second.string()
-                )
-            }
+            assert(first.string() == "Alice")
+            assert(second.string() == "Bob")
         }
 
         "captureValue advances root source by one flow collection" in {
@@ -886,21 +775,10 @@ class YamlTest extends kyo.test.Test[Any]:
             val secondValue      = second.int()
             second.arrayEnd()
 
-            assertResult(
-                (
-                    firstHasElement = true,
-                    firstValue = 1,
-                    secondHasElement = true,
-                    secondValue = 2
-                )
-            ) {
-                (
-                    firstHasElement = firstHasElement,
-                    firstValue = firstValue,
-                    secondHasElement = secondHasElement,
-                    secondValue = secondValue
-                )
-            }
+            assert(firstHasElement == true)
+            assert(firstValue == 1)
+            assert(secondHasElement == true)
+            assert(secondValue == 2)
         }
 
         "captureValue advances root source by one block collection" in {
@@ -924,21 +802,10 @@ class YamlTest extends kyo.test.Test[Any]:
             val secondValue      = second.int()
             second.arrayEnd()
 
-            assertResult(
-                (
-                    firstMatchedField = true,
-                    firstValue = "Alice",
-                    secondHasElement = true,
-                    secondValue = 2
-                )
-            ) {
-                (
-                    firstMatchedField = firstMatchedField,
-                    firstValue = firstValue,
-                    secondHasElement = secondHasElement,
-                    secondValue = secondValue
-                )
-            }
+            assert(firstMatchedField == true)
+            assert(firstValue == "Alice")
+            assert(secondHasElement == true)
+            assert(secondValue == 2)
         }
 
         "reader can pull a flow sequence prefix without parsing later malformed content" in {
@@ -947,19 +814,9 @@ class YamlTest extends kyo.test.Test[Any]:
             val size = reader.arrayStart()
 
             val hasElement = reader.hasNextElement()
-            assertResult(
-                (
-                    size = -1,
-                    hasElement = true,
-                    value = 1
-                )
-            ) {
-                (
-                    size = size,
-                    hasElement = hasElement,
-                    value = reader.int()
-                )
-            }
+            assert(size == -1)
+            assert(hasElement == true)
+            assert(reader.int() == 1)
         }
 
         "reader can pull a flow mapping prefix without parsing later malformed content" in {
@@ -970,21 +827,10 @@ class YamlTest extends kyo.test.Test[Any]:
             val hasField = reader.hasNextField()
             reader.fieldParse()
             val matchedField = reader.matchField("name".getBytes(java.nio.charset.StandardCharsets.UTF_8))
-            assertResult(
-                (
-                    size = -1,
-                    hasField = true,
-                    matchedField = true,
-                    value = "Alice"
-                )
-            ) {
-                (
-                    size = size,
-                    hasField = hasField,
-                    matchedField = matchedField,
-                    value = reader.string()
-                )
-            }
+            assert(size == -1)
+            assert(hasField == true)
+            assert(matchedField == true)
+            assert(reader.string() == "Alice")
         }
 
         "reader registers anchored mapping sources without parsing later malformed fields" in {
@@ -1083,17 +929,8 @@ class YamlTest extends kyo.test.Test[Any]:
         "reader reports unknown source aliases with context" in {
             Yaml.decode[String]("*missing\n") match
                 case Result.Failure(e: ParseException) =>
-                    assertResult(
-                        (
-                            mentionsAlias = true,
-                            mentionsLine = true
-                        )
-                    ) {
-                        (
-                            mentionsAlias = e.getMessage.contains("Unknown alias 'missing'"),
-                            mentionsLine = e.getMessage.contains("line 1")
-                        )
-                    }
+                    assert(e.getMessage.contains("Unknown alias 'missing'"))
+                    assert(e.getMessage.contains("line 1"))
                 case other => fail(s"Expected ParseException failure, got $other")
             end match
         }
@@ -1111,13 +948,13 @@ class YamlTest extends kyo.test.Test[Any]:
                 trailingContent = message("*name trailing\n")
             )
 
-            assertResult((
-                missingName = true,
-                trailingContent = true
-            ).toSeqMap)((
+            assert((
                 missingName = observed.missingName.contains("Expected YAML alias name") && observed.missingName.contains("line 1"),
                 trailingContent = observed.trailingContent.contains("Unexpected content after YAML alias") &&
                     observed.trailingContent.contains("line 1")
+            ).toSeqMap == (
+                missingName = true,
+                trailingContent = true
             ).toSeqMap)
         }
 
@@ -1136,17 +973,8 @@ class YamlTest extends kyo.test.Test[Any]:
             val reader = kyo.internal.yaml.YamlReader("Alice\nlater: [unterminated")
 
             val notNil = !reader.isNil()
-            assertResult(
-                (
-                    notNil = true,
-                    value = "Alice"
-                )
-            ) {
-                (
-                    notNil = notNil,
-                    value = reader.string()
-                )
-            }
+            assert(notNil == true)
+            assert(reader.string() == "Alice")
         }
 
         "captureValue advances root source by one block sequence" in {
@@ -1176,11 +1004,11 @@ class YamlTest extends kyo.test.Test[Any]:
             )
             next.objectEnd()
 
-            assertResult((
+            assert(observed.toSeqMap == (
                 decoded = Result.succeed(List(MTPerson("Alice", 30), MTPerson("Bob", 25))),
                 nextField = "next",
                 nextValue = "done"
-            ).toSeqMap)(observed.toSeqMap)
+            ).toSeqMap)
         }
 
         "captureValue advances root source by one flow mapping" in {
@@ -1199,16 +1027,16 @@ class YamlTest extends kyo.test.Test[Any]:
             val hasMore = next.hasNextElement()
             next.arrayEnd()
 
-            assertResult((
-                decoded = Result.succeed(scala.collection.immutable.Map("name" -> "Alice", "text" -> "brace } inside")),
-                hasNext = true,
-                value = 1,
-                hasMore = false
-            ).toSeqMap)((
+            assert((
                 decoded = decoded,
                 hasNext = hasNext,
                 value = value,
                 hasMore = hasMore
+            ).toSeqMap == (
+                decoded = Result.succeed(scala.collection.immutable.Map("name" -> "Alice", "text" -> "brace } inside")),
+                hasNext = true,
+                value = 1,
+                hasMore = false
             ).toSeqMap)
         }
 
@@ -1255,7 +1083,7 @@ class YamlTest extends kyo.test.Test[Any]:
             )
             next.objectEnd()
 
-            assertResult((
+            assert(observed.toSeqMap == (
                 hasText = true,
                 text = "a ] # not close",
                 hasValues = true,
@@ -1267,7 +1095,7 @@ class YamlTest extends kyo.test.Test[Any]:
                 hasMoreElements = false,
                 nextField = "name",
                 nextValue = "next"
-            ).toSeqMap)(observed.toSeqMap)
+            ).toSeqMap)
         }
 
         "skip advances the current sequence element without parsing later malformed content" in {
@@ -1299,17 +1127,8 @@ class YamlTest extends kyo.test.Test[Any]:
             val stream = Span.from("---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n".getBytes(StandardCharsets.UTF_8))
             val single = Span.from("name: Alice\nage: 30\n".getBytes(StandardCharsets.UTF_8))
 
-            assertResult(
-                (
-                    limited = Result.succeed(MTPerson("Alice", 30)),
-                    selected = Result.succeed(MTPerson("Bob", 25))
-                )
-            ) {
-                (
-                    limited = Yaml.decodeBytes[MTPerson](single, 64, 1024),
-                    selected = Yaml.decodeBytes[MTPerson](stream, Yaml.DocumentIndex(1))
-                )
-            }
+            assert(Yaml.decodeBytes[MTPerson](single, 64, 1024) == Result.succeed(MTPerson("Alice", 30)))
+            assert(Yaml.decodeBytes[MTPerson](stream, Yaml.DocumentIndex(1)) == Result.succeed(MTPerson("Bob", 25)))
         }
 
         "decodes every document of a stream with explicit limits" in {
@@ -1328,11 +1147,10 @@ class YamlTest extends kyo.test.Test[Any]:
         }
 
         "parses an empty source as an empty scalar" in {
-            assertResult(true) {
-                Yaml.parse("") match
-                    case Result.Success(Yaml.Node.Scalar(value, _)) => value.isEmpty
-                    case _                                          => false
-            }
+            val obtained = Yaml.parse("") match
+                case Result.Success(Yaml.Node.Scalar(value, _)) => value.isEmpty
+                case _                                          => false
+            assert(obtained)
         }
 
         "decodes a single-document CST stream through the top-level helper" in {
