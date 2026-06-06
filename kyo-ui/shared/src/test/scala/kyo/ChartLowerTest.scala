@@ -2893,4 +2893,141 @@ class ChartLowerTest extends Test:
         )
     }
 
+    // ---- L-bug: CatKey collision tests (toString-collision bug) ----
+    // A group type whose toString is non-injective: Grp(1) and Grp(2) both produce "G".
+    // This exposes the bug where dataMap / rowBySlot / colorIdxByKey key by toString, causing
+    // collisions: last-writer-wins on the data map while the category list expands to two entries,
+    // leading to one group's value being lost and the other double-counted.
+
+    final case class GrpRow(month: String, value: Double, grp: GrpTag) derives CanEqual
+    final case class GrpTag(id: Int) derives CanEqual:
+        override def toString: String = "G" // non-injective: all GrpTag values share the same label
+
+    "L-bug-stacked-bar: distinct groups with colliding toString must produce two segments with correct heights (not double-counted)" in {
+        // Two rows at the same x="Jan": grp=GrpTag(1) with value=10, grp=GrpTag(2) with value=30.
+        // Correct: two distinct segments of height 10 and 30 (total stack = 40).
+        // Buggy:   dataMap merges both under "G" (last-writer-wins -> 30), groupKeys=["G","G"],
+        //          totalY = 30+30 = 60, each segment height = 300 -> total 600 -> WRONG.
+        // Layout note: with stack.group defined, hasLegend=true, LegendReservedH=20 is reserved at the top.
+        // Effective: plotY_eff=40, plotH_eff=400, baseline=440.
+        // y scale: extent [0,40], niceTicks -> nHi=40. Scale.Linear(0,40,baseline=440,top=40).
+        // Segment gi=0 (value=10): spans [0,10] -> bottom=440, top=ys(10)=440+(10/40)*(40-440)=440-100=340; rectH=100.
+        // Segment gi=1 (value=30): spans [10,40] -> bottom=ys(10)=340, top=ys(40)=40; rectH=300.
+        // Total combined height = 400 = plotH_eff. Buggy total = 600.
+        val rows = Chunk(
+            GrpRow("Jan", 10.0, GrpTag(1)),
+            GrpRow("Jan", 30.0, GrpTag(2))
+        )
+        val spec  = UI.chart(rows)(bar(x = _.month, y = _.value, stack = by(_.grp)))
+        val root  = summon[Conversion[ChartSpec[GrpRow], Svg.Root]](spec)
+        val rects = rectsIn(root)
+
+        // Must have exactly 2 segments (one per distinct group).
+        assert(rects.size == 2, s"L-bug-stacked-bar: expected 2 stacked segments but got ${rects.size}")
+
+        // Effective plot height: legend reserve (LegendReservedH=20) shifts the plot down so plotH_eff = 400.
+        val plotHEff = 400.0
+        val heights  = rects.map(r => numOf(r.svgAttrs.height)).toSeq.sorted
+        // The two heights must sum to plotH_eff (total stack 40 covers the full effective plot height).
+        val totalHeight = heights.sum
+        assertClose(totalHeight, plotHEff, "L-bug-stacked-bar: total stacked height must equal effective plotH=400")
+        // Smaller segment (value=10): 10/40 of plotH_eff = 100.
+        assertClose(heights(0), plotHEff * 10.0 / 40.0, "L-bug-stacked-bar: smaller segment height (value=10 portion)")
+        // Larger segment (value=30): 30/40 of plotH_eff = 300.
+        assertClose(heights(1), plotHEff * 30.0 / 40.0, "L-bug-stacked-bar: larger segment height (value=30 portion)")
+
+        // Legend must have 2 distinct swatches.
+        val swatches = legendSwatchRects(root)
+        assert(swatches.size == 2, s"L-bug-stacked-bar: expected 2 legend swatches but got ${swatches.size}")
+    }
+
+    "L-bug-stacked-area: distinct groups with colliding toString must produce two distinct area bands (not one doubled)" in {
+        // Two rows at the same x="Jan": grp=GrpTag(1) with value=10, grp=GrpTag(2) with value=30.
+        // Correct: two distinct stacked area bands, total stack [0,40], top of stack at plotY=20.
+        // Buggy:   groupKeys=["G","G"], dataMap["Jan"]["G"]=30, second band accumulates to 60 ->
+        //          top of second band = ys(60) which is BELOW PlotY (a negative pixel, above the SVG).
+        val rows = Chunk(
+            GrpRow("Jan", 10.0, GrpTag(1)),
+            GrpRow("Jan", 30.0, GrpTag(2))
+        )
+        val spec = UI.chart(rows)(area(x = _.month, y = _.value, stack = by(_.grp)))
+        val root = summon[Conversion[ChartSpec[GrpRow], Svg.Root]](spec)
+        // The marks group holds area paths.
+        val marks     = marksGroup(root)
+        val areaPaths = marks.children.collect { case p: Svg.Path => p }
+
+        // Must have exactly 2 area band paths (one per distinct group).
+        assert(areaPaths.size == 2, s"L-bug-stacked-area: expected 2 area band paths but got ${areaPaths.size}")
+
+        // The two bands must have distinct fill colors (each group gets its own palette color).
+        val fills = areaPaths.map(p => fillColorOfPath(p)).toSeq.distinct
+        assert(fills.size == 2, s"L-bug-stacked-area: expected 2 distinct fill colors but got $fills")
+
+        // Critical correctness check: no path command should produce a y coordinate above plotY_eff.
+        // Layout: stack.group defined => hasLegend=true, LegendReservedH=20.
+        // plotY_eff = 40, baseline = 440, plotH_eff = 400.
+        // y scale: stackedAreaYExtent sums 10+30=40, niceTicks [0,40] -> nHi=40.
+        // Scale.Linear(0,40,baseline=440,top=40): ys(40)=40, ys(60)=40+(60/40)*(440-40)-440=-160 (above plot, NEGATIVE).
+        // In correct case: min path y = ys(40) = 40.0. In buggy case: min path y = -160 (way above the plot).
+        val plotYEff = 40.0 // plotY with legend reserve
+        val allPathYs: Seq[Double] = areaPaths.toSeq.flatMap: p =>
+            Svg.PathData.commands(p.svgAttrs.d.getOrElse(Svg.PathData.empty)).toSeq.collect:
+                case PathCommand.MoveTo(_, y) => y
+                case PathCommand.LineTo(_, y) => y
+        assert(allPathYs.nonEmpty, "L-bug-stacked-area: expected path y coordinates")
+        val minY = allPathYs.min
+        assert(
+            minY >= plotYEff - Tol,
+            s"L-bug-stacked-area: topmost y=$minY must be >= plotYEff=$plotYEff (second band must not exceed total stack of 40)"
+        )
+
+        // Legend must have 2 distinct swatches.
+        val swatches = legendSwatchRects(root)
+        assert(swatches.size == 2, s"L-bug-stacked-area: expected 2 legend swatches but got ${swatches.size}")
+    }
+
+    "L-bug-grouped-bar: distinct groups with colliding toString must produce two dodged bars with correct heights" in {
+        // Two rows at the same x="Jan": grp=GrpTag(1) with value=10, grp=GrpTag(2) with value=30.
+        // Correct: 2 dodged bars, one with height proportional to 10, one to 30, in 2 distinct colors.
+        // Buggy:   colorIdxByKey["G"]=0, both rows land in sub-slot 0, second overwrites first -> only 1 value rendered.
+        val rows = Chunk(
+            GrpRow("Jan", 10.0, GrpTag(1)),
+            GrpRow("Jan", 30.0, GrpTag(2))
+        )
+        val spec  = UI.chart(rows)(bar(x = _.month, y = _.value, color = _.grp))
+        val root  = summon[Conversion[ChartSpec[GrpRow], Svg.Root]](spec)
+        val rects = rectsIn(root)
+
+        // Must have exactly 2 bar rects (one per distinct group).
+        assert(rects.size == 2, s"L-bug-grouped-bar: expected 2 dodged bar rects but got ${rects.size}")
+
+        // The two bars must have distinct heights (10-proportional and 30-proportional).
+        // Layout: color channel defined => hasLegend=true, LegendReservedH=20.
+        // plotY_eff=40, plotH_eff=400, baseline=440.
+        // y scale: extent [0,30] (max is 30), niceTicks -> nHi=30.
+        // Scale.Linear(0,30,baseline=440,top=40): apply(10)=440+(10/30)*(40-440)=440-133.33=306.67; barH=133.33.
+        //                                          apply(30)=40; barH=440-40=400.
+        val plotHEff = 400.0
+        val heights  = rects.map(r => numOf(r.svgAttrs.height)).toSeq.sorted
+        assertClose(heights(0), plotHEff * 10.0 / 30.0, "L-bug-grouped-bar: smaller bar height (value=10 portion)")
+        assertClose(heights(1), plotHEff, "L-bug-grouped-bar: taller bar height (value=30 fills full effective plot)")
+
+        // The two bars must have distinct x positions (dodged side by side).
+        val xs = rects.map(r => numOf(r.svgAttrs.x)).toSeq.sorted
+        assert(xs(0) != xs(1), s"L-bug-grouped-bar: the two bars must be at different x positions (dodged), but both at ${xs(0)}")
+
+        // The two bars must have distinct fill colors.
+        val fills = rects.map(r => numOf(r.svgAttrs.x)).toSeq
+        val fillColors = rects.map(r =>
+            r.svgAttrs.fill match
+                case Present(Svg.Paint.Color(c)) => c
+                case other                       => fail(s"L-bug-grouped-bar: expected color fill but got $other")
+        ).toSeq.distinct
+        assert(fillColors.size == 2, s"L-bug-grouped-bar: expected 2 distinct fill colors but got $fillColors")
+
+        // Legend must have 2 distinct swatches.
+        val swatches = legendSwatchRects(root)
+        assert(swatches.size == 2, s"L-bug-grouped-bar: expected 2 legend swatches but got ${swatches.size}")
+    }
+
 end ChartLowerTest

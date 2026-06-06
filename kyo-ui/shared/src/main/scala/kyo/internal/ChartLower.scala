@@ -219,6 +219,8 @@ private[kyo] object ChartLower:
             case DataSource.Live(signal) =>
                 // Unsafe: a point-in-time sample of the live signal's current rows, used only to size the
                 // left margin to the labels currently on screen. Pure synchronous read, no suspension.
+                // Cannot throw: signal.current returns A < Sync (no Abort in scope), so Abort.run yields
+                // Result.Ok and getOrThrow never executes the throw branch.
                 import AllowUnsafe.embrace.danger
                 Present(Sync.Unsafe.evalOrThrow(signal.current))
         rowsMaybe match
@@ -2061,9 +2063,14 @@ private[kyo] object ChartLower:
         val colorCats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, colorEnc)
         val colorKeys: Chunk[String]        = colorCats.map(_._1)
         val numColors                       = colorKeys.size
-        // Precompute colorKey -> index once (O(colors)); replaces a per-row indexOf scan.
-        val colorIdxByKey: Map[String, Int] =
-            colorKeys.zipWithIndex.foldLeft(Map.empty[String, Int])((m, ki) => m.updated(ki._1, ki._2))
+        // Precompute colorCatKey -> index once (O(colors)); keys by CatKey (tag + raw value) so distinct
+        // color values with the same toString remain separate (INV-002 / catalog #6 fix).
+        // Mirrors lowerPoint's colorByKey: Map[CatKey, Style.Color].
+        val colorIdxByKey: Map[ChartFoundations.CatKey, Int] =
+            colorCats.zipWithIndex.foldLeft(Map.empty[ChartFoundations.CatKey, Int]): (m, catWithIdx) =>
+                val (cat, idx) = catWithIdx
+                val catKey     = ChartFoundations.categoryKey(colorEnc.tag, cat._2)
+                m.updated(catKey, idx)
         val basePalette: Chunk[Style.Color] = spec match
             case Present(s) => themePalette(s.theme)
             case Absent     => DefaultPalette
@@ -2085,15 +2092,16 @@ private[kyo] object ChartLower:
         // MULTIPLE distinct colors actually share the SAME x-band. When `color` is 1:1 with `x` (e.g.
         // bar(x=_.label, color=_.label)), every band holds exactly one color; dodging each band's single bar
         // into its global color sub-slot would march thin bars left-to-right, misaligned with the centered
-        // x-axis tick labels. So compute the max distinct color keys present within any single x-band; when
+        // x-axis tick labels. So compute the max distinct CatKeys present within any single x-band; when
         // that max is <= 1, render SIMPLE full-band bars (slot-centered, full bandwidth) instead of dodging.
+        // Keys by CatKey so two distinct values with the same toString are counted as two distinct colors.
         val maxColorsPerBand: Int =
-            rows.foldLeft(Map.empty[String, Set[String]]): (m, row) =>
+            rows.foldLeft(Map.empty[String, Set[ChartFoundations.CatKey]]): (m, row) =>
                 val xKeyMaybe = mark.x.plottable.toDomain(mark.x.accessor(row)).map(domainKey)
                 xKeyMaybe match
                     case Present(xKey) =>
-                        val colorKey = colorEnc.accessor(row).toString
-                        m.updated(xKey, m.getOrElse(xKey, Set.empty[String]) + colorKey)
+                        val colorCatKey = ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(row))
+                        m.updated(xKey, m.getOrElse(xKey, Set.empty[ChartFoundations.CatKey]) + colorCatKey)
                     case Absent => m
                 end match
             .foldLeft(0)((mx, kv) => math.max(mx, kv._2.size))
@@ -2112,10 +2120,10 @@ private[kyo] object ChartLower:
                         xDomain match
                             case Absent => acc
                             case Present(xd) =>
-                                val bandX    = xs.apply(xd)
-                                val bandW    = xs.bandwidth
-                                val colorKey = colorEnc.accessor(row).toString
-                                val colorIdx = colorIdxByKey.getOrElse(colorKey, -1)
+                                val bandX       = xs.apply(xd)
+                                val bandW       = xs.bandwidth
+                                val colorCatKey = ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(row))
+                                val colorIdx    = colorIdxByKey.getOrElse(colorCatKey, -1)
                                 // Dodge only when a real grouped bar (some band holds >1 color); otherwise the
                                 // bar spans the full band, slot-centered under its x tick label.
                                 val subW      = if dodge then bandW / numColors.toDouble else bandW
@@ -2174,13 +2182,14 @@ private[kyo] object ChartLower:
             case Present(s) => resolvePalette(s, groupCats)
             case Absent     => resolvePaletteFromCfg(groupKeys)
 
-        // 3. Build, in one pass: xKey -> groupKey -> yValue (dataMap), xKey -> first-seen x Domain
-        // (xDomainByKey, for band positioning), and (xKey, groupKey) -> first-seen row (rowBySlot, for
-        // per-datum channels). The latter two replace the per-x-key and per-rect linear `rows.find` scans.
+        // 3. Build, in one pass: xKey -> groupCatKey -> yValue (dataMap), xKey -> first-seen x Domain
+        // (xDomainByKey, for band positioning), and (xKey, groupCatKey) -> first-seen row (rowBySlot, for
+        // per-datum channels). Keys by CatKey (value-equality via categoryKey) instead of toString so two
+        // distinct group values with colliding toString remain separate (INV-002 / catalog #6 fix).
         final case class StackMaps(
-            data: Map[String, Map[String, Double]],
+            data: Map[String, Map[ChartFoundations.CatKey, Double]],
             xDomainByKey: Map[String, Domain],
-            rowBySlot: Map[(String, String), A]
+            rowBySlot: Map[(String, ChartFoundations.CatKey), A]
         )
         @scala.annotation.tailrec
         def buildMap(i: Int, m: StackMaps): StackMaps =
@@ -2194,24 +2203,26 @@ private[kyo] object ChartLower:
                 val yValOpt = mark.y.plottable.toDomain(mark.y.accessor(row)) match
                     case Present(Domain.Continuous(v)) => Present(v)
                     case _                             => Absent
-                val groupKey = groupFn(row).toString
+                // Key by CatKey (tag + raw value) so distinct group values with the same toString stay
+                // separate. groupEnc.tag is ConcreteTag[Any]; groupFn(row) is the raw group value.
+                val groupCatKey = ChartFoundations.categoryKey(groupEnc.tag, groupFn(row))
                 val withDomain = (xKeyOpt, xDomainOpt) match
                     case (Present(xk), Present(d)) if !m.xDomainByKey.contains(xk) =>
                         m.copy(xDomainByKey = m.xDomainByKey.updated(xk, d))
                     case _ => m
-                // rowBySlot records the first row per (xKey, groupKey) regardless of y, mirroring the
+                // rowBySlot records the first row per (xKey, groupCatKey) regardless of y, mirroring the
                 // original `rows.find` (which matched on x+group only). A slot's row is only consulted
                 // when its summed y is non-zero, but first-seen-by-x+group is the original semantics.
                 val withSlot = xKeyOpt match
                     case Present(xk) =>
-                        val slotKey = (xk, groupKey)
+                        val slotKey = (xk, groupCatKey)
                         if withDomain.rowBySlot.contains(slotKey) then withDomain
                         else withDomain.copy(rowBySlot = withDomain.rowBySlot.updated(slotKey, row))
                     case Absent => withDomain
                 val next = (xKeyOpt, yValOpt) match
                     case (Present(xk), Present(yv)) =>
                         val inner = withSlot.data.getOrElse(xk, Map.empty)
-                        withSlot.copy(data = withSlot.data.updated(xk, inner.updated(groupKey, yv)))
+                        withSlot.copy(data = withSlot.data.updated(xk, inner.updated(groupCatKey, yv)))
                     case _ => withSlot
                 buildMap(i + 1, next)
         val stackMaps    = buildMap(0, StackMaps(Map.empty, Map.empty, Map.empty))
@@ -2219,7 +2230,12 @@ private[kyo] object ChartLower:
         val xDomainByKey = stackMaps.xDomainByKey
         val rowBySlot    = stackMaps.rowBySlot
 
-        // 4. For each x key, emit stacked rects
+        // 4. For each x key, emit stacked rects.
+        // groupCatKeys: one CatKey per category in encounter/ordinal order, derived from the raw values
+        // in groupCats (mirrors how collectColorCategoriesWithRaw keyed them in step 2 above).
+        val groupCatKeys: Chunk[ChartFoundations.CatKey] =
+            groupCats.map { case (_, raw) => ChartFoundations.categoryKey(groupEnc.tag, raw) }
+
         @scala.annotation.tailrec
         def loopX(xi: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
             if xi >= xKeys.size then acc
@@ -2231,17 +2247,17 @@ private[kyo] object ChartLower:
                     case Absent     => xs.apply(Domain.Category(xKey))
                 val bandW    = xs.bandwidth
                 val groupMap = dataMap.getOrElse(xKey, Map.empty)
-                val totalY   = groupKeys.foldLeft(0.0)((s, gk) => s + groupMap.getOrElse(gk, 0.0))
+                val totalY   = groupCatKeys.foldLeft(0.0)((s, gck) => s + groupMap.getOrElse(gck, 0.0))
 
                 // posAcc and negAcc are threaded as loopGroup parameters, reset to 0.0 for each
                 // new x-key iteration (INV-018). posAcc accumulates positive contributions upward
                 // from the baseline; negAcc accumulates negative contributions downward.
                 @scala.annotation.tailrec
                 def loopGroup(gi: Int, posAcc: Double, negAcc: Double, acc2: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
-                    if gi >= groupKeys.size then acc2
+                    if gi >= groupCatKeys.size then acc2
                     else
-                        val gk   = groupKeys(gi)
-                        val rawY = groupMap.getOrElse(gk, 0.0)
+                        val gck  = groupCatKeys(gi)
+                        val rawY = groupMap.getOrElse(gck, 0.0)
                         val effectiveY =
                             if mark.stack.normalize then
                                 if totalY > 0.0 then rawY / totalY else 0.0
@@ -2282,7 +2298,7 @@ private[kyo] object ChartLower:
                                     .fill(Svg.Paint.Color(fillColor))
                                 // Look up the row for this x+group combination to apply per-datum channels.
                                 // (There is at most one row per x+group; rowBySlot holds the first match.)
-                                val rowForSlot: Maybe[A] = Maybe.fromOption(rowBySlot.get((xKey, gk)))
+                                val rowForSlot: Maybe[A] = Maybe.fromOption(rowBySlot.get((xKey, gck)))
                                 val withChannels: Chunk[Svg.SvgElement] = rowForSlot match
                                     case Absent => Chunk(baseRect)
                                     case Present(r) =>
@@ -2940,8 +2956,14 @@ private[kyo] object ChartLower:
             case Present(s) => resolvePalette(s, groupCats)
             case Absent     => resolvePaletteFromCfg(groupKeys)
 
+        // groupCatKeys: one CatKey per category in encounter/ordinal order, derived from the raw values
+        // in groupCats. Keys by CatKey (tag + raw value) so distinct group values with colliding toString
+        // stay separate (INV-002 / catalog #6 fix).
+        val groupCatKeys: Chunk[ChartFoundations.CatKey] =
+            groupCats.map { case (_, raw) => ChartFoundations.categoryKey(groupEnc.tag, raw) }
+
         // Precompute, in single passes: xKey -> first-seen x Domain (for band positioning) and
-        // groupKey -> first-seen row (for per-group interaction attrs). These replace the per-(group, x)
+        // groupCatKey -> first-seen row (for per-group interaction attrs). These replace the per-(group, x)
         // and per-group linear `rows.find` scans inside loopGroups.
         val xDomainByKey: Map[String, Domain] = rows.foldLeft(Map.empty[String, Domain]): (m, row) =>
             mark.x.plottable.toDomain(mark.x.accessor(row)) match
@@ -2949,13 +2971,14 @@ private[kyo] object ChartLower:
                     val k = domainKey(d)
                     if m.contains(k) then m else m.updated(k, d)
                 case Absent => m
-        val rowByGroup: Map[String, A] = rows.foldLeft(Map.empty[String, A]): (m, row) =>
-            val gk = groupFn(row).toString
-            if m.contains(gk) then m else m.updated(gk, row)
+        val rowByGroup: Map[ChartFoundations.CatKey, A] = rows.foldLeft(Map.empty[ChartFoundations.CatKey, A]): (m, row) =>
+            val gck = ChartFoundations.categoryKey(groupEnc.tag, groupFn(row))
+            if m.contains(gck) then m else m.updated(gck, row)
 
-        // Build xKey -> groupKey -> yValue map
+        // Build xKey -> groupCatKey -> yValue map.
+        // Keys by CatKey instead of toString so distinct group values with the same toString stay separate.
         @scala.annotation.tailrec
-        def buildMap(i: Int, m: Map[String, Map[String, Double]]): Map[String, Map[String, Double]] =
+        def buildMap(i: Int, m: Map[String, Map[ChartFoundations.CatKey, Double]]): Map[String, Map[ChartFoundations.CatKey, Double]] =
             if i >= rows.size then m
             else
                 val row = rows(i)
@@ -2969,9 +2992,9 @@ private[kyo] object ChartLower:
                     case Absent => Absent
                 val next = (xKeyOpt, yValOpt) match
                     case (Present(xk), Present(yv)) =>
-                        val gk    = groupFn(row).toString
+                        val gck   = ChartFoundations.categoryKey(groupEnc.tag, groupFn(row))
                         val inner = m.getOrElse(xk, Map.empty)
-                        m.updated(xk, inner.updated(gk, yv))
+                        m.updated(xk, inner.updated(gck, yv))
                     case _ => m
                 buildMap(i + 1, next)
         val dataMap = buildMap(0, Map.empty)
@@ -2979,7 +3002,7 @@ private[kyo] object ChartLower:
         // Compute per-x totals for normalization
         val xTotals: Map[String, Double] = xKeys.foldLeft(Map.empty[String, Double]): (acc, xk) =>
             val groupMap = dataMap.getOrElse(xk, Map.empty)
-            acc.updated(xk, groupKeys.foldLeft(0.0)((s, gk) => s + groupMap.getOrElse(gk, 0.0)))
+            acc.updated(xk, groupCatKeys.foldLeft(0.0)((s, gck) => s + groupMap.getOrElse(gck, 0.0)))
 
         // For each group, compute the pixel x values and the y0/y1 pixel pairs at each x slot.
         // `accumulatedFractions` tracks, for each xKey, how much of the stack has been consumed so far.
@@ -2989,14 +3012,14 @@ private[kyo] object ChartLower:
             accByX: Map[String, Double],
             acc: Chunk[Svg.SvgElement]
         ): Chunk[Svg.SvgElement] =
-            if gi >= groupKeys.size then acc
+            if gi >= groupCatKeys.size then acc
             else
-                val gk = groupKeys(gi)
+                val gck = groupCatKeys(gi)
 
                 // Build (px, py0, py1) for each x slot in order
                 val bands: Chunk[(Double, Double, Double)] = xKeys.flatMap: xk =>
                     val groupMap = dataMap.getOrElse(xk, Map.empty)
-                    val rawY     = groupMap.getOrElse(gk, 0.0)
+                    val rawY     = groupMap.getOrElse(gck, 0.0)
                     val accY     = accByX.getOrElse(xk, 0.0)
                     val total    = xTotals.getOrElse(xk, 0.0)
                     // Centre area vertices on the band (xs.apply gives the band LEFT edge; bandwidth is 0 for
@@ -3020,7 +3043,7 @@ private[kyo] object ChartLower:
 
                 // Skip groups that contribute nothing at every x (FIX 3a: no zero-height paths)
                 val hasContribution = xKeys.exists: xk =>
-                    dataMap.getOrElse(xk, Map.empty).getOrElse(gk, 0.0) > 0.0
+                    dataMap.getOrElse(xk, Map.empty).getOrElse(gck, 0.0) > 0.0
 
                 val newAcc =
                     if !hasContribution then acc
@@ -3041,7 +3064,7 @@ private[kyo] object ChartLower:
                         val withInteraction = spec match
                             case Absent => basePath
                             case Present(s) =>
-                                Maybe.fromOption(rowByGroup.get(gk)) match
+                                Maybe.fromOption(rowByGroup.get(gck)) match
                                     case Absent     => basePath
                                     case Present(r) => basePath.withAttrs(buildInteractionAttrs(r, s, internalHoverRef))
                         acc.append(withInteraction)
@@ -3049,7 +3072,7 @@ private[kyo] object ChartLower:
                 // Update accumulated fractions for the next group
                 val newAccByX = xKeys.foldLeft(accByX): (m, xk) =>
                     val groupMap = dataMap.getOrElse(xk, Map.empty)
-                    m.updated(xk, m.getOrElse(xk, 0.0) + groupMap.getOrElse(gk, 0.0))
+                    m.updated(xk, m.getOrElse(xk, 0.0) + groupMap.getOrElse(gck, 0.0))
 
                 loopGroups(gi + 1, newAccByX, newAcc)
         loopGroups(0, Map.empty, Chunk.empty)
@@ -4265,6 +4288,8 @@ private[kyo] object ChartLower:
                 // For a live chart, sample the current emission so the scales match what is on screen now.
                 // Unsafe: evalOrThrow runs the pure synchronous current-value read; the escape hatch is a
                 // point-in-time projection, documented to reflect the signal value at call time.
+                // Cannot throw: signal.current returns A < Sync (no Abort in scope), so Abort.run yields
+                // Result.Ok and getOrThrow never executes the throw branch.
                 import AllowUnsafe.embrace.danger
                 Sync.Unsafe.evalOrThrow(signal.current)
         val layout = buildLayout(spec)
