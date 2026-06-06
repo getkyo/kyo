@@ -469,8 +469,9 @@ object Tasty:
 
     /** All object (module) symbols in the loaded classpath.
       *
-      * Returns every `Symbol.Object` across all packages and classpath roots. Scala `object`
-      * declarations and Java-style singleton patterns registered as objects are included.
+      * Returns every `Symbol.Object` across all packages and classpath roots. Only Scala `object`
+      * declarations contribute; Java classfiles never produce `Symbol.Object` (the `Symbol.Object` ADT
+      * doc names this constraint explicitly).
       *
       * Effect row: `< Sync` (lazy classpath init on first access).
       *
