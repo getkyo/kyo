@@ -2375,12 +2375,16 @@ private[kyo] object ChartLower:
                 // colorScale is set, so a line WITHOUT a colorScale keeps byte-identical colors to before.
                 // Each series path is tagged with its series-representative row for highlight.
                 val cats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, colorEnc)
-                val colorKeys: Chunk[String]   = cats.map(_._1)
                 val palette: Chunk[Style.Color] = spec match
                     case Present(s) => resolvePalette(s, cats)
                     case Absent     => DefaultPalette
-                val tagged: Chunk[(A, Svg.SvgElement)] = colorKeys.zipWithIndex.flatMap: (key, idx) =>
-                    val seriesRows  = rows.filter(r => colorEnc.accessor(r).toString == key)
+                // Split rows by CatKey (tag + raw value), NOT by label toString: distinct color values
+                // with a colliding toString must stay in separate series. `cats` was deduped by CatKey,
+                // so cats[idx] aligns with the catKey filter at the same index.
+                val catKeys: Chunk[ChartFoundations.CatKey] =
+                    cats.map { case (_, raw) => ChartFoundations.categoryKey(colorEnc.tag, raw) }
+                val tagged: Chunk[(A, Svg.SvgElement)] = catKeys.zipWithIndex.flatMap: (catKey, idx) =>
+                    val seriesRows  = rows.filter(r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r)) == catKey)
                     val strokeColor = palette(idx % palette.size)
                     // Thread interaction into each per-series path.
                     val path = lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor, spec, internalHoverRef)
@@ -2530,10 +2534,16 @@ private[kyo] object ChartLower:
                 spec match
                     case Present(s) => resolvePalette(s, colorCatsWithRaw)
                     case Absent     => colorCatsWithRaw.zipWithIndex.map((_, i) => basePaletteText(i % basePaletteText.size))
-        // Precompute catKey -> index once (first-seen wins, matching indexWhere); replaces per-row scan.
-        val catIdxText: Map[String, Int] =
-            colorCatsWithRaw.zipWithIndex.foldLeft(Map.empty[String, Int]): (m, ci) =>
-                if m.contains(ci._1._1) then m else m.updated(ci._1._1, ci._2)
+        // Precompute CatKey (tag + raw value) -> index once, so distinct color values with a colliding
+        // toString resolve to distinct palette indices (not collapsed onto one label bucket).
+        val colorTagText: Maybe[ConcreteTag[Any]] = mark.color.map(_.tag.asInstanceOf[ConcreteTag[Any]])
+        val catIdxText: Map[ChartFoundations.CatKey, Int] =
+            (colorTagText, colorCatsWithRaw) match
+                case (Present(tag), cats) =>
+                    cats.zipWithIndex.foldLeft(Map.empty[ChartFoundations.CatKey, Int]): (m, ci) =>
+                        val key = ChartFoundations.categoryKey(tag, ci._1._2)
+                        if m.contains(key) then m else m.updated(key, ci._2)
+                case _ => Map.empty
         // Accumulate row-tagged glyphs so withHighlight can re-style the active row.
         @scala.annotation.tailrec
         def loop(i: Int, acc: Chunk[(A, Svg.SvgElement)]): Chunk[(A, Svg.SvgElement)] =
@@ -2556,7 +2566,7 @@ private[kyo] object ChartLower:
                                 val fillColor: Style.Color = mark.color match
                                     case Absent => defaultColor
                                     case Present(ch) =>
-                                        val catKey = ch.accessor(row.asInstanceOf[A]).toString
+                                        val catKey = ChartFoundations.categoryKey(ch.tag, ch.accessor(row.asInstanceOf[A]))
                                         val idx    = catIdxText.getOrElse(catKey, -1)
                                         if idx >= 0 && idx < palette.size then palette(idx) else defaultColor
                                 val baseText = Svg.text
@@ -2603,10 +2613,16 @@ private[kyo] object ChartLower:
                 spec match
                     case Present(s) => resolvePalette(s, colorCatsWithRaw)
                     case Absent     => colorCatsWithRaw.zipWithIndex.map((_, i) => basePaletteErr(i % basePaletteErr.size))
-        // Precompute catKey -> index once (first-seen wins, matching indexWhere); replaces per-row scan.
-        val catIdxErr: Map[String, Int] =
-            colorCatsWithRaw.zipWithIndex.foldLeft(Map.empty[String, Int]): (m, ci) =>
-                if m.contains(ci._1._1) then m else m.updated(ci._1._1, ci._2)
+        // Precompute CatKey (tag + raw value) -> index once, so distinct color values with a colliding
+        // toString resolve to distinct palette indices (not collapsed onto one label bucket).
+        val colorTagErr: Maybe[ConcreteTag[Any]] = mark.color.map(_.tag.asInstanceOf[ConcreteTag[Any]])
+        val catIdxErr: Map[ChartFoundations.CatKey, Int] =
+            (colorTagErr, colorCatsWithRaw) match
+                case (Present(tag), cats) =>
+                    cats.zipWithIndex.foldLeft(Map.empty[ChartFoundations.CatKey, Int]): (m, ci) =>
+                        val key = ChartFoundations.categoryKey(tag, ci._1._2)
+                        if m.contains(key) then m else m.updated(key, ci._2)
+                case _ => Map.empty
         val halfCap = mark.capWidth / 2.0
         highlight match
             case Absent =>
@@ -2629,7 +2645,7 @@ private[kyo] object ChartLower:
                                 val colorIdx = mark.color match
                                     case Absent => -1
                                     case Present(ch) =>
-                                        val catKey = ch.accessor(row.asInstanceOf[A]).toString
+                                        val catKey = ChartFoundations.categoryKey(ch.tag, ch.accessor(row.asInstanceOf[A]))
                                         catIdxErr.getOrElse(catKey, -1)
                                 val color: Style.Color =
                                     if colorIdx >= 0 && colorIdx < palette.size then palette(colorIdx) else defaultColor
@@ -2666,7 +2682,7 @@ private[kyo] object ChartLower:
                                 val colorIdx = mark.color match
                                     case Absent => -1
                                     case Present(ch) =>
-                                        val catKey = ch.accessor(row.asInstanceOf[A]).toString
+                                        val catKey = ChartFoundations.categoryKey(ch.tag, ch.accessor(row.asInstanceOf[A]))
                                         catIdxErr.getOrElse(catKey, -1)
                                 val color: Style.Color =
                                     if colorIdx >= 0 && colorIdx < palette.size then palette(colorIdx) else defaultColor
@@ -2817,15 +2833,21 @@ private[kyo] object ChartLower:
                                 // Color channel: split rows by category, one path per series.
                                 // resolvePalette falls back to theme.palette / DefaultPalette when no colorScale is set,
                                 // so a non-stacked area WITHOUT a colorScale keeps byte-identical colors to before.
+                                val colorEncAny: Encoding[A, Any] = colorEnc.asInstanceOf[Encoding[A, Any]]
                                 val cats: Chunk[(String, Any)] =
-                                    collectColorCategoriesWithRaw(rows, colorEnc.asInstanceOf[Encoding[A, Any]])
-                                val colorKeys: Chunk[String] = cats.map(_._1)
+                                    collectColorCategoriesWithRaw(rows, colorEncAny)
                                 val palette: Chunk[Style.Color] = spec match
                                     case Present(s) => resolvePalette(s, cats)
                                     case Absent     => DefaultPalette
-                                val tagged: Chunk[(A, Svg.SvgElement)] = colorKeys.zipWithIndex.flatMap: (key, idx) =>
-                                    val seriesRows = rows.filter(r => colorEnc.accessor(r).toString == key)
-                                    val fillColor  = palette(idx % palette.size)
+                                // Split rows by CatKey (tag + raw value), NOT by label toString: distinct color
+                                // values with a colliding toString must stay in separate series. `cats` was deduped
+                                // by CatKey, so cats[idx] aligns with the catKey filter at the same index.
+                                val catKeys: Chunk[ChartFoundations.CatKey] =
+                                    cats.map { case (_, raw) => ChartFoundations.categoryKey(colorEncAny.tag, raw) }
+                                val tagged: Chunk[(A, Svg.SvgElement)] = catKeys.zipWithIndex.flatMap: (catKey, idx) =>
+                                    val seriesRows =
+                                        rows.filter(r => ChartFoundations.categoryKey(colorEncAny.tag, colorEncAny.accessor(r)) == catKey)
+                                    val fillColor = palette(idx % palette.size)
                                     buildSimpleAreaPath(seriesRows, mark, layout, xs, ys, fillColor, spec, internalHoverRef) match
                                         case Absent => Chunk.empty
                                         case Present(path) =>

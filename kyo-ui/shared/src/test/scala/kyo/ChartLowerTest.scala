@@ -3030,4 +3030,92 @@ class ChartLowerTest extends Test:
         assert(swatches.size == 2, s"L-bug-grouped-bar: expected 2 legend swatches but got ${swatches.size}")
     }
 
+    "L-bug-line-color: distinct color series with colliding toString must not be merged into one another" in {
+        // GrpTag(1) appears only at x="Jan"; GrpTag(2) only at x="Feb". With both toString=="G",
+        // the static lowerLine color split filtered `accessor(r).toString == key` (== "G"), so EVERY
+        // series swept up ALL rows. Correct: each series path holds only its own single point (1 MoveTo,
+        // 0 LineTo). Buggy: each path holds both points (1 MoveTo + 1 LineTo).
+        val rows = Chunk(
+            GrpRow("Jan", 10.0, GrpTag(1)),
+            GrpRow("Feb", 30.0, GrpTag(2))
+        )
+        val spec  = UI.chart(rows)(line(x = _.month, y = _.value, color = _.grp))
+        val root  = summon[Conversion[ChartSpec[GrpRow], Svg.Root]](spec)
+        val paths = pathsIn(root)
+        assert(paths.size == 2, s"L-bug-line-color: expected 2 series paths but got ${paths.size}")
+        def lineToCount(p: Svg.Path): Int =
+            Svg.PathData.commands(p.svgAttrs.d.getOrElse(Svg.PathData.empty)).toSeq.count:
+                case _: PathCommand.LineTo => true
+                case _                     => false
+        val lineTos = paths.map(lineToCount).toSeq
+        assert(
+            lineTos.forall(_ == 0),
+            s"L-bug-line-color: each single-point series must have 0 LineTo commands (one point each), got $lineTos"
+        )
+    }
+
+    "L-bug-area-color: distinct color series with colliding toString must not be merged into one another" in {
+        // Same setup as L-bug-line-color, for the non-stacked color area path. The static lowerArea
+        // color split also filtered `accessor(r).toString == key`, merging distinct-toString series.
+        // A single-point closed area = top MoveTo, lineTo(lastX, baseline), lineTo(firstX, baseline), close
+        // -> exactly 2 LineTo commands. The buggy merge (both points) adds a top-edge LineTo -> 3.
+        val rows = Chunk(
+            GrpRow("Jan", 10.0, GrpTag(1)),
+            GrpRow("Feb", 30.0, GrpTag(2))
+        )
+        val spec  = UI.chart(rows)(area(x = _.month, y = _.value, color = _.grp))
+        val root  = summon[Conversion[ChartSpec[GrpRow], Svg.Root]](spec)
+        val paths = pathsIn(root)
+        assert(paths.size == 2, s"L-bug-area-color: expected 2 series paths but got ${paths.size}")
+        def lineToCount(p: Svg.Path): Int =
+            Svg.PathData.commands(p.svgAttrs.d.getOrElse(Svg.PathData.empty)).toSeq.count:
+                case _: PathCommand.LineTo => true
+                case _                     => false
+        val lineTos = paths.map(lineToCount).toSeq
+        assert(
+            lineTos.forall(_ == 2),
+            s"L-bug-area-color: each single-point series area must have 2 LineTo commands, got $lineTos"
+        )
+    }
+
+    "L-bug-text-color: distinct color categories with colliding toString must get distinct palette colors" in {
+        // GrpTag(1) at x="Jan", GrpTag(2) at x="Feb", both toString=="G". lowerText keyed its color
+        // index by label toString (catIdxText: Map[String,Int], first-seen wins), so both rows resolved
+        // to palette(0). Correct: GrpTag(1) -> palette(0), GrpTag(2) -> palette(1) (two distinct colors).
+        val rows = Chunk(
+            GrpRow("Jan", 10.0, GrpTag(1)),
+            GrpRow("Feb", 30.0, GrpTag(2))
+        )
+        val spec = UI.chart(rows)(text(x = _.month, y = _.value, label = _.month, color = _.grp))
+            .yScale(_.linear(0.0, 40.0))
+        val root  = summon[Conversion[ChartSpec[GrpRow], Svg.Root]](spec)
+        val marks = marksGroup(root)
+        val texts = marks.children.collect { case t: Svg.Text => t }
+        assert(texts.size == 2, s"L-bug-text-color: expected 2 text glyphs but got ${texts.size}")
+        val byX = texts.toSeq.sortBy(t => numOf(t.svgAttrs.x))
+        val c0  = fillColorOf(byX(0).svgAttrs.fill)
+        val c1  = fillColorOf(byX(1).svgAttrs.fill)
+        assert(c0 != c1, s"L-bug-text-color: the two distinct color categories must get distinct fills, both got $c0")
+    }
+
+    "L-bug-errorbar-color: distinct color categories with colliding toString must get distinct stroke colors" in {
+        // Mirror of L-bug-text-color for errorBar. lowerErrorBar keyed colorIdx by label toString
+        // (catIdxErr), collapsing the two distinct categories onto palette(0).
+        case class EbGrp(x: String, mean: Double, lo: Double, hi: Double, grp: GrpTag) derives CanEqual
+        val rows = Chunk(
+            EbGrp("a", 6.0, 4.0, 8.0, GrpTag(1)),
+            EbGrp("b", 3.0, 1.0, 5.0, GrpTag(2))
+        )
+        val spec = UI.chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi, color = _.grp))
+            .yScale(_.linear(0.0, 10.0))
+        val root    = summon[Conversion[ChartSpec[EbGrp], Svg.Root]](spec)
+        val marks   = marksGroup(root)
+        val circles = marks.children.collect { case c: Svg.Circle => c }
+        assert(circles.size == 2, s"L-bug-errorbar-color: expected 2 center-marker circles but got ${circles.size}")
+        val byX = circles.toSeq.sortBy(c => c.svgAttrs.cx.getOrElse(0.0))
+        val f0  = fillColorOf(byX(0))
+        val f1  = fillColorOf(byX(1))
+        assert(f0 != f1, s"L-bug-errorbar-color: the two distinct color categories must get distinct strokes, both got $f0")
+    }
+
 end ChartLowerTest
