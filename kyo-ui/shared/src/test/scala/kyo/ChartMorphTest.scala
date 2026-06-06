@@ -104,8 +104,8 @@ class ChartMorphTest extends Test:
         val initial = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val updated = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
         for
-            ref <- Signal.initRef(initial)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
+            ref <- Signal.initRef[Seq[Sale]](initial)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
@@ -172,8 +172,8 @@ class ChartMorphTest extends Test:
         val initial = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val updated = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)), Sale("Mar", Rev(1500.0)))
         for
-            ref <- Signal.initRef(initial)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
+            ref <- Signal.initRef[Seq[Sale]](initial)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
@@ -200,8 +200,8 @@ class ChartMorphTest extends Test:
         val initial = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val updated = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
         for
-            ref <- Signal.initRef(initial)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
+            ref <- Signal.initRef[Seq[Sale]](initial)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.none)
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
@@ -229,8 +229,8 @@ class ChartMorphTest extends Test:
         val initial = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val updated = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
         for
-            ref <- Signal.initRef(initial)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(area(x = _.month, y = _.revenue))
+            ref <- Signal.initRef[Seq[Sale]](initial)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
@@ -269,8 +269,8 @@ class ChartMorphTest extends Test:
         val r1 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val r2 = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
         for
-            ref <- Signal.initRef(r1)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
+            ref <- Signal.initRef[Seq[Sale]](r1)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
@@ -321,8 +321,8 @@ class ChartMorphTest extends Test:
         val r1 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val r2 = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
         for
-            ref <- Signal.initRef(r1)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(area(x = _.month, y = _.revenue))
+            ref <- Signal.initRef[Seq[Sale]](r1)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
@@ -356,8 +356,8 @@ class ChartMorphTest extends Test:
         // No animate child should be emitted.
         val initial = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         for
-            ref <- Signal.initRef(initial)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
+            ref <- Signal.initRef[Seq[Sale]](initial)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
@@ -394,8 +394,8 @@ class ChartMorphTest extends Test:
             MultiSale("Mar", Rev(1000.0), Absent)
         )
         for
-            ref <- Signal.initRef(e1)
-            spec = UI.chart(ref: Signal[Chunk[MultiSale]])(
+            ref <- Signal.initRef[Seq[MultiSale]](e1)
+            spec = UI.chart(ref: Signal[Seq[MultiSale]])(
                 bar(x = _.month, y = _.v1),
                 line(x = _.month, y = _.v2)
             ).yScale(_.linear(0.0, 4000.0))
@@ -449,8 +449,8 @@ class ChartMorphTest extends Test:
             NamedColorSale("Feb", Rev(1200.0), "Blue")
         )
         for
-            ref <- Signal.initRef(e1)
-            spec = UI.chart(ref: Signal[Chunk[NamedColorSale]])(
+            ref <- Signal.initRef[Seq[NamedColorSale]](e1)
+            spec = UI.chart(ref: Signal[Seq[NamedColorSale]])(
                 line(x = _.month, y = _.rev, color = _.series)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
@@ -491,15 +491,15 @@ class ChartMorphTest extends Test:
     // ---- INV-036 Leaf 4: removed series key absent in second emission ----
 
     "removed series key absent in second emission, no stale morph" in run {
-        // Emission 1: line with no color channel, key "line-0-0".
+        // Emission 1: line with no color encoding, key "line-0-0".
         // Emission 2: different data set (structural change: Jan+Feb -> Jan only).
         // After the category count drops from 2 to 1 the command count changes (2 -> 1),
         // so the structural gate fires and the path snaps (no <animate>).
         val e1 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val e2 = Chunk(Sale("Jan", Rev(1500.0)))
         for
-            ref <- Signal.initRef(e1)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
+            ref <- Signal.initRef[Seq[Sale]](e1)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
@@ -530,8 +530,8 @@ class ChartMorphTest extends Test:
             ColSale("Mar", Rev(1500.0), Col.Red)
         )
         for
-            ref <- Signal.initRef(rows)
-            spec = UI.chart(ref: Signal[Chunk[ColSale]])(
+            ref <- Signal.initRef[Seq[ColSale]](rows)
+            spec = UI.chart(ref: Signal[Seq[ColSale]])(
                 line(x = _.month, y = _.revenue, color = _.col)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
@@ -565,8 +565,8 @@ class ChartMorphTest extends Test:
             MultiSale("Mar", Rev(1000.0), Absent)
         )
         for
-            ref <- Signal.initRef(e1)
-            spec = UI.chart(ref: Signal[Chunk[MultiSale]])(
+            ref <- Signal.initRef[Seq[MultiSale]](e1)
+            spec = UI.chart(ref: Signal[Seq[MultiSale]])(
                 bar(x = _.month, y = _.v1),
                 area(x = _.month, y = _.v2)
             ).yScale(_.linear(0.0, 4000.0))
@@ -593,8 +593,8 @@ class ChartMorphTest extends Test:
         val e1 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val e2 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)), Sale("Mar", Rev(1500.0)))
         for
-            ref <- Signal.initRef(e1)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
+            ref <- Signal.initRef[Seq[Sale]](e1)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
@@ -639,8 +639,8 @@ class ChartMorphTest extends Test:
             GapSale("Apr", Present(Rev(4000.0)))
         )
         for
-            ref <- Signal.initRef(e1)
-            spec = UI.chart(ref: Signal[Chunk[GapSale]])(line(x = _.month, y = _.rev))
+            ref <- Signal.initRef[Seq[GapSale]](e1)
+            spec = UI.chart(ref: Signal[Seq[GapSale]])(line(x = _.month, y = _.rev))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
             root = summon[Conversion[ChartSpec[GapSale], Svg.Root]](spec)
@@ -686,8 +686,8 @@ class ChartMorphTest extends Test:
             GapSale("Apr", Present(Rev(3500.0)))
         )
         for
-            ref <- Signal.initRef(e1)
-            spec = UI.chart(ref: Signal[Chunk[GapSale]])(area(x = _.month, y = _.rev))
+            ref <- Signal.initRef[Seq[GapSale]](e1)
+            spec = UI.chart(ref: Signal[Seq[GapSale]])(area(x = _.month, y = _.rev))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
             root = summon[Conversion[ChartSpec[GapSale], Svg.Root]](spec)
@@ -734,8 +734,8 @@ class ChartMorphTest extends Test:
             NamedColorSale("Feb", Rev(1500.0), "Blue")
         )
         for
-            ref <- Signal.initRef(e1)
-            spec = UI.chart(ref: Signal[Chunk[NamedColorSale]])(
+            ref <- Signal.initRef[Seq[NamedColorSale]](e1)
+            spec = UI.chart(ref: Signal[Seq[NamedColorSale]])(
                 line(x = _.month, y = _.rev, color = _.series)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
@@ -794,8 +794,8 @@ class ChartMorphTest extends Test:
             NamedColorSale("Feb", Rev(1500.0), "Blue")
         )
         for
-            ref <- Signal.initRef(e1)
-            spec = UI.chart(ref: Signal[Chunk[NamedColorSale]])(
+            ref <- Signal.initRef[Seq[NamedColorSale]](e1)
+            spec = UI.chart(ref: Signal[Seq[NamedColorSale]])(
                 area(x = _.month, y = _.rev, color = _.series)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
@@ -832,7 +832,7 @@ class ChartMorphTest extends Test:
     // or merged path. After the fix (TransKey keyed by CatKey identity) the two series stay
     // distinct and each morphs from its OWN prior path.
     //
-    // Layout (color-channel line/area: legend at Top, reserveTop=true adds LegendReservedH=20):
+    // Layout (color-encoding line/area: legend at Top, reserveTop=true adds LegendReservedH=20):
     //   plotY = MarginTop + LegendReservedH = 20 + 20 = 40
     //   plotH = 480 - 20 (top) - 20 (legend) - 0 (bottom legend) - 40 (bottom margin) = 400
     //   baseline = plotY + plotH = 440
@@ -867,8 +867,8 @@ class ChartMorphTest extends Test:
             ColSale("Feb", Rev(1200.0), Col.Blue)
         )
         for
-            ref <- Signal.initRef(e1)
-            spec = UI.chart(ref: Signal[Chunk[ColSale]])(
+            ref <- Signal.initRef[Seq[ColSale]](e1)
+            spec = UI.chart(ref: Signal[Seq[ColSale]])(
                 line(x = _.month, y = _.revenue, color = _.col)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
@@ -942,8 +942,8 @@ class ChartMorphTest extends Test:
             ColSale("Feb", Rev(1200.0), Col.Blue)
         )
         for
-            ref <- Signal.initRef(e1)
-            spec = UI.chart(ref: Signal[Chunk[ColSale]])(
+            ref <- Signal.initRef[Seq[ColSale]](e1)
+            spec = UI.chart(ref: Signal[Seq[ColSale]])(
                 area(x = _.month, y = _.revenue, color = _.col)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))

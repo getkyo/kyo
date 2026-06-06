@@ -366,9 +366,9 @@ class ChartLowerTest extends Test:
             case other                 => fail(s"Expected width Present(640.0) but got $other")
     }
 
-    // ---- Test 8: color channel splits bar into N grouped sub-bands ----
+    // ---- Test 8: color encoding splits bar into N grouped sub-bands ----
 
-    "color channel splits a bar into N grouped sub-bands (N rects per band)" in {
+    "color encoding splits a bar into N grouped sub-bands (N rects per band)" in {
         // Rows: 3 rows all with same x="Jan", 3 distinct regions => 3 rects
         // band is subdivided: sub-band width = bandW / 3 = 504/3 = 168
         //   NA: barX=88+0*168=88
@@ -397,14 +397,14 @@ class ChartLowerTest extends Test:
     }
 
     // ---- Test 8a (BUG): color 1:1 with x must NOT dodge; bars stay full-band and slot-centered ----
-    // When the color channel is 1:1 with the x channel (each x-band contains exactly ONE color),
+    // When the color encoding is 1:1 with the x encoding (each x-band contains exactly ONE color),
     // grammar-of-graphics convention says color must NOT subdivide the band: it just paints full-width
     // bars. The old lowerBarGrouped dodged EVERY bar into a global color sub-slot keyed by global color
     // index, so category 0 landed at the far left (width bandW/N), category 1 one slot right, etc. =>
     // thin bars marching left-to-right, misaligned with their centered x-axis tick labels. The fix
     // renders simple full-band bars when no band holds more than one distinct color.
 
-    "color channel that is 1:1 with x does not dodge: bars stay full-band and slot-centered" in {
+    "color encoding that is 1:1 with x does not dodge: bars stay full-band and slot-centered" in {
         // 3 distinct categories A/B/C, each its OWN color (color == label). Each x-band holds exactly one
         // color => max-distinct-colors-per-band = 1 => simple full-band bars, NOT N grouped sub-bands.
         // x Band: n=3, totalW=560, slot=560/3=186.666..., bandW=560*0.9/3=168.0
@@ -441,13 +441,13 @@ class ChartLowerTest extends Test:
         assertClose(xsSorted(2), bandLeft(2), "C band left edge (442.666..)")
     }
 
-    // ---- Test 8b (ISSUE): grouped bar with numeric color channel honors a Sequential color scale ----
-    // A non-stacked bar whose color channel is NUMERIC plus `.legend(_.colorScaleSequential(low, high))`
+    // ---- Test 8b (ISSUE): grouped bar with numeric color encoding honors a Sequential color scale ----
+    // A non-stacked bar whose color encoding is NUMERIC plus `.legend(_.colorScaleSequential(low, high))`
     // must paint each bar with the interpolated gradient color for its value, the same way lowerPoint and
     // lowerArea do via resolvePalette. Before the fix, lowerBarGrouped colored bars from the categorical
     // theme/DefaultPalette (blue/orange/...), ignoring the Sequential scale entirely.
 
-    "grouped bar with numeric color channel honors a Sequential color scale (gradient, not categorical)" in {
+    "grouped bar with numeric color encoding honors a Sequential color scale (gradient, not categorical)" in {
         // Three rows, same x="Jan", numeric color values 0.0/50.0/100.0 over domain extent [0, 100].
         // Sequential(black=#000000, white=#ffffff): value 0 => rgb(0,0,0), 50 => rgb(128,128,128),
         // 100 => rgb(255,255,255). These are Style.Color.Rgb, NOT the categorical blue/orange Hex fills.
@@ -587,7 +587,7 @@ class ChartLowerTest extends Test:
     }
 
     // ---- Test 10b: single-mark default color is palette(0) ----
-    // A chart with a single mark and no explicit color channel uses the first palette entry (blue).
+    // A chart with a single mark and no explicit color encoding uses the first palette entry (blue).
 
     "single-mark bar uses palette(0) (blue) as its default fill" in {
         val rows  = Chunk(Sale("Jan", Usd(1000)))
@@ -603,7 +603,7 @@ class ChartLowerTest extends Test:
     }
 
     // ---- Test 10c (ISSUE 1): multi-mark combo assigns DISTINCT palette colors per mark index ----
-    // In a combo chart (bar + line, both without an explicit color channel) mark 0 (bar) must use
+    // In a combo chart (bar + line, both without an explicit color encoding) mark 0 (bar) must use
     // palette(0) (blue) and mark 1 (line) must use palette(1) (orange), so the line is visually
     // distinguishable from the bars rather than sharing the same default color.
 
@@ -724,7 +724,7 @@ class ChartLowerTest extends Test:
         assertClose(numOf(bg.svgAttrs.height), 240.0, "background height spans full SVG")
     }
 
-    // ---- Phase 3 tests: point color / symbol / size / curve / area band / stacks / channels ----
+    // ---- Phase 3 tests: point color / symbol / size / curve / area band / stacks / encodings ----
 
     case class Row(x: String, y: Double, g: String, mag: Double = 1.0, name: String = "")
     given CanEqual[Row, Row] = CanEqual.derived
@@ -822,14 +822,14 @@ class ChartLowerTest extends Test:
     }
 
     // --- Test 3: no color keeps defaultColor (INV-013) ---
-    "point without color channel: all circles have the same default fill (INV-013)" in {
+    "point without color encoding: all circles have the same default fill (INV-013)" in {
         val rows = Chunk(Row("a", 10.0, "g1"), Row("b", 20.0, "g2"))
         val spec = UI.chart(rows)(point(x = _.x, y = _.y))
         val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
         val cs   = deepCirclesIn(root)
         assert(cs.size >= 2, s"Expected at least 2 circles")
         val fills = cs.map(fillColorOf).toSeq.distinct
-        assert(fills.size == 1, s"All circles without color channel should share one fill, got $fills")
+        assert(fills.size == 1, s"All circles without color encoding should share one fill, got $fills")
     }
 
     // --- Test 4: symbol=square renders Svg.Path not Svg.Circle (INV-014) ---
@@ -899,7 +899,7 @@ class ChartLowerTest extends Test:
     }
 
     // --- Test 8: size legend is emitted (INV-015) ---
-    "size legend is emitted when size channel is set (INV-015)" in {
+    "size legend is emitted when size encoding is set (INV-015)" in {
         case class Bubble(x: Double, y: Double, mag: Double)
         given CanEqual[Bubble, Bubble] = CanEqual.derived
         val rows                       = Chunk(Bubble(1.0, 1.0, 1.0), Bubble(2.0, 1.0, 100.0))
@@ -920,7 +920,7 @@ class ChartLowerTest extends Test:
         given CanEqual[Bubble, Bubble] = CanEqual.derived
         val m                          = point[Bubble, Double, Double](x = _.x, y = _.y, size = _.mag, sizePx = _ => 8.0)
         val pm                         = m.asInstanceOf[Mark.Point[Bubble, Double, Double]]
-        assert(pm.size.isDefined, "size channel must be Present when both size and sizePx supplied")
+        assert(pm.size.isDefined, "size encoding must be Present when both size and sizePx supplied")
         assert(!pm.sizePx.isDefined, "sizePx must be Absent when size wins per Q-005")
     }
 
@@ -1037,7 +1037,7 @@ class ChartLowerTest extends Test:
         val root                   = summon[Conversion[ChartSpec[Band], Svg.Root]](spec)
         // When y is supplied, the factory sets yMaybe=Present, so area renders the single-y form.
         val ps = deepPathsIn(root).filter(_.svgAttrs.d.isDefined)
-        // Exactly 1 path: the y channel wins, so a single series path is emitted (not a y0/y1 ribbon).
+        // Exactly 1 path: the y encoding wins, so a single series path is emitted (not a y0/y1 ribbon).
         assert(ps.size == 1, s"area with single y must render exactly 1 path but got ${ps.size}")
         // The single-y linear form does not emit CubicTo commands. The band form (y0+y1+curve) would emit
         // cubics on both edges; the linear single-y path only has MoveTo/LineTo/Close. This distinguishes
@@ -1106,8 +1106,8 @@ class ChartLowerTest extends Test:
         assert(badH.isEmpty, s"All-positive stack rects must have positive height; bad: ${badH.map(_.svgAttrs.height)}")
     }
 
-    // --- Test 23: opacity channel (INV-019) ---
-    "opacity channel: bar fills are clamped to [0,1] fill-opacity (INV-019)" in {
+    // --- Test 23: opacity encoding (INV-019) ---
+    "opacity encoding: bar fills are clamped to [0,1] fill-opacity (INV-019)" in {
         val rows = Chunk(Row("a", 10.0, "g", 1.0), Row("b", 20.0, "g", 1.0))
         val spec = UI.chart(rows)(bar(x = _.x, y = _.y, opacity = r => if r.x == "a" then 0.5 else 1.7))
         val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
@@ -1121,18 +1121,18 @@ class ChartLowerTest extends Test:
         assert(opacities.exists(v => math.abs(v - 1.0) < 1e-9), "Expected fillOpacity clamped to 1.0 for out-of-range value")
     }
 
-    // --- Test 24: label channel (INV-019) ---
-    "label channel: bar emits per-datum Svg.Text elements (INV-019)" in {
+    // --- Test 24: label encoding (INV-019) ---
+    "label encoding: bar emits per-datum Svg.Text elements (INV-019)" in {
         val rows = Chunk(Row("a", 10.0, "g"), Row("b", 20.0, "g"))
         val spec = UI.chart(rows)(bar(x = _.x, y = _.y, label = r => r.y.toString))
         val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
         val ts   = deepTextsIn(root)
-        assert(ts.nonEmpty, "label channel must emit Svg.Text elements per bar")
+        assert(ts.nonEmpty, "label encoding must emit Svg.Text elements per bar")
         assert(ts.size >= 2, s"Expected at least 2 text labels for 2 bars, got ${ts.size}")
     }
 
-    // --- Test 25: tooltip channel (INV-019) ---
-    "tooltip channel: point emits title children on circles (INV-019)" in {
+    // --- Test 25: tooltip encoding (INV-019) ---
+    "tooltip encoding: point emits title children on circles (INV-019)" in {
         val rows = Chunk(Row("a", 10.0, "g", 1.0, "alpha"), Row("b", 20.0, "g", 1.0, "beta"))
         val spec = UI.chart(rows)(point(x = _.x, y = _.y, tooltip = _.name))
         val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
@@ -1142,18 +1142,18 @@ class ChartLowerTest extends Test:
             c.children.toSeq.exists:
                 case _: Svg.Title => true
                 case _            => false
-        assert(withTitle.nonEmpty, "tooltip channel must attach Svg.Title children to circles")
+        assert(withTitle.nonEmpty, "tooltip encoding must attach Svg.Title children to circles")
     }
 
     // --- Test 26: existing call sites compile and render unchanged (INV-019 backward compat) ---
-    "point(x,y) and bar(x,y) without new channels still produce circles and rects (INV-019)" in {
+    "point(x,y) and bar(x,y) without new encodings still produce circles and rects (INV-019)" in {
         val rows  = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val pSpec = UI.chart(rows)(point(x = _.month, y = _.revenue))
         val bSpec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
         val pRoot = summon[Conversion[ChartSpec[Sale], Svg.Root]](pSpec)
         val bRoot = summon[Conversion[ChartSpec[Sale], Svg.Root]](bSpec)
-        assert(deepCirclesIn(pRoot).nonEmpty, "point without new channels must still emit circles")
-        assert(rectsIn(bRoot).nonEmpty, "bar without new channels must still emit rects")
+        assert(deepCirclesIn(pRoot).nonEmpty, "point without new encodings must still emit circles")
+        assert(rectsIn(bRoot).nonEmpty, "bar without new encodings must still emit rects")
     }
 
     // ---- Phase-4 tests: text mark (INV-021) ----
@@ -1221,8 +1221,8 @@ class ChartLowerTest extends Test:
         assert(ts.size == 1, s"Expected exactly 1 Svg.Text (gap row skipped), got ${ts.size}")
     }
 
-    // Test 30 (plan leaf 20): text color/opacity channels apply (INV-021)
-    "text color and opacity channels apply (INV-021)" in {
+    // Test 30 (plan leaf 20): text color/opacity encodings apply (INV-021)
+    "text color and opacity encodings apply (INV-021)" in {
         case class Pt(x: Int, y: Double, g: String)
         val rows = Chunk(Pt(1, 5.0, "a"), Pt(2, 3.0, "b"))
         val spec = UI.chart(rows)(text(x = _.x, y = _.y, label = _.g, color = _.g, opacity = _ => 0.5))
@@ -1230,7 +1230,7 @@ class ChartLowerTest extends Test:
         val root = summon[Conversion[ChartSpec[Pt], Svg.Root]](spec)
         val ts   = deepTextsIn(root)
         assert(ts.size >= 2, s"Expected 2 text elements, got ${ts.size}")
-        // All text elements must have fillOpacity set to ~0.5 (the opacity channel value).
+        // All text elements must have fillOpacity set to ~0.5 (the opacity encoding value).
         val withOpacity = ts.toSeq.filter(t => t.svgAttrs.fillOpacity.isDefined)
         assert(withOpacity.nonEmpty, "At least one text must have fillOpacity set")
         assert(
@@ -1302,7 +1302,7 @@ class ChartLowerTest extends Test:
     }
 
     // Test 35 (plan leaf 21): errorBar color applies to all parts (INV-022)
-    "errorBar color channel applies the same stroke to line, caps, and marker (INV-022)" in {
+    "errorBar color encoding applies the same stroke to line, caps, and marker (INV-022)" in {
         case class EbRow(x: String, mean: Double, lo: Double, hi: Double, g: String)
         val rows = Chunk(EbRow("a", 6.0, 4.0, 8.0, "grp"))
         val spec = UI.chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi, color = _.g))
@@ -1494,7 +1494,7 @@ class ChartLowerTest extends Test:
 
     // ---- Leaf 4 (INV-025): line series gets a line-stroke swatch; bar series gets a rect swatch ----
 
-    "a line series with a color channel gets a line-stroke legend swatch, not a rect (INV-025)" in {
+    "a line series with a color encoding gets a line-stroke legend swatch, not a rect (INV-025)" in {
         case class LRow(x: Double, y: Double, series: String) derives CanEqual
         val rows = Chunk(LRow(0.0, 1.0, "s1"), LRow(1.0, 2.0, "s1"), LRow(0.0, 3.0, "s2"), LRow(1.0, 4.0, "s2"))
         val spec = UI.chart(rows)(line(x = _.x, y = _.y, color = _.series))
@@ -1513,7 +1513,7 @@ class ChartLowerTest extends Test:
         assert(shortStrokes.size == 2, s"Expected 2 line-stroke swatches (12px wide) for 2 series but got ${shortStrokes.size}")
     }
 
-    "a bar series with a color channel gets a 12x12 rect legend swatch (INV-025)" in {
+    "a bar series with a color encoding gets a 12x12 rect legend swatch (INV-025)" in {
         val rows     = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"))
         val spec     = UI.chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
         val root     = summon[Conversion[ChartSpec[CatRow], Svg.Root]](spec)
@@ -1763,7 +1763,7 @@ class ChartLowerTest extends Test:
 
     // Leaf 15: grouped bar under a custom theme.palette uses theme colors, not DefaultPalette
     "grouped bar uses theme.palette colors, not DefaultPalette, under a custom theme" in run {
-        // Two color groups via region channel: NA (idx=0) and EU (idx=1).
+        // Two color groups via region encoding: NA (idx=0) and EU (idx=1).
         // Custom palette: first color #cc00cc (purple-ish), second color #00cccc (teal).
         // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
         val purple = Style.Color.hex("#cc00cc").getOrElse(fail("bad hex"))
@@ -1821,7 +1821,7 @@ class ChartLowerTest extends Test:
 
     // Leaf 17: text mark under a custom theme.palette uses theme colors, not DefaultPalette
     "text mark uses theme.palette colors, not DefaultPalette, under a custom theme" in run {
-        // Two color groups via region channel: NA (idx=0) and EU (idx=1).
+        // Two color groups via region encoding: NA (idx=0) and EU (idx=1).
         // Custom palette: first color #cc00cc, second color #00cccc.
         // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
         val purple = Style.Color.hex("#cc00cc").getOrElse(fail("bad hex"))
@@ -1857,7 +1857,7 @@ class ChartLowerTest extends Test:
 
     // Leaf 18: errorBar mark under a custom theme.palette uses theme colors, not DefaultPalette
     "errorBar mark uses theme.palette colors, not DefaultPalette, under a custom theme" in run {
-        // Two color groups via region channel: NA (idx=0) and EU (idx=1).
+        // Two color groups via region encoding: NA (idx=0) and EU (idx=1).
         // Custom palette: first color #cc00cc, second color #00cccc.
         // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
         case class EbSale(x: String, mean: Double, lo: Double, hi: Double, region: Region)
@@ -1894,7 +1894,7 @@ class ChartLowerTest extends Test:
 
     // Leaf 14 (WARN-2): static colored line respects theme.palette
     "static multi-series line uses theme.palette colors, not DefaultPalette, under a custom theme" in run {
-        // Two series via region channel: NA (idx=0) and EU (idx=1).
+        // Two series via region encoding: NA (idx=0) and EU (idx=1).
         // Custom palette: first color magenta (#ff00ff), second color cyan (#00ffff).
         // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
         // With the fix, lowerLine reads themePalette(spec.theme) and must use the custom colors.
@@ -1976,7 +1976,7 @@ class ChartLowerTest extends Test:
     // Each group's band must be filled with its palette color (custom theme.palette here),
     // mirroring the non-stacked area's color fill. Before the fix the band paths had no fill.
     "stacked area bands carry per-group theme.palette fills (custom theme)" in run {
-        // Two color groups via region channel: NA (idx=0) and EU (idx=1).
+        // Two color groups via region encoding: NA (idx=0) and EU (idx=1).
         // Custom palette: first color #cc00cc (purple), second color #00cccc (teal).
         // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
         val purple = Style.Color.hex("#cc00cc").getOrElse(fail("bad hex"))
@@ -2206,7 +2206,7 @@ class ChartLowerTest extends Test:
 
     // ---- Phase P5 (GAP-COLOR-AREA-SIMPLE): non-stacked area color split ----
 
-    // L9 + L4 (reproduce-before-fix): non-stacked area with color channel emits one path per series.
+    // L9 + L4 (reproduce-before-fix): non-stacked area with color encoding emits one path per series.
     // Fails today: lowerArea emits ONE path filled with defaultColor regardless of mark.color.
     "non-stacked area with color=_.region emits one closed path per series at fill-opacity 0.7, each colored by colorScale (L4 + L9)" in {
         // Use colors that differ from DefaultPalette(0)=blue so failure is unambiguous on the color assertions.
@@ -2275,9 +2275,9 @@ class ChartLowerTest extends Test:
         )
     }
 
-    // L8 co-pin: non-stacked area WITHOUT a color channel emits exactly 1 closed path,
+    // L8 co-pin: non-stacked area WITHOUT a color encoding emits exactly 1 closed path,
     // byte-identical to today. The buildSimpleAreaPath refactor must not change the Absent-color arm.
-    "non-stacked area with no color channel still emits exactly one closed path (L8 co-pin, byte-identical)" in {
+    "non-stacked area with no color encoding still emits exactly one closed path (L8 co-pin, byte-identical)" in {
         case class SimpleRow(x: String, y: Int) derives CanEqual
         val rows = Chunk(SimpleRow("a", 100), SimpleRow("b", 200))
         val spec = UI.chart(rows)(area(x = _.x, y = _.y))
@@ -2457,7 +2457,7 @@ class ChartLowerTest extends Test:
 
     // ---- Leaf L22 (GAP-LEGEND-MARGIN-TEXT-ERRORBAR): legend margin reserved for color-bearing text/errorBar ----
     // Before the fix, buildLayout.hasLegend uses wildcard patterns for Mark.Text and Mark.ErrorBar that
-    // hardcode false regardless of a color channel. So a chart whose ONLY color mark is text or errorBar
+    // hardcode false regardless of a color encoding. So a chart whose ONLY color mark is text or errorBar
     // does NOT reserve legend margin (topPad stays 0, plotY stays MarginTop=20). After the fix, those
     // cases check m.color.isDefined, matching the Bar/Line/Area/Point treatment. plotY becomes 40.0.
 
@@ -2520,9 +2520,9 @@ class ChartLowerTest extends Test:
 
     // L22c (CO-PIN): no-color text mark keeps hasLegend==false, plotY unchanged at 20.0.
     "no-color text mark keeps plotY=20 (hasLegend=false, topPad=0) after GAP-LEGEND-MARGIN fix (co-pin)" in {
-        // text mark WITHOUT a color channel: m.color.isDefined==false, hasLegend stays false.
+        // text mark WITHOUT a color encoding: m.color.isDefined==false, hasLegend stays false.
         val rows = Chunk(
-            Sale("Jan", Usd(4000)), // no region => Region.NA default, but no color channel on mark
+            Sale("Jan", Usd(4000)), // no region => Region.NA default, but no color encoding on mark
             Sale("Feb", Usd(2000))
         )
         val spec = UI.chart(rows)(text(x = _.month, y = _.revenue, label = _.month))
@@ -2559,9 +2559,9 @@ class ChartLowerTest extends Test:
             ARow(1.0, 4.0, "b")
         )
         for
-            ref <- Signal.initRef(rows)
+            ref <- Signal.initRef[Seq[ARow]](rows)
             // .animate routes lowering through lowerAreaWithTransitions (the path under test).
-            spec = UI.chart(ref: Signal[Chunk[ARow]])(area(x = _.x, y = _.y, color = _.series))
+            spec = UI.chart(ref: Signal[Seq[ARow]])(area(x = _.x, y = _.y, color = _.series))
                 .animate(_.ease(300.millis))
                 .legend(_.colorScale {
                     case "a" => cyan
@@ -2626,9 +2626,9 @@ class ChartLowerTest extends Test:
             Sale("Feb", Usd(2500), Region.EU)
         )
         for
-            ref <- Signal.initRef(rows)
+            ref <- Signal.initRef[Seq[Sale]](rows)
             // .animate routes lowering through lowerAreaWithTransitions (the stacked arm at ~3659).
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(area(x = _.month, y = _.revenue, stack = by(_.region)))
+            spec = UI.chart(ref: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue, stack = by(_.region)))
                 .yScale(_.linear(0.0, 6000.0))
                 .animate(_.ease(300.millis))
                 .theme(_.palette(Chunk(purple, teal)))
@@ -2668,8 +2668,8 @@ class ChartLowerTest extends Test:
             Sale("Feb", Usd(2500), Region.EU)
         )
         for
-            ref <- Signal.initRef(rows)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(area(x = _.month, y = _.revenue, stack = by(_.region)))
+            ref <- Signal.initRef[Seq[Sale]](rows)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue, stack = by(_.region)))
                 .yScale(_.linear(0.0, 6000.0))
                 .animate(_.ease(300.millis))
                 .legend(_.colorScale[Region](
@@ -3002,7 +3002,7 @@ class ChartLowerTest extends Test:
         assert(rects.size == 2, s"L-bug-grouped-bar: expected 2 dodged bar rects but got ${rects.size}")
 
         // The two bars must have distinct heights (10-proportional and 30-proportional).
-        // Layout: color channel defined => hasLegend=true, LegendReservedH=20.
+        // Layout: color encoding defined => hasLegend=true, LegendReservedH=20.
         // plotY_eff=40, plotH_eff=400, baseline=440.
         // y scale: extent [0,30] (max is 30), niceTicks -> nHi=30.
         // Scale.Linear(0,30,baseline=440,top=40): apply(10)=440+(10/30)*(40-440)=440-133.33=306.67; barH=133.33.

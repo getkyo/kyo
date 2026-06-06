@@ -354,7 +354,7 @@ class ChartInteractionTest extends Test:
                 Sale("Feb", Rev(2000.0)),
                 Sale("Feb", Rev(800.0))
             )
-            // Use color channel as the stack group so 2 groups are formed.
+            // Use color encoding as the stack group so 2 groups are formed.
             // area with stack: group 1 = rows 0,2; group 2 = rows 1,3.
             spec = UI.chart(rows)(area(
                 x = _.month,
@@ -792,8 +792,8 @@ class ChartInteractionTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-            signal = Signal.initConst(rows)
-            spec = UI.chart(signal: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+            signal = Signal.initConst[Seq[Sale]](rows)
+            spec = UI.chart(signal: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
             html <- HtmlRenderer.render(root, Seq.empty)
@@ -810,8 +810,8 @@ class ChartInteractionTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-            signal = Signal.initConst(rows)
-            spec = UI.chart(signal: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+            signal = Signal.initConst[Seq[Sale]](rows)
+            spec = UI.chart(signal: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
@@ -835,8 +835,8 @@ class ChartInteractionTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-            signal = Signal.initConst(rows)
-            spec = UI.chart(signal: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
+            signal = Signal.initConst[Seq[Sale]](rows)
+            spec = UI.chart(signal: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
             html <- HtmlRenderer.render(root, Seq.empty)
@@ -851,8 +851,8 @@ class ChartInteractionTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-            signal = Signal.initConst(rows)
-            spec = UI.chart(signal: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
+            signal = Signal.initConst[Seq[Sale]](rows)
+            spec = UI.chart(signal: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
@@ -876,8 +876,8 @@ class ChartInteractionTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-            signal = Signal.initConst(rows)
-            spec = UI.chart(signal: Signal[Chunk[Sale]])(area(x = _.month, y = _.revenue))
+            signal = Signal.initConst[Seq[Sale]](rows)
+            spec = UI.chart(signal: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
             html <- HtmlRenderer.render(root, Seq.empty)
@@ -892,8 +892,8 @@ class ChartInteractionTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-            signal = Signal.initConst(rows)
-            spec = UI.chart(signal: Signal[Chunk[Sale]])(area(x = _.month, y = _.revenue))
+            signal = Signal.initConst[Seq[Sale]](rows)
+            spec = UI.chart(signal: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
                 .yScale(_.linear(0, 2000))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)

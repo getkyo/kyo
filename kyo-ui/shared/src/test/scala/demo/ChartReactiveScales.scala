@@ -30,7 +30,7 @@ object ChartReactiveScales extends KyoApp:
     case class Wave(x: Double, y: Double) derives CanEqual
 
     /** Initial series captured in frame 1. */
-    val waveStart: Chunk[Wave] = Chunk(
+    val waveStart: Seq[Wave] = Chunk(
         Wave(0, 40),
         Wave(1, 70),
         Wave(2, 55),
@@ -41,7 +41,7 @@ object ChartReactiveScales extends KyoApp:
     )
 
     /** Same structure (same length and x values), different y values: captured in frame 2 after the tick. */
-    val waveEnd: Chunk[Wave] = Chunk(
+    val waveEnd: Seq[Wave] = Chunk(
         Wave(0, 95),
         Wave(1, 50),
         Wave(2, 120),

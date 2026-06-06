@@ -32,7 +32,7 @@ end Scale
   */
 private[kyo] object Scale:
 
-    /** Selects the scale family for a channel. */
+    /** Selects the scale family for an encoding. */
     enum Kind derives CanEqual:
         case Linear, Log, Band, Time, Ordinal, Point, Symlog
     end Kind

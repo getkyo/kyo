@@ -401,7 +401,7 @@ object UI:
       * `Unset.supplied` to distinguish the two cases and builds `Present` or `Absent`
       * accordingly.
       *
-      * This is the one `asInstanceOf` idiom in the channel layer; it is safe because
+      * This is the one `asInstanceOf` idiom in the chart layer; it is safe because
       * the sentinel is never invoked, only compared by reference.
       */
     private[kyo] object Unset:
@@ -528,8 +528,8 @@ object UI:
 
         /** A bar or column mark.
           *
-          * Carries required positional channels `x` and `y`, and optional grouping
-          * channels `color` and `stack`. `axis` selects the y-axis. The additive
+          * Carries required positional parameters `x` and `y`, and optional grouping
+          * parameters `color` and `stack`. `axis` selects the y-axis. The additive
           * fields `opacity`, `label`, and `tooltip` are optional per-datum accessors
           * that default to `Absent` when not supplied by the factory.
           */
@@ -609,7 +609,7 @@ object UI:
           *
           * `x` or `y` carries a `RuleValue`: a constant (`Const`) or a reactive
           * signal (`Reactive`). At least one of `x`/`y` should be `Present`. `rule`
-          * has no `color` or `size` channel.
+          * has no `color` or `size` parameter.
           */
         final case class Rule[A](
             x: Maybe[RuleValue[?]],
@@ -637,7 +637,7 @@ object UI:
         /** An error bar mark.
           *
           * Renders a vertical line from `low` to `high` at `x`, with horizontal
-          * caps of `capWidth` pixels, and a center marker at `y`. All three y-channels
+          * caps of `capWidth` pixels, and a center marker at `y`. All three y parameters (`y`, `low`, `high`)
           * fold into the y-extent. `color` optionally groups by category.
           */
         final case class ErrorBar[A, X, Y](
@@ -656,7 +656,7 @@ object UI:
 
     /** Named-parameter factories for chart marks: `UI.mark.bar`, `UI.mark.line`, and so on.
       *
-      * Each factory returns a [[kyo.UI.Mark]] value. Channels are named parameters,
+      * Each factory returns a [[kyo.UI.Mark]] value. These are named parameters,
       * never chained setters: supplying `color` is what turns a plain chart into a grouped
       * one. Omitted optionals are `Absent` inside the resulting mark; supplied ones are
       * `Present`. The lowercase `mark` term coexists with the uppercase `Mark` type.
@@ -668,13 +668,13 @@ object UI:
     @scala.annotation.targetName("markFactory")
     object mark:
 
-        /** Tag for a positional (x/y/low/high) channel value.
+        /** Tag for a positional (x/y/low/high) parameter value.
           *
-          * Positional channel values feed numeric or ordinal scales and are never
+          * Positional parameter values feed numeric or ordinal scales and are never
           * category-keyed, so their `ConcreteTag` is not used for identity. A positional
           * `Y` may also be a `Maybe[..]` gap type, which `ConcreteTag` cannot derive.
           * This returns the widest tag so the field is populated without constraining the
-          * value type. Category keying (`CatKey`) only ever reads the color/group channel
+          * value type. Category keying (`CatKey`) only ever reads the color/group parameter
           * tag, which is always derived from a concrete type.
           */
         private[kyo] def positionalTag[C]: ConcreteTag[C] =
@@ -682,7 +682,7 @@ object UI:
 
         /** Creates a bar/column mark.
           *
-          * `x` and `y` are required positional channels; `color` groups the bars and
+          * `x` and `y` are required positional parameters; `color` groups the bars and
           * derives a legend; `stack` stacks or normalizes the bars (carrying its own
           * grouping via `UI.by(...)`); `axis` selects the y-axis (default `Axis.Left`).
           *
@@ -785,7 +785,7 @@ object UI:
         /** Creates a point (scatter/bubble) mark.
           *
           * `x` and `y` are required; `color`, `size`, and `symbol` are optional
-          * non-positional channels. `bar` has no `size` parameter; `point` does. This
+          * non-positional parameters. `bar` has no `size` parameter; `point` does. This
           * asymmetry is the capability gate enforced by the named-parameter design.
           * A `y` accessor returning `Maybe[Y]` renders a gap (no dot) at `Absent` rows.
           */
@@ -870,7 +870,7 @@ object UI:
         /** Creates an error bar mark.
           *
           * Renders a vertical line from `low` to `high` at `x`, two horizontal caps of `capWidth` pixels,
-          * and a center marker at `y`. All three y-channels (`y`, `low`, `high`) contribute to the y-axis
+          * and a center marker at `y`. All three y parameters (`y`, `low`, `high`) contribute to the y-axis
           * extent. `color` optionally groups by category. `capWidth` defaults to 6 pixels.
           *
           * The rendered elements are plain `Svg.line` and `Svg.circle` with no `url(#id)` or `<marker>`
@@ -906,27 +906,27 @@ object UI:
 
     // ---- Charts: entry point ----
 
-    /** Opens a chart over a static `Chunk[A]`.
+    /** Opens a chart over a static `Seq[A]`.
       *
       * `UI.chart(data)` fixes the row type `A`; the second application `(marks*)` supplies
       * the marks and returns a `UI.Ast.ChartSpec[A]`. The two-stage application is what
-      * makes row-type inference work: `A` is bound before the mark channel lambdas are read,
+      * makes row-type inference work: `A` is bound before the mark parameter lambdas are read,
       * so `UI.mark.bar(x = _.month, y = _.revenue)` needs no annotations. A `ChartSpec[A]`
       * converts to `Svg.Root` automatically wherever one is expected (including `UI.div`
       * children), via the `given Conversion`.
       */
-    def chart[A](data: Chunk[A])(using Frame): Builder[A] =
-        new Builder[A](DataSource.Static(data))
+    def chart[A](data: Seq[A])(using Frame): Builder[A] =
+        new Builder[A](DataSource.Static(Chunk.from(data)))
 
-    /** Opens a chart over a live `Signal[Chunk[A]]`; the marks region redraws on each emission. */
-    def chart[A](data: Signal[Chunk[A]])(using CanEqual[Chunk[A], Chunk[A]], Frame): Builder[A] =
-        new Builder[A](DataSource.Live(data))
+    /** Opens a chart over a live `Signal[Seq[A]]`; the marks region redraws on each emission. */
+    def chart[A](data: Signal[Seq[A]])(using CanEqual[A, A], Frame): Builder[A] =
+        new Builder[A](DataSource.Live(data.map(Chunk.from)))
 
     /** Holds the data source and accepts the mark list.
       *
       * The second application `(marks*)` is where the `ChartSpec[A]` is built.
       * Keeping this as a two-step application ensures that `A` is bound to the data
-      * element type before the mark channel lambdas are read, which is the
+      * element type before the mark parameter lambdas are read, which is the
       * inference boundary the named-parameter design relies on.
       */
     final class Builder[A] private[kyo] (data: DataSource[A]):
@@ -956,8 +956,8 @@ object UI:
     /** Maps a static value type to the scale that plots it.
       *
       * Open: the library ships built-in instances for `Int`, `Long`, `Double`, `String`, and `Instant`; enum types
-      * derive instances automatically; opaque numeric quantities use `Plottable.numeric`. A channel over a type with
-      * no instance is a compile error, so you cannot accidentally plot a `Boolean` or an arbitrary class.
+      * derive instances automatically; opaque numeric quantities use `Plottable.numeric`. A parameter mapped over a
+      * type with no instance is a compile error, so you cannot accidentally plot a `Boolean` or an arbitrary class.
       *
       * `kind` selects the scale family (`Scale.Kind`). `toDomain` projects a value into the scale's native domain
       * coordinate: `Present(d)` for a valid domain point, `Absent` for a value that must be SKIPPED and contribute
@@ -1000,8 +1000,8 @@ object UI:
         /** `Plottable[Maybe[A]]` projects only `Present` values; `Absent` returns `Absent` so the extent-folding
           * layer skips it entirely.
           *
-          * The `kind` is identical to the inner `Plottable[A]` kind: a `Maybe[Int]` channel is still a Linear
-          * channel; a `Maybe[String]` channel is still a Band channel. An all-`Absent` column produces an empty
+          * The `kind` is identical to the inner `Plottable[A]` kind: a `Maybe[Int]` parameter is still a Linear
+          * encoding; a `Maybe[String]` parameter is still a Band encoding. An all-`Absent` column produces an empty
           * extent (no domain contributions at all).
           */
         given maybe[A](using inner: Plottable[A]): Plottable[Maybe[A]] =
@@ -2188,21 +2188,21 @@ object UI:
         object Grouping:
             private[kyo] def none[A]: Grouping[A] = Grouping(Absent, false)
 
-        // ---- Charts: channel carriers ----
+        // ---- Charts: encoding carriers ----
 
         /** Bundles a row accessor with the `Plottable` evidence for its value type.
           *
-          * Captures the scale evidence and the `ConcreteTag` of the channel value type
+          * Captures the scale evidence and the `ConcreteTag` of the encoding value type
           * at the factory call site so the lowering phase does not need to re-derive
           * either. The `tag` is a stable, platform-independent type identity captured
           * from the static type `C`, used to key category values so the keying matches
           * across the JVM, Scala.js, and Native (a boxed runtime class would diverge).
-          * `A` is the row type; `C` is the channel value type. Both positional and
-          * non-positional channels use this carrier.
+          * `A` is the row type; `C` is the encoding value type. Both positional and
+          * non-positional parameters use this carrier.
           */
         final case class Encoding[A, C](accessor: A => C, plottable: Plottable[C], tag: ConcreteTag[C])
 
-        /** A channel whose accessor may return `Maybe[C]`, supporting gap semantics.
+        /** An encoding whose accessor may return `Maybe[C]`, supporting gap semantics.
           *
           * A `EncodingMaybe[A, C]` is built from an `A => C` total accessor (via
           * `EncodingMaybe.fromTotal`) or an `A => Maybe[C]` gap accessor (via
@@ -2535,7 +2535,7 @@ object UI:
           *
           * Builder methods return a copy with one field changed. Used as the argument to
           * `.legend(f)`: write `_.top` or `_.hidden`. The `colorScale` methods attach an
-          * explicit color mapping for the mark's color channel.
+          * explicit color mapping for the mark's `color` parameter.
           *
           * `position` selects where the legend box is placed relative to the plot area.
           * `isHidden` hides the legend entirely. `colorScale` is an optional
@@ -2564,7 +2564,7 @@ object UI:
               *
               * Clicking a legend swatch toggles that series' label in `ref`: a label not in the set is added
               * (the series is hidden), a label already present is removed (the series is shown again). The marks
-              * lowering reads `ref` and drops rows whose color-channel label is in the hidden set, applying the
+              * lowering reads `ref` and drops rows whose `color` parameter label is in the hidden set, applying the
               * filter before color-splitting so the visible categories keep their stable palette order.
               *
               * The hidden labels are held in a plain `scala.Predef.Set[String]`: this is genuine set membership
@@ -2607,14 +2607,14 @@ object UI:
 
             /** Attaches a total color-scale function keyed on the category label string.
               *
-              * `f` must be exhaustive over the category labels that the color channel produces. For a `String`-keyed
-              * color channel the labels are the raw string values. For an enum color channel the labels are the enum
-              * case names (e.g. `"NA"`, `"EU"`, `"APAC"`).
+              * `f` must be exhaustive over the category labels that the `color` parameter produces. For a `String`-keyed
+              * `color` parameter the labels are the raw string values. For an enum `color` parameter the labels are the
+              * enum case names (e.g. `"NA"`, `"EU"`, `"APAC"`).
               */
             def colorScale(f: String => Style.Color): LegendConfig =
                 copy(colorScale = Present(LegendConfig.ColorScale.Categorical(v => f(v.toString))))
 
-            /** Attaches a sequential low-to-high color gradient over the numeric color-channel domain.
+            /** Attaches a sequential low-to-high color gradient over the numeric `color` parameter domain.
               *
               * Each row's numeric color value is normalized into `[0, 1]` over the data extent and interpolated
               * between `low` (domain minimum) and `high` (domain maximum). The legend shows a continuous gradient
@@ -2632,7 +2632,7 @@ object UI:
         object LegendConfig:
             val default: LegendConfig = LegendConfig(Absent, false, Absent)
 
-            /** A legend color scale: how raw color-channel values map to swatch and mark colors.
+            /** A legend color scale: how raw `color` parameter values map to swatch and mark colors.
               *
               * `Categorical` carries a total function from a raw value to a color (built from value-equality pairs
               * or a label function); each distinct category gets its own swatch. `Sequential` carries a low-to-high
@@ -2682,7 +2682,7 @@ object UI:
             def palette(p: Palette): Theme = copy(palette = Present(Palette.colors(p)))
 
             /** Sets the categorical palette from an explicit color list. */
-            def palette(colors: Chunk[Style.Color]): Theme = copy(palette = Present(colors))
+            def palette(colors: Seq[Style.Color]): Theme = copy(palette = Present(Chunk.from(colors)))
 
         end Theme
 

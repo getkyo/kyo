@@ -20,16 +20,10 @@ import scala.language.implicitConversions
 case class Todo(id: String, text: String, done: Boolean)
 enum Region derives CanEqual, Plottable:
     case NA, EU, APAC
-opaque type Usd <: Double = Double
-object Usd:
-    def apply(d: Double): Usd = d
-    given Plottable[Usd]      = Plottable.numeric
-    given CanEqual[Usd, Usd]  = CanEqual.derived
-end Usd
-case class Sale(month: String, revenue: Usd, region: Region, lo: Usd, hi: Usd)
-val sales: Chunk[Sale] = Chunk(
-    Sale("Jan", Usd(49800.0), Region.EU, Usd(46000.0), Usd(53000.0)),
-    Sale("Feb", Usd(61200.0), Region.NA, Usd(58000.0), Usd(64000.0))
+case class Sale(month: String, revenue: Double, region: Region, lo: Double, hi: Double)
+val sales: Seq[Sale] = Seq(
+    Sale("Jan", 49800.0, Region.EU, 46000.0, 53000.0),
+    Sale("Feb", 61200.0, Region.NA, 58000.0, 64000.0)
 )
 ```
 -->
@@ -88,7 +82,7 @@ val labeled: UI =
 
 ### Event handlers
 
-Every element that mixes in `Interactive` (which is every non-`Void` factory plus the input elements) exposes `.onClick`, `.onClickSelf`, `.onKeyDown`, `.onKeyUp`, `.onFocus`, `.onBlur`. Handler bodies are typed `Any < Async`: the framework discards the return value, so you can pass any effectful expression directly without an explicit `.unit` or `Unit` ascription. Handlers can suspend, perform `Sync`, raise via `Abort`, sleep, call kyo-http, anything. The return value is not a communication channel; reach the rest of the app via a `SignalRef` (a writable, observable cell, introduced in [Reactivity](#reactivity) below) or other shared state.
+Every element that mixes in `Interactive` (which is every non-`Void` factory plus the input elements) exposes `.onClick`, `.onClickSelf`, `.onKeyDown`, `.onKeyUp`, `.onFocus`, `.onBlur`. Handler bodies are typed `Any < Async`: the framework discards the return value, so you can pass any effectful expression directly without an explicit `.unit` or `Unit` ascription. Handlers can suspend, perform `Sync`, raise via `Abort`, sleep, call kyo-http, anything. The return value is not a way to communicate with the rest of the app; reach it via a `SignalRef` (a writable, observable cell, introduced in [Reactivity](#reactivity) below) or other shared state.
 
 ```scala
 import UI.*
@@ -727,8 +721,8 @@ val sameButton: Style =
 `Color` is a sealed ADT with private constructors. Use the factories or the named constants:
 
 - `Color.hex(s: String): Maybe[Color]`. Validates: accepts 3, 4, 6, or 8 hex digits with or without a leading `#`. Returns `Absent` on any other length or any non-hex character. No exception is thrown.
-- `Color.rgb(r, g, b)`: channels clamped to `[0, 255]`.
-- `Color.rgba(r, g, b, a)`: channels clamped to `[0, 255]`, alpha clamped to `[0, 1]`.
+- `Color.rgb(r, g, b)`: components clamped to `[0, 255]`.
+- `Color.rgba(r, g, b, a)`: components clamped to `[0, 255]`, alpha clamped to `[0, 1]`.
 - Named constants: `Color.white`, `black`, `transparent`, `red`, `orange`, `yellow`, `green`, `blue`, `indigo`, `purple`, `pink`, `gray`, `slate`.
 
 ```scala
@@ -1050,30 +1044,23 @@ end board
 
 ## Charts
 
-A chart lowers to a value of type `Svg.Root`. Drop it into any `UI` container. The marks and channels are named parameters, so the row type is fixed before the lambda is read and no type annotations are needed.
+A chart is built from your data and a list of marks, and lowers to an `Svg.Root` you can drop into any `UI` container. Marks take their mappings as named parameters, so accessor lambdas like `_.revenue` infer their types with no annotations.
 
 ### A first chart
 
-`UI.chart(data)` opens a chart over a `Chunk[A]`, fixing the row type. The second application `(marks*)` names the visual layers. Configuration methods chain fluently and each returns a copy.
+`UI.chart(data)` opens a chart over a `Seq[A]`, fixing the row type. The second application `(marks*)` names the visual layers. Configuration methods chain fluently and each returns a copy.
 
-The whole Charts section works one running domain, defined once and shared by every example below. Each row is a monthly sale with a `region`, a `revenue`, and a `lo`/`hi` band the variance examples reach for later. The `region` enum derives its `Plottable` instance, and `revenue`/`lo`/`hi` are an opaque `Usd <: Double` whose instance comes from `Plottable.numeric`, so the scales are selected from the field types with no annotation at the call site:
+Every example below shares one running domain. Each row is a monthly sale with a `region`, a `revenue`, and a `lo`/`hi` band used later by the band and error-bar examples. The `region` enum derives its `Plottable` instance and `revenue`/`lo`/`hi` are plain `Double`s, so each scale is chosen from the field's type with no annotation at the call site:
 
 ```scala doctest:expect=skipped
 enum Region derives CanEqual, Plottable:
     case NA, EU, APAC
 
-opaque type Usd <: Double = Double
-object Usd:
-    def apply(d: Double): Usd = d
-    given Plottable[Usd]      = Plottable.numeric
-    given CanEqual[Usd, Usd]  = CanEqual.derived
-end Usd
+case class Sale(month: String, revenue: Double, region: Region, lo: Double, hi: Double)
 
-case class Sale(month: String, revenue: Usd, region: Region, lo: Usd, hi: Usd)
-
-val sales: Chunk[Sale] = Chunk(
-    Sale("Jan", Usd(49800.0), Region.EU, Usd(46000.0), Usd(53000.0)),
-    Sale("Feb", Usd(61200.0), Region.NA, Usd(58000.0), Usd(64000.0))
+val sales: Seq[Sale] = Seq(
+    Sale("Jan", 49800.0, Region.EU, 46000.0, 53000.0),
+    Sale("Feb", 61200.0, Region.NA, 58000.0, 64000.0)
 )
 ```
 
@@ -1083,7 +1070,7 @@ With that domain in scope, the first chart is one `bar` mark over `sales` plus a
 val firstChart: Svg.Root =
     UI.chart(sales)(
         UI.mark.bar(x = _.month, y = _.revenue, color = _.region),
-        UI.mark.rule[Sale, Usd](y = Usd(1000.0))
+        UI.mark.rule(y = 1000.0)
     )
         .yAxis(_.grid.ticks(5).format(v => f"$$$v%,.0f"))
         .legend(_.top)
@@ -1093,11 +1080,11 @@ val firstChart: Svg.Root =
 UI.div(UI.h2("Revenue by region"), firstChart)
 ```
 
-The `UI.mark.rule[Sale, Usd](y = Usd(1000.0))` call takes a plain `Usd` where a `RuleValue[Usd]` is expected: the `given constConversion[C: Plottable]: Conversion[C, RuleValue[C]]` lifts it. A `signalConversion` lifts a `Signal[Usd]` the same way, so a reactive threshold needs no wrapper either. Here `.toSvg` lowers the spec explicitly; the `given Conversion[ChartSpec, Svg.Root]` also lowers a spec wherever an `Svg.Root` is expected, so `UI.div(UI.h2(...), spec)` embeds a chart without the explicit call.
+The `rule` mark's `y` takes a plain `Double` threshold; it also accepts a `Signal[Double]` for a threshold that tracks a signal, with no wrapper either way. `.toSvg` lowers the spec to an `Svg.Root` explicitly, but a chart also lowers automatically wherever an `Svg.Root` is expected, so `UI.div(UI.h2(...), chart)` embeds it without the call.
 
 ### Marks compose; there is no chart zoo
 
-There is one `UI.chart` and a list of marks. The mark you pick, and the channels you map onto it, determine the chart type:
+There is one `UI.chart` and a list of marks. The mark you pick, and the parameters you map onto it, determine the chart type:
 
 ```scala
 val barChart: Svg.Root  = UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue)).toSvg
@@ -1112,7 +1099,7 @@ val combo: Svg.Root =
     UI.chart(sales)(
         UI.mark.bar(x = _.month, y = _.revenue),
         UI.mark.line(x = _.month, y = _.hi),
-        UI.mark.rule[Sale, Usd](y = Usd(50000.0))
+        UI.mark.rule(y = 50000.0)
     ).toSvg
 ```
 
@@ -1123,16 +1110,16 @@ val bubbles: Svg.Root =
     UI.chart(sales)(UI.mark.point(x = _.month, y = _.revenue, size = _.hi)).toSvg
 ```
 
-The `symbol` channel selects the glyph for each point from the `UI.Symbol` enum (`circle`, `square`, `triangle`, `diamond`, `cross`). Here every point uses a constant glyph; an accessor could vary it by row:
+The `symbol` parameter selects the glyph for each point from the `UI.Symbol` enum (`circle`, `square`, `triangle`, `diamond`, `cross`). Here every point uses a constant glyph; an accessor could vary it by row:
 
 ```scala
 val diamonds: Svg.Root =
     UI.chart(sales)(UI.mark.point(x = _.lo, y = _.hi, symbol = _ => UI.Symbol.diamond)).toSvg
 ```
 
-### Named-parameter channels
+### Named parameters
 
-Channels are named parameters, not chained method calls. This is what keeps the accessor lambdas inferring without annotations. A chained `.color(by = _.region)` after `bar(...)` would collapse the row type to `Any`; the named form does not:
+Each mark maps its data through named parameters, not chained method calls. This is what keeps the accessor lambdas inferring without annotations. A chained `.color(by = _.region)` after `bar(...)` would collapse the row type to `Any`; the named form does not:
 
 ```scala
 // named parameter: row type inferred before the lambda is read
@@ -1143,18 +1130,18 @@ val stacked    = UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, stack =
 val normalized = UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, stack = UI.by(_.region, normalize = true)))
 ```
 
-> **Note:** Mark factories gate capability by omission. `bar` has no `symbol` or `size` parameter; `rule` has no `color` or `size`. If a channel is not a parameter on a given mark, the type system rejects any attempt to pass it: there is no runtime flag to check and no silent no-op.
+> **Note:** Mark factories gate capability by omission. `bar` has no `symbol` or `size` parameter; `rule` has no `color` or `size`. If a mark does not offer a given parameter, the type system rejects any attempt to pass it: there is no runtime flag to check and no silent no-op.
 
 ### Typed values
 
-The scale for a channel is selected by the static type of its accessor. `Plottable` is an open typeclass. The library provides instances for `Int`, `Long`, `Double`, `String`, and `Instant`. Enum types derive instances automatically (`Region` above gets one from `derives ... Plottable`). Opaque numeric quantities use `Plottable.numeric`, as `Usd` does. So in the running domain `Region` selects a band (categorical) x-scale and `Usd` selects a linear y-scale, with no annotation at the call site:
+The scale for each parameter is selected by the static type of its accessor. `Plottable` is an open typeclass. The library provides instances for `Int`, `Long`, `Double`, `String`, and `Instant`. Enum types derive instances automatically (`Region` above gets one from `derives ... Plottable`), and an opaque numeric type can supply one with `Plottable.numeric`. So in the running domain `Region` selects a band (categorical) x-scale and `revenue: Double` selects a linear y-scale, with no annotation at the call site:
 
 ```scala
-// month: String selects a band x-scale; revenue: Usd selects a linear y-scale
+// month: String selects a band x-scale; revenue: Double selects a linear y-scale
 val typedChart: Svg.Root = UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue)).toSvg
 ```
 
-A channel over a type with no `Plottable` instance does not compile, so you cannot accidentally plot a `Boolean` or an arbitrary class.
+A parameter mapped over a type with no `Plottable` instance does not compile, so you cannot accidentally plot a `Boolean` or an arbitrary class.
 
 ### Scales, axes, and legends
 
@@ -1189,7 +1176,7 @@ val twoAxis: Svg.Root =
         .toSvg
 ```
 
-The right axis can draw its own gridlines, but when both axes set `.grid`, only the left axis emits gridlines; the left axis wins the tie-break and prevents doubled lines.
+The right axis can draw its own gridlines. If both axes enable `.grid`, only the left axis draws them, so the gridlines are never doubled.
 
 ### More one-liners
 
@@ -1199,13 +1186,13 @@ An `area` mark fills between a y value and the baseline:
 val areaChart: Svg.Root = UI.chart(sales)(UI.mark.area(x = _.month, y = _.revenue)).toSvg
 ```
 
-A `rule` is a reference line at a constant (or `Signal`-tracked) value; here a horizontal target line. The plain `Usd` lifts to a `RuleValue[Usd]` through the same conversion as before:
+A `rule` is a reference line at a constant (or `Signal`-tracked) value; here a horizontal target line:
 
 ```scala
 val withTarget: Svg.Root =
     UI.chart(sales)(
         UI.mark.line(x = _.month, y = _.revenue),
-        UI.mark.rule[Sale, Usd](y = Usd(55000.0))
+        UI.mark.rule(y = 55000.0)
     ).toSvg
 ```
 
@@ -1219,23 +1206,23 @@ val smooth: Svg.Root = UI.chart(sales)(UI.mark.line(x = _.month, y = _.revenue, 
 
 ```scala
 case class Hit(at: Instant, count: Double)
-val hits: Chunk[Hit] = Chunk(Hit(Instant.Epoch, 10.0), Hit(Instant.Epoch + 1.minute, 100.0))
+val hits: Seq[Hit] = Seq(Hit(Instant.Epoch, 10.0), Hit(Instant.Epoch + 1.minute, 100.0))
 
 val logOverTime: Svg.Root = UI.chart(hits)(UI.mark.line(x = _.at, y = _.count)).yScale(_.log).toSvg
 ```
 
 ### Color scales and themes
 
-The legend's color scale decides how the color channel maps to swatch and mark fills. A categorical scale takes value-equality pairs over a typed key; a category with no matching pair falls back to `Style.Color.blue`:
+The legend's color scale decides how the `color` parameter maps to swatch and mark fills. A categorical scale takes value-equality pairs over a typed key; a category with no matching pair falls back to `Style.Color.blue`:
 
 ```scala
 val categorical: Svg.Root =
     UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.region))
-        .legend(_.colorScale[Region](Region.NA -> Style.Color.blue, Region.EU -> Style.Color.green))
+        .legend(_.colorScale(Region.NA -> Style.Color.blue, Region.EU -> Style.Color.green))
         .toSvg
 ```
 
-A sequential scale interpolates a gradient over a numeric color channel. Each row's value is normalized into `[0, 1]` across the data extent; the mark fills are concrete interpolated colors, never `url(#...)` gradient references:
+A sequential scale maps a numeric `color` parameter onto a gradient. Each row's value is normalized across the data range and drawn as the matching interpolated color between the two endpoints:
 
 ```scala
 val sequential: Svg.Root =
@@ -1244,7 +1231,7 @@ val sequential: Svg.Root =
         .toSvg
 ```
 
-Both color-scale forms drive fills on grouped-bar, area, point, text, and errorBar marks, not only line and point. The `colorScale` overload that takes a label function maps each category's string key to a color, so custom palettes do not require a typed pair list:
+Both color-scale forms apply to every mark with a `color` parameter: bar, area, point, line, text, and errorBar. A `colorScale` overload takes a function from each category's label to a color, so a custom palette does not require a typed pair list:
 
 ```scala
 val byLabel: Svg.Root =
@@ -1253,7 +1240,7 @@ val byLabel: Svg.Root =
         .toSvg
 ```
 
-`.theme` switches between light and dark and selects a named palette. The palettes live at `UI.Ast.Palette`; `Okabe` is the Okabe-Ito set chosen for color-vision accessibility; `Viridis` is an 8-category perceptually-derived set; `Tableau10` is the Tableau 10 categorical palette. Beyond palette and scheme, `.font(family)` sets the font family, `.fontSize(px)` sets the size in pixels, `.background` overrides the plot fill, `.axisColor` overrides axis line and tick colors, and `.gridColor` overrides gridline color. The theme font now reaches Y axis ticks and titles as well as X axis labels, so a single `.font(...)` call covers the whole chart:
+`.theme` switches between light and dark and selects a named palette. The palettes live at `UI.Ast.Palette`: `Okabe` is the Okabe-Ito set chosen for color-vision accessibility, `Viridis` is an 8-category perceptually-derived set, and `Tableau10` is the Tableau 10 categorical palette. Beyond palette and scheme, `.font(family)` sets the font family across all axis labels, ticks, and titles; `.fontSize(px)` sets the size in pixels; `.background` overrides the plot fill; `.axisColor` overrides axis line and tick colors; and `.gridColor` overrides gridline color:
 
 ```scala
 val themed: Svg.Root =
@@ -1274,7 +1261,7 @@ val labeled: Svg.Root =
     ).toSvg
 ```
 
-An `errorBar` draws a `low`-to-`high` whisker with caps (`capWidth` is 6 pixels by default) and a center marker at `y`. It renders plain `Svg.line` and `Svg.circle` with no `<marker>` element:
+An `errorBar` draws a `low`-to-`high` whisker with caps (`capWidth` defaults to 6 pixels) and a center marker at `y`:
 
 ```scala
 val withError: Svg.Root =
@@ -1293,7 +1280,7 @@ val band: Svg.Root =
 
 ### Axis chrome, responsive sizing, and accessibility
 
-Config methods chain on the spec. `.responsive(ratio)` makes the root scale to its container at a fixed aspect ratio; `.margins(_.left(80))` widens one plot margin; scale knobs refine the fitted domain; `rotateTicks`/`pad` adjust tick chrome; `.title`/`.desc`/`.ariaLabel` add accessibility markup (`.title` also implies `role="img"` on the root `<svg>`, so assistive tech announces the chart as one image; `.ariaLabel` sets the `aria-label` attribute directly when you need a short override without a visible `<title>`). All accessibility fields default to absent. `rotateTicks`, `anchor`, and the theme font now apply to Y axis ticks and titles as well as the X axis:
+Config methods chain on the spec. `.responsive(ratio)` makes the root scale to its container at a fixed aspect ratio; `.margins(_.left(80))` widens one plot margin; scale knobs refine the fitted domain; `rotateTicks`/`pad`/`anchor` adjust tick chrome on either axis; `.title`/`.desc`/`.ariaLabel` add accessibility markup (`.title` also sets `role="img"` on the root `<svg>`, so assistive tech announces the chart as one image; `.ariaLabel` sets the `aria-label` attribute directly when you want a short override without a visible `<title>`). All accessibility fields default to absent:
 
 ```scala
 val a11yChart: Svg.Root =
@@ -1308,7 +1295,7 @@ val a11yChart: Svg.Root =
         .toSvg
 ```
 
-`.withNice` (or `.noNice`) rounds the fitted domain to tidy human values, such as stretching `[0, 78 432]` to `[0, 80 000]`. It is a `ScaleOverride` knob like `.withClamp` and `.withPad`.
+`.withNice` (or `.noNice`) rounds the fitted domain to tidy human values, such as stretching `[0, 78,432]` to `[0, 80,000]`. It is a `ScaleOverride` knob like `.withClamp` and `.withPad`.
 
 ### Reading back scales for overlays
 
@@ -1323,7 +1310,7 @@ For a live chart the returned scales reflect the signal value at call time and d
 
 ### Reactivity
 
-Pass a `Signal[Chunk[A]]` instead of a `Chunk[A]` to get a live chart. The marks region redraws on each emission; the frame, axes, and legend stay put. The marks and channels are identical to the static form:
+Pass a `Signal[Seq[A]]` instead of a `Seq[A]` to get a live chart. The marks region redraws on each emission; the frame, axes, and legend stay put. The marks and parameters are identical to the static form:
 
 ```scala
 val livePage: UI < Async =
@@ -1337,7 +1324,7 @@ val livePage: UI < Async =
         UI.div(liveChart)
 ```
 
-`.animate(_.ease(300.millis))` tweens same-structure path morphs on a fixed ease-in-out-cubic curve (only the duration is configurable) and snaps on a structural change, such as a category added or removed; for bars, the height/y tween fires, but a bar carrying a color or stack channel snaps rather than tweens.
+`.animate(_.ease(300.millis))` tweens same-structure path morphs on a fixed ease-in-out-cubic curve (only the duration is configurable) and snaps on a structural change, such as a category added or removed; for bars, the height/y tween fires, but a bar carrying a `color` or `stack` parameter snaps rather than tweens.
 
 ### Interaction
 
@@ -1365,7 +1352,7 @@ val interactivePage: UI < Async =
         )
 ```
 
-`.interaction(_.highlightSelect)` and `.interaction(_.highlightHover)` are no-ops unless the matching `onSelect` or `onHover` ref is configured; when both fire at once, select highlight wins over hover. The highlight surface now covers all drawable marks (bar, point, line, area, text, errorBar). Custom styles are available via `.hoverStyle(s)` and `.selectStyle(s)` in the same lambda without a separate example. The following example wires a select ref first, then opts into the built-in highlight:
+`.interaction(_.highlightSelect)` and `.interaction(_.highlightHover)` highlight the selected or hovered datum. They do nothing unless the matching `onSelect` or `onHover` ref is wired; when both apply at once, the select highlight takes precedence. Highlighting works on every mark (bar, point, line, area, text, errorBar), and `.hoverStyle(s)`/`.selectStyle(s)` customize its appearance:
 
 ```scala
 val highlightPage: UI < Async =

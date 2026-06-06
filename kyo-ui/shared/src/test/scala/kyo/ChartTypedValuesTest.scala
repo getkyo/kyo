@@ -19,7 +19,7 @@ import scala.language.implicitConversions
   *   2. `colorScale[K]` value-equality pairs: each `Region` case maps to its color; an unmapped case falls back.
   *   3. `colorScale[K]` pairs keep two colliding-`toString` cases distinct with no ClassCastException.
   *   4. Raw-literal `Conversion[Double, Usd]`: `rule(y = 1000.0)` builds a `RuleValue.Const`.
-  *   5. `Maybe[Usd]` gap channel: a line with `y = _.value` where some values are `Absent` splits into two sub-paths.
+  *   5. `Maybe[Usd]` gap encoding: a line with `y = _.value` where some values are `Absent` splits into two sub-paths.
   *
   * Layout defaults (640x480, matching `ChartLower` constants):
   *   plotX = 60, plotY = 20, plotW = 560, plotH = 420, baseline = 440.
@@ -263,9 +263,9 @@ class ChartTypedValuesTest extends Test:
         assertClose(actualY, expectedY, s"rule line y at Usd(1000) on [0,5000] scale")
     }
 
-    // ---- Test 5: Maybe[Usd] gap channel splits line at Absent ----
+    // ---- Test 5: Maybe[Usd] gap encoding splits line at Absent ----
 
-    "line with Maybe[Usd] y-channel splits into two sub-paths at Absent (two MoveTo commands)" in {
+    "line with Maybe[Usd] y encoding splits into two sub-paths at Absent (two MoveTo commands)" in {
         // Data: Jan=Present(500), Feb=Absent (gap), Mar=Present(1500)
         // The line lowerer produces one Svg.Path whose PathData contains:
         //   MoveTo(jan_px, jan_py)  -- start of first segment

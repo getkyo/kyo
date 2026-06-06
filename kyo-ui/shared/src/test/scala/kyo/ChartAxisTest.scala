@@ -502,8 +502,8 @@ class ChartAxisTest extends Test:
     // ---- Test 8b (LAYER FIX A): stacked bar derives a legend from the stack groups ----
 
     "stacked bar with .legend(_.top): one swatch per stack category in the segment colors" in {
-        // A stacked bar grouped by `group` (no separate `color` channel) must derive its legend from the
-        // STACK groups, exactly as a `color` channel would: one swatch per stack category, in the colors the
+        // A stacked bar grouped by `group` (no separate `color` encoding) must derive its legend from the
+        // STACK groups, exactly as a `color` encoding would: one swatch per stack category, in the colors the
         // stacked segments use. Three groups A, B, C at x="Jan".
         case class SRow(x: String, group: String, value: Double)
         val rows = Chunk(
@@ -840,12 +840,12 @@ class ChartAxisTest extends Test:
     }
 
     // ---- Test 13 (ISSUE 1): a GROUPED bar's y-axis chrome stays NEUTRAL, not palette(0) ----
-    // A grouped bar (a single bar mark WITH a color channel) renders in multiple category colors, so painting
+    // A grouped bar (a single bar mark WITH a color encoding) renders in multiple category colors, so painting
     // its y-axis a single palette color (blue) would misrepresent the series. The y-axis chrome must use the
     // neutral light-theme color instead. This tightens the iteration-2 rule, which color-coded any single
     // bound mark regardless of whether it rendered as one solid color.
 
-    "grouped bar (color channel) keeps a NEUTRAL y-axis chrome, not palette(0)" in {
+    "grouped bar (color encoding) keeps a NEUTRAL y-axis chrome, not palette(0)" in {
         val neutral = Style.Color.hex("#374151").getOrElse(Style.Color.black)
         val rows = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
@@ -888,7 +888,7 @@ class ChartAxisTest extends Test:
     }
 
     // ---- Test 15 (ISSUE 1): a single-color line keeps its color-coded y-axis chrome ----
-    // A line mark with no color channel renders as one solid color, so ISSUE 1 still color-codes its y-axis
+    // A line mark with no color encoding renders as one solid color, so ISSUE 1 still color-codes its y-axis
     // chrome (tick labels) to that mark's palette color (palette(0) = blue). This confirms the tightened rule
     // does not over-correct: solid-color marks remain color-coded.
 
@@ -1189,7 +1189,7 @@ class ChartAxisTest extends Test:
     case class SizeRow(a: Double, b: Double, w: Double)
     given CanEqual[SizeRow, SizeRow] = CanEqual.derived
 
-    // DEFECT 4 (visual-review #218): a point chart with a size channel must render its size legend as sample
+    // DEFECT 4 (visual-review #218): a point chart with a size encoding must render its size legend as sample
     // circles OUTSIDE the plot data area, not floating over a data bubble. The plot is shifted down to reserve
     // a top legend strip; the sample bubbles sit entirely above plotY.
     "size-legend sample circles render outside the plot data area, above plotY (defect 4)" in {

@@ -120,7 +120,7 @@ class ChartSpecTest extends Test:
 
     "UI.chart(signal)(...) produces DataSource.Live" in {
         run {
-            Signal.initRef(sales).map: sig =>
+            Signal.initRef[Seq[Sale]](sales).map: sig =>
                 val spec = UI.chart(sig)(bar(x = _.month, y = _.revenue))
                 spec.data match
                     case DataSource.Live(_)   => succeed
@@ -375,7 +375,7 @@ class ChartSpecTest extends Test:
     }
 
     // Test: errorBar factory builds Mark.ErrorBar with correct fields (D10)
-    "errorBar factory builds Mark.ErrorBar with correct channels (D10)" in {
+    "errorBar factory builds Mark.ErrorBar with correct encodings (D10)" in {
         case class Eb(x: String, mean: Usd, lo: Usd, hi: Usd)
         val eb = Eb("a", Usd(6.0), Usd(4.0), Usd(8.0))
         val m  = errorBar[Eb, String, Usd](x = _.x, y = _.mean, low = _.lo, high = _.hi, capWidth = 10.0)

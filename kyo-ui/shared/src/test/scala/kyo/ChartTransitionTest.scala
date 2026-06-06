@@ -31,7 +31,7 @@ import scala.language.implicitConversions
   *      in Phase 06; the bounded stepped-morph tween is implemented in Phase 08).
   *   5. Multi-pull idempotency: rendering the same emission twice (simulating the engine's double-pull)
   *      produces the same from/to animate pair on both pulls, not from==to (dead animation) on the second.
-  *   6. Default key (x channel) vs explicit `.key(...)` override: controls which rects update vs enter.
+  *   6. Default key (x encoding) vs explicit `.key(...)` override: controls which rects update vs enter.
   */
 class ChartTransitionTest extends Test:
 
@@ -94,8 +94,8 @@ class ChartTransitionTest extends Test:
         val initial = Chunk(Sale("Jan", Rev(1000.0)))
         val updated = Chunk(Sale("Jan", Rev(2000.0)))
         for
-            ref <- Signal.initRef(initial)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+            ref <- Signal.initRef[Seq[Sale]](initial)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
             // First render: records initial geometry (Jan -> barH=105, barY=335).
@@ -145,8 +145,8 @@ class ChartTransitionTest extends Test:
         val initial = Chunk(Sale("Jan", Rev(1000.0)))
         val updated = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         for
-            ref <- Signal.initRef(initial)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+            ref <- Signal.initRef[Seq[Sale]](initial)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
             // First render: only Jan (barH=105). Records Jan geometry.
@@ -174,8 +174,8 @@ class ChartTransitionTest extends Test:
         val initial = Chunk(Sale("Jan", Rev(1000.0)))
         val updated = Chunk(Sale("Jan", Rev(2000.0)))
         for
-            ref <- Signal.initRef(initial)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+            ref <- Signal.initRef[Seq[Sale]](initial)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.none)
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
@@ -213,8 +213,8 @@ class ChartTransitionTest extends Test:
         val initial = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val updated = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
         for
-            ref <- Signal.initRef(initial)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
+            ref <- Signal.initRef[Seq[Sale]](initial)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
@@ -259,8 +259,8 @@ class ChartTransitionTest extends Test:
         val r1 = Chunk(Sale("Jan", Rev(1000.0)))
         val r2 = Chunk(Sale("Jan", Rev(2000.0)))
         for
-            ref <- Signal.initRef(r1)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+            ref <- Signal.initRef[Seq[Sale]](r1)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
             // First render (R1, pull 1): records initial geometry.
@@ -306,10 +306,10 @@ class ChartTransitionTest extends Test:
         end for
     }
 
-    // ---- Test 6 (was Test 5): default key (x channel) vs explicit .key(...) override ----
+    // ---- Test 6 (was Test 5): default key (x encoding) vs explicit .key(...) override ----
 
-    "key defaults to x channel; .key(...) override controls update vs enter" in run {
-        // Without an explicit key override, the key is the x channel value (month string).
+    "key defaults to x encoding; .key(...) override controls update vs enter" in run {
+        // Without an explicit key override, the key is the x encoding value (month string).
         // Row "Jan" in initial and updated -> UPDATE (same x-key "Jan").
         //
         // With .key(_.region) override, the key is the region string, not the month.
@@ -319,17 +319,17 @@ class ChartTransitionTest extends Test:
         val initial = Chunk(Sale("Jan", Rev(1000.0), "A"))
         val updated = Chunk(Sale("Feb", Rev(2000.0), "A"))
         for
-            // Chart 1: default key (x channel = month). "Jan" -> "Feb" = different key = ENTER for "Feb".
-            ref1 <- Signal.initRef(initial)
-            spec1 = UI.chart(ref1: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+            // Chart 1: default key (x encoding = month). "Jan" -> "Feb" = different key = ENTER for "Feb".
+            ref1 <- Signal.initRef[Seq[Sale]](initial)
+            spec1 = UI.chart(ref1: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
             root1 = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec1)
             html1a <- HtmlRenderer.render(root1, Seq.empty)
             _      <- ref1.set(updated)
             html1b <- HtmlRenderer.render(root1, Seq.empty)
             // Chart 2: key override (region). Both rows have region="A" -> UPDATE.
-            ref2 <- Signal.initRef(initial)
-            spec2 = UI.chart(ref2: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+            ref2 <- Signal.initRef[Seq[Sale]](initial)
+            spec2 = UI.chart(ref2: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .key(_.region)
             root2 = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec2)
@@ -373,8 +373,8 @@ class ChartTransitionTest extends Test:
         val e1 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)), Sale("Mar", Rev(3000.0)))
         val e2 = Chunk(Sale("Jan", Rev(500.0)), Sale("Feb", Rev(1500.0)), Sale("Mar", Rev(2500.0)))
         for
-            ref <- Signal.initRef(e1)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(
+            ref <- Signal.initRef[Seq[Sale]](e1)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(
                 line(x = _.month, y = _.revenue, curve = Curve.monotone)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
@@ -434,9 +434,9 @@ class ChartTransitionTest extends Test:
             SRow(1.0, 4.0, "b")
         )
         for
-            ref <- Signal.initRef(rows)
+            ref <- Signal.initRef[Seq[SRow]](rows)
             // .animate enabled routes lowering through lowerLineWithTransitions (the path under test).
-            spec = UI.chart(ref: Signal[Chunk[SRow]])(line(x = _.x, y = _.y, color = _.series))
+            spec = UI.chart(ref: Signal[Seq[SRow]])(line(x = _.x, y = _.y, color = _.series))
                 .animate(_.ease(300.millis))
                 .legend(_.colorScale {
                     case "a" => cyan
@@ -475,11 +475,11 @@ class ChartTransitionTest extends Test:
         end for
     }
 
-    // ---- Leaf L18 (GAP-TRANS-BAR-CHANNELS): animated bar emits opacity/label/tooltip channels ----
+    // ---- Leaf L18 (GAP-TRANS-BAR-ENCODINGS): animated bar emits opacity/label/tooltip encodings ----
 
-    "animated bar emits opacity/label/tooltip channels matching the static path (L18, GAP-TRANS-BAR-CHANNELS)" in run {
-        // Static bar (no Signal ref): lowerBarSimple -> applyBarChannels -> channels applied.
-        // Animated bar (Signal ref + .animate): lowerBarSimpleWithTransitions -> was missing applyBarChannels.
+    "animated bar emits opacity/label/tooltip encodings matching the static path (L18, GAP-TRANS-BAR-ENCODINGS)" in run {
+        // Static bar (no Signal ref): lowerBarSimple -> applyBarEncodings -> encodings applied.
+        // Animated bar (Signal ref + .animate): lowerBarSimpleWithTransitions -> was missing applyBarEncodings.
         // Both must emit fill-opacity="0.5", a <title> tooltip child, and a sibling label <text>.
         //
         // Scale: linear(0, 4000), baseline=440.
@@ -488,8 +488,8 @@ class ChartTransitionTest extends Test:
         //   labelX = barX + barW/2 = 60 + 280 = 340, labelY = barY - 2 = 228
         val rows = Chunk(Sale("Jan", Rev(2000.0)))
         for
-            ref <- Signal.initRef(rows)
-            animSpec = UI.chart(ref: Signal[Chunk[Sale]])(
+            ref <- Signal.initRef[Seq[Sale]](rows)
+            animSpec = UI.chart(ref: Signal[Seq[Sale]])(
                 bar(
                     x = _.month,
                     y = _.revenue,
@@ -503,21 +503,21 @@ class ChartTransitionTest extends Test:
             // First render (ENTER): bar is new, from=0 to=210 height, from=440 to=230 y.
             html <- HtmlRenderer.render(animRoot, Seq.empty)
         yield
-            // (a) fill-opacity channel: the animated rect must carry fill-opacity="0.5".
+            // (a) fill-opacity encoding: the animated rect must carry fill-opacity="0.5".
             assert(
                 html.contains("fill-opacity=\"0.5\""),
-                s"Animated bar must carry fill-opacity=0.5 (opacity channel dropped before fix):\n$html"
+                s"Animated bar must carry fill-opacity=0.5 (opacity encoding dropped before fix):\n$html"
             )
-            // (b) tooltip channel: the animated rect must contain a <title ...>Jan</title> child.
+            // (b) tooltip encoding: the animated rect must contain a <title ...>Jan</title> child.
             // The renderer emits data-kyo-path attributes, so match on the closing tag pattern.
             assert(
                 html.contains(">Jan</title>"),
-                s"Animated bar must contain >Jan</title> (tooltip channel dropped before fix):\n$html"
+                s"Animated bar must contain >Jan</title> (tooltip encoding dropped before fix):\n$html"
             )
-            // (c) label channel: a sibling label <text>Jan</text> must be present.
+            // (c) label encoding: a sibling label <text>Jan</text> must be present.
             assert(
                 html.contains(">Jan<"),
-                s"Animated bar must emit a label text >Jan< (label channel dropped before fix):\n$html"
+                s"Animated bar must emit a label text >Jan< (label encoding dropped before fix):\n$html"
             )
             // (d) SMIL animates still present (animation not disturbed): both <animate> children preserved.
             assert(
@@ -540,40 +540,40 @@ class ChartTransitionTest extends Test:
         end for
     }
 
-    // ---- L18 co-pin: no-channel animated bar is byte-identical to today (L8 co-pin arm for transitions) ----
+    // ---- L18 co-pin: no-encoding animated bar is byte-identical to today (L8 co-pin arm for transitions) ----
 
-    "no-channel animated bar is byte-identical through the fix (L18 co-pin)" in run {
-        // A bar with NO opacity/label/tooltip channels. After the fix, applyBarChannels returns the rect
-        // unchanged (Absent arms for all three channels) and an empty label Chunk. The SMIL animates are
+    "no-encoding animated bar is byte-identical through the fix (L18 co-pin)" in run {
+        // A bar with NO opacity/label/tooltip encodings. After the fix, applyBarEncodings returns the rect
+        // unchanged (Absent arms for all three encodings) and an empty label Chunk. The SMIL animates are
         // attached as before. Output must be byte-identical to the pre-fix animated bar.
         val rows = Chunk(Sale("Jan", Rev(1000.0)))
         for
-            ref <- Signal.initRef(rows)
-            spec = UI.chart(ref: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+            ref <- Signal.initRef[Seq[Sale]](rows)
+            spec = UI.chart(ref: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
             root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
             html <- HtmlRenderer.render(root, Seq.empty)
         yield
-            // No fill-opacity attribute (opacity channel absent).
+            // No fill-opacity attribute (opacity encoding absent).
             assert(
                 !html.contains("fill-opacity"),
-                s"No-channel animated bar must NOT carry fill-opacity (Absent arm):\n$html"
+                s"No-encoding animated bar must NOT carry fill-opacity (Absent arm):\n$html"
             )
             // No <title> child (tooltip absent).
             assert(
                 !html.contains("<title>"),
-                s"No-channel animated bar must NOT carry <title> (Absent arm):\n$html"
+                s"No-encoding animated bar must NOT carry <title> (Absent arm):\n$html"
             )
             // SMIL animates still present.
             assert(
                 html.contains("attributeName=\"height\"") && html.contains("attributeName=\"y\""),
-                s"No-channel animated bar must still carry SMIL animates:\n$html"
+                s"No-encoding animated bar must still carry SMIL animates:\n$html"
             )
             // ENTER animate for Jan rev=1000: barH=105, barY=335.
             assert(
                 html.contains("from=\"0\"") && html.contains("to=\"105\""),
-                s"No-channel animated bar ENTER must have from=0 to=105 height:\n$html"
+                s"No-encoding animated bar ENTER must have from=0 to=105 height:\n$html"
             )
         end for
     }

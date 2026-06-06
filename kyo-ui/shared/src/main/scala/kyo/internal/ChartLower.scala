@@ -4,14 +4,14 @@ import kyo.*
 import kyo.UI.*
 import kyo.UI.Ast.*
 // Explicit named import so the bare `Encoding` resolves to the chart data-encoding carrier
-// (kyo.UI.Ast.Encoding). This is distinct from kyo-core's concurrency `kyo.Channel`.
+// (kyo.UI.Ast.Encoding). This is distinct from kyo-core's concurrency type `kyo.Channel`.
 import kyo.UI.Ast.Encoding
 
 /** Lowers a `ChartSpec[A]` to an `Svg.Root` for static or live (reactive) data.
   *
   * Multiple `private[kyo]` entry points cover the static path (`lowerStatic`), the live path
   * (`lowerLive`), and the transition-aware animated path (`marksRegionWithTransitions`). Layout is
-  * computed from `size` and margin constants; scales are resolved from the marks' channels via
+  * computed from `size` and margin constants; scales are resolved from the marks' encodings via
   * `Plottable` and `Scale.fit`; each mark is lowered to its corresponding SVG primitive. The
   * static frame (axes, gridlines, tick marks, tick labels, legend) is built by `buildFrame`.
   */
@@ -24,7 +24,7 @@ private[kyo] object ChartLower:
     private val MarginTop          = 20.0
     private val MarginBottom       = 40.0
 
-    /** Default point radius when no `size` channel is supplied. */
+    /** Default point radius when no `size` encoding is supplied. */
     private val DefaultRadius = 4.0
 
     /** Stroke width (pixels) of the separating outline drawn around each `point` circle so that overlapping
@@ -91,12 +91,12 @@ private[kyo] object ChartLower:
         case m: Mark.Text[A, ?, ?]     => m.axis
         case m: Mark.ErrorBar[A, ?, ?] => m.axis
 
-    /** Whether a mark renders as ONE solid color, i.e. it has no `color` channel and is not stack-grouped.
+    /** Whether a mark renders as ONE solid color, i.e. it has no `color` encoding and is not stack-grouped.
       *
-      * A grouped or stacked mark (a `color` channel present, or a `stack` grouping present) renders in
+      * A grouped or stacked mark (a `color` encoding present, or a `stack` grouping present) renders in
       * multiple category colors, so its y-axis must not be color-coded to a single palette color. Rule marks
       * are reference annotations and never count as a solid-color series here. Line and Point marks have no
-      * stacking, so only their `color` channel matters.
+      * stacking, so only their `color` encoding matters.
       */
     private def isSolidColorMark[A](mark: Mark[A]): Boolean = mark match
         case m: Mark.Bar[A, ?, ?]      => m.color.isEmpty && m.stack.group.isEmpty
@@ -110,7 +110,7 @@ private[kyo] object ChartLower:
     /** Resolve the chrome color for one y-axis so a reader can tell which axis a series uses.
       *
       * When exactly ONE data-series mark (Bar/Line/Area/Point, not Rule) binds to `axis` AND that mark renders
-      * as one solid color (no `color` channel, not stack-grouped), the axis chrome (tick labels, tick marks,
+      * as one solid color (no `color` encoding, not stack-grouped), the axis chrome (tick labels, tick marks,
       * axis line, rotated axis label) takes that mark's palette color via its per-mark palette index
       * (mark 0 -> palette(0), mark 1 -> palette(1), ...). When zero or multiple marks bind to the axis, or the
       * single bound mark is grouped/stacked (multi-color), the neutral theme chrome color is used so a single
@@ -149,7 +149,7 @@ private[kyo] object ChartLower:
 
     /** Resolve the default color for the mark at `markIndex` (cycling the theme palette).
       *
-      * Used when a mark has no explicit `color` channel so that a multi-mark chart (e.g. a bar plus a line)
+      * Used when a mark has no explicit `color` encoding so that a multi-mark chart (e.g. a bar plus a line)
       * gives each mark a distinct palette color: mark 0 uses palette(0), mark 1 uses palette(1), and so on.
       */
     private def markDefaultColor(theme: Theme, markIndex: Int): Style.Color =
@@ -266,7 +266,7 @@ private[kyo] object ChartLower:
       * Widens the right margin when a right y-axis is configured so tick labels on the right margin do not overlap
       * the plot area. Widens the LEFT margin so wide left y-tick labels (e.g. 5-digit values) and a rotated left
       * axis title fit without clipping at the SVG edge. Shifts the plot down by `LegendReservedH` when the legend
-      * will actually render (not hidden AND at least one mark carries a color channel) so legend rows sit in
+      * will actually render (not hidden AND at least one mark carries a `color` encoding) so legend rows sit in
       * reserved space above the plot without overlapping the bars.
       */
     private def buildLayout(spec: ChartSpec[?])(using Frame): Layout =
@@ -283,7 +283,7 @@ private[kyo] object ChartLower:
             case _: Mark.Rule[?]           => false
             case m: Mark.Text[?, ?, ?]     => m.color.isDefined
             case m: Mark.ErrorBar[?, ?, ?] => m.color.isDefined
-        // A point mark with a `size` channel emits a size legend (representative sample bubbles). That legend
+        // A point mark with a `size` encoding emits a size legend (representative sample bubbles). That legend
         // always sits in the TOP reserved strip, so the plot must be shifted down to make room even when there
         // is no color legend; otherwise the sample bubbles render over the plotted data (the scatter case).
         val hasSizeLegend = !spec.legendCfg.isHidden && spec.marks.exists:
@@ -300,7 +300,7 @@ private[kyo] object ChartLower:
         // Point glyphs are centred on their data value, so the topmost (max-value) point's top edge (cy - r)
         // would cross into the reserved top band and be clipped. Reserve the max point radius as in-plot top
         // headroom (consumed by the y-scale range in resolveAllScales). Only when a top band is reserved, so
-        // legend-free point charts keep byte-identical output. A size channel scales up to DefaultRMax.
+        // legend-free point charts keep byte-identical output. A size encoding scales up to DefaultRMax.
         val topHeadroom =
             if !reserveTop then 0.0
             else
@@ -325,7 +325,7 @@ private[kyo] object ChartLower:
 
     // ---- extent collection helpers ----
 
-    /** Fold domain values from a sequence of rows through a channel into an `Extent`.
+    /** Fold domain values from a sequence of rows through an encoding into an `Extent`.
       *
       * `Absent` returns from `toDomain` (gap values) are skipped and contribute nothing to the extent.
       */
@@ -368,7 +368,7 @@ private[kyo] object ChartLower:
         loop(0, Absent)
     end foldExtent
 
-    // Unsafe (row/channel erasure invariant, covers all ~50 asInstanceOf[A] and Encoding[A, Any] casts
+    // Unsafe (row/encoding erasure invariant, covers all ~50 asInstanceOf[A] and Encoding[A, Any] casts
     // in this file): `DataSource[A]` and each `Mark.*[A, ...]` are constructed from the same concrete
     // row type `A` as `rows: Chunk[A]`.  The GADT match arms (e.g. `m: Mark.Bar[A, ?, ?]`) prove
     // the mark carries the same `A`, so `r.asInstanceOf[A]` simply re-narrows a type that was erased
@@ -376,7 +376,7 @@ private[kyo] object ChartLower:
     // Likewise, `colorEnc.asInstanceOf[Encoding[A, Any]]` recovers the concrete element type from a
     // `Encoding[?, ?]` that was widened during pattern-match erasure; the cast is total.
 
-    /** Collect x-extent across all marks' x channels for the given rows. */
+    /** Collect x-extent across all marks' x encodings for the given rows. */
     private def xExtent[A](rows: Chunk[A], marks: Chunk[Mark[A]]): Maybe[Extent] =
         @scala.annotation.tailrec
         def loop(i: Int, acc: Maybe[Extent]): Maybe[Extent] =
@@ -444,10 +444,10 @@ private[kyo] object ChartLower:
                                     case Absent     => Absent
                             case _ => Absent
                     case m: Mark.Text[A, ?, ?] if m.axis == Axis.Left =>
-                        // Text y channel contributes to y-extent; gap rows (Absent) are skipped.
+                        // Text y encoding contributes to y-extent; gap rows (Absent) are skipped.
                         foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
                     case m: Mark.ErrorBar[A, ?, ?] if m.axis == Axis.Left =>
-                        // All three y-channels (low, high, y) fold into the y-extent.
+                        // All three y encodings (low, high, y) fold into the y-extent.
                         val eY    = foldExtent(rows, r => m.y.plottable.toDomain(m.y.accessor(r.asInstanceOf[A])))
                         val eLow  = foldExtent(rows, r => m.low.plottable.toDomain(m.low.accessor(r.asInstanceOf[A])))
                         val eHigh = foldExtent(rows, r => m.high.plottable.toDomain(m.high.accessor(r.asInstanceOf[A])))
@@ -1180,15 +1180,15 @@ private[kyo] object ChartLower:
         end match
     end buildXAxis
 
-    /** Build the legend `Svg.g` elements for any color channel present in the marks.
+    /** Build the legend `Svg.g` elements for any `color` encoding present in the marks.
       *
       * Categories are collected in enum-ordinal order when the color values are enums (real `Plottable`
       * ordering, not encounter order). The palette comes from `legendCfg.colorScale`
       * when set; otherwise from `theme.palette` or the `DefaultPalette`.
       *
-      * When no mark has a `color` channel but a Bar or Area mark carries a `stack` grouping, the legend is
+      * When no mark has a `color` encoding but a Bar or Area mark carries a `stack` grouping, the legend is
       * derived from the STACK groups instead: one swatch+label per stack category, in the same colors the
-      * stacked segments use. This is the same derivation as for a `color` channel, applied to the grouping
+      * stacked segments use. This is the same derivation as for a `color` encoding, applied to the grouping
       * accessor that colors the stacked segments.
       */
     private def buildLegend[A](
@@ -1199,8 +1199,8 @@ private[kyo] object ChartLower:
     )(using Frame): Chunk[Svg.SvgElement] =
         if spec.legendCfg.isHidden then Chunk.empty
         else
-            // Prefer a color channel; fall back to the stack grouping that colors the stacked segments.
-            val colorItems: Chunk[Svg.SvgElement] = legendChannel(spec.marks) match
+            // Prefer a color encoding; fall back to the stack grouping that colors the stacked segments.
+            val colorItems: Chunk[Svg.SvgElement] = legendEncoding(spec.marks) match
                 case Absent            => Chunk.empty
                 case Present(colorEnc) =>
                     // categories: Chunk[(label, rawValue)] sorted by enum ordinal when applicable
@@ -1225,7 +1225,7 @@ private[kyo] object ChartLower:
                                 )
                     end if
 
-            // Size legend: emitted when any Point mark has a size channel.
+            // Size legend: emitted when any Point mark has a size encoding.
             val sizeItems: Chunk[Svg.SvgElement] = spec.marks.flatMap:
                 case m: Mark.Point[A, ?, ?] =>
                     m.size match
@@ -1298,7 +1298,7 @@ private[kyo] object ChartLower:
         Chunk(Svg.defs(gradient), swatch, minLabel, maxLabel)
     end buildSequentialLegend
 
-    /** Build representative size-bubble legend items for a point mark with a size channel.
+    /** Build representative size-bubble legend items for a point mark with a size encoding.
       *
       * Emits two representative circles (min and max magnitude) with their magnitude labels,
       * placed in the legend region to the right of any color-legend items.
@@ -1373,14 +1373,14 @@ private[kyo] object ChartLower:
                 end if
     end buildSizeLegend
 
-    /** The channel that drives the legend: the first `color` channel, or, when none is present, the first
+    /** The encoding that drives the legend: the first `color` encoding, or, when none is present, the first
       * Bar/Area `stack` grouping (which colors the stacked segments).
       */
-    private def legendChannel[A](marks: Chunk[Mark[A]]): Maybe[Encoding[A, ?]] =
-        findColorChannel(marks).orElse(findStackGroup(marks))
+    private def legendEncoding[A](marks: Chunk[Mark[A]]): Maybe[Encoding[A, ?]] =
+        findColorEncoding(marks).orElse(findStackGroup(marks))
 
-    /** Find the first color channel across all marks. */
-    private def findColorChannel[A](marks: Chunk[Mark[A]]): Maybe[Encoding[A, ?]] =
+    /** Find the first `color` encoding across all marks. */
+    private def findColorEncoding[A](marks: Chunk[Mark[A]]): Maybe[Encoding[A, ?]] =
         @scala.annotation.tailrec
         def loop(i: Int): Maybe[Encoding[A, ?]] =
             if i >= marks.size then Absent
@@ -1394,12 +1394,12 @@ private[kyo] object ChartLower:
                     case m: Mark.ErrorBar[A, ?, ?] => m.color.orElse(loop(i + 1))
                     case _: Mark.Rule[A]           => loop(i + 1)
         loop(0)
-    end findColorChannel
+    end findColorEncoding
 
     /** Find the first Bar/Area `stack` grouping accessor, wrapped as a string-keyed `Encoding`.
       *
-      * The wrapped channel mirrors how `lowerBarStacked` colors stacked segments: the grouping accessor
-      * keyed as a string category. Deriving the legend from this channel produces one swatch per stack
+      * The wrapped encoding mirrors how `lowerBarStacked` colors stacked segments: the grouping accessor
+      * keyed as a string category. Deriving the legend from this encoding produces one swatch per stack
       * category in the same colors the segments use.
       */
     private def findStackGroup[A](marks: Chunk[Mark[A]]): Maybe[Encoding[A, ?]] =
@@ -1425,7 +1425,7 @@ private[kyo] object ChartLower:
       * a sort key so that the legend lists cases in enum declaration order rather than encounter order. This
       * ensures ordering via the real color accessor's `Plottable`, not the string stand-in.
       *
-      * Returns `Chunk[(label, rawValue)]` where `rawValue` is the first encountered raw color-channel value
+      * Returns `Chunk[(label, rawValue)]` where `rawValue` is the first encountered raw `color` encoding value
       * for that label. The raw value is passed to `colorScale` so typed enum functions can be applied
       * directly (no label-to-K roundtrip).
       */
@@ -1456,7 +1456,7 @@ private[kyo] object ChartLower:
     /** Resolve the palette: explicit `colorScale` first (applied to raw values), then `theme.palette`,
       * then `DefaultPalette`.
       *
-      * A `Categorical` scale applies its total function to each category's RAW color-channel value (e.g. the
+      * A `Categorical` scale applies its total function to each category's RAW `color` encoding value (e.g. the
       * actual enum case), not the label string, so typed pairs/functions work without a label-to-K roundtrip.
       * A `Sequential` scale derives the numeric domain extent from the categories (or its `domain` override)
       * and interpolates each raw value's color between `low` and `high`.
@@ -1520,7 +1520,7 @@ private[kyo] object ChartLower:
         lerpColor(lo, hi, t)
     end sequentialColor
 
-    /** Linear per-channel RGB interpolation between two colors at parameter `t` in `[0, 1]`.
+    /** Linear per-component RGB interpolation between two colors at parameter `t` in `[0, 1]`.
       *
       * RGB components are extracted from the color ADT directly (hex strings of 3/4/6/8 digits, rgb, rgba), so
       * named constants and `Style.Color.hex(...)` inputs all interpolate correctly. The result is an rgb color.
@@ -1565,7 +1565,7 @@ private[kyo] object ChartLower:
         end match
     end colorComponents
 
-    /** True when the legend-driving mark (the one that carries the color channel) is a line or area mark.
+    /** True when the legend-driving mark (the one that carries the `color` encoding) is a line or area mark.
       *
       * Line and area series get a short line-stroke swatch in the legend (matching how the data reads as a
       * stroke); bar and point series get the filled-rect swatch. When no color-bearing mark is found the
@@ -1828,9 +1828,9 @@ private[kyo] object ChartLower:
         spec: Maybe[ChartSpec[A]] = Absent,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Svg.G =
-        // Each mark with no explicit color channel uses a DISTINCT palette color by its index so that a
+        // Each mark with no explicit color encoding uses a DISTINCT palette color by its index so that a
         // multi-mark chart (e.g. a bar plus a line) shows e.g. blue bars and an orange line. A single-mark
-        // chart uses palette(0). Grouped/stacked color-channel marks keep mapping color categories to the
+        // chart uses palette(0). Grouped/stacked color encoding marks keep mapping color categories to the
         // palette (handled inside the per-mark lowerers).
         val theme = spec.map(_.theme).getOrElse(Theme.default)
         val allShapes: Chunk[UI] = marks.zipWithIndex.flatMap: (mark, markIdx) =>
@@ -1908,8 +1908,8 @@ private[kyo] object ChartLower:
 
     /** Lower a `Mark.Bar` to a `Chunk` of `Svg.Rect`s.
       *
-      * When the mark has no `color` channel each row produces one rect spanning the full band. When a `color`
-      * channel is present the band is subdivided into sub-bands (grouped) or the rects stack vertically
+      * When the mark has no `color` encoding each row produces one rect spanning the full band. When a `color`
+      * encoding is present the band is subdivided into sub-bands (grouped) or the rects stack vertically
       * (stacked, when `mark.stack.group` is `Present`).
       *
       * When `spec` is supplied, hover and click handlers are attached to each rect so `spec.onHover` and
@@ -1961,7 +1961,7 @@ private[kyo] object ChartLower:
         highlight: Maybe[Highlight[A]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         val baseline = layout.plotBaseline
-        // A bar with no explicit color channel uses the per-mark default fill (palette color by mark index),
+        // A bar with no explicit color encoding uses the per-mark default fill (palette color by mark index),
         // not the browser default (black), so it is visible and distinct from other marks in a combo chart.
         // The bar rect is tagged with its source row so the built-in highlight can re-style the
         // active row; label texts are not row-shapes and stay outside the highlight region.
@@ -1995,7 +1995,7 @@ private[kyo] object ChartLower:
                                     .height(barH)
                                     .fill(Svg.Paint.Color(defaultFill))
                                     .withAttrs(iAttrs)
-                                val (rectEl, labelElems) = applyBarChannels(baseRect, mark, row, barX, barW, barY, defaultFill)
+                                val (rectEl, labelElems) = applyBarEncodings(baseRect, mark, row, barX, barW, barY, defaultFill)
                                 (bars.append((row, rectEl)), labels ++ labelElems)
                         end match
                 loop(i + 1, nextBars, nextLabels)
@@ -2003,15 +2003,15 @@ private[kyo] object ChartLower:
         withHighlight(bars, highlight) ++ labels
     end lowerBarSimple
 
-    /** Apply the opacity, tooltip, and label channels to a bar rect for row `row`.
+    /** Apply the opacity, tooltip, and label encodings to a bar rect for row `row`.
       *
-      * Returns the channel-decorated rect plus any emitted label `Svg.text` (Chunk.empty when no
-      * `label` channel). Shared by the static (`lowerBarSimple`) and transition
+      * Returns the decorated rect plus any emitted label `Svg.text` (Chunk.empty when no
+      * `label` encoding). Shared by the static (`lowerBarSimple`) and transition
       * (`lowerBarSimpleWithTransitions`) paths so the two cannot drift: both honor `opacity`/`tooltip`/
       * `label` identically. `barX`/`barW`/`barY` are the already-projected rect geometry; `fill` is the
       * resolved fill color (passed in so the caller keeps control of palette resolution).
       */
-    private def applyBarChannels[A, X, Y](
+    private def applyBarEncodings[A, X, Y](
         rect: Svg.Rect,
         mark: Mark.Bar[A, X, Y],
         row: A,
@@ -2020,15 +2020,15 @@ private[kyo] object ChartLower:
         barY: Double,
         fill: Style.Color
     )(using Frame): (Svg.SvgElement, Chunk[Svg.SvgElement]) =
-        // Opacity channel.
+        // Opacity encoding.
         val withOpacity = mark.opacity match
             case Present(fn) => rect.fillOpacity(math.max(0.0, math.min(1.0, fn(row))))
             case Absent      => rect
-        // Tooltip channel.
+        // Tooltip encoding.
         val withTooltip = mark.tooltip match
             case Present(fn) => withOpacity(Svg.title(fn(row)))
             case Absent      => withOpacity
-        // Label channel: emit Svg.text above the bar.
+        // Label encoding: emit Svg.text above the bar.
         val labelElems: Chunk[Svg.SvgElement] = mark.label match
             case Present(fn) =>
                 val lx = barX + barW / 2.0
@@ -2044,7 +2044,7 @@ private[kyo] object ChartLower:
                 )
             case Absent => Chunk.empty
         (withTooltip, labelElems)
-    end applyBarChannels
+    end applyBarEncodings
 
     private def lowerBarGrouped[A, X, Y](
         rows: Chunk[A],
@@ -2059,7 +2059,7 @@ private[kyo] object ChartLower:
     )(using Frame): Chunk[Svg.SvgElement] =
         // Collect distinct color categories (label + raw value) in enum-ordinal order.
         // The raw values feed the same Sequential-aware palette resolution lowerPoint/lowerArea use, so a
-        // numeric color channel under a Sequential `colorScale` paints each bar with its gradient color.
+        // numeric `color` encoding under a Sequential `colorScale` paints each bar with its gradient color.
         val colorCats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, colorEnc)
         val colorKeys: Chunk[String]        = colorCats.map(_._1)
         val numColors                       = colorKeys.size
@@ -2088,7 +2088,7 @@ private[kyo] object ChartLower:
                     basePalette(i % basePalette.size)
         val baseline = layout.plotBaseline
 
-        // Degenerate-grouping guard: a `color` channel only DODGES (subdivides a band into sub-slots) when
+        // Degenerate-grouping guard: a `color` encoding only DODGES (subdivides a band into sub-slots) when
         // MULTIPLE distinct colors actually share the SAME x-band. When `color` is 1:1 with `x` (e.g.
         // bar(x=_.label, color=_.label)), every band holds exactly one color; dodging each band's single bar
         // into its global color sub-slot would march thin bars left-to-right, misaligned with the centered
@@ -2184,7 +2184,7 @@ private[kyo] object ChartLower:
 
         // 3. Build, in one pass: xKey -> groupCatKey -> yValue (dataMap), xKey -> first-seen x Domain
         // (xDomainByKey, for band positioning), and (xKey, groupCatKey) -> first-seen row (rowBySlot, for
-        // per-datum channels). Keys by CatKey (value-equality via categoryKey) instead of toString so two
+        // per-datum encodings). Keys by CatKey (value-equality via categoryKey) instead of toString so two
         // distinct group values with colliding toString remain separate.
         final case class StackMaps(
             data: Map[String, Map[ChartFoundations.CatKey, Double]],
@@ -2289,17 +2289,17 @@ private[kyo] object ChartLower:
                         val nextAcc2 =
                             if rawY == 0.0 then acc2
                             else
-                                // Apply opacity channel if present.
+                                // Apply opacity encoding if present.
                                 val baseRect = Svg.rect
                                     .x(bandX)
                                     .y(rectY)
                                     .width(bandW)
                                     .height(rectH)
                                     .fill(Svg.Paint.Color(fillColor))
-                                // Look up the row for this x+group combination to apply per-datum channels.
+                                // Look up the row for this x+group combination to apply per-datum encodings.
                                 // (There is at most one row per x+group; rowBySlot holds the first match.)
                                 val rowForSlot: Maybe[A] = Maybe.fromOption(rowBySlot.get((xKey, gck)))
-                                val withChannels: Chunk[Svg.SvgElement] = rowForSlot match
+                                val withEncodings: Chunk[Svg.SvgElement] = rowForSlot match
                                     case Absent => Chunk(baseRect)
                                     case Present(r) =>
                                         val withOpacity = mark.opacity match
@@ -2324,7 +2324,7 @@ private[kyo] object ChartLower:
                                             case Present(fn) => withOpacity(Svg.title(fn(r)))
                                             case Absent      => withOpacity
                                         Chunk(withTooltip) ++ labelElems
-                                acc2 ++ withChannels
+                                acc2 ++ withEncodings
                         loopGroup(gi + 1, nextPosAcc, nextNegAcc, nextAcc2)
                 val rectsForX = loopGroup(0, 0.0, 0.0, Chunk.empty)
                 loopX(xi + 1, acc ++ rectsForX)
@@ -2340,7 +2340,7 @@ private[kyo] object ChartLower:
       *
       * Each `Absent` y value (gap) closes the current sub-path and starts a new `MoveTo` segment. The result may
       * contain multiple `MoveTo` commands in a single `PathData` (one for each contiguous run of defined points).
-      * When a `color` channel is present each distinct color series produces its own path.
+      * When a `color` encoding is present each distinct color series produces its own path.
       *
       * When `spec` is supplied, hover and click handlers are attached to each path. A line path represents
       * all rows in a series; the hover handler publishes `Present(firstRow)` (the series representative row,
@@ -2360,7 +2360,7 @@ private[kyo] object ChartLower:
     )(using Frame): Chunk[Svg.SvgElement] =
         mark.color match
             case Absent =>
-                // No color channel: single series whose stroke is the per-mark default color (palette by mark index).
+                // No color encoding: single series whose stroke is the per-mark default color (palette by mark index).
                 // Pass spec/internalHoverRef so click/hover handlers are attached to the path.
                 // Tag the series path with the representative row (first row) and wrap via withHighlight.
                 val path   = lowerLineSeries(rows, mark, layout, xs, ys, defaultColor, spec, internalHoverRef)
@@ -2475,15 +2475,15 @@ private[kyo] object ChartLower:
             .fill(Svg.Paint.None)
             .stroke(Svg.Paint.Color(strokeColor))
             .strokeWidth(2.0)
-        // Opacity channel: for a line, apply as strokeOpacity.
+        // Opacity encoding: for a line, apply as strokeOpacity.
         val withOpacity = mark.opacity match
             case Present(fn) =>
-                // Use the first row to evaluate line-level opacity (series-level channel, not per-datum).
+                // Use the first row to evaluate line-level opacity (series-level encoding, not per-datum).
                 rows.headMaybe match
                     case Present(r) => basePath.strokeOpacity(math.max(0.0, math.min(1.0, fn(r))))
                     case Absent     => basePath
             case Absent => basePath
-        // Tooltip channel: attach a title child on the path element for browser tooltip.
+        // Tooltip encoding: attach a title child on the path element for browser tooltip.
         val withTooltip = mark.tooltip match
             case Present(fn) =>
                 rows.headMaybe match
@@ -2710,7 +2710,7 @@ private[kyo] object ChartLower:
       *
       * The path is always CLOSED: top edge via CurvePath.append, then lineTo the last x at baseline,
       * lineTo the first x at baseline, then close. fillOpacity defaults to 0.7.
-      * The `mark.opacity` channel overrides fillOpacity when Present; the channel is sampled from the
+      * The `mark.opacity` encoding overrides fillOpacity when Present; the encoding is sampled from the
       * first row in `seriesRows` (the series-representative row, same as the interaction anchor).
       *
       * `fill` is the resolved fill color (the caller handles palette resolution so this helper is
@@ -2758,7 +2758,7 @@ private[kyo] object ChartLower:
                     val lastX  = points(points.size - 1)._1
                     val firstX = points(0)._1
                     val pd2    = topPd.lineTo(lastX, baseline).lineTo(firstX, baseline).close
-                    // Apply opacity channel if present; default fillOpacity=0.7.
+                    // Apply opacity encoding if present; default fillOpacity=0.7.
                     val baseOpacity = 0.7
                     val opacity = mark.opacity match
                         case Present(fn) =>
@@ -2789,7 +2789,7 @@ private[kyo] object ChartLower:
       * Three dispatch paths:
       *   1. `mark.stack.group` is `Present` and `mark.y` is `Present`: stacked area (groups sit atop each other).
       *   2. `mark.y` is `Present` and no stack: per-color-series area(s) fill between y values and the plot
-      *      baseline; with a color channel, one path per category (mirroring `lowerLine`); without, one path.
+      *      baseline; with a `color` encoding, one path per category (mirroring `lowerLine`); without, one path.
       *   3. `mark.y` is `Absent`: the `y0`/`y1` band form (closed ribbon between two edges).
       */
     private def lowerArea[A, X, Y](
@@ -2821,7 +2821,7 @@ private[kyo] object ChartLower:
                         // Each series path is tagged with its series-representative row for highlight.
                         mark.color match
                             case Absent =>
-                                // No color channel: single series using the per-mark default color.
+                                // No color encoding: single series using the per-mark default color.
                                 val pathMaybe = buildSimpleAreaPath(rows, mark, layout, xs, ys, defaultColor, spec, internalHoverRef)
                                 val tagged: Chunk[(A, Svg.SvgElement)] = pathMaybe match
                                     case Absent => Chunk.empty
@@ -2831,7 +2831,7 @@ private[kyo] object ChartLower:
                                             case Absent     => Chunk.empty
                                 withHighlight(tagged, highlight)
                             case Present(colorEnc) =>
-                                // Color channel: split rows by category, one path per series.
+                                // Color encoding: split rows by category, one path per series.
                                 // resolvePalette falls back to theme.palette / DefaultPalette when no colorScale is set,
                                 // so a non-stacked area WITHOUT a colorScale keeps byte-identical colors to before.
                                 val colorEncAny: Encoding[A, Any] = colorEnc.asInstanceOf[Encoding[A, Any]]
@@ -3103,18 +3103,18 @@ private[kyo] object ChartLower:
 
     /** Lower a `Mark.Point` to glyphs (circle, square, triangle, diamond, or cross).
       *
-      * Color channel: when `mark.color` is `Present`, rows are split by
+      * Color encoding: when `mark.color` is `Present`, rows are split by
       * `ChartFoundations.categoryKey` and each category gets a distinct palette color
-      * via the same `resolvePalette` the legend uses. Without a color channel, all
+      * via the same `resolvePalette` the legend uses. Without a `color` encoding, all
       * points use `defaultColor`.
       *
-      * Size channel: `sizePx` overrides with raw pixel radius; `size` uses a
+      * Size encoding: `sizePx` overrides with raw pixel radius; `size` uses a
       * sqrt-area scale built from the magnitude extent over all rows. Absent: `DefaultRadius`.
       *
-      * Symbol channel: dispatches on `Symbol` to circle (`Svg.circle`) or a
+      * Symbol encoding: dispatches on `Symbol` to circle (`Svg.circle`) or a
       * path glyph helper (square, triangle, diamond, cross).
       *
-      * Channels: `opacity` sets `fillOpacity`; `label` emits an `Svg.text`
+      * Encodings: `opacity` sets `fillOpacity`; `label` emits an `Svg.text`
       * above the glyph; `tooltip` attaches a `<title>` child.
       */
     private def lowerPoint[A, X, Y](
@@ -3152,8 +3152,8 @@ private[kyo] object ChartLower:
                 Present(SizeScale(safeMin, safeMax, SizeScale.DefaultRMin, SizeScale.DefaultRMax))
             case Absent => Absent
 
-        // Resolve color categories when a color channel is present.
-        // Carry the channel's ConcreteTag so the colorByKey lookup keys raw values under the same
+        // Resolve color categories when a `color` encoding is present.
+        // Carry the encoding's ConcreteTag so the colorByKey lookup keys raw values under the same
         // stable, cross-platform type identity the per-row lookup uses below.
         val colorResolved: Maybe[(Chunk[(String, Any)], Chunk[Style.Color], ConcreteTag[Any])] = mark.color match
             case Present(colorEnc) =>
@@ -3220,7 +3220,7 @@ private[kyo] object ChartLower:
                                     // Resolve symbol and build the glyph shape.
                                     val sym = mark.symbol.map(_(row)).getOrElse(Symbol.circle)
 
-                                    // Opacity channel.
+                                    // Opacity encoding.
                                     val opacity = mark.opacity match
                                         case Present(fn) => Present(math.max(0.0, math.min(1.0, fn(row))))
                                         case Absent      => Absent
@@ -3268,7 +3268,7 @@ private[kyo] object ChartLower:
                                                 case Absent      => withOp
                                             Chunk(withTip)
 
-                                    // Label channel: emit Svg.text above the glyph.
+                                    // Label encoding: emit Svg.text above the glyph.
                                     val labelElems: Chunk[Svg.SvgElement] = mark.label match
                                         case Present(fn) =>
                                             val labelStr = fn(row)
@@ -3451,7 +3451,7 @@ private[kyo] object ChartLower:
       *     with identical `toString` stay distinct. Distinct-toString categories key identically to the
       *     old label scheme (CatKey value-equality reproduces the old label grouping when `toString` is
       *     injective), so the normal case is byte-identical.
-      *   - `SingleSeries(markIdx)`: a line or area with NO color channel (single-path series). Uses
+      *   - `SingleSeries(markIdx)`: a line or area with NO `color` encoding (single-path series). Uses
       *     only `markIdx` as the key, matching the old `"_single"` sentinel label but without any
       *     string representation that could collide with a user-supplied category label.
       */
@@ -3499,9 +3499,9 @@ private[kyo] object ChartLower:
     end TransState
 
     /** Compute the string key for a row in a given mark, using the spec's key function or falling back to
-      * the x channel.
+      * the x encoding.
       *
-      * Default: the x channel's domain string (`domainKey`). Override: `spec.key` when `Present`.
+      * Default: the x encoding's domain string (`domainKey`). Override: `spec.key` when `Present`.
       */
     private def rowKey[A](spec: ChartSpec[A], mark: Mark[A], row: A): String =
         spec.key match
@@ -3691,19 +3691,19 @@ private[kyo] object ChartLower:
                                 val iAttrs = buildInteractionAttrs(row, spec, internalHoverRef)
                                 val baseRect =
                                     Svg.rect.x(barX).y(barY).width(barW).height(barH).fill(Svg.Paint.Color(defaultFill)).withAttrs(iAttrs)
-                                val (channelRect, labelEls) = applyBarChannels(baseRect, mark, row, barX, barW, barY, defaultFill)
+                                val (decoratedRect, labelEls) = applyBarEncodings(baseRect, mark, row, barX, barW, barY, defaultFill)
                                 val r: Svg.SvgElement =
-                                    if !animOk then channelRect
+                                    if !animOk then decoratedRect
                                     else
                                         val (fromH, fromY) = Maybe.fromOption(fromGeom.get(transKey)) match
                                             case Present(MarkGeom.Bar(ph, py)) => (ph, py)
                                             case _                             => (0.0, baseline) // enter from baseline
-                                        // channelRect is a Svg.Rect at runtime (applyBarChannels returns the rect with
+                                        // decoratedRect is a Svg.Rect at runtime (applyBarEncodings returns the rect with
                                         // opacity/title applied; only .fillOpacity and .apply(ShapeChild) are called,
                                         // both returning Svg.Rect). Cast back to Svg.Rect to attach the SMIL animate
-                                        // children. Child order: tooltip (<title>) added first by applyBarChannels,
+                                        // children. Child order: tooltip (<title>) added first by applyBarEncodings,
                                         // animates follow: [<title>, <animate height>, <animate y>].
-                                        channelRect.asInstanceOf[Svg.Rect](
+                                        decoratedRect.asInstanceOf[Svg.Rect](
                                             smilAnimate("height", fromH, barH, durStr),
                                             smilAnimate("y", fromY, barY, durStr)
                                         )
@@ -3768,12 +3768,12 @@ private[kyo] object ChartLower:
         // rawPathsWithKey carries the TransKey (CatKey-based series identity) and the series-representative
         // row alongside each path. TransKey.Series keys by value identity (CatKey = tag + value), so two
         // enum cases with colliding toString stay distinct. TransKey.SingleSeries is used when there is no
-        // color channel. Both keys are stable across series add/remove/reorder.
+        // color encoding. Both keys are stable across series add/remove/reorder.
         // The representative row (repRow) is needed for withHighlight (mirrors lowerLine's tagged approach).
         val rawPathsWithKey: Chunk[(Svg.Path, TransKey, Maybe[A])] = mark.color match
             case Absent =>
-                // No color channel: single series. Use TransKey.SingleSeries(markIdx) as a stable key so
-                // it cannot collide with any color-channel series key.
+                // No color encoding: single series. Use TransKey.SingleSeries(markIdx) as a stable key so
+                // it cannot collide with any color-encoding series key.
                 // Pass Present(spec) and internalHoverRef so interaction attrs are attached to the path.
                 val path = lowerLineSeries(rows, mark, layout, xs, ys, defaultColor, Present(spec), internalHoverRef)
                 Chunk((path, TransKey.SingleSeries(markIdx), rows.headMaybe))
@@ -3886,7 +3886,7 @@ private[kyo] object ChartLower:
         else
             val animOk = spec.animateCfg.enabled
             val durStr = formatDur(spec.animateCfg.duration)
-            // FIX 1 (P9b): forward Present(spec) so the non-stacked color-channel arm resolves the
+            // FIX 1 (P9b): forward Present(spec) so the non-stacked color-encoding arm resolves the
             // palette via resolvePalette (honoring an explicit colorScale) instead of defaulting to
             // DefaultPalette. Mirrors the lowerLineWithTransitions FIX B pattern.
             // Pass internalHoverRef so buildSimpleAreaPath attaches interaction attrs to each raw path.
@@ -3989,7 +3989,7 @@ private[kyo] object ChartLower:
         val fromGeom: Map[TransKey, MarkGeom] =
             if isRepeatPull then t.fromGeom else t.currentGeom
         // Produce SVG shapes and accumulate new geometry in a single pass.
-        // Each mark with no explicit color channel uses a distinct palette color by its index (per-mark default).
+        // Each mark with no explicit color encoding uses a distinct palette color by its index (per-mark default).
         val (shapes, newGeom) = spec.marks.zipWithIndex.foldLeft((Chunk.empty[Svg.SvgElement], Map.empty[TransKey, MarkGeom])):
             case ((accElems, accGeom), (mark, markIdx)) =>
                 val markColor = markDefaultColor(spec.theme, markIdx)
@@ -4282,7 +4282,7 @@ private[kyo] object ChartLower:
         end if
     end buildReactiveRegion
 
-    /** Drop rows whose color-channel label is in the interactive legend's hidden set.
+    /** Drop rows whose `color` encoding label is in the interactive legend's hidden set.
       *
       * When the legend is not interactive (or no `hiddenSeries` ref is attached), all rows are returned. The
       * hidden labels are read synchronously from the user's ref; the label derivation mirrors the legend's
@@ -4299,7 +4299,7 @@ private[kyo] object ChartLower:
                 val hidden = ref.unsafe.get()
                 if hidden.isEmpty then rows
                 else
-                    legendChannel(spec.marks) match
+                    legendEncoding(spec.marks) match
                         case Present(ch) => rows.filter(r => !hidden.contains(ch.accessor(r).toString))
                         case Absent      => rows
                 end if

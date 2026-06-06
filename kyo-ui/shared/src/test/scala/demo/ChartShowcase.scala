@@ -34,7 +34,7 @@ object ChartShowcase extends KyoApp:
 
     case class Rev(month: String, revenue: Double, growth: Double) derives CanEqual
 
-    val revStart: Chunk[Rev] = Chunk(
+    val revStart: Seq[Rev] = Chunk(
         Rev("Jan", 45_000, 0.0),
         Rev("Feb", 52_000, 15.6),
         Rev("Mar", 48_000, -7.7),
@@ -43,7 +43,7 @@ object ChartShowcase extends KyoApp:
         Rev("Jun", 83_000, 18.6)
     )
 
-    val revEnd: Chunk[Rev] = Chunk(
+    val revEnd: Seq[Rev] = Chunk(
         Rev("Jan", 55_000, 0.0),
         Rev("Feb", 68_000, 23.6),
         Rev("Mar", 74_000, 8.8),
@@ -74,7 +74,7 @@ object ChartShowcase extends KyoApp:
 
     case class AreaPt(x: Int, y: Double, grp: String) derives CanEqual
 
-    val areaStart: Chunk[AreaPt] =
+    val areaStart: Seq[AreaPt] =
         Chunk.from((0 to 5).flatMap { i =>
             Chunk(
                 AreaPt(i, 20 + i * 6.0, "North"),
@@ -83,7 +83,7 @@ object ChartShowcase extends KyoApp:
             )
         })
 
-    val areaEnd: Chunk[AreaPt] =
+    val areaEnd: Seq[AreaPt] =
         Chunk.from((0 to 5).flatMap { i =>
             Chunk(
                 AreaPt(i, 40 + i * 5.0, "North"),
@@ -96,7 +96,7 @@ object ChartShowcase extends KyoApp:
 
     case class BarItem(label: String, value: Double, opacity: Double) derives CanEqual
 
-    val barsStart: Chunk[BarItem] = Chunk(
+    val barsStart: Seq[BarItem] = Chunk(
         BarItem("Q1", 42.0, 0.5),
         BarItem("Q2", 78.0, 0.7),
         BarItem("Q3", 61.0, 0.6),
@@ -104,7 +104,7 @@ object ChartShowcase extends KyoApp:
         BarItem("Q5", 53.0, 0.55)
     )
 
-    val barsEnd: Chunk[BarItem] = Chunk(
+    val barsEnd: Seq[BarItem] = Chunk(
         BarItem("Q1", 68.0, 0.9),
         BarItem("Q2", 55.0, 0.6),
         BarItem("Q3", 89.0, 0.85),

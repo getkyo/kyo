@@ -255,10 +255,10 @@ object LiveDashboard extends KyoApp:
 
     private[demo] def app: UI < Async =
         for
-            throughput <- Signal.initRef(initThroughput)
-            latency    <- Signal.initRef(initLatency)
-            status     <- Signal.initRef(initStatus)
-            errRate    <- Signal.initRef(initErr)
+            throughput <- Signal.initRef[Seq[Endpoint]](initThroughput)
+            latency    <- Signal.initRef[Seq[LatPoint]](initLatency)
+            status     <- Signal.initRef[Seq[StatusRow]](initStatus)
+            errRate    <- Signal.initRef[Seq[ErrPoint]](initErr)
             paused     <- Signal.initRef(false)
 
             // background engine: random-walk every metric on a fixed cadence, threading a pure seed (no var/while).
@@ -272,10 +272,10 @@ object LiveDashboard extends KyoApp:
                                 l <- latency.get
                                 s <- status.get
                                 e <- errRate.get
-                                (s1, nt) = stepThroughput(seed, t)
-                                (s2, nl) = stepLatency(s1, l)
-                                (s3, ns) = stepStatus(s2, s)
-                                ne       = stepErr(e, errorPct(ns))
+                                (s1, nt) = stepThroughput(seed, Chunk.from(t))
+                                (s2, nl) = stepLatency(s1, Chunk.from(l))
+                                (s3, ns) = stepStatus(s2, Chunk.from(s))
+                                ne       = stepErr(Chunk.from(e), errorPct(ns))
                                 _ <- throughput.set(nt)
                                 _ <- latency.set(nl)
                                 _ <- status.set(ns)
@@ -287,14 +287,14 @@ object LiveDashboard extends KyoApp:
             }
 
             // KPI tiles: each reads one metric and recolors its number by threshold.
-            totalTile = throughput.render(t => tile("Total req/s", withThousands(totalRps(t)), green))
+            totalTile = throughput.render(t => tile("Total req/s", withThousands(totalRps(Chunk.from(t))), green))
             errorTile = status.render { s =>
-                val pct   = errorPct(s)
+                val pct   = errorPct(Chunk.from(s))
                 val color = if pct > 5.0 then red else if pct > 2.0 then amber else green
                 tile("Error %", fmt1(pct) + "%", color)
             }
             p99Tile = latency.render { l =>
-                val v     = p99Now(l)
+                val v     = p99Now(Chunk.from(l))
                 val color = if v > 300.0 then red else if v > 200.0 then amber else green
                 tile("p99 latency", fmt0(v) + " ms", color)
             }

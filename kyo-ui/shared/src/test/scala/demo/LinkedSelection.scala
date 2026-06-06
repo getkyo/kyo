@@ -75,7 +75,7 @@ object LinkedSelection extends KyoApp:
             // The detail data is derived from the same ref: empty until a bar is clicked, then that category's
             // series. Because it is a `Signal`, the chart built over it updates itself; the marks region is
             // reactive by construction, so no `.render` wrapper is needed here.
-            val detailData = selected.map(sel => sel.fold(Chunk.empty[Pt])(c => seriesFor(c.name)))
+            val detailData = selected.map(sel => sel.fold(Seq.empty[Pt])(c => seriesFor(c.name)))
 
             val detailChart: Svg.Root =
                 UI.chart(detailData)(line(x = _.month, y = _.value))
