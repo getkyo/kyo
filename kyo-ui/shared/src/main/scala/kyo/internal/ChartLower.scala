@@ -1,13 +1,14 @@
 package kyo.internal
 
 import kyo.*
+import kyo.Chart.*
+// Explicit named import so the bare `Encoding` resolves to the chart data-encoding carrier
+// (kyo.Chart.Encoding). This is distinct from kyo-core's concurrency type `kyo.Channel`.
+import kyo.Chart.Encoding
 import kyo.UI.*
 import kyo.UI.Ast.*
-// Explicit named import so the bare `Encoding` resolves to the chart data-encoding carrier
-// (kyo.UI.Ast.Encoding). This is distinct from kyo-core's concurrency type `kyo.Channel`.
-import kyo.UI.Ast.Encoding
 
-/** Lowers a `ChartSpec[A]` to an `Svg.Root` for static or live (reactive) data.
+/** Lowers a `Chart.Spec[A]` to an `Svg.Root` for static or live (reactive) data.
   *
   * Multiple `private[kyo]` entry points cover the static path (`lowerStatic`), the live path
   * (`lowerLive`), and the transition-aware animated path (`marksRegionWithTransitions`). Layout is
@@ -213,7 +214,7 @@ private[kyo] object ChartLower:
       * Returns the configured margin unchanged when it is already wide enough (so existing narrow-label
       * charts keep byte-identical output).
       */
-    private def leftAxisMargin[A](spec: ChartSpec[A], configuredLeft: Double)(using Frame): Double =
+    private def leftAxisMargin[A](spec: Chart.Spec[A], configuredLeft: Double)(using Frame): Double =
         val rowsMaybe: Maybe[Chunk[A]] = spec.data match
             case DataSource.Static(rs)   => Present(rs)
             case DataSource.Live(signal) =>
@@ -269,7 +270,7 @@ private[kyo] object ChartLower:
       * will actually render (not hidden AND at least one mark carries a `color` encoding) so legend rows sit in
       * reserved space above the plot without overlapping the bars.
       */
-    private def buildLayout(spec: ChartSpec[?])(using Frame): Layout =
+    private def buildLayout(spec: Chart.Spec[?])(using Frame): Layout =
         val (w, h) = spec.chartSize
         val m      = spec.marginsCfg
         // The right-axis layout still needs the extra fixed reserve for dual-axis charts; otherwise use the
@@ -847,7 +848,7 @@ private[kyo] object ChartLower:
         xs: Scale,
         ysL: Scale,
         ysR: Maybe[Scale],
-        spec: ChartSpec[A],
+        spec: Chart.Spec[A],
         rows: Chunk[A],
         gradPrefix: String
     )(using Frame): Chunk[Svg.SvgElement] =
@@ -1193,7 +1194,7 @@ private[kyo] object ChartLower:
       */
     private def buildLegend[A](
         layout: Layout,
-        spec: ChartSpec[A],
+        spec: Chart.Spec[A],
         rows: Chunk[A],
         gradPrefix: String
     )(using Frame): Chunk[Svg.SvgElement] =
@@ -1248,7 +1249,7 @@ private[kyo] object ChartLower:
       */
     private def buildSequentialLegend[A](
         layout: Layout,
-        spec: ChartSpec[A],
+        spec: Chart.Spec[A],
         lo: Style.Color,
         hi: Style.Color,
         categories: Chunk[(String, Any)],
@@ -1461,7 +1462,7 @@ private[kyo] object ChartLower:
       * A `Sequential` scale derives the numeric domain extent from the categories (or its `domain` override)
       * and interpolates each raw value's color between `low` and `high`.
       */
-    private def resolvePalette[A](spec: ChartSpec[A], categories: Chunk[(String, Any)]): Chunk[Style.Color] =
+    private def resolvePalette[A](spec: Chart.Spec[A], categories: Chunk[(String, Any)]): Chunk[Style.Color] =
         spec.legendCfg.colorScale match
             case Present(LegendConfig.ColorScale.Categorical(fn)) =>
                 categories.map { case (_, raw) => fn(raw) }
@@ -1681,7 +1682,7 @@ private[kyo] object ChartLower:
       */
     private def buildInteractionAttrs[A](
         row: A,
-        spec: ChartSpec[A],
+        spec: Chart.Spec[A],
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]]
     )(using Frame): UI.Ast.Attrs =
         val hasHover   = spec.onHover.isDefined
@@ -1736,7 +1737,7 @@ private[kyo] object ChartLower:
       * enabled, mirroring the click-over-hover precedence of the interaction handlers. Returns `Absent` when no
       * highlight is enabled OR the matching ref is not configured (the documented no-op).
       */
-    private def resolveHighlight[A](spec: Maybe[ChartSpec[A]]): Maybe[Highlight[A]] =
+    private def resolveHighlight[A](spec: Maybe[Chart.Spec[A]]): Maybe[Highlight[A]] =
         spec match
             case Absent => Absent
             case Present(s) =>
@@ -1825,7 +1826,7 @@ private[kyo] object ChartLower:
         xs: Scale,
         ysL: Scale,
         ysR: Maybe[Scale] = Absent,
-        spec: Maybe[ChartSpec[A]] = Absent,
+        spec: Maybe[Chart.Spec[A]] = Absent,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Svg.G =
         // Each mark with no explicit color encoding uses a DISTINCT palette color by its index so that a
@@ -1923,7 +1924,7 @@ private[kyo] object ChartLower:
         xs: Scale,
         ys: Scale,
         defaultColor: Style.Color,
-        spec: Maybe[ChartSpec[A]] = Absent,
+        spec: Maybe[Chart.Spec[A]] = Absent,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         val highlight = resolveHighlight(spec)
@@ -1956,7 +1957,7 @@ private[kyo] object ChartLower:
         xs: Scale,
         ys: Scale,
         defaultFill: Style.Color,
-        spec: Maybe[ChartSpec[A]] = Absent,
+        spec: Maybe[Chart.Spec[A]] = Absent,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
         highlight: Maybe[Highlight[A]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
@@ -2053,7 +2054,7 @@ private[kyo] object ChartLower:
         layout: Layout,
         xs: Scale,
         ys: Scale,
-        spec: Maybe[ChartSpec[A]] = Absent,
+        spec: Maybe[Chart.Spec[A]] = Absent,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
         highlight: Maybe[Highlight[A]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
@@ -2157,7 +2158,7 @@ private[kyo] object ChartLower:
         layout: Layout,
         xs: Scale,
         ys: Scale,
-        spec: Maybe[ChartSpec[A]] = Absent
+        spec: Maybe[Chart.Spec[A]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         val groupFn  = mark.stack.group.getOrElse((_: A) => "")
         val baseline = layout.plotBaseline
@@ -2354,7 +2355,7 @@ private[kyo] object ChartLower:
         xs: Scale,
         ys: Scale,
         defaultColor: Style.Color,
-        spec: Maybe[ChartSpec[A]] = Absent,
+        spec: Maybe[Chart.Spec[A]] = Absent,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
         highlight: Maybe[Highlight[A]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
@@ -2455,7 +2456,7 @@ private[kyo] object ChartLower:
         xs: Scale,
         ys: Scale,
         strokeColor: Style.Color = Style.Color.blue,
-        spec: Maybe[ChartSpec[A]] = Absent,
+        spec: Maybe[Chart.Spec[A]] = Absent,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Svg.Path =
         // Collect contiguous defined segments. Each segment is then threaded through
@@ -2516,7 +2517,7 @@ private[kyo] object ChartLower:
         ys: Scale,
         defaultColor: Style.Color,
         theme: Theme,
-        spec: Maybe[ChartSpec[A]] = Absent,
+        spec: Maybe[Chart.Spec[A]] = Absent,
         highlight: Maybe[Highlight[A]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         // TextAnchor mapping: two distinct enums, explicit match required.
@@ -2601,7 +2602,7 @@ private[kyo] object ChartLower:
         ys: Scale,
         defaultColor: Style.Color,
         theme: Theme,
-        spec: Maybe[ChartSpec[A]] = Absent,
+        spec: Maybe[Chart.Spec[A]] = Absent,
         highlight: Maybe[Highlight[A]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         val colorCatsWithRaw: Chunk[(String, Any)] = mark.color match
@@ -2724,7 +2725,7 @@ private[kyo] object ChartLower:
         xs: Scale,
         ys: Scale,
         fill: Style.Color,
-        spec: Maybe[ChartSpec[A]],
+        spec: Maybe[Chart.Spec[A]],
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]]
     )(using Frame): Maybe[Svg.SvgElement] =
         mark.y match
@@ -2799,7 +2800,7 @@ private[kyo] object ChartLower:
         xs: Scale,
         ys: Scale,
         defaultColor: Style.Color = DefaultPalette(0),
-        spec: Maybe[ChartSpec[A]] = Absent,
+        spec: Maybe[Chart.Spec[A]] = Absent,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
         highlight: Maybe[Highlight[A]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
@@ -2953,7 +2954,7 @@ private[kyo] object ChartLower:
         layout: Layout,
         xs: Scale,
         ys: Scale,
-        spec: Maybe[ChartSpec[A]] = Absent,
+        spec: Maybe[Chart.Spec[A]] = Absent,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         val groupFn  = mark.stack.group.getOrElse((_: A) => "")
@@ -3124,7 +3125,7 @@ private[kyo] object ChartLower:
         xs: Scale,
         ys: Scale,
         defaultColor: Style.Color,
-        spec: Maybe[ChartSpec[A]] = Absent,
+        spec: Maybe[Chart.Spec[A]] = Absent,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
         theme: Theme = Theme.default,
         highlight: Maybe[Highlight[A]] = Absent
@@ -3503,7 +3504,7 @@ private[kyo] object ChartLower:
       *
       * Default: the x encoding's domain string (`domainKey`). Override: `spec.key` when `Present`.
       */
-    private def rowKey[A](spec: ChartSpec[A], mark: Mark[A], row: A): String =
+    private def rowKey[A](spec: Chart.Spec[A], mark: Mark[A], row: A): String =
         spec.key match
             case Present(kf) => kf(row)
             case Absent =>
@@ -3654,7 +3655,7 @@ private[kyo] object ChartLower:
         xs: Scale,
         ys: Scale,
         defaultFill: Style.Color,
-        spec: ChartSpec[A],
+        spec: Chart.Spec[A],
         fromGeom: Map[TransKey, MarkGeom],
         newGeom: Map[TransKey, MarkGeom],
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
@@ -3756,7 +3757,7 @@ private[kyo] object ChartLower:
         xs: Scale,
         ys: Scale,
         defaultColor: Style.Color,
-        spec: ChartSpec[A],
+        spec: Chart.Spec[A],
         fromGeom: Map[TransKey, MarkGeom],
         newGeom: Map[TransKey, MarkGeom],
         markIdx: Int,
@@ -3870,7 +3871,7 @@ private[kyo] object ChartLower:
         xs: Scale,
         ys: Scale,
         defaultColor: Style.Color,
-        spec: ChartSpec[A],
+        spec: Chart.Spec[A],
         fromGeom: Map[TransKey, MarkGeom],
         newGeom: Map[TransKey, MarkGeom],
         markIdx: Int,
@@ -3969,7 +3970,7 @@ private[kyo] object ChartLower:
       */
     private def marksRegionWithTransitions[A](
         rows: Chunk[A],
-        spec: ChartSpec[A],
+        spec: Chart.Spec[A],
         layout: Layout,
         xs: Scale,
         ysL: Scale,
@@ -4176,7 +4177,7 @@ private[kyo] object ChartLower:
         xs: Scale,
         ysL: Scale,
         ysR: Maybe[Scale],
-        spec: ChartSpec[A],
+        spec: Chart.Spec[A],
         initialRows: Chunk[A]
     )(using Frame): Chunk[Svg.SvgElement] =
         val leftChrome    = axisChromeColorFor(spec.theme, spec.marks, Axis.Left)
@@ -4225,7 +4226,7 @@ private[kyo] object ChartLower:
       */
     private def buildReactiveRegion[A](
         rows: Chunk[A],
-        spec: ChartSpec[A],
+        spec: Chart.Spec[A],
         layout: Layout,
         xs: Scale,
         ysL: Scale,
@@ -4288,7 +4289,7 @@ private[kyo] object ChartLower:
       * hidden labels are read synchronously from the user's ref; the label derivation mirrors the legend's
       * (`accessor(row).toString`), so toggling a swatch hides exactly the rows that swatch represents.
       */
-    private def visibleRowsFor[A](rows: Chunk[A], spec: ChartSpec[A]): Chunk[A] =
+    private def visibleRowsFor[A](rows: Chunk[A], spec: Chart.Spec[A]): Chunk[A] =
         spec.legendCfg.hiddenSeries match
             case Absent       => rows
             case Present(ref) =>
@@ -4305,7 +4306,7 @@ private[kyo] object ChartLower:
                 end if
     end visibleRowsFor
 
-    /** Lower a `ChartSpec[A]` with a `DataSource.Live` signal to an `Svg.Root`.
+    /** Lower a `Chart.Spec[A]` with a `DataSource.Live` signal to an `Svg.Root`.
       *
       * The static frame (background, axis lines, and the y-axis when the domain is fixed) is drawn once. The
       * marks region, the legend, the x-axis, and (when the domain is inferred) the y-axis ticks are wrapped in
@@ -4338,7 +4339,7 @@ private[kyo] object ChartLower:
       * pure render function. The ref is private to this chart instance and writes occur only on genuine row
       * changes, so the bypass is sound.
       */
-    private[kyo] def lowerLive[A](spec: ChartSpec[A], signal: Signal[Chunk[A]], gradPrefix: String)(using Frame): Svg.Root =
+    private[kyo] def lowerLive[A](spec: Chart.Spec[A], signal: Signal[Chunk[A]], gradPrefix: String)(using Frame): Svg.Root =
         val layout = buildLayout(spec)
         // Use a fixed initial row set for the layout/x-scale/ysR-presence check.
         // The x-scale is computed from the signal's current value via initConst or the first emission.
@@ -4430,7 +4431,7 @@ private[kyo] object ChartLower:
 
     // ---- main entry point ----
 
-    /** Lower a `ChartSpec[A]` to an `Svg.Root`.
+    /** Lower a `Chart.Spec[A]` to an `Svg.Root`.
       *
       * Dispatches to `lowerStatic` for `DataSource.Static` and `lowerLive` for `DataSource.Live`.
       *
@@ -4440,7 +4441,7 @@ private[kyo] object ChartLower:
       * always match (the def carries the prefix-derived `defId`, the swatch fill references the same id), and
       * two charts in one document never collide.
       */
-    private[kyo] def lower[A](spec: ChartSpec[A]): Svg.Root =
+    private[kyo] def lower[A](spec: Chart.Spec[A]): Svg.Root =
         given Frame    = Frame.internal
         val gradPrefix = ChartFoundations.nextChartInstancePrefix()
         spec.data match
@@ -4449,13 +4450,13 @@ private[kyo] object ChartLower:
         end match
     end lower
 
-    /** Lower a `ChartSpec[A]` to an `Svg.Root` together with its resolved scales.
+    /** Lower a `Chart.Spec[A]` to an `Svg.Root` together with its resolved scales.
       *
       * The returned `ChartScales` projects the same resolved `xs`/`ysL`/`ysR` the lowering used, plus the inner
       * plot rectangle, so callers can compute exact chart pixel coordinates. For a live chart the scales are
       * resolved from the signal's current value at call time.
       */
-    private[kyo] def lowerWithScales[A](spec: ChartSpec[A]): (Svg.Root, UI.Ast.ChartScales) =
+    private[kyo] def lowerWithScales[A](spec: Chart.Spec[A]): (Svg.Root, Chart.Scales) =
         given Frame = Frame.internal
         val rows: Chunk[A] = spec.data match
             case DataSource.Static(rs)   => rs
@@ -4490,8 +4491,8 @@ private[kyo] object ChartLower:
                 spec.yScaleRightOverride,
                 spec.yAxisRightCfg.getOrElse(AxisConfig.default)
             )
-        val plot   = UI.Ast.ChartScales.Rect(layout.plotX, layout.plotY, layout.plotW, layout.plotH)
-        val scales = UI.Ast.ChartScales.from(xs, ysL, ysR, plot)
+        val plot   = Chart.Scales.Rect(layout.plotX, layout.plotY, layout.plotW, layout.plotH)
+        val scales = Chart.Scales.from(xs, ysL, ysR, plot)
         val svg    = lower(spec)
         (svg, scales)
     end lowerWithScales
@@ -4543,7 +4544,7 @@ private[kyo] object ChartLower:
       * `role="img"` builder, and `ariaLabel` sets the generic `aria-label`. All attrs use the generic UI builders;
       * no chart-specific hardwiring in the renderer.
       */
-    private def buildBaseSvg[A](spec: ChartSpec[A], layout: Layout, vb: Svg.ViewBox)(using Frame): Svg.Root =
+    private def buildBaseSvg[A](spec: Chart.Spec[A], layout: Layout, vb: Svg.ViewBox)(using Frame): Svg.Root =
         val sized =
             if spec.isResponsive then
                 val base = Svg.svg.width(Svg.SvgLength.Pct(100.0)).viewBox(vb)
@@ -4559,7 +4560,7 @@ private[kyo] object ChartLower:
         spec.a11y.ariaLabel.fold(withRole)(lbl => withRole.aria("label", lbl))
     end buildBaseSvg
 
-    private def lowerStatic[A](rows: Chunk[A], spec: ChartSpec[A], gradPrefix: String)(using Frame): Svg.Root =
+    private def lowerStatic[A](rows: Chunk[A], spec: Chart.Spec[A], gradPrefix: String)(using Frame): Svg.Root =
         val layout = buildLayout(spec)
         val hasRight = spec.marks.exists:
             case m: Mark.Bar[A, ?, ?]      => m.axis == Axis.Right

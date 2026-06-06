@@ -1,8 +1,8 @@
 package kyo
 
+import kyo.Chart.*
 import kyo.UI.*
 import kyo.UI.Ast.*
-import kyo.UI.mark.*
 import kyo.internal.ChartFoundations
 import kyo.internal.ChartLower
 import kyo.internal.Extent
@@ -25,8 +25,8 @@ class ChartInvariantsTest extends Test:
     "INV-001: NaN y value does not appear in lowered SVG HTML output" in run {
         case class Row(x: Int, y: Double)
         val rows = Chunk(Row(0, 1.0), Row(1, Double.NaN), Row(2, 3.0))
-        val spec = UI.chart(rows)(bar(x = _.x, y = _.y))
-        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val spec = Chart(rows)(bar(x = _.x, y = _.y))
+        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(!html.contains("NaN"), s"SVG output must not contain 'NaN' but got: ${html.take(200)}")
@@ -39,8 +39,8 @@ class ChartInvariantsTest extends Test:
     "INV-001: NaN y value does not appear in POINT chart SVG output" in run {
         case class Row(x: Int, y: Double)
         val rows = Chunk(Row(0, 1.0), Row(1, Double.NaN), Row(2, Double.PositiveInfinity), Row(3, 3.0))
-        val spec = UI.chart(rows)(point(x = _.x, y = _.y))
-        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val spec = Chart(rows)(point(x = _.x, y = _.y))
+        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(!html.contains("NaN"), s"Point chart SVG must not contain 'NaN' but got: ${html.take(200)}")
@@ -51,8 +51,8 @@ class ChartInvariantsTest extends Test:
     "INV-001: NaN y value does not appear in LINE chart SVG output" in run {
         case class Row(x: Int, y: Double)
         val rows = Chunk(Row(0, 1.0), Row(1, Double.NaN), Row(2, Double.PositiveInfinity), Row(3, 3.0))
-        val spec = UI.chart(rows)(line(x = _.x, y = _.y))
-        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val spec = Chart(rows)(line(x = _.x, y = _.y))
+        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(!html.contains("NaN"), s"Line chart SVG must not contain 'NaN' but got: ${html.take(200)}")
@@ -70,14 +70,14 @@ class ChartInvariantsTest extends Test:
             Row("Feb", 20.0, 200.0),
             Row("Mar", 15.0, 150.0)
         )
-        val spec = UI.chart(rows)(
+        val spec = Chart(rows)(
             bar(x = _.x, y = _.yL),
             line(x = _.x, y = _.yL),
             point(x = _.x, y = _.yR, axis = Axis.Right)
         ).yAxisRight(identity)
 
-        val root1 = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
-        val root2 = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val root1 = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root2 = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
 
         for
             html1 <- HtmlRenderer.render(root1, Seq.empty)
@@ -101,12 +101,12 @@ class ChartInvariantsTest extends Test:
             Row("Feb", 20.0, 200.0),
             Row("Mar", 15.0, 150.0)
         )
-        val spec = UI.chart(rows)(
+        val spec = Chart(rows)(
             bar(x = _.x, y = _.yL),
             line(x = _.x, y = _.yL),
             point(x = _.x, y = _.yR, axis = Axis.Right)
         ).yAxisRight(identity)
-        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(!html.contains("linearGradient"), "golden chart must emit no gradient (determinism guard)")
@@ -129,7 +129,7 @@ class ChartInvariantsTest extends Test:
         // verbatim, so [-2,12] (override) is distinguishable from [-0.5,10.5] (AxisConfig).
         case class Row(x: Double, y: Double)
         val rows = Chunk(Row(0.0, 1.0), Row(5.0, 2.0), Row(10.0, 3.0))
-        val spec = UI.chart(rows)(bar(x = _.x, y = _.y))
+        val spec = Chart(rows)(bar(x = _.x, y = _.y))
             .xScale(_.linear(0.0, 10.0).withPad(0.2).noNice)
             .xAxis(_.pad(0.05))
         // Read the resolved x-scale back: ScaleOverride.withPad(0.2) widens [0,10] by 0.2*(10-0)=2 each
@@ -154,14 +154,14 @@ class ChartInvariantsTest extends Test:
         case class Row(x: String, y: Double)
         val rows = Chunk(Row("a", 1.0), Row("b", 2.0), Row("c", 3.0))
         // Forward control (no reverse): the first category 'a' sits left of the last 'c'.
-        val fwdSpec    = UI.chart(rows)(bar(x = _.x, y = _.y))
+        val fwdSpec    = Chart(rows)(bar(x = _.x, y = _.y))
         val (_, fwdSc) = fwdSpec.toSvgWithScales
         val fwdA       = fwdSc.x.toPixelCategory("a").getOrElse(fail("forward: band key 'a' must project"))
         val fwdC       = fwdSc.x.toPixelCategory("c").getOrElse(fail("forward: band key 'c' must project"))
         assert(fwdA < fwdC, s"forward (no reverse): first band 'a' must be left of 'c', px(a)=$fwdA, px(c)=$fwdC")
 
         // Reversed: the first category 'a' must project to the FAR (right) end, the last 'c' to the near end.
-        val spec    = UI.chart(rows)(bar(x = _.x, y = _.y)).xAxis(_.reverse)
+        val spec    = Chart(rows)(bar(x = _.x, y = _.y)).xAxis(_.reverse)
         val (_, sc) = spec.toSvgWithScales
         val pa      = sc.x.toPixelCategory("a").getOrElse(fail("reverse: band key 'a' must project"))
         val pc      = sc.x.toPixelCategory("c").getOrElse(fail("reverse: band key 'c' must project"))
@@ -180,8 +180,8 @@ class ChartInvariantsTest extends Test:
     "INV-020: rule() with both-Unset positions emits no rule line while the sibling bar renders" in {
         case class Row(x: String, y: Double)
         val rows = Chunk(Row("a", 1.0))
-        val spec = UI.chart(rows)(bar(x = _.x, y = _.y), rule[Row, Double]())
-        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val spec = Chart(rows)(bar(x = _.x, y = _.y), rule[Row, Double]())
+        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
         // In the static lowering the marks live in a single Svg.G; chrome (axis) lines are direct root
         // children (not inside a G). Scope the line check to the marks group so axis lines do not leak in.
         val marksGroups = root.children.collect { case g: Svg.G => g }.filter(g =>
@@ -198,8 +198,8 @@ class ChartInvariantsTest extends Test:
     "INV-021: text mark lowers to at least one Svg.Text element (crash-if-violated)" in run {
         case class Row(x: String, y: Double)
         val rows = Chunk(Row("a", 5.0), Row("b", 3.0))
-        val spec = UI.chart(rows)(text(x = _.x, y = _.y, label = _.x))
-        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val spec = Chart(rows)(text(x = _.x, y = _.y, label = _.x))
+        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield assert(html.nonEmpty, "text mark must produce non-empty SVG (INV-021)")
         end for
@@ -209,8 +209,8 @@ class ChartInvariantsTest extends Test:
     "INV-022: errorBar lowers without url(# references (crash-if-violated)" in run {
         case class Row(x: String, mean: Double, lo: Double, hi: Double)
         val rows = Chunk(Row("a", 6.0, 4.0, 8.0))
-        val spec = UI.chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi))
-        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi))
+        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(!html.contains("url(#"), "errorBar must not emit url(#...) references (INV-022)")
@@ -225,9 +225,9 @@ class ChartInvariantsTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[Pt]](Absent)
             rows = Chunk(Pt("a", 1.0), Pt("b", 2.0))
-            spec = UI.chart(rows)(line(x = _.x, y = _.y))
+            spec = Chart(rows)(line(x = _.x, y = _.y))
                 .onSelect(selectRef)
-            root = summon[Conversion[ChartSpec[Pt], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Pt], Svg.Root]](spec)
             paths = root.children.flatMap:
                 case g: Svg.G => g.children.collect { case p: Svg.Path => p }
                 case _        => Chunk.empty
@@ -240,9 +240,9 @@ class ChartInvariantsTest extends Test:
     "INV-024: interaction(_.highlightSelect) with no onSelect ref is a no-op without crash" in {
         case class Row(x: String, y: Double)
         val rows = Chunk(Row("a", 1.0))
-        val spec = UI.chart(rows)(bar(x = _.x, y = _.y))
+        val spec = Chart(rows)(bar(x = _.x, y = _.y))
             .interaction(_.highlightSelect) // no onSelect configured
-        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
         succeed
     }
 

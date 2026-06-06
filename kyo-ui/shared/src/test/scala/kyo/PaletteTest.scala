@@ -1,8 +1,8 @@
 package kyo
 
+import kyo.Chart.*
 import kyo.UI.*
 import kyo.UI.Ast.*
-import kyo.UI.mark.*
 import scala.language.implicitConversions
 
 /** Phase 06 tests for the named color [[Palette]] surface (INV-031).
@@ -45,11 +45,11 @@ class PaletteTest extends Test:
 
     "theme(_.palette(Palette.Okabe)) makes the first mark fill the first Okabe color, not the Default" in {
         val rows        = Chunk(Row("a", 1), Row("b", 2))
-        val defaultSpec = UI.chart(rows)(point(x = _.x, y = _.y))
-        val okabeSpec   = UI.chart(rows)(point(x = _.x, y = _.y)).theme(_.palette(Palette.Okabe))
+        val defaultSpec = Chart(rows)(point(x = _.x, y = _.y))
+        val okabeSpec   = Chart(rows)(point(x = _.x, y = _.y)).theme(_.palette(Palette.Okabe))
 
-        val defaultFill = firstFill(summon[Conversion[ChartSpec[Row], Svg.Root]](defaultSpec))
-        val okabeFill   = firstFill(summon[Conversion[ChartSpec[Row], Svg.Root]](okabeSpec))
+        val defaultFill = firstFill(summon[Conversion[Chart.Spec[Row], Svg.Root]](defaultSpec))
+        val okabeFill   = firstFill(summon[Conversion[Chart.Spec[Row], Svg.Root]](okabeSpec))
 
         // Default palette mark 0 is blue; Okabe mark 0 is black. They must differ, and Okabe must win.
         assert(defaultFill == Palette.colors(Palette.Default)(0), s"Default fill should be Default(0) but got $defaultFill")

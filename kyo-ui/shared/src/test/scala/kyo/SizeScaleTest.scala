@@ -1,7 +1,7 @@
 package kyo
 
+import kyo.Chart.*
 import kyo.UI.*
-import kyo.UI.mark.*
 import kyo.internal.SizeScale
 
 /** Unit tests for SizeScale sqrt-area mapping (INV-015, catalog #22/D7).

@@ -1,6 +1,8 @@
 package kyo.internal
 
 import kyo.Absent
+import kyo.Chart
+import kyo.Chart.*
 import kyo.Chunk
 import kyo.Maybe
 import kyo.Present
@@ -8,7 +10,6 @@ import kyo.Test
 import kyo.UI
 import kyo.UI.*
 import kyo.UI.Ast.*
-import kyo.UI.mark.*
 import scala.language.implicitConversions
 
 class ScaleTest extends Test:
@@ -248,17 +249,17 @@ class ScaleTest extends Test:
         assert(math.abs(clamped - atMax) < 1e-9, s"Clamped=$clamped should equal atMax=$atMax")
     }
 
-    // ---- Phase 11: L11a and L12b -- right-scale kind readback via ChartScales ----
+    // ---- Phase 11: L11a and L12b -- right-scale kind readback via Chart.Scales ----
 
     case class ScRow(x: String, yL: Double, yR: Double)
     given CanEqual[ScRow, ScRow] = CanEqual.derived
 
-    "L11a: yScaleRight(_.log) resolves right scale as Log kind (kind readback via ChartScales, GAP-RIGHTY-SCALE)" in {
+    "L11a: yScaleRight(_.log) resolves right scale as Log kind (kind readback via Chart.Scales, GAP-RIGHTY-SCALE)" in {
         // Use toSvgWithScales (via lowerWithScales) to read the resolved right scale kind.
         // The right scale should be Log after .yScaleRight(_.log).
         // Data: yR=[1.0, 100.0]; with log scale, domain is [1.0, 100.0].
         val rows = kyo.Chunk(ScRow("a", 100.0, 1.0), ScRow("b", 200.0, 100.0))
-        val spec = UI.chart(rows)(
+        val spec = Chart(rows)(
             bar(x = _.x, y = _.yL),
             line(x = _.x, y = _.yR, axis = Axis.Right)
         ).yScaleRight(_.log)
@@ -277,7 +278,7 @@ class ScaleTest extends Test:
     "L12b: no yScaleRight override -> right scale resolves as Linear (default byte-identity, CO-PIN)" in {
         // Without yScaleRight, the right scale defaults to Linear+nice, matching the old hardcoded call.
         val rows = kyo.Chunk(ScRow("a", 100.0, 0.0), ScRow("b", 200.0, 20.0))
-        val spec = UI.chart(rows)(
+        val spec = Chart(rows)(
             bar(x = _.x, y = _.yL),
             line(x = _.x, y = _.yR, axis = Axis.Right)
         )

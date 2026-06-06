@@ -1,9 +1,9 @@
 package kyo
 
+import kyo.Chart.*
 import kyo.UI.*
 import kyo.UI.Ast.*
 import kyo.UI.Ast.Reactive
-import kyo.UI.mark.*
 import kyo.internal.ChartLower
 import kyo.internal.HtmlRenderer
 import scala.language.implicitConversions
@@ -87,10 +87,10 @@ class ChartInteractionTest extends Test:
             hoverRef  <- Signal.initRef[Maybe[Sale]](Absent)
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-            spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+            spec = Chart(rows)(bar(x = _.month, y = _.revenue))
                 .onHover(hoverRef)
                 .onSelect(selectRef)
-            root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             rects = rectsIn(root)
         yield
             // Both bars should be present.
@@ -110,9 +110,9 @@ class ChartInteractionTest extends Test:
         for
             hoverRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)))
-            spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+            spec = Chart(rows)(bar(x = _.month, y = _.revenue))
                 .onHover(hoverRef)
-            root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             rects = rectsIn(root)
             _     = assert(rects.size == 1, s"Expected 1 rect but got ${rects.size}")
             rect  = rects(0)
@@ -145,9 +145,9 @@ class ChartInteractionTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Mar", Rev(3000.0)), Sale("Apr", Rev(4000.0)))
-            spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+            spec = Chart(rows)(bar(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
-            root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             rects = rectsIn(root)
             _     = assert(rects.size == 2, s"Expected 2 rects but got ${rects.size}")
             // Click the second rect (Apr, Rev(4000)).
@@ -166,9 +166,9 @@ class ChartInteractionTest extends Test:
     "tooltip(f) renders f(row) in the overlay Reactive after simulated hover" in run {
         for
             rows = Chunk(Sale("May", Rev(500.0)))
-            spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+            spec = Chart(rows)(bar(x = _.month, y = _.revenue))
                 .tooltip(s => s"${s.month}: ${s.revenue.toInt}")
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             // Locate the tooltip overlay: last Reactive child of root.
             topReactives = reactivesIn(root)
             _            = assert(topReactives.nonEmpty, "Expected at least one Reactive child (tooltip overlay)")
@@ -199,11 +199,11 @@ class ChartInteractionTest extends Test:
         for
             threshold <- Signal.initRef[Rev](Rev(1000.0))
             rows = Chunk(Sale("Jun", Rev(2000.0)))
-            spec = UI.chart(rows)(
+            spec = Chart(rows)(
                 bar(x = _.month, y = _.revenue),
                 rule(y = (threshold: Signal[Rev]))
             ).yScale(_.linear(0.0, 4000.0))
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             html0 <- HtmlRenderer.render(root, Seq.empty)
             // Update threshold and re-render.
             _     <- threshold.set(Rev(3000.0))
@@ -237,14 +237,14 @@ class ChartInteractionTest extends Test:
             hovered <- Signal.initRef[Maybe[Sale]](Absent)
             rowsA = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)), Sale("Mar", Rev(3000.0)))
             rowsB = Chunk(Sale("Jan", Rev(500.0)), Sale("Feb", Rev(1500.0)), Sale("Mar", Rev(2500.0)))
-            specA = UI.chart(rowsA)(bar(x = _.month, y = _.revenue))
+            specA = Chart(rowsA)(bar(x = _.month, y = _.revenue))
                 .onHover(hovered)
-            specB = UI.chart(rowsB)(
+            specB = Chart(rowsB)(
                 bar(x = _.month, y = _.revenue),
                 rule(x = hovered.map[Maybe[String]](_.map(_.month)))
             )
-            rootA = summon[Conversion[ChartSpec[Sale], Svg.Root]](specA)
-            rootB = summon[Conversion[ChartSpec[Sale], Svg.Root]](specB)
+            rootA = summon[Conversion[Chart.Spec[Sale], Svg.Root]](specA)
+            rootB = summon[Conversion[Chart.Spec[Sale], Svg.Root]](specB)
             // Chart A: hover the "Jan" bar (index 0 in the chunk, first rect).
             rectsA  = rectsIn(rootA)
             _       = assert(rectsA.size == 3, s"Expected 3 rects in chart A but got ${rectsA.size}")
@@ -275,8 +275,8 @@ class ChartInteractionTest extends Test:
         // A chart configured with only data and marks carries no interaction. The lowered shapes
         // must not have onHover or onClick attached, and the root must contain no tooltip Reactive.
         val rows  = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-        val spec  = UI.chart(rows)(bar(x = _.month, y = _.revenue))
-        val root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val spec  = Chart(rows)(bar(x = _.month, y = _.revenue))
+        val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
         val rects = rectsIn(root)
         assert(rects.size == 2, s"Expected 2 rects but got ${rects.size}")
         // Each mark rect must have Absent onHover and Absent onClick: no spurious handler wiring.
@@ -311,9 +311,9 @@ class ChartInteractionTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-            spec = UI.chart(rows)(line(x = _.month, y = _.revenue))
+            spec = Chart(rows)(line(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
-            root  = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             paths = pathsIn(root)
             _     = assert(paths.nonEmpty, s"Expected at least one Svg.Path from line mark but got none")
             // The line path should carry a click handler (INV-023).
@@ -332,9 +332,9 @@ class ChartInteractionTest extends Test:
         for
             hoverRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-            spec = UI.chart(rows)(area(x = _.month, y = _.revenue))
+            spec = Chart(rows)(area(x = _.month, y = _.revenue))
                 .onHover(hoverRef)
-            root     = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root     = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             paths    = pathsIn(root)
             _        = assert(paths.nonEmpty, s"Expected at least one Svg.Path from area mark but got none")
             areaPath = paths.toSeq.find(p => p.attrs.onHover.isDefined)
@@ -356,14 +356,14 @@ class ChartInteractionTest extends Test:
             )
             // Use color encoding as the stack group so 2 groups are formed.
             // area with stack: group 1 = rows 0,2; group 2 = rows 1,3.
-            spec = UI.chart(rows)(area(
+            spec = Chart(rows)(area(
                 x = _.month,
                 y = _.revenue,
                 color = _.revenue.toInt.toString,
                 stack = by(_.revenue.toInt.toString)
             ))
                 .onSelect(selectRef)
-            root             = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root             = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             paths            = pathsIn(root)
             interactivePaths = paths.toSeq.filter(p => p.attrs.onClick.isDefined)
             // 4 distinct revenue values -> 4 stack groups -> one interactive path per group segment.
@@ -379,9 +379,9 @@ class ChartInteractionTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-            spec = UI.chart(rows)(line(x = _.month, y = _.revenue))
+            spec = Chart(rows)(line(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
-            root             = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root             = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             paths            = pathsIn(root)
             interactivePaths = paths.toSeq.filter(p => p.attrs.onClick.isDefined)
         yield assert(
@@ -411,10 +411,10 @@ class ChartInteractionTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-            spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+            spec = Chart(rows)(bar(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             // Before any selection: the ref is Absent, so no bar carries the highlight stroke.
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
@@ -446,10 +446,10 @@ class ChartInteractionTest extends Test:
         for
             hoverRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)))
-            spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+            spec = Chart(rows)(bar(x = _.month, y = _.revenue))
                 .onHover(hoverRef)
                 .interaction(_.hoverStyle(Style.bg(Style.Color.purple)))
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             // Before hover: the custom fill is absent (the bar uses the default palette blue).
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
@@ -468,9 +468,9 @@ class ChartInteractionTest extends Test:
     // Test 14 (plan leaf 18): highlight with no ref configured is a no-op (INV-024)
     "interaction(_.highlightSelect) with no onSelect configured is a no-op (INV-024)" in run {
         val rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-        val spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+        val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
             .interaction(_.highlightSelect) // highlight configured, but no onSelect ref
-        val root      = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val root      = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
         val rects     = rectsIn(root)
         val withClick = rects.toSeq.filter(r => r.attrs.onClick.isDefined)
         assert(rects.size == 2, s"Expected 2 rects but got ${rects.size}")
@@ -490,10 +490,10 @@ class ChartInteractionTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)))
-            spec = UI.chart(rows)(bar(x = _.month, y = _.revenue))
+            spec = Chart(rows)(bar(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             // The highlight is realized as a Reactive region inside the marks group (no internal cell:
             // no tooltip is configured, so the ONLY reactive here is the highlight, and it is driven by
             // the user's selectRef directly).
@@ -533,9 +533,9 @@ class ChartInteractionTest extends Test:
         val rows = Chunk(CatRow("p", 1.0, "catA"), CatRow("q", 2.0, "catB"))
         for
             hidden <- Signal.initRef(Set.empty[String])
-            spec = UI.chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
+            spec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
                 .legend(_.interactive(hidden))
-            root = summon[Conversion[ChartSpec[CatRow], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](spec)
             // The first swatch corresponds to catA (enum/encounter order). Its onClick toggles "catA".
             swatches = legendSwatches(root)
             _        = assert(swatches.size == 2, s"Expected 2 legend swatches but got ${swatches.size}")
@@ -562,10 +562,10 @@ class ChartInteractionTest extends Test:
         for
             none   <- Signal.initRef(Set.empty[String])
             hidden <- Signal.initRef(Set("catA"))
-            specFull = UI.chart(rowsFull)(bar(x = _.x, y = _.y, color = _.cat)).legend(_.interactive(none))
-            specHid  = UI.chart(rowsFull)(bar(x = _.x, y = _.y, color = _.cat)).legend(_.interactive(hidden))
-            rootFull = summon[Conversion[ChartSpec[CatRow], Svg.Root]](specFull)
-            rootHid  = summon[Conversion[ChartSpec[CatRow], Svg.Root]](specHid)
+            specFull = Chart(rowsFull)(bar(x = _.x, y = _.y, color = _.cat)).legend(_.interactive(none))
+            specHid  = Chart(rowsFull)(bar(x = _.x, y = _.y, color = _.cat)).legend(_.interactive(hidden))
+            rootFull = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](specFull)
+            rootHid  = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](specHid)
             html <- HtmlRenderer.render(rootHid, Seq.empty)
         yield
             val fullBars = markBars(rootFull)
@@ -592,9 +592,9 @@ class ChartInteractionTest extends Test:
         )
         for
             hidden <- Signal.initRef(Set("catB"))
-            spec = UI.chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
+            spec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
                 .legend(_.interactive(hidden))
-            root = summon[Conversion[ChartSpec[CatRow], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](spec)
         yield
             // Visible marks are catA and catC. With catB filtered BEFORE color-splitting, the visible set is
             // {catA, catC}: catA -> palette(0)=blue, catC -> palette(1)=orange. (Not catC -> palette(2)=green,
@@ -623,9 +623,9 @@ class ChartInteractionTest extends Test:
         val rows = Chunk(CatRow("p", 1.0, "catA"), CatRow("q", 2.0, "catB"))
         for
             hidden <- Signal.initRef(Set("catA", "catB"))
-            spec = UI.chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
+            spec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
                 .legend(_.interactive(hidden))
-            root = summon[Conversion[ChartSpec[CatRow], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](spec)
             html <- HtmlRenderer.render(root, Seq.empty)
         yield
             // No mark rects (all series hidden): only the 12x12 legend swatches remain among rects.
@@ -654,10 +654,10 @@ class ChartInteractionTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-            spec = UI.chart(rows)(line(x = _.month, y = _.revenue))
+            spec = Chart(rows)(line(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
                 !htmlBefore.contains("stroke=\"#000000\""),
@@ -685,11 +685,11 @@ class ChartInteractionTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-            spec = UI.chart(rows)(area(x = _.month, y = _.revenue))
+            spec = Chart(rows)(area(x = _.month, y = _.revenue))
                 .yScale(_.linear(0, 2000))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
                 !htmlBefore.contains("stroke=\"#000000\""),
@@ -717,11 +717,11 @@ class ChartInteractionTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
-            spec = UI.chart(rows)(text(x = _.month, y = _.revenue, label = _.month))
+            spec = Chart(rows)(text(x = _.month, y = _.revenue, label = _.month))
                 .yScale(_.linear(0, 2000))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
                 !htmlBefore.contains("stroke=\"#000000\""),
@@ -750,13 +750,13 @@ class ChartInteractionTest extends Test:
         for
             selectRef <- Signal.initRef[Maybe[EB]](Absent)
             rows = Chunk(EB("Jan", 1000.0, 800.0, 1200.0), EB("Feb", 2000.0, 1700.0, 2300.0))
-            spec = UI.chart(rows)(
+            spec = Chart(rows)(
                 errorBar(x = _.x, y = _.y, low = _.lo, high = _.hi)
             )
                 .yScale(_.linear(0, 3000))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[ChartSpec[EB], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[EB], Svg.Root]](spec)
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
                 !htmlBefore.contains("stroke=\"#000000\""),
@@ -781,21 +781,21 @@ class ChartInteractionTest extends Test:
     // ---- Live-path tests: interaction on animated bar/line/area (LIVE-PATH BUG) ----
     // These tests reproduce the confirmed bug: the animated (live-chart) arms of
     // marksRegionWithTransitions do NOT attach onClick/onHover handlers or withHighlight,
-    // so a UI.chart(signal) with onSelect/onHover/highlightSelect silently drops all of it.
+    // so a Chart(signal) with onSelect/onHover/highlightSelect silently drops all of it.
     // Each test is expected to FAIL before the fix and PASS after.
 
     // Test 20: live bar carries onClick handler from onSelect
     "LIVE bar with onSelect: rendered rect carries data-kyo-ev=click (live-path interaction bug)" in run {
-        // AnimateConfig.default.enabled=true, so UI.chart(signal)(...) routes through
+        // AnimateConfig.default.enabled=true, so Chart(signal)(...) routes through
         // marksRegionWithTransitions -> lowerBarSimpleWithTransitions. Before the fix that
         // arm never calls buildInteractionAttrs, so no data-kyo-ev attribute is emitted.
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
             signal = Signal.initConst[Seq[Sale]](rows)
-            spec = UI.chart(signal: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
+            spec = Chart(signal: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             html <- HtmlRenderer.render(root, Seq.empty)
         yield assert(
             html.contains("data-kyo-ev") && html.contains("click"),
@@ -811,10 +811,10 @@ class ChartInteractionTest extends Test:
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
             signal = Signal.initConst[Seq[Sale]](rows)
-            spec = UI.chart(signal: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
+            spec = Chart(signal: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
                 !htmlBefore.contains("stroke=\"#000000\""),
@@ -836,9 +836,9 @@ class ChartInteractionTest extends Test:
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
             signal = Signal.initConst[Seq[Sale]](rows)
-            spec = UI.chart(signal: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
+            spec = Chart(signal: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             html <- HtmlRenderer.render(root, Seq.empty)
         yield assert(
             html.contains("data-kyo-ev") && html.contains("click"),
@@ -852,10 +852,10 @@ class ChartInteractionTest extends Test:
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
             signal = Signal.initConst[Seq[Sale]](rows)
-            spec = UI.chart(signal: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
+            spec = Chart(signal: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
                 !htmlBefore.contains("stroke=\"#000000\""),
@@ -877,9 +877,9 @@ class ChartInteractionTest extends Test:
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
             signal = Signal.initConst[Seq[Sale]](rows)
-            spec = UI.chart(signal: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
+            spec = Chart(signal: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             html <- HtmlRenderer.render(root, Seq.empty)
         yield assert(
             html.contains("data-kyo-ev") && html.contains("click"),
@@ -893,11 +893,11 @@ class ChartInteractionTest extends Test:
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
             signal = Signal.initConst[Seq[Sale]](rows)
-            spec = UI.chart(signal: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
+            spec = Chart(signal: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
                 .yScale(_.linear(0, 2000))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
                 !htmlBefore.contains("stroke=\"#000000\""),

@@ -14,6 +14,7 @@ Event handlers are typed `Any < Async` and can call anything in the kyo ecosyste
 
 <!-- doctest:setup
 ```scala
+import Chart.*
 import UI.*
 import kyo.*
 import scala.language.implicitConversions
@@ -1048,7 +1049,7 @@ A chart is built from your data and a list of marks, and lowers to an `Svg.Root`
 
 ### A first chart
 
-`UI.chart(data)` opens a chart over a `Seq[A]`, fixing the row type. The second application `(marks*)` names the visual layers. Configuration methods chain fluently and each returns a copy.
+`Chart(data)` opens a chart over a `Seq[A]`, fixing the row type. The second application `(marks*)` names the visual layers. Configuration methods chain fluently and each returns a copy.
 
 Every example below shares one running domain. Each row is a monthly sale with a `region`, a `revenue`, and a `lo`/`hi` band used later by the band and error-bar examples. The `region` enum derives its `Plottable` instance and `revenue`/`lo`/`hi` are plain `Double`s, so each scale is chosen from the field's type with no annotation at the call site:
 
@@ -1068,9 +1069,9 @@ With that domain in scope, the first chart is one `bar` mark over `sales` plus a
 
 ```scala
 val firstChart: Svg.Root =
-    UI.chart(sales)(
-        UI.mark.bar(x = _.month, y = _.revenue, color = _.region),
-        UI.mark.rule(y = 1000.0)
+    Chart(sales)(
+        Chart.bar(x = _.month, y = _.revenue, color = _.region),
+        Chart.rule(y = 1000.0)
     )
         .yAxis(_.grid.ticks(5).format(v => f"$$$v%,.0f"))
         .legend(_.top)
@@ -1084,22 +1085,22 @@ The `rule` mark's `y` takes a plain `Double` threshold; it also accepts a `Signa
 
 ### Marks compose; there is no chart zoo
 
-There is one `UI.chart` and a list of marks. The mark you pick, and the parameters you map onto it, determine the chart type:
+There is one `Chart` and a list of marks. The mark you pick, and the parameters you map onto it, determine the chart type:
 
 ```scala
-val barChart: Svg.Root  = UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue)).toSvg
-val lineChart: Svg.Root = UI.chart(sales)(UI.mark.line(x = _.month, y = _.revenue)).toSvg
-val scatter: Svg.Root   = UI.chart(sales)(UI.mark.point(x = _.lo, y = _.hi)).toSvg
+val barChart: Svg.Root  = Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).toSvg
+val lineChart: Svg.Root = Chart(sales)(Chart.line(x = _.month, y = _.revenue)).toSvg
+val scatter: Svg.Root   = Chart(sales)(Chart.point(x = _.lo, y = _.hi)).toSvg
 ```
 
 A combo chart is two marks in the same list. Marks share the chart's x-scale automatically:
 
 ```scala
 val combo: Svg.Root =
-    UI.chart(sales)(
-        UI.mark.bar(x = _.month, y = _.revenue),
-        UI.mark.line(x = _.month, y = _.hi),
-        UI.mark.rule(y = 50000.0)
+    Chart(sales)(
+        Chart.bar(x = _.month, y = _.revenue),
+        Chart.line(x = _.month, y = _.hi),
+        Chart.rule(y = 50000.0)
     ).toSvg
 ```
 
@@ -1107,14 +1108,14 @@ A `point` mark carries `size` (a magnitude scaled by square-root area, so the ey
 
 ```scala
 val bubbles: Svg.Root =
-    UI.chart(sales)(UI.mark.point(x = _.month, y = _.revenue, size = _.hi)).toSvg
+    Chart(sales)(Chart.point(x = _.month, y = _.revenue, size = _.hi)).toSvg
 ```
 
-The `symbol` parameter selects the glyph for each point from the `UI.Symbol` enum (`circle`, `square`, `triangle`, `diamond`, `cross`). Here every point uses a constant glyph; an accessor could vary it by row:
+The `symbol` parameter selects the glyph for each point from the `Chart.Symbol` enum (`circle`, `square`, `triangle`, `diamond`, `cross`). Here every point uses a constant glyph; an accessor could vary it by row:
 
 ```scala
 val diamonds: Svg.Root =
-    UI.chart(sales)(UI.mark.point(x = _.lo, y = _.hi, symbol = _ => UI.Symbol.diamond)).toSvg
+    Chart(sales)(Chart.point(x = _.lo, y = _.hi, symbol = _ => Chart.Symbol.diamond)).toSvg
 ```
 
 ### Named parameters
@@ -1123,11 +1124,11 @@ Each mark maps its data through named parameters, not chained method calls. This
 
 ```scala
 // named parameter: row type inferred before the lambda is read
-val grouped = UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.region))
+val grouped = Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
 
 // stack carries its grouping; normalize is a named parameter
-val stacked    = UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, stack = UI.by(_.region)))
-val normalized = UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, stack = UI.by(_.region, normalize = true)))
+val stacked    = Chart(sales)(Chart.bar(x = _.month, y = _.revenue, stack = Chart.by(_.region)))
+val normalized = Chart(sales)(Chart.bar(x = _.month, y = _.revenue, stack = Chart.by(_.region, normalize = true)))
 ```
 
 > **Note:** Mark factories gate capability by omission. `bar` has no `symbol` or `size` parameter; `rule` has no `color` or `size`. If a mark does not offer a given parameter, the type system rejects any attempt to pass it: there is no runtime flag to check and no silent no-op.
@@ -1138,7 +1139,7 @@ The scale for each parameter is selected by the static type of its accessor. `Pl
 
 ```scala
 // month: String selects a band x-scale; revenue: Double selects a linear y-scale
-val typedChart: Svg.Root = UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue)).toSvg
+val typedChart: Svg.Root = Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).toSvg
 ```
 
 A parameter mapped over a type with no `Plottable` instance does not compile, so you cannot accidentally plot a `Boolean` or an arbitrary class.
@@ -1149,7 +1150,7 @@ Scales are inferred from the accessor type and are overridable. Axes and legends
 
 ```scala
 val axisChart: Svg.Root =
-    UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.region))
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
         .xScale(_.band)
         .yScale(_.linear(0.0, 80000.0))
         .xAxis(_.label("Month"))
@@ -1166,9 +1167,9 @@ A mark opts onto the right y-axis with `axis = Axis.Right`. Each axis gets its o
 
 ```scala
 val twoAxis: Svg.Root =
-    UI.chart(sales)(
-        UI.mark.bar(x = _.month, y = _.revenue),
-        UI.mark.line(x = _.month, y = _.hi, axis = Axis.Right)
+    Chart(sales)(
+        Chart.bar(x = _.month, y = _.revenue),
+        Chart.line(x = _.month, y = _.hi, axis = Axis.Right)
     )
         .yAxis(_.label("Revenue"))
         .yAxisRight(_.label("Upper bound"))
@@ -1183,23 +1184,23 @@ The right axis can draw its own gridlines. If both axes enable `.grid`, only the
 An `area` mark fills between a y value and the baseline:
 
 ```scala
-val areaChart: Svg.Root = UI.chart(sales)(UI.mark.area(x = _.month, y = _.revenue)).toSvg
+val areaChart: Svg.Root = Chart(sales)(Chart.area(x = _.month, y = _.revenue)).toSvg
 ```
 
 A `rule` is a reference line at a constant (or `Signal`-tracked) value; here a horizontal target line:
 
 ```scala
 val withTarget: Svg.Root =
-    UI.chart(sales)(
-        UI.mark.line(x = _.month, y = _.revenue),
-        UI.mark.rule(y = 55000.0)
+    Chart(sales)(
+        Chart.line(x = _.month, y = _.revenue),
+        Chart.rule(y = 55000.0)
     ).toSvg
 ```
 
 `curve` selects the interpolation between vertices. `Curve.monotone` smooths the line; `Curve.stepAfter` draws a staircase:
 
 ```scala
-val smooth: Svg.Root = UI.chart(sales)(UI.mark.line(x = _.month, y = _.revenue, curve = Curve.monotone)).toSvg
+val smooth: Svg.Root = Chart(sales)(Chart.line(x = _.month, y = _.revenue, curve = Curve.monotone)).toSvg
 ```
 
 `.yScale(_.log)` overrides the inferred scale with a log scale. A time x-axis needs nothing special: map `x` to an `Instant` accessor, which has a `Plottable` instance:
@@ -1208,7 +1209,7 @@ val smooth: Svg.Root = UI.chart(sales)(UI.mark.line(x = _.month, y = _.revenue, 
 case class Hit(at: Instant, count: Double)
 val hits: Seq[Hit] = Seq(Hit(Instant.Epoch, 10.0), Hit(Instant.Epoch + 1.minute, 100.0))
 
-val logOverTime: Svg.Root = UI.chart(hits)(UI.mark.line(x = _.at, y = _.count)).yScale(_.log).toSvg
+val logOverTime: Svg.Root = Chart(hits)(Chart.line(x = _.at, y = _.count)).yScale(_.log).toSvg
 ```
 
 ### Color scales and themes
@@ -1217,7 +1218,7 @@ The legend's color scale decides how the `color` parameter maps to swatch and ma
 
 ```scala
 val categorical: Svg.Root =
-    UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.region))
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
         .legend(_.colorScale(Region.NA -> Style.Color.blue, Region.EU -> Style.Color.green))
         .toSvg
 ```
@@ -1226,7 +1227,7 @@ A sequential scale maps a numeric `color` parameter onto a gradient. Each row's 
 
 ```scala
 val sequential: Svg.Root =
-    UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.hi))
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.hi))
         .legend(_.colorScaleSequential(Style.Color.blue, Style.Color.red))
         .toSvg
 ```
@@ -1235,17 +1236,17 @@ Both color-scale forms apply to every mark with a `color` parameter: bar, area, 
 
 ```scala
 val byLabel: Svg.Root =
-    UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.region))
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
         .legend(_.colorScale(label => if label == "NA" then Style.Color.blue else Style.Color.green))
         .toSvg
 ```
 
-`.theme` switches between light and dark and selects a named palette. The palettes live at `UI.Ast.Palette`: `Okabe` is the Okabe-Ito set chosen for color-vision accessibility, `Viridis` is an 8-category perceptually-derived set, and `Tableau10` is the Tableau 10 categorical palette. Beyond palette and scheme, `.font(family)` sets the font family across all axis labels, ticks, and titles; `.fontSize(px)` sets the size in pixels; `.background` overrides the plot fill; `.axisColor` overrides axis line and tick colors; and `.gridColor` overrides gridline color:
+`.theme` switches between light and dark and selects a named palette. The palettes live at `Chart.Palette`: `Okabe` is the Okabe-Ito set chosen for color-vision accessibility, `Viridis` is an 8-category perceptually-derived set, and `Tableau10` is the Tableau 10 categorical palette. Beyond palette and scheme, `.font(family)` sets the font family across all axis labels, ticks, and titles; `.fontSize(px)` sets the size in pixels; `.background` overrides the plot fill; `.axisColor` overrides axis line and tick colors; and `.gridColor` overrides gridline color:
 
 ```scala
 val themed: Svg.Root =
-    UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.region))
-        .theme(_.dark.palette(UI.Ast.Palette.Okabe).font("monospace"))
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+        .theme(_.dark.palette(Chart.Palette.Okabe).font("monospace"))
         .toSvg
 ```
 
@@ -1255,9 +1256,9 @@ A `text` mark stamps a label string at each `(x, y)`; `anchor` controls horizont
 
 ```scala
 val labeled: Svg.Root =
-    UI.chart(sales)(
-        UI.mark.bar(x = _.month, y = _.revenue),
-        UI.mark.text(x = _.month, y = _.revenue, label = _.region.toString, anchor = UI.TextAnchor.Middle)
+    Chart(sales)(
+        Chart.bar(x = _.month, y = _.revenue),
+        Chart.text(x = _.month, y = _.revenue, label = _.region.toString, anchor = Chart.TextAnchor.Middle)
     ).toSvg
 ```
 
@@ -1265,9 +1266,9 @@ An `errorBar` draws a `low`-to-`high` whisker with caps (`capWidth` defaults to 
 
 ```scala
 val withError: Svg.Root =
-    UI.chart(sales)(
-        UI.mark.point(x = _.month, y = _.revenue),
-        UI.mark.errorBar(x = _.month, y = _.revenue, low = _.lo, high = _.hi)
+    Chart(sales)(
+        Chart.point(x = _.month, y = _.revenue),
+        Chart.errorBar(x = _.month, y = _.revenue, low = _.lo, high = _.hi)
     ).toSvg
 ```
 
@@ -1275,7 +1276,7 @@ An `area` mark also fills a band between `y0` and `y1`. Supply exactly one of `{
 
 ```scala
 val band: Svg.Root =
-    UI.chart(sales)(UI.mark.area(x = _.month, y0 = _.lo, y1 = _.hi)).toSvg
+    Chart(sales)(Chart.area(x = _.month, y0 = _.lo, y1 = _.hi)).toSvg
 ```
 
 ### Axis chrome, responsive sizing, and accessibility
@@ -1284,11 +1285,11 @@ Config methods chain on the spec. `.responsive(ratio)` makes the root scale to i
 
 ```scala
 val a11yChart: Svg.Root =
-    UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue))
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue))
         .responsive(16.0 / 9)
         .yScale(_.linear(0.0, 80000.0).withNice(true).withClamp(true).withPad(0.05))
         .xAxis(_.rotateTicks(45).pad(8))
-        .yAxis(_.rotateTicks(30).anchor(UI.TextAnchor.End))
+        .yAxis(_.rotateTicks(30).anchor(Chart.TextAnchor.End))
         .title("Revenue by region")
         .desc("Quarterly revenue, EU vs NA")
         .ariaLabel("Revenue by region bar chart")
@@ -1302,7 +1303,7 @@ val a11yChart: Svg.Root =
 `toSvgWithScales` returns the lowered SVG together with the resolved scales, so you can place overlays at exact chart pixels. `scales.x.toPixel`, `invert`, and `kind` expose the projection both ways:
 
 ```scala
-val (overlaySvg, scales)    = UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue)).toSvgWithScales
+val (overlaySvg, scales)    = Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).toSvgWithScales
 val pixelForRevenue: Double = scales.y.toPixel(60000.0)
 ```
 
@@ -1318,7 +1319,7 @@ val livePage: UI < Async =
         data <- Signal.initRef(sales)
     yield
         val liveChart: Svg.Root =
-            UI.chart(data)(UI.mark.bar(x = _.month, y = _.revenue))
+            Chart(data)(Chart.bar(x = _.month, y = _.revenue))
                 .animate(_.ease(300.millis))
                 .toSvg
         UI.div(liveChart)
@@ -1337,12 +1338,12 @@ val interactivePage: UI < Async =
         selected <- Signal.initRef(Maybe.empty[Sale])
     yield
         val hoverChart: Svg.Root =
-            UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue))
+            Chart(sales)(Chart.bar(x = _.month, y = _.revenue))
                 .onHover(hovered)
                 .onSelect(selected)
                 .toSvg
         val withTooltip: Svg.Root =
-            UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue))
+            Chart(sales)(Chart.bar(x = _.month, y = _.revenue))
                 .tooltip(s => s"${s.month}: ${s.revenue}")
                 .toSvg
         UI.div(
@@ -1360,7 +1361,7 @@ val highlightPage: UI < Async =
         selected <- Signal.initRef(Maybe.empty[Sale])
     yield
         val chart: Svg.Root =
-            UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.region))
+            Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
                 .onSelect(selected)
                 .interaction(_.highlightSelect)
                 .toSvg

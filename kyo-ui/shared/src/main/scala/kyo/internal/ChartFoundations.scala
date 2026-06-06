@@ -1,8 +1,8 @@
 package kyo.internal
 
 import kyo.*
+import kyo.Chart.*
 import kyo.ConcreteTag
-import kyo.UI.Ast.*
 import scala.annotation.targetName
 
 /** Cross-cutting foundation helpers for the charts lowering.
@@ -90,7 +90,7 @@ private[kyo] object ChartFoundations:
       * alias identical defs (benign). NOT `genId(Frame.internal)` (which collides
       * across all charts in a session).
       */
-    def chartIdPrefix(spec: ChartSpec[?]): String =
+    def chartIdPrefix(spec: Spec[?]): String =
         "kyo-chart-" + Integer.toHexString(spec.##)
 
     /** Monotonic counter assigning each lowered chart a document-unique instance id.

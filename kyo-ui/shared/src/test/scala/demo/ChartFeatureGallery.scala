@@ -1,9 +1,9 @@
 package demo
 
 import kyo.*
+import kyo.Chart.*
 import kyo.Style.*
 import kyo.UI.*
-import kyo.UI.mark.*
 
 /** A light-theme gallery of the STATIC chart features this campaign added.
   *
@@ -11,11 +11,11 @@ import kyo.UI.mark.*
   *
   *   1. Sequential color scale: a numeric color channel mapped to a low/high gradient via
   *      `.legend(_.colorScaleSequential(low, high))`.
-  *   2. Error bars: `UI.mark.errorBar(x, y, low, high, capWidth)` over a series with variance.
-  *   3. Text annotations: a bar chart plus `UI.mark.text(x, y, label, anchor)` labeling each value.
-  *   4. Stacked filled area: `UI.mark.area` with `stack = UI.by(_.region)` and a categorical color,
+  *   2. Error bars: `Chart.errorBar(x, y, low, high, capWidth)` over a series with variance.
+  *   3. Text annotations: a bar chart plus `Chart.text(x, y, label, anchor)` labeling each value.
+  *   4. Stacked filled area: `Chart.area` with `stack = Chart.by(_.region)` and a categorical color,
   *      so the per-group fills are distinct bands.
-  *   5. Theme + named palette: `.theme(_.dark.palette(UI.Ast.Palette.Okabe))`.
+  *   5. Theme + named palette: `.theme(_.dark.palette(Chart.Palette.Okabe))`.
   *   6. Accessibility: `.title(...)` (implies `role="img"`) and `.desc(...)` on a chart.
   *   7. Grouped (dodged) bar with categorical colorScale: distinct per-region colors + legend, no stack.
   *   8. Colored errorBar via colorScale: per-category whisker colors.
@@ -106,7 +106,7 @@ object ChartFeatureGallery extends KyoApp:
       * labels, keeps the single feature (sequential color) clear and uncluttered.
       */
     val sequentialColor: Svg.Root =
-        UI.chart(readings)(
+        Chart(readings)(
             point(x = _.month, y = _.value, color = _.heat)
         )
             .yScale(_.withNice(true))
@@ -118,7 +118,7 @@ object ChartFeatureGallery extends KyoApp:
 
     /** 2. Error bars: low-to-high whisker with caps and a center marker. */
     val errorBars: Svg.Root =
-        UI.chart(readings)(
+        Chart(readings)(
             point(x = _.month, y = _.value),
             errorBar(x = _.month, y = _.value, low = _.lo, high = _.hi, capWidth = 10.0)
         )
@@ -129,9 +129,9 @@ object ChartFeatureGallery extends KyoApp:
 
     /** 3. Text annotations stamping each bar's value. */
     val textAnnotations: Svg.Root =
-        UI.chart(readings)(
+        Chart(readings)(
             bar(x = _.month, y = _.value),
-            text(x = _.month, y = _.value, label = r => r.value.toInt.toString, anchor = UI.TextAnchor.Middle)
+            text(x = _.month, y = _.value, label = r => r.value.toInt.toString, anchor = Chart.TextAnchor.Middle)
         )
             .yScale(_.withNice(true))
             .yAxis(_.ticks(4))
@@ -140,7 +140,7 @@ object ChartFeatureGallery extends KyoApp:
 
     /** 4. Stacked filled area, one band per region (categorical color). */
     val stackedArea: Svg.Root =
-        UI.chart(stackData)(
+        Chart(stackData)(
             area(x = _.month, y = _.units, color = _.region, stack = by(_.region))
         )
             .yScale(_.withNice(true))
@@ -151,19 +151,19 @@ object ChartFeatureGallery extends KyoApp:
 
     /** 5. Dark theme with the Okabe-Ito accessible palette. */
     val themedPalette: Svg.Root =
-        UI.chart(stackData)(
+        Chart(stackData)(
             bar(x = _.month, y = _.units, color = _.region, stack = by(_.region))
         )
             .yScale(_.withNice(true))
             .yAxis(_.grid.ticks(4))
             .legend(_.top)
-            .theme(_.dark.palette(UI.Ast.Palette.Okabe))
+            .theme(_.dark.palette(Chart.Palette.Okabe))
             .size(360, 240)
             .toSvg
 
     /** 6. Accessibility: title (implies role="img") and desc. */
     val accessible: Svg.Root =
-        UI.chart(readings)(
+        Chart(readings)(
             line(x = _.month, y = _.value)
         )
             .yScale(_.withNice(true))
@@ -181,7 +181,7 @@ object ChartFeatureGallery extends KyoApp:
       * legend swatch. Contrast with cell 4 (stacked area) where the same data is stacked instead.
       */
     val groupedColorScale: Svg.Root =
-        UI.chart(saleData)(
+        Chart(saleData)(
             bar(x = _.month, y = _.units, color = _.region)
         )
             .yScale(_.withNice(true))
@@ -200,7 +200,7 @@ object ChartFeatureGallery extends KyoApp:
       * easy to distinguish overlapping confidence intervals when multiple groups share an x position.
       */
     val coloredErrorBar: Svg.Root =
-        UI.chart(saleData)(
+        Chart(saleData)(
             point(x = _.month, y = _.units, color = _.region),
             errorBar(x = _.month, y = _.units, low = _.lo, high = _.hi, color = _.region, capWidth = 8.0)
         )
@@ -222,9 +222,9 @@ object ChartFeatureGallery extends KyoApp:
       * uncolored `text` mark.
       */
     val coloredText: Svg.Root =
-        UI.chart(regionVals)(
+        Chart(regionVals)(
             bar(x = _.name, y = _.value, color = _.region),
-            text(x = _.name, y = _.value, label = r => r.value.toInt.toString, color = _.region, anchor = UI.TextAnchor.Middle)
+            text(x = _.name, y = _.value, label = r => r.value.toInt.toString, color = _.region, anchor = Chart.TextAnchor.Middle)
         )
             .yScale(_.withNice(true))
             .yAxis(_.ticks(4))
@@ -243,7 +243,7 @@ object ChartFeatureGallery extends KyoApp:
       * the canonical solution for charts whose x domain is a set of named categories (regions, SKUs, etc.).
       */
     val rotatedTicksAndFont: Svg.Root =
-        UI.chart(rotateData)(
+        Chart(rotateData)(
             bar(x = _.category, y = _.value)
         )
             .yScale(_.withNice(true))

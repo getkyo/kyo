@@ -1,8 +1,8 @@
 package kyo
 
+import kyo.Chart.*
 import kyo.UI.*
 import kyo.UI.Ast.*
-import kyo.UI.mark.*
 import kyo.internal.ChartFoundations
 import kyo.internal.ChartFoundations.CatKey
 import kyo.internal.ChartLower
@@ -95,8 +95,8 @@ class ChartFoundationsTest extends Test:
         given CanEqual[Row, Row]               = CanEqual.derived
         given CanEqual[Chunk[Row], Chunk[Row]] = CanEqual.derived
         val rows                               = Chunk(Row(1, 2.0))
-        val spec1                              = UI.chart(rows)(bar(x = _.x, y = _.y))
-        val spec3                              = UI.chart(rows)(bar(x = _.x, y = _.y), point(x = _.x, y = _.y))
+        val spec1                              = Chart(rows)(bar(x = _.x, y = _.y))
+        val spec3                              = Chart(rows)(bar(x = _.x, y = _.y), point(x = _.x, y = _.y))
         // Same spec object called twice: must produce the same prefix (deterministic hashing)
         val p1a = ChartFoundations.chartIdPrefix(spec1)
         val p1b = ChartFoundations.chartIdPrefix(spec1)
@@ -113,8 +113,8 @@ class ChartFoundationsTest extends Test:
     "INV-001: filterFinite retains finite values and the fitted extent for {1.0, NaN, 3.0} is exactly [1.0, 3.0]" in run {
         case class Row(x: Int, y: Double)
         val rows = Chunk(Row(0, 1.0), Row(1, Double.NaN), Row(2, 3.0))
-        val spec = UI.chart(rows)(bar(x = _.x, y = _.y))
-        val root = summon[Conversion[ChartSpec[Row], Svg.Root]](spec)
+        val spec = Chart(rows)(bar(x = _.x, y = _.y))
+        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
         // NaN-free: the full render pipeline must not emit "NaN" or "Infinity" (INV-001 core)
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield

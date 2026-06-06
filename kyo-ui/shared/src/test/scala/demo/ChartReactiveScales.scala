@@ -1,9 +1,9 @@
 package demo
 
 import kyo.*
+import kyo.Chart.*
 import kyo.Style.*
 import kyo.UI.*
-import kyo.UI.mark.*
 import scala.language.implicitConversions
 
 /** Shows the REACTIVE and SCALE features this campaign added, captured across two frames so the morph is visible.
@@ -86,7 +86,7 @@ object ChartReactiveScales extends KyoApp:
     // ---- clamp chart (static) ----
 
     val clampChart: Svg.Root =
-        UI.chart(clampData)(
+        Chart(clampData)(
             bar(x = _.label, y = _.value, color = _.label)
         )
             .yScale(_.linear(clampLo, clampHi).withClamp(true))
@@ -98,7 +98,7 @@ object ChartReactiveScales extends KyoApp:
     /** A bar chart plus a target rule placed at the exact pixel for `targetScore` via the read-back y-scale. */
     val overlayChart: Svg.Root =
         val (chartSvg, scales) =
-            UI.chart(overlayData)(
+            Chart(overlayData)(
                 bar(x = _.name, y = _.score)
             )
                 .yScale(_.linear(0.0, 100.0))
@@ -165,7 +165,7 @@ object ChartReactiveScales extends KyoApp:
             }
 
             morphChart =
-                UI.chart(wave)(
+                Chart(wave)(
                     line(x = _.x, y = _.y, curve = Curve.monotone),
                     point(x = _.x, y = _.y)
                 )

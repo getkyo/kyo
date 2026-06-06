@@ -1,8 +1,8 @@
 package kyo
 
+import kyo.Chart.*
 import kyo.UI.*
 import kyo.UI.Ast.*
-import kyo.UI.mark.*
 import kyo.internal.ChartLower
 import kyo.internal.HtmlRenderer
 import scala.language.implicitConversions
@@ -105,10 +105,10 @@ class ChartMorphTest extends Test:
         val updated = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
         for
             ref <- Signal.initRef[Seq[Sale]](initial)
-            spec = UI.chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
+            spec = Chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             // First render records the initial path geometry.
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Update to new values with the same categories.
@@ -173,10 +173,10 @@ class ChartMorphTest extends Test:
         val updated = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)), Sale("Mar", Rev(1500.0)))
         for
             ref <- Signal.initRef[Seq[Sale]](initial)
-            spec = UI.chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
+            spec = Chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             // First render: record 2-command path geometry.
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Structural change: 3 categories.
@@ -201,10 +201,10 @@ class ChartMorphTest extends Test:
         val updated = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
         for
             ref <- Signal.initRef[Seq[Sale]](initial)
-            spec = UI.chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
+            spec = Chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.none)
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             html0 <- HtmlRenderer.render(root, Seq.empty)
             _     <- ref.set(updated)
             html1 <- HtmlRenderer.render(root, Seq.empty)
@@ -230,10 +230,10 @@ class ChartMorphTest extends Test:
         val updated = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
         for
             ref <- Signal.initRef[Seq[Sale]](initial)
-            spec = UI.chart(ref: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
+            spec = Chart(ref: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             // First render: record initial area path geometry.
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Update values (same categories, same structure).
@@ -270,10 +270,10 @@ class ChartMorphTest extends Test:
         val r2 = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
         for
             ref <- Signal.initRef[Seq[Sale]](r1)
-            spec = UI.chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
+            spec = Chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             // R1 pull 1: no previous path.
             html1a <- HtmlRenderer.render(root, Seq.empty)
             // R1 pull 2: repeat pull of same emission.
@@ -322,10 +322,10 @@ class ChartMorphTest extends Test:
         val r2 = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
         for
             ref <- Signal.initRef[Seq[Sale]](r1)
-            spec = UI.chart(ref: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
+            spec = Chart(ref: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             html1a <- HtmlRenderer.render(root, Seq.empty)
             html1b <- HtmlRenderer.render(root, Seq.empty)
             _      <- ref.set(r2)
@@ -357,10 +357,10 @@ class ChartMorphTest extends Test:
         val initial = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         for
             ref <- Signal.initRef[Seq[Sale]](initial)
-            spec = UI.chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
+            spec = Chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(html.contains("<path"), s"Expected <path in first render:\n$html")
@@ -395,12 +395,12 @@ class ChartMorphTest extends Test:
         )
         for
             ref <- Signal.initRef[Seq[MultiSale]](e1)
-            spec = UI.chart(ref: Signal[Seq[MultiSale]])(
+            spec = Chart(ref: Signal[Seq[MultiSale]])(
                 bar(x = _.month, y = _.v1),
                 line(x = _.month, y = _.v2)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[MultiSale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[MultiSale], Svg.Root]](spec)
             // Emission 1: records bar geom (2 entries) and line geom ("line-1-0" with M+L = 2 cmds).
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Emission 2: bar adds Mar (3 geom entries); line v2 still produces 2 points (Jan, Feb).
@@ -450,11 +450,11 @@ class ChartMorphTest extends Test:
         )
         for
             ref <- Signal.initRef[Seq[NamedColorSale]](e1)
-            spec = UI.chart(ref: Signal[Seq[NamedColorSale]])(
+            spec = Chart(ref: Signal[Seq[NamedColorSale]])(
                 line(x = _.month, y = _.rev, color = _.series)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[NamedColorSale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[NamedColorSale], Svg.Root]](spec)
             // Emission 1: record "line-0-Red" (Jan+Feb) in fromGeom.
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Emission 2: Red series stable (morphs); Blue series new (snaps).
@@ -499,10 +499,10 @@ class ChartMorphTest extends Test:
         val e2 = Chunk(Sale("Jan", Rev(1500.0)))
         for
             ref <- Signal.initRef[Seq[Sale]](e1)
-            spec = UI.chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
+            spec = Chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             _    <- HtmlRenderer.render(root, Seq.empty)
             _    <- ref.set(e2)
             html <- HtmlRenderer.render(root, Seq.empty)
@@ -531,11 +531,11 @@ class ChartMorphTest extends Test:
         )
         for
             ref <- Signal.initRef[Seq[ColSale]](rows)
-            spec = UI.chart(ref: Signal[Seq[ColSale]])(
+            spec = Chart(ref: Signal[Seq[ColSale]])(
                 line(x = _.month, y = _.revenue, color = _.col)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[ColSale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[ColSale], Svg.Root]](spec)
             html <- HtmlRenderer.render(root, Seq.empty)
         yield
             // Two distinct series must produce two <path> elements.
@@ -566,12 +566,12 @@ class ChartMorphTest extends Test:
         )
         for
             ref <- Signal.initRef[Seq[MultiSale]](e1)
-            spec = UI.chart(ref: Signal[Seq[MultiSale]])(
+            spec = Chart(ref: Signal[Seq[MultiSale]])(
                 bar(x = _.month, y = _.v1),
                 area(x = _.month, y = _.v2)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[MultiSale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[MultiSale], Svg.Root]](spec)
             _    <- HtmlRenderer.render(root, Seq.empty)
             _    <- ref.set(e2)
             html <- HtmlRenderer.render(root, Seq.empty)
@@ -594,10 +594,10 @@ class ChartMorphTest extends Test:
         val e2 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)), Sale("Mar", Rev(1500.0)))
         for
             ref <- Signal.initRef[Seq[Sale]](e1)
-            spec = UI.chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
+            spec = Chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
             _    <- HtmlRenderer.render(root, Seq.empty)
             _    <- ref.set(e2)
             html <- HtmlRenderer.render(root, Seq.empty)
@@ -640,10 +640,10 @@ class ChartMorphTest extends Test:
         )
         for
             ref <- Signal.initRef[Seq[GapSale]](e1)
-            spec = UI.chart(ref: Signal[Seq[GapSale]])(line(x = _.month, y = _.rev))
+            spec = Chart(ref: Signal[Seq[GapSale]])(line(x = _.month, y = _.rev))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[GapSale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[GapSale], Svg.Root]](spec)
             // Emission 1: record "M L L" path geometry.
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Emission 2: gap in middle produces "M M L" (same count, different types).
@@ -687,10 +687,10 @@ class ChartMorphTest extends Test:
         )
         for
             ref <- Signal.initRef[Seq[GapSale]](e1)
-            spec = UI.chart(ref: Signal[Seq[GapSale]])(area(x = _.month, y = _.rev))
+            spec = Chart(ref: Signal[Seq[GapSale]])(area(x = _.month, y = _.rev))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[GapSale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[GapSale], Svg.Root]](spec)
             _    <- HtmlRenderer.render(root, Seq.empty)
             _    <- ref.set(e2)
             html <- HtmlRenderer.render(root, Seq.empty)
@@ -735,11 +735,11 @@ class ChartMorphTest extends Test:
         )
         for
             ref <- Signal.initRef[Seq[NamedColorSale]](e1)
-            spec = UI.chart(ref: Signal[Seq[NamedColorSale]])(
+            spec = Chart(ref: Signal[Seq[NamedColorSale]])(
                 line(x = _.month, y = _.rev, color = _.series)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[NamedColorSale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[NamedColorSale], Svg.Root]](spec)
             // Emission 1: records Red at key "line-0-Red" and Blue at key "line-0-Blue" (after fix).
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Emission 2: only Blue series remains.
@@ -795,11 +795,11 @@ class ChartMorphTest extends Test:
         )
         for
             ref <- Signal.initRef[Seq[NamedColorSale]](e1)
-            spec = UI.chart(ref: Signal[Seq[NamedColorSale]])(
+            spec = Chart(ref: Signal[Seq[NamedColorSale]])(
                 area(x = _.month, y = _.rev, color = _.series)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[NamedColorSale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[NamedColorSale], Svg.Root]](spec)
             _    <- HtmlRenderer.render(root, Seq.empty)
             _    <- ref.set(e2)
             html <- HtmlRenderer.render(root, Seq.empty)
@@ -868,11 +868,11 @@ class ChartMorphTest extends Test:
         )
         for
             ref <- Signal.initRef[Seq[ColSale]](e1)
-            spec = UI.chart(ref: Signal[Seq[ColSale]])(
+            spec = Chart(ref: Signal[Seq[ColSale]])(
                 line(x = _.month, y = _.revenue, color = _.col)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[ColSale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[ColSale], Svg.Root]](spec)
             // Emission 1: store geometry for both series under CatKey-based keys.
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Emission 2: each series must morph from its OWN prior path.
@@ -943,11 +943,11 @@ class ChartMorphTest extends Test:
         )
         for
             ref <- Signal.initRef[Seq[ColSale]](e1)
-            spec = UI.chart(ref: Signal[Seq[ColSale]])(
+            spec = Chart(ref: Signal[Seq[ColSale]])(
                 area(x = _.month, y = _.revenue, color = _.col)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[ColSale], Svg.Root]](spec)
+            root = summon[Conversion[Chart.Spec[ColSale], Svg.Root]](spec)
             _    <- HtmlRenderer.render(root, Seq.empty)
             _    <- ref.set(e2)
             html <- HtmlRenderer.render(root, Seq.empty)

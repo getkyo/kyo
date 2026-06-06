@@ -532,7 +532,7 @@ private[kyo] object Extent:
     def categories(keys: Chunk[String]): Extent = Extent.Categories(keys)
 end Extent
 
-/** The scale domain coordinate produced by `UI.Plottable.toDomain`.
+/** The scale domain coordinate produced by `Chart.Plottable.toDomain`.
   *
   * Three variants cover all scale families: `Continuous` for linear/log/time numeric axes, `Category` for band and
   * ordinal axes, and `Temporal` for time axes (epoch milliseconds). Scales consume this union; the kind selects

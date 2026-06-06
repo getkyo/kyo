@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.Chart.*
 import kyo.UI.*
 import kyo.internal.Domain
 import kyo.internal.Scale

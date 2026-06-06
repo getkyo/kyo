@@ -1,9 +1,9 @@
 package demo
 
 import kyo.*
+import kyo.Chart.*
 import kyo.Style.*
 import kyo.UI.*
-import kyo.UI.mark.*
 import scala.language.implicitConversions
 
 /** A live service-metrics dashboard built on the `Chart` layer's reactive (`Signal`-backed) data sources.
@@ -303,7 +303,7 @@ object LiveDashboard extends KyoApp:
             // marks region on each emission and keeps the frame (axes, legend) stable, so no `.render` wrapper
             // is needed. (Wrapping would rebuild the whole chart per tick and reset the animation state.)
             // Throughput bar chart: FIXED y-domain so the axis stays put; bars animate to new heights.
-            throughputChart = UI.chart(throughput)(bar(x = _.name, y = _.rps, color = _.name))
+            throughputChart = Chart(throughput)(bar(x = _.name, y = _.rps, color = _.name))
                 .yAxis(_.grid.ticks(4))
                 .yScale(_.linear(0.0, rpsMax))
                 .legend(_.hidden)
@@ -314,7 +314,7 @@ object LiveDashboard extends KyoApp:
 
             // Latency lines over the fixed 31-slot rolling window: one line per series via the color channel,
             // so the layer derives a p50/p99 legend. Cyan p50 and amber p99 stay distinct from the bars.
-            latencyChart = UI.chart(latency)(line(x = _.t, y = _.ms, color = _.series))
+            latencyChart = Chart(latency)(line(x = _.t, y = _.ms, color = _.series))
                 .yAxis(_.grid.ticks(4))
                 .xAxis(_.format(timeAxisLabel))
                 .yScale(_.linear(0.0, latMax))
@@ -330,7 +330,7 @@ object LiveDashboard extends KyoApp:
                 .toSvg
 
             // Status stacked bar grouped by code, colored by monitoring convention: 2xx green, 4xx amber, 5xx red.
-            statusChart = UI.chart(status)(bar(x = _.name, y = _.count, stack = by(_.code)))
+            statusChart = Chart(status)(bar(x = _.name, y = _.count, stack = by(_.code)))
                 .yScale(_.withNice(true))
                 .yAxis(_.grid.ticks(4))
                 .legend(
@@ -345,7 +345,7 @@ object LiveDashboard extends KyoApp:
                 .toSvg
 
             // Error-rate line over the rolling window: fills the bottom-right cell so all four quadrants balance.
-            errorChart = UI.chart(errRate)(line(x = _.t, y = _.pct))
+            errorChart = Chart(errRate)(line(x = _.t, y = _.pct))
                 .yAxis(_.grid.ticks(4))
                 .xAxis(_.format(timeAxisLabel))
                 .yScale(_.withNice(true))

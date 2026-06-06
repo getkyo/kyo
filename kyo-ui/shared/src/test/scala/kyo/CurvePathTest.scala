@@ -1,9 +1,9 @@
 package kyo
 
+import kyo.Chart.*
 import kyo.Svg.PathCommand
 import kyo.Svg.PathData
 import kyo.UI.*
-import kyo.UI.mark.*
 import kyo.internal.CurvePath
 
 /** Unit tests for CurvePath interpolation (INV-016, catalog #13/D3).

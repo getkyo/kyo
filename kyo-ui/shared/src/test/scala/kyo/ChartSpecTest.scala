@@ -1,8 +1,8 @@
 package kyo
 
+import kyo.Chart.*
 import kyo.UI.*
 import kyo.UI.Ast.*
-import kyo.UI.mark.*
 import scala.language.implicitConversions
 
 class ChartSpecTest extends Test:
@@ -29,10 +29,10 @@ class ChartSpecTest extends Test:
         Sale("Mar", Usd(1500), Region.APAC)
     )
 
-    // ---- inference: bar with color builds ChartSpec[Sale] ----
+    // ---- inference: bar with color builds Chart.Spec[Sale] ----
 
-    "bar with color infers ChartSpec[Sale] without annotations" in {
-        val spec = UI.chart(sales)(bar(x = _.month, y = _.revenue, color = _.region))
+    "bar with color infers Chart.Spec[Sale] without annotations" in {
+        val spec = Chart(sales)(bar(x = _.month, y = _.revenue, color = _.region))
         assert(spec.marks.length == 1)
         spec.marks.head match
             case Mark.Bar(_, _, color, _, _, _, _, _) =>
@@ -46,8 +46,8 @@ class ChartSpecTest extends Test:
     // ---- sentinel: bar without color yields Absent ----
 
     "bar without color yields Absent, bar with color yields Present" in {
-        val specNoColor = UI.chart(sales)(bar(x = _.month, y = _.revenue))
-        val specColor   = UI.chart(sales)(bar(x = _.month, y = _.revenue, color = _.region))
+        val specNoColor = Chart(sales)(bar(x = _.month, y = _.revenue))
+        val specColor   = Chart(sales)(bar(x = _.month, y = _.revenue, color = _.region))
 
         specNoColor.marks.head match
             case Mark.Bar(_, _, color, _, _, _, _, _) =>
@@ -83,26 +83,26 @@ class ChartSpecTest extends Test:
     // ---- config threading ----
 
     "size(640, 360) sets spec.size" in {
-        val spec = UI.chart(sales)(bar(x = _.month, y = _.revenue)).size(640, 360)
+        val spec = Chart(sales)(bar(x = _.month, y = _.revenue)).size(640, 360)
         assert(spec.chartSize == (640, 360))
     }
 
     "yAxis(_.grid.ticks(5)) sets showGrid true and tickCount 5" in {
-        val spec = UI.chart(sales)(bar(x = _.month, y = _.revenue)).yAxis(_.grid.ticks(5))
+        val spec = Chart(sales)(bar(x = _.month, y = _.revenue)).yAxis(_.grid.ticks(5))
         // side field removed (dead/false knob per design §GAP-AXISCONFIG-SIDE)
         assert(spec.yAxisCfg.showGrid == true)
         assert(spec.yAxisCfg.tickCount == 5)
     }
 
     "key(_.month) sets spec.key to Present" in {
-        val spec = UI.chart(sales)(bar(x = _.month, y = _.revenue)).key(_.month)
+        val spec = Chart(sales)(bar(x = _.month, y = _.revenue)).key(_.month)
         assert(spec.key.isDefined)
     }
 
     "onHover(ref) stores the ref in spec.onHover" in {
         run {
             Signal.initRef(Maybe.empty[Sale]).map: ref =>
-                val spec = UI.chart(sales)(bar(x = _.month, y = _.revenue)).onHover(ref)
+                val spec = Chart(sales)(bar(x = _.month, y = _.revenue)).onHover(ref)
                 spec.onHover match
                     case Present(storedRef) => assert(storedRef eq ref)
                     case Absent             => fail("Expected onHover to be Present")
@@ -111,17 +111,17 @@ class ChartSpecTest extends Test:
 
     // ---- two overloads: Chunk and Signal ----
 
-    "UI.chart(chunk)(...) produces DataSource.Static" in {
-        val spec = UI.chart(sales)(bar(x = _.month, y = _.revenue))
+    "Chart(chunk)(...) produces DataSource.Static" in {
+        val spec = Chart(sales)(bar(x = _.month, y = _.revenue))
         spec.data match
             case DataSource.Static(_) => succeed
             case DataSource.Live(_)   => fail("Expected Static but got Live")
     }
 
-    "UI.chart(signal)(...) produces DataSource.Live" in {
+    "Chart(signal)(...) produces DataSource.Live" in {
         run {
             Signal.initRef[Seq[Sale]](sales).map: sig =>
-                val spec = UI.chart(sig)(bar(x = _.month, y = _.revenue))
+                val spec = Chart(sig)(bar(x = _.month, y = _.revenue))
                 spec.data match
                     case DataSource.Live(_)   => succeed
                     case DataSource.Static(_) => fail("Expected Live but got Static")
@@ -131,7 +131,7 @@ class ChartSpecTest extends Test:
     // ---- legend config ----
 
     "legend(_.top) sets position to Top" in {
-        val spec = UI.chart(sales)(bar(x = _.month, y = _.revenue)).legend(_.top)
+        val spec = Chart(sales)(bar(x = _.month, y = _.revenue)).legend(_.top)
         spec.legendCfg.position match
             case Present(LegendPosition.Top) => succeed
             case other                       => fail(s"Expected Present(LegendPosition.Top) but got $other")
@@ -140,7 +140,7 @@ class ChartSpecTest extends Test:
     // ---- combo mark ----
 
     "combo chart with bar + rule has marks.length == 2" in {
-        val spec = UI.chart(sales)(
+        val spec = Chart(sales)(
             bar(x = _.month, y = _.revenue),
             rule[Sale, Usd](y = RuleValue.Const(Usd(1000), summon[Plottable[Usd]]))
         )
@@ -155,28 +155,28 @@ class ChartSpecTest extends Test:
             import kyo.*
             import kyo.UI.*
             import kyo.UI.Ast.*
-            import kyo.UI.mark.*
+            import kyo.Chart.*
             enum Region2 derives CanEqual, Plottable:
                 case NA, EU, APAC
             case class Sale2(month: String, revenue: Double, region: Region2)
             val sales: Chunk[Sale2] = Chunk.empty
-            val spec = UI.chart(sales)(bar(x = _.month, y = _.revenue, color = _.region))
-            val _: ChartSpec[Sale2] = spec
+            val spec = Chart(sales)(bar(x = _.month, y = _.revenue, color = _.region))
+            val _: Chart.Spec[Sale2] = spec
         """)
     }
 
-    "positive typeCheck: UI.chart(chunk) infers ChartSpec and UI.chart(signal) infers DataSource.Live at runtime" in {
+    "positive typeCheck: Chart(chunk) infers Chart.Spec and Chart(signal) infers DataSource.Live at runtime" in {
         typeCheck("""
             import kyo.*
             import kyo.UI.*
             import kyo.UI.Ast.*
-            import kyo.UI.mark.*
+            import kyo.Chart.*
             case class Row(x: String, y: Int)
             given CanEqual[Row, Row] = CanEqual.derived
             val chunk: Chunk[Row] = Chunk.empty
-            val specStatic: ChartSpec[Row] = UI.chart(chunk)(bar(x = _.x, y = _.y))
+            val specStatic: Chart.Spec[Row] = Chart(chunk)(bar(x = _.x, y = _.y))
         """)
-        // Signal inference is covered by the runtime "UI.chart(signal)(...) produces DataSource.Live" test.
+        // Signal inference is covered by the runtime "Chart(signal)(...) produces DataSource.Live" test.
         succeed
     }
 
@@ -187,10 +187,10 @@ class ChartSpecTest extends Test:
             import kyo.*
             import kyo.UI.*
             import kyo.UI.Ast.*
-            import kyo.UI.mark.*
+            import kyo.Chart.*
             case class Row(x: String, y: Int, c: String)
             val rows: Chunk[Row] = Chunk.empty
-            UI.chart(rows)(rule(color = _.c))
+            Chart(rows)(rule(color = _.c))
         """)("does not have a parameter color")
     }
 
@@ -199,10 +199,10 @@ class ChartSpecTest extends Test:
             import kyo.*
             import kyo.UI.*
             import kyo.UI.Ast.*
-            import kyo.UI.mark.*
+            import kyo.Chart.*
             case class Row(x: String, y: Int, s: Double)
             val rows: Chunk[Row] = Chunk.empty
-            UI.chart(rows)(bar(x = _.x, y = _.y, size = _.s))
+            Chart(rows)(bar(x = _.x, y = _.y, size = _.s))
         """)("does not have a parameter size")
     }
 
@@ -211,7 +211,7 @@ class ChartSpecTest extends Test:
             import kyo.*
             import kyo.UI.*
             import kyo.UI.Ast.*
-            import kyo.UI.mark.*
+            import kyo.Chart.*
             case class Row(x: String, y: Int, c: String)
             val rows: Chunk[Row] = Chunk.empty
             val m = bar(x = (r: Row) => r.x, y = (r: Row) => r.y)
@@ -224,7 +224,7 @@ class ChartSpecTest extends Test:
             import kyo.*
             import kyo.UI.*
             import kyo.UI.Ast.*
-            import kyo.UI.mark.*
+            import kyo.Chart.*
             enum Region derives CanEqual:
                 case NA, EU
             case class Row(x: String, y: Int, region: Region)
@@ -246,7 +246,7 @@ class ChartSpecTest extends Test:
     "line mark with color has color Present" in {
         case class Row(x: String, y: Int, series: String)
         val rows = Chunk(Row("a", 1, "s1"), Row("b", 2, "s2"))
-        val spec = UI.chart(rows)(line(x = _.x, y = _.y, color = _.series))
+        val spec = Chart(rows)(line(x = _.x, y = _.y, color = _.series))
         spec.marks.head match
             case Mark.Line(_, _, color, curve, defined, _, _, _, _) =>
                 assert(color.isDefined)
@@ -262,7 +262,7 @@ class ChartSpecTest extends Test:
     "point mark with size has size Present" in {
         case class Row(x: Int, y: Int, sz: Double)
         val rows = Chunk(Row(1, 2, 3.0))
-        val spec = UI.chart(rows)(point(x = _.x, y = _.y, size = _.sz))
+        val spec = Chart(rows)(point(x = _.x, y = _.y, size = _.sz))
         spec.marks.head match
             case Mark.Point(_, _, _, size, _, symbol, _, _, _, _) =>
                 assert(size.isDefined)
@@ -275,7 +275,7 @@ class ChartSpecTest extends Test:
     // ---- axis marker ----
 
     "line with axis = Axis.Right stores Axis.Right" in {
-        val spec = UI.chart(sales)(line(x = _.month, y = _.revenue, axis = Axis.Right))
+        val spec = Chart(sales)(line(x = _.month, y = _.revenue, axis = Axis.Right))
         spec.marks.head match
             case Mark.Line(_, _, _, _, _, _, _, _, axis) =>
                 assert(axis == Axis.Right)
@@ -284,11 +284,11 @@ class ChartSpecTest extends Test:
         succeed
     }
 
-    // ---- ChartSpec converts to Svg.Root ----
+    // ---- Chart.Spec converts to Svg.Root ----
 
-    "ChartSpec[Sale] converts to Svg.Root via given Conversion" in {
-        val spec: ChartSpec[Sale] = UI.chart(sales)(bar(x = _.month, y = _.revenue))
-        val root: Svg.Root        = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+    "Chart.Spec[Sale] converts to Svg.Root via given Conversion" in {
+        val spec: Chart.Spec[Sale] = Chart(sales)(bar(x = _.month, y = _.revenue))
+        val root: Svg.Root         = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
         succeed
     }
 
@@ -309,8 +309,8 @@ class ChartSpecTest extends Test:
     // Test: rule with both positions Unset is skipped at lowering (INV-020, plan leaf 10)
     "rule() with both positions Unset emits no rule line while the sibling bar renders (INV-020)" in {
         val m    = rule[Sale, Double]()
-        val spec = UI.chart(sales)(bar(x = _.month, y = _.revenue), m)
-        val root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+        val spec = Chart(sales)(bar(x = _.month, y = _.revenue), m)
+        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
         // The marks live in a single Svg.G (chrome axis lines are direct root children, not in a G).
         // Scope the line check to the marks group so axis lines do not leak into the assertion.
         val marksGroups = root.children.collect { case g: Svg.G => g }.filter(g =>
@@ -344,9 +344,9 @@ class ChartSpecTest extends Test:
         end match
     }
 
-    // Test: ChartSpec.InteractionConfig.default has all highlighting disabled (D23)
-    "ChartSpec.InteractionConfig.default has all highlights disabled (D23)" in {
-        val cfg = ChartSpec.InteractionConfig.default
+    // Test: Chart.Spec.InteractionConfig.default has all highlighting disabled (D23)
+    "Chart.Spec.InteractionConfig.default has all highlights disabled (D23)" in {
+        val cfg = Chart.Spec.InteractionConfig.default
         assert(!cfg.hoverHighlight, "hoverHighlight must be false by default")
         assert(!cfg.selectHighlight, "selectHighlight must be false by default")
         assert(cfg.hoverStyle == Absent, "hoverStyle must be Absent by default")
@@ -355,7 +355,7 @@ class ChartSpecTest extends Test:
 
     // Test: interaction extension method updates interactionCfg (D23)
     "interaction extension method updates interactionCfg (D23)" in {
-        val spec = UI.chart(sales)(bar(x = _.month, y = _.revenue))
+        val spec = Chart(sales)(bar(x = _.month, y = _.revenue))
             .interaction(_.highlightSelect)
         assert(spec.interactionCfg.selectHighlight, "highlightSelect must set selectHighlight=true")
         assert(!spec.interactionCfg.hoverHighlight, "hoverHighlight must remain false")
@@ -397,8 +397,8 @@ class ChartSpecTest extends Test:
 
     // ---- Phase 6: a11y, responsive, margins ----
 
-    private def rootOf[A](spec: ChartSpec[A]): Svg.Root =
-        summon[Conversion[ChartSpec[A], Svg.Root]](spec)
+    private def rootOf[A](spec: Chart.Spec[A]): Svg.Root =
+        summon[Conversion[Chart.Spec[A], Svg.Root]](spec)
 
     private def titleTextsIn(root: Svg.Root): Chunk[String] =
         root.children.flatMap:
@@ -412,31 +412,31 @@ class ChartSpecTest extends Test:
 
     // Leaf 14
     "title(t) adds an Svg.Title child carrying the title text" in {
-        val root = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)).title("Revenue by month"))
+        val root = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)).title("Revenue by month"))
         assert(titleTextsIn(root).toSeq.contains("Revenue by month"), "Expected a <title> child with the text")
     }
 
     // Leaf 15
     "title(t) sets role=img on the root svg" in {
-        val root = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)).title("T"))
+        val root = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)).title("T"))
         assert(root.attrs.role == Present("img"), s"Expected role=img but got ${root.attrs.role}")
     }
 
     // Leaf 16
     "desc(d) adds an Svg.Desc child carrying the description text" in {
-        val root = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)).desc("Monthly totals"))
+        val root = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)).desc("Monthly totals"))
         assert(descTextsIn(root).toSeq.contains("Monthly totals"), "Expected a <desc> child with the text")
     }
 
     // Leaf 17
     "ariaLabel(l) sets aria-label on the root svg" in {
-        val root = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)).ariaLabel("chart"))
+        val root = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)).ariaLabel("chart"))
         assert(root.attrs.ariaAttrs.get("label") == Some("chart"), s"Expected aria-label=chart but got ${root.attrs.ariaAttrs}")
     }
 
     // Leaf 18
     "no a11y configured -> no title, no desc, no role, no aria-label" in {
-        val root = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)))
+        val root = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)))
         assert(titleTextsIn(root).isEmpty, "Expected no <title>")
         assert(descTextsIn(root).isEmpty, "Expected no <desc>")
         assert(root.attrs.role == Absent, "Expected no role")
@@ -445,7 +445,7 @@ class ChartSpecTest extends Test:
 
     // Leaf 19
     "responsive uses width=100% and a viewBox with no fixed pixel height" in {
-        val root = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)).size(400, 300).responsive)
+        val root = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)).size(400, 300).responsive)
         assert(
             root.svgAttrs.width == Present(Svg.Coord.Len(Svg.SvgLength.Pct(100.0))),
             s"Expected width=100% but got ${root.svgAttrs.width}"
@@ -456,7 +456,7 @@ class ChartSpecTest extends Test:
 
     // Leaf 20
     "responsive(ratio) keeps width=100% and a viewBox and sets preserveAspectRatio" in {
-        val root = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)).responsive(16.0 / 9.0))
+        val root = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)).responsive(16.0 / 9.0))
         assert(root.svgAttrs.width == Present(Svg.Coord.Len(Svg.SvgLength.Pct(100.0))), "Expected width=100%")
         assert(root.svgAttrs.viewBox.isDefined, "Expected a viewBox")
         assert(root.svgAttrs.preserveAspectRatio.isDefined, "Expected preserveAspectRatio for an explicit ratio")
@@ -465,21 +465,21 @@ class ChartSpecTest extends Test:
     // Leaf 21
     "responsive and size are mutually exclusive with last-set-wins" in {
         // size after responsive -> fixed wins.
-        val sizeWins = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)).responsive.size(400, 300))
+        val sizeWins = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)).responsive.size(400, 300))
         assert(
             sizeWins.svgAttrs.width == Present(Svg.Coord.Num(400.0)),
             s"size-after-responsive must keep fixed width, got ${sizeWins.svgAttrs.width}"
         )
         assert(sizeWins.svgAttrs.height == Present(Svg.Coord.Num(300.0)), "size-after-responsive must keep fixed height")
         // responsive after size -> responsive wins.
-        val respWins = rootOf(UI.chart(sales)(bar(x = _.month, y = _.revenue)).size(400, 300).responsive)
+        val respWins = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)).size(400, 300).responsive)
         assert(respWins.svgAttrs.width == Present(Svg.Coord.Len(Svg.SvgLength.Pct(100.0))), "responsive-after-size must use width=100%")
         assert(respWins.svgAttrs.height == Absent, "responsive-after-size must have no fixed height")
     }
 
     // Leaf (margins)
     "margins(...) shifts the plot rectangle by the configured left/top margins" in {
-        val base     = UI.chart(sales)(bar(x = _.month, y = _.revenue))
+        val base     = Chart(sales)(bar(x = _.month, y = _.revenue))
         val (_, sc0) = base.toSvgWithScales
         val (_, sc1) = base.margins(_.left(120.0)).toSvgWithScales
         // Increasing the left margin moves plot.x right by the delta from the default (60).

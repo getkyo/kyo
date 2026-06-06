@@ -1,9 +1,9 @@
 package demo
 
 import kyo.*
+import kyo.Chart.*
 import kyo.Style.*
 import kyo.UI.*
-import kyo.UI.mark.*
 import scala.language.implicitConversions
 
 /** Animated + interactive showcase of chart features added this campaign.
@@ -195,7 +195,7 @@ object ChartShowcase extends KyoApp:
 
             // Panel 1: dual-axis animated combo
             dualAxisChart =
-                UI.chart(revSignal)(
+                Chart(revSignal)(
                     bar(x = _.month, y = _.revenue, color = _.month),
                     line(x = _.month, y = _.growth, axis = Axis.Right, curve = Curve.monotone)
                 )
@@ -210,7 +210,7 @@ object ChartShowcase extends KyoApp:
 
             // Panel 2: interactive multi-series line with categorical colorScale
             lineChart =
-                UI.chart(lineData)(
+                Chart(lineData)(
                     line(x = _.x, y = _.y, color = _.series, curve = Curve.monotone)
                 )
                     .yScale(_.withNice(true))
@@ -227,7 +227,7 @@ object ChartShowcase extends KyoApp:
 
             // Panel 3: animated multi-series non-stacked area with colorScale
             areaChart =
-                UI.chart(areaSignal)(
+                Chart(areaSignal)(
                     area(x = _.x, y = _.y, color = _.grp)
                 )
                     .yScale(_.linear(0.0, 70.0))
@@ -243,9 +243,9 @@ object ChartShowcase extends KyoApp:
 
             // Panel 4: animated bars with per-bar opacity + text labels
             barsChart =
-                UI.chart(barsSignal)(
+                Chart(barsSignal)(
                     bar(x = _.label, y = _.value, opacity = _.opacity),
-                    text(x = _.label, y = _.value, label = r => r.value.toInt.toString, anchor = UI.TextAnchor.Middle)
+                    text(x = _.label, y = _.value, label = r => r.value.toInt.toString, anchor = Chart.TextAnchor.Middle)
                 )
                     .yScale(_.linear(0.0, 120.0))
                     .yAxis(_.grid.ticks(5))
