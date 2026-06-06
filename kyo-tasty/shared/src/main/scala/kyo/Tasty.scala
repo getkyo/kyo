@@ -4372,6 +4372,10 @@ object Tasty:
                 end visit
                 visit(c)
                 out.result()
+            // F-004: Packages do not inherit; their memberIds ARE their All-scope members.
+            // This arm closes the doc-vs-impl gap documented at Tasty.scala:825-826.
+            case p: Symbol.Package =>
+                p.memberIds.flatMap(id => cp.symbol(id).toChunk)
             case _ => Chunk.empty
 
 end Tasty

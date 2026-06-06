@@ -205,25 +205,33 @@ class Inv009BehavioralTest extends Test:
                 succeed
     }
 
-    // ── Leaf 5: pure member queries perform no IO ─────────────────────────────
+    // ── Leaf 5: package member scope concrete equality ────────────────────────
+    // F-004: members(pkg, All) must equal members(pkg, Declared) for Package symbols;
+    //        members(pkg, Inherited) must be Chunk.empty.
     // Given: minimalCp bound via Tasty.withClasspath(cp)
-    // When: members(pkg, scope) across all three MemberScope cases,
-    //       findMember(pkg, name, scope) invoked
-    // Then: each returns its Chunk / Maybe result without raising the A1 sentinel
-    "Leaf 5: pure member queries perform no IO" in run {
+    //        pkg (SymbolId(0)) has memberIds = Chunk(SymbolId(1)) pointing to child package
+    // When: members(pkg, scope) across all three MemberScope cases invoked
+    // Then: Declared == Chunk(child); All == Chunk(child); Inherited == Chunk.empty
+    "Leaf 5: package member scope concrete equality (F-004)" in run {
         Tasty.withClasspath(minimalCp):
             for
-                m1 <- Tasty.members(pkg, Tasty.MemberScope.Declared)
-                m2 <- Tasty.members(pkg, Tasty.MemberScope.Inherited)
-                m3 <- Tasty.members(pkg, Tasty.MemberScope.All)
-                fm <- Tasty.findMember(pkg, "child", Tasty.MemberScope.Declared)
+                decl <- Tasty.members(pkg, Tasty.MemberScope.Declared).map(_.map(_.simpleName))
+                inh  <- Tasty.members(pkg, Tasty.MemberScope.Inherited)
+                all  <- Tasty.members(pkg, Tasty.MemberScope.All).map(_.map(_.simpleName))
             yield
-                // Package.memberIds[0] = SymbolId(1) = child; members uses cp.symbol lookup
-                // If the implementation resolves package memberIds, m1 will contain child.
-                // If it only resolves declarationIds, m1 will be empty. Either is fine for no-IO proof.
-                assert(m1 != null, "members(Declared) must return a non-null Chunk")
-                assert(m2 != null, "members(Inherited) must return a non-null Chunk")
-                assert(m3 != null, "members(All) must return a non-null Chunk")
+                // pkg.memberIds = Chunk(SymbolId(1)) => resolves to the child Package "root.child"
+                assert(
+                    decl == Chunk("root.child"),
+                    s"members(pkg, Declared).map(_.simpleName) must equal Chunk(root.child); got $decl"
+                )
+                assert(
+                    all == decl,
+                    s"members(pkg, All) must equal members(pkg, Declared); all=$all declared=$decl"
+                )
+                assert(
+                    inh == Chunk.empty,
+                    s"members(pkg, Inherited) must be Chunk.empty for packages; got $inh"
+                )
                 succeed
     }
 
