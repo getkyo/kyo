@@ -91,10 +91,22 @@ object Svg:
     def feDisplacementMap(using Frame): FeDisplacementMap = FeDisplacementMap()
 
     // ---- factories: SMIL animation ----
-    def animate(using Frame): Animate                   = Animate()
+
+    /** Builds a `<animate>` element that animates a single SVG attribute over time. */
+    def animate(using Frame): Animate = Animate()
+
+    /** Builds a `<animateTransform>` element that animates a transform attribute
+      * (translate, scale, rotate, skewX, skewY) on the parent element over time.
+      */
     def animateTransform(using Frame): AnimateTransform = AnimateTransform()
-    def animateMotion(using Frame): AnimateMotion       = AnimateMotion()
-    def set(using Frame): SetAnim                       = SetAnim()
+
+    /** Builds a `<animateMotion>` element that moves the parent element along a path. */
+    def animateMotion(using Frame): AnimateMotion = AnimateMotion()
+
+    /** Builds a `<set>` animation element. Named `SetAnim` in the API to avoid clashing
+      * with `scala.collection.Set`; this factory is the canonical entry point.
+      */
+    def set(using Frame): SetAnim = SetAnim()
 
     // ---- AST root ----
 
@@ -1092,6 +1104,13 @@ object Svg:
         def keySplines(v: String): Animate    = withSvg(svgAttrs.copy(animKeySplines = Present(v)))
     end Animate
 
+    /** `<animateTransform>`: animates a transform attribute on the parent element over time.
+      * The `type` setter selects the transform kind (`Translate`, `Scale`, `Rotate`,
+      * `SkewX`, or `SkewY`). The `from`/`to` values are tuples formatted as a
+      * space-separated string per the SVG spec (e.g., `"0 0"` for translate).
+      * Use `attributeName` to specify which transform attribute to animate (typically
+      * `"transform"`). Timing is controlled by `dur`, `begin`, and `repeatCount`.
+      */
     final case class AnimateTransform(svgAttrs: SvgAttrs = SvgAttrs(), attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using
         val frame: Frame
     ) extends SvgElement:
@@ -1107,6 +1126,12 @@ object Svg:
         def begin(v: String): AnimateTransform         = withSvg(svgAttrs.copy(animBegin = Present(v)))
     end AnimateTransform
 
+    /** `<animateMotion>`: moves the parent element along a motion path over time.
+      * The `path` setter accepts a `PathData` value (the same `d` attribute used by
+      * `<path>`) describing the trajectory. Timing is controlled by `dur` and
+      * `repeatCount`. Unlike `Animate`, this element does not take `attributeName`
+      * because it always targets the implicit motion path transform.
+      */
     final case class AnimateMotion(svgAttrs: SvgAttrs = SvgAttrs(), attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using
         val frame: Frame
     ) extends SvgElement:
