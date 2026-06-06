@@ -1,3 +1,4 @@
+import WasmCrossProject.*
 import sbt.*
 import sbt.Keys.*
 import sbtcrossproject.CrossPlugin.autoImport.*
@@ -5,7 +6,6 @@ import sbtcrossproject.CrossProject
 import sbtcrossproject.Platform
 import scalajscrossproject.ScalaJSCrossPlugin.autoImport.*
 import scalanativecrossproject.ScalaNativeCrossPlugin.autoImport.*
-import WasmCrossProject.*
 
 /** Wires kyo-test into a CrossProject using task-level LocalProject references.
   *
