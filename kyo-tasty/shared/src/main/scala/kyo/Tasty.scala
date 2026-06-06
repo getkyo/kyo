@@ -547,9 +547,51 @@ object Tasty:
       * to resolve parents, and returns a three-way `SubtypeVerdict` rather than a `Boolean`.
       */
     enum Type derives Schema, CanEqual:
+
+        /** Reference to a symbol by its id. Wire tag: `TYPEREFdirect` (105) and related forms.
+          *
+          * The most common type constructor: names a class, trait, object, type alias, or type
+          * parameter by its `SymbolId`. Resolves via `cp.symbol(symbolId)`. A `Named` whose
+          * `symbolId.value < 0` denotes an unresolvable reference that survived loading.
+          *
+          * Callers performing type comparison should use `Tasty.isSubtypeOf` rather than comparing
+          * `symbolId` values directly, as parent-chain resolution requires the `Classpath`.
+          */
         case Named(symbolId: SymbolId)
+
+        /** Reference to a term-level path as a type. Wire tag: `TERMREF` (111) and variants.
+          *
+          * Appears where a stable term path is used as a type, most commonly in path-dependent
+          * types (`p.type`) and singleton bounds. `prefix` is the qualifier type; `name` is the
+          * term name. Semantically distinct from `TypeRef` (which carries a type-level reference).
+          *
+          * Callers that need to match annotation FQNs should use `typeFqnString`, which handles
+          * both `TermRef` and `TypeRef` transparently.
+          */
         case TermRef(prefix: Type, name: Name)
+
+        /** Type application: `F[A1, ..., AN]`. Wire tag: `APPLIEDtype` (69).
+          *
+          * General type application after the constructor-folding in `TypeOps.applied`. `base` is
+          * the constructor type (often a `Named`); `args` are the type arguments in declaration
+          * order. The folding step converts `APPLIEDtype(scala.FunctionN, _)` to `Function`,
+          * `APPLIEDtype(scala.Array, _)` to `Array`, and so on, so callers only see `Applied` for
+          * forms that do not map to a dedicated case.
+          *
+          * Callers doing structural matching often want to recurse into `base` and `args` both.
+          */
         case Applied(base: Type, args: Chunk[Type])
+
+        /** Higher-kinded type lambda: `[X1, ..., XN] =>> body`. Wire tag: `TYPELAMBDAtype` (75).
+          *
+          * Represents a type-level function abstraction. `paramIds` holds the `SymbolId`s of the
+          * lambda's parameter symbols; `body` is the result type, which may contain `ParamRef`
+          * nodes pointing back into `paramIds`. Type lambdas arise from type members with type
+          * parameters and from certain higher-kinded class definitions.
+          *
+          * Callers applying a `TypeLambda` should substitute its params via
+          * `TypeOps.applyTypeLambda`.
+          */
         case TypeLambda(paramIds: Chunk[SymbolId], body: Type)
 
         /** Plain function type: `(A1, ..., AN) => R`.
@@ -570,9 +612,23 @@ object Tasty:
           * Wire-level: `APPLIEDtype` whose constructor has FQN `scala.ContextFunctionN`. Dedicated case
           * so callers can pattern-match `?=>` against `=>` without testing a Boolean flag. Methods decoded
           * from `scala.ContextFunctionN` produce this case; methods decoded from `scala.FunctionN` produce
-          * `Type.Function`.
+          * `Type.Function`. `params` holds the implicit parameter types; `result` is the return type.
+          *
+          * The corresponding Scala source shape is `(A1, ..., AN) ?=> R`.
           */
         case ContextFunction(params: Chunk[Type], result: Type)
+
+        /** Tuple type: `(A1, ..., AN)`. Wire tag: `APPLIEDtype(scala.TupleN, [A1, ..., AN])`.
+          *
+          * Collapsed by `TypeOps.applied` when the constructor FQN is `scala.TupleN` (N >= 2).
+          * `elements` holds the component types in declaration order. Callers iterating over
+          * tuple components should use `elements.iterator`.
+          *
+          * A `Tuple` with zero elements is not produced by the decoder; `Unit` decodes to
+          * `Named(scala.Unit)` rather than `Tuple(Chunk.empty)`.
+          *
+          * The corresponding Scala source shape is `(A1, ..., AN)`.
+          */
         case Tuple(elements: Chunk[Type])
 
         /** Call-by-name parameter type: `=> T`. Wire tag: `BYNAMEtpt`.

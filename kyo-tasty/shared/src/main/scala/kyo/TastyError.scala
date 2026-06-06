@@ -168,12 +168,18 @@ enum TastyError derives CanEqual:
       * TASTy type shape is not `Named(id)` or `Applied(Named(id), _)`. The verdict becomes `Indeterminate`
       * for the affected check; this error is a diagnostic, not a hard failure. `shape` is the short label
       * of the unhandled constructor (e.g. "Applied(TermRef,_)"); `lhs` and `rhs` carry the actual type
-      * values; `file` is the TASTy file the symbol was loaded from (currently "<unknown>" because Subtyping
-      * does not have file-name access; Phase 08+ may fill this in).
+      * values; `file` is the TASTy file the symbol was loaded from.
       *
-      * Note: this variant is produced at runtime during `isSubtypeOf` calls, not during classpath loading.
-      * It is NOT serialised to the KRFL snapshot format in this release (Phase 11 will add wire-format
-      * support when the snapshot minor version is bumped from 10 to 11).
+      * This variant is produced at runtime during `isSubtypeOf` calls, not during classpath loading.
+      * Wire-format support was added in Phase 11 (snapshot minor bumped from 10 to 11); see
+      * `SnapshotWriter` tag 20 and `SnapshotReader` tag 20.
+      *
+      * Warning: after a KRFL snapshot round-trip, `lhs` and `rhs` decode to `Type.Nothing` when the
+      * original Type is not in the SnapshotWriter encoder's covered set (Named, Any, Nothing, Applied,
+      * TermRef, TypeRef, Tuple, Function, ContextFunction, ByName, Repeated, Array). Complex shapes
+      * such as Refinement, AndType, OrType, MatchType, or FlexibleType fall through to the tag-255
+      * catch-all and are read back as `Type.Nothing`. See kyo-tasty/CONTRIBUTING.md section
+      * "Closed TastyError ADT" for the wire-format versioning rule.
       */
     case UnhandledSubtypingCase(shape: String, lhs: kyo.Tasty.Type, rhs: kyo.Tasty.Type, file: String)
 
