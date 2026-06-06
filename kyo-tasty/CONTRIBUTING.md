@@ -58,6 +58,8 @@ contract violation and requires a plan change and a bump to this list.
 - Effect: parses raw AST bytes on demand; result memoized per classpath instance.
 - AllowUnsafe gate: `Sync.Unsafe.defer` inside the body decode path
   (`ClasspathOrchestrator.decodeBody`).
+- Note: `Tasty.bodyTree` is the ONLY public entry point for AST body access. Do not
+  expose `DecodeContext.bodyMemo` or `DecodeContext.bodyStore` directly to callers.
 
 **Site 4: `Tasty.evictOlderThan(cacheDir, maxAge)`**
 - Effect: lists and deletes `.krfl` files older than `maxAge`.
@@ -67,6 +69,9 @@ contract violation and requires a plan change and a bump to this list.
 Every call to `AllowUnsafe` or `Sync.Unsafe.defer` anywhere in `src/main` must
 name one of these four sites in a `// Unsafe:` comment. A fifth unlabeled site
 is a code-review blocker.
+
+The four-site invariant is enforced behaviorally by `TestProbeFileSource`. See:
+`kyo-tasty/shared/src/test/scala/kyo/internal/tasty/TestProbeFileSource.scala`
 
 ---
 
@@ -221,8 +226,10 @@ Prefer Kyo types over scala stdlib equivalents throughout:
 | `Dict`     | `Map`                |
 | `Span`     | `Array` (public ADT) |
 
-`java.util.concurrent.*` is banned from `shared/src/main`. Use Kyo's
-`AtomicRef`, `AtomicLong`, `AtomicInt`, `AtomicBoolean` for shared state.
+`java.util.concurrent.ConcurrentHashMap` is permitted in `shared/src/main` (it
+is cross-platform: Scala.js and Scala Native both provide implementations). All
+other `java.util.concurrent.*` types are banned; use Kyo's `AtomicRef`,
+`AtomicLong`, `AtomicInt`, `AtomicBoolean` for shared state instead.
 
 ---
 

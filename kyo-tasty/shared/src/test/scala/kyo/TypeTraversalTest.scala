@@ -79,20 +79,16 @@ class TypeTraversalTest extends Test:
         val errs = compiletime.testing.typeCheckErrors(
             "(kyo.Tasty.Type.Any: kyo.Tasty.Type).visit(_ => ())"
         )
-        // typeCheckErrors is run from inside package kyo so private[kyo] IS visible.
-        // The test gate here verifies the method name exists (no MatchError) and the
-        // visibility change from public to private[kyo] is confirmed by the probe string
-        // above failing to compile from user scope. Since compiletime.testing runs in the
-        // test package (kyo), the test instead documents that the method was demoted and
-        // the compileErrors from a user package would fail. The behavioral gate below
-        // tests the public API (collect/find/foldLeft/exists) to confirm they work.
+        // typeCheckErrors is run from inside package kyo so private[kyo] IS visible here.
+        // The in-package probe compiles successfully: errs must be empty, confirming the
+        // method exists and is accessible from within the kyo package.
+        assert(errs.isEmpty, "visit should be accessible from inside package kyo (private[kyo])")
         // Leaf 9 intent: no public API named 'visit' accessible from user scope.
         // We verify via typeCheckErrors from an explicit user-package context.
         val errsFromUser = compiletime.testing.typeCheckErrors(
             "package testuser; object Probe { kyo.Tasty.Type.Any.visit(_ => ()) }"
         )
         assert(errsFromUser.nonEmpty, "Expected compile error for visit from outside package kyo")
-        succeed
     }
 
 end TypeTraversalTest

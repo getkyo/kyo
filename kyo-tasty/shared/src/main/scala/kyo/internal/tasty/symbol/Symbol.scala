@@ -10,8 +10,9 @@ import kyo.Tasty
   * declarationIds, etc.) are left at empty defaults. Pass C converts `LoadingSymbol.Materialising` instances to final immutable
   * `Tasty.Symbol` instances via `TypedSymbolFactory.from`.
   *
-  * The `idCounter` is a per-call-site thread-local counter managed by the caller. Each `makeSymbol` call assigns the next counter value as
-  * the unique id for the returned `Materialising`. The caller must ensure no two instances within the same decode session share an id.
+  * The `id` is supplied by the caller from a global AtomicInt counter threaded through `ClasspathOrchestrator`. Each `makeSymbol` call
+  * assigns the next counter value as the unique id for the returned `Materialising`. The caller must ensure no two instances within the
+  * same decode session share an id.
   */
 private[kyo] object Symbol:
 

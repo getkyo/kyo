@@ -22,8 +22,8 @@ object SnapshotReader:
 
     /** Read a snapshot from `path` and return a fully-constructed `Tasty.Classpath`.
       *
-      * Digest verification: when `expectedDigest` is provided, the 8-byte xxh64-custom hash embedded at bytes 16-23 of
-      * the snapshot header is compared against the expected value. A mismatch raises `TastyError.DigestMismatch`. Pass `None` (the
+      * Digest verification: when `expectedDigest` is Present, the 8-byte xxh64-custom hash embedded at bytes 16-23 of
+      * the snapshot header is compared against the expected value. A mismatch raises `TastyError.DigestMismatch`. Pass `Absent` (the
       * default) to skip this check (e.g., for trusted pre-warmed caches). `Tasty.withClasspath(roots, Present(cacheDir))` already
       * provides digest-based selection via the filename, so it does not need to pass an `expectedDigest` here.
       *
@@ -32,18 +32,18 @@ object SnapshotReader:
       * @param source
       *   FileSource for reading the bytes
       * @param expectedDigest
-      *   optional expected 8-byte xxh64-custom digest; when Some, the embedded digest is verified before deserialization
+      *   optional expected 8-byte xxh64-custom digest; when Present, the embedded digest is verified before deserialization
       */
     def read(
         path: String,
         source: FileSource,
-        expectedDigest: Option[Array[Byte]] = None
+        expectedDigest: Maybe[Array[Byte]] = Maybe.Absent
     )(using Frame): Tasty.Classpath < (Sync & Abort[TastyError]) =
         source.read(path).flatMap: bytes =>
             expectedDigest match
-                case None =>
+                case Maybe.Absent =>
                     readBytes(path, bytes)
-                case Some(expected) =>
+                case Maybe.Present(expected) =>
                     // inputDigest is at bytes [16, 24) in the header.
                     if bytes.length < 24 then
                         Abort.fail(TastyError.SnapshotFormatError(path, "header too short for digest check", 0L))
@@ -95,7 +95,11 @@ object SnapshotReader:
             // minor=6 is a breaking bump (FQNMAP__): reject to force cold re-decode.
             // minor=7 is a breaking bump (ERRORS typed format).
             // minor=8 is a breaking bump (SUBCIDX_/COMPIDX_): reject to force cold re-decode.
+            // minor=9 is a breaking bump: ClasspathClosed and ClasspathBuilding gained a context
+            //   string field; old snapshots encode these as tag-only. Reject to force cold re-decode.
             // minor=10 is a breaking bump (ERRORS string-tag format): reject to force cold re-decode.
+            // minor=11 is a breaking bump: four new TastyError variants gained full wire-format encoding.
+            //   A minor=10 snapshot has stub (zero-payload) entries for these; reject to force cold re-decode.
             throw new VersionMismatchException(
                 Tasty.Version(fileMajor, fileMinor, 0),
                 Tasty.Version(SnapshotFormat.majorVersion, SnapshotFormat.minorVersion, 0)
@@ -302,7 +306,10 @@ object SnapshotReader:
 
         // Collect parentTypes per symbol index.
         val parentsByIdx = new Array[Chunk[Tasty.Type]](symCount)
-        java.util.Arrays.fill(parentsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
+        java.util.Arrays.fill(
+            parentsByIdx.asInstanceOf[Array[Object]],
+            Chunk.empty
+        ) // flow-allow: asInstanceOf -- java.util.Arrays.fill requires Array[Object]; safe covariant widening for reference types
         sectionMap.get(SnapshotFormat.sectionPARENTS) match
             case Some((off, len)) if len > 0 =>
                 val sb = java.util.Arrays.copyOfRange(bytes, off, off + len)
@@ -320,7 +327,10 @@ object SnapshotReader:
 
         // Collect typeParamIds per symbol index.
         val typeParamsByIdx = new Array[Chunk[kyo.Tasty.SymbolId]](symCount)
-        java.util.Arrays.fill(typeParamsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
+        java.util.Arrays.fill(
+            typeParamsByIdx.asInstanceOf[Array[Object]],
+            Chunk.empty
+        ) // flow-allow: asInstanceOf -- java.util.Arrays.fill requires Array[Object]
         sectionMap.get(SnapshotFormat.sectionTPARAMS) match
             case Some((off, len)) if len > 0 =>
                 val sb = java.util.Arrays.copyOfRange(bytes, off, off + len)
@@ -338,7 +348,10 @@ object SnapshotReader:
 
         // Collect declarationIds per symbol index.
         val declarationsByIdx = new Array[Chunk[kyo.Tasty.SymbolId]](symCount)
-        java.util.Arrays.fill(declarationsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
+        java.util.Arrays.fill(
+            declarationsByIdx.asInstanceOf[Array[Object]],
+            Chunk.empty
+        ) // flow-allow: asInstanceOf -- java.util.Arrays.fill requires Array[Object]
         sectionMap.get(SnapshotFormat.sectionMEMBERS) match
             case Some((off, len)) if len > 0 =>
                 val sb = java.util.Arrays.copyOfRange(bytes, off, off + len)
@@ -356,7 +369,10 @@ object SnapshotReader:
 
         // Collect permittedSubclassIds per symbol index (PERMITS2 section).
         val permittedByIdx = new Array[kyo.Maybe[Chunk[Int]]](symCount)
-        java.util.Arrays.fill(permittedByIdx.asInstanceOf[Array[Object]], kyo.Maybe.Absent)
+        java.util.Arrays.fill(
+            permittedByIdx.asInstanceOf[Array[Object]],
+            kyo.Maybe.Absent
+        ) // flow-allow: asInstanceOf -- java.util.Arrays.fill requires Array[Object]
         sectionMap.get(SnapshotFormat.sectionPERMITS2) match
             case Some((off, len)) if len > 0 =>
                 val sb = java.util.Arrays.copyOfRange(bytes, off, off + len)
@@ -374,7 +390,10 @@ object SnapshotReader:
 
         // Collect annotation tycon FQN name-pool IDs per symbol index (ANNOTS_ section).
         val annotationsByIdx = new Array[Chunk[Tasty.Annotation]](symCount)
-        java.util.Arrays.fill(annotationsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
+        java.util.Arrays.fill(
+            annotationsByIdx.asInstanceOf[Array[Object]],
+            Chunk.empty
+        ) // flow-allow: asInstanceOf -- java.util.Arrays.fill requires Array[Object]
         sectionMap.get(SnapshotFormat.sectionANNOTS) match
             case Some((off, len)) if len > 0 =>
                 deserializeAnnotationsByIdx(bytes, off, len, symCount, namePool, annotationsByIdx)
@@ -384,7 +403,10 @@ object SnapshotReader:
         // Collect javaMetadata accessFlags per symbol index (JAVAMETA section).
         // Only accessFlags is stored; other JavaMetadata fields are reconstructed as empty.
         val javaMetaByIdx = new Array[kyo.Maybe[Int]](symCount)
-        java.util.Arrays.fill(javaMetaByIdx.asInstanceOf[Array[Object]], kyo.Maybe.Absent)
+        java.util.Arrays.fill(
+            javaMetaByIdx.asInstanceOf[Array[Object]],
+            kyo.Maybe.Absent
+        ) // flow-allow: asInstanceOf -- java.util.Arrays.fill requires Array[Object]
         sectionMap.get(SnapshotFormat.sectionJAVAMETA) match
             case Some((off, len)) if len > 0 =>
                 deserializeJavaMetaByIdx(bytes, off, len, symCount, javaMetaByIdx)
@@ -751,9 +773,18 @@ object SnapshotReader:
         val parentsByIdx      = new Array[Chunk[Tasty.Type]](symCount)
         val typeParamsByIdx   = new Array[Chunk[kyo.Tasty.SymbolId]](symCount)
         val declarationsByIdx = new Array[Chunk[kyo.Tasty.SymbolId]](symCount)
-        java.util.Arrays.fill(parentsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
-        java.util.Arrays.fill(typeParamsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
-        java.util.Arrays.fill(declarationsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
+        java.util.Arrays.fill(
+            parentsByIdx.asInstanceOf[Array[Object]],
+            Chunk.empty
+        ) // flow-allow: asInstanceOf -- java.util.Arrays.fill requires Array[Object]; safe covariant widening for reference types
+        java.util.Arrays.fill(
+            typeParamsByIdx.asInstanceOf[Array[Object]],
+            Chunk.empty
+        ) // flow-allow: asInstanceOf -- java.util.Arrays.fill requires Array[Object]
+        java.util.Arrays.fill(
+            declarationsByIdx.asInstanceOf[Array[Object]],
+            Chunk.empty
+        ) // flow-allow: asInstanceOf -- java.util.Arrays.fill requires Array[Object]
 
         sectionMap.get(SnapshotFormat.sectionPARENTS) match
             case Some((off, len)) if len > 0 =>
@@ -802,7 +833,10 @@ object SnapshotReader:
 
         // PERMITS2 section .
         val permittedByIdxM = new Array[kyo.Maybe[Chunk[Int]]](symCount)
-        java.util.Arrays.fill(permittedByIdxM.asInstanceOf[Array[Object]], kyo.Maybe.Absent)
+        java.util.Arrays.fill(
+            permittedByIdxM.asInstanceOf[Array[Object]],
+            kyo.Maybe.Absent
+        ) // flow-allow: asInstanceOf -- java.util.Arrays.fill requires Array[Object]
         sectionMap.get(SnapshotFormat.sectionPERMITS2) match
             case Some((off, len)) if len > 0 =>
                 val secBytes = copyViewRange(view, off, off + len)
@@ -820,7 +854,10 @@ object SnapshotReader:
 
         // ANNOTS_ section .
         val annotationsByIdxM = new Array[Chunk[Tasty.Annotation]](symCount)
-        java.util.Arrays.fill(annotationsByIdxM.asInstanceOf[Array[Object]], Chunk.empty)
+        java.util.Arrays.fill(
+            annotationsByIdxM.asInstanceOf[Array[Object]],
+            Chunk.empty
+        ) // flow-allow: asInstanceOf -- java.util.Arrays.fill requires Array[Object]
         sectionMap.get(SnapshotFormat.sectionANNOTS) match
             case Some((off, len)) if len > 0 =>
                 val secBytes = copyViewRange(view, off, off + len)
@@ -830,7 +867,10 @@ object SnapshotReader:
 
         // JAVAMETA section .
         val javaMetaByIdxM = new Array[kyo.Maybe[Int]](symCount)
-        java.util.Arrays.fill(javaMetaByIdxM.asInstanceOf[Array[Object]], kyo.Maybe.Absent)
+        java.util.Arrays.fill(
+            javaMetaByIdxM.asInstanceOf[Array[Object]],
+            kyo.Maybe.Absent
+        ) // flow-allow: asInstanceOf -- java.util.Arrays.fill requires Array[Object]
         sectionMap.get(SnapshotFormat.sectionJAVAMETA) match
             case Some((off, len)) if len > 0 =>
                 val secBytes = copyViewRange(view, off, off + len)

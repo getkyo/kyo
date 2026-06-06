@@ -7,7 +7,7 @@ import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 
-/** Tests for PositionsUnpickler.read and Tasty.Symbol.position.
+/** Tests for PositionsUnpickler.read and Tasty.Symbol.sourcePosition.
   *
   * Plan G2 tests 1-5.
   *

@@ -67,9 +67,11 @@ class VarBodyPresentTest extends Test:
                         case v: Tasty.Symbol.Var if ctx.bodyStore.get(v.id) != null => v
                     varWithBodyOpt match
                         case None =>
-                            // The fixture contains `var topLevelVar: Int = 0`; the body should be present.
-                            // If not found, the test is inconclusive rather than failing.
-                            Kyo.lift(succeed)
+                            // The fixture contains `var topLevelVar: Int = 0`; the body MUST be present.
+                            // A None here means the decoder failed to store the body, which is a real bug.
+                            Kyo.lift(
+                                fail("No Var with body found in FixtureClasses-package fixture; expected topLevelVar with body bytes")
+                            )
                         case Some(v) =>
                             TastyState.bindingLocal.let(Maybe.Present(binding)):
                                 Tasty.bodyTree(v).map: result =>

@@ -112,11 +112,15 @@ private[snapshot] object SectionValidator:
                 () // no assertion
     end validate
 
-    /** Expected number of TastyError ADT variants in the closed enum.
+    /** Expected number of TastyError ADT variants in the closed enum (documentation invariant).
       *
       * Updated to 23 (added UnhandledSubtypingCase, UnresolvedReference, UnknownType,
-      * MissingDeclaredType). Used as a documentation-and-runtime invariant: any future variant addition
-      * must bump the snapshot minor version and update this constant.
+      * MissingDeclaredType). Any future variant addition must bump the snapshot minor version AND
+      * update this constant. The `TastyErrorRoundTripTest` verifies that every known variant
+      * round-trips through the KRFL wire format; adding a case and running tests will catch the gap.
+      *
+      * Note: TastyError has non-singleton enum cases so `TastyError.values` is not available.
+      * This constant serves as a documentation anchor (count the cases in TastyError.scala to verify).
       */
     val expectedTastyErrorVariantCount: Int = 23
 

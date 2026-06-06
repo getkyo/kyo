@@ -614,6 +614,10 @@ object Tasty:
           * from `scala.ContextFunctionN` produce this case; methods decoded from `scala.FunctionN` produce
           * `Type.Function`. `params` holds the implicit parameter types; `result` is the return type.
           *
+          * This case is structurally disjoint from `Type.Function`: a given wire-level type node decodes
+          * to exactly one of the two cases based on whether its constructor FQN is `scala.ContextFunctionN`
+          * or `scala.FunctionN`.
+          *
           * The corresponding Scala source shape is `(A1, ..., AN) ?=> R`.
           */
         case ContextFunction(params: Chunk[Type], result: Type)
@@ -2163,6 +2167,7 @@ object Tasty:
             _schemaAnnotationValue
         end schemaAnnotationValue
 
+        // Unsafe: null.asInstanceOf breaks the mutual-recursion cycle at Schema derivation time (same pattern as _schemaAnnotationValue above).
         private var _schemaAnnotation: Schema[Annotation] = null.asInstanceOf[Schema[Annotation]]
         given schemaAnnotation: Schema[Annotation] =
             if _schemaAnnotation == null then
@@ -2329,6 +2334,7 @@ object Tasty:
             else
                 val b = Chunk.newBuilder[A]
                 symbols.foreach:
+                    // flow-allow: asInstanceOf -- guarded by s.kind == k; the kind discriminant ensures the runtime type matches A.
                     case s if s.kind == k => b += s.asInstanceOf[A]
                     case _                => ()
                 b.result()
@@ -2411,9 +2417,7 @@ object Tasty:
           * Note: a count > 0 is expected behavior when the classpath does not include all transitive
           * dependencies. It is not an error condition.
           *
-          * Performance: the result is computed once and cached. Repeated calls are O(1). The
-          * cache is NOT a constructor parameter and is NOT preserved by `cp.copy(...)`; copying recomputes
-          * it lazily on the next access of the new Classpath.
+          * Performance: O(symbols) per call; not cached. For repeated access, callers should cache the result.
           */
         def unresolvedTypeReferenceCount: Int =
             // Count parent-type references that point to a symbol not on this classpath.
@@ -2707,8 +2711,8 @@ object Tasty:
         /** All symbols carrying the Scala or Java annotation whose fully-qualified name is `annotationFqn`.
           *
           * Checks Scala `annotations` (via `Annotation.annotationType`: must be `Type.Named(id)` whose FQN matches `annotationFqn`) and
-          * Java `javaAnnotations` (via `JavaAnnotation.annotationClass` FQN). Symbols that carry neither field (TypeParam, Package,
-          * Unresolved) are excluded.
+          * Java `javaAnnotations` (via `JavaAnnotation.annotationClass` FQN). Symbols that carry neither field (TypeParam, Package) are
+          * excluded.
           */
         def symbolsAnnotatedWith(annotationFqn: String)(using Frame): Chunk[Symbol] < Sync =
             Sync.Unsafe.defer:
@@ -2989,7 +2993,7 @@ object Tasty:
                 (d: Dict[SymbolId, V]) => d.map((k, v) => (k.value.toString, v))
             )
 
-        /** Schema for Classpath.Indices. Placed here (after symbolIdMapSchema is defined) so Map[SymbolId, V] fields resolve. */
+        /** Schema for Classpath.Indices. Placed here (after symbolIdMapSchema is defined) so Dict[SymbolId, V] fields resolve. */
         given schemaIndices: Schema[Indices] = Schema.derived
 
         /** Init the classpath and additionally pre-load JDK `module-info.class` entries from the JDK module image.
@@ -3773,6 +3777,7 @@ object Tasty:
       */
     def allTypes(using Frame): Chunk[Symbol] < Sync =
         classpath.map(cp =>
+            // flow-allow: asInstanceOf -- covariant upcast of Chunk[Symbol.TypeAlias/OpaqueType/AbstractType] to Chunk[Symbol]; safe because Chunk is covariant in its element type and all subtypes extend Symbol.
             cp.allTypeAliases.asInstanceOf[Chunk[Symbol]] ++
                 cp.allOpaqueTypes.asInstanceOf[Chunk[Symbol]] ++
                 cp.allAbstractTypes.asInstanceOf[Chunk[Symbol]]

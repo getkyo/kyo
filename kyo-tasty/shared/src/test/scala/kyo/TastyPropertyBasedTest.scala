@@ -4,7 +4,7 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
 import scala.collection.mutable
 
-/** ScalaCheck-style property tests for kyo-tasty decoder robustness.
+/** ScalaCheck-style property tests that verify kyo-tasty decoder stability under adversarial input.
   *
   * Track B of the validation-infrastructure campaign (2026-06-02).
   *

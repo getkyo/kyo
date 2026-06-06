@@ -4,7 +4,7 @@ import kyo.internal.tasty.symbol.FqnNormalizer
 
 /** Unit tests for FqnNormalizer.canonicalSourceFqn and FqnNormalizer.isSyntheticName.
   *
-  * Pins HARD RULE 10 (comprehensive compiler-mangling normalization). One leaf per mangling pattern,
+  * Pins HARD RULE 10 (full compiler-mangling normalization coverage). One leaf per mangling pattern,
   * one leaf per synthetic-name pattern. Cross-platform: pure string operations.
   */
 class FqnNormalizerTest extends Test:
