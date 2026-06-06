@@ -4,7 +4,7 @@ import java.time.Instant
 import kyo.*
 import kyo.stats.*
 
-class TraceExporterTest extends Test:
+class TraceExporterTest extends kyo.test.Test[Any]:
 
     given AllowUnsafe = AllowUnsafe.embrace.danger
 

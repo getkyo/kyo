@@ -1,6 +1,6 @@
 # kyo-schema
 
-Define a case class and get JSON serialization, Protobuf encoding, field validation, type-safe lenses, structural diffs, and more, all derived from the type's structure. No annotations, no boilerplate. Works across JVM, JavaScript, and Scala Native. The module depends only on `kyo-data` (pure data structures) and has no dependency on Kyo's effect runtime, so it can be adopted as a standalone library.
+Define a case class and get JSON/YAML serialization, Protobuf encoding, field validation, type-safe lenses, structural diffs, and more, all derived from the type's structure. No annotations, no boilerplate. Works across JVM, JavaScript, and Scala Native. The module depends only on `kyo-data` (pure data structures) and has no dependency on Kyo's effect runtime, so it can be adopted as a standalone library.
 
 <!-- doctest:setup
 ```scala
@@ -19,6 +19,12 @@ val alice = User(1, "Alice", "alice@example.com", "secret", Address("Portland", 
 Json.encode(alice)
 // {"id":1,"name":"Alice","email":"alice@example.com","password":"secret","address":{"city":"Portland","zip":"97201"}}
 
+Yaml.encode(alice)
+// YAML 1.2-compatible text
+
+Protobuf.encode(alice)
+// Span[Byte] (binary)
+
 Schema[User].focus(_.address.city).update(alice)(_.toUpperCase)
 // User(1, "Alice", "alice@example.com", "secret", Address("PORTLAND", "97201"))
 ```
@@ -31,7 +37,7 @@ These are the top-level entry points:
 
 | Entry point | Purpose |
 |-------------|---------|
-| `Json` / `Protobuf` | Serialize to JSON strings or Protocol Buffers bytes |
+| `Json` / `Yaml` / `Protobuf` | Serialize to JSON strings, YAML documents, or Protocol Buffers bytes |
 | `Focus` | Type-safe lens for reading, writing, and updating fields at any depth |
 | `Compare` | Read-only field-by-field comparison of two values |
 | `Modify` | Batched field mutations applied as a single unit |
@@ -164,6 +170,154 @@ Json.decode[User](untrustedInput, maxDepth = 64, maxCollectionSize = 10000)
 ```
 
 Exceeding either limit returns `Result.Failure(LimitExceededException)`. `LimitExceededException` is a subtype of `DecodeException`, so the same pattern-match handles malformed input and limit breaches.
+
+### YAML
+
+`Yaml.decode` parses one YAML document into a typed value and returns `Result[DecodeException, A]`. For document streams, use `Yaml.decodeAll`, or pass `Yaml.DocumentIndex(n)` to target one zero-based document without decoding the whole stream. Use `Yaml.ReaderConfig` when you need document selection, stream-fragment merging, decode limits, or YAML 1.1 scalar resolution for legacy systems.
+
+```scala
+val yaml =
+    """id: 1
+      |name: Alice
+      |email: alice@example.com
+      |password: secret
+      |address:
+      |  city: Portland
+      |  zip: "97201"
+      |""".stripMargin
+
+Yaml.decode[User](yaml)
+// Result.Success(alice)
+
+val stream =
+    """---
+      |id: 0
+      |name: Bob
+      |email: bob@example.com
+      |password: secret
+      |address:
+      |  city: Seattle
+      |  zip: "98101"
+      |---
+      |id: 1
+      |name: Alice
+      |email: alice@example.com
+      |password: secret
+      |address:
+      |  city: Portland
+      |  zip: "97201"
+      |""".stripMargin
+
+Yaml.decode[User](stream, Yaml.DocumentIndex(1))
+// decodes the second document in the stream
+
+Yaml.decode[User](
+    stream,
+    Yaml.ReaderConfig(
+        documentIndex = Maybe(Yaml.DocumentIndex(1)),
+        maxDepth = 64,
+        maxCollectionSize = 1024,
+        yamlVersion = Yaml.SpecVersion.Yaml11
+    )
+)
+```
+
+`Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings` treats non-empty documents in a stream as fragments of one top-level mapping. This is useful for configuration files that split one case class, sealed trait wrapper, or Scala 3 enum case across document separators:
+
+```scala
+val splitStream =
+    """---
+      |id: 1
+      |name: Alice
+      |---
+      |email: alice@example.com
+      |password: secret
+      |---
+      |address:
+      |  city: Portland
+      |  zip: "97201"
+      |""".stripMargin
+
+Yaml.decode[User](
+    splitStream,
+    Yaml.ReaderConfig(
+        documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings
+    )
+)
+```
+
+`Yaml.encode` writes YAML 1.2 by default. Use `Yaml.WriterConfig` profiles and `yamlVersion` when writing for systems that still use YAML 1.1 implicit scalar rules.
+
+For YAML-specific tooling, `Yaml.Events` exposes parser and writer events without requiring a YAML node tree. This is useful for checks and transforms that care about anchors, aliases, tags, document boundaries, scalar styles, or source marks. Ordinary schema decoding and encoding should still use `Yaml.decode` and `Yaml.encode`; use `Yaml.pipeline` when middleware needs to sit between YAML parsing and schema decoding.
+
+#### YAML events
+
+Events can be collected, transformed, rendered, or produced from schema values. This example uppercases every scalar from a YAML parser stream and renders the transformed events back to YAML:
+
+```scala
+val renderer = Yaml.Events.Renderer()
+val uppercase =
+    Yaml.Events.Processor.mapScalars[DecodeException] { (value, meta) =>
+        Result.succeed((value.toUpperCase, meta))
+    }
+
+val rewritten =
+    Yaml.Events.visit("name: Alice\n", ())(uppercase.andThen(renderer))
+        .map(_ => renderer.resultString)
+
+assert(rewritten == Result.succeed("NAME: ALICE\n"))
+```
+
+The same event protocol can be driven from schema output with `Yaml.Events.write`, so YAML-specific tooling can sit on either side of the schema layer.
+
+#### YAML pipelines
+
+`Yaml.pipeline` composes event processors with schema operations. With no processors it delegates to the normal `Yaml.decode` and `Yaml.encode` fast paths. With processors, `decode` reads the transformed event stream directly into `Schema[A]`; it does not render YAML text first.
+
+```scala
+case class PublicUser(name: String, age: Int) derives Schema
+
+val legacyYaml =
+    """fullName: Alice
+      |age: 30
+      |""".stripMargin
+
+val renameFullName =
+    Yaml.Events.Processor.mapScalars[DecodeException] { (value, meta) =>
+        val next =
+            if value == "fullName" then "name"
+            else value
+        Result.succeed((next, meta))
+    }
+
+val decoded =
+    Yaml.pipeline
+        .through(renameFullName)
+        .decode[PublicUser](legacyYaml)
+
+assert(decoded == Result.succeed(PublicUser("Alice", 30)))
+```
+
+Use `render` when the transformed YAML document itself is the desired output:
+
+```scala
+val renameFullName =
+    Yaml.Events.Processor.mapScalars[DecodeException] { (value, meta) =>
+        val next =
+            if value == "fullName" then "name"
+            else value
+        Result.succeed((next, meta))
+    }
+
+val rendered =
+    Yaml.pipeline
+        .through(renameFullName)
+        .render("fullName: Alice\nage: 30\n")
+
+assert(rendered == Result.succeed("name: Alice\nage: 30\n"))
+```
+
+For richer examples, including an anchor audit that finds undeclared aliases and unused anchors, direct pipeline decode of case classes and ADTs, and a complete node-builder with a custom error hierarchy, see [YamlEventsTest.scala](shared/src/test/scala/kyo/YamlEventsTest.scala) and [YamlPipelineTest.scala](shared/src/test/scala/kyo/YamlPipelineTest.scala). When callers do want a tree, `Yaml.parse` builds one explicitly.
 
 ### Protobuf
 

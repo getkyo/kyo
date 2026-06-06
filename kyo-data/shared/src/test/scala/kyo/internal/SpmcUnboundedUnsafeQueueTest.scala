@@ -34,7 +34,40 @@ class SpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
                 assert(q.poll() == Maybe(i), s"i=$i")
         }
 
-        "noElementDuplication" in runNotJS {
+        "singleConsumerDegenerateCase" in {
+            val q = new SpmcUnboundedUnsafeQueue[Int](8)
+            for i <- 0 until 1000 do q.offer(i)
+            for i <- 0 until 1000 do
+                assert(q.poll() == Maybe(i))
+        }
+
+        "longChainNavigation" in {
+            // Force many chunk transitions (100+ chunks with chunk size 8)
+            val q = new SpmcUnboundedUnsafeQueue[Int](8)
+            val n = 8 * 100
+            for i <- 0 until n do q.offer(i)
+            for i <- 0 until n do
+                assert(q.poll() == Maybe(i), s"i=$i")
+            assert(q.poll().isEmpty)
+        }
+
+        "interleavedOfferPollAcrossChunks" in {
+            // Interleave offer/poll to verify old chunks get released properly
+            val q = new SpmcUnboundedUnsafeQueue[Int](8)
+            for round <- 0 until 50 do
+                // Fill one chunk plus a bit
+                val n = 10
+                for i <- 0 until n do q.offer(round * n + i)
+                for i <- 0 until n do
+                    assert(q.poll() == Maybe(round * n + i), s"round=$round, i=$i")
+            end for
+            assert(q.poll().isEmpty)
+        }
+    }
+
+    "SpmcUnboundedUnsafeQueue-specific concurrent".notJs - {
+
+        "noElementDuplication" in {
             val q        = new SpmcUnboundedUnsafeQueue[Long](16)
             val stop     = new AtomicBoolean(false)
             val start    = new CountDownLatch(1)
@@ -73,24 +106,7 @@ class SpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
             assert(!dup.get(), "Detected duplicate consumption in unbounded SPMC")
         }
 
-        "singleConsumerDegenerateCase" in {
-            val q = new SpmcUnboundedUnsafeQueue[Int](8)
-            for i <- 0 until 1000 do q.offer(i)
-            for i <- 0 until 1000 do
-                assert(q.poll() == Maybe(i))
-        }
-
-        "longChainNavigation" in {
-            // Force many chunk transitions (100+ chunks with chunk size 8)
-            val q = new SpmcUnboundedUnsafeQueue[Int](8)
-            val n = 8 * 100
-            for i <- 0 until n do q.offer(i)
-            for i <- 0 until n do
-                assert(q.poll() == Maybe(i), s"i=$i")
-            assert(q.poll().isEmpty)
-        }
-
-        "chunkRefRace" in runNotJS {
+        "chunkRefRace" in {
             // Multiple consumers racing to advance consumerChunkRef across many chunks
             val q             = new SpmcUnboundedUnsafeQueue[Long](8)
             val stop          = new AtomicBoolean(false)
@@ -141,19 +157,6 @@ class SpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
                 consumedCount.get() + remaining == offered.get(),
                 s"Chunk ref race data loss: offered=${offered.get()}, consumed=${consumedCount.get()}, remaining=$remaining"
             )
-        }
-
-        "interleavedOfferPollAcrossChunks" in {
-            // Interleave offer/poll to verify old chunks get released properly
-            val q = new SpmcUnboundedUnsafeQueue[Int](8)
-            for round <- 0 until 50 do
-                // Fill one chunk plus a bit
-                val n = 10
-                for i <- 0 until n do q.offer(round * n + i)
-                for i <- 0 until n do
-                    assert(q.poll() == Maybe(round * n + i), s"round=$round, i=$i")
-            end for
-            assert(q.poll().isEmpty)
         }
     }
 end SpmcUnboundedUnsafeQueueTest

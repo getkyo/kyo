@@ -10,7 +10,7 @@ class NavigationWatcherSnapshotDriftTest extends kyo.BrowserTest:
     // NavSnapshot (which would cause pollNavigated to observe "URL changed" spuriously). Wire-shape drift
     // must surface as a typed BrowserProtocolErrorException via the same path as decodeSettleState.
 
-    "NavigationWatcher.decodeSnapshotState - malformed wire surfaces BrowserProtocolErrorException" in run {
+    "NavigationWatcher.decodeSnapshotState - malformed wire surfaces BrowserProtocolErrorException" in {
         val bad = "not valid json"
         Abort.run[BrowserReadException](NavigationWatcher.decodeSnapshotState(bad)).map {
             case Result.Failure(_: BrowserProtocolErrorException) =>
@@ -26,12 +26,12 @@ class NavigationWatcherSnapshotDriftTest extends kyo.BrowserTest:
         }
     }
 
-    "NavigationWatcher.decodeSnapshotState - wire envelope missing pushStateCount surfaces BrowserProtocolErrorException" in run {
+    "NavigationWatcher.decodeSnapshotState - wire envelope missing pushStateCount surfaces BrowserProtocolErrorException" in {
         // A wire envelope that resembles the snapshot shape but is missing the required `pushStateCount`
         // field. The decode must surface as Failure rather than silently producing a degraded snapshot.
         val driftedEnvelope = """{"url":"https://example.test/page","beforeUnload":false}"""
         Abort.run[BrowserReadException](NavigationWatcher.decodeSnapshotState(driftedEnvelope)).map {
-            case Result.Failure(_: BrowserProtocolErrorException) => succeed
+            case Result.Failure(ex: BrowserProtocolErrorException) => assert(ex.method == "NavigationWatcher.decodeSnapshotState")
             case other => fail(s"expected Abort.fail(BrowserProtocolErrorException) for drifted envelope, got $other")
         }
     }
@@ -39,7 +39,7 @@ class NavigationWatcherSnapshotDriftTest extends kyo.BrowserTest:
     // Live-browser contract: snapshotState's wire shape decodes correctly when the in-page IIFE returns the
     // canonical envelope. We verify by driving the watcher around a real navigation: armAroundNavigation must
     // observe the pre-navigation URL and detect the change.
-    "NavigationWatcher live snapshot decodes a well-formed wire envelope on a real page" in run {
+    "NavigationWatcher live snapshot decodes a well-formed wire envelope on a real page" in {
         withBrowserOnLocalhost {
             // The recorded URL must round-trip through snapshotState; after a navigation the gate
             // observes a URL change and resolves. If snapshotState degraded to url="" the gate

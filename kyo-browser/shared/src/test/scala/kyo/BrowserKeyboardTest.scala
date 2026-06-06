@@ -24,7 +24,7 @@ class BrowserKeyboardTest extends BrowserTest:
           |  document.addEventListener('keyup',   function(e) { rec('keyup',   e); });
           |</script>""".stripMargin
 
-    "press(sel, Key('a'), shift = true) emits shiftKey on keydown AND keyup" in run {
+    "press(sel, Key('a'), shift = true) emits shiftKey on keydown AND keyup" in {
         withBrowser {
             onPage(pressModifierListenerHtml) {
                 Browser.press(Browser.Selector.id("t"), Browser.Key('a'), Browser.KeyModifiers(shift = true)).andThen {
@@ -39,7 +39,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "press(sel, Key('a'), ctrl = true) emits ctrlKey on keydown AND keyup" in run {
+    "press(sel, Key('a'), ctrl = true) emits ctrlKey on keydown AND keyup" in {
         withBrowser {
             onPage(pressModifierListenerHtml) {
                 Browser.press(Browser.Selector.id("t"), Browser.Key('a'), Browser.KeyModifiers(ctrl = true)).andThen {
@@ -54,7 +54,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "press(sel, Key('a'), alt = true) emits altKey on keydown AND keyup" in run {
+    "press(sel, Key('a'), alt = true) emits altKey on keydown AND keyup" in {
         withBrowser {
             onPage(pressModifierListenerHtml) {
                 Browser.press(Browser.Selector.id("t"), Browser.Key('a'), Browser.KeyModifiers(alt = true)).andThen {
@@ -69,7 +69,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "press(sel, Key('a'), meta = true) emits metaKey on keydown AND keyup" in run {
+    "press(sel, Key('a'), meta = true) emits metaKey on keydown AND keyup" in {
         withBrowser {
             onPage(pressModifierListenerHtml) {
                 Browser.press(Browser.Selector.id("t"), Browser.Key('a'), Browser.KeyModifiers(meta = true)).andThen {
@@ -84,7 +84,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "press(sel, Key('a'), KeyModifiers(ctrl = true, shift = true)) emits both modifier bits on both events" in run {
+    "press(sel, Key('a'), KeyModifiers(ctrl = true, shift = true)) emits both modifier bits on both events" in {
         withBrowser {
             onPage(pressModifierListenerHtml) {
                 Browser.press(Browser.Selector.id("t"), Browser.Key('a'), Browser.KeyModifiers(shift = true, ctrl = true)).andThen {
@@ -102,7 +102,7 @@ class BrowserKeyboardTest extends BrowserTest:
     // KeyModifiers shift+alt: exercises the new bundle type on the selector-press path. Asserts BOTH bits
     // land on keydown and keyup; ctrl + meta remain false. KeyModifiers.of(...) variant is also exercised
     // to confirm both factories yield identical wire shape.
-    "press(sel, Key('a'), KeyModifiers(shift = true, alt = true)) emits shift AND alt on both events" in run {
+    "press(sel, Key('a'), KeyModifiers(shift = true, alt = true)) emits shift AND alt on both events" in {
         withBrowser {
             onPage(pressModifierListenerHtml) {
                 Browser.press(
@@ -121,7 +121,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "KeyModifiers.of factory yields the same bundle as the case-class apply" in run {
+    "KeyModifiers.of factory yields the same bundle as the case-class apply" in {
         // Compile-and-equality check: KeyModifiers.of(shift = true, ctrl = true) == KeyModifiers(shift = true, ctrl = true).
         val viaApply   = Browser.KeyModifiers(shift = true, ctrl = true)
         val viaFactory = Browser.KeyModifiers.of(shift = true, ctrl = true)
@@ -130,10 +130,10 @@ class BrowserKeyboardTest extends BrowserTest:
             Browser.KeyModifiers.none == Browser.KeyModifiers(),
             s"expected KeyModifiers.none == KeyModifiers() but got ${Browser.KeyModifiers.none}"
         )
-        succeed
+        ()
     }
 
-    "press(sel, Key('a')) without modifier flags leaves all modifier bits false on both events" in run {
+    "press(sel, Key('a')) without modifier flags leaves all modifier bits false on both events" in {
         withBrowser {
             onPage(pressModifierListenerHtml) {
                 Browser.press(Browser.Selector.id("t"), Browser.Key('a')).andThen {
@@ -148,7 +148,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "press(sel, Key.Shift) standalone still carries the shift modifier bit on both events" in run {
+    "press(sel, Key.Shift) standalone still carries the shift modifier bit on both events" in {
         // Regression: pressing Key.Shift without explicit shift = true must still send modifiers = 8 because
         // mapKey(Key.Shift).modifierBit = 8 (totalMods is the OR of info.modifierBit and callerMods, NOT a replacement).
         withBrowser {
@@ -167,7 +167,7 @@ class BrowserKeyboardTest extends BrowserTest:
 
     // ---- press(key); global, no selector ----
 
-    "press(Enter) without a selector dispatches a keydown event observable on document" in run {
+    "press(Enter) without a selector dispatches a keydown event observable on document" in {
         withBrowser {
             onPage(
                 """<div id='log'>none</div>
@@ -186,7 +186,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "press(Escape) without a selector triggers a global keydown handler that mutates the DOM" in run {
+    "press(Escape) without a selector triggers a global keydown handler that mutates the DOM" in {
         withBrowser {
             onPage(
                 """<div id='modal' style='display:block'>open</div>
@@ -197,13 +197,17 @@ class BrowserKeyboardTest extends BrowserTest:
                   |</script>""".stripMargin
             ) {
                 Browser.press(Key.Escape).andThen {
-                    Browser.assertNotVisible(Browser.Selector.css("#modal")).map(_ => succeed)
+                    Browser.assertNotVisible(Browser.Selector.css("#modal")).andThen {
+                        Browser.isVisible(Browser.Selector.css("#modal")).map { visible =>
+                            assert(!visible, "modal must not be visible after Escape key dismissal")
+                        }
+                    }
                 }
             }
         }
     }
 
-    "press(key) settles after the handler triggers a delayed DOM mutation" in run {
+    "press(key) settles after the handler triggers a delayed DOM mutation" in {
         // Settlement should wait for the setTimeout-driven mutation to land before press returns.
         withBrowser {
             onPage(
@@ -230,81 +234,105 @@ class BrowserKeyboardTest extends BrowserTest:
     // Chromium's CDP `Input.dispatchKeyEvent({key:'Tab'})` does NOT run the focus-advance algorithm.
     // The shim runs after keyDown/keyUp dispatch and emulates the platform's tabbing algorithm.
 
-    "Tab from element A advances focus to element B in DOM order" in run {
+    "Tab from element A advances focus to element B in DOM order" in {
         withBrowser {
             onPage("<input id='a'/><input id='b'/><input id='c'/>") {
                 Browser.eval("document.getElementById('a').focus()").andThen {
                     Browser.press(Key.Tab).andThen {
-                        Browser.assertFocused(Browser.Selector.id("b")).map(_ => succeed)
+                        Browser.assertFocused(Browser.Selector.id("b")).andThen {
+                            Browser.eval("document.activeElement ? document.activeElement.id : ''").map { focused =>
+                                assert(focused == "b", s"Expected activeElement to be 'b' but was ''")
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    "Tab from last focusable wraps to first" in run {
+    "Tab from last focusable wraps to first" in {
         withBrowser {
             onPage("<input id='a'/><input id='b'/><input id='c'/>") {
                 Browser.eval("document.getElementById('c').focus()").andThen {
                     Browser.press(Key.Tab).andThen {
-                        Browser.assertFocused(Browser.Selector.id("a")).map(_ => succeed)
+                        Browser.assertFocused(Browser.Selector.id("a")).andThen {
+                            Browser.eval("document.activeElement ? document.activeElement.id : ''").map { focused =>
+                                assert(focused == "a", s"Expected activeElement to be 'a' but was ''")
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    "Tab skips elements with the hidden attribute" in run {
+    "Tab skips elements with the hidden attribute" in {
         withBrowser {
             onPage("<input id='a'/><input id='b' hidden/><input id='c'/>") {
                 Browser.eval("document.getElementById('a').focus()").andThen {
                     Browser.press(Key.Tab).andThen {
-                        Browser.assertFocused(Browser.Selector.id("c")).map(_ => succeed)
+                        Browser.assertFocused(Browser.Selector.id("c")).andThen {
+                            Browser.eval("document.activeElement ? document.activeElement.id : ''").map { focused =>
+                                assert(focused == "c", s"Expected activeElement to be 'c' but was ''")
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    "Tab skips disabled inputs" in run {
+    "Tab skips disabled inputs" in {
         withBrowser {
             onPage("<input id='a'/><input id='b' disabled/><input id='c'/>") {
                 Browser.eval("document.getElementById('a').focus()").andThen {
                     Browser.press(Key.Tab).andThen {
-                        Browser.assertFocused(Browser.Selector.id("c")).map(_ => succeed)
+                        Browser.assertFocused(Browser.Selector.id("c")).andThen {
+                            Browser.eval("document.activeElement ? document.activeElement.id : ''").map { focused =>
+                                assert(focused == "c", s"Expected activeElement to be 'c' but was ''")
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    "Tab skips display:none ancestors" in run {
+    "Tab skips display:none ancestors" in {
         withBrowser {
             onPage(
                 "<input id='a'/><div style='display:none'><input id='b'/></div><input id='c'/>"
             ) {
                 Browser.eval("document.getElementById('a').focus()").andThen {
                     Browser.press(Key.Tab).andThen {
-                        Browser.assertFocused(Browser.Selector.id("c")).map(_ => succeed)
+                        Browser.assertFocused(Browser.Selector.id("c")).andThen {
+                            Browser.eval("document.activeElement ? document.activeElement.id : ''").map { focused =>
+                                assert(focused == "c", s"Expected activeElement to be 'c' but was ''")
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    "Tab skips tabindex=-1" in run {
+    "Tab skips tabindex=-1" in {
         withBrowser {
             onPage("<input id='a'/><input id='b' tabindex='-1'/><input id='c'/>") {
                 Browser.eval("document.getElementById('a').focus()").andThen {
                     Browser.press(Key.Tab).andThen {
-                        Browser.assertFocused(Browser.Selector.id("c")).map(_ => succeed)
+                        Browser.assertFocused(Browser.Selector.id("c")).andThen {
+                            Browser.eval("document.activeElement ? document.activeElement.id : ''").map { focused =>
+                                assert(focused == "c", s"Expected activeElement to be 'c' but was ''")
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    "positive tabindex sorts before tabindex=0 / unset" in run {
+    "positive tabindex sorts before tabindex=0 / unset" in {
         // Page has <input id='a'/><input id='b' tabindex='2'/><input id='c' tabindex='1'/>.
         // From document.body (no element initially focused), Tab order should be:
         //   c (tabindex=1) → b (tabindex=2) → a (natural)
@@ -316,7 +344,11 @@ class BrowserKeyboardTest extends BrowserTest:
                             Browser.press(Key.Tab).andThen {
                                 Browser.assertFocused(Browser.Selector.id("b")).andThen {
                                     Browser.press(Key.Tab).andThen {
-                                        Browser.assertFocused(Browser.Selector.id("a")).map(_ => succeed)
+                                        Browser.assertFocused(Browser.Selector.id("a")).andThen {
+                                            Browser.eval("document.activeElement ? document.activeElement.id : ''").map { focused =>
+                                                assert(focused == "a", s"Expected activeElement to be 'a' but was ''")
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -327,51 +359,64 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "Tab on a page with no focusables is a no-op (no abort)" in run {
+    "Tab on a page with no focusables is a no-op (no abort)" in {
         withBrowser {
             onPage("<p>nothing focusable here</p>") {
-                Browser.press(Key.Tab).map(_ => succeed)
+                // Tab on a page with no focusable elements must not throw; the absence of abort IS the contract.
+                Browser.press(Key.Tab).andThen(succeed("Tab on a page with no focusables completes without aborting"))
             }
         }
     }
 
-    "Shift+Tab walks backward" in run {
+    "Shift+Tab walks backward" in {
         withBrowser {
             onPage("<input id='a'/><input id='b'/><input id='c'/>") {
                 Browser.eval("document.getElementById('b').focus()").andThen {
                     Browser.press(Key.Tab, Browser.KeyModifiers(shift = true)).andThen {
-                        Browser.assertFocused(Browser.Selector.id("a")).map(_ => succeed)
+                        Browser.assertFocused(Browser.Selector.id("a")).andThen {
+                            Browser.eval("document.activeElement ? document.activeElement.id : ''").map { focused =>
+                                assert(focused == "a", s"Expected activeElement to be 'a' but was ''")
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    "Shift+Tab from first focusable wraps to last" in run {
+    "Shift+Tab from first focusable wraps to last" in {
         withBrowser {
             onPage("<input id='a'/><input id='b'/><input id='c'/>") {
                 Browser.eval("document.getElementById('a').focus()").andThen {
                     Browser.press(Key.Tab, Browser.KeyModifiers(shift = true)).andThen {
-                        Browser.assertFocused(Browser.Selector.id("c")).map(_ => succeed)
+                        Browser.assertFocused(Browser.Selector.id("c")).andThen {
+                            Browser.eval("document.activeElement ? document.activeElement.id : ''").map { focused =>
+                                assert(focused == "c", s"Expected activeElement to be 'c' but was ''")
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    "selector-scoped press(sel, Key.Tab) advances focus from that selector" in run {
+    "selector-scoped press(sel, Key.Tab) advances focus from that selector" in {
         // Without prior focus on 'a', call press(Selector.id("a"), Key.Tab) and confirm 'b' is focused.
         // The selector-scoped press first focuses 'a' (actionable side-effect), then Tab advances to 'b'.
         withBrowser {
             onPage("<input id='a'/><input id='b'/>") {
                 Browser.press(Browser.Selector.id("a"), Browser.Key.Tab).andThen {
-                    Browser.assertFocused(Browser.Selector.id("b")).map(_ => succeed)
+                    Browser.assertFocused(Browser.Selector.id("b")).andThen {
+                        Browser.eval("document.activeElement ? document.activeElement.id : ''").map { focused =>
+                            assert(focused == "b", s"Expected activeElement to be 'b' but was ''")
+                        }
+                    }
                 }
             }
         }
     }
 
-    "Tab still emits a real keydown event for page listeners" in run {
+    "Tab still emits a real keydown event for page listeners" in {
         // Regression: shim runs AFTER keydown/keyup dispatch; this test ensures we didn't replace the dispatch with only the shim.
         withBrowser {
             onPage(
@@ -398,7 +443,7 @@ class BrowserKeyboardTest extends BrowserTest:
     // against disabled controls. The actionability gate's other arms (visibility, attached, stability, hittable) all
     // still run for press/hover; only the disabled probe is skipped.
 
-    "press(disabledCheckbox, Key.Enter) does not toggle and does not abort" in run {
+    "press(disabledCheckbox, Key.Enter) does not toggle and does not abort" in {
         // `press` must not raise on a disabled target; it is valid against disabled controls.
         withBrowser {
             onPage("<input type='checkbox' id='c' disabled/>") {
@@ -414,7 +459,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "press(disabledSelect, Key.ArrowDown) does not change value and does not abort" in run {
+    "press(disabledSelect, Key.ArrowDown) does not change value and does not abort" in {
         withBrowser {
             onPage("<select id='s' disabled><option value='a'>A</option><option value='b'>B</option></select>") {
                 Browser.press(Browser.Selector.id("s"), Browser.Key.ArrowDown).andThen {
@@ -426,17 +471,18 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "hover(disabledButton) is harmless and does not abort" in run {
+    "hover(disabledButton) is harmless and does not abort" in {
         // hover on a disabled button must not raise BrowserElementNotActionableException; real browsers fire mouseover
         // against disabled controls (tooltips and :hover styles still need to work).
         withBrowser {
             onPage("<button id='b' disabled style='width:80px;height:30px'>x</button>") {
-                Browser.hover(Browser.Selector.id("b")).map(_ => succeed)
+                // The absence of abort IS the contract here; hover completed without throwing.
+                Browser.hover(Browser.Selector.id("b")).andThen(succeed("hover on a disabled button completes without aborting"))
             }
         }
     }
 
-    "click(disabledButton) STILL aborts NotActionable (regression)" in run {
+    "click(disabledButton) STILL aborts NotActionable (regression)" in {
         // Catches an over-broad relaxation that flips requireEnabled = false for click too.
         withBrowser {
             onPage("<button id='b' disabled style='width:80px;height:30px'>x</button>") {
@@ -448,7 +494,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "fill(disabledInput, 'x') STILL aborts NotActionable (regression)" in run {
+    "fill(disabledInput, 'x') STILL aborts NotActionable (regression)" in {
         // Catches an over-broad relaxation that flips requireEnabled = false for fill too.
         withBrowser {
             onPage("<input id='t' disabled style='width:120px;height:24px'/>") {
@@ -467,7 +513,7 @@ class BrowserKeyboardTest extends BrowserTest:
     // only invokes `el.click()` when document.activeElement is one of those activatable types; text inputs still receive
     // a literal space via Chromium's keyDown text field.
 
-    "Space on a focused button fires onClick" in run {
+    "Space on a focused button fires onClick" in {
         withBrowser {
             onPage(
                 """<button id='b' onclick='window.__clicks=(window.__clicks||0)+1'>go</button>"""
@@ -483,7 +529,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "Space on a focused checkbox toggles checked" in run {
+    "Space on a focused checkbox toggles checked" in {
         withBrowser {
             onPage("<input type='checkbox' id='c'/>") {
                 Browser.eval("document.getElementById('c').focus()").andThen {
@@ -503,7 +549,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "Space on a focused radio activates" in run {
+    "Space on a focused radio activates" in {
         withBrowser {
             onPage(
                 "<input type='radio' name='r' id='r1'/><input type='radio' name='r' id='r2'/>"
@@ -523,7 +569,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "Space on a focused text input inserts a literal space (no click synthesis)" in run {
+    "Space on a focused text input inserts a literal space (no click synthesis)" in {
         // Regression: page has <input id='t' value='ab'/>. Caret at position 2 (end). After Space the value must be 'ab '.
         // Catches a shim that synthesizes click on every Space regardless of active-element type.
         withBrowser {
@@ -541,7 +587,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "Space on a non-focused page is a no-op" in run {
+    "Space on a non-focused page is a no-op" in {
         // Boundary: page has <button id='b'/> but body has focus. Press Space and assert no click fires.
         withBrowser {
             onPage(
@@ -559,7 +605,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "Space on a disabled button does not fire onClick" in run {
+    "Space on a disabled button does not fire onClick" in {
         // press on disabled elements is allowed; the synthesis shim handles Space-on-disabled by delegating to
         // HTMLElement.click(), which is a no-op on disabled elements per HTML spec. This test guards against a
         // regression that uses dispatchEvent('click') directly (which would fire even on disabled targets).
@@ -583,7 +629,7 @@ class BrowserKeyboardTest extends BrowserTest:
     // caret to position 0). The unified fill leaves the caret at end of value, so the natural fill -> press -> press
     // flow exercises the "already" arm; the cursor stays where fill left it.
 
-    "sequential press of two characters preserves caret" in run {
+    "sequential press of two characters preserves caret" in {
         // Two consecutive presses on the same focused input must append in order; re-focusing between presses would reset the caret
         // to position 0 and produce reversed output. `fill("")` primes focus + caret-at-0; the press sequence exercises the
         // already-focused arm of the actionability gate.
@@ -602,7 +648,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "sequential press of three characters preserves caret" in run {
+    "sequential press of three characters preserves caret" in {
         // Catches partial fixes that handle 2-press but miss 3+.
         withBrowser {
             onPage("<input id='t' type='text' />") {
@@ -621,7 +667,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "press after Browser.fill preserves caret at end" in run {
+    "press after Browser.fill preserves caret at end" in {
         // fill leaves the caret at end of value (position 5 for "hello"); press skips re-focus when the target is
         // already focused, so Backspace deletes from cursor position 5 (the last character).
         withBrowser {
@@ -637,7 +683,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "press on an unfocused element still focuses it (regression)" in run {
+    "press on an unfocused element still focuses it (regression)" in {
         // Confirms the focus path still runs when the JS probe returns 'needs_focus'. Catches a regression that always
         // skips the focus.
         withBrowser {
@@ -652,7 +698,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "press on element B when element A is focused focuses B first" in run {
+    "press on element B when element A is focused focuses B first" in {
         // Catches a buggy probe that returns 'already' whenever ANY element is focused rather than 'this element is focused'.
         // a is autofocused; press targets b; the probe must say 'needs_focus' for b and the focus path must run.
         withBrowser {
@@ -670,7 +716,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "press on detached element aborts NotAttached" in run {
+    "press on detached element aborts NotAttached" in {
         // Boundary: page is empty. The actionability gate aborts before the cursor-check probe can observe a missing node;
         // confirms the probe is scheduled INSIDE withActionable, not outside.
         withBrowser {
@@ -685,7 +731,7 @@ class BrowserKeyboardTest extends BrowserTest:
 
     // ---- keyDown / keyUp raw dispatch ----
 
-    "keyDown dispatches a keydown event without a corresponding keyup" in run {
+    "keyDown dispatches a keydown event without a corresponding keyup" in {
         withBrowser {
             onPage(
                 """<div id='log'>none</div>
@@ -716,7 +762,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "keyDown then keyUp produces the canonical down→up sequence" in run {
+    "keyDown then keyUp produces the canonical down→up sequence" in {
         withBrowser {
             onPage(
                 """<script>
@@ -742,7 +788,7 @@ class BrowserKeyboardTest extends BrowserTest:
         }
     }
 
-    "keyUp without preceding keyDown still dispatches a keyup event" in run {
+    "keyUp without preceding keyDown still dispatches a keyup event" in {
         withBrowser {
             onPage(
                 """<script>
@@ -761,7 +807,7 @@ class BrowserKeyboardTest extends BrowserTest:
 
     // ---- regression coverage ----
 
-    "press('a') emits keydown, keypress, keyup in that order" in run {
+    "press('a') emits keydown, keypress, keyup in that order" in {
         // The keypress event fires only on printable keys per HTML spec; pin the actual sequence so future modifier work can't
         // silently drop keypress on the printable path. If keypress doesn't fire (Chromium CDP quirk), the failure message records
         // the actual sequence so the contract is still pinned.
@@ -793,7 +839,7 @@ class BrowserKeyboardTest extends BrowserTest:
     // selector is stale (e.g. SPA replaced the input mid-flight).
     // -------------------------------------------------------------------------
 
-    "press(selector, key) falls back to document.activeElement when the selector is stale" in run {
+    "press(selector, key) falls back to document.activeElement when the selector is stale" in {
         // Fixture: a script destroys the original #target node + inserts a NEW one with the same id
         // and focuses it. press(Selector.id("target"), Key.Enter) targets the OLD node; actionability
         // says NotAttached; and should transparently fall back to dispatching against activeElement,

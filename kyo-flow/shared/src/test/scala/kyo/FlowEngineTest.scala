@@ -1,6 +1,6 @@
 package kyo
 
-class FlowEngineTest extends Test:
+class FlowEngineTest extends kyo.test.Test[Any]:
 
     override def timeout = 30.seconds
 
@@ -46,7 +46,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "basic execution" - {
 
-        "single output flow completes" in run {
+        "single output flow completes" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x + 1)
                 for
@@ -60,7 +60,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "two sequential outputs complete" in run {
+        "two sequential outputs complete" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .output("y")(ctx => ctx.x + 1)
@@ -76,7 +76,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "output values are persisted in store" in run {
+        "output values are persisted in store" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x + 1)
                 for
@@ -91,7 +91,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "step flow completes" in run {
+        "step flow completes" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .output("y")(ctx => ctx.x + 1)
@@ -107,7 +107,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "flow failure results in Failed status" in run {
+        "flow failure results in Failed status" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx =>
                     throw new RuntimeException("boom"); ""
@@ -131,7 +131,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "signal delivery" - {
 
-        "waits for input then resumes" in run {
+        "waits for input then resumes" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[String]("name").output("greeting")(ctx => s"Hello ${ctx.name}")
                 for
@@ -146,7 +146,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "duplicate signal fails" in run {
+        "duplicate signal fails" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[String]("name").output("y")(ctx => ctx.name)
                 for
@@ -161,7 +161,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "signal to unknown input fails" in run {
+        "signal to unknown input fails" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -175,7 +175,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "signal to terminal execution fails" in run {
+        "signal to terminal execution fails" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -196,7 +196,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "registration" - {
 
-        "unregistered workflow fails to start" in run {
+        "unregistered workflow fails to start" in {
             withEngine { (engine, store, tc) =>
                 Abort.run[FlowException](engine.workflows.start(Flow.Id.Workflow("unknown")))
                     .map(r => assert(r.isFailure))
@@ -209,7 +209,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "cancel" - {
 
-        "cancel waiting execution" in run {
+        "cancel waiting execution" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -224,7 +224,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "cancel completed execution is no-op" in run {
+        "cancel completed execution is no-op" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -240,7 +240,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "cancelAll cancels multiple executions" in run {
+        "cancelAll cancels multiple executions" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -263,7 +263,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "event history" - {
 
-        "records events for completed flow" in run {
+        "records events for completed flow" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -288,7 +288,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "replay" - {
 
-        "completed output is skipped on replay" in run {
+        "completed output is skipped on replay" in {
             withEngine { (engine, store, tc) =>
                 var callCount = 0
                 val flow = Flow.input[Int]("x").output("y") { ctx =>
@@ -315,7 +315,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "workflows API" - {
 
-        "list registered workflows" in run {
+        "list registered workflows" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -327,7 +327,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "describe workflow" in run {
+        "describe workflow" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -338,14 +338,14 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "describe unknown workflow fails" in run {
+        "describe unknown workflow fails" in {
             withEngine { (engine, store, tc) =>
                 Abort.run[FlowException](engine.workflows.describe(Flow.Id.Workflow("unknown")))
                     .map(r => assert(r.isFailure))
             }
         }
 
-        "workflow diagram" in run {
+        "workflow diagram" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -362,7 +362,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "handle" - {
 
-        "signal via handle" in run {
+        "signal via handle" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x + 1)
                 for
@@ -377,7 +377,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "status via handle" in run {
+        "status via handle" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -392,7 +392,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "cancel via handle" in run {
+        "cancel via handle" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -414,7 +414,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "inputs and diagram" - {
 
-        "shows delivered and pending inputs" in run {
+        "shows delivered and pending inputs" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").input[String]("name").output("y")(ctx => ctx.x)
                 for
@@ -432,7 +432,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "generates execution diagram" in run {
+        "generates execution diagram" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -453,7 +453,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "search" - {
 
-        "finds executions by workflow" in run {
+        "finds executions by workflow" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -466,7 +466,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "filters by status" in run {
+        "filters by status" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -493,7 +493,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "multi-executor" - {
 
-        "two executors share store, both process" in run {
+        "two executors share store, both process" in {
             Clock.withTimeControl { tc =>
                 FlowStore.initMemory.map { store =>
                     for
@@ -514,7 +514,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "multiple executions distributed" in run {
+        "multiple executions distributed" in {
             Clock.withTimeControl { tc =>
                 FlowStore.initMemory.map { store =>
                     val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x * 2)
@@ -528,8 +528,8 @@ class FlowEngineTest extends Test:
                         _ <- Kyo.foreachDiscard(eids.zipWithIndex)((eid, i) =>
                             engine1.executions.signal[Int](eid, "x", i)
                         )
-                        _ <- Kyo.foreachDiscard(eids)(eid => pump(tc, store, eid, _.isTerminal))
-                    yield succeed
+                        statuses <- Kyo.foreach(eids)(eid => pump(tc, store, eid, _.isTerminal))
+                    yield assert(statuses.size == 5 && statuses.forall(_.isTerminal))
                     end for
                 }
             }
@@ -541,7 +541,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "end-to-end" - {
 
-        "multi-step chain completes" in run {
+        "multi-step chain completes" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .output("a")(ctx => ctx.x + 1)
@@ -563,7 +563,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "two inputs, two outputs" in run {
+        "two inputs, two outputs" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .input[String]("name")
@@ -585,7 +585,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "step and output interleaved" in run {
+        "step and output interleaved" in {
             withEngine { (engine, store, tc) =>
                 var stepExecuted = false
                 val flow = Flow.input[Int]("x")
@@ -607,7 +607,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "events are recorded in correct order" in run {
+        "events are recorded in correct order" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .output("y")(ctx => ctx.x + 1)
@@ -638,14 +638,14 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "runLocal" - {
 
-        "simple flow with pre-populated input completes" in run {
+        "simple flow with pre-populated input completes" in {
             val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x * 2)
             Flow.runLocal(flow, "x" ~ 5).map { result =>
                 assert(result.y == 10)
             }
         }
 
-        "failure produces FlowException" in run {
+        "failure produces FlowException" in {
             val flow = Flow.input[Int]("x").output("y")(ctx =>
                 throw new RuntimeException("oops"); ""
             )
@@ -660,7 +660,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "signal type mismatch" - {
 
-        "wrong type fails with FlowSignalTypeMismatchException" in run {
+        "wrong type fails with FlowSignalTypeMismatchException" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -677,7 +677,7 @@ class FlowEngineTest extends Test:
 
     "start with wrong input type" - {
 
-        "pre-populated input with wrong type fails with clear error" in run {
+        "pre-populated input with wrong type fails with clear error" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x + 1)
                 for
@@ -696,7 +696,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "sleep" - {
 
-        "sets Sleeping status and resumes after time passes" in run {
+        "sets Sleeping status and resumes after time passes" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .output("y")(ctx => ctx.x + 1)
@@ -717,7 +717,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "SleepCompleted event recorded on resume" in run {
+        "SleepCompleted event recorded on resume" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .sleep("pause", 500.millis)
@@ -741,7 +741,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "compensation" - {
 
-        "compensated output fires on later failure" in run {
+        "compensated output fires on later failure" in {
             withEngine { (engine, store, tc) =>
                 var compensated = false
                 val flow = Flow.input[Int]("x")
@@ -762,7 +762,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "all succeed → no compensations fire" in run {
+        "all succeed → no compensations fire" in {
             withEngine { (engine, store, tc) =>
                 var compensated = false
                 val flow = Flow.input[Int]("x")
@@ -781,7 +781,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "compensations do NOT fire on suspension (WaitingForInput)" in run {
+        "compensations do NOT fire on suspension (WaitingForInput)" in {
             withEngine { (engine, store, tc) =>
                 var compensated = false
                 val flow = Flow.input[Int]("x")
@@ -805,7 +805,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "execution describe" - {
 
-        "returns execution state" in run {
+        "returns execution state" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -818,7 +818,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "unknown execution fails" in run {
+        "unknown execution fails" in {
             withEngine { (engine, store, tc) =>
                 Abort.run[FlowException](engine.executions.describe(Flow.Id.Execution("unknown")))
                     .map(r => assert(r.isFailure))
@@ -828,7 +828,7 @@ class FlowEngineTest extends Test:
 
     "search pagination" - {
 
-        "respects limit and offset" in run {
+        "respects limit and offset" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -848,7 +848,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "end-to-end advanced" - {
 
-        "20+ step chain completes" in run {
+        "20+ step chain completes" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .output("s1")(ctx => ctx.x + 1)
@@ -889,7 +889,7 @@ class FlowEngineTest extends Test:
         // Users handle errors inside their computations using Kyo's Abort effect.
         // The output always produces a value — sound by construction.
 
-        "output: Abort.recover catches specific error and provides fallback" in run {
+        "output: Abort.recover catches specific error and provides fallback" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .output("y") { ctx =>
@@ -912,7 +912,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "output: Abort.recover with union error type" in run {
+        "output: Abort.recover with union error type" in {
             withEngine { (engine, store, tc) =>
                 class NetworkError extends RuntimeException("network")
                 class TimeoutError extends RuntimeException("timeout")
@@ -938,7 +938,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "output: unhandled error fails the workflow" in run {
+        "output: unhandled error fails the workflow" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .output("y")(ctx => if ctx.x == 0 then throw new RuntimeException("boom") else ctx.x)
@@ -955,7 +955,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "step: Abort.recover catches error, step continues" in run {
+        "step: Abort.recover catches error, step continues" in {
             withEngine { (engine, store, tc) =>
                 var called = false
                 val flow = Flow.input[Int]("x")
@@ -981,7 +981,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "foreach: Abort.recover per element" in run {
+        "foreach: Abort.recover per element" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("n")
                     .foreach("results")(ctx => (1 to ctx.n).toSeq) { item =>
@@ -1001,7 +1001,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "loop: Abort.recover in body" in run {
+        "loop: Abort.recover in body" in {
             withEngine { (engine, store, tc) =>
                 var attempts = 0
                 val flow = Flow.input[Int]("x")
@@ -1030,7 +1030,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "dispatch: Abort.recover in branch body" in run {
+        "dispatch: Abort.recover in branch body" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .dispatch[String]("result")
@@ -1055,7 +1055,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "output: Abort.catching lets non-matching errors propagate" in run {
+        "output: Abort.catching lets non-matching errors propagate" in {
             withEngine { (engine, store, tc) =>
                 class ExpectedError   extends RuntimeException("expected")
                 class UnexpectedError extends RuntimeException("unexpected")
@@ -1084,7 +1084,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "dispatch" - {
 
-        "takes the first matching branch" in run {
+        "takes the first matching branch" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("amount")
                     .dispatch[String]("decision")
@@ -1104,7 +1104,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "takes default branch when no condition matches" in run {
+        "takes default branch when no condition matches" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("amount")
                     .dispatch[String]("decision")
@@ -1130,7 +1130,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "loop" - {
 
-        "loop done immediately" in run {
+        "loop done immediately" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("count")
                     .loop("result") { ctx => Loop.done(0) }
@@ -1148,7 +1148,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "loop done with value immediately" in run {
+        "loop done with value immediately" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .loop("result") { ctx => Loop.done(42) }
@@ -1166,7 +1166,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "loop with 1 state — accumulator" in run {
+        "loop with 1 state — accumulator" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .loop("result", 0) { (state: Int, ctx) =>
@@ -1187,7 +1187,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "loop with 2 states" in run {
+        "loop with 2 states" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .loop("result", 0, 1) { (a: Int, b: Int, ctx) =>
@@ -1214,7 +1214,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "foreach" - {
 
-        "processes collection and produces chunked result" in run {
+        "processes collection and produces chunked result" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("n")
                     .foreach("doubled")(ctx => (1 to ctx.n).toSeq)(i => i * 2)
@@ -1235,7 +1235,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "skip idempotency" - {
 
-        "completed output is not re-executed on replay" in run {
+        "completed output is not re-executed on replay" in {
             withEngine { (engine, store, tc) =>
                 var callCount = 0
                 val flow = Flow.input[Int]("x")
@@ -1260,7 +1260,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "completed step is not re-executed on replay" in run {
+        "completed step is not re-executed on replay" in {
             withEngine { (engine, store, tc) =>
                 var stepCount = 0
                 val flow = Flow.input[Int]("x")
@@ -1284,7 +1284,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "partial completion: first outputs skipped, rest execute" in run {
+        "partial completion: first outputs skipped, rest execute" in {
             withEngine { (engine, store, tc) =>
                 var counts = scala.collection.mutable.Map[String, Int]().withDefaultValue(0)
                 val flow = Flow.input[Int]("x")
@@ -1324,7 +1324,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "compensation edge cases" - {
 
-        "two compensated outputs, second fails: first fires in reverse" in run {
+        "two compensated outputs, second fails: first fires in reverse" in {
             withEngine { (engine, store, tc) =>
                 var log = Seq.empty[String]
                 val flow = Flow.input[Int]("x")
@@ -1350,7 +1350,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "all succeed: no reverts fire" in run {
+        "all succeed: no reverts fire" in {
             withEngine { (engine, store, tc) =>
                 var fired = false
                 val flow = Flow.input[Int]("x")
@@ -1369,7 +1369,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "revert handler throws: swallowed, other reverts still run" in run {
+        "revert handler throws: swallowed, other reverts still run" in {
             withEngine { (engine, store, tc) =>
                 var log = Seq.empty[String]
                 val flow = Flow.input[Int]("x")
@@ -1395,7 +1395,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "compensation does NOT fire on suspension" in run {
+        "compensation does NOT fire on suspension" in {
             withEngine { (engine, store, tc) =>
                 var fired = false
                 val flow = Flow.input[Int]("x")
@@ -1413,7 +1413,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "compensation re-registered on replay after skip" in run {
+        "compensation re-registered on replay after skip" in {
             withEngine { (engine, store, tc) =>
                 var fired = false
                 val flow = Flow.input[Int]("x")
@@ -1440,7 +1440,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "andThen: first part has compensation, second fails" in run {
+        "andThen: first part has compensation, second fails" in {
             withEngine { (engine, store, tc) =>
                 var fired = false
                 val flow = Flow.input[Int]("x")
@@ -1469,7 +1469,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "sleep edge cases" - {
 
-        "zero-duration sleep completes immediately" in run {
+        "zero-duration sleep completes immediately" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .sleep("instant", Duration.Zero)
@@ -1488,7 +1488,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "sleep emits SleepStarted event" in run {
+        "sleep emits SleepStarted event" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .sleep("pause", 500.millis)
@@ -1511,7 +1511,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "cancel edge cases" - {
 
-        "cancel persists Cancelled status to store" in run {
+        "cancel persists Cancelled status to store" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -1526,7 +1526,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "cancel appends Cancelled event to history" in run {
+        "cancel appends Cancelled event to history" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -1547,12 +1547,11 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "audit" - {
 
-        "FlowLint checks recover names for duplicates" in run {
+        "FlowLint checks recover names for duplicates" in {
             val flow = Flow.input[Int]("x")
                 .output("x")(ctx => ctx.x + 1)
             val warnings = kyo.internal.FlowLint.duplicateNames(flow)
             assert(warnings.exists(_.message.contains("Duplicate node name 'x'")))
-            succeed
         }
     }
 
@@ -1561,7 +1560,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "subflow" - {
 
-        "child output accessible downstream via nested record" in run {
+        "child output accessible downstream via nested record" in {
             withEngine { (engine, store, tc) =>
                 val child = Flow.input[Int]("a").output("b")(ctx => ctx.a * 10)
                 val flow = Flow.input[Int]("x")
@@ -1581,7 +1580,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "child fields do not leak into parent namespace" in run {
+        "child fields do not leak into parent namespace" in {
             withEngine { (engine, store, tc) =>
                 val child = Flow.input[Int]("a").output("b")(ctx => ctx.a * 10)
                 val flow = Flow.input[Int]("x")
@@ -1601,12 +1600,12 @@ class FlowEngineTest extends Test:
                     assert(v.get == 6)
                     // "b" IS in the store (child persisted it), but it shouldn't be confused with parent fields
                     // The type system prevents ctx.b at compile time (b is not in Out)
-                    succeed
+                    ()
                 end for
             }
         }
 
-        "subflow replays correctly after suspension" in run {
+        "subflow replays correctly after suspension" in {
             withEngine { (engine, store, tc) =>
                 var childBodyCount = 0
                 val child = Flow.input[Int]("a").output("b") { ctx =>
@@ -1637,7 +1636,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "multiple subflows don't interfere" in run {
+        "multiple subflows don't interfere" in {
             withEngine { (engine, store, tc) =>
                 val child1 = Flow.input[Int]("a").output("b")(ctx => ctx.a + 1)
                 val child2 = Flow.input[Int]("a").output("b")(ctx => ctx.a * 2)
@@ -1659,7 +1658,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "child failure propagates to parent" in run {
+        "child failure propagates to parent" in {
             withEngine { (engine, store, tc) =>
                 val child = Flow.input[Int]("a").output("b")(ctx =>
                     if ctx.a == 0 then throw new RuntimeException("zero") else ctx.a
@@ -1687,7 +1686,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "duplicate execution ID" - {
 
-        "start with existing ID fails" in run {
+        "start with existing ID fails" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -1703,7 +1702,7 @@ class FlowEngineTest extends Test:
 
     "diagram formats" - {
 
-        "mermaid" in run {
+        "mermaid" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -1714,7 +1713,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "dot" in run {
+        "dot" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -1725,7 +1724,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "bpmn" in run {
+        "bpmn" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -1736,7 +1735,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "json" in run {
+        "json" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -1747,7 +1746,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "elk" in run {
+        "elk" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -1761,7 +1760,7 @@ class FlowEngineTest extends Test:
 
     "Handle.describe" - {
 
-        "returns execution detail with progress" in run {
+        "returns execution detail with progress" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -1780,7 +1779,7 @@ class FlowEngineTest extends Test:
 
     "workflows.executions" - {
 
-        "lists executions for workflow" in run {
+        "lists executions for workflow" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -1799,7 +1798,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "compensation advanced" - {
 
-        "five reverts fire in reverse order" in run {
+        "five reverts fire in reverse order" in {
             withEngine { (engine, store, tc) =>
                 var log = Seq.empty[String]
                 val flow = Flow.input[Int]("x")
@@ -1826,7 +1825,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "revert does not fire for step that never completed" in run {
+        "revert does not fire for step that never completed" in {
             withEngine { (engine, store, tc) =>
                 var log = Seq.empty[String]
                 val flow = Flow.input[Int]("x")
@@ -1848,7 +1847,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "revert handler sees context at registration time" in run {
+        "revert handler sees context at registration time" in {
             withEngine { (engine, store, tc) =>
                 var capturedX = -1
                 val flow = Flow.input[Int]("x")
@@ -1867,7 +1866,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "multiple throwing revert handlers: all still execute" in run {
+        "multiple throwing revert handlers: all still execute" in {
             withEngine { (engine, store, tc) =>
                 var log = Seq.empty[String]
                 val flow = Flow.input[Int]("x")
@@ -1895,7 +1894,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "foreach body has no compensation, later step fails: no spurious reverts" in run {
+        "foreach body has no compensation, later step fails: no spurious reverts" in {
             withEngine { (engine, store, tc) =>
                 var fired = false
                 val flow = Flow.input[Int]("n")
@@ -1924,7 +1923,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "zip execution" - {
 
-        "both branches execute and merge results" in run {
+        "both branches execute and merge results" in {
             withEngine { (engine, store, tc) =>
                 val left  = Flow.input[Int]("a").output("b")(ctx => ctx.a * 10)
                 val right = Flow.input[Int]("c").output("d")(ctx => ctx.c * 20)
@@ -1949,7 +1948,7 @@ class FlowEngineTest extends Test:
 
     "gather execution" - {
 
-        "all branches execute and merge" in run {
+        "all branches execute and merge" in {
             withEngine { (engine, store, tc) =>
                 val f1   = Flow.input[Int]("a").output("b")(ctx => ctx.a + 1)
                 val f2   = Flow.input[Int]("c").output("d")(ctx => ctx.c + 2)
@@ -1977,7 +1976,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "progress through engine" - {
 
-        "reports progress for completed steps" in run {
+        "reports progress for completed steps" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x + 1).output("z")(ctx => ctx.y + 1)
                 for
@@ -1994,7 +1993,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "reports pending steps before input" in run {
+        "reports pending steps before input" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x + 1)
                 for
@@ -2018,7 +2017,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "cancel advanced" - {
 
-        "cancel status is not overwritten by Failed" in run {
+        "cancel status is not overwritten by Failed" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -2044,7 +2043,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "misc" - {
 
-        "input-only flow reaches Completed" in run {
+        "input-only flow reaches Completed" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                 for
@@ -2058,7 +2057,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "loop body executes on every iteration (not cached)" in run {
+        "loop body executes on every iteration (not cached)" in {
             withEngine { (engine, store, tc) =>
                 var iterations = 0
                 val flow = Flow.input[Int]("x")
@@ -2080,7 +2079,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "concurrent starts with same ID — at most one succeeds" in run {
+        "concurrent starts with same ID — at most one succeeds" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 val eid  = Flow.Id.Execution("same-id")
@@ -2095,20 +2094,18 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "FlowGraph.build produces correct node and edge counts" in run {
+        "FlowGraph.build produces correct node and edge counts" in {
             val flow  = Flow.input[Int]("x").output("y")(ctx => ctx.x + 1).step("log")(ctx => ()).sleep("wait", 1.second)
             val graph = kyo.internal.FlowGraph.build(flow)
             assert(graph.nodes.size == 4)
             assert(graph.edges.size == 3)
-            succeed
         }
 
-        "FlowGraph.build with progress annotates status" in run {
+        "FlowGraph.build with progress annotates status" in {
             val flow     = Flow.input[Int]("x").output("y")(ctx => ctx.x + 1)
             val progress = FlowEngine.Progress.build(flow, Set("x", "y"), Flow.Status.Completed)
             val graph    = kyo.internal.FlowGraph.build(flow, progress)
             assert(graph.nodes.exists(_.status == "completed"))
-            succeed
         }
     }
 
@@ -2117,7 +2114,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "sleep advanced" - {
 
-        "sequential sleeps" in run {
+        "sequential sleeps" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .sleep("sleep1", 300.millis)
@@ -2137,7 +2134,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "compensation runs when step after sleep fails" in run {
+        "compensation runs when step after sleep fails" in {
             withEngine { (engine, store, tc) =>
                 var fired = false
                 val flow = Flow.input[Int]("x")
@@ -2167,7 +2164,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "skip replay" - {
 
-        "dispatch skipped when result already in record" in run {
+        "dispatch skipped when result already in record" in {
             withEngine { (engine, store, tc) =>
                 var dispatchCalled = false
                 val flow = Flow.input[Int]("x")
@@ -2201,7 +2198,7 @@ class FlowEngineTest extends Test:
 
     "regression" - {
 
-        "zero-duration sleep does not execute and does not affect replay" in run {
+        "zero-duration sleep does not execute and does not affect replay" in {
             withEngine { (engine, store, tc) =>
                 var afterCount = 0
                 val flow = Flow.input[Int]("x")
@@ -2228,7 +2225,7 @@ class FlowEngineTest extends Test:
                 end for
             }
         }
-        "compensation error propagates as Failure" in run {
+        "compensation error propagates as Failure" in {
             withEngine { (engine, store, tc) =>
                 var compFired = false
                 val flow = Flow.input[Int]("x")
@@ -2255,7 +2252,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "compensation handler sees only fields present at registration" in run {
+        "compensation handler sees only fields present at registration" in {
             withEngine { (engine, store, tc) =>
                 var capturedKeys = Set.empty[String]
                 val flow = Flow.input[Int]("x")
@@ -2284,7 +2281,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "compensation emits CompensationStarted and CompensationCompleted events" in run {
+        "compensation emits CompensationStarted and CompensationCompleted events" in {
             withEngine { (engine, store, tc) =>
                 var compFired = false
                 val flow = Flow.input[Int]("x")
@@ -2318,9 +2315,8 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "Compensating status is not terminal" in run {
+        "Compensating status is not terminal" in {
             assert(!Flow.Status.Compensating.isTerminal)
-            succeed
         }
     }
 
@@ -2329,7 +2325,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "scheduled loop" - {
 
-        "fixed schedule — stops when body returns done" in run {
+        "fixed schedule — stops when body returns done" in {
             withEngine { (engine, store, tc) =>
                 var iterations = 0
                 val flow = Flow.input[Int]("x")
@@ -2353,7 +2349,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "schedule runs until body returns done" in run {
+        "schedule runs until body returns done" in {
             withEngine { (engine, store, tc) =>
                 var iterations = 0
                 val flow = Flow.input[Int]("x")
@@ -2378,7 +2374,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "body returns done before schedule exhausts" in run {
+        "body returns done before schedule exhausts" in {
             withEngine { (engine, store, tc) =>
                 var iterations = 0
                 val flow = Flow.input[Int]("x")
@@ -2401,7 +2397,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "scheduled loop body throws — execution fails" in run {
+        "scheduled loop body throws — execution fails" in {
             withEngine { (engine, store, tc) =>
                 var iterations = 0
                 val flow = Flow.input[Int]("x")
@@ -2429,7 +2425,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "race execution" - {
 
-        "one branch fails, other succeeds — winner completes" in run {
+        "one branch fails, other succeeds — winner completes" in {
             withEngine { (engine, store, tc) =>
                 val left = Flow.input[Int]("x").output("a")(ctx =>
                     throw new RuntimeException("left fails"); 0
@@ -2450,7 +2446,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "both branches fail — execution fails" in run {
+        "both branches fail — execution fails" in {
             withEngine { (engine, store, tc) =>
                 val left = Flow.input[Int]("x").output("a")(ctx =>
                     throw new RuntimeException("left"); 0
@@ -2478,7 +2474,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "gather advanced" - {
 
-        "one branch fails — entire gather fails" in run {
+        "one branch fails — entire gather fails" in {
             withEngine { (engine, store, tc) =>
                 val f1 = Flow.input[Int]("x").output("a")(ctx => ctx.x + 1)
                 val f2 = Flow.input[Int]("x").output("b")(ctx =>
@@ -2498,7 +2494,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "three branches all complete and merge" in run {
+        "three branches all complete and merge" in {
             withEngine { (engine, store, tc) =>
                 val f1 = Flow.input[Int]("x").output("a")(ctx => ctx.x + 1)
                 val f2 = Flow.input[Int]("x").output("b")(ctx => ctx.x + 2)
@@ -2525,7 +2521,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "retry" - {
 
-        "output with retry — fails twice then succeeds" in run {
+        "output with retry — fails twice then succeeds" in {
             withEngine { (engine, store, tc) =>
                 var attempts = 0
                 val flow = Flow.input[Int]("x")
@@ -2549,7 +2545,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "output with retry — exhausts schedule then fails" in run {
+        "output with retry — exhausts schedule then fails" in {
             withEngine { (engine, store, tc) =>
                 var attempts = 0
                 val flow = Flow.input[Int]("x")
@@ -2573,7 +2569,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "step with retry — retries side-effect step" in run {
+        "step with retry — retries side-effect step" in {
             withEngine { (engine, store, tc) =>
                 var attempts = 0
                 val flow = Flow.input[Int]("x")
@@ -2601,7 +2597,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "timeout" - {
 
-        "output completes within timeout — succeeds" in run {
+        "output completes within timeout — succeeds" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .output("y", timeout = 5.seconds)(ctx => ctx.x * 2)
@@ -2625,7 +2621,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "dispatch advanced" - {
 
-        "all conditions false — default branch taken" in run {
+        "all conditions false — default branch taken" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .dispatch[String]("result")
@@ -2646,7 +2642,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "condition throws — execution fails" in run {
+        "condition throws — execution fails" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .dispatch[String]("result")
@@ -2670,7 +2666,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "branch body throws — execution fails" in run {
+        "branch body throws — execution fails" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .dispatch[String]("result")
@@ -2697,7 +2693,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "foreach advanced" - {
 
-        "empty collection — Chunk.empty stored" in run {
+        "empty collection — Chunk.empty stored" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .foreach("results")(ctx => Seq.empty[Int])(n => n * 10)
@@ -2712,7 +2708,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "body throws on one element — execution fails" in run {
+        "body throws on one element — execution fails" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .foreach("results")(ctx => (1 to ctx.x).toSeq) { n =>
@@ -2732,7 +2728,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "collection computation throws — execution fails" in run {
+        "collection computation throws — execution fails" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .foreach("results")(ctx =>
@@ -2757,7 +2753,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "subflow advanced" - {
 
-        "child with multiple outputs — nested record accessible" in run {
+        "child with multiple outputs — nested record accessible" in {
             withEngine { (engine, store, tc) =>
                 val child = Flow.input[Int]("a")
                     .output("b")(ctx => ctx.a * 2)
@@ -2780,7 +2776,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "nested subflow (subflow within subflow)" in run {
+        "nested subflow (subflow within subflow)" in {
             withEngine { (engine, store, tc) =>
                 val inner = Flow.input[Int]("a").output("b")(ctx => ctx.a * 3)
                 val middle = Flow.input[Int]("a")
@@ -2804,7 +2800,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "inputMapper throws — parent fails" in run {
+        "inputMapper throws — parent fails" in {
             withEngine { (engine, store, tc) =>
                 val child = Flow.input[Int]("a").output("b")(ctx => ctx.a)
                 val flow = Flow.input[Int]("x")
@@ -2830,7 +2826,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "compensation deep nesting" - {
 
-        "5 compensated outputs — all fire in reverse on failure" in run {
+        "5 compensated outputs — all fire in reverse on failure" in {
             withEngine { (engine, store, tc) =>
                 var log = Seq.empty[String]
                 val flow = Flow.input[Int]("x")
@@ -2866,7 +2862,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "degenerate flows" - {
 
-        "flow with only init — completes immediately" in run {
+        "flow with only init — completes immediately" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.init("test")
                 for
@@ -2879,7 +2875,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "flow with only input — suspends then completes" in run {
+        "flow with only input — suspends then completes" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                 for
@@ -2894,16 +2890,16 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "flow with only sleep — suspends then completes" in run {
+        "flow with only sleep — suspends then completes" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.init("test").sleep("wait", 1.second)
                 for
                     _      <- engine.register(wf1, flow)
                     handle <- engine.workflows.start(wf1)
                     eid = handle.executionId
-                    _ <- pump(tc, store, eid, _.isSleeping)
-                    _ <- pump(tc, store, eid, _.isTerminal, 200)
-                yield succeed
+                    _      <- pump(tc, store, eid, _.isSleeping)
+                    status <- pump(tc, store, eid, _.isTerminal, 200)
+                yield assert(status == Flow.Status.Completed)
                 end for
             }
         }
@@ -2914,7 +2910,7 @@ class FlowEngineTest extends Test:
     // =========================================================================
     "dict debug" - {
 
-        "engine defs contains registered workflow" in run {
+        "engine defs contains registered workflow" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -2927,7 +2923,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "engine defs update replaces workflow" in run {
+        "engine defs update replaces workflow" in {
             withEngine { (engine, store, tc) =>
                 val flow1 = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 val flow2 = Flow.input[Int]("x").output("y")(ctx => ctx.x).output("z")(ctx => 0)
@@ -2949,7 +2945,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "worker builds wfIds from defs" in run {
+        "worker builds wfIds from defs" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -2963,7 +2959,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "hash mismatch detected after re-register" in run {
+        "hash mismatch detected after re-register" in {
             withEngine { (engine, store, tc) =>
                 val flow1 = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 val flow2 = Flow.input[Int]("x").output("y")(ctx => ctx.x).output("z")(ctx => 0)
@@ -3001,83 +2997,75 @@ class FlowEngineTest extends Test:
 
     "Progress.build with empty completed steps" - {
 
-        "first node is Running, rest are Pending" in run {
+        "first node is Running, rest are Pending" in {
             val progress = FlowEngine.Progress.build(linearFlow, Set.empty, Flow.Status.Running)
             assert(progress.nodes.size == 4)
             assert(progress.nodes(0).status == FlowEngine.Progress.NodeStatus.Running)
             (1 until progress.nodes.size).foreach { i =>
                 assert(progress.nodes(i).status == FlowEngine.Progress.NodeStatus.Pending)
             }
-            succeed
+            ()
         }
 
-        "completedCount is 0" in run {
+        "completedCount is 0" in {
             val progress = FlowEngine.Progress.build(linearFlow, Set.empty, Flow.Status.Running)
             assert(progress.completedCount == 0)
-            succeed
         }
 
-        "totalCount matches node count" in run {
+        "totalCount matches node count" in {
             val progress = FlowEngine.Progress.build(linearFlow, Set.empty, Flow.Status.Running)
             assert(progress.totalCount == 4)
-            succeed
         }
     }
 
     "Progress.build with some completed steps" - {
 
-        "marks completed steps correctly" in run {
+        "marks completed steps correctly" in {
             val progress = FlowEngine.Progress.build(linearFlow, Set("x", "y"), Flow.Status.Running)
             assert(progress.nodeByName("x").get.status == FlowEngine.Progress.NodeStatus.Completed)
             assert(progress.nodeByName("y").get.status == FlowEngine.Progress.NodeStatus.Completed)
             assert(progress.nodeByName("log").get.status == FlowEngine.Progress.NodeStatus.Running)
             assert(progress.nodeByName("wait").get.status == FlowEngine.Progress.NodeStatus.Pending)
-            succeed
         }
 
-        "completedCount reflects completed steps" in run {
+        "completedCount reflects completed steps" in {
             val progress = FlowEngine.Progress.build(linearFlow, Set("x", "y"), Flow.Status.Running)
             assert(progress.completedCount == 2)
-            succeed
         }
 
-        "all completed gives full count" in run {
+        "all completed gives full count" in {
             val progress = FlowEngine.Progress.build(linearFlow, Set("x", "y", "log", "wait"), Flow.Status.Completed)
             assert(progress.completedCount == 4)
             assert(progress.completedCount == progress.totalCount)
-            succeed
         }
     }
 
     "Progress.build with WaitingForInput status" - {
 
-        "marks the waiting input as WaitingForInput" in run {
+        "marks the waiting input as WaitingForInput" in {
             val progress = FlowEngine.Progress.build(linearFlow, Set.empty, Flow.Status.WaitingForInput("x"))
             assert(progress.nodeByName("x").get.status == FlowEngine.Progress.NodeStatus.WaitingForInput)
-            succeed
         }
 
-        "non-matching input stays pending" in run {
+        "non-matching input stays pending" in {
             val flow = Flow.input[Int]("a")
                 .input[String]("b")
                 .output("c")(ctx => ctx.a)
             val progress = FlowEngine.Progress.build(flow, Set("a"), Flow.Status.WaitingForInput("b"))
             assert(progress.nodeByName("a").get.status == FlowEngine.Progress.NodeStatus.Completed)
             assert(progress.nodeByName("b").get.status == FlowEngine.Progress.NodeStatus.WaitingForInput)
-            succeed
         }
     }
 
     "Progress.build with Sleeping status" - {
 
-        "marks the sleeping node as Sleeping" in run {
+        "marks the sleeping node as Sleeping" in {
             val until    = Instant.Epoch + 1.hour
             val progress = FlowEngine.Progress.build(linearFlow, Set("x", "y", "log"), Flow.Status.Sleeping("wait", until))
             assert(progress.nodeByName("wait").get.status == FlowEngine.Progress.NodeStatus.Sleeping(until))
-            succeed
         }
 
-        "non-matching sleep stays pending" in run {
+        "non-matching sleep stays pending" in {
             val flow = Flow.input[Int]("x")
                 .sleep("s1", 1.minute)
                 .sleep("s2", 2.minutes)
@@ -3085,28 +3073,25 @@ class FlowEngineTest extends Test:
             val progress = FlowEngine.Progress.build(flow, Set("x", "s1"), Flow.Status.Sleeping("s2", until))
             assert(progress.nodeByName("s1").get.status == FlowEngine.Progress.NodeStatus.Completed)
             assert(progress.nodeByName("s2").get.status == FlowEngine.Progress.NodeStatus.Sleeping(until))
-            succeed
         }
     }
 
     "Progress.nodeByName" - {
 
-        "finds existing node" in run {
+        "finds existing node" in {
             val progress = FlowEngine.Progress.build(linearFlow, Set.empty, Flow.Status.Running)
             val node     = progress.nodeByName("x")
             assert(node.isDefined)
             assert(node.get.name == "x")
             assert(node.get.nodeType == FlowEngine.Progress.NodeType.Input)
-            succeed
         }
 
-        "returns empty for missing name" in run {
+        "returns empty for missing name" in {
             val progress = FlowEngine.Progress.build(linearFlow, Set.empty, Flow.Status.Running)
             assert(progress.nodeByName("nonexistent").isEmpty)
-            succeed
         }
 
-        "finds all node types" in run {
+        "finds all node types" in {
             val flow = Flow.input[Int]("x")
                 .dispatch[String]("d")
                 .when(ctx => ctx.x > 0, name = "yes")(ctx => "yes")
@@ -3116,33 +3101,30 @@ class FlowEngineTest extends Test:
             assert(progress.nodeByName("x").get.nodeType == FlowEngine.Progress.NodeType.Input)
             assert(progress.nodeByName("d").get.nodeType == FlowEngine.Progress.NodeType.Dispatch)
             assert(progress.nodeByName("r").get.nodeType == FlowEngine.Progress.NodeType.Loop)
-            succeed
         }
     }
 
     "Progress.completedCount and totalCount" - {
 
-        "empty progress" in run {
+        "empty progress" in {
             val progress = FlowEngine.Progress.empty
             assert(progress.completedCount == 0)
             assert(progress.totalCount == 0)
-            succeed
         }
 
-        "complex flow with zip" in run {
+        "complex flow with zip" in {
             val left     = Flow.input[Int]("a").output("b")(ctx => ctx.a)
             val right    = Flow.input[Int]("c").output("d")(ctx => ctx.c)
             val flow     = left.zip(right)
             val progress = FlowEngine.Progress.build(flow, Set("a", "b"), Flow.Status.Running)
             assert(progress.completedCount == 2)
             assert(progress.totalCount == 4)
-            succeed
         }
     }
 
     "Progress loop iteration detection" - {
 
-        "loop node shows Completed when only iteration-indexed steps are in completedSteps" in run {
+        "loop node shows Completed when only iteration-indexed steps are in completedSteps" in {
             val flow = Flow.input[Int]("x")
                 .loop("result") { ctx => Loop.done(ctx.x - 1) }
             val completedSteps = Set("x", "result#0", "result#1", "result#2")
@@ -3150,37 +3132,34 @@ class FlowEngineTest extends Test:
             val resultNode     = progress.nodeByName("result")
             assert(resultNode.isDefined)
             assert(resultNode.get.status == FlowEngine.Progress.NodeStatus.Completed)
-            succeed
         }
     }
 
     "Progress running and failed status" - {
 
-        "first non-completed node shows Running when flow status is Running" in run {
+        "first non-completed node shows Running when flow status is Running" in {
             val progress = FlowEngine.Progress.build(linearFlow, Set.empty, Flow.Status.Running)
             assert(progress.nodeByName("x").get.status == FlowEngine.Progress.NodeStatus.Running)
-            succeed
         }
 
-        "last non-completed step shows Failed when flow status is Failed" in run {
+        "last non-completed step shows Failed when flow status is Failed" in {
             val progress = FlowEngine.Progress.build(linearFlow, Set("x"), Flow.Status.Failed("boom"))
             assert(progress.nodeByName("y").get.status == FlowEngine.Progress.NodeStatus.Failed("boom"))
-            succeed
         }
     }
 
     "Progress node location" - {
 
-        "location is populated" in run {
+        "location is populated" in {
             val progress = FlowEngine.Progress.build(linearFlow, Set.empty, Flow.Status.Running)
             progress.nodes.foreach(node => assert(node.location.nonEmpty))
-            succeed
+            ()
         }
     }
 
     "runner" - {
 
-        "runner handles Env effect in step body" in run {
+        "runner handles Env effect in step body" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .output("y") { ctx =>
@@ -3201,7 +3180,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "runner handles Var effect in step body" in run {
+        "runner handles Var effect in step body" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .output("y") { ctx =>
@@ -3228,7 +3207,7 @@ class FlowEngineTest extends Test:
 
     "isolate in parallel branches" - {
 
-        "zip branches should preserve Var state via Isolate" in run {
+        "zip branches should preserve Var state via Isolate" in {
             withEngine { (engine, store, tc) =>
                 val left = Flow.input[Int]("x").output("left") { ctx =>
                     val r: Int < Var[Int] = Var.update[Int](_ + ctx.x).andThen(Var.get[Int])
@@ -3259,7 +3238,7 @@ class FlowEngineTest extends Test:
             }
         }
 
-        "race branches should preserve Var state via Isolate" in run {
+        "race branches should preserve Var state via Isolate" in {
             withEngine { (engine, store, tc) =>
                 val fast = Flow.input[Int]("x").output("winner") { ctx =>
                     val r: Int < Var[Int] = Var.update[Int](_ + 100).andThen(Var.get[Int])
@@ -3292,7 +3271,7 @@ class FlowEngineTest extends Test:
 
     "worker fiber resilience" - {
 
-        "step that throws RuntimeException marks execution as Failed" in run {
+        "step that throws RuntimeException marks execution as Failed" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x")
                     .output("y") { ctx =>

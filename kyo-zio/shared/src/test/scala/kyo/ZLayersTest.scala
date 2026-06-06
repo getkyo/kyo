@@ -4,29 +4,20 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kyo.*
 import kyo.internal.LayerMacros.extractEnvs
-import org.scalatest.compatible.Assertion
-import scala.concurrent.Future
-import zio.Cause
-import zio.Runtime
 import zio.Scope as ZScope
 import zio.Tag as ZTag
-import zio.Unsafe
 import zio.ZIO
 import zio.ZLayer
 
-class ZLayersTest extends Test:
+class ZLayersTest extends kyo.test.Test[Any]:
 
-    def runZIO[T](v: zio.Task[T]): Future[T] =
-        zio.Unsafe.unsafe(implicit u =>
-            zio.Runtime.default.unsafe.runToFuture(v)
-        )
+    // Run the body THROUGH the ZIO runtime (preserving the kyo<->ZIO interop these tests cover), bridging the
+    // resulting Future back into a kyo computation so it can be a kyo-test leaf body.
+    def runZIO[T](v: zio.Task[T]): T < Async =
+        Async.fromFuture(zio.Unsafe.unsafe(implicit u => zio.Runtime.default.unsafe.runToFuture(v)))
 
-    def runKyo(v: => Assertion < (Abort[Throwable] & Async)): Future[Assertion] =
-        zio.Unsafe.unsafe(implicit u =>
-            zio.Runtime.default.unsafe.runToFuture(
-                ZIOs.run(v)
-            )
-        )
+    def runKyo(v: => Unit < (Abort[Throwable] & Async)): Unit < Async =
+        Async.fromFuture(zio.Unsafe.unsafe(implicit u => zio.Runtime.default.unsafe.runToFuture(ZIOs.run(v))))
 
     trait TestService:
         def getValue: Int
@@ -84,7 +75,10 @@ class ZLayersTest extends Test:
             Env.runLayer(klayer3)(Env.use[TestService](_.getValue)).map(value => assert(value == 2)).handle(Memo.run, Scope.run)
         }
 
-        def scopedTest(name: String)(expectedExit: zio.Exit[Any, Any])(effect: => Any < (Env[Int] & Abort[String] & Async)) =
+        def scopedTest(name: String)(expectedExit: zio.Exit[
+            Any,
+            Any
+        ])(effect: kyo.test.AssertScope ?=> Any < (Env[Int] & Abort[String] & Async)) =
             s"scoped - $name" in runKyo {
                 given CanEqual[zio.Exit[Any, Any], zio.Exit[Any, Any]] = CanEqual.derived
                 import zio.Exit

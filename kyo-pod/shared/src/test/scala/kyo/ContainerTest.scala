@@ -1,8 +1,8 @@
 package kyo
 
-class ContainerTest extends Test:
+class ContainerTest extends BasePodTest:
 
-    private def assertSuccess[A](r: Result[String, A]): A =
+    private def assertSuccess[A](r: Result[String, A])(using kyo.test.AssertScope): A =
         r match
             case Result.Success(v) => v
             case other             => fail(s"Expected Success but got: $other")
@@ -235,7 +235,7 @@ class ContainerTest extends Test:
         }
 
         // empty composite semantics and head-schedule selection
-        "empty composite passes trivially" in run {
+        "empty composite passes trivially" in {
             val hc = Container.HealthCheck.all()
             // NOTE: null.asInstanceOf[Container] is intentional — the empty composite never dereferences the container argument.
             // Keep this comment so a future reader understands the intent if the impl gains short-circuit logic.
@@ -408,13 +408,13 @@ class ContainerTest extends Test:
     "Summary.attach" in {
         // Compile-level check: the method exists on Summary and returns a Container effect.
         val _: Container.Summary => Container < (Async & Abort[ContainerException]) = _.attach
-        assert(true)
+        succeed("compile-level check: Summary.attach exists and returns a Container effect")
     }
 
     "currentBackendDescription" in {
         // Compile-level check: the method exists and returns the expected type.
         val _: String < (Async & Abort[ContainerException]) = Container.currentBackendDescription
-        assert(true)
+        succeed("compile-level check: currentBackendDescription exists and returns the expected type")
     }
 
     "BackendConfig.UnixSocket overloads" in {
@@ -436,25 +436,25 @@ class ContainerTest extends Test:
                 kyo.internal.HttpContainerBackend.parseHostUri(envName, value)
             )
 
-        "DOCKER_HOST=unix:///var/run/docker.sock returns the path" in run {
+        "DOCKER_HOST=unix:///var/run/docker.sock returns the path" in {
             parsed("DOCKER_HOST", "unix:///var/run/docker.sock").map { r =>
                 assert(r == Result.Success("/var/run/docker.sock"))
             }
         }
 
-        "DOCKER_HOST=/var/run/docker.sock (bare absolute path) returns it as-is" in run {
+        "DOCKER_HOST=/var/run/docker.sock (bare absolute path) returns it as-is" in {
             parsed("DOCKER_HOST", "/var/run/docker.sock").map { r =>
                 assert(r == Result.Success("/var/run/docker.sock"))
             }
         }
 
-        "CONTAINER_HOST=unix:///run/podman/podman.sock returns the path" in run {
+        "CONTAINER_HOST=unix:///run/podman/podman.sock returns the path" in {
             parsed("CONTAINER_HOST", "unix:///run/podman/podman.sock").map { r =>
                 assert(r == Result.Success("/run/podman/podman.sock"))
             }
         }
 
-        "DOCKER_HOST=tcp://localhost:2375 fails with TCP message" in run {
+        "DOCKER_HOST=tcp://localhost:2375 fails with TCP message" in {
             parsed("DOCKER_HOST", "tcp://localhost:2375").map {
                 case Result.Failure(e: ContainerBackendUnavailableException) =>
                     val msg = e.reason
@@ -464,7 +464,7 @@ class ContainerTest extends Test:
             }
         }
 
-        "CONTAINER_HOST=ssh://user@host fails with SSH message" in run {
+        "CONTAINER_HOST=ssh://user@host fails with SSH message" in {
             parsed("CONTAINER_HOST", "ssh://user@host").map {
                 case Result.Failure(e: ContainerBackendUnavailableException) =>
                     val msg = e.reason
@@ -474,7 +474,7 @@ class ContainerTest extends Test:
             }
         }
 
-        "DOCKER_HOST=npipe:////./pipe/docker_engine fails with named-pipe message" in run {
+        "DOCKER_HOST=npipe:////./pipe/docker_engine fails with named-pipe message" in {
             parsed("DOCKER_HOST", "npipe:////./pipe/docker_engine").map {
                 case Result.Failure(e: ContainerBackendUnavailableException) =>
                     val msg = e.reason.toLowerCase
@@ -486,7 +486,7 @@ class ContainerTest extends Test:
             }
         }
 
-        "DOCKER_HOST=fd://3 fails with fd message" in run {
+        "DOCKER_HOST=fd://3 fails with fd message" in {
             parsed("DOCKER_HOST", "fd://3").map {
                 case Result.Failure(e: ContainerBackendUnavailableException) =>
                     assert(e.reason.contains("fd"), s"expected 'fd' in: ${e.reason}")
@@ -494,7 +494,7 @@ class ContainerTest extends Test:
             }
         }
 
-        "DOCKER_HOST=localhost:2375 (no scheme) fails with unrecognized message" in run {
+        "DOCKER_HOST=localhost:2375 (no scheme) fails with unrecognized message" in {
             parsed("DOCKER_HOST", "localhost:2375").map {
                 case Result.Failure(e: ContainerBackendUnavailableException) =>
                     assert(
@@ -505,9 +505,11 @@ class ContainerTest extends Test:
             }
         }
 
-        "DOCKER_HOST=unix:// (empty path) fails" in run {
+        "DOCKER_HOST=unix:// (empty path) fails" in {
             parsed("DOCKER_HOST", "unix://").map {
-                case Result.Failure(_: ContainerBackendUnavailableException) => succeed
+                case Result.Failure(e: ContainerBackendUnavailableException) =>
+                    // The path is empty after stripping the unix:// prefix; verify the error message is surfaced.
+                    assert(e.getMessage.contains("Backend unavailable"))
                 case other => fail(s"Expected ContainerBackendUnavailableException, got $other")
             }
         }
@@ -526,22 +528,18 @@ class ContainerTest extends Test:
         "returns wire status when body is Absent" in {
             assert(canonicalStatus(500, Absent) == 500)
             assert(canonicalStatus(404, Absent) == 404)
-            succeed
         }
 
         "returns wire status when body is empty" in {
             assert(canonicalStatus(500, Present("")) == 500)
-            succeed
         }
 
         "returns wire status when body is not JSON" in {
             assert(canonicalStatus(500, Present("not json at all")) == 500)
-            succeed
         }
 
         "returns wire status when body has no response field (docker)" in {
             assert(canonicalStatus(404, Present("""{"message":"No such image: foo"}""")) == 404)
-            succeed
         }
 
         // Podman's docker-compat shim case — the wire status disagrees with the real condition.
@@ -549,26 +547,22 @@ class ContainerTest extends Test:
         "podman name conflict: HTTP 500 with response 409 in body returns 409" in {
             val body = """{"cause":"...","message":"container name X is already in use","response":409}"""
             assert(canonicalStatus(500, Present(body)) == 409)
-            succeed
         }
 
         "podman missing image: HTTP 403 with response 404 in body returns 404" in {
             val body = """{"cause":"...","message":"no such image","response":404}"""
             assert(canonicalStatus(403, Present(body)) == 404)
-            succeed
         }
 
         "out-of-range response field falls back to wire status" in {
             assert(canonicalStatus(500, Present("""{"response":99}""")) == 500)
             assert(canonicalStatus(500, Present("""{"response":700}""")) == 500)
             assert(canonicalStatus(500, Present("""{"response":-1}""")) == 500)
-            succeed
         }
 
         "valid response field at boundaries is honoured" in {
             assert(canonicalStatus(500, Present("""{"response":100}""")) == 100)
             assert(canonicalStatus(500, Present("""{"response":599}""")) == 599)
-            succeed
         }
 
         // Real CI capture from rootless podman: the shim returns wire 500 AND
@@ -579,32 +573,27 @@ class ContainerTest extends Test:
         "cause field 'already in use' overrides wire+response 500 to 409" in {
             val body = """{"cause":"that name is already in use","message":"container name X is already in use","response":500}"""
             assert(canonicalStatus(500, Present(body)) == 409)
-            succeed
         }
 
         "message field 'no such image' on docker (no response field) returns 404" in {
             val body = """{"message":"No such image: foo:latest"}"""
             assert(canonicalStatus(404, Present(body)) == 404)
-            succeed
         }
 
         "manifest unknown phrase returns 404" in {
             val body = """{"message":"manifest unknown for image foo"}"""
             assert(canonicalStatus(500, Present(body)) == 404)
-            succeed
         }
 
         "no such container in cause returns 404" in {
             val body = """{"cause":"no such container","message":"some wrapper"}"""
             assert(canonicalStatus(500, Present(body)) == 404)
-            succeed
         }
 
         "cause/message takes precedence over response field" in {
             // response says 500 but cause says conflict — cause wins
             val body = """{"cause":"that name is already in use","response":500}"""
             assert(canonicalStatus(500, Present(body)) == 409)
-            succeed
         }
     }
 
@@ -623,25 +612,21 @@ class ContainerTest extends Test:
             assert(parseState("removing") == Container.State.Removing)
             assert(parseState("exited") == Container.State.Stopped)
             assert(parseState("dead") == Container.State.Dead)
-            succeed
         }
 
         "podman pre-start states map to Created" in {
             assert(parseState("configured") == Container.State.Created)
             assert(parseState("initialized") == Container.State.Created)
-            succeed
         }
 
         "case-insensitive" in {
             assert(parseState("RUNNING") == Container.State.Running)
             assert(parseState("Configured") == Container.State.Created)
-            succeed
         }
 
         "unknown states default to Stopped" in {
             assert(parseState("unknown-state-xyz") == Container.State.Stopped)
             assert(parseState("") == Container.State.Stopped)
-            succeed
         }
     }
 
@@ -771,7 +756,7 @@ class ContainerTest extends Test:
                 def architecture()(using AllowUnsafe): kyo.System.Arch  = kyo.System.Arch.X86_64
                 def availableProcessors()(using AllowUnsafe): Int       = 1)
 
-        "XDG_RUNTIME_DIR/containers/auth.json is consulted when present" in run {
+        "XDG_RUNTIME_DIR/containers/auth.json is consulted when present" in {
             val tmpRoot    = Path("/tmp/kyo-xdg-" + java.util.UUID.randomUUID)
             val containers = tmpRoot / "containers"
             for
@@ -791,7 +776,7 @@ class ContainerTest extends Test:
             end for
         }
 
-        "malformed JSON yields empty auth Dict (no panic)" in run {
+        "malformed JSON yields empty auth Dict (no panic)" in {
             val tmpRoot    = Path("/tmp/kyo-xdg-bad-" + java.util.UUID.randomUUID)
             val containers = tmpRoot / "containers"
             for
@@ -809,7 +794,7 @@ class ContainerTest extends Test:
             end for
         }
 
-        "missing file yields empty auth Dict (no panic)" in run {
+        "missing file yields empty auth Dict (no panic)" in {
             val auth = kyo.System.let(systemWith(
                 envOverrides = Map("XDG_RUNTIME_DIR" -> "/tmp/kyo-no-such-xdg-dir", "DOCKER_CONFIG" -> ""),
                 propsOverrides = Map("user.home" -> "/nonexistent")
@@ -970,13 +955,13 @@ class ContainerTest extends Test:
                 .tmpfs(Path("/d"))
             assert(config.mounts.size == 3)
             config.mounts(0) match
-                case _: Container.Config.Mount.Bind => succeed
+                case _: Container.Config.Mount.Bind => ()
                 case other                          => fail(s"Expected Bind mount, got $other")
             config.mounts(1) match
-                case _: Container.Config.Mount.Volume => succeed
+                case _: Container.Config.Mount.Volume => ()
                 case other                            => fail(s"Expected Volume mount, got $other")
             config.mounts(2) match
-                case _: Container.Config.Mount.Tmpfs => succeed
+                case _: Container.Config.Mount.Tmpfs => ()
                 case other                           => fail(s"Expected Tmpfs mount, got $other")
         }
 

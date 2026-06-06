@@ -1,25 +1,27 @@
 package kyo
 
-class CheckTest extends Test:
+class CheckTest extends kyo.test.Test[Any]:
 
     "apply" - {
         "with message" - {
-            "passes when condition is true" in run {
-                Check.runDiscard(Check.require(true, "This should pass").map(_ => succeed))
+            "passes when condition is true" in {
+                Check.runDiscard(Check.require(true, "This should pass").map(_ => ()))
+                succeed("Check.require(true) completed without raising a CheckFailed")
             }
 
-            "fails when condition is false" in run {
+            "fails when condition is false" in {
                 Abort.run(Check.runAbort(Check.require(false, "This should fail"))).map { r =>
                     assert(r.failure.get.asInstanceOf[CheckFailed].message == "This should fail")
                 }
             }
         }
         "no message" - {
-            "passes when condition is true" in run {
-                Check.runDiscard(Check.require(true).map(_ => succeed))
+            "passes when condition is true" in {
+                Check.runDiscard(Check.require(true).map(_ => ()))
+                succeed("Check.require(true) completed without raising a CheckFailed")
             }
 
-            "fails when condition is false" in run {
+            "fails when condition is false" in {
                 Abort.run(Check.runAbort(Check.require(false))).map { r =>
                     assert(r.failure.get.asInstanceOf[CheckFailed].message == "")
                 }
@@ -28,7 +30,7 @@ class CheckTest extends Test:
     }
 
     "runAbort" - {
-        "returns success for passing checks" in run {
+        "returns success for passing checks" in {
             val result = Check.runAbort {
                 for
                     _ <- Check.require(true, "This should pass")
@@ -38,7 +40,7 @@ class CheckTest extends Test:
             Abort.run(result).map(r => assert(r == Result.succeed("All checks passed")))
         }
 
-        "returns failure for failing checks" in run {
+        "returns failure for failing checks" in {
             val result = Check.runAbort {
                 for
                     _ <- Check.require(true, "This should pass")
@@ -53,7 +55,7 @@ class CheckTest extends Test:
     }
 
     "runChunk" - {
-        "collects all check failures" in run {
+        "collects all check failures" in {
             val result = Check.runChunk {
                 for
                     _ <- Check.require(false, "First failure")
@@ -71,7 +73,7 @@ class CheckTest extends Test:
     }
 
     "runDiscard" - {
-        "discards check failures and continues execution" in run {
+        "discards check failures and continues execution" in {
             val result = Check.runDiscard {
                 for
                     _ <- Check.require(false, "This failure is discarded")
@@ -82,7 +84,7 @@ class CheckTest extends Test:
         }
     }
 
-    "multiple checks" in run {
+    "multiple checks" in {
         val result = Check.runChunk {
             for
                 _ <- Check.require(true, "This should pass")
@@ -99,7 +101,7 @@ class CheckTest extends Test:
         }
     }
 
-    "checks with effects" in run {
+    "checks with effects" in {
         val result = Env.run(5) {
             Check.runChunk {
                 for
@@ -116,7 +118,7 @@ class CheckTest extends Test:
         }
     }
 
-    "combining with other effects" in run {
+    "combining with other effects" in {
         val result = Var.run(0) {
             Check.runChunk {
                 for
@@ -134,7 +136,7 @@ class CheckTest extends Test:
     }
 
     "isolate" - {
-        "combines failures from isolated and outer scopes" in run {
+        "combines failures from isolated and outer scopes" in {
             val result = Check.runChunk {
                 for
                     _ <- Check.require(false, "Outer failure 1")
@@ -158,7 +160,7 @@ class CheckTest extends Test:
             }
         }
 
-        "proper state restoration after nested isolations" in run {
+        "proper state restoration after nested isolations" in {
             val result = Check.runChunk {
                 for
                     _ <- Check.require(false, "Start failure")
@@ -184,7 +186,7 @@ class CheckTest extends Test:
         }
 
         "composition" - {
-            "can combine multiple isolates" in run {
+            "can combine multiple isolates" in {
                 val i1 = Isolate[Check, Any, Check]
                 val i2 = Emit.isolate.merge[String]
 
@@ -208,7 +210,7 @@ class CheckTest extends Test:
                 }
             }
 
-            "with Var isolate" in run {
+            "with Var isolate" in {
                 val isolate = Isolate[Check, Any, Check].andThen(Var.isolate.update[Int])
 
                 val result = Check.runChunk {

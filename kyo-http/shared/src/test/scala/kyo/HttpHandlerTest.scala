@@ -3,7 +3,7 @@ package kyo
 import kyo.*
 import scala.language.implicitConversions
 
-class HttpHandlerTest extends Test:
+class HttpHandlerTest extends BaseHttpTest:
 
     import HttpPath.*
 
@@ -18,7 +18,7 @@ class HttpHandlerTest extends Test:
                 HttpResponse.ok.addField("body", "hello")
             }
             val _: HttpHandler[Any, "body" ~ String, Nothing] = handler
-            succeed
+            succeed("compile-time type check: handler has the expected HttpHandler type")
         }
 
         "preserves In type from path captures and request fields" in {
@@ -31,7 +31,7 @@ class HttpHandlerTest extends Test:
                 HttpResponse.ok.addField("body", User(1, "alice"))
             }
             val _: HttpHandler["id" ~ Int & "include" ~ String, "body" ~ User, Nothing] = handler
-            succeed
+            succeed("compile-time type check: handler In/Out types are correctly inferred")
         }
 
         "preserves Out type with multiple response fields" in {
@@ -43,7 +43,7 @@ class HttpHandlerTest extends Test:
                     .addField("etag", "abc")
             }
             val _: HttpHandler[Any, "body" ~ User & "etag" ~ String, Nothing] = handler
-            succeed
+            succeed("compile-time type check: Out type includes both body and etag fields")
         }
 
         "handler can use Abort[HttpResponse.Halt]" in {
@@ -53,7 +53,7 @@ class HttpHandlerTest extends Test:
                 Abort.fail(HttpResponse.Halt(HttpResponse.unauthorized))
             }
             val _: HttpHandler[Any, "body" ~ String, Nothing] = handler
-            succeed
+            succeed("compile-time type check: handler accepting Abort[HttpResponse.Halt] is valid")
         }
 
         "error accumulation on route" in {
@@ -65,7 +65,7 @@ class HttpHandlerTest extends Test:
                 HttpResponse.ok.addField("body", "hello")
             }
             val _: HttpHandler[Any, "body" ~ String, String | Int] = handler
-            succeed
+            succeed("compile-time type check: error union type is correctly accumulated")
         }
 
         "filter E accumulates with route E" in {
@@ -84,7 +84,7 @@ class HttpHandlerTest extends Test:
                 HttpResponse.ok.addField("body", "hello")
             }
             val _: HttpHandler[Any, "body" ~ String, String] = handler
-            succeed
+            succeed("compile-time type check: filter E accumulates into handler E type")
         }
 
         "filter-added request fields are accessible in handler" in {
@@ -104,7 +104,7 @@ class HttpHandlerTest extends Test:
                 HttpResponse.ok.addField("body", user)
             }
             val _: HttpHandler["user" ~ String, "body" ~ String, Nothing] = handler
-            succeed
+            succeed("compile-time type check: filter-added request fields are in In type")
         }
 
         "filter-added fields survive request builder chaining" in {
@@ -126,7 +126,7 @@ class HttpHandlerTest extends Test:
                 HttpResponse.ok.addField("body", "ok")
             }
             val _: HttpHandler["user" ~ String & "page" ~ Int, "body" ~ String, Nothing] = handler
-            succeed
+            succeed("compile-time type check: filter fields survive request builder chaining")
         }
     }
 
@@ -134,12 +134,12 @@ class HttpHandlerTest extends Test:
 
         "default path" in {
             val _: HttpHandler[Any, "body" ~ String, Nothing] = HttpHandler.health()
-            succeed
+            succeed("compile-time type check: health() returns the correct handler type")
         }
 
         "custom path" in {
             val _: HttpHandler[Any, "body" ~ String, Nothing] = HttpHandler.health("healthz")
-            succeed
+            succeed("compile-time type check: health() with custom path returns the correct type")
         }
     }
 
@@ -200,7 +200,7 @@ class HttpHandlerTest extends Test:
                 Abort.fail("bad request")
             }
             val _: HttpHandler[Any, Any, String] = handler
-            succeed
+            succeed("compile-time type check: error type parameter flows into handler E")
         }
     }
 
@@ -229,7 +229,7 @@ class HttpHandlerTest extends Test:
             }
 
             val _: HttpRoute[Any, "body" ~ String, ?] = handler.route
-            succeed
+            succeed("compile-time type check: handler.route retains the route's error type")
         }
     }
 

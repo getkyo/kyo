@@ -25,7 +25,7 @@ class PageDownloadTest extends kyo.BrowserTest:
 
     // `PageDownload.setDownloadBehavior(client, Allow, Present(tempDir))` causes CDP to emit
     // `Page.downloadWillBegin` when a download is triggered.
-    "setDownloadBehavior(Allow) causes CDP to emit Page.downloadWillBegin on a download" in run {
+    "setDownloadBehavior(Allow) causes CDP to emit Page.downloadWillBegin on a download" in {
         withBrowser {
             Browser.use { tab =>
                 val session = tab.client.withSession(tab.sessionId)
@@ -64,7 +64,7 @@ class PageDownloadTest extends kyo.BrowserTest:
 
     // downloadWillBegin carries a `guid`; a subsequent downloadProgress event with the same `guid`
     // and `state = "completed"` eventually arrives.
-    "downloadWillBegin and downloadProgress share the same guid and reach state=completed" in run {
+    "downloadWillBegin and downloadProgress share the same guid and reach state=completed" in {
         withBrowser {
             Browser.use { tab =>
                 val session = tab.client.withSession(tab.sessionId)
@@ -125,7 +125,7 @@ class PageDownloadTest extends kyo.BrowserTest:
 
     // The PageDownload wrapper must surface BrowserConnectionException as a typed Abort (never a raw string / panic) when the
     // protocol call fails; e.g. issued against a CdpClient whose WebSocket has been closed.
-    "setDownloadBehavior propagates BrowserConnectionException via typed Abort on a closed client" in run {
+    "setDownloadBehavior propagates BrowserConnectionException via typed Abort on a closed client" in {
         SharedChrome.init.map { wsUrl =>
             for
                 client <- CdpClient.initUnscoped(wsUrl, Browser.LaunchConfig.default)
@@ -134,7 +134,8 @@ class PageDownloadTest extends kyo.BrowserTest:
                     PageDownload.setDownloadBehavior(client, PageDownload.Behavior.Default, Absent)
                 )
             yield result match
-                case Result.Failure(_: BrowserConnectionException) => succeed
+                case Result.Failure(_: BrowserConnectionException) =>
+                    succeed("PageDownload.setDownloadBehavior on a closed client surfaces as a typed BrowserConnectionException")
                 case other => fail(s"expected PageDownload wrapper to fail with BrowserConnectionException but got $other")
             end for
         }

@@ -1,10 +1,13 @@
 package kyo
 
 import kyo.internal.TestSupport.*
-import org.scalatest.Assertions
-import org.scalatest.freespec.AnyFreeSpec
 
-class PatMatchTest extends AnyFreeSpec with Assertions:
+class PatMatchTest extends kyo.test.Test[Any]:
+
+    // runLiftTest asserts by throwing (value comparison outside the kyo.test assert macros),
+    // so the no-assertion counter sees zero. Disable the check for this suite.
+    override def config = super.config.failOnNoAssertion(false)
+
     "unlifted scrutinee" - {
         "without guards" - {
             "pure cases" in {

@@ -10,9 +10,9 @@ import kyo.*
   *
   * All scenarios are pure (no browser, no I/O).
   */
-class BrowserSnapshotTest extends kyo.Test:
+class BrowserSnapshotTest extends kyo.BaseBrowserTest:
 
-    "decodeSnapshotEnvelope round-trips a well-formed envelope, preserving every field verbatim" in run {
+    "decodeSnapshotEnvelope round-trips a well-formed envelope, preserving every field verbatim" in {
         val wire = """{
           "url":"https://example.test/page",
           "localStorage":{"k1":"v1","k2":"v2"},
@@ -40,7 +40,7 @@ class BrowserSnapshotTest extends kyo.Test:
         }
     }
 
-    "decodeSnapshotEnvelope applies Schema defaults for an empty envelope: scrollX/Y=0, storage/formFields empty, strings empty" in run {
+    "decodeSnapshotEnvelope applies Schema defaults for an empty envelope: scrollX/Y=0, storage/formFields empty, strings empty" in {
         val wire = """{}"""
         Abort.run[BrowserReadException](BrowserSnapshot.decodeSnapshotEnvelope(wire)).map {
             case Result.Success(env) =>
@@ -56,7 +56,7 @@ class BrowserSnapshotTest extends kyo.Test:
         }
     }
 
-    "decodeSnapshotEnvelope applies the missing-field default for a partially-populated envelope (about:blank case)" in run {
+    "decodeSnapshotEnvelope applies the missing-field default for a partially-populated envelope (about:blank case)" in {
         // about:blank pages have no scrollX/Y, no storage, no form fields, but the URL is still present.
         val wire = """{"url":"about:blank"}"""
         Abort.run[BrowserReadException](BrowserSnapshot.decodeSnapshotEnvelope(wire)).map {
@@ -70,7 +70,7 @@ class BrowserSnapshotTest extends kyo.Test:
         }
     }
 
-    "decodeSnapshotEnvelope surfaces malformed JSON as BrowserProtocolErrorException (no silent zero-snapshot)" in run {
+    "decodeSnapshotEnvelope surfaces malformed JSON as BrowserProtocolErrorException (no silent zero-snapshot)" in {
         val wire = "this is definitely not json"
         Abort.run[BrowserReadException](BrowserSnapshot.decodeSnapshotEnvelope(wire)).map {
             case Result.Failure(ex: BrowserProtocolErrorException) =>
@@ -83,7 +83,7 @@ class BrowserSnapshotTest extends kyo.Test:
         }
     }
 
-    "decodeSnapshotEnvelope surfaces a wire whose typed field is the wrong type as BrowserProtocolErrorException" in run {
+    "decodeSnapshotEnvelope surfaces a wire whose typed field is the wrong type as BrowserProtocolErrorException" in {
         // `scrollX` is typed Int; supplying a string for it forces a Schema-decode failure rather
         // than a silent fall-through to the field's default.
         val wire = """{"scrollX":"not-a-number"}"""

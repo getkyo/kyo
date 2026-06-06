@@ -160,9 +160,45 @@ private[kyo] object KeyInfo:
             case "\uE009" => ControlKey
             case "\uE00A" => AltKey
             case "\uE03D" => MetaKey
+            case other if other.length == 1 =>
+                val (code, vk) = physicalKey(other.charAt(0))
+                KeyInfo(other, vk, Maybe(other), code, 0)
             case other =>
-                val code = other.headOption.map(_.toInt).getOrElse(0)
-                KeyInfo(other, code, Maybe(other), other, 0)
+                KeyInfo(other, 0, Maybe(other), other, 0)
     end mapKey
+
+    /** Physical DOM `code` and `windowsVirtualKeyCode` for a printable US-QWERTY character. Chrome rejects a `code` it does not
+      * recognize, so synthetic key dispatch must use the real physical code ("KeyX", "Digit1", "Period", ...) rather than the typed
+      * character. Shifted variants share the unshifted key's code and keycode ('!' and '1' are both Digit1 / 49). Non-ASCII characters
+      * fall back to the character itself with codepoint 0.
+      */
+    private def physicalKey(c: Char): (String, Int) =
+        c match
+            case l if l >= 'a' && l <= 'z' => (s"Key${l.toUpper}", l.toUpper.toInt)
+            case u if u >= 'A' && u <= 'Z' => (s"Key$u", u.toInt)
+            case d if d >= '0' && d <= '9' => (s"Digit$d", d.toInt)
+            case '`' | '~'                 => ("Backquote", 192)
+            case '!'                       => ("Digit1", 49)
+            case '@'                       => ("Digit2", 50)
+            case '#'                       => ("Digit3", 51)
+            case '$'                       => ("Digit4", 52)
+            case '%'                       => ("Digit5", 53)
+            case '^'                       => ("Digit6", 54)
+            case '&'                       => ("Digit7", 55)
+            case '*'                       => ("Digit8", 56)
+            case '('                       => ("Digit9", 57)
+            case ')'                       => ("Digit0", 48)
+            case '-' | '_'                 => ("Minus", 189)
+            case '=' | '+'                 => ("Equal", 187)
+            case '[' | '{'                 => ("BracketLeft", 219)
+            case ']' | '}'                 => ("BracketRight", 221)
+            case '\\' | '|'                => ("Backslash", 220)
+            case ';' | ':'                 => ("Semicolon", 186)
+            case '\'' | '"'                => ("Quote", 222)
+            case ',' | '<'                 => ("Comma", 188)
+            case '.' | '>'                 => ("Period", 190)
+            case '/' | '?'                 => ("Slash", 191)
+            case _                         => (c.toString, c.toInt)
+    end physicalKey
 
 end KeyInfo

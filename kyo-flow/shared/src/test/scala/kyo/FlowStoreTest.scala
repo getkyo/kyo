@@ -1,6 +1,6 @@
 package kyo
 
-abstract class FlowStoreTest extends Test:
+abstract class FlowStoreTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -38,7 +38,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "I1 — claim exclusivity" - {
 
-        "two concurrent claimReady, 1 ready — exactly one gets it" in run {
+        "two concurrent claimReady, 1 ready — exactly one gets it" in {
             makeStore.map { store =>
                 for
                     _ <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -54,7 +54,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "repeated calls with same executor get different executions" in run {
+        "repeated calls with same executor get different executions" in {
             makeStore.map { store =>
                 for
                     _      <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -74,7 +74,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "I2 — atomic status + event" - {
 
-        "updateStatus: getExecution and getHistory both reflect change" in run {
+        "updateStatus: getExecution and getHistory both reflect change" in {
             makeStore.map { store =>
                 for
                     _   <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -100,7 +100,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "I3 — atomic field check-and-write" - {
 
-        "two concurrent putFieldIfAbsent, same key — exactly one returns true" in run {
+        "two concurrent putFieldIfAbsent, same key — exactly one returns true" in {
             makeStore.map { store =>
                 for
                     _ <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -117,7 +117,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "winner's value is the one persisted" in run {
+        "winner's value is the one persisted" in {
             makeStore.map { store =>
                 for
                     _      <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -137,7 +137,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "I4 — claim lease integrity" - {
 
-        "A expires, B claims, A renewClaim → false" in run {
+        "A expires, B claims, A renewClaim → false" in {
             Clock.withTimeControl { tc =>
                 makeStore.map { store =>
                     for
@@ -153,7 +153,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "A renews before expiry → true, expiry extended" in run {
+        "A renews before expiry → true, expiry extended" in {
             makeStore.map { store =>
                 for
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -163,7 +163,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "B tries renewClaim on A's valid claim → false" in run {
+        "B tries renewClaim on A's valid claim → false" in {
             makeStore.map { store =>
                 for
                     _      <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -179,7 +179,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "I5 — terminal irreversibility" - {
 
-        "updateStatus on Completed with Running → stays Completed" in run {
+        "updateStatus on Completed with Running → stays Completed" in {
             makeStore.map { store =>
                 for
                     now   <- Clock.now
@@ -190,7 +190,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "updateStatus on Failed → stays Failed" in run {
+        "updateStatus on Failed → stays Failed" in {
             makeStore.map { store =>
                 for
                     now   <- Clock.now
@@ -203,7 +203,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "claimReady never returns Completed, Failed, or Cancelled" in run {
+        "claimReady never returns Completed, Failed, or Cancelled" in {
             makeStore.map { store =>
                 for
                     now     <- Clock.now
@@ -221,7 +221,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "I6 — read-your-writes" - {
 
-        "putField then getField → returns value" in run {
+        "putField then getField → returns value" in {
             makeStore.map { store =>
                 for
                     _ <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -231,7 +231,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "updateStatus then getExecution → returns new status" in run {
+        "updateStatus then getExecution → returns new status" in {
             makeStore.map { store =>
                 for
                     _     <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -242,7 +242,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "appendEvent then getHistory → event appears" in run {
+        "appendEvent then getHistory → event appears" in {
             makeStore.map { store =>
                 for
                     _   <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -259,7 +259,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "I7 — event ordering" - {
 
-        "three sequential appendEvent → getHistory returns in order" in run {
+        "three sequential appendEvent → getHistory returns in order" in {
             makeStore.map { store =>
                 for
                     _   <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -283,7 +283,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "I8 — readiness correctness" - {
 
-        "Sleeping with until in the future → not returned" in run {
+        "Sleeping with until in the future → not returned" in {
             makeStore.map { store =>
                 for
                     now <- Clock.now
@@ -297,7 +297,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "Sleeping with until in the past → returned" in run {
+        "Sleeping with until in the past → returned" in {
             Clock.withTimeControl { tc =>
                 makeStore.map { store =>
                     for
@@ -315,7 +315,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "WaitingForInput with field absent → not returned" in run {
+        "WaitingForInput with field absent → not returned" in {
             makeStore.map { store =>
                 for
                     now <- Clock.now
@@ -329,7 +329,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "WaitingForInput with field present → returned" in run {
+        "WaitingForInput with field present → returned" in {
             makeStore.map { store =>
                 for
                     now <- Clock.now
@@ -345,7 +345,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "Running unclaimed → returned" in run {
+        "Running unclaimed → returned" in {
             makeStore.map { store =>
                 for
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -354,7 +354,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "Running claimed by another with valid lease → not returned" in run {
+        "Running claimed by another with valid lease → not returned" in {
             makeStore.map { store =>
                 for
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -364,7 +364,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "Running claimed by another with expired lease → returned" in run {
+        "Running claimed by another with expired lease → returned" in {
             Clock.withTimeControl { tc =>
                 makeStore.map { store =>
                     for
@@ -383,7 +383,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "I9 — claim sets executor and expiry" - {
 
-        "returned execution has executor = caller's ID" in run {
+        "returned execution has executor = caller's ID" in {
             makeStore.map { store =>
                 for
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -394,7 +394,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "claimExpiry is set" in run {
+        "claimExpiry is set" in {
             makeStore.map { store =>
                 for
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -409,7 +409,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "field operations" - {
 
-        "putField then getField returns the value" in run {
+        "putField then getField returns the value" in {
             makeStore.map { store =>
                 for
                     _ <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -419,7 +419,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "getField for absent name returns empty" in run {
+        "getField for absent name returns empty" in {
             makeStore.map { store =>
                 for
                     _ <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -428,7 +428,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "putField overwrites existing value" in run {
+        "putField overwrites existing value" in {
             makeStore.map { store =>
                 for
                     _ <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -439,7 +439,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "getAllFields returns all fields for an execution" in run {
+        "getAllFields returns all fields for an execution" in {
             makeStore.map { store =>
                 for
                     _   <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -453,7 +453,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "getAllFields returns empty map for unknown execution" in run {
+        "getAllFields returns empty map for unknown execution" in {
             makeStore.map { store =>
                 for
                     all <- store.getAllFields(Flow.Id.Execution("unknown"))
@@ -461,7 +461,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "different executions have separate fields" in run {
+        "different executions have separate fields" in {
             makeStore.map { store =>
                 for
                     _  <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -482,7 +482,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "putFieldIfAbsent" - {
 
-        "returns true and stores value when field is absent" in run {
+        "returns true and stores value when field is absent" in {
             makeStore.map { store =>
                 for
                     _     <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -494,7 +494,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "returns false and preserves original value when field exists" in run {
+        "returns false and preserves original value when field exists" in {
             makeStore.map { store =>
                 for
                     _     <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -507,7 +507,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "works correctly across different executions" in run {
+        "works correctly across different executions" in {
             makeStore.map { store =>
                 for
                     _  <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -526,7 +526,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "execution state" - {
 
-        "getExecution for unknown ID returns empty" in run {
+        "getExecution for unknown ID returns empty" in {
             makeStore.map { store =>
                 for
                     state <- store.getExecution(Flow.Id.Execution("unknown"))
@@ -534,7 +534,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "updateStatus creates execution if not exists" in run {
+        "updateStatus creates execution if not exists" in {
             makeStore.map { store =>
                 for
                     now   <- Clock.now
@@ -547,7 +547,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "multiple updateStatus calls append events in order" in run {
+        "multiple updateStatus calls append events in order" in {
             makeStore.map { store =>
                 for
                     now <- Clock.now
@@ -573,7 +573,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "status transitions: Running → Sleeping → Running → Completed" in run {
+        "status transitions: Running → Sleeping → Running → Completed" in {
             makeStore.map { store =>
                 for
                     now <- Clock.now
@@ -603,7 +603,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "event history" - {
 
-        "getHistory returns events in append order" in run {
+        "getHistory returns events in append order" in {
             makeStore.map { store =>
                 for
                     _   <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -619,7 +619,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "getHistory with limit returns at most N events" in run {
+        "getHistory with limit returns at most N events" in {
             makeStore.map { store =>
                 for
                     _   <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -634,7 +634,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "getHistory with offset skips events" in run {
+        "getHistory with offset skips events" in {
             makeStore.map { store =>
                 for
                     _   <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -650,7 +650,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "getHistory returns empty for unknown execution" in run {
+        "getHistory returns empty for unknown execution" in {
             makeStore.map { store =>
                 for
                     h <- store.getHistory(Flow.Id.Execution("unknown"), 100, 0)
@@ -666,7 +666,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "claimReady" - {
 
-        "returns empty when no executions exist" in run {
+        "returns empty when no executions exist" in {
             makeStore.map { store =>
                 for
                     results <- store.claimReady(Set(wf1), ex1, lease, 10, 100.millis)
@@ -674,7 +674,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "returns unclaimed Running execution" in run {
+        "returns unclaimed Running execution" in {
             makeStore.map { store =>
                 for
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -685,7 +685,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "does not return terminal executions" in run {
+        "does not return terminal executions" in {
             makeStore.map { store =>
                 for
                     now     <- Clock.now
@@ -695,7 +695,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "returns at most limit executions" in run {
+        "returns at most limit executions" in {
             makeStore.map { store =>
                 for
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -706,7 +706,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "filters by workflow IDs" in run {
+        "filters by workflow IDs" in {
             makeStore.map { store =>
                 for
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -724,7 +724,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "renewClaim" - {
 
-        "returns true and extends expiry for valid claim owner" in run {
+        "returns true and extends expiry for valid claim owner" in {
             makeStore.map { store =>
                 for
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -734,7 +734,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "returns false for non-owner" in run {
+        "returns false for non-owner" in {
             makeStore.map { store =>
                 for
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -744,7 +744,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "returns false after claim expired" in run {
+        "returns false after claim expired" in {
             Clock.withTimeControl { tc =>
                 makeStore.map { store =>
                     for
@@ -763,7 +763,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "releaseClaim" - {
 
-        "clears executor and claimExpiry for valid owner" in run {
+        "clears executor and claimExpiry for valid owner" in {
             makeStore.map { store =>
                 for
                     _     <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -776,7 +776,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "released execution becomes discoverable by claimReady" in run {
+        "released execution becomes discoverable by claimReady" in {
             makeStore.map { store =>
                 for
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -787,7 +787,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "no-op for non-owner" in run {
+        "no-op for non-owner" in {
             makeStore.map { store =>
                 for
                     _     <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -804,7 +804,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "listExecutions" - {
 
-        "returns executions for given flowId" in run {
+        "returns executions for given flowId" in {
             makeStore.map { store =>
                 for
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -815,7 +815,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "filters by status when provided" in run {
+        "filters by status when provided" in {
             makeStore.map { store =>
                 for
                     now     <- Clock.now
@@ -828,7 +828,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "respects limit and offset" in run {
+        "respects limit and offset" in {
             makeStore.map { store =>
                 for
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -839,7 +839,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "returns empty for unknown flowId" in run {
+        "returns empty for unknown flowId" in {
             makeStore.map { store =>
                 for
                     results <- store.listExecutions(Flow.Id.Workflow("unknown"), Maybe.empty, 100, 0)
@@ -862,7 +862,7 @@ abstract class FlowStoreTest extends Test:
             structuralHash = "abc123"
         )
 
-        "putWorkflow then getWorkflow returns the metadata" in run {
+        "putWorkflow then getWorkflow returns the metadata" in {
             makeStore.map { store =>
                 for
                     _ <- store.putWorkflow(testMeta)
@@ -871,7 +871,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "getWorkflow for unknown ID returns empty" in run {
+        "getWorkflow for unknown ID returns empty" in {
             makeStore.map { store =>
                 for
                     m <- store.getWorkflow(Flow.Id.Workflow("unknown"))
@@ -879,7 +879,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "listWorkflows returns all registered workflows" in run {
+        "listWorkflows returns all registered workflows" in {
             makeStore.map { store =>
                 for
                     _   <- store.putWorkflow(testMeta)
@@ -889,7 +889,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "putWorkflow overwrites existing workflow with same ID" in run {
+        "putWorkflow overwrites existing workflow with same ID" in {
             makeStore.map { store =>
                 for
                     _ <- store.putWorkflow(testMeta)
@@ -904,7 +904,7 @@ abstract class FlowStoreTest extends Test:
     // Additional missing scenarios from plan
     // =========================================================================
 
-    "I1 — 10 concurrent callers, 5 ready — all disjoint" in run {
+    "I1 — 10 concurrent callers, 5 ready — all disjoint" in {
         makeStore.map { store =>
             for
                 _ <- Kyo.foreach(1 to 5)(i => mkExecution(store, Flow.Id.Execution(s"e$i"), wf1, Flow.Status.Running))
@@ -917,7 +917,7 @@ abstract class FlowStoreTest extends Test:
         }
     }
 
-    "I7 — events from different callers on same execution" in run {
+    "I7 — events from different callers on same execution" in {
         makeStore.map { store =>
             for
                 _   <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -933,7 +933,7 @@ abstract class FlowStoreTest extends Test:
         }
     }
 
-    "field operations — getField with wrong type tag returns empty" in run {
+    "field operations — getField with wrong type tag returns empty" in {
         makeStore.map { store =>
             for
                 _ <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -943,7 +943,7 @@ abstract class FlowStoreTest extends Test:
         }
     }
 
-    "renewClaim — same executor can renew multiple times" in run {
+    "renewClaim — same executor can renew multiple times" in {
         makeStore.map { store =>
             for
                 _  <- mkExecution(store, eid1, wf1, Flow.Status.Running)
@@ -958,7 +958,7 @@ abstract class FlowStoreTest extends Test:
         }
     }
 
-    "execution state — WaitingForInput → Running → Failed" in run {
+    "execution state — WaitingForInput → Running → Failed" in {
         makeStore.map { store =>
             for
                 now <- Clock.now
@@ -978,7 +978,7 @@ abstract class FlowStoreTest extends Test:
         }
     }
 
-    "execution state — Running → Cancelled" in run {
+    "execution state — Running → Cancelled" in {
         makeStore.map { store =>
             for
                 now <- Clock.now
@@ -994,7 +994,7 @@ abstract class FlowStoreTest extends Test:
     // =========================================================================
     "claimReady blocking" - {
 
-        "returns empty on timeout when nothing ready" in run {
+        "returns empty on timeout when nothing ready" in {
             makeStore.map { store =>
                 for
                     results <- store.claimReady(Set(wf1), ex1, lease, 10, 100.millis)
@@ -1002,7 +1002,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "wakes when signal makes execution ready (putField on WaitingForInput)" in run {
+        "wakes when signal makes execution ready (putField on WaitingForInput)" in {
             Clock.withTimeControl { tc =>
                 makeStore.map { store =>
                     for
@@ -1018,7 +1018,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "wakes when status changes to Running via updateStatus" in run {
+        "wakes when status changes to Running via updateStatus" in {
             Clock.withTimeControl { tc =>
                 makeStore.map { store =>
                     for
@@ -1033,7 +1033,7 @@ abstract class FlowStoreTest extends Test:
             }
         }
 
-        "expired sleep found on next poll" in run {
+        "expired sleep found on next poll" in {
             Clock.withTimeControl { tc =>
                 makeStore.map { store =>
                     for

@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 
-class HttpMethodTest extends Test:
+class HttpMethodTest extends BaseHttpTest:
 
     "constants" - {
         "GET" in {

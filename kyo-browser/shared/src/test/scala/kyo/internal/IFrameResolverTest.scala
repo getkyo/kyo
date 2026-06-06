@@ -17,34 +17,34 @@ class IFrameResolverTest extends kyo.BrowserTest:
 
     override def timeout = 60.seconds
 
-    "resolveIFrameHandle aborts with BrowserElementNotFoundException for a selector that matches nothing" in run {
+    "resolveIFrameHandle aborts with BrowserElementNotFoundException for a selector that matches nothing" in {
         withBrowser {
             onPage("<body><h1>no frames</h1></body>") {
                 Abort.run[BrowserReadException] {
                     IFrameResolver.resolveIFrameHandle(Selector.id("missing"))
                 }.map {
-                    case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                    case Result.Failure(ex: BrowserElementNotFoundException) => assert(ex.getMessage.contains("Element not found"))
                     case other => fail(s"expected BrowserElementNotFoundException but got $other")
                 }
             }
         }
     }
 
-    "resolveIFrameHandle aborts with BrowserIFrameInvalidException(NotAFrame) for a selector that matches a non-frame element" in run {
+    "resolveIFrameHandle aborts with BrowserIFrameInvalidException(NotAFrame) for a selector that matches a non-frame element" in {
         withBrowser {
             onPage("<body><h1 id='heading'>not a frame</h1></body>") {
                 Abort.run[BrowserReadException] {
                     IFrameResolver.resolveIFrameHandle(Selector.id("heading"))
                 }.map {
                     case Result.Failure(BrowserIFrameInvalidException(Reason.NotAFrame)) =>
-                        succeed
+                        ()
                     case other => fail(s"expected BrowserIFrameInvalidException(NotAFrame) but got $other")
                 }
             }
         }
     }
 
-    "resolveIFrameHandle aborts with BrowserIFrameInvalidException(ContextNotObserved) when the frame's context has been drained from the per-tab map" in run {
+    "resolveIFrameHandle aborts with BrowserIFrameInvalidException(ContextNotObserved) when the frame's context has been drained from the per-tab map" in {
         // Standard parent-iframe page: the iframe attaches and the resolver pipeline can locate it,
         // but if we drain `frameContexts` of the iframe's executionContextId entry first, the resolver
         // path through `tab.frameContexts.get` must surface ContextNotObserved.
@@ -76,7 +76,7 @@ class IFrameResolverTest extends kyo.BrowserTest:
                                 IFrameResolver.resolveIFrameHandle(Selector.testId("frame"))
                             }.map {
                                 case Result.Failure(BrowserIFrameInvalidException(Reason.ContextNotObserved)) =>
-                                    succeed
+                                    ()
                                 case other => fail(s"expected BrowserIFrameInvalidException(ContextNotObserved) but got $other")
                             }
                         }

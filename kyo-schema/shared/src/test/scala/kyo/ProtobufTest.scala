@@ -6,7 +6,7 @@ import kyo.internal.CodecMacro
 import kyo.internal.ProtobufReader
 import kyo.internal.ProtobufWriter
 
-class ProtobufTest extends Test:
+class ProtobufTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -199,101 +199,101 @@ class ProtobufTest extends Test:
         }
 
         "ProtoSchema top-level Primitive throws IllegalArgumentException" in {
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(Structure.of[Int])
             }
         }
 
         "ProtoSchema top-level Collection throws IllegalArgumentException" in {
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(Structure.of[List[Int]])
             }
         }
 
         "ProtoSchema top-level Optional throws IllegalArgumentException" in {
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(Structure.of[Option[Int]])
             }
         }
 
         "ProtoSchema top-level Mapping throws IllegalArgumentException" in {
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(Structure.of[Map[String, Int]])
             }
         }
 
         "ProtoSchema List[Option[A]] field throws IllegalArgumentException" in {
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 ProtoSchema.from[MTListOfOption]
             }
         }
 
         "ProtoSchema List[List[A]] field throws IllegalArgumentException" in {
             case class ListOfList(values: List[List[Int]]) derives CanEqual
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(Structure.of[ListOfList])
             }
         }
 
         "ProtoSchema List[Map[K, V]] field throws IllegalArgumentException" in {
             case class ListOfMap(values: List[Map[String, Int]]) derives CanEqual
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(Structure.of[ListOfMap])
             }
         }
 
         "ProtoSchema Option[Option[A]] field throws IllegalArgumentException" in {
             case class NestedOption(value: Option[Option[Int]]) derives CanEqual
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(Structure.of[NestedOption])
             }
         }
 
         "ProtoSchema Option[List[A]] field throws IllegalArgumentException" in {
             case class OptionOfList(value: Option[List[Int]]) derives CanEqual
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(Structure.of[OptionOfList])
             }
         }
 
         "ProtoSchema Option[Map[K, V]] field throws IllegalArgumentException" in {
             case class OptionOfMap(value: Option[Map[String, Int]]) derives CanEqual
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(Structure.of[OptionOfMap])
             }
         }
 
         "ProtoSchema Map[K, Option[V]] field throws IllegalArgumentException" in {
             case class MapWithOptionValue(value: Map[String, Option[Int]]) derives CanEqual
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(Structure.of[MapWithOptionValue])
             }
         }
 
         "ProtoSchema Map[K, List[V]] field throws IllegalArgumentException" in {
             case class MapWithListValue(value: Map[String, List[Int]]) derives CanEqual
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(Structure.of[MapWithListValue])
             }
         }
 
         "ProtoSchema Map[K, Map[K2, V]] field throws IllegalArgumentException" in {
             case class MapWithMapValue(value: Map[String, Map[String, Int]]) derives CanEqual
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(Structure.of[MapWithMapValue])
             }
         }
 
         "ProtoSchema Map[Option[K], V] field throws IllegalArgumentException" in {
             case class MapWithOptionKey(value: Map[Option[String], Int]) derives CanEqual
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(Structure.of[MapWithOptionKey])
             }
         }
 
         "ProtoSchema Map[List[K], V] field throws IllegalArgumentException" in {
             case class MapWithListKey(value: Map[List[String], Int]) derives CanEqual
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(Structure.of[MapWithListKey])
             }
         }
@@ -457,7 +457,7 @@ class ProtobufTest extends Test:
             val r = new ProtobufReader(w.resultBytes)
             val _ = r.field()
             intercept[RangeException](r.short())
-            succeed
+            ()
         }
 
         "ProtobufReader.byte throws RangeException for out-of-range Int value" in {
@@ -467,7 +467,7 @@ class ProtobufTest extends Test:
             val r = new ProtobufReader(w.resultBytes)
             val _ = r.field()
             intercept[RangeException](r.byte())
-            succeed
+            ()
         }
 
         "ProtobufReader.char throws RangeException for negative Int value" in {
@@ -477,7 +477,7 @@ class ProtobufTest extends Test:
             val r = new ProtobufReader(w.resultBytes)
             val _ = r.field()
             intercept[RangeException](r.char())
-            succeed
+            ()
         }
 
         // --- ProtobufReader: TruncatedInputException ---
@@ -489,7 +489,7 @@ class ProtobufTest extends Test:
             val r    = new ProtobufReader(data)
             val _    = r.field()
             intercept[TruncatedInputException](r.string())
-            succeed
+            ()
         }
 
         "ProtobufReader.bytes throws TruncatedInputException when length prefix exceeds remaining data" in {
@@ -497,7 +497,7 @@ class ProtobufTest extends Test:
             val r    = new ProtobufReader(data)
             val _    = r.field()
             intercept[TruncatedInputException](r.bytes())
-            succeed
+            ()
         }
 
         "ProtobufReader.readVarint throws TruncatedInputException on unterminated varint" in {
@@ -505,7 +505,7 @@ class ProtobufTest extends Test:
             val data = Array[Byte](0x80.toByte, 0x80.toByte, 0x80.toByte)
             val r    = new ProtobufReader(data)
             intercept[TruncatedInputException](r.field())
-            succeed
+            ()
         }
 
         "ProtobufReader.readFixedLong throws TruncatedInputException when under 8 bytes remain" in {
@@ -514,7 +514,7 @@ class ProtobufTest extends Test:
             val r    = new ProtobufReader(data)
             val _    = r.field()
             intercept[TruncatedInputException](r.double())
-            succeed
+            ()
         }
 
         "ProtobufReader.readFixedInt throws TruncatedInputException when under 4 bytes remain" in {
@@ -523,7 +523,7 @@ class ProtobufTest extends Test:
             val r    = new ProtobufReader(data)
             val _    = r.field()
             intercept[TruncatedInputException](r.float())
-            succeed
+            ()
         }
 
         "ProtobufReader.objectStart throws TruncatedInputException when nested message length exceeds remaining" in {
@@ -532,7 +532,7 @@ class ProtobufTest extends Test:
             val r    = new ProtobufReader(data)
             val _    = r.field()
             intercept[TruncatedInputException](r.objectStart())
-            succeed
+            ()
         }
 
         "ProtobufReader.skip throws TruncatedInputException for fixed64 under 8 bytes remaining" in {
@@ -540,7 +540,7 @@ class ProtobufTest extends Test:
             val r    = new ProtobufReader(data)
             val _    = r.field()
             intercept[TruncatedInputException](r.skip())
-            succeed
+            ()
         }
 
         "ProtobufReader.skip throws TruncatedInputException for length-delimited with over-large length" in {
@@ -548,7 +548,7 @@ class ProtobufTest extends Test:
             val r    = new ProtobufReader(data)
             val _    = r.field()
             intercept[TruncatedInputException](r.skip())
-            succeed
+            ()
         }
 
         "ProtobufReader.skip throws TruncatedInputException for fixed32 under 4 bytes remaining" in {
@@ -556,7 +556,7 @@ class ProtobufTest extends Test:
             val r    = new ProtobufReader(data)
             val _    = r.field()
             intercept[TruncatedInputException](r.skip())
-            succeed
+            ()
         }
 
         // --- ProtobufReader: ParseException ---
@@ -568,7 +568,7 @@ class ProtobufTest extends Test:
             val r = new ProtobufReader(w.resultBytes)
             val _ = r.field()
             intercept[ParseException](r.bigInt())
-            succeed
+            ()
         }
 
         "ProtobufReader.bigDecimal throws ParseException on non-numeric payload" in {
@@ -578,7 +578,7 @@ class ProtobufTest extends Test:
             val r = new ProtobufReader(w.resultBytes)
             val _ = r.field()
             intercept[ParseException](r.bigDecimal())
-            succeed
+            ()
         }
 
         // --- Base Reader: LimitExceededException ---
@@ -587,7 +587,7 @@ class ProtobufTest extends Test:
             val r = new ProtobufReader(Array.emptyByteArray)
             r.resetLimits(maxDepth = 512, maxCollectionSize = 10)
             intercept[LimitExceededException](r.checkCollectionSize(11))
-            succeed
+            ()
         }
 
         "Protobuf.decode returns LimitExceededException when collection size exceeds limit" in {

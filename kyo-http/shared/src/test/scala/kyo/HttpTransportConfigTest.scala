@@ -1,6 +1,6 @@
 package kyo
 
-class HttpTransportConfigTest extends Test:
+class HttpTransportConfigTest extends BaseHttpTest:
 
     val client = internal.HttpTestPlatformBackend.client
 
@@ -17,7 +17,7 @@ class HttpTransportConfigTest extends Test:
             }
         }
 
-    "default config values match design doc" in runNotNative {
+    "default config values match design doc".notNative in {
         val config = HttpTransportConfig.default
         assert(config.channelCapacity == 4)
         assert(config.readChunkSize == 8192)
@@ -25,7 +25,7 @@ class HttpTransportConfigTest extends Test:
         assert(config.maxHeaderSize == 65536)
     }
 
-    "builder methods produce correct values" in runNotNative {
+    "builder methods produce correct values".notNative in {
         val config = HttpTransportConfig.default
             .channelCapacity(8)
             .readChunkSize(4096)
@@ -37,7 +37,7 @@ class HttpTransportConfigTest extends Test:
         assert(config.maxHeaderSize == 32768)
     }
 
-    "custom channelCapacity respected" in runNotNative {
+    "custom channelCapacity respected".notNative in {
         val tc     = HttpTransportConfig.default.channelCapacity(1)
         val config = HttpServerConfig.default.port(0).host("localhost").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
@@ -54,7 +54,7 @@ class HttpTransportConfigTest extends Test:
         }
     }
 
-    "custom readChunkSize respected" in runNotNative {
+    "custom readChunkSize respected".notNative in {
         val tc     = HttpTransportConfig.default.readChunkSize(512)
         val config = HttpServerConfig.default.port(0).host("localhost").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
@@ -71,7 +71,7 @@ class HttpTransportConfigTest extends Test:
         }
     }
 
-    "custom writeBatchSize respected" in runNotNative {
+    "custom writeBatchSize respected".notNative in {
         val tc     = HttpTransportConfig.default.writeBatchSize(2)
         val config = HttpServerConfig.default.port(0).host("localhost").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
@@ -88,7 +88,7 @@ class HttpTransportConfigTest extends Test:
         }
     }
 
-    "custom maxHeaderSize rejects oversized headers" in runNotNative {
+    "custom maxHeaderSize rejects oversized headers".notNative in {
         val tc     = HttpTransportConfig.default.maxHeaderSize(128)
         val config = HttpServerConfig.default.port(0).host("localhost").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
@@ -107,8 +107,8 @@ class HttpTransportConfigTest extends Test:
                         Async.timeout(5.seconds)(send(url, route, request))
                     ).map { result =>
                         result match
-                            case Result.Failure(_)    => assertionSuccess
-                            case Result.Panic(_)      => assertionSuccess
+                            case Result.Failure(_)    => succeed("expected: oversized headers cause error")
+                            case Result.Panic(_)      => succeed("expected: oversized headers cause panic")
                             case Result.Success(resp) =>
                                 // If we somehow get a response, it should be an error status
                                 assert(resp.status.isError || resp.status == HttpStatus.BadRequest)
@@ -118,7 +118,7 @@ class HttpTransportConfigTest extends Test:
         }
     }
 
-    "config propagated through HttpServerConfig" in runNotNative {
+    "config propagated through HttpServerConfig".notNative in {
         val tc = HttpTransportConfig.default
             .channelCapacity(2)
             .readChunkSize(1024)
@@ -141,7 +141,7 @@ class HttpTransportConfigTest extends Test:
         }
     }
 
-    "config propagated through HttpClientConfig" in runNotNative {
+    "config propagated through HttpClientConfig".notNative in {
         val tc = HttpTransportConfig.default
             .channelCapacity(2)
             .readChunkSize(1024)

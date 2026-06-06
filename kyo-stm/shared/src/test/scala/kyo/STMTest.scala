@@ -2,10 +2,16 @@ package kyo
 
 import scala.concurrent.Future
 
-class STMTest extends Test:
+class STMTest extends kyo.test.Test[Any]:
+
+    // Several `Tick.testOnlySet(...)` leaves assert exact values of the GLOBAL `STM.Tick` counter (a process-wide
+    // AtomicLong). A concurrently-running leaf's `STM.run` advances that shared counter and breaks those assertions, so
+    // this suite runs its leaves sequentially. The ScalaTest original ran sequentially (single-thread EC) for the same
+    // reason; per-suite `sequential` is the kyo-test mechanism for shared-global-state suites (not a framework default).
+    override def config = super.config.sequential
 
     "Transaction isolation" - {
-        "concurrent modifications" in run {
+        "concurrent modifications" in {
             for
                 ref    <- TRef.init(0)
                 fibers <- Async.fill(100, 100)(STM.run(ref.update(_ + 1)))
@@ -13,7 +19,7 @@ class STMTest extends Test:
             yield assert(value == 100)
         }
 
-        "no dirty reads" in run {
+        "no dirty reads" in {
             for
                 ref      <- TRef.init(0)
                 start    <- Latch.init(1)
@@ -35,7 +41,7 @@ class STMTest extends Test:
             yield assert(before == 0 && after == 42)
         }
 
-        "independent transactions don't interfere" in run {
+        "independent transactions don't interfere" in {
             for
                 ref1 <- TRef.init(10)
                 ref2 <- TRef.init(20)
@@ -54,7 +60,7 @@ class STMTest extends Test:
     }
 
     "Retry behavior" - {
-        "explicit retry" in run {
+        "explicit retry" in {
             for
                 ref <- TRef.init(0)
                 result <- Abort.run {
@@ -68,7 +74,7 @@ class STMTest extends Test:
             yield assert(result.isFailure)
         }
 
-        "retry with schedule" in run {
+        "retry with schedule" in {
             for
                 ref     <- TRef.init(0)
                 counter <- AtomicInt.init(0)
@@ -87,7 +93,7 @@ class STMTest extends Test:
 
         "arbitrary failure is retried if the transaction is inconsistent" - {
 
-            "within retry budget" in run {
+            "within retry budget" in {
                 for
                     ref      <- TRef.init(0)
                     latch1   <- Latch.init(1)
@@ -118,7 +124,7 @@ class STMTest extends Test:
             }
         }
 
-        "exceeding retry budget" in run {
+        "exceeding retry budget" in {
             for
                 ref      <- TRef.init(0)
                 attempts <- AtomicInt.init
@@ -144,7 +150,7 @@ class STMTest extends Test:
 
     "with isolates" - {
 
-        "with Var effect" in run {
+        "with Var effect" in {
             Var.run(42) {
                 for
                     ref <- TRef.init(0)
@@ -165,7 +171,7 @@ class STMTest extends Test:
             }
         }
 
-        "with Emit effect" in run {
+        "with Emit effect" in {
             for
                 ref <- TRef.init(0)
                 result <- Emit.run {
@@ -184,7 +190,7 @@ class STMTest extends Test:
             yield assert(result == (Chunk(42, 1), 1) && finalValue == 1)
         }
 
-        "rollback on failure preserves effect isolation" in run {
+        "rollback on failure preserves effect isolation" in {
             val ex = new Exception("Test failure")
             for
                 ref <- TRef.init(0)
@@ -208,7 +214,7 @@ class STMTest extends Test:
             end for
         }
 
-        "with nested Var isolations" in run {
+        "with nested Var isolations" in {
             Var.run(0) {
                 for
                     ref <- TRef.init(1)
@@ -239,7 +245,7 @@ class STMTest extends Test:
             }
         }
 
-        "with Memo effect" in run {
+        "with Memo effect" in {
             var count = 0
             val f = Memo[Int, Int, Any] { x =>
                 count += 1
@@ -264,7 +270,7 @@ class STMTest extends Test:
             }
         }
 
-        "rollback preserves all effect isolations" in run {
+        "rollback preserves all effect isolations" in {
             val ex = new Exception("Test failure")
             Var.run(0) {
                 for
@@ -296,7 +302,7 @@ class STMTest extends Test:
 
     "Nested transactions" - {
 
-        "nested transactions share the same transaction context" in run {
+        "nested transactions share the same transaction context" in {
             for
                 ref <- TRef.init(0)
                 result <- STM.run {
@@ -316,7 +322,7 @@ class STMTest extends Test:
             yield assert(result == (2, 2) && outsideValue == 2)
         }
 
-        "nested transaction rollbacks affect outer transaction" in run {
+        "nested transaction rollbacks affect outer transaction" in {
             for
                 ref <- TRef.init(0)
                 _ <-
@@ -338,7 +344,7 @@ class STMTest extends Test:
             yield assert(finalValue == 1)
         }
 
-        "multiple levels of nesting maintain consistency" in run {
+        "multiple levels of nesting maintain consistency" in {
             for
                 ref <- TRef.init(0)
                 result <- STM.run {
@@ -358,7 +364,7 @@ class STMTest extends Test:
             yield assert(result == (2, 3) && finalValue == 3)
         }
 
-        "nested transactions see parent modifications" in run {
+        "nested transactions see parent modifications" in {
             for
                 ref <- TRef.init(0)
                 result <- STM.run {
@@ -378,7 +384,7 @@ class STMTest extends Test:
             yield assert(result == (1, (1, 2), 2))
         }
 
-        "nested transaction modifications are visible to parent" in run {
+        "nested transaction modifications are visible to parent" in {
             for
                 ref1 <- TRef.init(0)
                 ref2 <- TRef.init(0)
@@ -404,7 +410,7 @@ class STMTest extends Test:
             yield assert(result == (1, 2) && finalValues == (3, 2))
         }
 
-        "sequential nested transactions see previous changes" in run {
+        "sequential nested transactions see previous changes" in {
             for
                 ref <- TRef.init(0)
                 result <- STM.run {
@@ -428,7 +434,7 @@ class STMTest extends Test:
             yield assert(result == (1, 2, 3))
         }
 
-        "nested transaction rollback preserves parent changes" in run {
+        "nested transaction rollback preserves parent changes" in {
             for
                 ref <- TRef.init(0)
                 result <- STM.run {
@@ -455,7 +461,7 @@ class STMTest extends Test:
 
     "Error handling" - {
 
-        "transaction rollback on failure" in run {
+        "transaction rollback on failure" in {
             for
                 ref <- TRef.init(42)
                 result <- Abort.run {
@@ -470,7 +476,7 @@ class STMTest extends Test:
             yield assert(result.isFailure && value == 42)
         }
 
-        "multiple refs rollback on failure" in run {
+        "multiple refs rollback on failure" in {
             for
                 ref1 <- TRef.init(10)
                 ref2 <- TRef.init(20)
@@ -488,7 +494,7 @@ class STMTest extends Test:
             yield assert(result.isFailure && value1 == 10 && value2 == 20)
         }
 
-        "nested transaction rollback on inner failure" in run {
+        "nested transaction rollback on inner failure" in {
             for
                 ref <- TRef.init(1)
                 result <- Abort.run {
@@ -508,7 +514,7 @@ class STMTest extends Test:
             yield assert(result.isFailure && value == 1)
         }
 
-        "partial updates within transaction are atomic" in run {
+        "partial updates within transaction are atomic" in {
             for
                 ref1 <- TRef.init("initial1")
                 ref2 <- TRef.init("initial2")
@@ -531,7 +537,7 @@ class STMTest extends Test:
             )
         }
 
-        "exception in update function rolls back" in run {
+        "exception in update function rolls back" in {
             for
                 ref <- TRef.init(0)
                 result <- Abort.run {
@@ -552,7 +558,7 @@ class STMTest extends Test:
         val repeats = 10
         val sizes   = Choice.eval(1, 10, 100, 1000)
 
-        "concurrent updates" in runNotJS {
+        "concurrent updates".notJs in {
             (for
                 size  <- sizes
                 ref   <- TRef.init(0)
@@ -560,10 +566,10 @@ class STMTest extends Test:
                 value <- STM.run(ref.get)
             yield assert(value == size))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "concurrent reads and writes" in runNotJS {
+        "concurrent reads and writes".notJs in {
             (for
                 size  <- sizes
                 ref   <- TRef.init(0)
@@ -580,10 +586,10 @@ class STMTest extends Test:
                 value <- STM.run(ref.get)
             yield assert(value == size && reads.forall(_ <= size)))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "concurrent nested transactions" in runNotJS {
+        "concurrent nested transactions".notJs in {
             // Under high contention, nested transactions generate many conflicts.
             // Use unlimited retries so contention is resolved instead of failing.
             val retrySchedule = STM.defaultRetrySchedule.forever
@@ -606,10 +612,10 @@ class STMTest extends Test:
                 value <- STM.run(ref.get)
             yield assert(value == size * 2))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "dining philosophers" in run {
+        "dining philosophers" in {
             val philosophers = 5
             (for
                 forks <- Kyo.fill(philosophers)(TRef.init(true))
@@ -636,10 +642,10 @@ class STMTest extends Test:
                 finalStates <- Kyo.collectAll(forks.map(fork => STM.run(fork.get)))
             yield assert(finalStates.forall(identity)))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "bank account transfers" in run {
+        "bank account transfers" in {
             (for
                 account1 <- TRef.init(500)
                 account2 <- TRef.init(300)
@@ -686,10 +692,10 @@ class STMTest extends Test:
                 assert(final3 >= 0)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "circular account transfers" in run {
+        "circular account transfers" in {
             (for
                 account1 <- TRef.init(300)
                 account2 <- TRef.init(200)
@@ -738,12 +744,12 @@ class STMTest extends Test:
                 assert(final3 >= 0)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
     }
 
     "async transaction nesting" - {
-        "nested transactions with async boundary should fail gracefully" in run {
+        "nested transactions with async boundary should fail gracefully" in {
             for
                 ref <- TRef.init(0)
                 result <- Abort.run {
@@ -772,7 +778,7 @@ class STMTest extends Test:
             yield assert(result.isFailure && value == 2)
         }
 
-        "tick should not leak across async boundaries" in run {
+        "tick should not leak across async boundaries" in {
             for
                 ref <- TRef.init(0)
                 (parentTick, childTick) <-
@@ -789,7 +795,7 @@ class STMTest extends Test:
         }
     }
 
-    "bug #925" in runJVM {
+    "bug #925".onlyJvm in {
         def unsafeToFuture[A](a: => A < (Async & Abort[Throwable])): Future[A] =
             import kyo.AllowUnsafe.embrace.danger
             Sync.Unsafe.evalOrThrow(
@@ -810,7 +816,7 @@ class STMTest extends Test:
             assert(result == Result.panic(ex))
         }
     }
-    "bug #1172" in runJVM {
+    "bug #1172".onlyJvm in {
         Abort.run { // trap non-fatal exceptions (AssertionError)
             for
                 // initially they contain equal values:
@@ -835,13 +841,14 @@ class STMTest extends Test:
                 }
                 once = Async.zip(STM.run(STM.defaultRetrySchedule.forever)(txn1), STM.run(STM.defaultRetrySchedule.forever)(txn2))
                 _ <- Async.foreachDiscard(1 to 10, concurrency = 8) { _ => once }
-            yield succeed
-        }.map(_.getOrElse(succeed))
+            yield ()
+        }.map(_.getOrElse(()))
+            .map(_ => succeed("assertion: all iterations completed without observing divergent TRef values"))
     }
 
     "opacity" - {
 
-        "bug #1411" in runJVM {
+        "bug #1411".onlyJvm in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
                 r1         <- STM.run(TRef.init("a"))
@@ -873,7 +880,7 @@ class STMTest extends Test:
             end for
         }
 
-        "division by zero" in runJVM {
+        "division by zero".onlyJvm in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
                 numerator   <- TRef.init(0)
@@ -903,11 +910,11 @@ class STMTest extends Test:
                 }
                 _ <- writer.get
                 _ <- reader.get
-            yield succeed
+            yield succeed("assertion: all iterations completed without ArithmeticException (opacity preserved)")
             end for
         }
 
-        "double read consistency" in runJVM {
+        "double read consistency".onlyJvm in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
                 ref <- TRef.init(0L)
@@ -928,11 +935,11 @@ class STMTest extends Test:
                 }
                 _ <- writer.get
                 _ <- reader.get
-            yield succeed
+            yield ()
             end for
         }
 
-        "even odd" in runJVM {
+        "even odd".onlyJvm in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
                 even <- TRef.init(0)
@@ -964,11 +971,11 @@ class STMTest extends Test:
                 }
                 _ <- writer.get
                 _ <- reader.get
-            yield succeed
+            yield ()
             end for
         }
 
-        "sum invariant" in runJVM {
+        "sum invariant".onlyJvm in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
                 a <- TRef.init(500)
@@ -999,14 +1006,14 @@ class STMTest extends Test:
                 }
                 _ <- reader.get
                 _ <- writer.get
-            yield succeed
+            yield ()
             end for
         }
     }
 
     "large tick values (overflow)" - {
 
-        "basic read and write with tick near Int.MaxValue" in run {
+        "basic read and write with tick near Int.MaxValue" in {
             Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(Int.MaxValue.toLong - 10)
             }.andThen {
@@ -1018,7 +1025,7 @@ class STMTest extends Test:
             }
         }
 
-        "basic read and write with tick beyond Int.MaxValue" in run {
+        "basic read and write with tick beyond Int.MaxValue" in {
             Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
@@ -1030,7 +1037,7 @@ class STMTest extends Test:
             }
         }
 
-        "conflict detection with large ticks" in run {
+        "conflict detection with large ticks" in {
             Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
@@ -1051,7 +1058,7 @@ class STMTest extends Test:
             }
         }
 
-        "concurrent transactions with large ticks" in runNotJS {
+        "concurrent transactions with large ticks".notJs in {
             Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
@@ -1063,7 +1070,7 @@ class STMTest extends Test:
             }
         }
 
-        "nested transactions with large ticks" in run {
+        "nested transactions with large ticks" in {
             Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
@@ -1086,7 +1093,7 @@ class STMTest extends Test:
             }
         }
 
-        "opacity with large ticks" in runJVM {
+        "opacity with large ticks".onlyJvm in {
             Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
@@ -1110,14 +1117,14 @@ class STMTest extends Test:
                     }
                     _ <- writer.get
                     _ <- reader.get
-                yield succeed
+                yield ()
                 end for
             }
         }
     }
 
     "early writer abort optimization" - {
-        "writers yield to fresher readers under contention" in runJVM {
+        "writers yield to fresher readers under contention".onlyJvm in {
             // This tests that writers with older ticks abort early when
             // fresher readers have registered their readTick, avoiding
             // wasted work building transaction logs that would fail at commit
@@ -1150,7 +1157,7 @@ class STMTest extends Test:
             end for
         }
 
-        "high contention read-heavy workload" in runJVM {
+        "high contention read-heavy workload".onlyJvm in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
                 refs <- Kyo.fill(5)(TRef.init(0))
@@ -1180,7 +1187,7 @@ class STMTest extends Test:
 
     "STM" - {
 
-        "Tick.next returns strictly increasing Long values within a single fiber" in run {
+        "Tick.next returns strictly increasing Long values within a single fiber" in {
             Sync.Unsafe.defer {
                 val a: Long = STM.Tick.next()
                 val b: Long = STM.Tick.next()
@@ -1192,7 +1199,7 @@ class STMTest extends Test:
             }
         }
 
-        "Tick.counter testOnlySet(0) then next returns 1, and Long.MaxValue overflow does not coincide with first" in run {
+        "Tick.counter testOnlySet(0) then next returns 1, and Long.MaxValue overflow does not coincide with first" in {
             Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(0L)
                 val first: Long = STM.Tick.next()
@@ -1208,7 +1215,7 @@ class STMTest extends Test:
             }
         }
 
-        "Tick.next from 200 concurrent fibers produces 200 distinct values" in runNotJS {
+        "Tick.next from 200 concurrent fibers produces 200 distinct values".notJs in {
             val n = 200
             Sync.Unsafe.defer { STM.Tick.testOnlySet(0L) }.andThen {
                 Async.fill(n, n) {
@@ -1222,7 +1229,7 @@ class STMTest extends Test:
             }
         }
 
-        "Tick.testOnlySet at 0, -1, (1L<<55)-1, and Long.MaxValue-5 yields next()+1 for each" in run {
+        "Tick.testOnlySet at 0, -1, (1L<<55)-1, and Long.MaxValue-5 yields next()+1 for each" in {
             Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(0L)
                 val zero: Long = STM.Tick.next()
@@ -1242,7 +1249,7 @@ class STMTest extends Test:
             }
         }
 
-        "currentTransaction Local returns Absent when read outside any STM.run scope" in run {
+        "currentTransaction Local returns Absent when read outside any STM.run scope" in {
             for
                 observedAbsent <- AtomicBoolean.init(false)
                 v <- STM.withCurrentTransactionOrNew[Int, Sync] { _ =>
@@ -1252,7 +1259,7 @@ class STMTest extends Test:
             yield assert(v == 42 && observed, "Absent branch of withCurrentTransactionOrNew should have run outside STM.run")
         }
 
-        "withCurrentTransactionOrNew outside STM.run runs the body but does not commit a transaction" in run {
+        "withCurrentTransactionOrNew outside STM.run runs the body but does not commit a transaction" in {
             for
                 observedTick <- AtomicLong.init(-1L)
                 _ <- STM.withCurrentTransactionOrNew[Unit, Sync] { tick =>
@@ -1262,7 +1269,7 @@ class STMTest extends Test:
             yield assert(tick > 0L, s"Tick.next should have been called; got $tick")
         }
 
-        "withCurrentTransactionOrNew runs Absent branch outside STM.run and Present branch inside STM.run" in run {
+        "withCurrentTransactionOrNew runs Absent branch outside STM.run and Present branch inside STM.run" in {
             for
                 outerTick <- AtomicLong.init(-1L)
                 innerTick <- AtomicLong.init(-1L)
@@ -1281,7 +1288,7 @@ class STMTest extends Test:
                 assert(ot != parent, "outer-call tick must differ from later parent-transaction tick")
         }
 
-        "STM.retry attaches the call-site Frame to FailedTransaction" in run {
+        "STM.retry attaches the call-site Frame to FailedTransaction" in {
             def specRetryFrameCallSite_0011: Nothing < (STM & Abort[FailedTransaction]) = STM.retry
             for
                 result <- Abort.run[FailedTransaction] {
@@ -1297,7 +1304,7 @@ class STMTest extends Test:
                 case other => fail(s"unexpected: $other")
         }
 
-        "STM.retryIf re-evaluates a side-effecting cond on every transaction attempt" in run {
+        "STM.retryIf re-evaluates a side-effecting cond on every transaction attempt" in {
             for
                 ref      <- TRef.init(0)
                 attempts <- AtomicInt.init
@@ -1317,7 +1324,7 @@ class STMTest extends Test:
                 assert(count >= 2, s"retryIf should have caused at least one retry; attempts=$count")
         }
 
-        "STM.run with sealed-trait E surfaces each subtype distinguishably" in run {
+        "STM.run with sealed-trait E surfaces each subtype distinguishably" in {
             val txnA: Int < (STM & Abort[MyErr0013]) = Abort.fail(ErrA0013("a"))
             val txnB: Int < (STM & Abort[MyErr0013]) = Abort.fail(ErrB0013(99))
             for
@@ -1325,16 +1332,15 @@ class STMTest extends Test:
                 rb <- Abort.run[MyErr0013 | FailedTransaction](STM.run(txnB))
             yield
                 ra match
-                    case Result.Failure(ErrA0013("a")) => ()
+                    case Result.Failure(ErrA0013("a")) => succeed("pattern match is the assertion")
                     case other                         => fail(s"expected Result.Failure(ErrA0013('a')), got $other")
                 rb match
-                    case Result.Failure(ErrB0013(99)) => ()
+                    case Result.Failure(ErrB0013(99)) => succeed("pattern match is the assertion")
                     case other                        => fail(s"expected Result.Failure(ErrB0013(99)), got $other")
-                succeed
             end for
         }
 
-        "STM.run with a user-defined Isolate over Var captures/restores state correctly" in run {
+        "STM.run with a user-defined Isolate over Var captures/restores state correctly" in {
             Var.run(0) {
                 for
                     ref <- TRef.init(0)
@@ -1354,7 +1360,7 @@ class STMTest extends Test:
             }
         }
 
-        "STM.run with Schedule.done on first conflict surfaces FailedTransaction immediately" in run {
+        "STM.run with Schedule.done on first conflict surfaces FailedTransaction immediately" in {
             for
                 attempts <- AtomicInt.init
                 result <- Abort.run[FailedTransaction] {
@@ -1366,11 +1372,11 @@ class STMTest extends Test:
             yield
                 assert(n == 1, s"Schedule.done should produce zero retries; body invoked $n times")
                 result match
-                    case Result.Failure(_: FailedTransaction) => succeed
+                    case Result.Failure(_: FailedTransaction) => ()
                     case other                                => fail(s"expected Failure(FailedTransaction), got $other")
         }
 
-        "STM.run of a pure computation with no TRef operations commits successfully" in run {
+        "STM.run of a pure computation with no TRef operations commits successfully" in {
             for
                 r       <- STM.run[Any, Int, Any](42)
                 retried <- Abort.run[FailedTransaction](STM.run(Schedule.done)(STM.retry))
@@ -1379,7 +1385,7 @@ class STMTest extends Test:
                 assert(retried.isFailure, "empty STM.run with STM.retry should still fail")
         }
 
-        "STM.run schedule exhaustion surfaces Result.Failure(FailedTransaction)" in run {
+        "STM.run schedule exhaustion surfaces Result.Failure(FailedTransaction)" in {
             for
                 result <- Abort.run[FailedTransaction] {
                     STM.run(Schedule.repeat(3))(STM.retry)
@@ -1390,7 +1396,7 @@ class STMTest extends Test:
                 case other => fail(s"expected Result.Failure(FailedTransaction), got $other")
         }
 
-        "STM.run with a user error and no TRef writes propagates the user error" in run {
+        "STM.run with a user error and no TRef writes propagates the user error" in {
             val ex = new RuntimeException("user-error-0018")
             for
                 result <- Abort.run[Throwable] {
@@ -1399,16 +1405,16 @@ class STMTest extends Test:
                     }
                 }
             yield result match
-                case Result.Failure(`ex`) => succeed
+                case Result.Failure(`ex`) => succeed("pattern match confirms the exact exception instance was propagated")
                 case other                => fail(s"expected propagated user error, got $other")
         }
 
-        "top-level STM.run does not invoke the nested-branch unchecked cast (no ClassCastException)" in run {
+        "top-level STM.run does not invoke the nested-branch unchecked cast (no ClassCastException)" in {
             val txn: Int < STM = TRef.init(7).map(_.get)
             STM.run(txn).map { v => assert(v == 7) }
         }
 
-        "STM.run with two different result types both compile and commit" in run {
+        "STM.run with two different result types both compile and commit" in {
             val txnInt: Int < STM       = TRef.init(1).map(_.get)
             val txnString: String < STM = TRef.init("a").map(_.get)
             for
@@ -1418,7 +1424,7 @@ class STMTest extends Test:
             end for
         }
 
-        "STM.run with no TRef ops successfully commits via the size==0 fast-path" in run {
+        "STM.run with no TRef ops successfully commits via the size==0 fast-path" in {
             for
                 attempts <- AtomicInt.init
                 _        <- STM.run(attempts.incrementAndGet.unit)
@@ -1426,7 +1432,7 @@ class STMTest extends Test:
             yield assert(n == 1, s"empty-log commit must succeed in 1 attempt, got $n attempts")
         }
 
-        "single-ref read-only transaction that aborts with user error probes the commit without mutating the ref" in run {
+        "single-ref read-only transaction that aborts with user error probes the commit without mutating the ref" in {
             val ex = new RuntimeException("user-fail-after-read-0022")
             for
                 ref <- TRef.init(7)
@@ -1447,7 +1453,7 @@ class STMTest extends Test:
             end for
         }
 
-        "STM.run touching 16 distinct TRefs commits consistently" in run {
+        "STM.run touching 16 distinct TRefs commits consistently" in {
             val n = 16
             for
                 refs <- Kyo.fill(n)(TRef.init(0))
@@ -1459,7 +1465,7 @@ class STMTest extends Test:
             end for
         }
 
-        "multi-ref read-only transaction that aborts with user error probes without mutating any ref" in run {
+        "multi-ref read-only transaction that aborts with user error probes without mutating any ref" in {
             val ex = new RuntimeException("user-fail-after-multi-read-0024")
             for
                 r1 <- TRef.init(10)
@@ -1486,19 +1492,19 @@ class STMTest extends Test:
             end for
         }
 
-        "FailedTransaction(Present(Result.Failure(throwable))) exposes the inner throwable as the cause" in run {
+        "FailedTransaction(Present(Result.Failure(throwable))) exposes the inner throwable as the cause" in {
             val inner = new IllegalStateException("inner-cause-0025")
             val ft    = new FailedTransaction(Present(Result.Failure(inner)))
             assert(ft.getCause eq inner, s"expected inner cause to be propagated; got cause=${ft.getCause}")
         }
 
-        "FailedTransaction(Present(Result.Panic(ex))) uses ex as the JDK cause" in run {
+        "FailedTransaction(Present(Result.Panic(ex))) uses ex as the JDK cause" in {
             val panicCause = new RuntimeException("panic-0026")
             val ft         = new FailedTransaction(Present(Result.Panic(panicCause)))
             assert(ft.getCause eq panicCause, s"Throwable-arm should expose panic cause as JDK cause; got ${ft.getCause}")
         }
 
-        "FailedTransaction(Present(Result.Failure(nonThrowable))) renders the error via error.show" in run {
+        "FailedTransaction(Present(Result.Failure(nonThrowable))) renders the error via error.show" in {
             val nonThrowableError: Result.Error[String] = Result.Failure("not-a-throwable-0027")
             val ft                                      = new FailedTransaction(Present(nonThrowableError))
             val msg                                     = ft.toString
@@ -1508,12 +1514,12 @@ class STMTest extends Test:
             )
         }
 
-        "FailedTransaction.getMessage contains 'STM transaction failed!'" in run {
+        "FailedTransaction.getMessage contains 'STM transaction failed!'" in {
             val ft = new FailedTransaction()
             assert(ft.getMessage.contains("STM transaction failed!"), s"expected canonical message, got: ${ft.getMessage}")
         }
 
-        "FailedTransaction carries the captured call-site Frame" in run {
+        "FailedTransaction carries the captured call-site Frame" in {
             def myMethod_SPEC0029(): FailedTransaction = new FailedTransaction()
             val ft                                     = myMethod_SPEC0029()
             val frame                                  = ft.frame.show
@@ -1523,7 +1529,7 @@ class STMTest extends Test:
             )
         }
 
-        "two STM.run calls on disjoint TRef sets do not serialise (no global lock)" in run {
+        "two STM.run calls on disjoint TRef sets do not serialise (no global lock)" in {
             for
                 r1    <- TRef.init(0)
                 r2    <- TRef.init(0)
@@ -1556,7 +1562,7 @@ class STMTest extends Test:
             yield assert((v1, v2) == (1, 2), s"both disjoint commits should succeed: got ($v1, $v2)")
         }
 
-        "two concurrent STM.run-write transactions on the same TRef do not produce a lost update" in runNotJS {
+        "two concurrent STM.run-write transactions on the same TRef do not produce a lost update".notJs in {
             val n = 200
             for
                 ref <- TRef.init(0)
@@ -1566,7 +1572,7 @@ class STMTest extends Test:
             end for
         }
 
-        "disjoint-ref STM.run calls each retry zero times (no conflict)" in run {
+        "disjoint-ref STM.run calls each retry zero times (no conflict)" in {
             val nFibers = 10
             for
                 refs     <- Kyo.fill(nFibers)(TRef.init(0))
@@ -1584,7 +1590,7 @@ class STMTest extends Test:
             end for
         }
 
-        "two transactions writing in opposite source order both commit (lock-ordering prevents deadlock)" in runNotJS {
+        "two transactions writing in opposite source order both commit (lock-ordering prevents deadlock)".notJs in {
             for
                 r1 <- TRef.init(0)
                 r2 <- TRef.init(0)
@@ -1600,7 +1606,7 @@ class STMTest extends Test:
             )
         }
 
-        "writer with older tick than recorded readTick aborts (validated by attempt count)" in runNotJS {
+        "writer with older tick than recorded readTick aborts (validated by attempt count)".notJs in {
             for
                 ref      <- TRef.init(0)
                 attempts <- AtomicInt.init
@@ -1623,7 +1629,7 @@ class STMTest extends Test:
                 assert(n <= 11, s"writer attempt count exceeded schedule cap: $n")
         }
 
-        "side-effecting body of STM.run runs once per attempt" in run {
+        "side-effecting body of STM.run runs once per attempt" in {
             for
                 ref      <- TRef.init(0)
                 sideRuns <- AtomicInt.init
@@ -1646,7 +1652,7 @@ class STMTest extends Test:
             yield assert(n >= 2, s"side effect should be re-executed across retries; sideRuns=$n")
         }
 
-        "side effect performed after STM.run sees committed values" in run {
+        "side effect performed after STM.run sees committed values" in {
             for
                 ref      <- TRef.init(0)
                 observed <- AtomicInt.init
@@ -1657,7 +1663,7 @@ class STMTest extends Test:
             yield assert(v == 42, s"post-commit side effect should observe 42, got $v")
         }
 
-        "writer-induced retry forces reader to attempt >= 2 times" in runNotJS {
+        "writer-induced retry forces reader to attempt >= 2 times".notJs in {
             for
                 ref      <- TRef.init(0)
                 latch1   <- Latch.init(1)
@@ -1687,17 +1693,17 @@ class STMTest extends Test:
                 assert(a >= 2, s"writer-induced conflict forces >= 2 attempts; got a=$a")
         }
 
-        "explicit STM.retry surfaces Result.Failure(FailedTransaction) not a generic failure" in run {
+        "explicit STM.retry surfaces Result.Failure(FailedTransaction) not a generic failure" in {
             for
                 result <- Abort.run[FailedTransaction] {
                     STM.run(Schedule.done)(STM.retry)
                 }
             yield result match
-                case Result.Failure(_: FailedTransaction) => succeed
+                case Result.Failure(_: FailedTransaction) => succeed("pattern match confirms FailedTransaction type")
                 case other                                => fail(s"expected FailedTransaction, got $other")
         }
 
-        "concurrent updates: every reader observes a value in [0, n]" in runNotJS {
+        "concurrent updates: every reader observes a value in [0, n]".notJs in {
             val n = 100
             for
                 ref     <- TRef.init(0)
@@ -1717,7 +1723,7 @@ class STMTest extends Test:
             end for
         }
 
-        "opacity reader records mismatched (v1, v2) snapshots; sink should remain 0" in runNotJS {
+        "opacity reader records mismatched (v1, v2) snapshots; sink should remain 0".notJs in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
                 ref      <- TRef.init(0L)
@@ -1743,7 +1749,7 @@ class STMTest extends Test:
             end for
         }
 
-        "two-ref swap commits both writes; post-commit reads observe swapped values" in run {
+        "two-ref swap commits both writes; post-commit reads observe swapped values" in {
             Sync.Unsafe.defer { STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000) }.andThen {
                 for
                     r1 <- TRef.init(10)
@@ -1762,7 +1768,7 @@ class STMTest extends Test:
             }
         }
 
-        "after testOnlySet(Int.MaxValue + 1000), Tick.next allocates a tick > Int.MaxValue" in run {
+        "after testOnlySet(Int.MaxValue + 1000), Tick.next allocates a tick > Int.MaxValue" in {
             val bigTick = Int.MaxValue.toLong + 1000
             Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(bigTick)
@@ -1773,7 +1779,7 @@ class STMTest extends Test:
             }
         }
 
-        "STM.run inside Var-of-TRef[Int] effect commits TRef writes; Var state is preserved" in run {
+        "STM.run inside Var-of-TRef[Int] effect commits TRef writes; Var state is preserved" in {
             for
                 initialRef <- TRef.init(7)
                 _ <- Var.run(initialRef) {
@@ -1791,7 +1797,7 @@ class STMTest extends Test:
             yield assert(v == 107, s"Var-held TRef should be mutated; got $v")
         }
 
-        "STM.run with Schedule.never terminates cleanly on first abort" in run {
+        "STM.run with Schedule.never terminates cleanly on first abort" in {
             for
                 attempts <- AtomicInt.init
                 result <- Abort.run[FailedTransaction] {
@@ -1805,7 +1811,7 @@ class STMTest extends Test:
                 assert(result.isFailure, s"abort should surface; result=$result")
         }
 
-        "Tick.next from 200 concurrent fibers produces 200 distinct values (mirror)" in runNotJS {
+        "Tick.next from 200 concurrent fibers produces 200 distinct values (mirror)".notJs in {
             val n = 200
             Sync.Unsafe.defer { STM.Tick.testOnlySet(0L) }.andThen {
                 Async.fill(n, n) { Sync.Unsafe.defer { STM.Tick.next(): Long } }
@@ -1816,7 +1822,7 @@ class STMTest extends Test:
             }
         }
 
-        "STM.retry after writing 3 refs rolls back all 3 writes" in run {
+        "STM.retry after writing 3 refs rolls back all 3 writes" in {
             for
                 r1 <- TRef.init(10)
                 r2 <- TRef.init(20)
@@ -1839,7 +1845,7 @@ class STMTest extends Test:
                 assert((v1, v2, v3) == (10, 20, 30), s"all writes should roll back; got ($v1, $v2, $v3)")
         }
 
-        "withCurrentTransaction inside STM.run observes the same tick used by the surrounding run" in run {
+        "withCurrentTransaction inside STM.run observes the same tick used by the surrounding run" in {
             STM.run {
                 for
                     t1 <- STM.withCurrentTransaction(tick => (tick: Long))
@@ -1851,7 +1857,7 @@ class STMTest extends Test:
             }
         }
 
-        "commit-conflict on validate-fail and lock-fail both surface as retry (user-observable)" in run {
+        "commit-conflict on validate-fail and lock-fail both surface as retry (user-observable)" in {
             val n = 10
             for
                 refs     <- Kyo.fill(n)(TRef.init(0))
@@ -1873,7 +1879,7 @@ class STMTest extends Test:
             end for
         }
 
-        "forced commit-fail consumes one Schedule.repeat step per failed commit" in run {
+        "forced commit-fail consumes one Schedule.repeat step per failed commit" in {
             val k = 5
             for
                 ref      <- TRef.init(0)
@@ -1895,7 +1901,7 @@ class STMTest extends Test:
             end for
         }
 
-        "top-level STM.run with a value carrying STM effects executes as a new transaction (no cast crash)" in run {
+        "top-level STM.run with a value carrying STM effects executes as a new transaction (no cast crash)" in {
             val inner: Int < STM =
                 for
                     r <- TRef.init(42)
@@ -1904,7 +1910,7 @@ class STMTest extends Test:
             STM.run(inner).map { v => assert(v == 42, s"top-level STM.run should evaluate body cleanly; got $v") }
         }
 
-        "STM.run with Schedule.fixed(20.millis) introduces gap between body attempts" in run {
+        "STM.run with Schedule.fixed(20.millis) introduces gap between body attempts" in {
             val delay = 20.millis
             for
                 stamps <- AtomicRef.init(List.empty[Long])
@@ -1929,7 +1935,7 @@ class STMTest extends Test:
             end for
         }
 
-        "STM.run body observes Present(tick) for currentTransaction from its first statement" in run {
+        "STM.run body observes Present(tick) for currentTransaction from its first statement" in {
             STM.run {
                 for
                     tickInFirst <- STM.withCurrentTransaction(t => (t: Long))
@@ -1942,7 +1948,7 @@ class STMTest extends Test:
             }
         }
 
-        "STM.run with two different result types both compile (commit's [A, S] not used as constraints today)" in run {
+        "STM.run with two different result types both compile (commit's [A, S] not used as constraints today)" in {
             val nothingTxn: Nothing < (STM & Abort[FailedTransaction]) = STM.retry
             val unitTxn: Unit < STM                                    = Kyo.unit
             for
@@ -1952,7 +1958,7 @@ class STMTest extends Test:
             end for
         }
 
-        "single-ref read-only transaction with a stale snapshot triggers exactly one retry" in run {
+        "single-ref read-only transaction with a stale snapshot triggers exactly one retry" in {
             for
                 ref       <- TRef.init(0)
                 gateRead  <- Latch.init(1)
@@ -1975,7 +1981,7 @@ class STMTest extends Test:
                 assert(a >= 2, s"stale single-ref read should retry at least once; attempts=$a")
         }
 
-        "successive STM.run calls on the same fiber produce no observable buffer leak across iterations" in run {
+        "successive STM.run calls on the same fiber produce no observable buffer leak across iterations" in {
             for
                 refs <- Kyo.fill(3)(TRef.init(0))
                 _ <- Kyo.foreachDiscard(1 to 100) { i =>
@@ -1987,7 +1993,7 @@ class STMTest extends Test:
             yield assert(finals == Seq(100, 100, 100), s"100 sequential commits should leave refs at 100; got $finals")
         }
 
-        "multi-ref commit returning false via boundary.break does not leak the Break exception" in runNotJS {
+        "multi-ref commit returning false via boundary.break does not leak the Break exception".notJs in {
             for
                 r1 <- TRef.init(0)
                 r2 <- TRef.init(0)
@@ -2008,7 +2014,7 @@ class STMTest extends Test:
                 case other             => fail(s"break-mechanism should not panic; got $other")
         }
 
-        "explicit STM.retry and conflict-detection both produce Result.Failure(FailedTransaction)" in run {
+        "explicit STM.retry and conflict-detection both produce Result.Failure(FailedTransaction)" in {
             for
                 explicit <- Abort.run[FailedTransaction](STM.run(Schedule.done)(STM.retry))
                 conflict <- Abort.run[FailedTransaction] {
@@ -2023,15 +2029,14 @@ class STMTest extends Test:
                 }
             yield
                 explicit match
-                    case Result.Failure(_: FailedTransaction) => ()
+                    case Result.Failure(_: FailedTransaction) => succeed("pattern confirms FailedTransaction for explicit retry")
                     case other                                => fail(s"explicit retry: $other")
                 conflict match
-                    case Result.Failure(_: FailedTransaction) => ()
+                    case Result.Failure(_: FailedTransaction) => succeed("pattern confirms FailedTransaction for conflict-based retry")
                     case other                                => fail(s"conflict retry: $other")
-                succeed
         }
 
-        "STM.run with Schedule.never on always-retry body terminates with FailedTransaction" in run {
+        "STM.run with Schedule.never on always-retry body terminates with FailedTransaction" in {
             for
                 attempts <- AtomicInt.init
                 result <- Abort.run[FailedTransaction] {
@@ -2043,11 +2048,11 @@ class STMTest extends Test:
             yield
                 assert(n == 1, s"with Schedule.never, body must run exactly once; got $n")
                 result match
-                    case Result.Failure(_: FailedTransaction) => succeed
+                    case Result.Failure(_: FailedTransaction) => ()
                     case other                                => fail(s"expected FailedTransaction, got $other")
         }
 
-        "unchecked exception inside STM.run body surfaces as Panic after probe-commit; ref rolled back" in run {
+        "unchecked exception inside STM.run body surfaces as Panic after probe-commit; ref rolled back" in {
             val ex = new IllegalStateException("user-thrown-0061")
             for
                 ref <- TRef.init(7)
@@ -2067,7 +2072,7 @@ class STMTest extends Test:
             end for
         }
 
-        "STM.run with 1000 forced retries does not StackOverflowError" in runJVM {
+        "STM.run with 1000 forced retries does not StackOverflowError".onlyJvm in {
             val k = 1000
             for
                 attempts <- AtomicInt.init
@@ -2080,21 +2085,21 @@ class STMTest extends Test:
             yield
                 assert(n == k + 1, s"expected ${k + 1} attempts, got $n")
                 result match
-                    case Result.Failure(_: FailedTransaction) => succeed
+                    case Result.Failure(_: FailedTransaction) => ()
                     case Result.Panic(_: StackOverflowError)  => fail("retry loop is stack-bound")
                     case other                                => fail(s"unexpected: $other")
                 end match
             end for
         }
 
-        "after STM.run returns, withCurrentTransactionOrNew on same fiber allocates a fresh tick" in run {
+        "after STM.run returns, withCurrentTransactionOrNew on same fiber allocates a fresh tick" in {
             for
                 _        <- STM.run(TRef.init(0).map(_.get))
                 observed <- STM.withCurrentTransactionOrNew { tick => (tick: Long) }
             yield assert(observed > 0L, s"after STM.run exits, observed tick must be freshly allocated; got $observed")
         }
 
-        "STM public surface includes run, retry, retryIf, defaultRetrySchedule" in run {
+        "STM public surface includes run, retry, retryIf, defaultRetrySchedule" in {
             val r1 = STM.retry
             val r2 = STM.retryIf(true)
             val r3 = STM.defaultRetrySchedule
@@ -2109,7 +2114,7 @@ class STMTest extends Test:
             end for
         }
 
-        "blocking sleep inside STM.run body completes (no driver deadlock)" in run {
+        "blocking sleep inside STM.run body completes (no driver deadlock)" in {
             for
                 ref <- TRef.init(0)
                 _ <- STM.run {
@@ -2123,7 +2128,7 @@ class STMTest extends Test:
             yield assert(v == 2, s"after sleep+update, ref should be 2; got $v")
         }
 
-        "STM.run body's events appear in source order on every retry" in run {
+        "STM.run body's events appear in source order on every retry" in {
             for
                 events <- AtomicRef.init(List.empty[String])
                 _ <- Abort.run {
@@ -2142,7 +2147,7 @@ class STMTest extends Test:
             )
         }
 
-        "STM.run wrapped in Async.timeout surfaces timeout failure even on infinite retry schedule" in run {
+        "STM.run wrapped in Async.timeout surfaces timeout failure even on infinite retry schedule" in {
             for
                 ref <- TRef.init(0)
                 result <- Abort.run {
@@ -2155,7 +2160,7 @@ class STMTest extends Test:
             yield assert(result.isFailure, s"timeout should fire; got $result")
         }
 
-        "nested STM.run that retries leaves outer-write rollback exclusively to the nested scope" in run {
+        "nested STM.run that retries leaves outer-write rollback exclusively to the nested scope" in {
             for
                 ref <- TRef.init(0)
                 _ <- STM.run {
@@ -2175,7 +2180,7 @@ class STMTest extends Test:
             yield assert(v == 1, s"outer write should be preserved; nested write should be rolled back. got $v")
         }
 
-        "STM.retry rolls back writes made after a TRef set even on the same ref" in run {
+        "STM.retry rolls back writes made after a TRef set even on the same ref" in {
             for
                 ref <- TRef.init(0)
                 _ <- Abort.run {
@@ -2192,7 +2197,7 @@ class STMTest extends Test:
             yield assert(v == 0, s"all writes rolled back; got $v")
         }
 
-        "after STM.run completes, no internal pending-set retains a reference (each run commits in 1 attempt)" in run {
+        "after STM.run completes, no internal pending-set retains a reference (each run commits in 1 attempt)" in {
             for
                 ref            <- TRef.init(0)
                 attemptsBefore <- AtomicInt.init
@@ -2206,7 +2211,7 @@ class STMTest extends Test:
                 assert(a2 == 1, s"second transaction should commit in 1 attempt; got $a2")
         }
 
-        "after STM.run returns success, a follow-up STM.run on the same ref does not block" in run {
+        "after STM.run returns success, a follow-up STM.run on the same ref does not block" in {
             for
                 ref <- TRef.init(0)
                 v <- STM.run(ref.set(1)).andThen {
@@ -2215,7 +2220,7 @@ class STMTest extends Test:
             yield assert(v == 1, s"chained STM.run should see 1; got $v")
         }
 
-        "STM.run preserves the body's S effect parameter (Env[Int]) in the return type" in run {
+        "STM.run preserves the body's S effect parameter (Env[Int]) in the return type" in {
             val txn: Int < (STM & Env[Int]) =
                 for
                     n <- Env.get[Int]
@@ -2225,7 +2230,7 @@ class STMTest extends Test:
             Env.run(99)(handled).map { v => assert(v == 99, s"Env-carrying body should see 99; got $v") }
         }
 
-        "50 fibers each running STM.run on disjoint refs complete (no global lock)" in runNotJS {
+        "50 fibers each running STM.run on disjoint refs complete (no global lock)".notJs in {
             val n = 50
             for
                 refs   <- Kyo.fill(n)(TRef.init(0))
@@ -2235,7 +2240,7 @@ class STMTest extends Test:
             end for
         }
 
-        "STM.run admits 200 concurrent callers without a built-in concurrency cap" in runNotJS {
+        "STM.run admits 200 concurrent callers without a built-in concurrency cap".notJs in {
             val n = 200
             for
                 ref <- TRef.init(0)
@@ -2245,7 +2250,7 @@ class STMTest extends Test:
             end for
         }
 
-        "Sync.defer side effect inside STM.run body runs once per attempt" in run {
+        "Sync.defer side effect inside STM.run body runs once per attempt" in {
             for
                 counter <- AtomicInt.init
                 _ <- Abort.run {
@@ -2260,7 +2265,7 @@ class STMTest extends Test:
             yield assert(n == 3, s"Sync.defer should run per attempt; got $n")
         }
 
-        "STM.retryIf(value.isEmpty) on TRef[Maybe[V]] proceeds when value becomes Present" in run {
+        "STM.retryIf(value.isEmpty) on TRef[Maybe[V]] proceeds when value becomes Present" in {
             for
                 ref <- TRef.init(Maybe.empty[Int])
                 writer <- Fiber.initUnscoped {
@@ -2276,7 +2281,7 @@ class STMTest extends Test:
             yield assert(v == 42, s"wait-until-set encoding should yield 42; got $v")
         }
 
-        "STM.run on the same Kyo value produces the same observable behaviour each invocation" in run {
+        "STM.run on the same Kyo value produces the same observable behaviour each invocation" in {
             for
                 ref <- TRef.init(0)
                 txn = ref.update(_ + 1)
@@ -2286,7 +2291,7 @@ class STMTest extends Test:
             yield assert(v == 2, s"two runs of the same txn should both commit; got $v")
         }
 
-        "retryIf based on multi-ref reads retries when any read ref changes" in run {
+        "retryIf based on multi-ref reads retries when any read ref changes" in {
             for
                 r1 <- TRef.init(0)
                 r2 <- TRef.init(0)
@@ -2304,7 +2309,7 @@ class STMTest extends Test:
             yield assert(v == ((0, 1)), s"reader should observe writer's update; got $v")
         }
 
-        "TRef[TRef[String]] chain inside STM.run observes consistent snapshot or retries" in run {
+        "TRef[TRef[String]] chain inside STM.run observes consistent snapshot or retries" in {
             for
                 inner1 <- TRef.init("a")
                 inner2 <- TRef.init("b")
@@ -2322,30 +2327,29 @@ class STMTest extends Test:
             yield assert(result == "a" || result == "b", s"reader should observe one consistent inner value; got $result")
         }
 
-        "after STM.run returns success, a same-thread read observes the post-commit value" in run {
+        "after STM.run returns success, a same-thread read observes the post-commit value" in {
             for
                 r  <- TRef.init(0)
                 v1 <- STM.run(r.set(42)).andThen(STM.run(r.get))
             yield assert(v1 == 42, s"continuation should see published commit; got $v1")
         }
 
-        "STM.run with body that panics routes via Result.Panic; typed fail via Result.Failure" in run {
+        "STM.run with body that panics routes via Result.Panic; typed fail via Result.Failure" in {
             val ex = new IllegalStateException("defect-0081")
             for
                 panicked <- Abort.run[Throwable] { STM.run(Sync.defer { throw ex }) }
                 typed    <- Abort.run[String](STM.run(Abort.fail("typed-fail-0081")))
             yield
                 panicked match
-                    case Result.Panic(`ex`) => ()
+                    case Result.Panic(`ex`) => succeed("pattern confirms Panic contains the exact exception instance")
                     case other              => fail(s"expected Panic(ex), got $other")
                 typed match
-                    case Result.Failure("typed-fail-0081") => ()
+                    case Result.Failure("typed-fail-0081") => succeed("pattern confirms typed failure with exact string")
                     case other                             => fail(s"expected Failure('typed-fail-0081'), got $other")
-                succeed
             end for
         }
 
-        "logging side effect (Sync.defer) inside STM.run runs once per attempt under retry" in run {
+        "logging side effect (Sync.defer) inside STM.run runs once per attempt under retry" in {
             for
                 logCount <- AtomicInt.init
                 attempts <- AtomicInt.init
@@ -2372,7 +2376,7 @@ class STMTest extends Test:
             yield assert(l == a, s"logCount=$l should equal attempts=$a (side effect runs once per attempt)")
         }
 
-        "Tick.testOnlySet(-100) is accepted; next() returns -99" in run {
+        "Tick.testOnlySet(-100) is accepted; next() returns -99" in {
             Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(-100L)
                 val t: Long = STM.Tick.next()
@@ -2383,7 +2387,7 @@ class STMTest extends Test:
             }
         }
 
-        "STM.retry is non-blocking: retries until schedule exhausted, then fails" in run {
+        "STM.retry is non-blocking: retries until schedule exhausted, then fails" in {
             for
                 attempts <- AtomicInt.init
                 result <- Abort.run[FailedTransaction] {
@@ -2397,7 +2401,7 @@ class STMTest extends Test:
                 assert(result.isFailure, s"after schedule exhaustion, FailedTransaction surfaces; got $result")
         }
 
-        "after a commit conflict + retry, subsequent independent commit succeeds in 1 attempt" in run {
+        "after a commit conflict + retry, subsequent independent commit succeeds in 1 attempt" in {
             for
                 r      <- TRef.init(0)
                 aborts <- AtomicInt.init
@@ -2421,7 +2425,7 @@ class STMTest extends Test:
                 assert(v == 42)
         }
 
-        "STM.run with default retry schedule on always-retry body exhausts after a bounded attempt count" in run {
+        "STM.run with default retry schedule on always-retry body exhausts after a bounded attempt count" in {
             val expected = Async.defaultConcurrency * 16 + 1
             for
                 attempts <- AtomicInt.init
@@ -2435,7 +2439,7 @@ class STMTest extends Test:
             end for
         }
 
-        "STM.retry called from within a multi-ref transaction leaves no ref in a corrupted lock state" in run {
+        "STM.retry called from within a multi-ref transaction leaves no ref in a corrupted lock state" in {
             for
                 r1 <- TRef.init(0)
                 r2 <- TRef.init(0)
@@ -2463,7 +2467,7 @@ class STMTest extends Test:
                 assert(finals == Seq(99, 99, 99), s"all writes commit; got $finals")
         }
 
-        "single-set transaction calls set exactly once (no extraneous side effects)" in run {
+        "single-set transaction calls set exactly once (no extraneous side effects)" in {
             for
                 ref    <- TRef.init(0)
                 writes <- AtomicInt.init
@@ -2476,7 +2480,7 @@ class STMTest extends Test:
                 assert(v == 42)
         }
 
-        "each STM.run schedule exhaustion produces a fresh FailedTransaction instance" in run {
+        "each STM.run schedule exhaustion produces a fresh FailedTransaction instance" in {
             for
                 a <- Abort.run[FailedTransaction](STM.run(Schedule.done)(STM.retry))
                 b <- Abort.run[FailedTransaction](STM.run(Schedule.done)(STM.retry))
@@ -2490,7 +2494,7 @@ class STMTest extends Test:
                 assert(!(ea eq eb), s"each failure should be a distinct exception instance; got $ea / $eb")
         }
 
-        "sequential STM.run calls do not accumulate residual state in the currentTransaction Local" in run {
+        "sequential STM.run calls do not accumulate residual state in the currentTransaction Local" in {
             val n = 1000
             for
                 ref      <- TRef.init(0)
@@ -2503,7 +2507,7 @@ class STMTest extends Test:
             end for
         }
 
-        "Tick.next is monotonic regardless of wall-clock time" in run {
+        "Tick.next is monotonic regardless of wall-clock time" in {
             Sync.Unsafe.defer {
                 val a: Long = STM.Tick.next()
                 val b: Long = STM.Tick.next()
@@ -2513,7 +2517,7 @@ class STMTest extends Test:
             }
         }
 
-        "Tick.next after counter overflow at Long.MaxValue returns Long.MinValue" in run {
+        "Tick.next after counter overflow at Long.MaxValue returns Long.MinValue" in {
             Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(Long.MaxValue)
                 val t: Long = STM.Tick.next()
@@ -2524,7 +2528,7 @@ class STMTest extends Test:
             }
         }
 
-        "println-style side effect inside STM.run runs at least once per attempt" in run {
+        "println-style side effect inside STM.run runs at least once per attempt" in {
             for
                 ref      <- TRef.init(0)
                 prints   <- AtomicInt.init
@@ -2547,7 +2551,7 @@ class STMTest extends Test:
             yield assert(a == p, s"prints=$p should equal attempts=$a")
         }
 
-        "a Kyo computation captured inside an STM.run and run after STM.run completes returns the post-commit value" in run {
+        "a Kyo computation captured inside an STM.run and run after STM.run completes returns the post-commit value" in {
             for
                 ref <- TRef.init(0)
                 deferred <- STM.run {
@@ -2557,7 +2561,7 @@ class STMTest extends Test:
             yield assert(v == 42, s"deferred read should see committed value; got $v")
         }
 
-        "Async.sleep inside STM.run body runs once per attempt" in run {
+        "Async.sleep inside STM.run body runs once per attempt" in {
             for
                 stamps   <- AtomicRef.init(List.empty[Long])
                 attempts <- AtomicInt.init
@@ -2576,7 +2580,7 @@ class STMTest extends Test:
             yield assert(a == 3 && s.size == 3, s"each attempt records a stamp; attempts=$a stamps=${s.size}")
         }
 
-        "Fiber spawned inside STM.run that calls withCurrentTransactionOrNew sees a fresh tick" in run {
+        "Fiber spawned inside STM.run that calls withCurrentTransactionOrNew sees a fresh tick" in {
             for
                 ticks <- STM.run {
                     for
@@ -2592,7 +2596,7 @@ class STMTest extends Test:
                 assert(child > 0L, s"child should allocate its own tick; got $child")
         }
 
-        "100 concurrent STM.run fibers complete (no thread-pool deadlock)" in runNotJS {
+        "100 concurrent STM.run fibers complete (no thread-pool deadlock)".notJs in {
             val n = 100
             for
                 ref <- TRef.init(0)
@@ -2602,7 +2606,7 @@ class STMTest extends Test:
             end for
         }
 
-        "two sequential STM.run calls on the same fiber commit in source order" in run {
+        "two sequential STM.run calls on the same fiber commit in source order" in {
             for
                 ref <- TRef.init(0)
                 _   <- STM.run(ref.set(1))
@@ -2611,7 +2615,7 @@ class STMTest extends Test:
             yield assert(v == 2, s"last sequential STM.run should win; got $v")
         }
 
-        "TRef.init on fiber A and STM.run on fiber B both observe consistent ref state" in run {
+        "TRef.init on fiber A and STM.run on fiber B both observe consistent ref state" in {
             for
                 refF <- Fiber.initUnscoped(TRef.init(0)).map(_.get)
                 _    <- Fiber.initUnscoped(STM.run(refF.set(42))).map(_.get)
@@ -2619,7 +2623,7 @@ class STMTest extends Test:
             yield assert(v == 42, s"cross-fiber TRef operations should compose; got $v")
         }
 
-        "println-style side effect inside STM.run with 5 attempts runs exactly 5 times" in run {
+        "println-style side effect inside STM.run with 5 attempts runs exactly 5 times" in {
             for
                 counter  <- AtomicInt.init
                 attempts <- AtomicInt.init
@@ -2637,7 +2641,7 @@ class STMTest extends Test:
             yield assert(a == 5 && c == 5, s"side effect count $c should equal attempts $a")
         }
 
-        "two transactions writing to (r1, r2) and (r2, r1) commit without deadlock" in runNotJS {
+        "two transactions writing to (r1, r2) and (r2, r1) commit without deadlock".notJs in {
             for
                 r1 <- TRef.init(0)
                 r2 <- TRef.init(0)
@@ -2653,17 +2657,17 @@ class STMTest extends Test:
             )
         }
 
-        "STM.retry can be called from any STM.run body (no opt-in flag required)" in run {
+        "STM.retry can be called from any STM.run body (no opt-in flag required)" in {
             for
                 result <- Abort.run[FailedTransaction](STM.run(Schedule.done)(STM.retry))
             yield assert(result.isFailure, s"STM.retry should abort regardless of config; got $result")
         }
 
-        "STM.run(Kyo.unit) is a valid no-op that returns unit" in run {
+        "STM.run(Kyo.unit) is a valid no-op that returns unit" in {
             STM.run(Kyo.unit).map { v => assert(v == (), s"empty STM.run should return unit; got $v") }
         }
 
-        "nested STM.run with inner exception propagated upward rolls back the outer's writes" in run {
+        "nested STM.run with inner exception propagated upward rolls back the outer's writes" in {
             for
                 ref <- TRef.init(0)
                 result <- Abort.run[Throwable] {
@@ -2682,7 +2686,7 @@ class STMTest extends Test:
                 assert(v == 0, s"outer write should be rolled back; got $v")
         }
 
-        "500 concurrent fibers calling Tick.next return 500 distinct values" in runNotJS {
+        "500 concurrent fibers calling Tick.next return 500 distinct values".notJs in {
             val n = 500
             Sync.Unsafe.defer { STM.Tick.testOnlySet(0L) }.andThen {
                 Async.fill(n, n) { Sync.Unsafe.defer { STM.Tick.next(): Long } }
@@ -2693,32 +2697,31 @@ class STMTest extends Test:
             }
         }
 
-        "STM.run default overload preserves typed E in Abort union, distinguishable from FailedTransaction" in run {
+        "STM.run default overload preserves typed E in Abort union, distinguishable from FailedTransaction" in {
             val typedFailure: Int < (STM & Abort[String]) = Abort.fail("E1-0108")
             for
                 asStringFail <- Abort.run[String](STM.run(typedFailure))
                 asFTFail     <- Abort.run[FailedTransaction](STM.run(Schedule.done)(STM.retry))
             yield
                 asStringFail match
-                    case Result.Failure("E1-0108") => ()
+                    case Result.Failure("E1-0108") => succeed("pattern confirms typed String error propagated")
                     case other                     => fail(s"E half: expected 'E1-0108', got $other")
                 asFTFail match
-                    case Result.Failure(_: FailedTransaction) => ()
+                    case Result.Failure(_: FailedTransaction) => succeed("pattern confirms FailedTransaction distinguishable")
                     case other                                => fail(s"FT half: expected FailedTransaction, got $other")
-                succeed
             end for
         }
 
-        "STM.run custom-schedule overload preserves typed E in Abort union" in run {
+        "STM.run custom-schedule overload preserves typed E in Abort union" in {
             val typedFailure: Int < (STM & Abort[String]) = Abort.fail("E2-0109")
             for
                 asStringFail <- Abort.run[String](STM.run(Schedule.done)(typedFailure))
             yield asStringFail match
-                case Result.Failure("E2-0109") => succeed
+                case Result.Failure("E2-0109") => succeed("pattern confirms typed error propagated through custom-schedule overload")
                 case other                     => fail(s"expected 'E2-0109', got $other")
         }
 
-        "inline f in withCurrentTransaction captures call-site values (counter increment observed)" in run {
+        "inline f in withCurrentTransaction captures call-site values (counter increment observed)" in {
             for
                 counter <- AtomicInt.init(0)
                 result <- STM.run {
@@ -2732,7 +2735,7 @@ class STMTest extends Test:
                 assert(result == 1, s"return value should match captured side effect; got $result")
         }
 
-        "inline f in withCurrentTransactionOrNew captures call-site values" in run {
+        "inline f in withCurrentTransactionOrNew captures call-site values" in {
             for
                 counter <- AtomicInt.init(0)
                 result <- STM.withCurrentTransactionOrNew[Int, Sync] { _ =>
@@ -2744,7 +2747,7 @@ class STMTest extends Test:
                 assert(result == 1, s"return value should match captured side effect; got $result")
         }
 
-        "FailedTransaction(Present(error)) with non-Throwable error.show completes construction" in run {
+        "FailedTransaction(Present(error)) with non-Throwable error.show completes construction" in {
             val err: Result.Error[String] = Result.Failure("not-a-throwable-0113")
             val ft                        = new FailedTransaction(Present(err))
             assert(
@@ -2753,7 +2756,7 @@ class STMTest extends Test:
             )
         }
 
-        "forced-retry loop with 100 iterations completes (no inter-iteration retention)" in run {
+        "forced-retry loop with 100 iterations completes (no inter-iteration retention)" in {
             val k = 100
             for
                 refs     <- Kyo.fill(20)(TRef.init(0))
@@ -2772,7 +2775,7 @@ class STMTest extends Test:
             end for
         }
 
-        "nested STM.run with heavy ref-touch returns without retaining the inner log" in run {
+        "nested STM.run with heavy ref-touch returns without retaining the inner log" in {
             val k = 200
             for
                 v <- STM.run {
@@ -2793,7 +2796,7 @@ class STMTest extends Test:
             yield assert(v == k, s"outer ref ends at $k; got $v")
         }
 
-        "nested STM.run + STM.retry under Abort.run rolls back inner-only writes; outer commit publishes outer-only writes" in run {
+        "nested STM.run + STM.retry under Abort.run rolls back inner-only writes; outer commit publishes outer-only writes" in {
             for
                 ref <- TRef.init(0)
                 _ <- STM.run {
@@ -2813,7 +2816,7 @@ class STMTest extends Test:
             yield assert(v == 7, s"outer write preserved; got $v (inner write leaked?)")
         }
 
-        "TRef.init outside STM.run produces a TRef immediately observable from another fiber" in runNotJS {
+        "TRef.init outside STM.run produces a TRef immediately observable from another fiber".notJs in {
             for
                 ref   <- TRef.init(42)
                 v1    <- STM.run(ref.get)
@@ -2822,7 +2825,7 @@ class STMTest extends Test:
             yield assert(v1 == 42 && v2 == 42, s"TRef allocated outside STM.run is immediately visible; got ($v1, $v2)")
         }
 
-        "inner STM.run reads the value set by outer STM.run before outer's commit" in run {
+        "inner STM.run reads the value set by outer STM.run before outer's commit" in {
             for
                 ref <- TRef.init(0)
                 v <- STM.run {

@@ -1,6 +1,6 @@
 package kyo
 
-class ChangesetTest extends Test:
+class ChangesetTest extends kyo.test.Test[Any]:
 
     val alice = MTPerson("Alice", 30)
     val bob   = MTPerson("Bob", 25)

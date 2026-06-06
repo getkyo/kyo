@@ -37,7 +37,45 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
             end for
         }
 
-        "xaddUniqueness" in runNotJS {
+        "allPooledCombinations" in {
+            for cs <- Seq(8, 16, 32) do
+                for mp <- Seq(0, 1, 2, 4) do
+                    val q = new MpmcUnboundedUnsafeQueue[Int](cs, maxPooledChunks = mp)
+                    for i <- 0 until 100 do q.offer(i)
+                    for i <- 0 until 100 do
+                        assert(q.poll() == Maybe(i), s"chunkSize=$cs, maxPooled=$mp, i=$i")
+        }
+
+        "chunkSizeSmall" in {
+            // Small chunkSize gets rounded to 8 (min)
+            val q = new MpmcUnboundedUnsafeQueue[Int](1)
+            for i <- 0 until 100 do q.offer(i)
+            for i <- 0 until 100 do
+                assert(q.poll() == Maybe(i))
+        }
+
+        "backwardWalkProducerChunk" in {
+            // Force backward walk by filling multiple chunks sequentially
+            for mp <- Seq(0, 2) do
+                val q = new MpmcUnboundedUnsafeQueue[Int](8, maxPooledChunks = mp)
+                // Fill across 5 chunks (40 elements for chunk size 8)
+                for i <- 0 until 40 do q.offer(i)
+                for i <- 0 until 40 do
+                    assert(q.poll() == Maybe(i), s"maxPooled=$mp, i=$i")
+                assert(q.poll().isEmpty)
+        }
+
+        "nullElementThrowsNPE" in {
+            val q = new MpmcUnboundedUnsafeQueue[String](8)
+            interceptThrown[NullPointerException] {
+                q.offer(null)
+            }
+        }
+    }
+
+    "MpmcUnboundedUnsafeQueue-specific concurrent".notJs - {
+
+        "xaddUniqueness" in {
             val q        = new MpmcUnboundedUnsafeQueue[Long](8)
             val stop     = new AtomicBoolean(false)
             val start    = new CountDownLatch(1)
@@ -81,24 +119,7 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
             assert(!dup.get(), "XADD produced duplicate elements")
         }
 
-        "allPooledCombinations" in {
-            for cs <- Seq(8, 16, 32) do
-                for mp <- Seq(0, 1, 2, 4) do
-                    val q = new MpmcUnboundedUnsafeQueue[Int](cs, maxPooledChunks = mp)
-                    for i <- 0 until 100 do q.offer(i)
-                    for i <- 0 until 100 do
-                        assert(q.poll() == Maybe(i), s"chunkSize=$cs, maxPooled=$mp, i=$i")
-        }
-
-        "chunkSizeSmall" in {
-            // Small chunkSize gets rounded to 8 (min)
-            val q = new MpmcUnboundedUnsafeQueue[Int](1)
-            for i <- 0 until 100 do q.offer(i)
-            for i <- 0 until 100 do
-                assert(q.poll() == Maybe(i))
-        }
-
-        "pooledConcurrentNoDuplicates" in runNotJS {
+        "pooledConcurrentNoDuplicates" in {
             val q        = new MpmcUnboundedUnsafeQueue[Long](8, maxPooledChunks = 4)
             val stop     = new AtomicBoolean(false)
             val start    = new CountDownLatch(1)
@@ -140,7 +161,7 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
             assert(!dup.get(), "Pooled mode produced duplicate elements")
         }
 
-        "pooledConcurrentNoDataLoss" in runNotJS {
+        "pooledConcurrentNoDataLoss" in {
             val q        = new MpmcUnboundedUnsafeQueue[Long](8, maxPooledChunks = 4)
             val stop     = new AtomicBoolean(false)
             val start    = new CountDownLatch(1)
@@ -184,7 +205,7 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
             )
         }
 
-        "pooledPeekConsistency" in runNotJS {
+        "pooledPeekConsistency" in {
             val q       = new MpmcUnboundedUnsafeQueue[Long](8, maxPooledChunks = 4)
             val stop    = new AtomicBoolean(false)
             val start   = new CountDownLatch(1)
@@ -226,7 +247,7 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
             assert(!failure.get(), "Peek returned invalid value in pooled mode")
         }
 
-        "rotationLockContention" in runNotJS {
+        "rotationLockContention" in {
             // Many producers forcing concurrent chunk allocation via ROTATION lock
             val q        = new MpmcUnboundedUnsafeQueue[Long](8, maxPooledChunks = 0)
             val stop     = new AtomicBoolean(false)
@@ -267,24 +288,6 @@ class MpmcUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
 
             while q.poll().isDefined do ()
             assert(!dup.get(), "Rotation lock contention caused duplicates")
-        }
-
-        "backwardWalkProducerChunk" in {
-            // Force backward walk by filling multiple chunks sequentially
-            for mp <- Seq(0, 2) do
-                val q = new MpmcUnboundedUnsafeQueue[Int](8, maxPooledChunks = mp)
-                // Fill across 5 chunks (40 elements for chunk size 8)
-                for i <- 0 until 40 do q.offer(i)
-                for i <- 0 until 40 do
-                    assert(q.poll() == Maybe(i), s"maxPooled=$mp, i=$i")
-                assert(q.poll().isEmpty)
-        }
-
-        "nullElementThrowsNPE" in {
-            val q = new MpmcUnboundedUnsafeQueue[String](8)
-            assertThrows[NullPointerException] {
-                q.offer(null)
-            }
         }
     }
 end MpmcUnboundedUnsafeQueueTest

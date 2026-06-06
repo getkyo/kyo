@@ -4,7 +4,7 @@ import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.internal.codec.*
 
-class ParsedResponseTest extends kyo.Test:
+class ParsedResponseTest extends kyo.BaseHttpTest:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -59,7 +59,6 @@ class ParsedResponseTest extends kyo.Test:
             assert(resp.contentLength == 42)
             assert(resp.isChunked == false)
             assert(resp.isKeepAlive == true)
-            succeed
         }
 
         "headers property wraps packed bytes as HttpHeaders" in {
@@ -71,7 +70,6 @@ class ParsedResponseTest extends kyo.Test:
             assert(headers.size == 1)
             assert(headers.get("Content-Type") == Present(value))
             assert(headers.get("content-type") == Present(value)) // case-insensitive
-            succeed
         }
 
         "statusCode is a read-only val" in {
@@ -84,7 +82,6 @@ class ParsedResponseTest extends kyo.Test:
             val resp2 = new ParsedResponse(500, emptyPackedHeaders(), -1, false, false)
             assert(resp.statusCode == 404)
             assert(resp2.statusCode == 500)
-            succeed
         }
 
         "contentLength is a read-only val" in {
@@ -96,7 +93,6 @@ class ParsedResponseTest extends kyo.Test:
             assert(respPresent.contentLength == 1024)
             // Mutating one instance must not affect the other
             assert(respAbsent.contentLength == -1)
-            succeed
         }
     }
 

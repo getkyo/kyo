@@ -6,7 +6,7 @@ import kyo.stats.Attributes
 import kyo.stats.internal.TraceSpan
 import kyo.stats.internal.UnsafeTraceSpan
 
-class OTLPTraceContextFilterTest extends Test:
+class OTLPTraceContextFilterTest extends kyo.test.Test[Any]:
 
     private val testUrl = HttpUrl(Maybe("http"), "localhost", 80, "/test", Maybe.empty)
 
@@ -19,7 +19,7 @@ class OTLPTraceContextFilterTest extends Test:
 
     "server filter" - {
 
-        "parses valid traceparent and sets span context" in run {
+        "parses valid traceparent and sets span context" in {
             val filter  = OTLPTraceContextFilter.server
             val traceId = "0af7651916cd43dd8448eb211c80319c"
             val spanId  = "b7ad6b7169203331"
@@ -47,7 +47,7 @@ class OTLPTraceContextFilterTest extends Test:
             }
         }
 
-        "passes through without traceparent header" in run {
+        "passes through without traceparent header" in {
             val filter  = OTLPTraceContextFilter.server
             val request = HttpRequest(HttpMethod.GET, testUrl)
 
@@ -63,7 +63,7 @@ class OTLPTraceContextFilterTest extends Test:
             }
         }
 
-        "passes through with invalid traceparent - wrong traceId length" in run {
+        "passes through with invalid traceparent - wrong traceId length" in {
             val filter = OTLPTraceContextFilter.server
             val request = HttpRequest(HttpMethod.GET, testUrl)
                 .addHeader("traceparent", "00-short-b7ad6b7169203331-01")
@@ -86,7 +86,7 @@ class OTLPTraceContextFilterTest extends Test:
             }
         }
 
-        "passes through with invalid traceparent - wrong spanId length" in run {
+        "passes through with invalid traceparent - wrong spanId length" in {
             val filter = OTLPTraceContextFilter.server
             val request = HttpRequest(HttpMethod.GET, testUrl)
                 .addHeader("traceparent", "00-0af7651916cd43dd8448eb211c80319c-short-01")
@@ -109,7 +109,7 @@ class OTLPTraceContextFilterTest extends Test:
             }
         }
 
-        "passes through with invalid traceparent - too few parts" in run {
+        "passes through with invalid traceparent - too few parts" in {
             val filter = OTLPTraceContextFilter.server
             val request = HttpRequest(HttpMethod.GET, testUrl)
                 .addHeader("traceparent", "0af7651916cd43dd8448eb211c80319c")
@@ -132,7 +132,7 @@ class OTLPTraceContextFilterTest extends Test:
             }
         }
 
-        "passes through with empty traceparent" in run {
+        "passes through with empty traceparent" in {
             val filter = OTLPTraceContextFilter.server
             val request = HttpRequest(HttpMethod.GET, testUrl)
                 .addHeader("traceparent", "")
@@ -158,7 +158,7 @@ class OTLPTraceContextFilterTest extends Test:
 
     "client filter" - {
 
-        "adds traceparent header when propagatable span exists" in run {
+        "adds traceparent header when propagatable span exists" in {
             val filter  = OTLPTraceContextFilter.client
             val traceId = "0af7651916cd43dd8448eb211c80319c"
             val spanId  = "b7ad6b7169203331"
@@ -179,7 +179,7 @@ class OTLPTraceContextFilterTest extends Test:
             }
         }
 
-        "traceparent follows W3C format" in run {
+        "traceparent follows W3C format" in {
             val filter  = OTLPTraceContextFilter.client
             val traceId = "abcdef1234567890abcdef1234567890"
             val spanId  = "1234567890abcdef"
@@ -209,7 +209,7 @@ class OTLPTraceContextFilterTest extends Test:
             }
         }
 
-        "no header when no current span" in run {
+        "no header when no current span" in {
             val filter  = OTLPTraceContextFilter.client
             val request = HttpRequest(HttpMethod.GET, testUrl)
 
@@ -225,7 +225,7 @@ class OTLPTraceContextFilterTest extends Test:
             }
         }
 
-        "no header when span is not propagatable" in run {
+        "no header when span is not propagatable" in {
             val filter  = OTLPTraceContextFilter.client
             val span    = TraceSpan.noop
             val request = HttpRequest(HttpMethod.GET, testUrl)
@@ -244,7 +244,7 @@ class OTLPTraceContextFilterTest extends Test:
             }
         }
 
-        "preserves existing request headers" in run {
+        "preserves existing request headers" in {
             val filter  = OTLPTraceContextFilter.client
             val traceId = "0af7651916cd43dd8448eb211c80319c"
             val spanId  = "b7ad6b7169203331"
@@ -273,7 +273,7 @@ class OTLPTraceContextFilterTest extends Test:
 
     "roundtrip" - {
 
-        "client header is parsed correctly by server" in run {
+        "client header is parsed correctly by server" in {
             val clientFilter = OTLPTraceContextFilter.client
             val serverFilter = OTLPTraceContextFilter.server
             val traceId      = "0af7651916cd43dd8448eb211c80319c"

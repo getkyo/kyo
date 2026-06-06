@@ -3,7 +3,7 @@ package kyo.internal
 import kyo.*
 import kyo.internal.util.Sha1
 
-class Sha1Test extends kyo.Test:
+class Sha1Test extends kyo.BaseHttpTest:
 
     // Helper: convert hex string to Array[Byte]
     private def fromHex(hex: String): Array[Byte] =

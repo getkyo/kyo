@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 
-class HttpFormCodecTest extends Test:
+class HttpFormCodecTest extends BaseHttpTest:
 
     case class LoginForm(username: String, password: String) derives HttpFormCodec, CanEqual
     case class SearchForm(query: String, page: Int) derives HttpFormCodec, CanEqual

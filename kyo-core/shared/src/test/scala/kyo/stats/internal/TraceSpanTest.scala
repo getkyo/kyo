@@ -3,9 +3,9 @@ package kyo.stats.internal
 import kyo.*
 import kyo.stats.*
 
-class TraceSpanTest extends Test:
+class TraceSpanTest extends kyo.test.Test[Any]:
 
-    "end" in run {
+    "end" in {
         val unsafe = new TestSpan
         val span   = TraceSpan(unsafe)
         for
@@ -13,7 +13,7 @@ class TraceSpanTest extends Test:
         yield assert(unsafe.isEnded)
     }
 
-    "event" in run {
+    "event" in {
         val unsafe = new TestSpan
         val span   = TraceSpan(unsafe)
         for
@@ -21,22 +21,22 @@ class TraceSpanTest extends Test:
         yield assert(unsafe.lastEvent == "testEvent")
     }
 
-    "noop" in run {
+    "noop" in {
         val noopSpan = TraceSpan.noop
         noopSpan.end
         noopSpan.event("noopEvent", Attributes.empty)
-        succeed
+        succeed("noop span methods complete without error")
     }
 
     "all" - {
-        "empty" in run {
+        "empty" in {
             assert(TraceSpan.all(Nil).unsafe eq TraceSpan.noop.unsafe)
         }
-        "one" in run {
+        "one" in {
             val span = TraceSpan(new TestSpan)
             assert(TraceSpan.all(List(span)).unsafe eq span.unsafe)
         }
-        "multiple" in run {
+        "multiple" in {
             val unsafe1       = new TestSpan
             val unsafe2       = new TestSpan
             val compositeSpan = TraceSpan.all(List(TraceSpan(unsafe1), TraceSpan(unsafe2)))

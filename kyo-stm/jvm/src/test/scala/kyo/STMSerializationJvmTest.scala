@@ -2,11 +2,11 @@ package kyo
 
 // JVM-only: Java object serialization (java.io.ObjectOutputStream / ObjectInputStream)
 // has no equivalent on Scala.js or Scala Native.
-class STMSerializationJvmTest extends Test:
+class STMSerializationJvmTest extends kyo.test.Test[Any]:
 
     "TRef" - {
 
-        "serializes and deserializes preserving the committed value" in run {
+        "serializes and deserializes preserving the committed value" in {
             for
                 ref0 <- TRef.init(42)
                 bytes <- Sync.defer {

@@ -1,23 +1,23 @@
 package kyo
 
-class EmitCombinatorsTest extends Test:
+class EmitCombinatorsTest extends kyo.test.Test[Any]:
 
     given ce[A, B]: CanEqual[A, B] = CanEqual.canEqualAny
 
     "emit" - {
-        "handleEmit" in run {
+        "handleEmit" in {
             val emit = Loop(1)(i => if i == 4 then Loop.done else Emit.valueWith(i)(Loop.continue(i + 1))).andThen("done")
             emit.handleEmit.map:
                 case (chunk, res) => assert(chunk == Chunk(1, 2, 3) && res == "done")
         }
 
-        "handleEmitDiscarding" in run {
+        "handleEmitDiscarding" in {
             val emit = Loop(1)(i => if i == 4 then Loop.done else Emit.valueWith(i)(Loop.continue(i + 1))).andThen("done")
             emit.handleEmitDiscarding.map:
                 case chunk => assert(chunk == Chunk(1, 2, 3))
         }
 
-        "foreachEmit" in run {
+        "foreachEmit" in {
             val emit = Loop(1)(i => if i == 4 then Loop.done else Emit.valueWith(i)(Loop.continue(i + 1))).andThen("done")
             val effect = emit.foreachEmit(i => Var.update[Int](v => v + i).unit).map: result =>
                 Var.get[Int].map(v => (result, v))
@@ -25,7 +25,7 @@ class EmitCombinatorsTest extends Test:
                 case (res, state) => assert(res == "done" && state == 6)
         }
 
-        "emitToChannel" in run {
+        "emitToChannel" in {
             val emit = Loop(1)(i => if i == 4 then Loop.done else Emit.valueWith(i)(Loop.continue(i + 1)))
             for
                 channel <- Channel.init[Int](10)
@@ -35,35 +35,35 @@ class EmitCombinatorsTest extends Test:
             end for
         }
 
-        "emitChunked with number of emitted values divisible by chunk size" in run {
+        "emitChunked with number of emitted values divisible by chunk size" in {
             val emit        = Loop(1)(i => if i == 5 then Loop.done else Emit.valueWith(i)(Loop.continue(i + 1)))
             val chunkedEmit = emit.emitChunked(2)
             chunkedEmit.handleEmitDiscarding.map: result =>
                 assert(result == Chunk(Chunk(1, 2), Chunk(3, 4)))
         }
 
-        "emitChunked with number of emitted values not divisible by chunk size" in run {
+        "emitChunked with number of emitted values not divisible by chunk size" in {
             val emit        = Loop(1)(i => if i == 6 then Loop.done else Emit.valueWith(i)(Loop.continue(i + 1)))
             val chunkedEmit = emit.emitChunked(2)
             chunkedEmit.handleEmitDiscarding.map: result =>
                 assert(result == Chunk(Chunk(1, 2), Chunk(3, 4), Chunk(5)))
         }
 
-        "emitChunkedToStream" in run {
+        "emitChunkedToStream" in {
             val emit   = Loop(0)(i => if i == 9 then Loop.done else Emit.valueWith(i)(Loop.continue(i + 1))).unit
             val stream = emit.emitChunkedToStream(2)
             stream.run.map: chunk =>
                 assert(chunk == Chunk.from(0 until 9))
         }
 
-        "emitChunkedToStreamDiscarding" in run {
+        "emitChunkedToStreamDiscarding" in {
             val emit   = Loop(0)(i => if i == 9 then Loop.done("done") else Emit.valueWith(i)(Loop.continue(i + 1)))
             val stream = emit.emitChunkedToStreamDiscarding(2)
             stream.run.map: chunk =>
                 assert(chunk == Chunk.from(0 until 9))
         }
 
-        "emitChunkedToStreamAndResult" in run {
+        "emitChunkedToStreamAndResult" in {
             val emit = Loop(0)(i => if i == 9 then Loop.done("done") else Emit.valueWith(i)(Loop.continue(i + 1)))
             for
                 (stream, handled) <- emit.emitChunkedToStreamAndResult(2)
@@ -75,21 +75,21 @@ class EmitCombinatorsTest extends Test:
     }
 
     "chunked emit" - {
-        "emitToStream" in run {
+        "emitToStream" in {
             val emit   = Stream.init(0 until 9).emit
             val stream = emit.emitToStream
             stream.run.map: chunk =>
                 assert(chunk == Chunk.from(0 until 9))
         }
 
-        "emitToStreamDiscarding" in run {
+        "emitToStreamDiscarding" in {
             val emit   = Kyo.foreach(0 until 3)(i => Emit.value[Chunk[Int]](Chunk.from((i * 3) until (i * 3) + 3)).andThen(i))
             val stream = emit.emitToStreamDiscarding
             stream.run.map: chunk =>
                 assert(chunk == Chunk.from(0 until 9))
         }
 
-        "emitToStreamAndResult" in run {
+        "emitToStreamAndResult" in {
             val emit = Kyo.foreach(0 until 3)(i => Emit.value[Chunk[Int]](Chunk.from((i * 3) until (i * 3) + 3)).andThen(i))
             for
                 (stream, handled) <- emit.emitToStreamAndResult

@@ -1,28 +1,28 @@
 package kyo
 
-class AtomicTest extends Test:
+class AtomicTest extends kyo.test.Test[Any]:
 
     "int" - {
-        "should initialize to default value (0)" in run {
+        "should initialize to default value (0)" in {
             for
                 ref <- AtomicInt.init
                 v   <- ref.get
             yield assert(v == 0)
         }
-        "should initialize to the provided value" in run {
+        "should initialize to the provided value" in {
             for
                 ref <- AtomicInt.init(5)
                 v   <- ref.get
             yield assert(v == 5)
         }
-        "should set the value" in run {
+        "should set the value" in {
             for
                 ref <- AtomicInt.init(5)
                 _   <- ref.set(10)
                 v   <- ref.get
             yield assert(v == 10)
         }
-        "should compare and set the value" in run {
+        "should compare and set the value" in {
             for
                 ref <- AtomicInt.init(5)
                 v   <- ref.compareAndSet(5, 10)
@@ -31,73 +31,73 @@ class AtomicTest extends Test:
                 assert(v == true)
                 assert(r == 10)
         }
-        "should increment and get the value" in run {
+        "should increment and get the value" in {
             for
                 ref <- AtomicInt.init(5)
                 v   <- ref.incrementAndGet
             yield assert(v == 6)
         }
-        "should get and increment the value" in run {
+        "should get and increment the value" in {
             for
                 ref <- AtomicInt.init(5)
                 v   <- ref.getAndIncrement
             yield assert(v == 5)
         }
-        "should decrement and get the value" in run {
+        "should decrement and get the value" in {
             for
                 ref <- AtomicInt.init(5)
                 v   <- ref.decrementAndGet
             yield assert(v == 4)
         }
-        "should get and decrement the value" in run {
+        "should get and decrement the value" in {
             for
                 ref <- AtomicInt.init(5)
                 v   <- ref.getAndDecrement
             yield assert(v == 5)
         }
-        "should add and get the value" in run {
+        "should add and get the value" in {
             for
                 ref <- AtomicInt.init(5)
                 v   <- ref.addAndGet(5)
             yield assert(v == 10)
         }
-        "should get and add the value" in run {
+        "should get and add the value" in {
             for
                 ref <- AtomicInt.init(5)
                 v   <- ref.getAndAdd(5)
             yield assert(v == 5)
         }
-        "lazySet" in run {
+        "lazySet" in {
             for
                 ref <- AtomicInt.init(5)
                 _   <- ref.lazySet(5)
                 v   <- ref.get
             yield assert(v == 5)
         }
-        "getAndSet" in run {
+        "getAndSet" in {
             for
                 ref <- AtomicInt.init(5)
                 v1  <- ref.getAndSet(6)
                 v2  <- ref.get
             yield assert(v1 == 5 && v2 == 6)
         }
-        "should use current value with transformation" in run {
+        "should use current value with transformation" in {
             for
                 ref <- AtomicInt.init(5)
                 v   <- ref.use(x => x * 2)
             yield assert(v == 10)
         }
-        "should use new atomic with function" in run {
+        "should use new atomic with function" in {
             for
                 v <- AtomicInt.initWith(ref => ref.incrementAndGet)
             yield assert(v == 1)
         }
-        "should use new atomic with initial value" in run {
+        "should use new atomic with initial value" in {
             for
                 v <- AtomicInt.initWith(5)(ref => ref.incrementAndGet)
             yield assert(v == 6)
         }
-        "should get and update the value" in run {
+        "should get and update the value" in {
             for
                 ref <- AtomicInt.init(5)
                 v   <- ref.getAndUpdate(_ + 1)
@@ -106,7 +106,7 @@ class AtomicTest extends Test:
                 assert(v == 5)
                 assert(r == 6)
         }
-        "should update and get the value" in run {
+        "should update and get the value" in {
             for
                 ref <- AtomicInt.init(5)
                 v   <- ref.updateAndGet(_ + 1)
@@ -115,26 +115,26 @@ class AtomicTest extends Test:
     }
 
     "long" - {
-        "should initialize to default value (0)" in run {
+        "should initialize to default value (0)" in {
             for
                 ref <- AtomicLong.init
                 v   <- ref.get
             yield assert(v == 0L)
         }
-        "should initialize to the provided value" in run {
+        "should initialize to the provided value" in {
             for
                 ref <- AtomicLong.init(5L)
                 v   <- ref.get
             yield assert(v == 5L)
         }
-        "should set the value" in run {
+        "should set the value" in {
             for
                 ref <- AtomicLong.init(5L)
                 _   <- ref.set(10L)
                 v   <- ref.get
             yield assert(v == 10L)
         }
-        "should compare and set the value" in run {
+        "should compare and set the value" in {
             for
                 ref <- AtomicLong.init(5L)
                 v   <- ref.compareAndSet(5L, 10L)
@@ -143,73 +143,73 @@ class AtomicTest extends Test:
                 assert(v == true)
                 assert(r == 10L)
         }
-        "should increment and get the value" in run {
+        "should increment and get the value" in {
             for
                 ref <- AtomicLong.init(5L)
                 v   <- ref.incrementAndGet
             yield assert(v == 6L)
         }
-        "should get and increment the value" in run {
+        "should get and increment the value" in {
             for
                 ref <- AtomicLong.init(5L)
                 v   <- ref.getAndIncrement
             yield assert(v == 5L)
         }
-        "should decrement and get the value" in run {
+        "should decrement and get the value" in {
             for
                 ref <- AtomicLong.init(5L)
                 v   <- ref.decrementAndGet
             yield assert(v == 4L)
         }
-        "should get and decrement the value" in run {
+        "should get and decrement the value" in {
             for
                 ref <- AtomicLong.init(5L)
                 v   <- ref.getAndDecrement
             yield assert(v == 5L)
         }
-        "should add and get the value" in run {
+        "should add and get the value" in {
             for
                 ref <- AtomicLong.init(5L)
                 v   <- ref.addAndGet(5L)
             yield assert(v == 10L)
         }
-        "should get and add the value" in run {
+        "should get and add the value" in {
             for
                 ref <- AtomicLong.init(5L)
                 v   <- ref.getAndAdd(5L)
             yield assert(v == 5L)
         }
-        "lazySet" in run {
+        "lazySet" in {
             for
                 ref <- AtomicLong.init(5)
                 _   <- ref.lazySet(5)
                 v   <- ref.get
             yield assert(v == 5)
         }
-        "getAndSet" in run {
+        "getAndSet" in {
             for
                 ref <- AtomicLong.init(5)
                 v1  <- ref.getAndSet(6)
                 v2  <- ref.get
             yield assert(v1 == 5 && v2 == 6)
         }
-        "should use current value with transformation" in run {
+        "should use current value with transformation" in {
             for
                 ref <- AtomicLong.init(5L)
                 v   <- ref.use(x => x * 2)
             yield assert(v == 10L)
         }
-        "should use new atomic with function" in run {
+        "should use new atomic with function" in {
             for
                 v <- AtomicLong.initWith(ref => ref.incrementAndGet)
             yield assert(v == 1L)
         }
-        "should use new atomic with initial value" in run {
+        "should use new atomic with initial value" in {
             for
                 v <- AtomicLong.initWith(5L)(ref => ref.incrementAndGet)
             yield assert(v == 6L)
         }
-        "should get and update the value" in run {
+        "should get and update the value" in {
             for
                 ref <- AtomicLong.init(5L)
                 v   <- ref.getAndUpdate(_ + 1)
@@ -218,7 +218,7 @@ class AtomicTest extends Test:
                 assert(v == 5L)
                 assert(r == 6L)
         }
-        "should update and get the value" in run {
+        "should update and get the value" in {
             for
                 ref <- AtomicLong.init(5L)
                 v   <- ref.updateAndGet(_ + 1)
@@ -227,26 +227,26 @@ class AtomicTest extends Test:
     }
 
     "boolean" - {
-        "should initialize to default value (false)" in run {
+        "should initialize to default value (false)" in {
             for
                 ref <- AtomicBoolean.init
                 v   <- ref.get
             yield assert(v == false)
         }
-        "should initialize to the provided value" in run {
+        "should initialize to the provided value" in {
             for
                 ref <- AtomicBoolean.init(true)
                 v   <- ref.get
             yield assert(v)
         }
-        "should set the value" in run {
+        "should set the value" in {
             for
                 ref <- AtomicBoolean.init(true)
                 _   <- ref.set(false)
                 v   <- ref.get
             yield assert(v == false)
         }
-        "should compare and set the value" in run {
+        "should compare and set the value" in {
             for
                 ref <- AtomicBoolean.init(true)
                 v   <- ref.compareAndSet(true, false)
@@ -255,32 +255,32 @@ class AtomicTest extends Test:
                 assert(v == true)
                 assert(r == false)
         }
-        "lazySet" in run {
+        "lazySet" in {
             for
                 ref <- AtomicBoolean.init(true)
                 _   <- ref.lazySet(false)
                 v   <- ref.get
             yield assert(!v)
         }
-        "getAndSet" in run {
+        "getAndSet" in {
             for
                 ref <- AtomicBoolean.init(true)
                 v1  <- ref.getAndSet(false)
                 v2  <- ref.get
             yield assert(v1 && !v2)
         }
-        "should use current value with transformation" in run {
+        "should use current value with transformation" in {
             for
                 ref <- AtomicBoolean.init(true)
                 v   <- ref.use(x => !x)
             yield assert(!v)
         }
-        "should use new atomic with function" in run {
+        "should use new atomic with function" in {
             for
                 v <- AtomicBoolean.initWith(ref => ref.get)
             yield assert(!v) // default value is false
         }
-        "should use new atomic with initial value" in run {
+        "should use new atomic with initial value" in {
             for
                 v <- AtomicBoolean.initWith(true)(ref => ref.get)
             yield assert(v)
@@ -288,20 +288,20 @@ class AtomicTest extends Test:
     }
 
     "ref" - {
-        "should initialize to the provided value" in run {
+        "should initialize to the provided value" in {
             for
                 ref <- AtomicRef.init("initial")
                 v   <- ref.get
             yield assert(v == "initial")
         }
-        "should set the value" in run {
+        "should set the value" in {
             for
                 ref <- AtomicRef.init("initial")
                 _   <- ref.set("new")
                 v   <- ref.get
             yield assert(v == "new")
         }
-        "should compare and set the value" in run {
+        "should compare and set the value" in {
             for
                 ref <- AtomicRef.init("initial")
                 v   <- ref.compareAndSet("initial", "new")
@@ -310,7 +310,7 @@ class AtomicTest extends Test:
                 assert(v == true)
                 assert(r == "new")
         }
-        "should fail compare and set the value" in run {
+        "should fail compare and set the value" in {
             for
                 ref <- AtomicRef.init("initial")
                 v   <- ref.compareAndSet("not-initial", "new")
@@ -319,7 +319,7 @@ class AtomicTest extends Test:
                 assert(v == false)
                 assert(r == "initial")
         }
-        "should get and set the value" in run {
+        "should get and set the value" in {
             for
                 ref <- AtomicRef.init("initial")
                 v   <- ref.getAndSet("new")
@@ -328,25 +328,25 @@ class AtomicTest extends Test:
                 assert(v == "initial")
                 assert(r == "new")
         }
-        "should lazy set the value" in run {
+        "should lazy set the value" in {
             for
                 ref <- AtomicRef.init("initial")
                 _   <- ref.lazySet("new")
                 v   <- ref.get
             yield assert(v == "new")
         }
-        "should use current value with transformation" in run {
+        "should use current value with transformation" in {
             for
                 ref <- AtomicRef.init("hello")
                 v   <- ref.use(x => x.toUpperCase)
             yield assert(v == "HELLO")
         }
-        "should use new atomic with initial value" in run {
+        "should use new atomic with initial value" in {
             for
                 v <- AtomicRef.initWith("hello")(ref => ref.get)
             yield assert(v == "hello")
         }
-        "should get and update the value" in run {
+        "should get and update the value" in {
             for
                 ref <- AtomicRef.init("hello")
                 v   <- ref.getAndUpdate(_.toUpperCase)
@@ -355,7 +355,7 @@ class AtomicTest extends Test:
                 assert(v == "hello")
                 assert(r == "HELLO")
         }
-        "should update and get the value" in run {
+        "should update and get the value" in {
             for
                 ref <- AtomicRef.init("hello")
                 v   <- ref.updateAndGet(_.toUpperCase)

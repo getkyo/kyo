@@ -1,6 +1,6 @@
 package kyo
 
-class TypeMapTest extends Test:
+class TypeMapTest extends kyo.test.Test[Any]:
     "empty" - {
         "TypeMap.empty" in {
             assert(TypeMap.empty.isEmpty)
@@ -65,7 +65,7 @@ class TypeMapTest extends Test:
                 "Intersection types are not supported here"
             )
         }
-        "distinct" in pendingUntilFixed {
+        "distinct".pendingUntilFixed("TypeMap does not yet reject duplicate-type entries at compile time") in {
             discard(typeCheckFailure("TypeMap(0, 0)")("should fail"))
         }
     }
@@ -73,7 +73,7 @@ class TypeMapTest extends Test:
         import scala.util.Try
         import scala.util.Failure
 
-        def test[A: Tag](e: TypeMap[A], contents: String, tpe: String) =
+        def test[A: Tag](e: TypeMap[A], contents: String, tpe: String)(using kyo.test.AssertScope) =
             Try(e.get[A]) match
                 case Failure(error) => assert(
                         error.getMessage == s"fatal: kyo.TypeMap of contents [$contents] missing value of type: [$tpe]."
@@ -242,11 +242,7 @@ class TypeMapTest extends Test:
             val e1: TypeMap[A] = TypeMap(a)
             val e2             = e1.add[A](b1)
             assert(e2.get[A] eq b1)
-            typeCheckFailure(
-                """
-                  | e2.get[B]
-                  |""".stripMargin
-            )(
+            typeCheckFailure("e2.get[B]")(
                 "Type argument B does not conform to lower bound A"
             )
         }
@@ -280,10 +276,12 @@ class TypeMapTest extends Test:
             assert(p.size == 1)
         }
         "Env[Super] -> Env[Sub]" in {
-            typeCheckFailure("""
-                  | val e = TypeMap(new Throwable)
-                  | val p = e.prune[Exception]
-                  |""".stripMargin)(
+            typeCheckFailure(
+                """
+val e = TypeMap(new Throwable)
+val p = e.prune[Exception]
+"""
+            )(
                 "Type argument Exception does not conform to lower bound Throwable"
             )
         }

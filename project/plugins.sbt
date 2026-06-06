@@ -1,16 +1,17 @@
 addSbtPlugin("pl.project13.scala" % "sbt-jmh"        % "0.4.8")
 addSbtPlugin("org.scalameta"      % "sbt-scalafmt"   % "2.5.6")
 addSbtPlugin("com.github.sbt"     % "sbt-ci-release" % "1.11.2")
+addSbtPlugin("com.eed3si9n"       % "sbt-buildinfo"  % "0.13.1")
 
 // sbt-assembly: used by kyo-tasty-sbt-runner to produce a fat JAR for the forked JVM.
 addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "2.3.1")
 
-// sbt-kyo-doctest: wired in-tree via project/build.sbt (same pattern as kyo-compat).
+// kyo-doctest-plugin: wired in-tree via project/build.sbt (same pattern as kyo-compat-plugin).
 // The plugin's source is compiled directly into the meta-build, so build.sbt
 // can reference `KyoDoctestPlugin` without an addSbtPlugin/ivy round trip.
 // Auto-enables on JVM projects (allRequirements trigger + JvmPlugin requires).
 
-// kyo-compat (in-tree plugin, wired in via project/build.sbt) needs
+// kyo-compat-plugin (in-tree plugin, wired in via project/build.sbt) needs
 // these on the meta-build's compile classpath too; see project/build.sbt.
 addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject"      % "1.3.2")
 addSbtPlugin("org.scala-js"       % "sbt-scalajs"                   % "1.21.0")

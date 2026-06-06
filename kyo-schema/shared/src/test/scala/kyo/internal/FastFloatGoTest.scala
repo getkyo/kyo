@@ -14,9 +14,8 @@
 package kyo.internal
 
 import java.nio.charset.StandardCharsets
-import kyo.Test
 
-class FastFloatGoTest extends Test:
+class FastFloatGoTest extends kyo.test.Test[Any]:
 
     import FastFloat.DoubleBailOut
 
@@ -26,7 +25,7 @@ class FastFloatGoTest extends Test:
     // (bit-identical to java.lang.Double.parseDouble) or bail out (DoubleBailOut).
     // A bail-out is legal — the caller falls back to the JDK; what is illegal is a
     // wrong-but-non-sentinel value.
-    private def assertParsesTo(s: String, expected: Double): org.scalatest.Assertion =
+    private def assertParsesTo(s: String, expected: Double)(using kyo.test.AssertScope): Unit =
         val b    = bytes(s)
         val bits = FastFloat.parseDouble(b, 0, b.length)
         if bits == DoubleBailOut then
@@ -42,11 +41,11 @@ class FastFloatGoTest extends Test:
     end assertParsesTo
 
     // Convenience overload — expected value computed by Double.parseDouble.
-    private def assertParsesTo(s: String): org.scalatest.Assertion =
+    private def assertParsesTo(s: String)(using kyo.test.AssertScope): Unit =
         assertParsesTo(s, java.lang.Double.parseDouble(s))
 
     // Asserts that the fast path returns +Infinity bits or bails out (for overflow inputs).
-    private def assertOverflows(s: String): org.scalatest.Assertion =
+    private def assertOverflows(s: String)(using kyo.test.AssertScope): Unit =
         val b    = bytes(s)
         val bits = FastFloat.parseDouble(b, 0, b.length)
         if bits == DoubleBailOut then
@@ -60,7 +59,7 @@ class FastFloatGoTest extends Test:
     end assertOverflows
 
     // Asserts that the fast path returns -Infinity bits or bails out.
-    private def assertOverflowsNeg(s: String): org.scalatest.Assertion =
+    private def assertOverflowsNeg(s: String)(using kyo.test.AssertScope): Unit =
         val b    = bytes(s)
         val bits = FastFloat.parseDouble(b, 0, b.length)
         if bits == DoubleBailOut then
@@ -74,7 +73,7 @@ class FastFloatGoTest extends Test:
     end assertOverflowsNeg
 
     // Asserts that the fast path returns +0.0 bits or bails out (for underflow inputs).
-    private def assertUnderflows(s: String): org.scalatest.Assertion =
+    private def assertUnderflows(s: String)(using kyo.test.AssertScope): Unit =
         val b    = bytes(s)
         val bits = FastFloat.parseDouble(b, 0, b.length)
         if bits == DoubleBailOut then

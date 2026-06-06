@@ -71,7 +71,7 @@ import kyo.internal.SharedChrome
 //
 // ────────────────────────────────────────────────────────────────────────────
 
-abstract class BrowserTest extends Test:
+abstract class BrowserTest extends BaseBrowserTest:
 
     /** Cold-Chrome warmup gate. The shared-Chrome first-call cost (~2.8s for Chrome launch + CDP roundtrip) would otherwise blow
       * per-call schedule budgets in `BrowserPerCallScheduleTest`. Eat that cost on the FIRST integration-test call so subsequent tests see a
@@ -144,8 +144,9 @@ abstract class BrowserTest extends Test:
       * with a default diagnostic message and the same effect row as [[Browser.eval]].
       */
     def evalAssert(js: String, expected: String)(using
-        Frame
-    ): Assertion < (Browser & Abort[BrowserReadException]) =
+        Frame,
+        kyo.test.AssertScope
+    ): Unit < (Browser & Abort[BrowserReadException]) =
         Browser.eval(js).map { v =>
             assert(v == expected, s"expected `$expected` but got `$v` for js `$js`")
         }
@@ -195,7 +196,7 @@ abstract class BrowserTest extends Test:
     def expectNotActionable[S](
         action: Unit < (Browser & Abort[BrowserElementException] & S),
         reason: Reason
-    )(using Frame): Assertion < (Browser & Async & S) =
+    )(using Frame, kyo.test.AssertScope): Unit < (Browser & Async & S) =
         tight(Abort.run[BrowserElementException](action)).map {
             case Result.Failure(ex: BrowserElementNotActionableException) =>
                 assert(ex.reason == reason, s"expected reason $reason but got ${ex.reason}")
@@ -206,12 +207,12 @@ abstract class BrowserTest extends Test:
     /** Asserts a `Browser` action aborts with [[BrowserElementNotActionableException]] matching the given partial function. */
     def expectNotActionablePF[S](
         action: Unit < (Browser & Abort[BrowserElementException] & S)
-    )(check: PartialFunction[Reason, Unit])(using Frame): Assertion < (Browser & Async & S) =
+    )(check: PartialFunction[Reason, Unit])(using Frame, kyo.test.AssertScope): Unit < (Browser & Async & S) =
         tight(Abort.run[BrowserElementException](action)).map {
             case Result.Failure(ex: BrowserElementNotActionableException) =>
                 if check.isDefinedAt(ex.reason) then
                     check(ex.reason)
-                    succeed
+                    ()
                 else
                     fail(s"unexpected reason ${ex.reason} - partial function not defined for it")
             case other =>

@@ -3,7 +3,7 @@ package kyo
 import kyo.*
 import scala.language.implicitConversions
 
-class HttpRouteTest extends Test:
+class HttpRouteTest extends BaseHttpTest:
 
     import HttpPath.*
     import HttpRoute.*
@@ -998,7 +998,7 @@ class HttpRouteTest extends Test:
                 HttpRoute.getRaw("users")
                     .request(_.query[Int]("page").query[String]("page"))
             val _: HttpRoute["page" ~ (Int | String), Any, Nothing] = r
-            succeed
+            succeed("compile-time type check: duplicate query param names produce union type")
         }
 
         "query and header with same name become an union" in {
@@ -1006,7 +1006,7 @@ class HttpRouteTest extends Test:
                 HttpRoute.getRaw("users")
                     .request(_.query[String]("token").header[Int]("token"))
             val _: HttpRoute["token" ~ (Int | String), Any, Nothing] = r
-            succeed
+            succeed("compile-time type check: same-named query and header produce union type")
         }
 
         "query named 'body' conflicts with bodyJson" in {
@@ -1014,7 +1014,7 @@ class HttpRouteTest extends Test:
                 HttpRoute.postRaw("data")
                     .request(_.query[String]("body").bodyJson[Int])
             val _: HttpRoute["body" ~ (Int | String), Any, Nothing] = r
-            succeed
+            succeed("compile-time type check: query \"body\" and bodyJson merge into union type")
         }
 
         "duplicate response header names rejected at compile time" in {
@@ -1022,7 +1022,7 @@ class HttpRouteTest extends Test:
                 HttpRoute.getRaw("users")
                     .response(_.header[String]("X-Id").header[Int]("X-Id"))
             val _: HttpRoute[Any, "X-Id" ~ (Int | String), Nothing] = r
-            succeed
+            succeed("compile-time type check: duplicate response header names produce union type")
         }
     }
 
@@ -1165,7 +1165,7 @@ class HttpRouteTest extends Test:
             // extractedFilter has type HttpFilter[?, ?, ?, ?, ? <: E]
             // If we could call it with a request lacking "auth", f1 would crash at runtime
             // trying to access request.fields.auth
-            succeed
+            ()
         }
 
         "filter andThen composition preserves runtime behavior" in {
@@ -1195,7 +1195,6 @@ class HttpRouteTest extends Test:
             val route = HttpRoute.getRaw("test").filter(f1).filter(f2)
             // Both filters should be composed
             assert(route.filter ne HttpFilter.noop)
-            succeed
         }
 
         "wireName defaults to empty consistently for Capture and query" in {
@@ -1310,7 +1309,7 @@ class HttpRouteTest extends Test:
                 .filter(f)
                 .request(_.query[Int]("limit"))
             val _: HttpRoute["user" ~ String & "limit" ~ Int, Any, Any] = route
-            succeed
+            succeed("compile-time type check: filter fields are preserved through request chaining")
         }
     }
 

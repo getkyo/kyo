@@ -1,6 +1,6 @@
 package kyo
 
-class BuilderTest extends Test:
+class BuilderTest extends kyo.test.Test[Any]:
 
     // === build (12 tests) ===
 

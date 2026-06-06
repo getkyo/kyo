@@ -1,0 +1,67 @@
+package kyo
+
+import kyo.UI.*
+import kyo.UI.Ast.*
+import kyo.internal.HtmlRenderer
+import scala.language.implicitConversions
+
+class IndeterminateTest extends kyo.test.Test[Any]:
+
+    private def renderHtml(ui: UI)(using Frame): String < Sync =
+        HtmlRenderer.render(ui, Seq.empty)
+
+    "checkbox.indeterminate(true) adds jsProps and renders data-kyo-prop-indeterminate" in {
+        val cb   = UI.checkbox.indeterminate(true)
+        val html = renderHtml(cb)
+        html.map { s =>
+            assert(cb.attrs.jsProps == Map("indeterminate" -> "true"))
+            assert(s.contains("""data-kyo-prop-indeterminate="true""""))
+        }
+    }
+
+    "checkbox.indeterminate(true).checked(true) renders both checked and data-kyo-prop-indeterminate" in {
+        val html = renderHtml(UI.checkbox.indeterminate(true).checked(true))
+        html.map { s =>
+            assert(s.contains("checked"))
+            assert(s.contains("""data-kyo-prop-indeterminate="true""""))
+        }
+    }
+
+    "checkbox.indeterminate(false) removes the jsProp key from attrs" in {
+        val cb   = UI.checkbox.indeterminate(true).indeterminate(false)
+        val html = renderHtml(cb)
+        html.map { s =>
+            assert(!cb.attrs.jsProps.contains("indeterminate"))
+            assert(!s.contains("data-kyo-prop-indeterminate"))
+        }
+    }
+
+    "checkbox.indeterminate(signal) at true produces Checkbox with correct jsProps" in {
+        for
+            ref <- Signal.initRef(true)
+            reactive = UI.checkbox.indeterminate(ref: Signal[Boolean])
+            r        = reactive.asInstanceOf[Reactive[?]]
+            result <- r.signal.current.map { inner =>
+                inner match
+                    case cb: Checkbox =>
+                        assert(cb.attrs.jsProps == Map("indeterminate" -> "true"))
+                    case other =>
+                        fail(s"Expected Checkbox, got $other")
+            }
+        yield result
+    }
+
+    "toggling indeterminate from true to false drops the jsProp in rendered HTML" in {
+        for
+            ref <- Signal.initRef(true)
+            reactive = UI.checkbox.indeterminate(ref: Signal[Boolean])
+            r        = reactive.asInstanceOf[Reactive[?]]
+            htmlTrue  <- r.signal.current.flatMap(ui => renderHtml(ui))
+            _         <- ref.set(false)
+            htmlFalse <- r.signal.current.flatMap(ui => renderHtml(ui))
+        yield
+            assert(htmlTrue.contains("""data-kyo-prop-indeterminate="true""""))
+            assert(!htmlFalse.contains("data-kyo-prop-indeterminate"))
+    }
+
+end IndeterminateTest

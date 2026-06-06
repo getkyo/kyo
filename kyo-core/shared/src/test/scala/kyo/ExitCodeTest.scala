@@ -1,6 +1,6 @@
 package kyo
 
-class ExitCodeTest extends Test:
+class ExitCodeTest extends kyo.test.Test[Any]:
 
     "ExitCode(0) is ExitCode.Success" in {
         assert(ExitCode(0) == ExitCode.Success)
@@ -87,7 +87,7 @@ class ExitCodeTest extends Test:
                 s"Signal $n: Signaled($n).toInt=${code.toInt}, ExitCode(${code.toInt})=$roundTripped, expected $code"
             )
         }
-        succeed
+        ()
     }
 
     "ExitCode with negative integer produces Failure" in {
@@ -189,7 +189,7 @@ class ExitCodeTest extends Test:
     // Process-based ExitCode tests
     // ---------------------------------------------------------------------------
 
-    "waitFor with timeout returns Present(ExitCode) for quick process" in run {
+    "waitFor with timeout returns Present(ExitCode) for quick process" in {
         Scope.run {
             for
                 proc   <- Command("true").spawn
@@ -198,7 +198,7 @@ class ExitCodeTest extends Test:
         }
     }
 
-    "waitFor with timeout returns Absent when process exceeds timeout" in run {
+    "waitFor with timeout returns Absent when process exceeds timeout" in {
         Scope.run {
             for
                 proc   <- Command("sleep", "60").spawn
@@ -207,7 +207,7 @@ class ExitCodeTest extends Test:
         }
     }
 
-    "envAppend adds and overrides env variables preserving existing ones" in run {
+    "envAppend adds and overrides env variables preserving existing ones" in {
         Command("sh", "-c", "echo $KYO_TEST_VAR")
             .envAppend(Map("KYO_TEST_VAR" -> "appended_value"))
             .text
@@ -216,7 +216,7 @@ class ExitCodeTest extends Test:
             }
     }
 
-    "envReplace runs process with only specified environment" in run {
+    "envReplace runs process with only specified environment" in {
         Command("sh", "-c", "echo ${KYO_ONLY_VAR:-only}")
             .envReplace(Map("KYO_ONLY_VAR" -> "only"))
             .text
@@ -227,7 +227,7 @@ class ExitCodeTest extends Test:
 
     "envClear runs process with empty environment" in {
         assume(!kyo.internal.Platform.isWindows, "env command is Unix-only")
-        run {
+        {
             Command("env")
                 .envClear
                 .text

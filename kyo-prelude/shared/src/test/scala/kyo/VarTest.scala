@@ -1,6 +1,6 @@
 package kyo
 
-class VarTest extends Test:
+class VarTest extends kyo.test.Test[Any]:
 
     "get" in {
         val r = Var.run(1)(Var.get[Int].map(_ + 1)).eval
@@ -118,7 +118,7 @@ class VarTest extends Test:
 
     "isolate" - {
         "merge" - {
-            "combines values from isolated and outer scopes" in run {
+            "combines values from isolated and outer scopes" in {
                 val result = Var.runTuple(42) {
                     Var.isolate.merge[Int](_ + _).run {
                         for
@@ -131,7 +131,7 @@ class VarTest extends Test:
                 assert(result.eval == (52, (42, 10)))
             }
 
-            "proper state restoration after nested isolations" in run {
+            "proper state restoration after nested isolations" in {
                 val result = Var.runTuple(1) {
                     for
                         start <- Var.get[Int]
@@ -148,7 +148,7 @@ class VarTest extends Test:
                 assert(result.eval == (8, (1, 2, 3, 5, 8)))
             }
 
-            "with multishot" in run {
+            "with multishot" in {
                 val result: (Int, Chunk[Int]) < Any = Var.runTuple(1) {
                     Choice.run:
                         Choice.eval(1, 2, 3).map: i =>
@@ -170,7 +170,7 @@ class VarTest extends Test:
         }
 
         "update" - {
-            "replaces outer value with inner value" in run {
+            "replaces outer value with inner value" in {
                 val result = Var.runTuple(42) {
                     for
                         before <- Var.get[Int]
@@ -183,7 +183,7 @@ class VarTest extends Test:
                 assert(result.eval == (10, (42, 10)))
             }
 
-            "nested updates apply in order" in run {
+            "nested updates apply in order" in {
                 val result = Var.runTuple(1) {
                     for
                         start <- Var.get[Int]
@@ -200,7 +200,7 @@ class VarTest extends Test:
                 assert(result.eval == (4, (1, 4)))
             }
 
-            "value changes preserved after effects" in run {
+            "value changes preserved after effects" in {
                 val result = Var.runTuple(5) {
                     Env.run(2) {
                         for
@@ -219,7 +219,7 @@ class VarTest extends Test:
         }
 
         "discard" - {
-            "inner modifications don't affect outer scope" in run {
+            "inner modifications don't affect outer scope" in {
                 val result = Var.runTuple(42) {
                     for
                         before <- Var.get[Int]
@@ -232,7 +232,7 @@ class VarTest extends Test:
                 assert(result.eval == (42, (42, 42)))
             }
 
-            "nested discards maintain isolation" in run {
+            "nested discards maintain isolation" in {
                 val result = Var.runTuple(1) {
                     for
                         start <- Var.get[Int]
@@ -249,7 +249,7 @@ class VarTest extends Test:
                 assert(result.eval == (1, (1, 1)))
             }
 
-            "effects execute but state changes discarded" in run {
+            "effects execute but state changes discarded" in {
                 var sideEffect = 0
                 val result = Var.runTuple(5) {
                     for
@@ -269,7 +269,7 @@ class VarTest extends Test:
         }
 
         "composition" - {
-            "can combine multiple isolates" in run {
+            "can combine multiple isolates" in {
                 val i1 = Var.isolate.merge[Int](_ + _)
                 val i2 = Var.isolate.update[Int]
 
@@ -287,7 +287,7 @@ class VarTest extends Test:
                 assert(result.eval == (2, (1, 2)))
             }
 
-            "preserves individual isolation behaviors when composed" in run {
+            "preserves individual isolation behaviors when composed" in {
                 val i1 = Var.isolate.discard[Int]
                 val i2 = Var.isolate.update[Int]
 
@@ -307,7 +307,7 @@ class VarTest extends Test:
                 assert(result.eval == (20, (1, 1, 20)))
             }
 
-            "with Emit isolate" in run {
+            "with Emit isolate" in {
                 val varIsolate  = Var.isolate.discard[Int]
                 val emitIsolate = Emit.isolate.merge[Int]
 

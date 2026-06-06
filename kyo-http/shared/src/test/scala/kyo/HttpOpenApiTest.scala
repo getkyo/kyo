@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 
-class HttpOpenApiTest extends kyo.Test:
+class HttpOpenApiTest extends kyo.BaseHttpTest:
 
     val petStoreSpec = HttpOpenApi(
         openapi = "3.0.0",
@@ -796,7 +796,9 @@ class HttpOpenApiTest extends kyo.Test:
 
         // BUG: requestBody is ignored — only parameters are processed.
         // A POST with requestBody should have a body field in the request.
-        "requestBody should produce a body field" in pendingUntilFixed {
+        "requestBody should produce a body field".pendingUntilFixed(
+            "requestBody is ignored , only parameters are processed. A POST with requestBody should have a body field in the request."
+        ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -814,12 +816,13 @@ class HttpOpenApiTest extends kyo.Test:
                 }
             }""")
             assert(api.createItem.request.fields.nonEmpty)
-            ()
         }
 
         // BUG: $ref jsons are not resolved — falls through to String.
         // A $ref response should not produce a "body" ~ String field.
-        "$ref json should be resolved" in pendingUntilFixed {
+        "$ref json should be resolved".pendingUntilFixed(
+            "$ref jsons are not resolved , falls through to String. A $ref response should not produce a \"body\" ~ String field."
+        ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -852,7 +855,7 @@ class HttpOpenApiTest extends kyo.Test:
         }
 
         // BUG: array json type is not handled — falls through to String.
-        "array json should not fall through to String" in pendingUntilFixed {
+        "array json should not fall through to String".pendingUntilFixed("array json type is not handled , falls through to String.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -880,7 +883,7 @@ class HttpOpenApiTest extends kyo.Test:
         }
 
         // BUG: object json type is not handled — falls through to String.
-        "object json should not fall through to String" in pendingUntilFixed {
+        "object json should not fall through to String".pendingUntilFixed("object json type is not handled , falls through to String.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -944,7 +947,9 @@ class HttpOpenApiTest extends kyo.Test:
         }
 
         // BUG: cookie parameters are silently dropped — only query and header are processed.
-        "cookie parameter should be included" in pendingUntilFixed {
+        "cookie parameter should be included".pendingUntilFixed(
+            "cookie parameters are silently dropped , only query and header are processed."
+        ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -964,11 +969,10 @@ class HttpOpenApiTest extends kyo.Test:
                 }
             }""")
             assert(api.listItems.request.fields.nonEmpty)
-            ()
         }
 
         // BUG: string/date-time format falls through to plain String.
-        "string/date-time should not map to String" in pendingUntilFixed {
+        "string/date-time should not map to String".pendingUntilFixed("string/date-time format falls through to plain String.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -993,7 +997,7 @@ class HttpOpenApiTest extends kyo.Test:
         }
 
         // BUG: string/date format falls through to plain String.
-        "string/date should not map to String" in pendingUntilFixed {
+        "string/date should not map to String".pendingUntilFixed("string/date format falls through to plain String.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1018,7 +1022,7 @@ class HttpOpenApiTest extends kyo.Test:
         }
 
         // BUG: non-JSON response content types are silently ignored.
-        "text/plain response should produce a body field" in pendingUntilFixed {
+        "text/plain response should produce a body field".pendingUntilFixed("non-JSON response content types are silently ignored.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1041,11 +1045,10 @@ class HttpOpenApiTest extends kyo.Test:
                 }
             }""")
             assert(api.greet.response.fields.nonEmpty)
-            ()
         }
 
         // BUG: oneOf json is not handled — falls through to String.
-        "oneOf json should not fall through to String" in pendingUntilFixed {
+        "oneOf json should not fall through to String".pendingUntilFixed("oneOf json is not handled , falls through to String.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1078,7 +1081,7 @@ class HttpOpenApiTest extends kyo.Test:
         }
 
         // BUG: string/byte format falls through to plain String.
-        "string/byte should not map to String" in pendingUntilFixed {
+        "string/byte should not map to String".pendingUntilFixed("string/byte format falls through to plain String.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1103,7 +1106,7 @@ class HttpOpenApiTest extends kyo.Test:
         }
 
         // BUG: string/binary format falls through to plain String.
-        "string/binary should not map to String" in pendingUntilFixed {
+        "string/binary should not map to String".pendingUntilFixed("string/binary format falls through to plain String.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1128,7 +1131,7 @@ class HttpOpenApiTest extends kyo.Test:
         }
 
         // BUG: anyOf json is not handled — falls through to String.
-        "anyOf json should not fall through to String" in pendingUntilFixed {
+        "anyOf json should not fall through to String".pendingUntilFixed("anyOf json is not handled , falls through to String.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1160,7 +1163,7 @@ class HttpOpenApiTest extends kyo.Test:
         }
 
         // BUG: allOf json is not handled — falls through to String.
-        "allOf json should not fall through to String" in pendingUntilFixed {
+        "allOf json should not fall through to String".pendingUntilFixed("allOf json is not handled , falls through to String.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1193,7 +1196,9 @@ class HttpOpenApiTest extends kyo.Test:
         }
 
         // BUG: application/xml response content is silently ignored.
-        "application/xml response should produce a body field" in pendingUntilFixed {
+        "application/xml response should produce a body field".pendingUntilFixed(
+            "application/xml response content is silently ignored."
+        ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1216,11 +1221,10 @@ class HttpOpenApiTest extends kyo.Test:
                 }
             }""")
             assert(api.listItems.response.fields.nonEmpty)
-            ()
         }
 
         // BUG: $ref in parameter json falls through to String.
-        "$ref in parameter json should be resolved" in pendingUntilFixed {
+        "$ref in parameter json should be resolved".pendingUntilFixed("$ref in parameter json falls through to String.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1251,7 +1255,9 @@ class HttpOpenApiTest extends kyo.Test:
 
         // BUG: only error responses (no 2xx, no default) silently falls back to OK with empty response.
         // Should produce a compile error or at least warn.
-        "only error responses should not silently default to OK" in pendingUntilFixed {
+        "only error responses should not silently default to OK".pendingUntilFixed(
+            "only error responses (no 2xx, no default) silently falls back to OK with empty response. Should produce a compile error or at least warn."
+        ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1269,11 +1275,12 @@ class HttpOpenApiTest extends kyo.Test:
             }""")
             // Silently defaults to status 200 — should not be 200
             assert(api.listItems.response.status.code != 200)
-            ()
         }
 
         // BUG: nested array of objects — combines array and object limitations.
-        "array of objects response should not fall through to String" in pendingUntilFixed {
+        "array of objects response should not fall through to String".pendingUntilFixed(
+            "nested array of objects , combines array and object limitations."
+        ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1304,7 +1311,9 @@ class HttpOpenApiTest extends kyo.Test:
         }
 
         // BUG: security schemes are parsed but ignored — no auth headers/params generated.
-        "security scheme bearer token should produce a header field" in pendingUntilFixed {
+        "security scheme bearer token should produce a header field".pendingUntilFixed(
+            "security schemes are parsed but ignored , no auth headers/params generated."
+        ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1327,11 +1336,12 @@ class HttpOpenApiTest extends kyo.Test:
                 }
             }""")
             assert(api.listItems.request.fields.nonEmpty)
-            ()
         }
 
         // BUG: security scheme apiKey should produce a header/query field.
-        "security scheme apiKey should produce a parameter field" in pendingUntilFixed {
+        "security scheme apiKey should produce a parameter field".pendingUntilFixed(
+            "security scheme apiKey should produce a header/query field."
+        ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1355,11 +1365,12 @@ class HttpOpenApiTest extends kyo.Test:
                 }
             }""")
             assert(api.listItems.request.fields.nonEmpty)
-            ()
         }
 
         // BUG: path-level parameters are ignored — only operation-level parameters are read.
-        "path-level parameters should be merged with operation parameters" in pendingUntilFixed {
+        "path-level parameters should be merged with operation parameters".pendingUntilFixed(
+            "path-level parameters are ignored , only operation-level parameters are read."
+        ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1386,11 +1397,10 @@ class HttpOpenApiTest extends kyo.Test:
             }""")
             // Should have both X-Tenant (path-level) and limit (operation-level)
             assert(api.listItems.request.fields.size == 2)
-            ()
         }
 
         // BUG: nullable parameter is not handled — should map to Maybe[T].
-        "nullable parameter should map to Maybe" in pendingUntilFixed {
+        "nullable parameter should map to Maybe".pendingUntilFixed("nullable parameter is not handled , should map to Maybe[T].") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1415,7 +1425,7 @@ class HttpOpenApiTest extends kyo.Test:
         }
 
         // BUG: default values in parameters are ignored.
-        "parameter default value should be used" in pendingUntilFixed {
+        "parameter default value should be used".pendingUntilFixed("default values in parameters are ignored.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1435,11 +1445,12 @@ class HttpOpenApiTest extends kyo.Test:
             }""")
             val field = api.listItems.request.fields.head.asInstanceOf[HttpRoute.Field.Param[?, ?, ?]]
             assert(field.default.isDefined)
-            ()
         }
 
         // BUG: requestBody with multipart/form-data should produce a Multipart field.
-        "requestBody multipart/form-data should produce a body field" in pendingUntilFixed {
+        "requestBody multipart/form-data should produce a body field".pendingUntilFixed(
+            "requestBody with multipart/form-data should produce a Multipart field."
+        ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1457,11 +1468,12 @@ class HttpOpenApiTest extends kyo.Test:
                 }
             }""")
             assert(api.upload.request.fields.nonEmpty)
-            ()
         }
 
         // BUG: requestBody with application/x-www-form-urlencoded should produce a field.
-        "requestBody form-urlencoded should produce a body field" in pendingUntilFixed {
+        "requestBody form-urlencoded should produce a body field".pendingUntilFixed(
+            "requestBody with application/x-www-form-urlencoded should produce a field."
+        ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1479,11 +1491,12 @@ class HttpOpenApiTest extends kyo.Test:
                 }
             }""")
             assert(api.login.request.fields.nonEmpty)
-            ()
         }
 
         // BUG: application/octet-stream response should use ContentType.Binary.
-        "application/octet-stream response should produce a binary body" in pendingUntilFixed {
+        "application/octet-stream response should produce a binary body".pendingUntilFixed(
+            "application/octet-stream response should use ContentType.Binary."
+        ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1506,12 +1519,13 @@ class HttpOpenApiTest extends kyo.Test:
                 }
             }""")
             assert(api.download.response.fields.nonEmpty)
-            ()
         }
 
         // BUG: multiple content types in response — only application/json is checked,
         // other types are silently ignored even when present alongside JSON.
-        "response with multiple content types should handle all" in pendingUntilFixed {
+        "response with multiple content types should handle all".pendingUntilFixed(
+            "multiple content types in response , only application/json is checked, other types are silently ignored even when present alongside JSON."
+        ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1538,11 +1552,10 @@ class HttpOpenApiTest extends kyo.Test:
             }""")
             // Should represent both content types, not just JSON
             assert(api.listItems.response.fields.size > 1)
-            ()
         }
 
         // BUG: string minLength constraint is silently ignored.
-        "string parameter minLength should not be ignored" in pendingUntilFixed {
+        "string parameter minLength should not be ignored".pendingUntilFixed("string minLength constraint is silently ignored.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1564,11 +1577,12 @@ class HttpOpenApiTest extends kyo.Test:
             val field = api.listItems.request.fields.head.asInstanceOf[HttpRoute.Field.Param[?, ?, ?]]
             // The constraint should be captured in the field description — currently silently dropped
             assert(field.description.nonEmpty)
-            ()
         }
 
         // BUG: integer minimum/maximum constraints are silently ignored.
-        "integer parameter minimum/maximum should not be ignored" in pendingUntilFixed {
+        "integer parameter minimum/maximum should not be ignored".pendingUntilFixed(
+            "integer minimum/maximum constraints are silently ignored."
+        ) in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1589,11 +1603,10 @@ class HttpOpenApiTest extends kyo.Test:
             }""")
             val field = api.listItems.request.fields.head.asInstanceOf[HttpRoute.Field.Param[?, ?, ?]]
             assert(field.description.nonEmpty)
-            ()
         }
 
         // BUG: string pattern constraint is silently ignored.
-        "string parameter pattern should not be ignored" in pendingUntilFixed {
+        "string parameter pattern should not be ignored".pendingUntilFixed("string pattern constraint is silently ignored.") in {
             val api = HttpOpenApi.fromJson("""{
                 "openapi": "3.0.0",
                 "info": {"title": "Test", "version": "1.0"},
@@ -1614,7 +1627,6 @@ class HttpOpenApiTest extends kyo.Test:
             }""")
             val field = api.listItems.request.fields.head.asInstanceOf[HttpRoute.Field.Param[?, ?, ?]]
             assert(field.description.nonEmpty)
-            ()
         }
 
         "generated operation name when no operationId" in {

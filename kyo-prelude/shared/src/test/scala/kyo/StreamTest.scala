@@ -1,6 +1,6 @@
 package kyo
 
-class StreamTest extends Test:
+class StreamTest extends kyo.test.Test[Any]:
 
     val n = 100000
 
@@ -1078,21 +1078,21 @@ class StreamTest extends Test:
     }
 
     "foreach" - {
-        "executes the function for each element" in run {
+        "executes the function for each element" in {
             var sum = 0
             Stream.init(Seq(1, 2, 3, 4, 5)).foreach(i => sum += i).map { _ =>
                 assert(sum == 15)
             }
         }
 
-        "works with empty stream" in run {
+        "works with empty stream" in {
             var executed = false
             Stream.init(Seq.empty[Int]).foreach(_ => executed = true).map { _ =>
                 assert(!executed)
             }
         }
 
-        "works with effects" in run {
+        "works with effects" in {
             var sum = 0
             Stream.init(Seq(1, 2, 3, 4, 5)).foreach { i =>
                 Env.use[Int] { multiplier =>
@@ -1103,7 +1103,7 @@ class StreamTest extends Test:
             }
         }
 
-        "short-circuits on abort" in run {
+        "short-circuits on abort" in {
             var sum = 0
             val result = Abort.run[String] {
                 Stream.init(Seq(1, 2, 3, 4, 5)).foreach { i =>
@@ -1120,7 +1120,7 @@ class StreamTest extends Test:
     }
 
     "foreachChunk" - {
-        "executes the function for each chunk" in run {
+        "executes the function for each chunk" in {
             var sum = 0
             Stream.init(Chunk(1, 2, 3, 4, 5)).foreachChunk(chunk =>
                 sum += chunk.foldLeft(0)(_ + _)
@@ -1129,14 +1129,14 @@ class StreamTest extends Test:
             }
         }
 
-        "works with empty stream" in run {
+        "works with empty stream" in {
             var executed = false
             Stream.init(Chunk.empty[Int]).foreachChunk(_ => executed = true).map { _ =>
                 assert(!executed)
             }
         }
 
-        "works with effects" in run {
+        "works with effects" in {
             var sum = 0
             Stream.init(Chunk(1, 2, 3, 4, 5)).foreachChunk { chunk =>
                 Env.use[Int] { multiplier =>
@@ -1199,19 +1199,19 @@ class StreamTest extends Test:
     "nesting with other effect" in {
         val stream: Stream[Int, Any] < Env[Seq[Int]] =
             Env.use[Seq[Int]](seq => Stream.init(seq))
-        Env.run(Seq(1, 2, 3))(stream.map(_.run)).eval
-        succeed
+        val result = Env.run(Seq(1, 2, 3))(stream.map(_.run)).eval
+        assert(result == Chunk(1, 2, 3))
     }
 
     "splitAt" - {
-        "split under length" in run {
+        "split under length" in {
             val stream = Stream.range(0, 10, 1, 3)
             stream.splitAt(4).map: (chunk, restStream) =>
                 assert(chunk == Chunk(0, 1, 2, 3))
                 assert(restStream.run.eval == Seq(4, 5, 6, 7, 8, 9))
         }
 
-        "split over length" in run {
+        "split over length" in {
             val stream = Stream.range(0, 10, 1, 3)
             stream.splitAt(12).map: (chunk, restStream) =>
                 assert(chunk == Chunk(0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
@@ -1285,7 +1285,7 @@ class StreamTest extends Test:
             assert(Abort.run(result).eval == Result.fail("Sum too large"))
         }
 
-        "nested flatMap with alternating effects" in run {
+        "nested flatMap with alternating effects" in {
             var counter = 0
             val stream  = Stream.init(Seq(1, 2, 3, 4, 5))
             val result = Abort.run[String] {
@@ -1305,7 +1305,7 @@ class StreamTest extends Test:
             assert(counter == 2)
         }
 
-        "mapChunk with state-dependent abort" in run {
+        "mapChunk with state-dependent abort" in {
             val stream = Stream.init(Chunk(1, 2, 3, 4, 5))
             val result = Abort.run[String] {
                 Var.run(0) {
@@ -1320,7 +1320,7 @@ class StreamTest extends Test:
             assert(result.eval == Result.fail("State too high: 5"))
         }
 
-        "flatMap with env-dependent chunking" in run {
+        "flatMap with env-dependent chunking" in {
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
             val result = Env.run(2) {
                 stream.flatMap { n =>
@@ -1332,7 +1332,7 @@ class StreamTest extends Test:
             assert(result.eval == Seq(1, 1, 2, 2, 3, 3, 4, 4, 5, 5))
         }
 
-        "take with nested aborts and environment" in run {
+        "take with nested aborts and environment" in {
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
             val result = Env.run(3) {
                 Abort.run[String] {
@@ -1349,7 +1349,7 @@ class StreamTest extends Test:
     }
 
     "handle" - {
-        "handle other effects" in run {
+        "handle other effects" in {
             val stream = Stream:
                 for
                     _  <- Emit.value(Chunk(1, 2, 3))
@@ -1366,7 +1366,7 @@ class StreamTest extends Test:
             assert(handledStream.run.eval == Chunk(1, 2, 3, 4, 5))
         }
 
-        "transform emit type" in run {
+        "transform emit type" in {
             val stream                 = Stream.init(1 to 3)
             val transformed            = stream.handle(eff => Emit.runForeach[Chunk[Int]](eff)(chunk => Emit.value(chunk.map(_.toString))))
             val _: Stream[String, Any] = transformed
