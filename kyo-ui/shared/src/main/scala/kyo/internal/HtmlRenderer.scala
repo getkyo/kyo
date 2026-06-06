@@ -22,7 +22,7 @@ private[kyo] object HtmlRenderer:
            |<style>$baseCss$css</style>
            |</head>
            |<body>$body
-           |<script>${clientJs(esc(sessionId), esc(basePath))}</script>
+           |<script>${clientJs(jsStr(sessionId), jsStr(basePath))}</script>
            |</body>
            |</html>""".stripMargin
 
@@ -526,6 +526,41 @@ private[kyo] object HtmlRenderer:
         }
         sb.toString
     end esc
+
+    // Escape a string for safe embedding inside a JS double-quoted string literal within a
+    // <script> element. Must handle both JS parse hazards and the HTML parser's raw-text
+    // model: </script> (or </Script> etc.) ends the script element regardless of JS context.
+    //
+    // Rules applied, in order:
+    //   \  -> \\   (backslash first, before any escape that produces \)
+    //   "  -> \"   (closing double-quote)
+    //   '  -> \'   (single-quote, safe-by-default)
+    //  \r  -> \r   (CR, JS line terminator)
+    //  \n  -> \n   (LF, JS line terminator)
+    // U+2028 ->    (LINE SEPARATOR, JS line terminator)
+    // U+2029 ->    (PARAGRAPH SEPARATOR, JS line terminator)
+    //  </  -> <\/  (prevents </script> from closing the element; < alone is harmless in JS)
+    private def jsStr(s: String): String =
+        val sb = new StringBuilder(s.length)
+        var i  = 0
+        while i < s.length do
+            s.charAt(i) match
+                case '\\' => sb.append("\\\\")
+                case '"'  => sb.append("\\\"")
+                case '\'' => sb.append("\\'")
+                case '\r' => sb.append("\\r")
+                case '\n' => sb.append("\\n")
+                case ' '  => sb.append("\\u2028")
+                case ' '  => sb.append("\\u2029")
+                case '<' if i + 1 < s.length && s.charAt(i + 1) == '/' =>
+                    sb.append("<\\/")
+                    i += 1
+                case c => sb.append(c)
+            end match
+            i += 1
+        end while
+        sb.toString
+    end jsStr
 
     // ---- Client JS ----
 
