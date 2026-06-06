@@ -187,4 +187,56 @@ class TastyErrorRoundTripTest extends Test:
             case Result.Panic(t) => throw t
     }
 
+    // Phase 12 W2 carry: tag-255 round-trip path in writeType/readType.
+    // The tag-255 catch-all in SnapshotWriter.writeType serializes complex types (Refinement,
+    // Rec, Skolem, etc.) as an opaque show string. The reader falls back to Type.Nothing on
+    // any unknown tag including 255. This is a known semantic limitation documented in the
+    // writer comments; the critical invariant is that the bytes are consumed cleanly without
+    // crashing or corrupting the stream so the rest of the snapshot remains readable.
+    //
+    // Given: a TastyError.UnhandledSubtypingCase whose lhs is a Type.Refinement (tag-255 path)
+    //   and rhs is Type.Any (tag-1; decoded faithfully).
+    // When: written via SnapshotWriter and read back via SnapshotReader.
+    // Then: (a) no exception is raised during read; (b) the error round-trips with rhs == Type.Any;
+    //   (c) lhs decodes to Type.Nothing (the documented opaque-tag fallback, not data corruption).
+    // Pins: Phase 11 audit W2; INV-TASTYERROR-WIRE.
+    "W2 carry: tag-255 opaque catch-all round-trips cleanly; lhs falls back to Type.Nothing" in run {
+        val refinementType: Tasty.Type = Tasty.Type.Refinement(
+            Tasty.Type.Named(Tasty.SymbolId(0)),
+            Tasty.Name("x"),
+            Tasty.Type.Any
+        )
+        val err    = TastyError.UnhandledSubtypingCase("Refinement", refinementType, Tasty.Type.Any, "W2.tasty")
+        val errors = Chunk[TastyError](err)
+
+        val snapshotBytes = snapshotBytesWithErrors(errors)
+        val cacheSrc      = MemoryFileSource()
+        val hex           = kyo.internal.tasty.snapshot.DigestComputer.toHexString(Array[Byte](0, 1, 2, 3, 4, 5, 6, 7))
+        val snapPath      = s"cache/$hex.krfl"
+        cacheSrc.add(snapPath, snapshotBytes)
+
+        Abort.run[TastyError]:
+            SnapshotReader.read(snapPath, cacheSrc).map: loadedCp =>
+                loadedCp.errors
+        .map:
+            case Result.Success(loaded) =>
+                assert(loaded.size == 1, s"Expected 1 error after tag-255 round-trip, got ${loaded.size}")
+                loaded(0) match
+                    case TastyError.UnhandledSubtypingCase(shape, lhs, rhs, file) =>
+                        assert(shape == "Refinement", s"shape mismatch: expected 'Refinement', got '$shape'")
+                        assert(file == "W2.tasty", s"file mismatch: expected 'W2.tasty', got '$file'")
+                        // lhs (Refinement) goes through tag-255; reader falls back to Type.Nothing.
+                        assert(
+                            lhs == Tasty.Type.Nothing,
+                            s"tag-255 opaque lhs should decode to Type.Nothing, got $lhs"
+                        )
+                        // rhs (Type.Any) is tag-1; round-trips faithfully.
+                        assert(rhs == Tasty.Type.Any, s"rhs mismatch: expected Type.Any, got $rhs")
+                    case other =>
+                        fail(s"Expected UnhandledSubtypingCase, got: $other")
+                end match
+            case Result.Failure(e) => fail(s"Unexpected failure: $e")
+            case Result.Panic(t)   => throw t
+    }
+
 end TastyErrorRoundTripTest

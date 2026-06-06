@@ -19,8 +19,8 @@ because the loader decodes files in parallel and registers mmap finalizers.
 `Tasty.bodyTree(sym)` returns `Maybe[Tree] < (Sync & Abort[TastyError])` because
 the AST bytes are parsed on demand. **Everything else** is a `Sync`-carrying
 query on `object Tasty.*`. `Tasty.owner(sym)`, `Tasty.findClass(fqn)`,
-`Tasty.allMethods`, `tpe.isSubtypeOf` all carry `< Sync` to enable the
-module-level fallback classpath; do not confuse that with `IO`.
+`Tasty.allMethods` all carry `< Sync` to enable the module-level fallback
+classpath; do not confuse that with `IO`.
 
 The reading arc is **withClasspath -> look up -> navigate -> inspect -> decode**.
 
@@ -155,7 +155,7 @@ re-narrowing.
 ### Find vs require
 
 The lookups come in two flavours that mirror each other. `Tasty.findClass(fqn)`,
-`Tasty.findTrait(fqn)`, `Tasty.findObject(fqn)`, `Tasty.findClassLike(fqn)`,
+`Tasty.findObject(fqn)`, `Tasty.findClassLike(fqn)`,
 `Tasty.findPackage(fqn)` all return `Maybe[Symbol.X] < Sync`; `Absent` means no
 symbol of that exact kind at that FQN. The `require*` variants raise
 `Abort.fail(TastyError.NotFound)` when the symbol is missing, which is the right
@@ -163,7 +163,7 @@ shape when "I expect this to exist" is a postcondition of your code rather than
 a question.
 
 ```scala
-val maybeCircle: Maybe[Symbol.Class] < Sync         = Tasty.findClass("example.Circle")
+val maybeCircle: Maybe[Symbol.Class] < Sync           = Tasty.findClass("example.Circle")
 val circle: Symbol.Class < (Sync & Abort[TastyError]) = Tasty.requireClass("example.Circle")
 ```
 
@@ -194,25 +194,23 @@ this ADT is what lets you write exhaustive, type-safe code over a classpath.
 
 ### The sealed hierarchy
 
-`Symbol` is a sealed trait with fifteen concrete subtypes, grouped under
-three intermediate sealed traits:
+`Symbol` is a sealed trait with thirteen concrete subtypes. The only intermediate
+sealed trait is `ClassLike`:
 
 ```
 Symbol
-  TypeLike
-    ClassLike    -> Class, Trait, Object, EnumCase
-    TypeAlias, OpaqueType, AbstractType, TypeParam
-  TermLike       -> Method, Val, Var, Field, Parameter
+  ClassLike  -> Class, Trait, Object, EnumCase
+  TypeAlias, OpaqueType, AbstractType, TypeParam
+  Method, Val, Var, Field, Parameter
   Package
-  Unresolved
 ```
 
 `Symbol.EnumCase` is a peer of `Symbol.Class` under `Symbol.ClassLike`; a
 `Symbol.EnumCase` does NOT match a `Symbol.Class` pattern. Put an explicit
 `EnumCase` arm before `Class` when you need to specialize Scala 3 enum cases.
 
-Every concrete symbol is a pure case class that carries data only. The five
-common fields are: `id: SymbolId`, `name: Name`, `flags: Flags`,
+Every concrete symbol is a pure case class that carries data only. The common
+fields are: `id: SymbolId`, `name: Name`, `flags: Flags`,
 `ownerId: SymbolId`. Subtype-specific fields (parent IDs, member IDs, param
 IDs, type IDs) vary by case. Symbols derive `Schema` and `CanEqual`; they
 are serialisable and equality-comparable out of the box.
@@ -235,13 +233,7 @@ def role(sym: Symbol): String = sym match
         _: Symbol.TypeParam => "type"
     case _: Symbol.Parameter  => "parameter"
     case _: Symbol.Package    => "package"
-    case _: Symbol.Unresolved => "unresolved"
 ```
-
-`Symbol.Unresolved` is not an error; it is the placeholder for a reference
-the loader could not resolve in the current classpath (for instance, a
-parent type whose defining JAR is missing). Match it explicitly when you
-need to skip such holes.
 
 ## Navigating from a symbol
 
@@ -325,7 +317,7 @@ openness lands in `OpenLevel` (`Final`, `Sealed`, `Open`, `Default`).
 ## Inspecting types
 
 Types in `kyo-tasty` are a separate ADT from symbols. `Type` is a sealed
-enum with around twenty-three cases; in practice you pattern-match a
+enum with around twenty-six cases; in practice you pattern-match a
 handful and let the rest be handled by traversal helpers.
 
 ### The Type ADT in practice
@@ -345,11 +337,14 @@ def classify(tpe: Type): String = tpe match
     case _                               => "ConstantType, Refinement, ByName, ..."
 ```
 
-Three sentinel cases stand in for missing or unresolvable bounds:
-`Type.Nothing`, `Type.Any`, and `Type.Unknown`. They are first-class
-cases on the `Type` enum, not `Type.Named` values: pattern-match them
-directly when you need to distinguish "genuinely Any" from a load-time
-fallback. `Constant` is the payload type inside `Type.ConstantType` and
+Two sentinel cases stand in for missing or unresolvable bounds: `Type.Nothing`
+and `Type.Any`. They are first-class cases on the `Type` enum, not
+`Type.Named` values: pattern-match them directly when you need to distinguish
+"genuinely Any" from a load-time fallback. Fields whose type information could
+not be resolved (e.g. `TypeAlias.body`, `OpaqueType.body`, `Parameter.declaredType`)
+use `Maybe.Absent` rather than a sentinel case.
+
+`Constant` is the payload type inside `Type.ConstantType` and
 `Tree.Literal`. Its cases use the `Const` suffix: `StringConst`,
 `IntConst`, `LongConst`, `FloatConst`, `DoubleConst`, `BooleanConst`,
 `CharConst`, `ByteConst`, `ShortConst`, `UnitConst`, `NullConst`,
@@ -364,46 +359,49 @@ verdict rather than a `Boolean`. The third case is the typed "I could not
 decide":
 
 ```scala
-val sub: SubtypeVerdict     = SubtypeVerdict.Sub
-val notSub: SubtypeVerdict  = SubtypeVerdict.NotSub
-val unknown: SubtypeVerdict = SubtypeVerdict.Unknown
+val sub:           SubtypeVerdict = SubtypeVerdict.Sub
+val notSub:        SubtypeVerdict = SubtypeVerdict.NotSub
+val indeterminate: SubtypeVerdict = SubtypeVerdict.Indeterminate
 
-for
-    circle <- cp.findClass("example.Circle")
-    shape  <- cp.findClassLike("example.Shape")
-yield
-    val circleTpe: Type    = Type.Named(circle.id)
-    val shapeTpe: Type     = Type.Named(shape.id)
-    val v1: SubtypeVerdict = circleTpe.isSubtypeOf(shapeTpe) // Sub
-    val v2: SubtypeVerdict = shapeTpe.isSubtypeOf(circleTpe) // NotSub
-    (v1, v2)
-end for
+Tasty.withClasspath(roots):
+    Tasty.findClass("example.Circle").flatMap { mbCircle =>
+        Tasty.findClassLike("example.Shape").map { mbShape =>
+            for
+                circle <- mbCircle
+                shape  <- mbShape
+            yield
+                val circleTpe: Type    = Type.Named(circle.id)
+                val shapeTpe: Type     = Type.Named(shape.id)
+                val v1: SubtypeVerdict < Sync = Tasty.isSubtypeOf(circleTpe, shapeTpe) // Sub
+                val v2: SubtypeVerdict < Sync = Tasty.isSubtypeOf(shapeTpe, circleTpe) // NotSub
+                (v1, v2)
+        }
+    }
 ```
 
-`Unknown` happens when the parent chain is not fully loaded into the
+`Indeterminate` happens when the parent chain is not fully loaded into the
 current classpath, or when the subtype check exhausts its 64-step budget
 on a deeply nested type. Treat it as a distinct outcome: it almost always
 means "open the JAR that supplies the missing parent and try again",
-not "this is not a subtype".
+not "this is not a subtype". Unhandled type shapes during the check also
+accumulate in `cp.errors` as `TastyError.UnhandledSubtypingCase`.
 
-For walking nested types, `tpe.children`, `tpe.foreach(f)`, and
-`tpe.symbol(using cp)` are the traversal primitives (the last returns
-`Maybe[Symbol]` for the nominal head of a `Type.Named`, `Absent`
-otherwise). `tpe.show(using cp)`
-renders a Scala-source-shaped string. The small support enums
-`TypeBounds(lo, hi)`, `Variance` (`Invariant`, `Covariant`,
-`Contravariant`), and `Visibility` are referenced from various symbol and
-type fields; their shapes are obvious enough that they do not get their
-own chapter.
+For walking nested types, `tpe.children`, `tpe.collect`, `tpe.find`,
+`tpe.foldLeft`, and `tpe.exists` are the pure traversal primitives.
+`Tasty.typeSymbol(tpe)` returns `Maybe[Symbol] < Sync` for the nominal head
+of a `Type.Named`, `Absent` otherwise. `Tasty.typeShow(tpe)` renders a
+Scala-source-shaped string.
+
+The small support enums `TypeBounds(lo, hi)`, `Variance` (`Invariant`,
+`Covariant`, `Contravariant`), and `Visibility` are referenced from various
+symbol and type fields; their shapes are obvious enough that they do not
+get their own chapter.
 
 ## Reading method and value bodies
 
-Bodies are the only part of the model that is not eagerly decoded. Every
-`Symbol.Method`, `Symbol.Val`, and `Symbol.Var` carries a
-`Maybe[SymbolBody]` byte-slice slot. `SymbolBody` is just the envelope:
-the raw AST bytes, the local name table, and an address map. Calling
-`Tasty.bodyTree(sym)` parses those bytes into a `Tree` on demand and the
-result is memoized per classpath instance keyed by `SymbolId`. **This is
+Bodies are the only part of the model that is not eagerly decoded. Calling
+`Tasty.bodyTree(sym)` parses the stored AST bytes into a `Tree` on demand;
+the result is memoized per classpath instance keyed by `SymbolId`. **This is
 the only post-open accessor that carries `Sync & Abort[TastyError]`**;
 everything else on the snapshot is pure.
 
@@ -449,9 +447,9 @@ For "find every selection of `math.Pi` inside `Circle.area`", `collect`
 with a partial function that matches `Tree.Select(_, name)` is the
 idiomatic shape.
 
-Alongside `bodyTree`, `Method` carries a handful of shape fields that are
-all pure data reads: `paramListIds: Chunk[Chunk[SymbolId]]` (the parameter
-groups), `resultTypeId: SymbolId`, plus flag predicates `isExtension` /
+Alongside `bodyTree`, `Symbol.Method` carries a handful of pure shape fields:
+`paramListIds: Chunk[Chunk[SymbolId]]` (the parameter groups),
+`declaredType: Maybe[Type]`, plus flag predicates `isExtension` /
 `isInline` / `isGiven` / `isMacro` / `isTailrec`. None carry a `Sync`
 effect; they are straight case-class field reads.
 
@@ -461,7 +459,7 @@ Scala 3 annotations and Java annotations are different value spaces, and
 `kyo-tasty` keeps them as two parallel ADTs rather than papering over the
 difference. A Scala-source class carries `Chunk[Annotation]`; a class
 loaded from a `.class` file with retention-class annotations carries
-`Chunk[JavaAnnotation]`. Some symbols carry both.
+`Chunk[Java.Annotation]`. Some symbols carry both.
 
 ### Asking whether a symbol is annotated
 
@@ -472,7 +470,7 @@ Tasty.withClasspath(roots):
     Tasty.findClass("example.Circle").map { mbCircle =>
         mbCircle.foreach { circle =>
             Tasty.hasAnnotation(circle, "scala.deprecated")         // Boolean < Sync
-            Tasty.findAnnotation(circle, "scala.deprecated")        // Maybe[Annotation | JavaAnnotation] < Sync
+            Tasty.findAnnotation(circle, "scala.deprecated")        // Maybe[Annotation | Java.Annotation] < Sync
         }
     }
 ```
@@ -491,18 +489,17 @@ still present, just without its decoded arguments. Treat
 `arguments.isEmpty` as the "no decoded args" signal; there is no separate
 `Maybe` wrapper on the slot.
 
-`JavaAnnotation` carries `annotationClass: Symbol` and
-`values: Chunk[(Name, JavaAnnotation.Value)]` (an ordered chunk of pairs,
+`Tasty.Java.Annotation` carries `annotationClass: Symbol` and
+`values: Chunk[(Name, Java.Annotation.Value)]` (an ordered chunk of pairs,
 preserving the element order from the classfile attribute).
-`JavaAnnotation.Value` is a
-sealed ADT whose cases are `StringVal`, `IntVal`, `LongVal`, `FloatVal`,
-`DoubleVal`, `BoolVal`, `ClassVal`, `EnumVal`, `ArrayVal`, `AnnotationVal`;
-the last two nest recursively (note: the JVM annotation format collapses
-`char`, `byte`, and `short` element values into `IntVal`, so there are no
-separate `CharVal`, `ByteVal`, or `ShortVal` cases). If your code only
-walks `Chunk[Annotation]` and skips `Chunk[JavaAnnotation]`, you will miss
-`@SuppressWarnings` from Java sources and a number of Lombok-style
-annotations.
+`Java.Annotation.Value` is a sealed ADT whose cases are `StringVal`,
+`IntVal`, `LongVal`, `FloatVal`, `DoubleVal`, `BoolVal`, `ClassVal`,
+`EnumVal`, `ArrayVal`, `AnnotationVal`; the last two nest recursively
+(note: the JVM annotation format collapses `char`, `byte`, and `short`
+element values into `IntVal`, so there are no separate `CharVal`, `ByteVal`,
+or `ShortVal` cases). If your code only walks `Chunk[Annotation]` and skips
+`Chunk[Java.Annotation]`, you will miss `@SuppressWarnings` from Java sources
+and a number of Lombok-style annotations.
 
 ### Classpath-wide annotation queries
 
@@ -519,22 +516,27 @@ time, so closure queries do not scan.
 
 ### Sealed-trait closure and inheritance
 
-For a sealed hierarchy, "list every implementation" is one call:
+For a sealed hierarchy, "list every implementation" is one call. These
+methods live on `Classpath`, not on `object Tasty` directly, so you access
+them through `Tasty.classpath`:
 
 ```scala
 Tasty.withClasspath(roots):
-    Tasty.findClassLike("example.Shape").map { mbShape =>
-        mbShape.foreach { shape =>
-            Tasty.directSubclassesOf(shape) // Chunk[Symbol.ClassLike] < Sync
-            Tasty.subclassesOf(shape)       // Chunk[Symbol.ClassLike] < Sync
-            Tasty.implementationsOf(shape)  // Chunk[Symbol.ClassLike] < Sync
+    Tasty.classpath.flatMap { cp =>
+        Tasty.findClassLike("example.Shape").map { mbShape =>
+            mbShape match
+                case Maybe.Present(shape) =>
+                    cp.directSubclassesOf(shape) // Chunk[Symbol.ClassLike]
+                    cp.subclassesOf(shape)       // Chunk[Symbol.ClassLike]
+                    cp.implementationsOf(shape)  // Chunk[Symbol.Class]
+                case Maybe.Absent => Chunk.empty
         }
     }
 ```
 
-`Tasty.directSubclassesOf` returns only the immediate subclasses;
-`Tasty.subclassesOf` walks the full transitive closure;
-`Tasty.implementationsOf` returns only the concrete (non-abstract,
+`cp.directSubclassesOf` returns only the immediate subclasses;
+`cp.subclassesOf` walks the full transitive closure;
+`cp.implementationsOf` returns only the concrete (non-abstract,
 non-trait) leaves. All three are backed by an inverted index built at open
 time, so they are O(number of direct edges) rather than a linear classpath
 scan.
@@ -551,7 +553,7 @@ Tasty.allObjects   // Chunk[Symbol.Object] < Sync
 Tasty.allMethods   // Chunk[Symbol.Method] < Sync
 // ... plus allVals, allVars, allFields, allTypeAliases,
 //     allOpaqueTypes, allAbstractTypes, allTypeParams,
-//     allParameters, allPackages, allUnresolved.
+//     allParameters, allPackages.
 ```
 
 `Tasty.classpath` returns the active `Classpath` value directly.
@@ -561,11 +563,12 @@ rather than the full symbol table.
 
 JPMS modules are surfaced through a parallel descriptor index built from
 `module-info.class` files. `Tasty.classpath.map(_.modules)` returns
-`Chunk[ModuleDescriptor]`; `Tasty.findModule(name)` looks one up by name; and
-each `ModuleDescriptor` carries `requires`, `exports`, `opens`, `uses`,
-and `provides` directives as plain immutable data (`ModuleRequires`,
-`ModuleExports`, `ModuleOpens`, `ModuleProvides`). If you do not work
-with module-info classpaths, you can ignore this side of the API.
+`Chunk[Tasty.Java.Module.Descriptor]`; `Tasty.findModule(name)` looks one
+up by name; and each `Tasty.Java.Module.Descriptor` carries `requires`,
+`exports`, `opens`, `uses`, and `provides` directives as plain immutable
+data (`Tasty.Java.Module.Requires`, `Tasty.Java.Module.Exports`,
+`Tasty.Java.Module.Opens`, `Tasty.Java.Module.Provides`). If you do not
+work with module-info classpaths, you can ignore this side of the API.
 
 ## Errors
 
@@ -581,10 +584,16 @@ The variants group naturally by source:
   decode passes, typically a partial classfile rewrite caught mid-load).
   In `SoftFail` mode these accumulate into `cp.errors`; in `FailFast` they
   abort the open.
+- **Symbol resolution errors:** `UnresolvedReference` (a cross-file
+  reference the loader could not resolve), `UnknownType` (a declared type
+  that could not be resolved), `MissingDeclaredType` (a symbol whose
+  declared type is absent under `FailFast` mode).
 - **Lookup errors:** `SymbolNotFound` (the model has the symbol id but
   not the symbol; usually means a stale `SymbolId` from a different
   classpath), `NotFound` (the FQN does not resolve; raised by the
   `require*` lookups).
+- **Subtype checking:** `UnhandledSubtypingCase` (a type shape the checker
+  does not handle; verdict is `Indeterminate`; also accumulated in `cp.errors`).
 - **Snapshot errors:** `SnapshotFormatError`, `SnapshotVersionMismatch`,
   `SnapshotIoError`. Raised by the cached-open path when the cache
   file is corrupt or written by a different `kyo-tasty` version.
@@ -609,8 +618,9 @@ import kyo.Tasty.*
 
 def shapeImplementations(roots: Seq[String]): Chunk[String] < (Async & Abort[TastyError]) =
     Tasty.withClasspath(roots):
-        Tasty.requireTrait("example.Shape").map { shape =>
-            Tasty.implementationsOf(shape).map { impls =>
+        Tasty.classpath.flatMap { cp =>
+            Tasty.requireClassLike("example.Shape").map { shape =>
+                val impls  = cp.implementationsOf(shape)
                 val sorted = impls.sortBy(_.name.asString)
                 Kyo.foreach(sorted) { impl =>
                     Tasty.fullName(impl).map { fqn =>

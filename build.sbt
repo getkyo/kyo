@@ -661,6 +661,7 @@ lazy val `kyo-tasty` =
                 val resManaged = (Test / resourceManaged).value
                 val filesToCopy = Seq(
                     (base / "README.md")                                                                -> "README.md",
+                    (base / "CONTRIBUTING.md")                                                          -> "CONTRIBUTING.md",
                     (srcBase / "kyo" / "Tasty.scala")                                                   -> "kyo/Tasty.scala",
                     (srcBase / "kyo" / "internal" / "tasty" / "classfile" / "ClassfileUnpickler.scala") -> "kyo/internal/tasty/classfile/ClassfileUnpickler.scala",
                     (srcBase / "kyo" / "internal" / "tasty" / "symbol" / "Constant.scala")              -> "kyo/internal/tasty/symbol/Constant.scala"
