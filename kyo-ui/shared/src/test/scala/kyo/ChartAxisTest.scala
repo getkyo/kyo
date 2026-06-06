@@ -1051,7 +1051,7 @@ class ChartAxisTest extends Test:
         case class XRow(x: Double, y: Double)
         val rows    = Chunk.from((1 to 12).map(m => XRow(m.toDouble, m.toDouble)))
         val spec    = Chart(rows)(point(x = _.x, y = _.y)).xScale(_.linear(1.0, 12.0))
-        val (_, sc) = spec.toSvgWithScales
+        val (_, sc) = spec.lowerWithScales
         sc.x.kind match
             case ScaleKind.Linear(lo, hi) =>
                 assertClose(lo, 1.0, "explicit x-domain lo (must stay 1.0, not nice-expand to 0.0)")

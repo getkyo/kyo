@@ -206,7 +206,7 @@ object ChartShowcase extends KyoApp:
                     .legend(_.hidden)
                     .animate(_.ease(800.millis))
                     .size(620, 280)
-                    .toSvg
+                    .lower
 
             // Panel 2: interactive multi-series line with categorical colorScale
             lineChart =
@@ -223,7 +223,7 @@ object ChartShowcase extends KyoApp:
                     .onSelect(selected)
                     .interaction(_.highlightSelect)
                     .size(620, 280)
-                    .toSvg
+                    .lower
 
             // Panel 3: animated multi-series non-stacked area with colorScale
             areaChart =
@@ -239,7 +239,7 @@ object ChartShowcase extends KyoApp:
                     })
                     .animate(_.ease(800.millis))
                     .size(620, 280)
-                    .toSvg
+                    .lower
 
             // Panel 4: animated bars with per-bar opacity + text labels
             barsChart =
@@ -251,7 +251,7 @@ object ChartShowcase extends KyoApp:
                     .yAxis(_.grid.ticks(5))
                     .animate(_.ease(800.millis))
                     .size(620, 280)
-                    .toSvg
+                    .lower
         yield UI.div.style(pageStyle)(
             UI.div.style(Style.row.gap(16.px).align(_.center))(
                 UI.h2("kyo-ui Chart Showcase").style(Style.fontSize(20.px).fontWeight(_.bold).color(Style.Color.rgb(15, 23, 42))),

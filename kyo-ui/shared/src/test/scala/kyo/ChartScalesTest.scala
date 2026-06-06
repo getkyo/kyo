@@ -5,7 +5,7 @@ import kyo.UI.*
 import kyo.UI.Ast.*
 import scala.language.implicitConversions
 
-/** Phase 06 tests for the `toSvgWithScales` escape hatch and its read-only [[Chart.Scales]] projection (INV-035).
+/** Phase 06 tests for the `lowerWithScales` escape hatch and its read-only [[Chart.Scales]] projection (INV-035).
   *
   * Asserts that the projected pixel coordinates match the coordinates actually emitted in the SVG, that
   * category projection works for a band axis, and that the public surface never leaks the internal `Scale` type.
@@ -31,11 +31,11 @@ class ChartScalesTest extends Test:
 
     // ---- Leaf 22: scales.x.toPixel(datumX) equals the cx of the corresponding circle ----
 
-    "toSvgWithScales: x.toPixel(datumX) equals the emitted circle cx" in {
+    "lowerWithScales: x.toPixel(datumX) equals the emitted circle cx" in {
         // Continuous x so the linear x-scale projection is directly comparable to cx.
         val rows       = Chunk(PRow(0.0, 10.0), PRow(10.0, 20.0))
         val spec       = Chart(rows)(point(x = _.x, y = _.y)).xScale(_.linear(0.0, 10.0))
-        val (root, sc) = spec.toSvgWithScales
+        val (root, sc) = spec.lowerWithScales
         val circles    = circlesIn(root)
         assert(circles.size == 2, s"Expected 2 circles but got ${circles.size}")
 
@@ -56,10 +56,10 @@ class ChartScalesTest extends Test:
 
     // ---- Leaf 23: toPixelCategory returns Present for a band axis and Absent for a continuous axis ----
 
-    "toSvgWithScales: x.toPixelCategory returns Present for a known band key, Absent for an unknown key" in {
+    "lowerWithScales: x.toPixelCategory returns Present for a known band key, Absent for an unknown key" in {
         val rows       = Chunk(BRow("a", 1), BRow("b", 2), BRow("c", 3))
         val spec       = Chart(rows)(bar(x = _.cat, y = _.y))
-        val (root, sc) = spec.toSvgWithScales
+        val (root, sc) = spec.lowerWithScales
 
         // Band axis: a known key projects to a pixel; an unknown key is Absent.
         sc.x.toPixelCategory("b") match
@@ -82,7 +82,7 @@ class ChartScalesTest extends Test:
     "Chart.Scales public accessors do not leak kyo.internal.Scale types (compile-time type-ascription gate)" in {
         val rows                           = Chunk(PRow(0.0, 1.0), PRow(1.0, 2.0))
         val spec                           = Chart(rows)(point(x = _.x, y = _.y))
-        val pair: (Svg.Root, Chart.Scales) = spec.toSvgWithScales
+        val pair: (Svg.Root, Chart.Scales) = spec.lowerWithScales
         val sc: Chart.Scales               = pair._2
 
         // Compile-time ascriptions: these fail to compile if any accessor returns kyo.internal.Scale.
@@ -112,11 +112,11 @@ class ChartScalesTest extends Test:
 
     // ---- Leaf 25: ScaleKind.Linear carries the actual fitted domain, not (0.0, 0.0) ----
 
-    "toSvgWithScales: y-axis kind is ScaleKind.Linear with actual fitted domain, not (0.0, 0.0)" in {
+    "lowerWithScales: y-axis kind is ScaleKind.Linear with actual fitted domain, not (0.0, 0.0)" in {
         // y values span 10.0..90.0; nice-ticking over that range yields nLo=10.0, nHi=90.0.
         val rows    = Chunk(PRow(0.0, 10.0), PRow(5.0, 90.0), PRow(10.0, 50.0))
         val spec    = Chart(rows)(point(x = _.x, y = _.y))
-        val (_, sc) = spec.toSvgWithScales
+        val (_, sc) = spec.lowerWithScales
         sc.y.kind match
             case ScaleKind.Linear(lo, hi) =>
                 assert(lo != 0.0 || hi != 0.0, s"y-axis ScaleKind.Linear must not be the (0.0, 0.0) placeholder")

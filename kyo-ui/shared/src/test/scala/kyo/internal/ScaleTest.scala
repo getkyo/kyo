@@ -255,7 +255,7 @@ class ScaleTest extends Test:
     given CanEqual[ScRow, ScRow] = CanEqual.derived
 
     "L11a: yScaleRight(_.log) resolves right scale as Log kind (kind readback via Chart.Scales, GAP-RIGHTY-SCALE)" in {
-        // Use toSvgWithScales (via lowerWithScales) to read the resolved right scale kind.
+        // Use lowerWithScales (via lowerWithScales) to read the resolved right scale kind.
         // The right scale should be Log after .yScaleRight(_.log).
         // Data: yR=[1.0, 100.0]; with log scale, domain is [1.0, 100.0].
         val rows = kyo.Chunk(ScRow("a", 100.0, 1.0), ScRow("b", 200.0, 100.0))
@@ -263,7 +263,7 @@ class ScaleTest extends Test:
             bar(x = _.x, y = _.yL),
             line(x = _.x, y = _.yR, axis = Axis.Right)
         ).yScaleRight(_.log)
-        val (_, scales) = spec.toSvgWithScales
+        val (_, scales) = spec.lowerWithScales
         // The right axis should be Log kind.
         scales.yRight match
             case Present(ax) =>
@@ -282,7 +282,7 @@ class ScaleTest extends Test:
             bar(x = _.x, y = _.yL),
             line(x = _.x, y = _.yR, axis = Axis.Right)
         )
-        val (_, scales) = spec.toSvgWithScales
+        val (_, scales) = spec.lowerWithScales
         scales.yRight match
             case Present(ax) =>
                 ax.kind match

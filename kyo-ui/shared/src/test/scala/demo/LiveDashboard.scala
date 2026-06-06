@@ -310,7 +310,7 @@ object LiveDashboard extends KyoApp:
                 .theme(_.dark)
                 .animate(_.ease(400.millis))
                 .size(chartW, chartH)
-                .toSvg
+                .lower
 
             // Latency lines over the fixed 31-slot rolling window: one line per series via the color channel,
             // so the layer derives a p50/p99 legend. Cyan p50 and amber p99 stay distinct from the bars.
@@ -327,7 +327,7 @@ object LiveDashboard extends KyoApp:
                 .theme(_.dark)
                 .animate(_.ease(400.millis))
                 .size(chartW, chartH)
-                .toSvg
+                .lower
 
             // Status stacked bar grouped by code, colored by monitoring convention: 2xx green, 4xx amber, 5xx red.
             statusChart = Chart(status)(bar(x = _.name, y = _.count, stack = by(_.code)))
@@ -342,7 +342,7 @@ object LiveDashboard extends KyoApp:
                 )
                 .theme(_.dark)
                 .size(chartW, chartH)
-                .toSvg
+                .lower
 
             // Error-rate line over the rolling window: fills the bottom-right cell so all four quadrants balance.
             errorChart = Chart(errRate)(line(x = _.t, y = _.pct))
@@ -352,7 +352,7 @@ object LiveDashboard extends KyoApp:
                 .theme(_.dark)
                 .animate(_.ease(400.millis))
                 .size(chartW, chartH)
-                .toSvg
+                .lower
 
             // Pause / resume control; label reacts to the paused signal.
             pauseBtn = paused.render { isPaused =>

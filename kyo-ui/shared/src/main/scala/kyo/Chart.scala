@@ -11,7 +11,7 @@ import scala.language.implicitConversions
   * Build a chart with `Chart(data)(marks*)`: the first application fixes the row type `A`, the second supplies the marks and returns a
   * [[kyo.Chart.Spec]]. Marks are produced by the factories `Chart.bar`, `Chart.line`, `Chart.area`, `Chart.point`, `Chart.text`,
   * `Chart.errorBar`, and `Chart.rule`. The resulting spec is refined with the configuration methods (`.xAxis`, `.legend`, `.theme`, ...)
-  * and lowered with `.toSvg` (or implicitly).
+  * and lowered with `.lower` (or implicitly).
   *
   * @see
   *   [[kyo.Chart.apply]] for the chart entry point
@@ -1025,7 +1025,7 @@ object Chart:
           * Equivalent to `summon[Conversion[Spec[A], Svg.Root]](spec)`. Provided as an explicit
           * method for callers that do not have `scala.language.implicitConversions` in scope.
           */
-        def toSvg: Svg.Root = kyo.internal.ChartLower.lower(spec)
+        def lower: Svg.Root = kyo.internal.ChartLower.lower(spec)
 
         /** Lowers this chart spec to an `Svg.Root` together with its resolved [[Scales]].
           *
@@ -1033,9 +1033,9 @@ object Chart:
           * inner plot rectangle, so callers can build overlays, brush outlines, or annotations at
           * exact chart pixel coordinates without re-deriving the scale math. For live charts the
           * scales are computed from the current signal value at call time; they do not update until
-          * `toSvgWithScales` is called again.
+          * `lowerWithScales` is called again.
           */
-        def toSvgWithScales: (Svg.Root, Scales) =
+        def lowerWithScales: (Svg.Root, Scales) =
             kyo.internal.ChartLower.lowerWithScales(spec)
 
     end extension
@@ -1355,7 +1355,7 @@ object Chart:
 
     /** Read-only projection of the resolved scale state after lowering a `Spec`.
       *
-      * Obtain one via `spec.toSvgWithScales`. The accessors expose the data-to-pixel projection
+      * Obtain one via `spec.lowerWithScales`. The accessors expose the data-to-pixel projection
       * for both axes and the inner plot rectangle, while the internal `Scale`/`Layout` types stay
       * private. Use it as an escape hatch to build overlays, brush outlines, or custom annotations
       * at exact chart pixel coordinates. `x` and `y` are always present; `yRight` is `Present` only

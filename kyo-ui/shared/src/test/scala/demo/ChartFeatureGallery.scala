@@ -114,7 +114,7 @@ object ChartFeatureGallery extends KyoApp:
             .legend(_.colorScaleSequential(Style.Color.blue, Style.Color.red))
             .margins(_.top(30))
             .size(360, 260)
-            .toSvg
+            .lower
 
     /** 2. Error bars: low-to-high whisker with caps and a center marker. */
     val errorBars: Svg.Root =
@@ -125,7 +125,7 @@ object ChartFeatureGallery extends KyoApp:
             .yScale(_.withNice(true))
             .yAxis(_.grid.ticks(4))
             .size(360, 240)
-            .toSvg
+            .lower
 
     /** 3. Text annotations stamping each bar's value. */
     val textAnnotations: Svg.Root =
@@ -136,7 +136,7 @@ object ChartFeatureGallery extends KyoApp:
             .yScale(_.withNice(true))
             .yAxis(_.ticks(4))
             .size(360, 240)
-            .toSvg
+            .lower
 
     /** 4. Stacked filled area, one band per region (categorical color). */
     val stackedArea: Svg.Root =
@@ -147,7 +147,7 @@ object ChartFeatureGallery extends KyoApp:
             .yAxis(_.grid.ticks(4))
             .legend(_.top)
             .size(360, 240)
-            .toSvg
+            .lower
 
     /** 5. Dark theme with the Okabe-Ito accessible palette. */
     val themedPalette: Svg.Root =
@@ -159,7 +159,7 @@ object ChartFeatureGallery extends KyoApp:
             .legend(_.top)
             .theme(_.dark.palette(Chart.Palette.Okabe))
             .size(360, 240)
-            .toSvg
+            .lower
 
     /** 6. Accessibility: title (implies role="img") and desc. */
     val accessible: Svg.Root =
@@ -172,7 +172,7 @@ object ChartFeatureGallery extends KyoApp:
             .desc("Line chart of the NA monthly reading value from January through May.")
             .ariaLabel("Monthly NA readings line chart")
             .size(360, 240)
-            .toSvg
+            .lower
 
     /** 7. Grouped (dodged) bar with categorical colorScale: distinct per-region colors + legend. No stack.
       *
@@ -192,7 +192,7 @@ object ChartFeatureGallery extends KyoApp:
                 Region.APAC -> Style.Color.rgb(245, 158, 11)
             ))
             .size(360, 240)
-            .toSvg
+            .lower
 
     /** 8. Colored errorBar via colorScale: per-category whisker colors.
       *
@@ -212,7 +212,7 @@ object ChartFeatureGallery extends KyoApp:
                 Region.APAC -> Style.Color.rgb(245, 158, 11)
             ))
             .size(360, 240)
-            .toSvg
+            .lower
 
     /** 9. Colored text annotations via colorScale: each bar's value label uses the region's color.
       *
@@ -234,7 +234,7 @@ object ChartFeatureGallery extends KyoApp:
                 Region.APAC -> Style.Color.rgb(245, 158, 11)
             ))
             .size(360, 240)
-            .toSvg
+            .lower
 
     /** 10. X tick rotation + theme font: category names rotated -40 degrees in a Georgia serif font.
       *
@@ -252,7 +252,7 @@ object ChartFeatureGallery extends KyoApp:
             .theme(_.font("Georgia"))
             .margins(_.bottom(74).left(56))
             .size(480, 300)
-            .toSvg
+            .lower
 
     // ---- styles ----
 

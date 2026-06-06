@@ -480,8 +480,8 @@ class ChartSpecTest extends Test:
     // Leaf (margins)
     "margins(...) shifts the plot rectangle by the configured left/top margins" in {
         val base     = Chart(sales)(bar(x = _.month, y = _.revenue))
-        val (_, sc0) = base.toSvgWithScales
-        val (_, sc1) = base.margins(_.left(120.0)).toSvgWithScales
+        val (_, sc0) = base.lowerWithScales
+        val (_, sc1) = base.margins(_.left(120.0)).lowerWithScales
         // Increasing the left margin moves plot.x right by the delta from the default (60).
         assertClose(sc1.plot.x - sc0.plot.x, 60.0, "left margin delta shifts plot.x")
     }

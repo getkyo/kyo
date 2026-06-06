@@ -134,7 +134,7 @@ class ChartInvariantsTest extends Test:
             .xAxis(_.pad(0.05))
         // Read the resolved x-scale back: ScaleOverride.withPad(0.2) widens [0,10] by 0.2*(10-0)=2 each
         // side -> [-2,12]; AxisConfig.pad(0.05) would give [-0.5,10.5]. The OVERRIDE must win.
-        val (_, sc) = spec.toSvgWithScales
+        val (_, sc) = spec.lowerWithScales
         sc.x.kind match
             case ScaleKind.Linear(lo, hi) =>
                 assert(
@@ -155,14 +155,14 @@ class ChartInvariantsTest extends Test:
         val rows = Chunk(Row("a", 1.0), Row("b", 2.0), Row("c", 3.0))
         // Forward control (no reverse): the first category 'a' sits left of the last 'c'.
         val fwdSpec    = Chart(rows)(bar(x = _.x, y = _.y))
-        val (_, fwdSc) = fwdSpec.toSvgWithScales
+        val (_, fwdSc) = fwdSpec.lowerWithScales
         val fwdA       = fwdSc.x.toPixelCategory("a").getOrElse(fail("forward: band key 'a' must project"))
         val fwdC       = fwdSc.x.toPixelCategory("c").getOrElse(fail("forward: band key 'c' must project"))
         assert(fwdA < fwdC, s"forward (no reverse): first band 'a' must be left of 'c', px(a)=$fwdA, px(c)=$fwdC")
 
         // Reversed: the first category 'a' must project to the FAR (right) end, the last 'c' to the near end.
         val spec    = Chart(rows)(bar(x = _.x, y = _.y)).xAxis(_.reverse)
-        val (_, sc) = spec.toSvgWithScales
+        val (_, sc) = spec.lowerWithScales
         val pa      = sc.x.toPixelCategory("a").getOrElse(fail("reverse: band key 'a' must project"))
         val pc      = sc.x.toPixelCategory("c").getOrElse(fail("reverse: band key 'c' must project"))
         assert(pa > pc, s"reverse must place first datum 'a' at the far (right) end: px(a)=$pa must exceed px(c)=$pc")

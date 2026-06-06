@@ -2085,12 +2085,12 @@ class ChartLowerTest extends Test:
         // The Conversion yields a plain Svg.Root, not Svg.Root < S; the explicit annotation is the witness.
         val root: Svg.Root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
         assert(root.children.nonEmpty, "the pure projection must produce a non-empty Svg.Root")
-        // .toSvg likewise returns a bare Svg.Root with no Sync/Async row.
-        val viaToSvg: Svg.Root = spec.toSvg
-        assert(viaToSvg.children.nonEmpty, "spec.toSvg must return a non-empty Svg.Root with no effect row")
-        // .toSvgWithScales returns a pure (Svg.Root, Chart.Scales) tuple, again with no effect row.
-        val pair: (Svg.Root, Chart.Scales) = spec.toSvgWithScales
-        assert(pair._1.children.nonEmpty, "spec.toSvgWithScales must return a pure Svg.Root with no effect row")
+        // .lower likewise returns a bare Svg.Root with no Sync/Async row.
+        val viaToSvg: Svg.Root = spec.lower
+        assert(viaToSvg.children.nonEmpty, "spec.lower must return a non-empty Svg.Root with no effect row")
+        // .lowerWithScales returns a pure (Svg.Root, Chart.Scales) tuple, again with no effect row.
+        val pair: (Svg.Root, Chart.Scales) = spec.lowerWithScales
+        assert(pair._1.children.nonEmpty, "spec.lowerWithScales must return a pure Svg.Root with no effect row")
     }
 
     // ---- Bug A: TEXT mark over a band x is centred on the band, honouring TextAnchor.Middle ----
@@ -2148,7 +2148,7 @@ class ChartLowerTest extends Test:
         val rows             = Chunk(P(0.0, 0.0, 10.0), P(1.0, 1.0, 50.0), P(2.0, 2.0, 90.0))
         val spec = Chart(rows)(point(x = _.x, y = _.y, color = _.heat))
             .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
-        val (root, scales) = spec.toSvgWithScales
+        val (root, scales) = spec.lowerWithScales
         val plotY          = scales.plot.y
         // Collect every rect anywhere in the tree (the legend swatch is a direct root child, not under the marks G).
         def allRects(e: UI): Chunk[Svg.Rect] = e match

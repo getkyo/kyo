@@ -58,7 +58,7 @@ object LinkedSelection extends KyoApp:
                     .yAxis(_.grid.ticks(4))
                     .theme(_.dark)
                     .size(560, 300)
-                    .toSvg
+                    .lower
 
             val totalsTitle = UI.h3("Total by product")
 
@@ -84,7 +84,7 @@ object LinkedSelection extends KyoApp:
                     .yAxis(_.grid.ticks(4))
                     .theme(_.dark)
                     .size(560, 300)
-                    .toSvg
+                    .lower
 
             UI.div.style(Style.column.gap(16.px).padding(20.px).bg(Color.rgb(15, 18, 28)).color(Color.rgb(226, 232, 240)))(
                 UI.h2("Linked selection"),

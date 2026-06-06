@@ -15,7 +15,7 @@ import scala.language.implicitConversions
   *      tweens rather than snapping.
   *   2. Clamp: a bar chart with a FIXED y-domain `.yScale(_.linear(lo, hi).withClamp(true))`. One bar's value
   *      sits above `hi`; with clamp on it pins to the top of the plot instead of overflowing the frame.
-  *   3. Scale readback overlay: a static bar chart lowered with `toSvgWithScales`, then composed inside an outer
+  *   3. Scale readback overlay: a static bar chart lowered with `lowerWithScales`, then composed inside an outer
   *      `Svg.svg` together with a horizontal target `Svg.line` drawn at `scales.y.toPixel(target)`, so the rule
   *      lands on the exact data pixel for the target value.
   *
@@ -93,7 +93,7 @@ object ChartReactiveScales extends KyoApp:
             .yAxis(_.grid.ticks(5))
             .legend(_.hidden)
             .size(360, 240)
-            .toSvg
+            .lower
 
     /** A bar chart plus a target rule placed at the exact pixel for `targetScore` via the read-back y-scale. */
     val overlayChart: Svg.Root =
@@ -104,7 +104,7 @@ object ChartReactiveScales extends KyoApp:
                 .yScale(_.linear(0.0, 100.0))
                 .yAxis(_.grid.ticks(5))
                 .size(overlayW, overlayH)
-                .toSvgWithScales
+                .lowerWithScales
         val targetPx = scales.y.toPixel(targetScore)
         val target =
             Svg.line
@@ -173,7 +173,7 @@ object ChartReactiveScales extends KyoApp:
                     .yAxis(_.grid.ticks(5))
                     .animate(_.ease(800.millis))
                     .size(360, 240)
-                    .toSvg
+                    .lower
         yield UI.div.style(pageStyle)(
             UI.h2("kyo-ui Chart Reactive + Scales").style(Style.fontSize(18.px).fontWeight(_.bold)),
             UI.div.style(gridStyle)(
