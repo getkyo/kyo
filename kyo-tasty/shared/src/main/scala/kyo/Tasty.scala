@@ -1632,19 +1632,90 @@ object Tasty:
 
         /** Human-readable representation. Pure; requires no Classpath. */
         def show: String = this match
-            case StringConst(s)  => "\"" + s + "\""
-            case IntConst(i)     => i.toString
-            case LongConst(l)    => l.toString + "L"
-            case FloatConst(f)   => f.toString + "f"
-            case DoubleConst(d)  => d.toString
+            case StringConst(s) => Constant.escapeStringLiteral(s)
+            case IntConst(i)    => i.toString
+            case LongConst(l)   => l.toString + "L"
+            case FloatConst(f) =>
+                if f.isNaN then "Float.NaN"
+                else if f == Float.PositiveInfinity then "Float.PositiveInfinity"
+                else if f == Float.NegativeInfinity then "Float.NegativeInfinity"
+                else f.toString + "f"
+            case DoubleConst(d) =>
+                if d.isNaN then "Double.NaN"
+                else if d == Double.PositiveInfinity then "Double.PositiveInfinity"
+                else if d == Double.NegativeInfinity then "Double.NegativeInfinity"
+                else d.toString
             case BooleanConst(b) => b.toString
-            case CharConst(c)    => "'" + c + "'"
+            case CharConst(c)    => Constant.escapeCharLiteral(c)
             case ByteConst(b)    => b.toString
             case ShortConst(s)   => s.toString
             case UnitConst       => "()"
             case NullConst       => "null"
-            case ClassConst(t)   => "classOf[" + t.toString + "]"
+            case ClassConst(t)   => "classOf[" + Constant.classConstTypeShow(t) + "]"
         end show
+    end Constant
+
+    object Constant:
+
+        /** Renders a String value as a Scala string literal, escaping all characters that would
+          * make the literal unparseable. Handles: double-quote, backslash, newline, carriage
+          * return, tab, backspace, and form-feed.
+          */
+        private[kyo] def escapeStringLiteral(s: String): String =
+            val sb = new java.lang.StringBuilder("\"")
+            s.foreach {
+                case '"'  => sb.append("\\\"")
+                case '\\' => sb.append("\\\\")
+                case '\n' => sb.append("\\n")
+                case '\r' => sb.append("\\r")
+                case '\t' => sb.append("\\t")
+                case '\b' => sb.append("\\b")
+                case '\f' => sb.append("\\f")
+                case c    => sb.append(c)
+            }
+            sb.append('"')
+            sb.toString
+        end escapeStringLiteral
+
+        /** Renders a Char value as a Scala character literal, escaping single-quote, backslash,
+          * and the same control characters as escapeStringLiteral.
+          */
+        private[kyo] def escapeCharLiteral(c: Char): String =
+            val inner = c match
+                case '\'' => "\\'"
+                case '\\' => "\\\\"
+                case '\n' => "\\n"
+                case '\r' => "\\r"
+                case '\t' => "\\t"
+                case '\b' => "\\b"
+                case '\f' => "\\f"
+                case ch   => ch.toString
+            "'" + inner + "'"
+        end escapeCharLiteral
+
+        /** Renders a Type for use inside classOf[...]. Since Constant.show is pure and has no
+          * Classpath, Named references cannot be resolved to their FQN. An unresolved
+          * Type.Named(id) emits the placeholder <id:N> per Q-009. Other common Type cases
+          * are rendered with their Scala source shape; the catch-all preserves existing
+          * behaviour for any new Type cases added in the future.
+          */
+        private[kyo] def classConstTypeShow(t: Type): String = t match
+            case Type.Named(id) => s"<id:${id.value}>"
+            case Type.Any       => "Any"
+            case Type.Nothing   => "Nothing"
+            case Type.Applied(base, args) =>
+                val baseStr = classConstTypeShow(base)
+                val argsStr = args.iterator.map(classConstTypeShow).mkString(", ")
+                s"$baseStr[$argsStr]"
+            case Type.Tuple(elems) =>
+                "(" + elems.iterator.map(classConstTypeShow).mkString(", ") + ")"
+            case Type.Function(params, result) =>
+                val ps = params.iterator.map(classConstTypeShow).mkString(", ")
+                val r  = classConstTypeShow(result)
+                if params.size == 1 then s"${classConstTypeShow(params(0))} => $r"
+                else s"($ps) => $r"
+            case other => other.toString
+        end classConstTypeShow
     end Constant
 
     /** Source position attached to a TASTy symbol.

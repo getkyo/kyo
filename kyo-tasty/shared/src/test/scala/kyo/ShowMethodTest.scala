@@ -159,6 +159,78 @@ class ShowMethodTest extends Test with TastyTestSupport:
         assert(Tasty.Constant.NullConst.show == "null")
     }
 
+    // F-008 leaves: StringConst escaping (INV-005)
+    "Constant.show StringConst escapes embedded double-quote" in {
+        // StringConst("a\"b") must render as "a\"b", not "a"b"
+        assert(Tasty.Constant.StringConst("a\"b").show == "\"a\\\"b\"")
+    }
+
+    "Constant.show StringConst escapes newline" in {
+        assert(Tasty.Constant.StringConst("line1\nline2").show == "\"line1\\nline2\"")
+    }
+
+    "Constant.show StringConst escapes backslash" in {
+        assert(Tasty.Constant.StringConst("\\").show == "\"\\\\\"")
+    }
+
+    "Constant.show StringConst round-trips simple value" in {
+        assert(Tasty.Constant.StringConst("hello").show == "\"hello\"")
+    }
+
+    // F-008 leaves: CharConst escaping
+    "Constant.show CharConst escapes single-quote" in {
+        // escapeCharLiteral('\'') => '\'' (4 chars: quote, backslash, quote, quote)
+        assert(Tasty.Constant.CharConst('\'').show == "'\\''")
+    }
+
+    // F-008 leaves: FloatConst NaN/Infinity guards (INV-005)
+    "Constant.show FloatConst NaN emits Float.NaN" in {
+        assert(Tasty.Constant.FloatConst(Float.NaN).show == "Float.NaN")
+    }
+
+    "Constant.show FloatConst PositiveInfinity emits Float.PositiveInfinity" in {
+        assert(Tasty.Constant.FloatConst(Float.PositiveInfinity).show == "Float.PositiveInfinity")
+    }
+
+    "Constant.show FloatConst NegativeInfinity emits Float.NegativeInfinity" in {
+        assert(Tasty.Constant.FloatConst(Float.NegativeInfinity).show == "Float.NegativeInfinity")
+    }
+
+    "Constant.show FloatConst normal value still works" in {
+        assert(Tasty.Constant.FloatConst(1.5f).show == "1.5f")
+    }
+
+    // F-008 leaves: DoubleConst NaN/Infinity guards
+    "Constant.show DoubleConst NaN emits Double.NaN" in {
+        assert(Tasty.Constant.DoubleConst(Double.NaN).show == "Double.NaN")
+    }
+
+    "Constant.show DoubleConst PositiveInfinity emits Double.PositiveInfinity" in {
+        assert(Tasty.Constant.DoubleConst(Double.PositiveInfinity).show == "Double.PositiveInfinity")
+    }
+
+    "Constant.show DoubleConst NegativeInfinity emits Double.NegativeInfinity" in {
+        assert(Tasty.Constant.DoubleConst(Double.NegativeInfinity).show == "Double.NegativeInfinity")
+    }
+
+    "Constant.show DoubleConst normal value still works" in {
+        assert(Tasty.Constant.DoubleConst(3.14).show == "3.14")
+    }
+
+    // F-008 leaves: ClassConst unresolved Type.Named emits <id:N> placeholder (Q-009)
+    "Constant.show ClassConst with unresolved Named emits placeholder" in {
+        import kyo.Tasty.SymbolId
+        assert(Tasty.Constant.ClassConst(Tasty.Type.Named(SymbolId(7))).show == "classOf[<id:7>]")
+    }
+
+    "Constant.show ClassConst with Type.Any emits classOf[Any]" in {
+        assert(Tasty.Constant.ClassConst(Tasty.Type.Any).show == "classOf[Any]")
+    }
+
+    "Constant.show ClassConst with Type.Nothing emits classOf[Nothing]" in {
+        assert(Tasty.Constant.ClassConst(Tasty.Type.Nothing).show == "classOf[Nothing]")
+    }
+
     // Leaf F-005-a: renderType renders Function as arrow (INV-008)
     // Given: method def map[B](f: A => B): List[B]
     // When: Tasty.signature(mapMethod)
