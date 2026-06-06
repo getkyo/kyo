@@ -293,4 +293,59 @@ class SubtypeTest extends Test:
                     succeed
     }
 
+    // ── F-003 tests: ADT sentinel cases Type.Any and Type.Nothing ──────────
+
+    // Test F003-1: Named(X).isSubtypeOf(Type.Any) returns Sub via ADT sentinel arm
+    "F003-1: Named(X).isSubtypeOf(Type.Any) == Sub (ADT sentinel)" in run {
+        nextId = 0
+        val intSym  = makeSym("scala.Int")
+        val intType = Tasty.Type.Named(intSym.id)
+        makeTestClasspath(Chunk(intSym)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                Tasty.isSubtypeOf(intType, Tasty.Type.Any).map: v =>
+                    assert(v == Tasty.SubtypeVerdict.Sub, s"Expected Sub but got $v")
+    }
+
+    // Test F003-2: Type.Nothing.isSubtypeOf(Named(X)) returns Sub via ADT sentinel arm
+    "F003-2: Type.Nothing.isSubtypeOf(Named(X)) == Sub (ADT sentinel)" in run {
+        nextId = 0
+        val stringSym  = makeSym("java.lang.String")
+        val stringType = Tasty.Type.Named(stringSym.id)
+        makeTestClasspath(Chunk(stringSym)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                Tasty.isSubtypeOf(Tasty.Type.Nothing, stringType).map: v =>
+                    assert(v == Tasty.SubtypeVerdict.Sub, s"Expected Sub but got $v")
+    }
+
+    // Test F003-3: Type.Nothing.isSubtypeOf(Type.Any) returns Sub (both ADT sentinels)
+    "F003-3: Type.Nothing.isSubtypeOf(Type.Any) == Sub (both ADT sentinels)" in run {
+        nextId = 0
+        makeTestClasspath(Chunk.empty).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                Tasty.isSubtypeOf(Tasty.Type.Nothing, Tasty.Type.Any).map: v =>
+                    assert(v == Tasty.SubtypeVerdict.Sub, s"Expected Sub but got $v")
+    }
+
+    // Test F003-4: Type.Any.isSubtypeOf(Named(X)) returns NotSub (Any is not sub of random type)
+    "F003-4: Type.Any.isSubtypeOf(Named(X)) == NotSub (negative pinning)" in run {
+        nextId = 0
+        val intSym  = makeSym("scala.Int")
+        val intType = Tasty.Type.Named(intSym.id)
+        makeTestClasspath(Chunk(intSym)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                Tasty.isSubtypeOf(Tasty.Type.Any, intType).map: v =>
+                    assert(v == Tasty.SubtypeVerdict.NotSub, s"Expected NotSub but got $v")
+    }
+
+    // Test F003-5: Named(X).isSubtypeOf(Type.Nothing) returns NotSub (Nothing is bottom type)
+    "F003-5: Named(X).isSubtypeOf(Type.Nothing) == NotSub (negative pinning)" in run {
+        nextId = 0
+        val stringSym  = makeSym("java.lang.String")
+        val stringType = Tasty.Type.Named(stringSym.id)
+        makeTestClasspath(Chunk(stringSym)).flatMap: cp =>
+            Tasty.withClasspath(cp):
+                Tasty.isSubtypeOf(stringType, Tasty.Type.Nothing).map: v =>
+                    assert(v == Tasty.SubtypeVerdict.NotSub, s"Expected NotSub but got $v")
+    }
+
 end SubtypeTest

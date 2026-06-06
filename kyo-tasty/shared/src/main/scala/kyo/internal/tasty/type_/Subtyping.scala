@@ -74,6 +74,9 @@ object Subtyping:
         else
             // Any is supertype of everything
             sup match
+                // ADT sentinel: Type.Any short-circuits before any classpath lookup
+                case Tasty.Type.Any =>
+                    Sub
                 case Tasty.Type.Named(supId) if {
                         import Tasty.Name.asString; cp.symbol(supId).map(_.name.asString).getOrElse("") == AnyName
                     } =>
@@ -90,6 +93,9 @@ object Subtyping:
                     end if
                 case _ =>
                     sub match
+                        // ADT sentinel: Type.Nothing short-circuits before any classpath lookup
+                        case Tasty.Type.Nothing =>
+                            Sub
                         // Nothing is subtype of everything
                         case Tasty.Type.Named(subId) if {
                                 import Tasty.Name.asString; cp.symbol(subId).map(_.name.asString).getOrElse("") == NothingName
