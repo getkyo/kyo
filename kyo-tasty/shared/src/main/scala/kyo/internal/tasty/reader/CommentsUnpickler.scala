@@ -35,7 +35,7 @@ object CommentsUnpickler:
     def read(
         view: ByteView,
         addrMap: IntMap[LoadingSymbol.Materialising]
-    )(using Frame, AllowUnsafe): Map[LoadingSymbol.Materialising, String] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): scala.collection.mutable.LongMap[String] < (Sync & Abort[TastyError]) =
         val result =
             try Right(readSync(view, addrMap))
             catch
@@ -48,8 +48,11 @@ object CommentsUnpickler:
 
     private def readSync(view: ByteView, addrMap: IntMap[LoadingSymbol.Materialising])(using
         AllowUnsafe
-    ): Map[LoadingSymbol.Materialising, String] =
-        val builder = Map.newBuilder[LoadingSymbol.Materialising, String]
+    ): scala.collection.mutable.LongMap[String] =
+        // F-006 Q-001 AT-RISK rotation: key by sym.id (primitive Long), not the mutable
+        // LoadingSymbol.Materialising case class. Avoids structural-equality fragility when
+        // LoadingSymbol.id is mutated post-insertion. Matches the LongMap pattern in AstUnpickler.
+        val builder = scala.collection.mutable.LongMap.empty[String]
         while view.remaining > 0 do
             val addr    = view.readNat()
             val textLen = view.readNat()
@@ -64,11 +67,11 @@ object CommentsUnpickler:
             addrMap.get(addr) match
                 case Some(sym) =>
                     val text = new String(buf, java.nio.charset.StandardCharsets.UTF_8)
-                    builder += (sym -> text)
+                    builder(sym.id.toLong) = text
                 case None => () // sub-expression node, not a definition; skip
             end match
         end while
-        builder.result()
+        builder
     end readSync
 
     /** Skip a signed big-endian base-128 Long (continuation bit is 0x80 CLEAR; stop on 0x80 SET). */

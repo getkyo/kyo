@@ -49,10 +49,19 @@ class PositionsUnpicklerTest extends Test:
         ((n & 0x3f) | 0x80).toByte
     end encNegInt
 
-    /** Create a minimal LoadingSymbol.Materialising for testing (replaces makePlaceholder). */
+    private var nextSymId: Int = 0
+
+    /** Create a minimal LoadingSymbol.Materialising for testing with a unique sequential id.
+      *
+      * F-006: the LongMap rotation in PositionsUnpickler keys by sym.id.toLong, so each symbol
+      * must have a unique id to avoid overwriting entries in the result map. Sequential ids
+      * guarantee uniqueness across all test symbols in this test class.
+      */
     private def makeTestSymbol(nameStr: String): LoadingSymbol.Materialising =
+        val id = nextSymId
+        nextSymId += 1
         LoadingSymbol.Materialising(
-            id = nameStr.hashCode.abs % 1000,
+            id = id,
             kind = SymbolKind.Class,
             flags = Tasty.Flags.empty,
             name = Tasty.Name(nameStr)
@@ -85,8 +94,9 @@ class PositionsUnpicklerTest extends Test:
         Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Present("Foo.scala"))).map:
             case Result.Success(result) =>
                 assert(result.size == 1, s"Expected 1 position entry but got ${result.size}")
-                assert(result.contains(sym), "Expected sym to have a position entry")
-                val pos = result(sym)
+                // F-006: LongMap keyed by sym.id.toLong, not by symbol object.
+                assert(result.contains(sym.id.toLong), "Expected sym.id to have a position entry")
+                val pos = result(sym.id.toLong)
                 assert(pos.sourceFile == "Foo.scala", s"Expected sourceFile=Foo.scala but got ${pos.sourceFile}")
                 assert(pos.line == 3, s"Expected line=3 but got ${pos.line}")
                 assert(pos.column == 1, s"Expected column=1 but got ${pos.column}")
@@ -194,10 +204,11 @@ class PositionsUnpicklerTest extends Test:
         Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Present("test.scala"))).map:
             case Result.Success(result) =>
                 assert(result.size == 2, s"Expected 2 entries but got ${result.size}")
-                assert(result.contains(symAlpha), "Expected symAlpha to have a position entry")
-                assert(result.contains(symBeta), "Expected symBeta to have a position entry")
-                val posAlpha = result(symAlpha)
-                val posBeta  = result(symBeta)
+                // F-006: LongMap keyed by sym.id.toLong, not by symbol object.
+                assert(result.contains(symAlpha.id.toLong), "Expected symAlpha.id to have a position entry")
+                assert(result.contains(symBeta.id.toLong), "Expected symBeta.id to have a position entry")
+                val posAlpha = result(symAlpha.id.toLong)
+                val posBeta  = result(symBeta.id.toLong)
                 assert(
                     posAlpha.line == 1 && posAlpha.column == 3,
                     s"symAlpha expected (line=1, col=3) but got (${posAlpha.line}, ${posAlpha.column})"
@@ -286,11 +297,12 @@ class PositionsUnpicklerTest extends Test:
             case Result.Success(result) =>
                 assert(result.size == N, s"Expected $N position entries but got ${result.size}")
                 // Spot-check 5 entries: indices 0, 999, 4999, 7777, 9999
+                // F-006: LongMap keyed by sym.id.toLong.
                 val checks = Seq(0, 999, 4999, 7777, 9999)
                 for i <- checks do
                     val sym = syms(i)
-                    assert(result.contains(sym), s"Expected sym$i to have a position entry")
-                    val pos = result(sym)
+                    assert(result.contains(sym.id.toLong), s"Expected sym$i.id to have a position entry")
+                    val pos = result(sym.id.toLong)
                     // curIndex = i+1, curStart = i+1; lineStarts(k) = k for size-0 lines.
                     // offset = i+1; binary search finds highest k with lineStarts(k) <= i+1.
                     // lineStarts(i+1) = i+1 exactly matches, so line index = i+1 (0-based) => line i+2 (1-based).
@@ -421,8 +433,9 @@ class PositionsUnpicklerTest extends Test:
         Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Present("test.scala"))).map:
             case Result.Success(result) =>
                 // Verify the read succeeded; the position of sym at offset 0 should be line 1, col 1
-                assert(result.contains(sym), "Expected sym to have a position entry")
-                val pos = result(sym)
+                // F-006: LongMap keyed by sym.id.toLong.
+                assert(result.contains(sym.id.toLong), "Expected sym.id to have a position entry")
+                val pos = result(sym.id.toLong)
                 assert(pos.line == 1, s"Expected line=1 but got ${pos.line}")
                 assert(pos.column == 1, s"Expected column=1 but got ${pos.column}")
                 // Verify spot-check on lineStarts(10) = 1055 via a new read with sym at that offset
@@ -481,8 +494,9 @@ class PositionsUnpicklerTest extends Test:
         // Use Present sourceFile so position entries are built, not the absent-SOURCEFILE silent skip.
         Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Present("test.scala"))).map:
             case Result.Success(result) =>
-                assert(result.contains(sym), "Expected sym to have a position entry")
-                val pos = result(sym)
+                // F-006: LongMap keyed by sym.id.toLong.
+                assert(result.contains(sym.id.toLong), "Expected sym.id to have a position entry")
+                val pos = result(sym.id.toLong)
                 // offset 1055 = lineStarts(10) => line index 10 (0-based) => line 11 (1-based), col 1
                 assert(pos.line == 11, s"Expected line=11 (lineStarts(10)=1055) but got ${pos.line}")
                 assert(pos.column == 1, s"Expected column=1 but got ${pos.column}")

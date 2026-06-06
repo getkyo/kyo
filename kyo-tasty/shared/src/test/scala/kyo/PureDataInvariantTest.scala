@@ -77,15 +77,15 @@ class PureDataInvariantTest extends Test:
             succeed
     }
 
-    // Leaf 3: equality is structural
-    // Given: the same Symbol instance retrieved twice
+    // Leaf 3: equality is reflexive (same instance equals itself under id-and-kind contract after F-006)
+    // Given: the same Symbol instance retrieved twice (materialized symbols have non-sentinel ids)
     // When: comparing with ==
-    // Then: equal; hashCode also matches
-    "HARD RULE 7: Symbol equality is structural (same instance equals itself)" in run {
+    // Then: equal; hashCode also matches (F-006: id-and-kind equality is reflexive for non-sentinel ids)
+    "HARD RULE 7: Symbol equality is reflexive (same instance equals itself)" in run {
         openFixtureClasspath.map: cp =>
             val sample = cp.symbols.take(20)
             sample.foreach: sym =>
-                assert(sym == sym, s"Symbol $sym: sym == sym returned false (identity equality broken)")
+                assert(sym == sym, s"Symbol $sym: sym == sym returned false (reflexive equality broken)")
                 assert(sym.hashCode == sym.hashCode, s"Symbol $sym: hashCode not stable")
             succeed
     }

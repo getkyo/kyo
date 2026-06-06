@@ -393,6 +393,9 @@ class DecoderFidelity5Wave2Test extends Test:
     }
 
     // W2.22: Symbol used as HashMap key resolves to itself.
+    // F-006: Symbol equality is id-based with a kind discriminant; the `final override def equals`
+    // on Tasty.Symbol compares `(id.value, kind)`. The decoder relies on `id`-based equality through
+    // this override; case-class auto-derivation is shadowed by the trait-body override.
     "W2.22: Symbol usable as HashMap key (equals/hashCode contract)" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val syms = cp.symbols.take(50).toList

@@ -332,21 +332,21 @@ class SymbolHierarchyTest extends Test:
             annotations = Chunk.empty,
             javaAnnotations = Chunk.empty
         )
-        // Symbol equality is now field-based (case class default).
-        // Two symbols with the same id but different names are NOT equal.
-        assert(a != b, "Two Symbol.Class with different names are not equal (field-based equality)")
+        // F-006: Symbol equality is id-and-kind based (override on sealed-trait body, final).
+        // Two Symbol.Class with same non-negative id are equal regardless of other fields.
+        assert(a == b, "Two Symbol.Class with same non-negative id must be equal (id-based equality, F-006)")
         succeed
     }
 
-    // ── Leaf 12: equals-field-based-all-fields ──────────────────────────────
+    // ── Leaf 12: sentinel-id-not-equal ──────────────────────────────────────
 
-    // Given: two Symbol.Unresolved instances with identical fields (including id=-1).
+    // Given: two Symbol.Package instances with sentinel id=-1 and identical fields.
     // When: compare with ==.
-    // Then: returns true (field-based equality; id=-1 is not special in).
-    "Leaf 12: two Symbol.Unresolved with same fields are equal (field-based equality)" in {
+    // Then: returns false (F-006 sentinel guard: id.value == -1 means NOT equal, never equal to any symbol).
+    "Leaf 12: two symbols with sentinel id=-1 are not equal (F-006 sentinel guard)" in {
         val x: Tasty.Symbol = Tasty.Symbol.Package(SymbolId(-1), Tasty.Name("u"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
         val y: Tasty.Symbol = Tasty.Symbol.Package(SymbolId(-1), Tasty.Name("u"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
-        assert(x == y, "Two Unresolved symbols with identical fields must be equal (field-based equality)")
+        assert(x != y, "Two symbols with sentinel id=-1 must NOT be equal (F-006 sentinel guard)")
         succeed
     }
 

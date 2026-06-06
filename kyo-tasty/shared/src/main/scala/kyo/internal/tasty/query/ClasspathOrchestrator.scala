@@ -78,8 +78,8 @@ object ClasspathOrchestrator:
         parentsBySymbol: mutable.LongMap[Chunk[Tasty.Type]],
         childrenByOwner: mutable.LongMap[Chunk[LoadingSymbol.Materialising]],
         typeBySymbol: mutable.LongMap[Tasty.Type],
-        commentsBySymbol: Map[LoadingSymbol.Materialising, String],
-        positionsBySymbol: Map[LoadingSymbol.Materialising, Tasty.Position],
+        commentsBySymbol: mutable.LongMap[String],
+        positionsBySymbol: mutable.LongMap[Tasty.Position],
         ownerBySymbol: mutable.LongMap[LoadingSymbol.Materialising],
         bodyDataByAddr: mutable.LongMap[(Int, Int)],
         sectionBytes: Array[Byte],
@@ -955,19 +955,19 @@ object ClasspathOrchestrator:
                     end for
 
                     for fr <- fileResults do
-                        for (sym, text) <- fr.commentsBySymbol do
-                            val idx = symbolIdMap.getOrElse(sym.id.toLong, -1)
+                        fr.commentsBySymbol.foreach { (symId, text) =>
+                            val idx = symbolIdMap.getOrElse(symId, -1)
                             if idx >= 0 && idx < count && descs(idx).scaladoc.isEmpty then
                                 descs(idx).scaladoc = Maybe(text)
-                        end for
+                        }
                     end for
 
                     for fr <- fileResults do
-                        for (sym, pos) <- fr.positionsBySymbol do
-                            val idx = symbolIdMap.getOrElse(sym.id.toLong, -1)
+                        fr.positionsBySymbol.foreach { (symId, pos) =>
+                            val idx = symbolIdMap.getOrElse(symId, -1)
                             if idx >= 0 && idx < count && descs(idx).sourcePosition.isEmpty then
                                 descs(idx).sourcePosition = Maybe(pos)
-                        end for
+                        }
                     end for
 
                     // Populate annotations from ANNOTATION modifier blocks decoded during per-file decode.
@@ -1771,8 +1771,8 @@ object ClasspathOrchestrator:
             mutable.LongMap.empty[Chunk[Tasty.Type]],
             mutable.LongMap.empty[Chunk[LoadingSymbol.Materialising]],
             mutable.LongMap.empty[Tasty.Type],
-            Map.empty,
-            Map.empty,
+            mutable.LongMap.empty[String],
+            mutable.LongMap.empty[Tasty.Position],
             mutable.LongMap.empty[LoadingSymbol.Materialising],
             mutable.LongMap.empty[(Int, Int)],
             Array.empty[Byte],
@@ -1830,13 +1830,13 @@ object ClasspathOrchestrator:
                     val commentsView = view.subView(offset, offset + length)
                     CommentsUnpickler.read(commentsView, pass1Result.addrMap)
                 case Absent =>
-                    Sync.defer(Map.empty[LoadingSymbol.Materialising, String]))
+                    Sync.defer(mutable.LongMap.empty[String]))
             positionsBySymbol <- timed(TastyPerfStats.positionsUnpicklerNs)(sections.get(TastyFormat.PositionsSection) match
                 case Present((offset, length)) =>
                     val posView = view.subView(offset, offset + length)
                     PositionsUnpickler.read(posView, pass1Result.addrMap, attrs.sourceFile)
                 case Absent =>
-                    Sync.defer(Map.empty[LoadingSymbol.Materialising, Tasty.Position]))
+                    Sync.defer(mutable.LongMap.empty[Tasty.Position]))
         yield
             // computeFqn walks the ownerBySymbol chain to build the dotted FQN.
             val ownerBySymbol = pass1Result.ownerBySymbol

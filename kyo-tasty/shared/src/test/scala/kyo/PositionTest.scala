@@ -92,8 +92,9 @@ class PositionTest extends Test:
         Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Maybe.Present("Foo.scala"))).map:
             case Result.Success(posMap) =>
                 assert(posMap.size == 1, s"Expected 1 position entry but got ${posMap.size}")
-                assert(posMap.contains(sym), "Expected sym to have a position entry")
-                val pos = posMap(sym)
+                // F-006: LongMap keyed by sym.id.toLong, not by symbol object.
+                assert(posMap.contains(sym.id.toLong), "Expected sym.id to have a position entry")
+                val pos = posMap(sym.id.toLong)
                 assert(pos.sourceFile == "Foo.scala", s"Expected sourceFile='Foo.scala' but got '${pos.sourceFile}'")
                 assert(pos.line == 1, s"Expected line=1 but got ${pos.line}")
                 succeed

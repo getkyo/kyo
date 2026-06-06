@@ -50,10 +50,19 @@ class CommentsUnpicklerTest extends Test:
     private def buildSection(entries: (Int, String)*): Array[Byte] =
         entries.toArray.flatMap((addr, text) => encEntry(addr, text))
 
-    /** Create a minimal LoadingSymbol.Materialising for testing (replaces makePlaceholder). */
+    private var nextSymId: Int = 0
+
+    /** Create a minimal LoadingSymbol.Materialising for testing with a unique sequential id.
+      *
+      * F-006: the LongMap rotation in CommentsUnpickler keys by sym.id.toLong, so each symbol
+      * must have a unique id to avoid overwriting entries in the result map. Sequential ids
+      * guarantee uniqueness across all test symbols in this test class.
+      */
     private def makeTestSymbol(nameStr: String): LoadingSymbol.Materialising =
+        val id = nextSymId
+        nextSymId += 1
         LoadingSymbol.Materialising(
-            id = nameStr.hashCode.abs % 1000,
+            id = id,
             kind = SymbolKind.Class,
             flags = Tasty.Flags.empty,
             name = Tasty.Name(nameStr)
@@ -72,8 +81,9 @@ class CommentsUnpicklerTest extends Test:
         Abort.run[TastyError](CommentsUnpickler.read(view, addrMap)).map:
             case Result.Success(result) =>
                 assert(result.size == 1, s"Expected 1 entry but got ${result.size}")
-                assert(result.contains(sym), "Expected sym to have a comment entry")
-                val text = result(sym)
+                // F-006: LongMap keyed by sym.id.toLong, not by symbol object.
+                assert(result.contains(sym.id.toLong), "Expected sym.id to have a comment entry")
+                val text = result(sym.id.toLong)
                 assert(text.contains("My doc"), s"Expected text to contain 'My doc' but got: $text")
             case Result.Failure(e) =>
                 fail(s"Expected success but got failure: $e")
@@ -127,7 +137,7 @@ class CommentsUnpicklerTest extends Test:
 
     // ── Test 4: symbol with no comment has no map entry; with comment has an entry ─
 
-    // Test 4 (plan: phase-02 update): CommentsUnpickler returns a Map[Symbol, String].
+    // Test 4 (plan: phase-02 update): CommentsUnpickler returns a LongMap keyed by sym.id.
     // A symbol at an addr that has a comment entry appears in the map; one without does not.
     "CommentsUnpickler: symbol with comment appears in returned map; symbol without does not" in run {
         val symWithDoc    = makeTestSymbol("WithDoc")
@@ -138,17 +148,18 @@ class CommentsUnpicklerTest extends Test:
         val view    = ByteView(payload)
         Abort.run[TastyError](CommentsUnpickler.read(view, addrMap)).map:
             case Result.Success(comments) =>
+                // F-006: LongMap keyed by sym.id.toLong, not by symbol object.
                 assert(
-                    comments.contains(symWithDoc),
-                    s"Expected symWithDoc to appear in comments map but it was absent"
+                    comments.contains(symWithDoc.id.toLong),
+                    s"Expected symWithDoc.id=${symWithDoc.id} to appear in comments map but it was absent"
                 )
                 assert(
-                    comments(symWithDoc).contains("documented"),
-                    s"Expected scaladoc text to contain 'documented' but got ${comments(symWithDoc)}"
+                    comments(symWithDoc.id.toLong).contains("documented"),
+                    s"Expected scaladoc text to contain 'documented' but got ${comments(symWithDoc.id.toLong)}"
                 )
                 assert(
-                    !comments.contains(symWithoutDoc),
-                    s"Expected symWithoutDoc to be absent from comments map but it was present"
+                    !comments.contains(symWithoutDoc.id.toLong),
+                    s"Expected symWithoutDoc.id=${symWithoutDoc.id} to be absent from comments map but it was present"
                 )
             case Result.Failure(e) =>
                 fail(s"Expected success but got failure: $e")
@@ -169,24 +180,25 @@ class CommentsUnpicklerTest extends Test:
         Abort.run[TastyError](CommentsUnpickler.read(view, addrMap)).map:
             case Result.Success(comments) =>
                 assert(comments.size == 2, s"Expected 2 entries but got ${comments.size}")
-                assert(comments.contains(symAlpha), "Expected symAlpha to have a comment")
-                assert(comments.contains(symBeta), "Expected symBeta to have a comment")
+                // F-006: LongMap keyed by sym.id.toLong, not by symbol object.
+                assert(comments.contains(symAlpha.id.toLong), "Expected symAlpha.id to have a comment")
+                assert(comments.contains(symBeta.id.toLong), "Expected symBeta.id to have a comment")
                 assert(
-                    comments(symAlpha).contains("Alpha doc"),
-                    s"symAlpha comment wrong: ${comments(symAlpha)}"
+                    comments(symAlpha.id.toLong).contains("Alpha doc"),
+                    s"symAlpha comment wrong: ${comments(symAlpha.id.toLong)}"
                 )
                 assert(
-                    comments(symBeta).contains("Beta doc"),
-                    s"symBeta comment wrong: ${comments(symBeta)}"
+                    comments(symBeta.id.toLong).contains("Beta doc"),
+                    s"symBeta comment wrong: ${comments(symBeta.id.toLong)}"
                 )
                 // No cross-contamination: Alpha's doc is not Beta's doc
                 assert(
-                    !comments(symAlpha).contains("Beta"),
-                    s"symAlpha unexpectedly contains 'Beta': ${comments(symAlpha)}"
+                    !comments(symAlpha.id.toLong).contains("Beta"),
+                    s"symAlpha unexpectedly contains 'Beta': ${comments(symAlpha.id.toLong)}"
                 )
                 assert(
-                    !comments(symBeta).contains("Alpha"),
-                    s"symBeta unexpectedly contains 'Alpha': ${comments(symBeta)}"
+                    !comments(symBeta.id.toLong).contains("Alpha"),
+                    s"symBeta unexpectedly contains 'Alpha': ${comments(symBeta.id.toLong)}"
                 )
             case Result.Failure(e) =>
                 fail(s"Expected success but got failure: $e")

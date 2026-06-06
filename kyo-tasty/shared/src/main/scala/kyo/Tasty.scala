@@ -2705,10 +2705,11 @@ object Tasty:
       * effect row.
       *
       * Equality contract: `derives CanEqual` enables `==` comparisons between any two `Symbol` values regardless of their concrete
-      * subtype. Equality is implemented via a custom `equals` that compares `SymbolId` values: two symbols are equal if and only if
-      * `id.value == other.id.value` and neither id is the sentinel (-1). Comparing a `Symbol.Class` to a `Symbol.Trait` always returns
-      * `false` even when they represent the same named entity after a kind-change, because their `SymbolId` values differ. Use `id` for
-      * cross-kind identity checks.
+      * subtype. The realised equality is overridden on the sealed-trait body (marked `final` so case-class auto-derived equality
+      * cannot shadow it) and compares `(id.value, kind)`: two symbols are equal iff `id.value == other.id.value`, neither id is
+      * the sentinel (-1), and `kind == other.kind`. The kind discriminant ensures comparing a `Symbol.Class` to a `Symbol.Trait`
+      * always returns `false` even when an upstream producer assigns the same `id.value` across kinds. `hashCode` returns
+      * `id.value`. Use `id` for cross-kind identity checks when this is intentional.
       */
     /** Sealed-trait root of the pure-data Symbol hierarchy.
       *
@@ -2730,6 +2731,17 @@ object Tasty:
         def ownerId: SymbolId
         def scaladoc: Maybe[String]
         def sourcePosition: Maybe[Position]
+
+        // F-006: id-and-kind equality on the sealed-trait body. `final` blocks the 14 case classes'
+        // auto-derived structural equality from shadowing this override. INV-002.
+        final override def equals(that: Any): Boolean = that match
+            case other: Symbol =>
+                val selfIdVal  = id.value
+                val otherIdVal = other.id.value
+                selfIdVal == otherIdVal && selfIdVal != -1 && otherIdVal != -1 && kind == other.kind
+            case _ => false
+
+        final override def hashCode(): Int = id.value
 
         // 40 flag predicates on base trait: pure bitmask checks, no Classpath dependency
         def isFinal: Boolean       = flags.contains(Flag.Final)

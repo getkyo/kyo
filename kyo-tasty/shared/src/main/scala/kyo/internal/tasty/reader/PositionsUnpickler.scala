@@ -54,7 +54,7 @@ object PositionsUnpickler:
         view: ByteView,
         addrMap: IntMap[LoadingSymbol.Materialising],
         sourceFile: Maybe[String]
-    )(using Frame, AllowUnsafe): Map[LoadingSymbol.Materialising, Tasty.Position] < (Sync & Abort[TastyError]) =
+    )(using Frame, AllowUnsafe): scala.collection.mutable.LongMap[Tasty.Position] < (Sync & Abort[TastyError]) =
         val result =
             try Right(readSync(view, addrMap, sourceFile))
             catch
@@ -73,9 +73,9 @@ object PositionsUnpickler:
         view: ByteView,
         addrMap: IntMap[LoadingSymbol.Materialising],
         sourceFile: Maybe[String]
-    )(using AllowUnsafe): Map[LoadingSymbol.Materialising, Tasty.Position] =
+    )(using AllowUnsafe): scala.collection.mutable.LongMap[Tasty.Position] =
         // An empty section has no data at all; return an empty map immediately without trying to read.
-        if view.remaining == 0 then return Map.empty
+        if view.remaining == 0 then return scala.collection.mutable.LongMap.empty
 
         // When the Attributes section did not record a SOURCEFILE, we cannot associate positions with a
         // file name (this happens for TASTy compiled without the Attributes SOURCEFILE attribute, e.g. some
@@ -84,7 +84,7 @@ object PositionsUnpickler:
         // encoding where the source path is only carried by SOURCE entries inside the Positions stream,
         // which kyo-tasty does not resolve (they require walking the TASTy NameTable). No error is emitted.
         sourceFile match
-            case Maybe.Absent     => return Map.empty
+            case Maybe.Absent     => return scala.collection.mutable.LongMap.empty
             case Maybe.Present(_) => ()
         end match
 
@@ -119,7 +119,10 @@ object PositionsUnpickler:
         end while
 
         // Decode the Assoc stream.
-        val builder  = Map.newBuilder[LoadingSymbol.Materialising, Tasty.Position]
+        // F-006 Q-001 AT-RISK rotation: key by sym.id (primitive Long), not the mutable
+        // LoadingSymbol.Materialising case class. Avoids structural-equality fragility when
+        // LoadingSymbol.id is mutated post-insertion. Matches the LongMap pattern in AstUnpickler.
+        val builder  = scala.collection.mutable.LongMap.empty[Tasty.Position]
         var curIndex = 0
         var curStart = 0
         var curEnd   = 0
@@ -143,13 +146,13 @@ object PositionsUnpickler:
                 addrMap.get(curIndex) match
                     case Some(sym) =>
                         val (line, col) = offsetToLineCol(curStart, lineStarts)
-                        builder += (sym -> Tasty.Position(sf, line, col))
+                        builder(sym.id.toLong) = Tasty.Position(sf, line, col)
                     case None => () // sub-expression node or unmapped address; skip
                 end match
             end if
         end while
 
-        builder.result()
+        builder
     end readSync
 
     /** Convert a character offset to a 1-based (line, column) pair.
