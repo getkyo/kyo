@@ -812,240 +812,9 @@ val noPadding: Style                   = base.without[Style.Prop.Padding]
 
 The `Style.Prop` sum is the full property AST: `BgColor`, `TextColor`, `Padding`, `Width`, `Height`, `BorderWidthProp`, `HoverProp(style: Style)`, etc. You will rarely name these in app code, but they are useful for theme transforms (drop one property kind across an entire merged style, or query whether a hover variant exists).
 
-## SVG
-
-SVG is not a separate document model bolted on the side. Every SVG node is a `UI` element built by a `Svg.*` factory, reusing the same path/event/reactive engine as `div` and `button`. The one boundary that matters is HTML embedding: only `Svg.svg` (the `Root`) is also `HtmlContent`, so it embeds in an HTML container, while bare SVG primitives extend `SvgElement`/`SvgNode` but NOT `HtmlContent`. Reach for the `<svg>` root as the single embed point, then build shapes inside it.
-
-```scala
-import UI.*
-import kyo.*
-
-val drawing: UI =
-    div(
-        Svg.svg.width(120).height(120).viewBox(Svg.ViewBox(0, 0, 120, 120))(
-            Svg.circle.cx(60).cy(60).r(40)
-        )
-    )
-```
-
-> **Caution:** `div(Svg.svg(...))` compiles; `div(Svg.circle(...))` does NOT. Bare SVG primitives extend `SvgElement`/`SvgNode` but not `HtmlContent`, so the only HTML embed point is the `<svg>` root. Build shapes inside it.
-
-### Structure and grouping
-
-`Svg.g` groups elements (and carries shared `fill`/`stroke`/`transform`); `Svg.defs` holds reusable definitions; `Svg.symbol` defines a template instantiated by `Svg.use`; `Svg.switch` and `Svg.a` (an `SvgAnchor`) round out the structural set. `Svg.use(target)` resolves the target's id automatically, so a symbol with no explicit `.id` still wires up:
-
-```scala
-import UI.*
-import kyo.*
-
-val reused: UI =
-    Svg.svg.width(200).height(100).viewBox(Svg.ViewBox(0, 0, 200, 100))(
-        Svg.defs(
-            Svg.symbol.id("dot")(Svg.circle.cx(5).cy(5).r(5))
-        ),
-        Svg.g(
-            Svg.use(Svg.symbol.id("dot")),
-            Svg.use(Svg.symbol.id("dot")).x(20).y(0)
-        )
-    )
-```
-
-### Shapes and text
-
-The shape factories are `Svg.rect`, `Svg.circle`, `Svg.ellipse`, `Svg.line`, `Svg.polyline`, `Svg.polygon`, and `Svg.path`. The text factories are `Svg.text`, `Svg.tspan`, and `Svg.textPath`; each accepts a plain `String` child. Which setters exist on a given element is gated by SVG capability traits (`HasFill`, `HasStroke`, `HasTransform`, `HasOpacity`, `Positioned`, `Sized`, `HasFilter`, ...): `Svg.line` has no `fill` (it mixes in `HasStroke` but not `HasFill`), and `Svg.rect` carries `x`/`y`/`width`/`height` from `Positioned` and `Sized`.
-
-```scala
-import UI.*
-import kyo.*
-
-val labeled: UI =
-    Svg.svg.width(200).height(60).viewBox(Svg.ViewBox(0, 0, 200, 60))(
-        Svg.rect.x(0).y(0).width(200).height(60).fill(Svg.Paint.Color(Style.Color.slate)),
-        Svg.text.x(100).y(34)
-            .textAnchor(Svg.TextAnchor.Middle)
-            .fill(Svg.Paint.Color(Style.Color.white))
-            .fontSize(Svg.SvgLength.px(18.0))("centered")
-    )
-```
-
-### Typed value DSLs, no raw attribute strings
-
-SVG attribute values are typed, never raw strings. A path's `d` is built from a `Svg.PathData` value: start at `PathData.from(x, y)`, then chain `moveTo`, `lineTo`, `cubicTo`, `arcTo`, and `close` (each appends a command). There is no raw `d` string overload. The same applies to `Svg.Points` (point sequences), `Svg.Transform` (translate/rotate/scale/skew/matrix), `Svg.ViewBox`, `Svg.PreserveAspectRatio`, and `Svg.SvgLength` (`px`/`pct`/`em`/`user`).
-
-```scala
-import UI.*
-import kyo.*
-
-val triangle: UI =
-    Svg.svg.width(100).height(100).viewBox(Svg.ViewBox(0, 0, 100, 100))(
-        Svg.path
-            .d(Svg.PathData.from(10, 90).lineTo(50, 10).lineTo(90, 90).close)
-            .fill(Svg.Paint.Color(Style.Color.blue))
-            .transform(Svg.Transform.Translate(0, 0))
-    )
-```
-
-### Constrained enums
-
-Where SVG would otherwise take a magic token, kyo-ui takes a typed enum: `Svg.FillRule`, `Svg.StrokeLinecap`, `Svg.StrokeLinejoin`, `Svg.TextAnchor`, `Svg.DominantBaseline`, `Svg.SpreadMethod`, `Svg.Units`, `Svg.BlendMode`, and more (each renders to its exact SVG token). A misspelled `"middel"` is impossible because `textAnchor` takes `Svg.TextAnchor`, not a `String`:
-
-```scala
-import UI.*
-import kyo.*
-
-val capped: UI =
-    Svg.svg.width(100).height(40).viewBox(Svg.ViewBox(0, 0, 100, 40))(
-        Svg.line.x1(10).y1(20).x2(90).y2(20)
-            .stroke(Svg.Paint.Color(Style.Color.black))
-            .strokeWidth(6.0)
-            .strokeLinecap(Svg.StrokeLinecap.Round)
-    )
-```
-
-### Paint and typed references
-
-A `fill` or `stroke` takes a `Svg.Paint`: `Paint.None`, `Paint.CurrentColor`, `Paint.Color(c)`, or `Paint.Ref(server)`. An ambient `Style.Color => Paint` conversion lets you pass a plain `Style.Color` wherever a `Paint` is expected (with `scala.language.implicitConversions` in scope):
-
-```scala
-import UI.*
-import kyo.*
-import scala.language.implicitConversions
-
-val viaConversion: UI =
-    Svg.svg.width(60).height(60).viewBox(Svg.ViewBox(0, 0, 60, 60))(
-        Svg.circle.cx(30).cy(30).r(25).fill(Style.Color.green)
-    )
-```
-
-References are typed handles, never raw `url(#id)` strings. A paint server (`Svg.linearGradient`, `Svg.radialGradient`, `Svg.pattern`, holding `Svg.stop` children) yields a `Paint.Ref` through `.paint`; `Svg.clipPath`, `Svg.mask`, `Svg.marker`, and `Svg.filter` yield `ClipPath.Ref`/`Mask.Ref`/`Marker.Ref`/`Filter.Ref` through `.clipRef`/`.maskRef`/`.markerRef`/`.filterRef`. Define the server once, take its handle, and apply it:
-
-```scala
-import UI.*
-import kyo.*
-
-val gradientFill: UI =
-    val grad = Svg.linearGradient(
-        Svg.stop.offset(0.0).stopColor(Style.Color.blue),
-        Svg.stop.offset(1.0).stopColor(Style.Color.purple)
-    )
-    Svg.svg.width(120).height(80).viewBox(Svg.ViewBox(0, 0, 120, 80))(
-        Svg.defs(grad),
-        Svg.rect.x(0).y(0).width(120).height(80).fill(grad.paint)
-    )
-end gradientFill
-```
-
-> **Note:** SVG definition ids are derived deterministically from the construction-site `Frame` (`kyo-<hex(frame.hashCode)>`), not a global counter or randomness, so the id is stable across all three render targets. The `.paint`/`*Ref` handle and the emitted `id` attribute always agree, so a gradient referenced through `.paint` without an explicit `.id` still emits a matching `id` and never a dangling reference.
-
-### Filters
-
-`Svg.filter` defines a filter region and holds a pipeline of `fe*` primitives: `Svg.feGaussianBlur`, `Svg.feOffset`, `Svg.feBlend`, `Svg.feColorMatrix`, `Svg.feFlood`, `Svg.feComposite`, `Svg.feMerge` / `Svg.feMergeNode`, and more. Each primitive's `in`/`result` names wire the stages together; the consumer references the filter through the typed `Filter.Ref` from `.filterRef`:
-
-```scala
-import UI.*
-import kyo.*
-
-val blurred: UI =
-    val blur = Svg.filter(
-        Svg.feGaussianBlur.stdDeviation(2.0)
-    )
-    Svg.svg.width(80).height(80).viewBox(Svg.ViewBox(0, 0, 80, 80))(
-        Svg.defs(blur),
-        Svg.circle.cx(40).cy(40).r(30).fill(Svg.Paint.Color(Style.Color.red)).filter(blur.filterRef)
-    )
-end blurred
-```
-
-### SMIL animation
-
-`Svg.animate`, `Svg.animateTransform`, `Svg.animateMotion`, and `Svg.set` are animation leaves placed INSIDE a shape (the `ShapeChild` content model), so the browser drives the tween with no server round-trip:
-
-```scala
-import UI.*
-import kyo.*
-
-val pulsing: UI =
-    Svg.svg.width(80).height(80).viewBox(Svg.ViewBox(0, 0, 80, 80))(
-        Svg.circle.cx(40).cy(40).r(20).fill(Svg.Paint.Color(Style.Color.blue))(
-            Svg.animate.attributeName("r").from(20.0).to(35.0).dur("1s").repeatCount("indefinite")
-        )
-    )
-```
-
-### Embedding and metadata
-
-`Svg.image(href: UI.ImgSrc)` embeds a raster or vector image into the SVG canvas. The `href` is typed as `UI.ImgSrc` (the same union used by `UI.img`): `ImgSrc.Path` for a relative path, `ImgSrc.Absolute` for a full URL, or `ImgSrc.Data` for an inline base64 data URI.
-
-`Svg.foreignObject` re-enters the HTML content model inside SVG coordinate space. Its children are `HtmlContent` nodes (any `div`, `span`, or other HTML element), letting you position styled HTML fragments at an exact SVG coordinate. It is the only SVG surface that crosses back into `HtmlContent`.
-
-`Svg.title(text)` and `Svg.desc(text)` attach an accessible name and description to the containing SVG element; screen readers surface these as the element's label. `Svg.metadata` holds arbitrary structured metadata (RDF, custom XML) for the SVG document and carries no visual output.
-
-```scala
-import UI.*
-import kyo.*
-
-val annotated: UI =
-    Svg.svg.width(100).height(100).viewBox(Svg.ViewBox(0, 0, 100, 100))(
-        Svg.title("Red circle"),
-        Svg.desc("A filled red circle centered in the viewport"),
-        Svg.circle.cx(50).cy(50).r(40).fill(Svg.Paint.Color(Style.Color.red))
-    )
-```
-
-### Events on SVG
-
-Because `Svg.Root` and the interactive SVG nodes mix in `Interactive`, the same typed event setters work as on HTML: `.onClick`, `.onHover((e: UI.MouseEvent) => ...)`, and `.onScroll((w: UI.WheelEvent) => ...)`, with the same payloads. Handlers usually live on the enclosing `Svg.g` (SVG hit-tests the topmost element, and dispatch delegates to ancestors), as the Flamegraph demo does:
-
-```scala
-import UI.*
-import kyo.*
-
-val interactiveCell: UI < Async =
-    for hovered <- Signal.initRef(false)
-    yield Svg.svg.width(60).height(60).viewBox(Svg.ViewBox(0, 0, 60, 60))(
-        Svg.g
-            .onClick(Console.printLine("clicked"))
-            .onHover((e: UI.MouseEvent) => hovered.set(true))
-            .onUnhover(hovered.set(false))(
-                Svg.rect.x(5).y(5).width(50).height(50).fill(Svg.Paint.Color(Style.Color.green))
-            )
-    )
-```
-
-### A worked example: a small grid
-
-Putting the pieces together, a grid board is one backing `Svg.rect`, a `Svg.circle` marking a target cell, and one `Svg.rect` per occupied cell, each positioned by multiplying its grid coordinate by the cell size. This mirrors the in-repo `demo/Snake.scala` (charts have their own typed [Chart](#charts) layer, so reach for raw SVG like this when you are drawing something the chart marks do not cover):
-
-```scala
-import UI.*
-import kyo.*
-
-val board: UI =
-    val cell  = 16
-    val cells = 10
-    val snake = Chunk((4, 5), (3, 5), (2, 5)) // head-first cells
-    val food  = (7, 3)
-    val backing = Svg.rect.x(0).y(0).width(cell * cells).height(cell * cells)
-        .fill(Svg.Paint.Color(Style.Color.rgb(24, 28, 42)))
-    val foodDot = Svg.circle
-        .cx(food._1 * cell + cell / 2.0).cy(food._2 * cell + cell / 2.0).r(cell / 2.0 - 2.0)
-        .fill(Svg.Paint.Color(Style.Color.red))
-    val segments = snake.map { case (cx, cy) =>
-        Svg.rect.x(cx * cell + 1).y(cy * cell + 1).width(cell - 2).height(cell - 2)
-            .fill(Svg.Paint.Color(Style.Color.green))
-    }
-    div(
-        Svg.svg.width(cell * cells).height(cell * cells)
-            .viewBox(Svg.ViewBox(0, 0, cell * cells, cell * cells))(
-                (backing +: foodDot +: segments)*
-            )
-    )
-end board
-```
-
 ## Charts
 
-A chart is built from your data and a list of marks, and lowers to an `Svg.Root` you can drop into any `UI` container. Marks take their mappings as named parameters, so accessor lambdas like `_.revenue` infer their types with no annotations.
+A chart is built from your data and a list of marks, and lowers to an `Svg.Root` (the typed [SVG](#svg) layer, covered later) you can drop into any `UI` container. Marks take their mappings as named parameters, so accessor lambdas like `_.revenue` infer their types with no annotations.
 
 ### A first chart
 
@@ -1535,6 +1304,237 @@ val navBar: UI =
         a.href(Href.Path("/about"))("about"),
         a.href(Href.External("https", "example.com"), Target.Blank)("external") // not intercepted
     )
+```
+
+## SVG
+
+SVG is not a separate document model bolted on the side. Every SVG node is a `UI` element built by a `Svg.*` factory, reusing the same path/event/reactive engine as `div` and `button`. The one boundary that matters is HTML embedding: only `Svg.svg` (the `Root`) is also `HtmlContent`, so it embeds in an HTML container, while bare SVG primitives extend `SvgElement`/`SvgNode` but NOT `HtmlContent`. Reach for the `<svg>` root as the single embed point, then build shapes inside it.
+
+```scala
+import UI.*
+import kyo.*
+
+val drawing: UI =
+    div(
+        Svg.svg.width(120).height(120).viewBox(Svg.ViewBox(0, 0, 120, 120))(
+            Svg.circle.cx(60).cy(60).r(40)
+        )
+    )
+```
+
+> **Caution:** `div(Svg.svg(...))` compiles; `div(Svg.circle(...))` does NOT. Bare SVG primitives extend `SvgElement`/`SvgNode` but not `HtmlContent`, so the only HTML embed point is the `<svg>` root. Build shapes inside it.
+
+### Structure and grouping
+
+`Svg.g` groups elements (and carries shared `fill`/`stroke`/`transform`); `Svg.defs` holds reusable definitions; `Svg.symbol` defines a template instantiated by `Svg.use`; `Svg.switch` and `Svg.a` (an `SvgAnchor`) round out the structural set. `Svg.use(target)` resolves the target's id automatically, so a symbol with no explicit `.id` still wires up:
+
+```scala
+import UI.*
+import kyo.*
+
+val reused: UI =
+    Svg.svg.width(200).height(100).viewBox(Svg.ViewBox(0, 0, 200, 100))(
+        Svg.defs(
+            Svg.symbol.id("dot")(Svg.circle.cx(5).cy(5).r(5))
+        ),
+        Svg.g(
+            Svg.use(Svg.symbol.id("dot")),
+            Svg.use(Svg.symbol.id("dot")).x(20).y(0)
+        )
+    )
+```
+
+### Shapes and text
+
+The shape factories are `Svg.rect`, `Svg.circle`, `Svg.ellipse`, `Svg.line`, `Svg.polyline`, `Svg.polygon`, and `Svg.path`. The text factories are `Svg.text`, `Svg.tspan`, and `Svg.textPath`; each accepts a plain `String` child. Which setters exist on a given element is gated by SVG capability traits (`HasFill`, `HasStroke`, `HasTransform`, `HasOpacity`, `Positioned`, `Sized`, `HasFilter`, ...): `Svg.line` has no `fill` (it mixes in `HasStroke` but not `HasFill`), and `Svg.rect` carries `x`/`y`/`width`/`height` from `Positioned` and `Sized`.
+
+```scala
+import UI.*
+import kyo.*
+
+val labeled: UI =
+    Svg.svg.width(200).height(60).viewBox(Svg.ViewBox(0, 0, 200, 60))(
+        Svg.rect.x(0).y(0).width(200).height(60).fill(Svg.Paint.Color(Style.Color.slate)),
+        Svg.text.x(100).y(34)
+            .textAnchor(Svg.TextAnchor.Middle)
+            .fill(Svg.Paint.Color(Style.Color.white))
+            .fontSize(Svg.SvgLength.px(18.0))("centered")
+    )
+```
+
+### Typed value DSLs, no raw attribute strings
+
+SVG attribute values are typed, never raw strings. A path's `d` is built from a `Svg.PathData` value: start at `PathData.from(x, y)`, then chain `moveTo`, `lineTo`, `cubicTo`, `arcTo`, and `close` (each appends a command). There is no raw `d` string overload. The same applies to `Svg.Points` (point sequences), `Svg.Transform` (translate/rotate/scale/skew/matrix), `Svg.ViewBox`, `Svg.PreserveAspectRatio`, and `Svg.SvgLength` (`px`/`pct`/`em`/`user`).
+
+```scala
+import UI.*
+import kyo.*
+
+val triangle: UI =
+    Svg.svg.width(100).height(100).viewBox(Svg.ViewBox(0, 0, 100, 100))(
+        Svg.path
+            .d(Svg.PathData.from(10, 90).lineTo(50, 10).lineTo(90, 90).close)
+            .fill(Svg.Paint.Color(Style.Color.blue))
+            .transform(Svg.Transform.Translate(0, 0))
+    )
+```
+
+### Constrained enums
+
+Where SVG would otherwise take a magic token, kyo-ui takes a typed enum: `Svg.FillRule`, `Svg.StrokeLinecap`, `Svg.StrokeLinejoin`, `Svg.TextAnchor`, `Svg.DominantBaseline`, `Svg.SpreadMethod`, `Svg.Units`, `Svg.BlendMode`, and more (each renders to its exact SVG token). A misspelled `"middel"` is impossible because `textAnchor` takes `Svg.TextAnchor`, not a `String`:
+
+```scala
+import UI.*
+import kyo.*
+
+val capped: UI =
+    Svg.svg.width(100).height(40).viewBox(Svg.ViewBox(0, 0, 100, 40))(
+        Svg.line.x1(10).y1(20).x2(90).y2(20)
+            .stroke(Svg.Paint.Color(Style.Color.black))
+            .strokeWidth(6.0)
+            .strokeLinecap(Svg.StrokeLinecap.Round)
+    )
+```
+
+### Paint and typed references
+
+A `fill` or `stroke` takes a `Svg.Paint`: `Paint.None`, `Paint.CurrentColor`, `Paint.Color(c)`, or `Paint.Ref(server)`. An ambient `Style.Color => Paint` conversion lets you pass a plain `Style.Color` wherever a `Paint` is expected (with `scala.language.implicitConversions` in scope):
+
+```scala
+import UI.*
+import kyo.*
+import scala.language.implicitConversions
+
+val viaConversion: UI =
+    Svg.svg.width(60).height(60).viewBox(Svg.ViewBox(0, 0, 60, 60))(
+        Svg.circle.cx(30).cy(30).r(25).fill(Style.Color.green)
+    )
+```
+
+References are typed handles, never raw `url(#id)` strings. A paint server (`Svg.linearGradient`, `Svg.radialGradient`, `Svg.pattern`, holding `Svg.stop` children) yields a `Paint.Ref` through `.paint`; `Svg.clipPath`, `Svg.mask`, `Svg.marker`, and `Svg.filter` yield `ClipPath.Ref`/`Mask.Ref`/`Marker.Ref`/`Filter.Ref` through `.clipRef`/`.maskRef`/`.markerRef`/`.filterRef`. Define the server once, take its handle, and apply it:
+
+```scala
+import UI.*
+import kyo.*
+
+val gradientFill: UI =
+    val grad = Svg.linearGradient(
+        Svg.stop.offset(0.0).stopColor(Style.Color.blue),
+        Svg.stop.offset(1.0).stopColor(Style.Color.purple)
+    )
+    Svg.svg.width(120).height(80).viewBox(Svg.ViewBox(0, 0, 120, 80))(
+        Svg.defs(grad),
+        Svg.rect.x(0).y(0).width(120).height(80).fill(grad.paint)
+    )
+end gradientFill
+```
+
+> **Note:** SVG definition ids are derived deterministically from the construction-site `Frame` (`kyo-<hex(frame.hashCode)>`), not a global counter or randomness, so the id is stable across all three render targets. The `.paint`/`*Ref` handle and the emitted `id` attribute always agree, so a gradient referenced through `.paint` without an explicit `.id` still emits a matching `id` and never a dangling reference.
+
+### Filters
+
+`Svg.filter` defines a filter region and holds a pipeline of `fe*` primitives: `Svg.feGaussianBlur`, `Svg.feOffset`, `Svg.feBlend`, `Svg.feColorMatrix`, `Svg.feFlood`, `Svg.feComposite`, `Svg.feMerge` / `Svg.feMergeNode`, and more. Each primitive's `in`/`result` names wire the stages together; the consumer references the filter through the typed `Filter.Ref` from `.filterRef`:
+
+```scala
+import UI.*
+import kyo.*
+
+val blurred: UI =
+    val blur = Svg.filter(
+        Svg.feGaussianBlur.stdDeviation(2.0)
+    )
+    Svg.svg.width(80).height(80).viewBox(Svg.ViewBox(0, 0, 80, 80))(
+        Svg.defs(blur),
+        Svg.circle.cx(40).cy(40).r(30).fill(Svg.Paint.Color(Style.Color.red)).filter(blur.filterRef)
+    )
+end blurred
+```
+
+### SMIL animation
+
+`Svg.animate`, `Svg.animateTransform`, `Svg.animateMotion`, and `Svg.set` are animation leaves placed INSIDE a shape (the `ShapeChild` content model), so the browser drives the tween with no server round-trip:
+
+```scala
+import UI.*
+import kyo.*
+
+val pulsing: UI =
+    Svg.svg.width(80).height(80).viewBox(Svg.ViewBox(0, 0, 80, 80))(
+        Svg.circle.cx(40).cy(40).r(20).fill(Svg.Paint.Color(Style.Color.blue))(
+            Svg.animate.attributeName("r").from(20.0).to(35.0).dur("1s").repeatCount("indefinite")
+        )
+    )
+```
+
+### Embedding and metadata
+
+`Svg.image(href: UI.ImgSrc)` embeds a raster or vector image into the SVG canvas. The `href` is typed as `UI.ImgSrc` (the same union used by `UI.img`): `ImgSrc.Path` for a relative path, `ImgSrc.Absolute` for a full URL, or `ImgSrc.Data` for an inline base64 data URI.
+
+`Svg.foreignObject` re-enters the HTML content model inside SVG coordinate space. Its children are `HtmlContent` nodes (any `div`, `span`, or other HTML element), letting you position styled HTML fragments at an exact SVG coordinate. It is the only SVG surface that crosses back into `HtmlContent`.
+
+`Svg.title(text)` and `Svg.desc(text)` attach an accessible name and description to the containing SVG element; screen readers surface these as the element's label. `Svg.metadata` holds arbitrary structured metadata (RDF, custom XML) for the SVG document and carries no visual output.
+
+```scala
+import UI.*
+import kyo.*
+
+val annotated: UI =
+    Svg.svg.width(100).height(100).viewBox(Svg.ViewBox(0, 0, 100, 100))(
+        Svg.title("Red circle"),
+        Svg.desc("A filled red circle centered in the viewport"),
+        Svg.circle.cx(50).cy(50).r(40).fill(Svg.Paint.Color(Style.Color.red))
+    )
+```
+
+### Events on SVG
+
+Because `Svg.Root` and the interactive SVG nodes mix in `Interactive`, the same typed event setters work as on HTML: `.onClick`, `.onHover((e: UI.MouseEvent) => ...)`, and `.onScroll((w: UI.WheelEvent) => ...)`, with the same payloads. Handlers usually live on the enclosing `Svg.g` (SVG hit-tests the topmost element, and dispatch delegates to ancestors), as the Flamegraph demo does:
+
+```scala
+import UI.*
+import kyo.*
+
+val interactiveCell: UI < Async =
+    for hovered <- Signal.initRef(false)
+    yield Svg.svg.width(60).height(60).viewBox(Svg.ViewBox(0, 0, 60, 60))(
+        Svg.g
+            .onClick(Console.printLine("clicked"))
+            .onHover((e: UI.MouseEvent) => hovered.set(true))
+            .onUnhover(hovered.set(false))(
+                Svg.rect.x(5).y(5).width(50).height(50).fill(Svg.Paint.Color(Style.Color.green))
+            )
+    )
+```
+
+### A worked example: a small grid
+
+Putting the pieces together, a grid board is one backing `Svg.rect`, a `Svg.circle` marking a target cell, and one `Svg.rect` per occupied cell, each positioned by multiplying its grid coordinate by the cell size. This mirrors the in-repo `demo/Snake.scala` (charts have their own typed [Chart](#charts) layer, so reach for raw SVG like this when you are drawing something the chart marks do not cover):
+
+```scala
+import UI.*
+import kyo.*
+
+val board: UI =
+    val cell  = 16
+    val cells = 10
+    val snake = Chunk((4, 5), (3, 5), (2, 5)) // head-first cells
+    val food  = (7, 3)
+    val backing = Svg.rect.x(0).y(0).width(cell * cells).height(cell * cells)
+        .fill(Svg.Paint.Color(Style.Color.rgb(24, 28, 42)))
+    val foodDot = Svg.circle
+        .cx(food._1 * cell + cell / 2.0).cy(food._2 * cell + cell / 2.0).r(cell / 2.0 - 2.0)
+        .fill(Svg.Paint.Color(Style.Color.red))
+    val segments = snake.map { case (cx, cy) =>
+        Svg.rect.x(cx * cell + 1).y(cy * cell + 1).width(cell - 2).height(cell - 2)
+            .fill(Svg.Paint.Color(Style.Color.green))
+    }
+    div(
+        Svg.svg.width(cell * cells).height(cell * cells)
+            .viewBox(Svg.ViewBox(0, 0, cell * cells, cell * cells))(
+                (backing +: foodDot +: segments)*
+            )
+    )
+end board
 ```
 
 ## Pattern-matching on UI (AST access)
