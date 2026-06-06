@@ -210,21 +210,21 @@ class TastyErrorWireFormatTest extends Test:
         )
     }
 
-    // Leaf 3: minor version bumped to 10.
+    // Leaf 3: minor version bumped (originally to 10 for string-tag format; now 11 after Phase 11 variant addition).
     // Given: a freshly written snapshot.
     // When: read the format header bytes.
-    // Then: minorVersion == 10.
+    // Then: minorVersion == 11 (Phase 11 bumped from 10 to 11 for four new TastyError variants).
     // Pins: INV-002 minor-version bump.
-    "minor version is 10 in freshly written snapshot" in run {
+    "minor version is 11 in freshly written snapshot after Phase 11 variant addition" in run {
         val snapshotBytes = snapshotBytesWithErrors(Chunk.empty)
         val minor         = snapshotBytes(5) & 0xff
         assert(
-            minor == 10,
-            s"Expected snapshot minor version 10, got $minor"
+            minor == 11,
+            s"Expected snapshot minor version 11, got $minor"
         )
         assert(
-            SnapshotFormat.minorVersion == 10,
-            s"SnapshotFormat.minorVersion must be 10, got ${SnapshotFormat.minorVersion}"
+            SnapshotFormat.minorVersion == 11,
+            s"SnapshotFormat.minorVersion must be 11, got ${SnapshotFormat.minorVersion}"
         )
     }
 
@@ -337,7 +337,7 @@ class TastyErrorWireFormatTest extends Test:
     // Leaf 7: old fixture snapshots at minor=9 fail with TastyError.SnapshotVersionMismatch.
     // Given: a snapshot byte array whose header byte at offset 5 is patched to 9.
     // When: loaded via SnapshotReader.read.
-    // Then: raises TastyError.SnapshotVersionMismatch with found=(1,9,0), supported=(1,10,0).
+    // Then: raises TastyError.SnapshotVersionMismatch with found=(1,9,0), supported=(1,11,0).
     // Pins: INV-002 breaking-add-only-loads.
     "snapshot with minorVersion=9 is rejected with SnapshotVersionMismatch" in run {
         val freshBytes   = snapshotBytesWithErrors(Chunk.empty)
@@ -361,8 +361,8 @@ class TastyErrorWireFormatTest extends Test:
                             s"Expected found version (1,9,0), got ${vm.found}"
                         )
                         assert(
-                            vm.supported.major == 1 && vm.supported.minor == 10,
-                            s"Expected supported version (1,10,0), got ${vm.supported}"
+                            vm.supported.major == 1 && vm.supported.minor == 11,
+                            s"Expected supported version (1,11,0), got ${vm.supported}"
                         )
                     case other =>
                         fail(s"Expected TastyError.SnapshotVersionMismatch, got: $other")

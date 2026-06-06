@@ -11,12 +11,13 @@ import kyo.internal.tasty.snapshot.SnapshotFormat
   */
 class SnapshotFormatTest extends Test:
 
-    // Test 1 (INV-023, updated Phase 5.03): minorVersion reflects the Phase 5.03 ClasspathClosed/ClasspathBuilding context-field bump.
+    // Test 1 (INV-023, updated Phase 11): minorVersion reflects the Phase 11 four-new-variants bump.
     // Phase 5.01b set minorVersion to 7 for ERRORS typed-format; Phase 5.02 set it to 8 for index sections;
     // Phase 5.03 sets it to 9 for ClasspathClosed/ClasspathBuilding context field (F-W2-11).
-    // Phase 11 sets it to 10 for ERRORS string-tag format (stable productPrefix wire encoding, item 14).
-    "SnapshotFormat.minorVersion is 10 after Phase 11 string-tag ERRORS wire format" in run {
-        assert(SnapshotFormat.minorVersion == 10)
+    // Phase 11 (prior campaign) set it to 10 for ERRORS string-tag format (stable productPrefix wire encoding, item 14).
+    // Phase 11 (this campaign) sets it to 11 for UnhandledSubtypingCase / UnresolvedReference / UnknownType / MissingDeclaredType.
+    "SnapshotFormat.minorVersion is 11 after Phase 11 four-new-TastyError-variants bump" in run {
+        assert(SnapshotFormat.minorVersion == 11)
         succeed
     }
 

@@ -489,6 +489,72 @@ object SnapshotWriter:
             end while
         end writeVarint
 
+        // Compact tag-prefixed recursive encoder for Tasty.Type fields.
+        // Tag byte (single byte 0-255):
+        //   0  = Named(symbolId)   : 4-byte Int32LE symbolId.value
+        //   1  = Any               : no payload
+        //   2  = Nothing           : no payload
+        //   3  = Applied(base, args): recursive base, varint arg count, recursive args
+        //   4  = TermRef(prefix, name): recursive prefix, 4-byte name len + UTF-8 bytes
+        //   5  = TypeRef(qual, name): recursive qual, 4-byte name len + UTF-8 bytes
+        //   6  = Tuple(elements)   : varint count, recursive elements
+        //   7  = Function(params, result): varint count, recursive params, recursive result
+        //   8  = ContextFunction(params, result): varint count, recursive params, recursive result
+        //   9  = ByName(underlying): recursive underlying
+        //   10 = Repeated(elem)    : recursive elem
+        //   11 = Array(elem)       : recursive elem
+        //   255 = Opaque           : 4-byte string len + UTF-8 show string (catch-all; no round-trip semantic for complex types)
+        def writeType(t: Tasty.Type): Unit = t match
+            case Tasty.Type.Named(symId) =>
+                baos.write(0)
+                writeInt(symId.value)
+            case Tasty.Type.Any =>
+                baos.write(1)
+            case Tasty.Type.Nothing =>
+                baos.write(2)
+            case Tasty.Type.Applied(base, args) =>
+                baos.write(3)
+                writeType(base)
+                writeVarint(args.size)
+                args.foreach(writeType)
+            case Tasty.Type.TermRef(prefix, name) =>
+                baos.write(4)
+                writeType(prefix)
+                writeStr(name.asString)
+            case Tasty.Type.TypeRef(qual, name) =>
+                baos.write(5)
+                writeType(qual)
+                writeStr(name.asString)
+            case Tasty.Type.Tuple(elements) =>
+                baos.write(6)
+                writeVarint(elements.size)
+                elements.foreach(writeType)
+            case Tasty.Type.Function(params, result) =>
+                baos.write(7)
+                writeVarint(params.size)
+                params.foreach(writeType)
+                writeType(result)
+            case Tasty.Type.ContextFunction(params, result) =>
+                baos.write(8)
+                writeVarint(params.size)
+                params.foreach(writeType)
+                writeType(result)
+            case Tasty.Type.ByName(underlying) =>
+                baos.write(9)
+                writeType(underlying)
+            case Tasty.Type.Repeated(elem) =>
+                baos.write(10)
+                writeType(elem)
+            case Tasty.Type.Array(elem) =>
+                baos.write(11)
+                writeType(elem)
+            case other =>
+                // Catch-all: store the show string. No round-trip semantic for complex production types;
+                // preserves the text for diagnostics without crashing on types not covered by the encoder.
+                baos.write(255)
+                writeStr(other.toString)
+        end writeType
+
         for err <- errors do
             val tag: String           = err.productPrefix
             val tagBytes: Array[Byte] = tag.getBytes(java.nio.charset.StandardCharsets.UTF_8)
@@ -515,16 +581,14 @@ object SnapshotWriter:
                 case TastyError.UnknownTagInPosition(tag, pos)         => writeInt(tag); writeStr(pos)
                 case TastyError.InvalidFqn(fqn, reason)                => writeStr(fqn); writeStr(reason)
                 case TastyError.DigestMismatch(exp, act)               => writeStr(exp); writeStr(act)
-                // Phase 11 wire-format note: UnhandledSubtypingCase carries Tasty.Type fields that are not
-                // yet encodable in the snapshot format. Write no fields; the reader maps the unknown tag
-                // string to TastyError.NotImplemented for forward-compat until Phase 11 adds the encoding.
-                case TastyError.UnhandledSubtypingCase(_, _, _, _) => ()
-                // UnresolvedReference: loading-phase error; write no snapshot fields (Phase 11 note).
-                case TastyError.UnresolvedReference(_, _) => ()
-                // Phase 10: UnknownType and MissingDeclaredType will get full wire-format in Phase 11.
-                // Write no fields for now; the reader maps unknown tags to TastyError.NotImplemented.
-                case TastyError.UnknownType(_, _, _)      => ()
-                case TastyError.MissingDeclaredType(_, _) => ()
+                case TastyError.UnhandledSubtypingCase(shape, lhs, rhs, file) =>
+                    writeStr(shape); writeType(lhs); writeType(rhs); writeStr(file)
+                case TastyError.UnresolvedReference(name, idx) =>
+                    writeStr(name); writeInt(idx)
+                case TastyError.UnknownType(file, byteOffset, reason) =>
+                    writeStr(file); writeLong(byteOffset); writeStr(reason)
+                case TastyError.MissingDeclaredType(symbolId, file) =>
+                    writeInt(symbolId.value); writeStr(file)
             end match
         end for
         baos.toByteArray

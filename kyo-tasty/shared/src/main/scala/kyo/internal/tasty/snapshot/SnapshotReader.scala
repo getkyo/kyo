@@ -177,6 +177,11 @@ object SnapshotReader:
                     // ordinal to a varint-length-prefixed UTF-8 string (the case productPrefix). Reading a
                     // minor=9 snapshot's ERRORS with the new reader would misinterpret the first ordinal byte
                     // as a tag-length varint, producing garbage. Reject to force cold re-decode.
+                    // minor=11 is a breaking bump: four new TastyError variants (UnhandledSubtypingCase,
+                    // UnresolvedReference, UnknownType, MissingDeclaredType) gained full wire-format encoding.
+                    // A minor=10 snapshot written by the old writer has stub (zero-payload) entries for these
+                    // variants; reading them with the new reader would interpret the next error's tag varint
+                    // as a field, producing garbage. Reject to force cold re-decode.
                     Abort.fail(
                         TastyError.SnapshotVersionMismatch(
                             Tasty.Version(fileMajor, fileMinor, 0),
@@ -1483,6 +1488,78 @@ object SnapshotReader:
                 result
             end readVarint
 
+            // Recursive decoder for Tasty.Type fields encoded by writeType.
+            // Tag byte meanings match the writeType encoding (see SnapshotWriter.serializeErrors):
+            //   0 = Named, 1 = Any, 2 = Nothing, 3 = Applied, 4 = TermRef, 5 = TypeRef,
+            //   6 = Tuple, 7 = Function, 8 = ContextFunction, 9 = ByName, 10 = Repeated,
+            //   11 = Array, 255 = Opaque (stored as show string; no round-trip semantic).
+            def readType(): Tasty.Type =
+                val tag = bytes(pos) & 0xff
+                pos += 1
+                tag match
+                    case 0 =>
+                        Tasty.Type.Named(Tasty.SymbolId(readInt()))
+                    case 1 =>
+                        Tasty.Type.Any
+                    case 2 =>
+                        Tasty.Type.Nothing
+                    case 3 =>
+                        val base     = readType()
+                        val argCount = readVarint()
+                        val argsB    = scala.collection.mutable.ArrayBuffer.empty[Tasty.Type]
+                        var ai       = 0
+                        while ai < argCount do
+                            argsB += readType()
+                            ai += 1
+                        Tasty.Type.Applied(base, Chunk.from(argsB.toSeq))
+                    case 4 =>
+                        val prefix = readType()
+                        val name   = readStr()
+                        Tasty.Type.TermRef(prefix, Tasty.Name(name))
+                    case 5 =>
+                        val qual = readType()
+                        val name = readStr()
+                        Tasty.Type.TypeRef(qual, Tasty.Name(name))
+                    case 6 =>
+                        val count  = readVarint()
+                        val elemsB = scala.collection.mutable.ArrayBuffer.empty[Tasty.Type]
+                        var ei     = 0
+                        while ei < count do
+                            elemsB += readType()
+                            ei += 1
+                        Tasty.Type.Tuple(Chunk.from(elemsB.toSeq))
+                    case 7 =>
+                        val count   = readVarint()
+                        val paramsB = scala.collection.mutable.ArrayBuffer.empty[Tasty.Type]
+                        var pi      = 0
+                        while pi < count do
+                            paramsB += readType()
+                            pi += 1
+                        val result = readType()
+                        Tasty.Type.Function(Chunk.from(paramsB.toSeq), result)
+                    case 8 =>
+                        val count   = readVarint()
+                        val paramsB = scala.collection.mutable.ArrayBuffer.empty[Tasty.Type]
+                        var pi      = 0
+                        while pi < count do
+                            paramsB += readType()
+                            pi += 1
+                        val result = readType()
+                        Tasty.Type.ContextFunction(Chunk.from(paramsB.toSeq), result)
+                    case 9 =>
+                        Tasty.Type.ByName(readType())
+                    case 10 =>
+                        Tasty.Type.Repeated(readType())
+                    case 11 =>
+                        Tasty.Type.Array(readType())
+                    case _ =>
+                        // Opaque catch-all or unknown tag: read the show string and fall back to Nothing.
+                        // The show string is consumed to advance pos correctly; diagnostics are lost on read.
+                        val _ = readStr()
+                        Tasty.Type.Nothing
+                end match
+            end readType
+
             while i < count do
                 val tagLen   = readVarint()
                 val tagBytes = new Array[Byte](tagLen)
@@ -1533,6 +1610,18 @@ object SnapshotReader:
                     case "DigestMismatch" =>
                         val exp = readStr(); val act = readStr()
                         TastyError.DigestMismatch(exp, act)
+                    case "UnhandledSubtypingCase" =>
+                        val shape = readStr(); val lhs = readType(); val rhs = readType(); val file = readStr()
+                        TastyError.UnhandledSubtypingCase(shape, lhs, rhs, file)
+                    case "UnresolvedReference" =>
+                        val name = readStr(); val idx = readInt()
+                        TastyError.UnresolvedReference(name, idx)
+                    case "UnknownType" =>
+                        val file = readStr(); val byteOffset = readLong(); val reason = readStr()
+                        TastyError.UnknownType(file, byteOffset, reason)
+                    case "MissingDeclaredType" =>
+                        val symbolId = Tasty.SymbolId(readInt()); val file = readStr()
+                        TastyError.MissingDeclaredType(symbolId, file)
                     case other => TastyError.NotImplemented(s"unknown TastyError wire tag: $other")
                 buf += err
                 i += 1

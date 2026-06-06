@@ -112,4 +112,12 @@ private[snapshot] object SectionValidator:
                 () // no assertion
     end validate
 
+    /** Expected number of TastyError ADT variants in the closed enum.
+      *
+      * Updated in Phase 11 to 23 (added UnhandledSubtypingCase, UnresolvedReference, UnknownType,
+      * MissingDeclaredType). Used as a documentation-and-runtime invariant: any future variant addition
+      * must bump the snapshot minor version and update this constant.
+      */
+    val expectedTastyErrorVariantCount: Int = 23
+
 end SectionValidator

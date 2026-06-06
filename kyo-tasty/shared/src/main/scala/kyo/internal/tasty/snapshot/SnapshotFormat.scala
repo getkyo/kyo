@@ -76,7 +76,8 @@ object SnapshotFormat:
 
     /** Current format version. Major bumps invalidate old snapshots. */
     val majorVersion: Int = 1
-    val minorVersion: Int = 10 // bumped from 9 by item 14 (stable string-tag TastyError wire format)
+    val minorVersion: Int =
+        11 // bumped from 10 by Phase 11 (four new TastyError variants: UnhandledSubtypingCase, UnresolvedReference, UnknownType, MissingDeclaredType)
 
     /** Maximum number of sections allowed in a snapshot header (F-W2-29 guard).
       *

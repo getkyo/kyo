@@ -2,6 +2,7 @@ package kyo
 
 import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.snapshot.DigestComputer
+import kyo.internal.tasty.snapshot.SnapshotWriter
 
 /** Cross-platform `DigestComputer.compute` tests covering jar-root and directory-root branches.
   *
@@ -113,6 +114,56 @@ class SnapshotDigestTest extends Test:
                 fail(s"Unexpected failure: $e")
             case Result.Panic(t) =>
                 throw t
+    }
+
+    // Leaf 5 (Phase 11): INV007-digestStabilityPostBump.
+    // Given: a fixture classpath with Phase 11 errors serialized twice.
+    // When: digests of both serializations are compared.
+    // Then: digests are equal; flipping byte 16 produces a differing digest string.
+    // Pins: INV-007 (digest determinism); PRESERVE-N (minor=11 bump).
+    "Phase 11 snapshot serialization is digest-stable across two calls" in run {
+        import kyo.Tasty.SymbolId
+        val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val errors = Chunk[TastyError](
+            TastyError.UnhandledSubtypingCase("Applied-TermRef-_", Tasty.Type.Any, Tasty.Type.Nothing, "X.tasty"),
+            TastyError.UnresolvedReference("x.Y", 7)
+        )
+        val cp = Tasty.Classpath.make(
+            symbols = Chunk(rootSym),
+            rootSymbolId = SymbolId(0),
+            topLevelClassIds = Chunk.empty,
+            packageIds = Chunk(rootSym.id),
+            fqnIndex = Dict.empty,
+            packageIndex = Dict.empty,
+            subclassIndex = Dict.empty,
+            companionIndex = Dict.empty,
+            moduleIndex = Dict.empty,
+            errors = errors
+        )
+        val digest = Array[Byte](0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17)
+
+        val bytes1 = SnapshotWriter.serializeToBytes(cp, digest)
+        val bytes2 = SnapshotWriter.serializeToBytes(cp, digest)
+
+        assert(
+            java.util.Arrays.equals(bytes1, bytes2),
+            "Two serializations of the same classpath must produce identical bytes"
+        )
+
+        // The 8-byte input digest is embedded at bytes [16..23] (magic 4 + version 4 + flags 8 = 16).
+        val digestSlice1 = java.util.Arrays.copyOfRange(bytes1, 16, 24)
+        val digestSlice2 = java.util.Arrays.copyOfRange(bytes2, 16, 24)
+        val hex1         = DigestComputer.toHexString(digestSlice1)
+        val hex2         = DigestComputer.toHexString(digestSlice2)
+        assert(hex1 == hex2, s"Digest hex strings must be equal: $hex1 vs $hex2")
+
+        // Tamper: flip byte 16. The digest field starts here; the tampered snapshot carries a different digest.
+        val tamperedBytes = bytes1.clone()
+        tamperedBytes(16) = (tamperedBytes(16) ^ 0xff.toByte).toByte
+        val tamperedDigestSlice = java.util.Arrays.copyOfRange(tamperedBytes, 16, 24)
+        val hexTampered         = DigestComputer.toHexString(tamperedDigestSlice)
+        assert(hex1 != hexTampered, s"Tampered digest must differ from original: both are $hex1")
+        succeed
     }
 
     private def writeJar(path: String, entries: Seq[(String, Array[Byte])]): Unit =
