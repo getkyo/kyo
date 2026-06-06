@@ -13,8 +13,12 @@ import kyo.Tasty.*
   */
 object RuntimeReflectionExample:
 
-    /** Returns the public val fields of `A` as `(name, type)` pairs. */
-    def fieldsOf[A](using t: Tag[A], frame: Frame): Chunk[(String, Tasty.Type)] < (Sync & Async & Abort[TastyError]) =
+    /** Returns the public val fields of `A` as `(name, Maybe[type])` pairs.
+      *
+      * The type is Maybe.Absent when the symbol's declared type was not resolved (e.g., a truncated TASTy).
+      * Callers that need a concrete type can fold the absent case to a default or filter with .flatten.
+      */
+    def fieldsOf[A](using t: Tag[A], frame: Frame): Chunk[(String, Maybe[Tasty.Type])] < (Sync & Async & Abort[TastyError]) =
         // Unsafe: Symbol accessors require AllowUnsafe; embraced here at the example app boundary (§839 case 3).
         import AllowUnsafe.embrace.danger
         val fqn = Tasty.classFqn[A]
@@ -25,7 +29,7 @@ object RuntimeReflectionExample:
             yield
                 val decls = cls.declarationIds.flatMap(id => cp.symbol(id).toChunk)
                 val vals  = decls.collect { case v: Tasty.Symbol.Val => v }
-                vals.map(f => (f.name.asString, f.declaredType.getOrElse(Tasty.Type.Nothing)))
+                vals.map(f => (f.name.asString, f.declaredType))
     end fieldsOf
 
     /** Returns a structural type summary of a known type for debugging or printing. */

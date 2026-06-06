@@ -296,7 +296,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
 
     // Phase 10 leaf 5: failFastRaisesMissingDeclaredType
     // Given: a SymbolDescriptor with kind=Parameter, declaredType=Maybe.Absent
-    // When: TypedSymbolFactory.from called with FailFast mode and a non-null accErrors buffer
+    // When: TypedSymbolFactory.from called with FailFast mode and a Maybe.Present accErrors buffer
     // Then: SymbolMaterializationError is thrown carrying TastyError.MissingDeclaredType
     // Pins: Cat 14; INV-TASTYERROR-WIRE consumer
     "Phase 10 leaf 5: TypedSymbolFactory.from throws SymbolMaterializationError under FailFast with absent declaredType" in {
@@ -320,11 +320,11 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
             permittedSubclassIds = Maybe.Absent,
             body = Maybe.Absent
         )
-        // A non-null accErrors buffer is required to activate the error path.
-        // When accErrors is null, the factory silently returns Maybe.Absent (for INV-009 compliance).
+        // A Maybe.Present accErrors buffer is required to activate the error path.
+        // When accErrors is Maybe.Absent, the factory silently returns Maybe.Absent (for clean stdlib loads).
         val sentinel = new scala.collection.mutable.ArrayBuffer[TastyError]()
         try
-            TypedSymbolFactory.from(d, Tasty.ErrorMode.FailFast, sentinel, "test.tasty", 0L)
+            TypedSymbolFactory.from(d, Tasty.ErrorMode.FailFast, Maybe.Present(sentinel), "test.tasty", 0L)
             fail("Expected SymbolMaterializationError to be thrown")
         catch
             case sme: SymbolMaterializationError =>
@@ -364,7 +364,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
             permittedSubclassIds = Maybe.Absent,
             body = Maybe.Absent
         )
-        val sym = TypedSymbolFactory.from(d, Tasty.ErrorMode.SoftFail, accErrors, "soft.tasty", 0L)
+        val sym = TypedSymbolFactory.from(d, Tasty.ErrorMode.SoftFail, Maybe.Present(accErrors), "soft.tasty", 0L)
         assert(accErrors.length == 1, s"Expected 1 accumulated error but got ${accErrors.length}")
         accErrors.head match
             case TastyError.UnknownType(file, _, reason) =>
@@ -379,6 +379,78 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
             case other =>
                 fail(s"Expected Parameter but got $other")
         end match
+        succeed
+    }
+
+    // Carry A2 leaf 8: producerWireViaMaybePresentAccumulator
+    // Given: SymbolDescriptors for TypeAlias (absent body) and OpaqueType (absent body)
+    // When: TypedSymbolFactory.from called with SoftFail mode and Maybe.Present(acc)
+    //       (this is exactly the call the fixed materializeSymbols now makes)
+    // Then: each absent-body descriptor accumulates one TastyError.UnknownType;
+    //       Maybe.Absent suppresses accumulation (no error for absent accumulator)
+    // Pins: F-1 carry fix (orchestrator producer wire), F-3 carry fix (Maybe not null)
+    "Carry A2 leaf 8: TypedSymbolFactory.from accumulates UnknownType via Maybe.Present for TypeAlias and OpaqueType" in {
+        import kyo.internal.tasty.symbol.SymbolDescriptor
+        import kyo.internal.tasty.symbol.SymbolKind
+        import kyo.internal.tasty.symbol.TypedSymbolFactory
+
+        // TypeAlias with absent body
+        val accTa = new scala.collection.mutable.ArrayBuffer[TastyError]()
+        val dTa = new SymbolDescriptor(
+            id = 10,
+            kind = SymbolKind.TypeAlias,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name("MyAlias"),
+            ownerId = -1,
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            body = Maybe.Absent
+        )
+        TypedSymbolFactory.from(dTa, Tasty.ErrorMode.SoftFail, Maybe.Present(accTa), "MyAlias.tasty", 0L)
+        assert(accTa.length == 1, s"Expected 1 UnknownType for TypeAlias but got ${accTa.length}")
+        accTa.head match
+            case TastyError.UnknownType(_, _, reason) =>
+                assert(reason.contains("TypeAlias"), s"Expected reason to mention TypeAlias but got '$reason'")
+            case other => fail(s"Expected UnknownType but got $other")
+        end match
+
+        // OpaqueType with absent body
+        val accOt = new scala.collection.mutable.ArrayBuffer[TastyError]()
+        val dOt = new SymbolDescriptor(
+            id = 11,
+            kind = SymbolKind.OpaqueType,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name("MyOpaque"),
+            ownerId = -1,
+            declaredType = Maybe.Absent,
+            scaladoc = Maybe.Absent,
+            sourcePosition = Maybe.Absent,
+            javaMetadata = Maybe.Absent,
+            parentTypes = Chunk.empty,
+            typeParamIds = Chunk.empty,
+            declarationIds = Chunk.empty,
+            permittedSubclassIds = Maybe.Absent,
+            body = Maybe.Absent
+        )
+        TypedSymbolFactory.from(dOt, Tasty.ErrorMode.SoftFail, Maybe.Present(accOt), "MyOpaque.tasty", 0L)
+        assert(accOt.length == 1, s"Expected 1 UnknownType for OpaqueType but got ${accOt.length}")
+        accOt.head match
+            case TastyError.UnknownType(_, _, reason) =>
+                assert(reason.contains("OpaqueType"), s"Expected reason to mention OpaqueType but got '$reason'")
+            case other => fail(s"Expected UnknownType but got $other")
+        end match
+
+        // Maybe.Absent accumulator suppresses error (clean stdlib load path)
+        val accSilent = new scala.collection.mutable.ArrayBuffer[TastyError]()
+        TypedSymbolFactory.from(dTa, Tasty.ErrorMode.SoftFail, Maybe.Absent, "stdlib.tasty", 0L)
+        assert(accSilent.isEmpty, "Expected no error when accErrors=Maybe.Absent (silent path)")
+
         succeed
     }
 

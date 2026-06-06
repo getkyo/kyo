@@ -21,7 +21,7 @@ object CodegenExample:
     final case class FacadeMethod(
         name: Tasty.Name,
         flags: Tasty.Flags,
-        returnType: Tasty.Type,
+        returnType: Maybe[Tasty.Type],
         params: Chunk[Tasty.Type]
     )
 
@@ -55,13 +55,13 @@ object CodegenExample:
         import AllowUnsafe.embrace.danger
         m.declaredType match
             case Maybe.Present(t: Tasty.Type.Function) =>
-                FacadeMethod(m.name, m.flags, t.result, t.params)
+                FacadeMethod(m.name, m.flags, Maybe.Present(t.result), t.params)
             case Maybe.Present(t: Tasty.Type.ContextFunction) =>
-                FacadeMethod(m.name, m.flags, t.result, t.params)
+                FacadeMethod(m.name, m.flags, Maybe.Present(t.result), t.params)
             case Maybe.Present(other) =>
-                FacadeMethod(m.name, m.flags, other, Chunk.empty)
+                FacadeMethod(m.name, m.flags, Maybe.Present(other), Chunk.empty)
             case Maybe.Absent =>
-                FacadeMethod(m.name, m.flags, Tasty.Type.Nothing, Chunk.empty)
+                FacadeMethod(m.name, m.flags, Maybe.Absent, Chunk.empty)
         end match
     end buildFacadeMethod
 
@@ -69,7 +69,9 @@ object CodegenExample:
         // Unsafe: Name.asString requires AllowUnsafe; embraced here at the example app boundary (§839 case 3).
         import AllowUnsafe.embrace.danger
         Kyo.foreach(f.methods): m =>
-            Tasty.typeShow(m.returnType).map(retStr => s"  ${m.name.asString}: $retStr")
+            m.returnType match
+                case Maybe.Present(t) => Tasty.typeShow(t).map(retStr => s"  ${m.name.asString}: $retStr")
+                case Maybe.Absent     => s"  ${m.name.asString}: <absent>"
         .map: methodLines =>
             s"facade ${f.name.asString} {\n${methodLines.mkString("\n")}\n}"
     end renderFacade

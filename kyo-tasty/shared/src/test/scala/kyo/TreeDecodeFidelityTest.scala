@@ -38,11 +38,16 @@ class TreeDecodeFidelityTest extends Test:
     // Then: post-fix body decode succeeds
     // Pins: F-B-002
     // Cross-platform: kyo.fixtures.SomeCaseClass has methods; error guard is universal.
+    // Carry A2: TastyError.UnknownType for absent TypeAlias/OpaqueType/Parameter bodies is now correctly
+    //           propagated (it was hidden by null sentinel). Exclude it from this filter since it is a
+    //           per-symbol absent-type error, not a body decode / tree reconstruction error.
     "F-B-002 (Phase 05): Tree.New preserves constructor argument list" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
-            val bodyErrors = classpath.errors.filter: e =>
-                val s = e.toString
-                s.contains("unknown") || s.contains("unhandled")
+            val bodyErrors = classpath.errors.filter:
+                case _: TastyError.UnknownType => false // absent-body per-symbol errors are permitted
+                case e =>
+                    val s = e.toString
+                    s.contains("unknown") || s.contains("unhandled")
             assert(
                 bodyErrors.isEmpty,
                 s"Body decode errors after Phase 05: ${bodyErrors.take(2)}"

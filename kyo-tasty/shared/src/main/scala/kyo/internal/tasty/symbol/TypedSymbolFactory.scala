@@ -27,13 +27,17 @@ final private[kyo] class SymbolMaterializationError(val error: TastyError)
   * ClasspathOrchestrator.materializeSymbols to thread error-accumulation context. All other call sites
   * (SnapshotReader, ClassfileUnpickler, Scala2PickleReader) leave them at defaults; their SymbolDescriptors
   * always have declaredType resolved before calling from, so the error path is never triggered.
+  *
+  * `accErrors` uses Maybe[ArrayBuffer] rather than a null sentinel to express "no accumulator provided".
+  * Maybe.Absent means silently return Maybe.Absent for absent types (clean stdlib loads, snapshot readers).
+  * Maybe.Present(buf) means record errors into buf; under FailFast throw SymbolMaterializationError instead.
   */
 private[kyo] object TypedSymbolFactory:
 
     def from(
         d: SymbolDescriptor,
         mode: Tasty.ErrorMode = Tasty.ErrorMode.SoftFail,
-        accErrors: scala.collection.mutable.ArrayBuffer[TastyError] = null,
+        accErrors: Maybe[scala.collection.mutable.ArrayBuffer[TastyError]] = Maybe.Absent,
         file: String = "<unknown>",
         byteOffset: Long = 0L
     ): Tasty.Symbol =
@@ -146,18 +150,20 @@ private[kyo] object TypedSymbolFactory:
                     body = d.declaredType match
                         case Maybe.Present(t) => Maybe.Present(t)
                         case Maybe.Absent =>
-                            if accErrors != null then
-                                if mode == Tasty.ErrorMode.FailFast then
-                                    throw new SymbolMaterializationError(
-                                        TastyError.MissingDeclaredType(SymbolId(d.id), file)
-                                    )
-                                else
-                                    accErrors += TastyError.UnknownType(
-                                        file = file,
-                                        byteOffset = byteOffset,
-                                        reason = "TypedSymbolFactory: TypeAlias body absent"
-                                    )
-                            end if
+                            accErrors match
+                                case Maybe.Present(buf) =>
+                                    if mode == Tasty.ErrorMode.FailFast then
+                                        throw new SymbolMaterializationError(
+                                            TastyError.MissingDeclaredType(SymbolId(d.id), file)
+                                        )
+                                    else
+                                        buf += TastyError.UnknownType(
+                                            file = file,
+                                            byteOffset = byteOffset,
+                                            reason = "TypedSymbolFactory: TypeAlias body absent"
+                                        )
+                                case Maybe.Absent => ()
+                            end match
                             Maybe.Absent
                     ,
                     typeParamIds = Chunk.from(d.typeParamIds.toSeq.map(SymbolId(_))),
@@ -174,18 +180,20 @@ private[kyo] object TypedSymbolFactory:
                     body = d.declaredType match
                         case Maybe.Present(t) => Maybe.Present(t)
                         case Maybe.Absent =>
-                            if accErrors != null then
-                                if mode == Tasty.ErrorMode.FailFast then
-                                    throw new SymbolMaterializationError(
-                                        TastyError.MissingDeclaredType(SymbolId(d.id), file)
-                                    )
-                                else
-                                    accErrors += TastyError.UnknownType(
-                                        file = file,
-                                        byteOffset = byteOffset,
-                                        reason = "TypedSymbolFactory: OpaqueType body absent"
-                                    )
-                            end if
+                            accErrors match
+                                case Maybe.Present(buf) =>
+                                    if mode == Tasty.ErrorMode.FailFast then
+                                        throw new SymbolMaterializationError(
+                                            TastyError.MissingDeclaredType(SymbolId(d.id), file)
+                                        )
+                                    else
+                                        buf += TastyError.UnknownType(
+                                            file = file,
+                                            byteOffset = byteOffset,
+                                            reason = "TypedSymbolFactory: OpaqueType body absent"
+                                        )
+                                case Maybe.Absent => ()
+                            end match
                             Maybe.Absent
                     ,
                     bounds = d.bounds.getOrElse(Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any)),
@@ -227,18 +235,20 @@ private[kyo] object TypedSymbolFactory:
                     declaredType = d.declaredType match
                         case Maybe.Present(t) => Maybe.Present(t)
                         case Maybe.Absent =>
-                            if accErrors != null then
-                                if mode == Tasty.ErrorMode.FailFast then
-                                    throw new SymbolMaterializationError(
-                                        TastyError.MissingDeclaredType(SymbolId(d.id), file)
-                                    )
-                                else
-                                    accErrors += TastyError.UnknownType(
-                                        file = file,
-                                        byteOffset = byteOffset,
-                                        reason = "TypedSymbolFactory: Parameter declaredType absent"
-                                    )
-                            end if
+                            accErrors match
+                                case Maybe.Present(buf) =>
+                                    if mode == Tasty.ErrorMode.FailFast then
+                                        throw new SymbolMaterializationError(
+                                            TastyError.MissingDeclaredType(SymbolId(d.id), file)
+                                        )
+                                    else
+                                        buf += TastyError.UnknownType(
+                                            file = file,
+                                            byteOffset = byteOffset,
+                                            reason = "TypedSymbolFactory: Parameter declaredType absent"
+                                        )
+                                case Maybe.Absent => ()
+                            end match
                             Maybe.Absent
                     ,
                     defaultArgId = d.defaultArgId.map(SymbolId(_)),
