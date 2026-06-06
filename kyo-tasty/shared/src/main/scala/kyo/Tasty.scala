@@ -2298,95 +2298,6 @@ object Tasty:
         def show: String = s"Pickle($uuid v${version.show} ${bytes.size}B)"
     end Pickle
 
-    // ── Suspend / create ───────────────────────────────────────────────────
-
-    /** Bind a fresh Classpath loaded from `roots` and run `f` in that scope.
-      *
-      * Loads the classpath from the given file-system roots using `ErrorMode.SoftFail`. When
-      * `cacheDir` is `Present(dir)`, attempts to read a snapshot from `dir` first; on a miss,
-      * cold-loads and writes the snapshot before returning. Resources (mmap arenas, JAR handles)
-      * are released when the scope exits via the internal `Scope.run`.
-      *
-      * INV-009 site-1: init from file-system roots (cold-load) via `ClasspathOrchestrator.coldLoadBinding`.
-      * This is the ONLY entry point that reads the file system during classpath construction. All
-      * `Tasty.*` query methods called inside `f` are pure and perform no IO.
-      *
-      * Diagnostics accumulated during the scope by `Tasty.isSubtypeOf` (e.g.,
-      * `TastyError.UnhandledSubtypingCase`) are folded into `cp.errors` on any call to
-      * `Tasty.classpath` within `f` (Q-003 binding: errors appear in `cp.errors`).
-      *
-      * Effect row: `A < (Async & Abort[TastyError] & S)` -- `Scope` is consumed internally.
-      */
-    def withClasspath[A, S](
-        roots: Seq[String],
-        cacheDir: Maybe[String] = Maybe.Absent
-    )(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
-        Scope.run:
-            ClasspathOrchestrator.coldLoadBinding(roots, ErrorMode.SoftFail, cacheDir).map: binding =>
-                TastyState.bindingLocal.let(Maybe.Present(binding))(f)
-
-    /** Bind a pre-existing (deserialized) Classpath and run `f` in that scope.
-      *
-      * No filesystem access, no Scope overhead. The bound Binding carries a fresh DecodeContext so
-      * that `Tasty.isSubtypeOf` can accumulate `TastyError.UnhandledSubtypingCase` diagnostics.
-      * `Tasty.bodyTree` returns `Maybe.Absent` for every symbol inside `f` because the DecodeContext
-      * carries no body source handle.
-      *
-      * Diagnostics accumulated during the scope are folded into `cp.errors` on any call to
-      * `Tasty.classpath` within `f` (Q-003 binding: errors appear in `cp.errors`).
-      *
-      * Effect row: `A < S` -- identical to `f`'s row.
-      */
-    def withClasspath[A, S](cp: Classpath)(f: => A < S)(using Frame): A < S =
-        TastyState.bindingLocal.let(Maybe.Present(Binding(cp, Maybe.Present(DecodeContext.fresh()))))(f)
-
-    /** Bind a Classpath decoded from in-memory pickles and run `f` in that scope.
-      *
-      * Decodes the pickles sequentially using an in-memory FileSource. The resulting Binding carries
-      * a fresh DecodeContext so `Tasty.bodyTree` can decode body bytes on demand.
-      *
-      * INV-009 site-1-related (in-memory alt-init; no real-FS contact): constructs an anonymous
-      * in-memory FileSource from the pickle bytes map; never reads `PlatformFileSource.get` and
-      * never touches the real file system. All `Tasty.*` query methods called inside `f` are pure and perform no IO.
-      *
-      * Effect row: `A < (Async & Abort[TastyError] & S)`.
-      */
-    def withPickles[A, S](pickles: Chunk[Pickle])(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
-        Scope.run:
-            ClasspathOrchestrator.loadPickles(pickles).map: binding =>
-                TastyState.bindingLocal.let(Maybe.Present(binding))(f)
-
-    /** Delete snapshot files in `cacheDir` whose modification time is older than `maxAge`.
-      *
-      * Delegates to `Tasty.Snapshot.evictOlderThan`. Only deletes `*.krfl` files; does not recurse.
-      * INV-009 site-4: the underlying file-deletion logic uses AllowUnsafe via the FileSource.
-      */
-    def evictOlderThan(cacheDir: String, maxAge: Duration)(using Frame): Unit < (Sync & Abort[TastyError]) =
-        Snapshot.evictOlderThan(cacheDir, maxAge)
-
-    // ── Access ─────────────────────────────────────────────────────────────
-
-    /** Get the current Classpath from the active binding, falling back to the module-level JVM classpath.
-      *
-      * Returns the JVM classpath stub when called outside a `withClasspath` scope.
-      *
-      * When called inside a `withClasspath` scope, folds any `TastyError.UnhandledSubtypingCase`
-      * diagnostics accumulated by `isSubtypeOf` calls during the scope into the returned
-      * `Classpath.errors` field. This makes `cp.errors` the user-visible channel for
-      * unhandled-shape diagnostics (Q-003 binding).
-      *
-      * Effect row: Sync, because reading the lazy val TastyState.global may trigger initialization.
-      */
-    def classpath(using Frame): Classpath < Sync =
-        TastyState.bindingLocal.use: mbind =>
-            val binding = mbind.getOrElse(TastyState.global)
-            Sync.defer:
-                binding.decodeCtx match
-                    case Maybe.Present(ctx) if ctx.subtypingErrors.nonEmpty =>
-                        Classpath.copyWithErrors(binding.cp, binding.cp.errors ++ Chunk.from(ctx.subtypingErrors))
-                    case _ =>
-                        binding.cp
-
     // ── Classpath ───────────────────────────────────────────────────────────
 
     /** Immutable snapshot of a fully-loaded TASTy classpath.
@@ -3270,6 +3181,95 @@ object Tasty:
 
     /** CanEqual[Classpath, Classpath] derived after the companion closes; same placement rationale as schemaClasspath. */
     given canEqualClasspath: CanEqual[Classpath, Classpath] = CanEqual.canEqualAny
+
+    // ── Suspend / create ───────────────────────────────────────────────────
+
+    /** Bind a fresh Classpath loaded from `roots` and run `f` in that scope.
+      *
+      * Loads the classpath from the given file-system roots using `ErrorMode.SoftFail`. When
+      * `cacheDir` is `Present(dir)`, attempts to read a snapshot from `dir` first; on a miss,
+      * cold-loads and writes the snapshot before returning. Resources (mmap arenas, JAR handles)
+      * are released when the scope exits via the internal `Scope.run`.
+      *
+      * INV-009 site-1: init from file-system roots (cold-load) via `ClasspathOrchestrator.coldLoadBinding`.
+      * This is the ONLY entry point that reads the file system during classpath construction. All
+      * `Tasty.*` query methods called inside `f` are pure and perform no IO.
+      *
+      * Diagnostics accumulated during the scope by `Tasty.isSubtypeOf` (e.g.,
+      * `TastyError.UnhandledSubtypingCase`) are folded into `cp.errors` on any call to
+      * `Tasty.classpath` within `f` (Q-003 binding: errors appear in `cp.errors`).
+      *
+      * Effect row: `A < (Async & Abort[TastyError] & S)` -- `Scope` is consumed internally.
+      */
+    def withClasspath[A, S](
+        roots: Seq[String],
+        cacheDir: Maybe[String] = Maybe.Absent
+    )(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
+        Scope.run:
+            ClasspathOrchestrator.coldLoadBinding(roots, ErrorMode.SoftFail, cacheDir).map: binding =>
+                TastyState.bindingLocal.let(Maybe.Present(binding))(f)
+
+    /** Bind a pre-existing (deserialized) Classpath and run `f` in that scope.
+      *
+      * No filesystem access, no Scope overhead. The bound Binding carries a fresh DecodeContext so
+      * that `Tasty.isSubtypeOf` can accumulate `TastyError.UnhandledSubtypingCase` diagnostics.
+      * `Tasty.bodyTree` returns `Maybe.Absent` for every symbol inside `f` because the DecodeContext
+      * carries no body source handle.
+      *
+      * Diagnostics accumulated during the scope are folded into `cp.errors` on any call to
+      * `Tasty.classpath` within `f` (Q-003 binding: errors appear in `cp.errors`).
+      *
+      * Effect row: `A < S` -- identical to `f`'s row.
+      */
+    def withClasspath[A, S](cp: Classpath)(f: => A < S)(using Frame): A < S =
+        TastyState.bindingLocal.let(Maybe.Present(Binding(cp, Maybe.Present(DecodeContext.fresh()))))(f)
+
+    /** Bind a Classpath decoded from in-memory pickles and run `f` in that scope.
+      *
+      * Decodes the pickles sequentially using an in-memory FileSource. The resulting Binding carries
+      * a fresh DecodeContext so `Tasty.bodyTree` can decode body bytes on demand.
+      *
+      * INV-009 site-1-related (in-memory alt-init; no real-FS contact): constructs an anonymous
+      * in-memory FileSource from the pickle bytes map; never reads `PlatformFileSource.get` and
+      * never touches the real file system. All `Tasty.*` query methods called inside `f` are pure and perform no IO.
+      *
+      * Effect row: `A < (Async & Abort[TastyError] & S)`.
+      */
+    def withPickles[A, S](pickles: Chunk[Pickle])(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
+        Scope.run:
+            ClasspathOrchestrator.loadPickles(pickles).map: binding =>
+                TastyState.bindingLocal.let(Maybe.Present(binding))(f)
+
+    /** Delete snapshot files in `cacheDir` whose modification time is older than `maxAge`.
+      *
+      * Delegates to `Tasty.Snapshot.evictOlderThan`. Only deletes `*.krfl` files; does not recurse.
+      * INV-009 site-4: the underlying file-deletion logic uses AllowUnsafe via the FileSource.
+      */
+    def evictOlderThan(cacheDir: String, maxAge: Duration)(using Frame): Unit < (Sync & Abort[TastyError]) =
+        Snapshot.evictOlderThan(cacheDir, maxAge)
+
+    // ── Access ─────────────────────────────────────────────────────────────
+
+    /** Get the current Classpath from the active binding, falling back to the module-level JVM classpath.
+      *
+      * Returns the JVM classpath stub when called outside a `withClasspath` scope.
+      *
+      * When called inside a `withClasspath` scope, folds any `TastyError.UnhandledSubtypingCase`
+      * diagnostics accumulated by `isSubtypeOf` calls during the scope into the returned
+      * `Classpath.errors` field. This makes `cp.errors` the user-visible channel for
+      * unhandled-shape diagnostics (Q-003 binding).
+      *
+      * Effect row: Sync, because reading the lazy val TastyState.global may trigger initialization.
+      */
+    def classpath(using Frame): Classpath < Sync =
+        TastyState.bindingLocal.use: mbind =>
+            val binding = mbind.getOrElse(TastyState.global)
+            Sync.defer:
+                binding.decodeCtx match
+                    case Maybe.Present(ctx) if ctx.subtypingErrors.nonEmpty =>
+                        Classpath.copyWithErrors(binding.cp, binding.cp.errors ++ Chunk.from(ctx.subtypingErrors))
+                    case _ =>
+                        binding.cp
 
     // ── Snapshot management ─────────────────────────────────────────────────
 

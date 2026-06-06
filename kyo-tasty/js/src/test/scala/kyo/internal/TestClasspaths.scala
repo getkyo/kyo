@@ -19,7 +19,7 @@ import kyo.internal.tasty.query.TastyState
   *   - All 13 embedded TASTy fixtures are included (PlainClass, SomeObject, SomeTrait, GenericBox, Outer, SomeCaseClass, Color,
   *     FixtureClasses$package, BaseClass, ChildClass, Shape, VarargFixture, TypeAdtFixture$package). Shape carries class-form enum cases
   *     (fixture additions for extended coverage).
-  *     
+  *
   *   - The `roots` parameter mirrors the JVM surface but is ignored; embedded fixtures are always loaded.
   *   - HARD RULE 7: the MemoryFileSource is internal to the loading call; it is not exposed to callers.
   *
