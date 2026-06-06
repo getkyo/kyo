@@ -15,6 +15,9 @@ final class IonWriter private (private val out: StringBuilder) extends Writer:
     private var stack: List[Context] = Nil
     private var afterField: Boolean  = false
 
+    // Reusable scratch buffer for Ryu float formatting (sized to RyuDouble.MaxOutputLen).
+    private val numberBytes = new Array[Byte](24)
+
     def objectStart(name: String, size: Int): Unit =
         beforeValue()
         out.append('{')
@@ -151,7 +154,10 @@ final class IonWriter private (private val out: StringBuilder) extends Writer:
         else if value == Double.PositiveInfinity then out.append("+inf")
         else if value == Double.NegativeInfinity then out.append("-inf")
         else
-            val text = java.lang.Double.toString(value)
+            // Ryu yields Java's Double.toString format deterministically across JVM, JS, and Native,
+            // unlike java.lang.Double.toString which diverges (for example 5.0 renders "5" on Scala.js).
+            val end  = Ryu.RyuDouble.write(value, numberBytes, 0, numberBytes.length)
+            val text = new String(numberBytes, 0, end, StandardCharsets.UTF_8)
             out.append(text)
             if text.indexOf('E') < 0 && text.indexOf('e') < 0 then out.append("e0")
         end if

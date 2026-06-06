@@ -1,6 +1,6 @@
 package kyo
 
-class IonTest extends Test:
+class IonTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 

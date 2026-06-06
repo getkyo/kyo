@@ -2,53 +2,57 @@ package kyo
 
 import java.nio.charset.StandardCharsets
 
-class IonCorpusTest extends Test:
+class IonCorpusTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
     "vendored amazon ion-tests corpus" - {
 
         "resources are present with upstream license and notice" in {
-            assert(resource("/iontestdata/LICENSE").contains("Apache License"))
-            assert(resource("/iontestdata/NOTICE").contains("Amazon Ion Tests"))
-
-            IonCorpusTest.RequiredResources.foreach { name =>
-                assert(resource(s"/iontestdata/good/$name").nonEmpty)
-            }
-            succeed
+            for
+                license <- resource("/iontestdata/LICENSE")
+                notice  <- resource("/iontestdata/NOTICE")
+                _ <- Kyo.foreach(IonCorpusTest.RequiredResources) { name =>
+                    resource(s"/iontestdata/good/$name").map(content => assert(content.nonEmpty))
+                }
+            yield
+                assert(license.contains("Apache License"))
+                assert(notice.contains("Amazon Ion Tests"))
         }
 
         "decodes typed null values from iontestdata/good/allNulls.ion" in {
-            val upstream = resource("/iontestdata/good/allNulls.ion")
-            assert(upstream.contains("null.int"))
-            assert(upstream.contains("null.struct"))
+            resource("/iontestdata/good/allNulls.ion").map { upstream =>
+                assert(upstream.contains("null.int"))
+                assert(upstream.contains("null.struct"))
 
-            val options = Ion.decode[List[Option[Int]]](upstream).getOrThrow
-            assert(options.size == 14)
-            assert(options.forall(_ == None))
+                val options = Ion.decode[List[Option[Int]]](upstream).getOrThrow
+                assert(options.size == 14)
+                assert(options.forall(_ == None))
 
-            val maybes = Ion.decode[List[Maybe[String]]](upstream).getOrThrow
-            assert(maybes.size == 14)
-            assert(maybes.forall(_ == Maybe.empty))
+                val maybes = Ion.decode[List[Maybe[String]]](upstream).getOrThrow
+                assert(maybes.size == 14)
+                assert(maybes.forall(_ == Maybe.empty))
+            }
         }
 
         "decodes non-null scalar and container samples from iontestdata/good/nonNulls.ion" in {
-            val upstream = resource("/iontestdata/good/nonNulls.ion")
-            List("0", "0.0", "0d0", "0e0", "\"\"", "''''''", "{{}}", "{{\"\"}}", "[]", "()", "{}").foreach { ion =>
-                assert(upstream.contains(ion))
-            }
+            resource("/iontestdata/good/nonNulls.ion").map { upstream =>
+                List("0", "0.0", "0d0", "0e0", "\"\"", "''''''", "{{}}", "{{\"\"}}", "[]", "()", "{}").foreach { ion =>
+                    assert(upstream.contains(ion))
+                }
 
-            assert(Ion.decode[Int]("0").getOrThrow == 0)
-            assert(Ion.decode[BigDecimal]("0.0").getOrThrow == BigDecimal("0.0"))
-            assert(Ion.decode[BigDecimal]("0d0").getOrThrow == BigDecimal(0))
-            assert(Ion.decode[Double]("0e0").getOrThrow == 0.0)
-            assert(Ion.decode[String]("\"\"").getOrThrow == "")
-            assert(Ion.decode[String]("''''''").getOrThrow == "")
-            assert(Ion.decode[Span[Byte]]("{{}}").getOrThrow.toArray.isEmpty)
-            assert(Ion.decode[Span[Byte]]("{{\"\"}}").getOrThrow.toArray.isEmpty)
-            assert(Ion.decode[List[Int]]("[]").getOrThrow == Nil)
-            assert(Ion.decode[List[Int]]("()").getOrThrow == Nil)
-            assert(Ion.decode[Map[String, Int]]("{}").getOrThrow == Map.empty)
+                assert(Ion.decode[Int]("0").getOrThrow == 0)
+                assert(Ion.decode[BigDecimal]("0.0").getOrThrow == BigDecimal("0.0"))
+                assert(Ion.decode[BigDecimal]("0d0").getOrThrow == BigDecimal(0))
+                assert(Ion.decode[Double]("0e0").getOrThrow == 0.0)
+                assert(Ion.decode[String]("\"\"").getOrThrow == "")
+                assert(Ion.decode[String]("''''''").getOrThrow == "")
+                assert(Ion.decode[Span[Byte]]("{{}}").getOrThrow.toArray.isEmpty)
+                assert(Ion.decode[Span[Byte]]("{{\"\"}}").getOrThrow.toArray.isEmpty)
+                assert(Ion.decode[List[Int]]("[]").getOrThrow == Nil)
+                assert(Ion.decode[List[Int]]("()").getOrThrow == Nil)
+                assert(Ion.decode[Map[String, Int]]("{}").getOrThrow == Map.empty)
+            }
         }
 
         "decodes integer samples from iontestdata/good/integer_values.ion and intBinary.ion" in {
@@ -63,11 +67,12 @@ class IonCorpusTest extends Test:
                 IonCorpusTest.IntCase("intsWithUnderscores.ion", "-0b1111_0000", BigInt(-240))
             )
 
-            cases.foreach { c =>
-                assert(resource(s"/iontestdata/good/${c.source}").contains(c.ion))
-                assert(Ion.decode[BigInt](c.ion).getOrThrow == c.expected)
-            }
-            succeed
+            Kyo.foreach(cases) { c =>
+                resource(s"/iontestdata/good/${c.source}").map { content =>
+                    assert(content.contains(c.ion))
+                    assert(Ion.decode[BigInt](c.ion).getOrThrow == c.expected)
+                }
+            }.andThen(succeed)
         }
 
         "decodes decimal samples from iontestdata/good/decimal_values.ion" in {
@@ -79,49 +84,60 @@ class IonCorpusTest extends Test:
                 IonCorpusTest.DecimalCase("decimalsWithUnderscores.ion", "1_2_3_4.5_6_7_8", BigDecimal("1234.5678"))
             )
 
-            cases.foreach { c =>
-                assert(resource(s"/iontestdata/good/${c.source}").contains(c.ion))
-                assert(Ion.decode[BigDecimal](c.ion).getOrThrow == c.expected)
-            }
-            succeed
+            Kyo.foreach(cases) { c =>
+                resource(s"/iontestdata/good/${c.source}").map { content =>
+                    assert(content.contains(c.ion))
+                    assert(Ion.decode[BigDecimal](c.ion).getOrThrow == c.expected)
+                }
+            }.andThen(succeed)
         }
 
         "decodes float samples from iontestdata/good/floatSpecials.ion" in {
-            val specials = Ion.decode[List[Double]](resource("/iontestdata/good/floatSpecials.ion")).getOrThrow
-            assert(specials.size == 3)
-            assert(specials(0).isNaN)
-            assert(specials(1) == Double.PositiveInfinity)
-            assert(specials(2) == Double.NegativeInfinity)
+            for
+                specialsRaw <- resource("/iontestdata/good/floatSpecials.ion")
+                underscores <- resource("/iontestdata/good/floatsWithUnderscores.ion")
+            yield
+                val specials = Ion.decode[List[Double]](specialsRaw).getOrThrow
+                assert(specials.size == 3)
+                assert(specials(0).isNaN)
+                assert(specials(1) == Double.PositiveInfinity)
+                assert(specials(2) == Double.NegativeInfinity)
 
-            val cases = List(
-                "12_34.56_78e0"      -> 1234.5678e0,
-                "12_34e56"           -> 1234e56,
-                "1_2_3_4.5_6_7_8E90" -> 1234.5678e90
-            )
-            cases.foreach { (ion, expected) =>
-                assert(resource("/iontestdata/good/floatsWithUnderscores.ion").contains(ion))
-                assert(Ion.decode[Double](ion).getOrThrow == expected)
-            }
-            succeed
+                val cases = List(
+                    "12_34.56_78e0"      -> 1234.5678e0,
+                    "12_34e56"           -> 1234e56,
+                    "1_2_3_4.5_6_7_8E90" -> 1234.5678e90
+                )
+                cases.foreach { (ion, expected) =>
+                    assert(underscores.contains(ion))
+                    assert(Ion.decode[Double](ion).getOrThrow == expected)
+                }
         }
 
         "decodes string and symbol samples from iontestdata/good/strings.ion and symbols.ion" in {
-            assert(resource("/iontestdata/good/strings.ion").contains("'''concatenated'''"))
-            assert(
-                Ion.decode[String]("'''concatenated'''  ''' from '''   '''a single line'''").getOrThrow == "concatenated from a single line"
-            )
+            for
+                strings  <- resource("/iontestdata/good/strings.ion")
+                symbols  <- resource("/iontestdata/good/symbols.ion")
+                symEmpty <- resource("/iontestdata/good/symbolEmpty.ion")
+            yield
+                assert(strings.contains("'''concatenated'''"))
+                assert(
+                    Ion.decode[String](
+                        "'''concatenated'''  ''' from '''   '''a single line'''"
+                    ).getOrThrow == "concatenated from a single line"
+                )
 
-            val escaped = "\"\\0 \\a \\b \\t \\n \\f \\r \\v \\\" \\' \\? \\\\ \\/\""
-            assert(Ion.decode[String](escaped).getOrThrow == "\u0000 \u0007 \b \t \n \f \r \u000b \" ' ? \\ /")
+                val escaped = "\"\\0 \\a \\b \\t \\n \\f \\r \\v \\\" \\' \\? \\\\ \\/\""
+                assert(Ion.decode[String](escaped).getOrThrow == "\u0000 \u0007 \b \t \n \f \r \u000b \" ' ? \\ /")
 
-            assert(resource("/iontestdata/good/symbols.ion").contains("bareSymbol"))
-            assert(Ion.decode[String]("bareSymbol").getOrThrow == "bareSymbol")
-            assert(Ion.decode[String]("'$99'").getOrThrow == "$99")
+                assert(symbols.contains("bareSymbol"))
+                assert(Ion.decode[String]("bareSymbol").getOrThrow == "bareSymbol")
+                assert(Ion.decode[String]("'$99'").getOrThrow == "$99")
 
-            assert(resource("/iontestdata/good/symbolEmpty.ion").contains("{'':abc}"))
-            assert(Ion.decode[String]("''").getOrThrow == "")
-            assert(Ion.decode[String]("abc::''").getOrThrow == "")
-            assert(Ion.decode[Map[String, String]]("{'':abc}").getOrThrow == Map("" -> "abc"))
+                assert(symEmpty.contains("{'':abc}"))
+                assert(Ion.decode[String]("''").getOrThrow == "")
+                assert(Ion.decode[String]("abc::''").getOrThrow == "")
+                assert(Ion.decode[Map[String, String]]("{'':abc}").getOrThrow == Map("" -> "abc"))
         }
 
         "decodes blob and clob samples from iontestdata/good/blobs.ion and clobs.ion" in {
@@ -144,9 +160,6 @@ class IonCorpusTest extends Test:
         }
 
         "accepts upstream annotation files while treating annotations as schema metadata" in {
-            assert(resource("/iontestdata/good/multipleAnnotations.ion").trim == "annot1::annot2::value")
-            assert(Ion.decode[String]("annot1::annot2::value").getOrThrow == "value")
-
             val annotationCases = List(
                 "annotationQuotedTrue.ion"     -> "'true'::23",
                 "annotationQuotedFalse.ion"    -> "'false'::23",
@@ -158,16 +171,22 @@ class IonCorpusTest extends Test:
                 "annotationQuotedNegInf.ion"   -> "'-inf'::23"
             )
 
-            annotationCases.foreach { (file, ion) =>
-                assert(resource(s"/iontestdata/good/$file").trim == ion)
-                assert(Ion.decode[Int](ion).getOrThrow == 23)
-            }
-
-            val annotatedNull = resource("/iontestdata/good/structFieldAnnotationsUnquotedThenQuoted.ion")
-            assert(Ion.decode[Map[String, Option[String]]](annotatedNull).getOrThrow == Map("f" -> None))
-
-            val quotedNullField = resource("/iontestdata/good/fieldNameQuotedNullInt.ion")
-            assert(Ion.decode[Map[String, Boolean]](quotedNullField).getOrThrow == Map("null.int" -> false))
+            for
+                multi <- resource("/iontestdata/good/multipleAnnotations.ion")
+                _ <- Kyo.foreach(annotationCases) { case (file, ion) =>
+                    resource(s"/iontestdata/good/$file").map { content =>
+                        assert(content.trim == ion)
+                        assert(Ion.decode[Int](ion).getOrThrow == 23)
+                    }
+                }
+                annotatedNull   <- resource("/iontestdata/good/structFieldAnnotationsUnquotedThenQuoted.ion")
+                quotedNullField <- resource("/iontestdata/good/fieldNameQuotedNullInt.ion")
+            yield
+                assert(multi.trim == "annot1::annot2::value")
+                assert(Ion.decode[String]("annot1::annot2::value").getOrThrow == "value")
+                assert(Ion.decode[Map[String, Option[String]]](annotatedNull).getOrThrow == Map("f" -> None))
+                assert(Ion.decode[Map[String, Boolean]](quotedNullField).getOrThrow == Map("null.int" -> false))
+            end for
         }
 
         "rejects invalid annotation and numeric syntax" in {
@@ -196,20 +215,28 @@ class IonCorpusTest extends Test:
         }
     }
 
-    private def resource(path: String): String =
-        val stream = getClass.getResourceAsStream(path)
-        if stream == null then throw new AssertionError(s"Missing test resource $path")
-        try
-            val buffer = new Array[Byte](1024)
-            val out    = new java.io.ByteArrayOutputStream()
-            var read   = stream.read(buffer)
-            while read >= 0 do
-                out.write(buffer, 0, read)
-                read = stream.read(buffer)
-            new String(out.toByteArray, StandardCharsets.UTF_8)
-        finally stream.close()
-        end try
-    end resource
+    // The JS test runner's working directory is the build root, while the JVM and Native runners use the
+    // platform subproject directory. Resolve the repository root by walking up to the directory that holds
+    // build.sbt, then read the shared corpus from there. This keeps the suite cross-platform with no classpath.
+    private def corpusRoot(using Frame): Path < Sync =
+        Path.cwd.map { cwd =>
+            cwd.ancestors.run.map { chain =>
+                def search(candidates: List[Path]): Path < Sync =
+                    candidates match
+                        case Nil => cwd
+                        case head :: tail =>
+                            (head / "build.sbt").isRegularFile.map { found =>
+                                if found then head else search(tail)
+                            }
+                search(chain.toList)
+            }
+        }
+
+    private def resource(name: String)(using Frame): String < (Sync & Abort[FileReadException]) =
+        corpusRoot.map { root =>
+            (root / "kyo-schema" / "shared" / "src" / "test" / "resources" / name.stripPrefix("/"))
+                .read(StandardCharsets.UTF_8)
+        }
 
 end IonCorpusTest
 

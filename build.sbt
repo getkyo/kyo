@@ -519,12 +519,13 @@ lazy val `kyo-schema` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
         .in(file("kyo-schema"))
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
 
 lazy val `kyo-core` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
