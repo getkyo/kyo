@@ -30,7 +30,7 @@ import kyo.AllowUnsafe.embrace.danger
 import kyo.Tasty.*
 
 val program: Chunk[String] < (Async & Abort[TastyError]) =
-    Tasty.withClasspath(Seq("target/scala-3.7.4/classes")):
+    Tasty.withClasspath(Seq("target/scala-3.8.3/classes")):
         Tasty.allClassLike.map(Kyo.foreach(_)(sym => Tasty.fullName(sym)))
 ```
 
@@ -268,9 +268,12 @@ Every symbol also carries a `sourcePosition: Maybe[Position]` field pointing
 back into the original source file when the TASTy file recorded one.
 
 `Parameter` carries `defaultArgId: Maybe[SymbolId]` (the synthesized
-default-argument method when the parameter has one, otherwise `Absent`) plus
-`isImplicit` / `isByName` / `isRepeated`. `TypeParam` carries `varianceOrdinal:
-Int` and `boundsId: SymbolId`.
+default-argument method when the parameter has one, otherwise `Absent`),
+`declaredType: Maybe[Type]` (the parameter's declared type, wrapped in
+`Type.ByName` for by-name parameters and `Type.Repeated` for varargs), and
+`annotations: Chunk[Annotation]`. Implicit/given parameters have `Flag.Given`
+set in `flags`. `TypeParam` carries `variance: Variance` (one of `Invariant`,
+`Covariant`, `Contravariant`) and `bounds: TypeBounds`.
 
 ### Walking down: declarations and members
 
