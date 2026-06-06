@@ -3630,7 +3630,9 @@ private[kyo] object ChartLower:
         defaultFill: Style.Color,
         spec: ChartSpec[A],
         fromGeom: Map[String, MarkGeom],
-        newGeom: Map[String, MarkGeom]
+        newGeom: Map[String, MarkGeom],
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
+        highlight: Maybe[Highlight[A]] = Absent
     )(using Frame): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
         val baseline = layout.plotBaseline
         val durStr   = formatDur(spec.animateCfg.duration)
@@ -3638,11 +3640,11 @@ private[kyo] object ChartLower:
         @scala.annotation.tailrec
         def loop(
             i: Int,
-            acc: Chunk[Svg.SvgElement],
+            acc: Chunk[(A, Svg.SvgElement)],
             geom: Map[String, MarkGeom],
             labels: Chunk[Svg.SvgElement]
-        ): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
-            if i >= rows.size then (acc ++ labels, geom)
+        ): (Chunk[(A, Svg.SvgElement)], Map[String, MarkGeom], Chunk[Svg.SvgElement]) =
+            if i >= rows.size then (acc, geom, labels)
             else
                 val row     = rows(i)
                 val yDomain = mark.y.plottable.toDomain(mark.y.accessor(row))
@@ -3653,13 +3655,16 @@ private[kyo] object ChartLower:
                         xDomain match
                             case Absent => (acc, geom, labels)
                             case Present(xd) =>
-                                val barX     = xs.apply(xd)
-                                val barW     = xs.bandwidth
-                                val barY     = ys.apply(yd)
-                                val barH     = baseline - barY
-                                val key      = rowKey(spec, mark, row)
-                                val newG2    = geom.updated(key, MarkGeom.Bar(barH, barY))
-                                val baseRect = Svg.rect.x(barX).y(barY).width(barW).height(barH).fill(Svg.Paint.Color(defaultFill))
+                                val barX  = xs.apply(xd)
+                                val barW  = xs.bandwidth
+                                val barY  = ys.apply(yd)
+                                val barH  = baseline - barY
+                                val key   = rowKey(spec, mark, row)
+                                val newG2 = geom.updated(key, MarkGeom.Bar(barH, barY))
+                                // Attach interaction attrs (mirrors lowerBarSimple: buildInteractionAttrs per row).
+                                val iAttrs = buildInteractionAttrs(row, spec, internalHoverRef)
+                                val baseRect =
+                                    Svg.rect.x(barX).y(barY).width(barW).height(barH).fill(Svg.Paint.Color(defaultFill)).withAttrs(iAttrs)
                                 val (channelRect, labelEls) = applyBarChannels(baseRect, mark, row, barX, barW, barY, defaultFill)
                                 val r: Svg.SvgElement =
                                     if !animOk then channelRect
@@ -3676,10 +3681,12 @@ private[kyo] object ChartLower:
                                             smilAnimate("height", fromH, barH, durStr),
                                             smilAnimate("y", fromY, barY, durStr)
                                         )
-                                (acc.append(r), newG2, labels ++ labelEls)
+                                (acc.append((row, r)), newG2, labels ++ labelEls)
                         end match
                 loop(i + 1, nextResult._1, nextResult._2, nextResult._3)
-        loop(0, Chunk.empty, newGeom, Chunk.empty)
+        val (bars, finalGeom, labels) = loop(0, Chunk.empty, newGeom, Chunk.empty)
+        // Wrap bar shapes with the built-in highlight region (mirrors lowerBarSimple).
+        (withHighlight(bars, highlight) ++ labels, finalGeom)
     end lowerBarSimpleWithTransitions
 
     /** Lower a line mark with keyed-transition awareness, emitting a declarative SMIL path morph when
@@ -3726,19 +3733,24 @@ private[kyo] object ChartLower:
         spec: ChartSpec[A],
         fromGeom: Map[String, MarkGeom],
         newGeom: Map[String, MarkGeom],
-        markIdx: Int
+        markIdx: Int,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
+        highlight: Maybe[Highlight[A]] = Absent
     )(using Frame): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
         val animOk = spec.animateCfg.enabled
         val durStr = formatDur(spec.animateCfg.duration)
-        // rawPathsWithLabel carries the category display label alongside each path so the pathKey is
-        // keyed by series category identity (label), not by positional index. This makes the key stable
-        // across series add/remove/reorder: a surviving series finds its OWN prior geometry in fromGeom
-        // even when other series are removed from the middle.
-        val rawPathsWithLabel: Chunk[(Svg.Path, String)] = mark.color match
+        // rawPathsWithLabel carries the category display label and the series-representative row alongside
+        // each path so the pathKey is keyed by series category identity (label), not by positional index.
+        // This makes the key stable across series add/remove/reorder: a surviving series finds its OWN
+        // prior geometry in fromGeom even when other series are removed from the middle.
+        // The representative row (repRow) is needed for withHighlight (mirrors lowerLine's tagged approach).
+        val rawPathsWithLabel: Chunk[(Svg.Path, String, Maybe[A])] = mark.color match
             case Absent =>
                 // No color channel: single series. Use "_single" as a stable label (not "0") so the key
                 // cannot collide with a color-channel series whose label happens to be "0".
-                Chunk((lowerLineSeries(rows, mark, layout, xs, ys, defaultColor), "_single"))
+                // Pass Present(spec) and internalHoverRef so interaction attrs are attached to the path.
+                val path = lowerLineSeries(rows, mark, layout, xs, ys, defaultColor, Present(spec), internalHoverRef)
+                Chunk((path, "_single", rows.headMaybe))
             case Present(colorEnc) =>
                 // FIX B (transitions path, mirrors lowerLine): resolve per-series colors via resolvePalette
                 // (the same path the legend and the static line use) so an explicit categorical/sequential
@@ -3768,13 +3780,16 @@ private[kyo] object ChartLower:
                             if resolved.isEmpty then DefaultPalette(seriesIdx % DefaultPalette.size)
                             else resolved(seriesIdx                           % resolved.size)
                         val seriesLabel = catLabelByKey.getOrElse(catKey, seriesIdx.toString)
-                        (lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor), seriesLabel)
+                        // Pass Present(spec) and internalHoverRef so interaction attrs are attached.
+                        val path = lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor, Present(spec), internalHoverRef)
+                        (path, seriesLabel, seriesRows.headMaybe)
         // For each raw path: optionally attach a SMIL animate on `d`, then record the new PathData.
+        // Also accumulate (repRow, emittedPath) pairs for withHighlight (mirrors lowerLine's tagged approach).
         // pathKey = "line-$markIdx-$seriesLabel" is stable per (mark identity, series category identity),
         // so a prior mark's geometry-count change does NOT shift this mark's key, and removing/reordering
         // a color series does not cause a surviving series to look up a different series' prior geometry.
-        val (elems, updatedGeom) = rawPathsWithLabel.foldLeft((Chunk.empty[Svg.SvgElement], newGeom)):
-            case ((accElems, accGeom), (rawPath, seriesLabel)) =>
+        val (tagged, updatedGeom) = rawPathsWithLabel.foldLeft((Chunk.empty[(A, Svg.SvgElement)], newGeom)):
+            case ((accTagged, accGeom), (rawPath, seriesLabel, repRowMaybe)) =>
                 val pathKey  = s"line-$markIdx-$seriesLabel"
                 val newPd    = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
                 val newGeom2 = accGeom.updated(pathKey, MarkGeom.LinePath(newPd))
@@ -3803,8 +3818,12 @@ private[kyo] object ChartLower:
                             case _ =>
                                 // No previous path for this slot (first emission or new series): snap.
                                 rawPath
-                (accElems.append(emittedPath), newGeom2)
-        (elems, updatedGeom)
+                val nextTagged = repRowMaybe match
+                    case Present(r) => accTagged.append((r, emittedPath))
+                    case Absent     => accTagged
+                (nextTagged, newGeom2)
+        // Wrap paths with the built-in highlight region, mirroring lowerLine's withHighlight call.
+        (withHighlight(tagged, highlight), updatedGeom)
     end lowerLineWithTransitions
 
     /** Lower an area mark with keyed-transition awareness, emitting a declarative SMIL path morph when
@@ -3831,12 +3850,15 @@ private[kyo] object ChartLower:
         spec: ChartSpec[A],
         fromGeom: Map[String, MarkGeom],
         newGeom: Map[String, MarkGeom],
-        markIdx: Int
+        markIdx: Int,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
+        highlight: Maybe[Highlight[A]] = Absent
     )(using Frame): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
         // Stacked area: fall through to plain lowerArea (no per-group path tracking yet).
+        // Pass internalHoverRef and highlight so interaction and highlight fire for stacked paths too.
         val isStacked = mark.y.isDefined && mark.stack.group.isDefined
         if isStacked then
-            val elems = lowerArea(rows, mark, layout, xs, ys, defaultColor, Present(spec))
+            val elems = lowerArea(rows, mark, layout, xs, ys, defaultColor, Present(spec), internalHoverRef, highlight)
             (elems, newGeom)
         else
             val animOk = spec.animateCfg.enabled
@@ -3844,22 +3866,35 @@ private[kyo] object ChartLower:
             // FIX 1 (P9b): forward Present(spec) so the non-stacked color-channel arm resolves the
             // palette via resolvePalette (honoring an explicit colorScale) instead of defaulting to
             // DefaultPalette. Mirrors the lowerLineWithTransitions FIX B pattern.
-            val rawPaths: Chunk[Svg.Path] = lowerArea(rows, mark, layout, xs, ys, defaultColor, Present(spec)).collect:
+            // Pass internalHoverRef so buildSimpleAreaPath attaches interaction attrs to each raw path.
+            // Do NOT pass highlight here: lowerArea would call withHighlight internally, which wraps
+            // paths in Reactive[Svg.G] nodes that are not Svg.Path and would be dropped by .collect.
+            // Instead we apply withHighlight ourselves after SMIL is attached, using the repRows we
+            // compute below (mirrors lowerLineWithTransitions).
+            val rawPaths: Chunk[Svg.Path] = lowerArea(rows, mark, layout, xs, ys, defaultColor, Present(spec), internalHoverRef).collect:
                 case p: Svg.Path => p
-            // Compute category labels for the color channel (if present) so that the pathKey for each
-            // area path is keyed by series category IDENTITY (label) rather than positional index.
+            // Compute category labels and representative rows for each series so the pathKey for each
+            // area path is keyed by series category IDENTITY (label) rather than positional index,
+            // and withHighlight can tag each emitted path with its series-representative row.
             // lowerArea emits one path per category in the ordinal order of collectColorCategoriesWithRaw,
             // so rawPaths(i) corresponds to cats(i). For the no-color single-series case, use "_single".
-            val seriesLabels: Chunk[String] = mark.color match
-                case Absent => Chunk("_single")
+            val (seriesLabels, seriesRepRows): (Chunk[String], Chunk[Maybe[A]]) = mark.color match
+                case Absent => (Chunk("_single"), Chunk(rows.headMaybe))
                 case Present(colorEnc) =>
-                    collectColorCategoriesWithRaw(rows, colorEnc).map(_._1)
+                    val colorEncAny: Encoding[A, Any] = colorEnc.asInstanceOf[Encoding[A, Any]]
+                    val cats                          = collectColorCategoriesWithRaw(rows, colorEncAny)
+                    val catKeys: Chunk[ChartFoundations.CatKey] =
+                        cats.map { case (_, raw) => ChartFoundations.categoryKey(colorEncAny.tag, raw) }
+                    val labels = cats.map(_._1)
+                    val repRows = catKeys.map: catKey =>
+                        rows.filter(r => ChartFoundations.categoryKey(colorEncAny.tag, colorEncAny.accessor(r)) == catKey).headMaybe
+                    (labels, repRows)
             // pathKey = "area-$markIdx-$seriesLabel" is stable per (mark identity, series category
             // identity), so a prior mark's geometry-count change does NOT shift this mark's key, and
             // removing/reordering a color series does not cause a surviving series to look up a
             // different series' prior geometry.
-            val (elems, updatedGeom) = rawPaths.zipWithIndex.foldLeft((Chunk.empty[Svg.SvgElement], newGeom)):
-                case ((accElems, accGeom), (rawPath, seriesIdx)) =>
+            val (tagged, updatedGeom) = rawPaths.zipWithIndex.foldLeft((Chunk.empty[(A, Svg.SvgElement)], newGeom)):
+                case ((accTagged, accGeom), (rawPath, seriesIdx)) =>
                     val seriesLabel = if seriesIdx < seriesLabels.size then seriesLabels(seriesIdx) else seriesIdx.toString
                     val pathKey     = s"area-$markIdx-$seriesLabel"
                     val newPd       = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
@@ -3882,8 +3917,13 @@ private[kyo] object ChartLower:
                                     end if
                                 case _ =>
                                     rawPath
-                    (accElems.append(emittedPath), newGeom2)
-            (elems, updatedGeom)
+                    val repRowMaybe = if seriesIdx < seriesRepRows.size then seriesRepRows(seriesIdx) else Absent
+                    val nextTagged = repRowMaybe match
+                        case Present(r) => accTagged.append((r, emittedPath))
+                        case Absent     => accTagged
+                    (nextTagged, newGeom2)
+            // Wrap area paths with the built-in highlight region, mirroring lowerArea's withHighlight call.
+            (withHighlight(tagged, highlight), updatedGeom)
         end if
     end lowerAreaWithTransitions
 
@@ -3912,7 +3952,8 @@ private[kyo] object ChartLower:
         xs: Scale,
         ysL: Scale,
         ysR: Maybe[Scale],
-        stateRef: AtomicRef.Unsafe[TransState[A]]
+        stateRef: AtomicRef.Unsafe[TransState[A]],
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
     )(using Frame): Svg.G =
         // Unsafe: stateRef is chart-private and its writes are serialized by the reactive engine's
         // single-threaded emission model; reading it synchronously here (pure SVG projection, no
@@ -3938,23 +3979,67 @@ private[kyo] object ChartLower:
                     case m: Mark.Rule[A]           => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
                     case m: Mark.Text[A, ?, ?]     => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
                     case m: Mark.ErrorBar[A, ?, ?] => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                val highlight = resolveHighlight(Present(spec))
                 mark match
                     case m: Mark.Bar[A, ?, ?] if m.stack.group.isEmpty && m.color.isEmpty =>
                         // Simple ungrouped bar: supports keyed SMIL transitions.
                         // fromGeom is the stable animation origin for this call (same on every pull of this emission).
-                        val (elems, geom) = lowerBarSimpleWithTransitions(rows, m, layout, xs, ys, markColor, spec, fromGeom, accGeom)
+                        // Pass internalHoverRef and highlight so interaction handlers and the highlight region
+                        // fire on animated bars, mirroring the static lowerBarSimple path.
+                        val (elems, geom) = lowerBarSimpleWithTransitions(
+                            rows,
+                            m,
+                            layout,
+                            xs,
+                            ys,
+                            markColor,
+                            spec,
+                            fromGeom,
+                            accGeom,
+                            internalHoverRef,
+                            highlight
+                        )
                         (accElems ++ elems, geom)
                     case m: Mark.Line[A, ?, ?] if animOk =>
                         // Line path: declarative SMIL `d` morph when command counts match; snaps otherwise.
                         // fromGeom carries the previous PathData for the `from` side of the SMIL animate.
-                        val (elems, geom) = lowerLineWithTransitions(rows, m, layout, xs, ys, markColor, spec, fromGeom, accGeom, markIdx)
+                        // Pass internalHoverRef and highlight so interaction and highlight fire on animated lines.
+                        val (elems, geom) = lowerLineWithTransitions(
+                            rows,
+                            m,
+                            layout,
+                            xs,
+                            ys,
+                            markColor,
+                            spec,
+                            fromGeom,
+                            accGeom,
+                            markIdx,
+                            internalHoverRef,
+                            highlight
+                        )
                         (accElems ++ elems, geom)
                     case m: Mark.Area[A, ?, ?] if animOk =>
                         // Area path: same declarative SMIL `d` morph discipline as line.
-                        val (elems, geom) = lowerAreaWithTransitions(rows, m, layout, xs, ys, markColor, spec, fromGeom, accGeom, markIdx)
+                        // Pass internalHoverRef and highlight so interaction and highlight fire on animated areas.
+                        val (elems, geom) = lowerAreaWithTransitions(
+                            rows,
+                            m,
+                            layout,
+                            xs,
+                            ys,
+                            markColor,
+                            spec,
+                            fromGeom,
+                            accGeom,
+                            markIdx,
+                            internalHoverRef,
+                            highlight
+                        )
                         (accElems ++ elems, geom)
-                    case m: Mark.Bar[A, ?, ?] => (accElems ++ lowerBar(rows, m, layout, xs, ys, markColor, Present(spec)), accGeom)
-                    // Pass resolveHighlight for the static fallback paths (non-animated line/area).
+                    case m: Mark.Bar[A, ?, ?] =>
+                        (accElems ++ lowerBar(rows, m, layout, xs, ys, markColor, Present(spec), internalHoverRef), accGeom)
+                    // Pass highlight (pre-computed) and internalHoverRef for the static fallback paths (non-animated line/area).
                     case m: Mark.Line[A, ?, ?] => (
                             accElems ++ lowerLine(
                                 rows,
@@ -3964,8 +4049,8 @@ private[kyo] object ChartLower:
                                 ys,
                                 markColor,
                                 Present(spec),
-                                Absent,
-                                resolveHighlight(Present(spec))
+                                internalHoverRef,
+                                highlight
                             ),
                             accGeom
                         )
@@ -3978,8 +4063,8 @@ private[kyo] object ChartLower:
                                 ys,
                                 markColor,
                                 Present(spec),
-                                Absent,
-                                resolveHighlight(Present(spec))
+                                internalHoverRef,
+                                highlight
                             ),
                             accGeom
                         )
@@ -3993,18 +4078,18 @@ private[kyo] object ChartLower:
                                 ys,
                                 markColor,
                                 Present(spec),
-                                Absent,
+                                internalHoverRef,
                                 spec.theme,
-                                resolveHighlight(Present(spec))
+                                highlight
                             ),
                             accGeom
                         )
                     case m: Mark.Rule[A] => (accElems ++ lowerRule(m, layout, xs, ys), accGeom)
                     // Text/errorBar produce no geometry for morph tracking; elements are emitted.
-                    // Pass resolveHighlight so the active text glyph / errorBar group gets the highlight stroke.
+                    // Pass highlight (pre-computed) so the active text glyph / errorBar group gets the highlight stroke.
                     case m: Mark.Text[A, ?, ?] =>
                         (
-                            accElems ++ lowerText(m, rows, xs, ys, markColor, spec.theme, Present(spec), resolveHighlight(Present(spec))),
+                            accElems ++ lowerText(m, rows, xs, ys, markColor, spec.theme, Present(spec), highlight),
                             accGeom
                         )
                     case m: Mark.ErrorBar[A, ?, ?] =>
@@ -4017,7 +4102,7 @@ private[kyo] object ChartLower:
                                 markColor,
                                 spec.theme,
                                 Present(spec),
-                                resolveHighlight(Present(spec))
+                                highlight
                             ),
                             accGeom
                         )
@@ -4131,7 +4216,7 @@ private[kyo] object ChartLower:
         // legend keeps every category (built from the full emission rows) so a hidden series can be toggled on.
         val visibleRows = visibleRowsFor(rows, spec)
         val marksG = stateRef match
-            case Present(ref) => marksRegionWithTransitions(visibleRows, spec, layout, xs, ysL, ysR, ref)
+            case Present(ref) => marksRegionWithTransitions(visibleRows, spec, layout, xs, ysL, ysR, ref, internalHoverRef)
             case Absent       => marksRegion(visibleRows, spec.marks, layout, xs, ysL, ysR, Present(spec), internalHoverRef)
         // Live legend: built per emission from the full rows so it reflects the current category set.
         val legendElems = buildLegend(layout, spec, rows, gradPrefix)

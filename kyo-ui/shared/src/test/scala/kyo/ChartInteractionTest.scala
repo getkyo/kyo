@@ -778,4 +778,137 @@ class ChartInteractionTest extends Test:
             )
     }
 
+    // ---- Live-path tests: interaction on animated bar/line/area (LIVE-PATH BUG) ----
+    // These tests reproduce the confirmed bug: the animated (live-chart) arms of
+    // marksRegionWithTransitions do NOT attach onClick/onHover handlers or withHighlight,
+    // so a UI.chart(signal) with onSelect/onHover/highlightSelect silently drops all of it.
+    // Each test is expected to FAIL before the fix and PASS after.
+
+    // Test 20: live bar carries onClick handler from onSelect
+    "LIVE bar with onSelect: rendered rect carries data-kyo-ev=click (live-path interaction bug)" in run {
+        // AnimateConfig.default.enabled=true, so UI.chart(signal)(...) routes through
+        // marksRegionWithTransitions -> lowerBarSimpleWithTransitions. Before the fix that
+        // arm never calls buildInteractionAttrs, so no data-kyo-ev attribute is emitted.
+        for
+            selectRef <- Signal.initRef[Maybe[Sale]](Absent)
+            rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+            signal = Signal.initConst(rows)
+            spec = UI.chart(signal: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+                .onSelect(selectRef)
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield assert(
+            html.contains("data-kyo-ev") && html.contains("click"),
+            s"LIVE bar with onSelect must carry data-kyo-ev=click on rendered rects, but got:\n${html.take(3000)}"
+        )
+    }
+
+    // Test 21: live bar with highlightSelect: after setting selectRef the active bar carries the select stroke
+    "LIVE bar with highlightSelect: after selectRef is set, the active bar carries stroke=#000000 (live-path highlight bug)" in run {
+        // Before the fix: withHighlight is not called in lowerBarSimpleWithTransitions, so
+        // no Reactive highlight region is created and the select stroke never appears.
+        for
+            selectRef <- Signal.initRef[Maybe[Sale]](Absent)
+            rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+            signal = Signal.initConst(rows)
+            spec = UI.chart(signal: Signal[Chunk[Sale]])(bar(x = _.month, y = _.revenue))
+                .onSelect(selectRef)
+                .interaction(_.highlightSelect)
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            htmlBefore <- HtmlRenderer.render(root, Seq.empty)
+            _ = assert(
+                !htmlBefore.contains("stroke=\"#000000\""),
+                s"No bar may carry the select stroke before selection on a live chart, but got:\n${htmlBefore.take(2000)}"
+            )
+            _         <- selectRef.set(Present(Sale("Jan", Rev(1000.0))))
+            htmlAfter <- HtmlRenderer.render(root, Seq.empty)
+        yield assert(
+            htmlAfter.contains("stroke=\"#000000\"") && htmlAfter.contains("stroke-width=\"2px\""),
+            s"LIVE bar with highlightSelect must carry stroke=#000000 after selection, but got:\n${htmlAfter.take(2000)}"
+        )
+    }
+
+    // Test 22: live line carries onClick handler from onSelect
+    "LIVE line with onSelect: rendered path carries data-kyo-ev=click (live-path interaction bug)" in run {
+        // Before the fix: lowerLineWithTransitions calls lowerLineSeries without spec/internalHoverRef,
+        // so no interaction attrs are attached to the line path.
+        for
+            selectRef <- Signal.initRef[Maybe[Sale]](Absent)
+            rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+            signal = Signal.initConst(rows)
+            spec = UI.chart(signal: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
+                .onSelect(selectRef)
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield assert(
+            html.contains("data-kyo-ev") && html.contains("click"),
+            s"LIVE line with onSelect must carry data-kyo-ev=click on rendered path, but got:\n${html.take(3000)}"
+        )
+    }
+
+    // Test 23: live line with highlightSelect fires after selection
+    "LIVE line with highlightSelect: after selectRef is set, the active series path carries stroke=#000000 (live-path highlight bug)" in run {
+        for
+            selectRef <- Signal.initRef[Maybe[Sale]](Absent)
+            rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+            signal = Signal.initConst(rows)
+            spec = UI.chart(signal: Signal[Chunk[Sale]])(line(x = _.month, y = _.revenue))
+                .onSelect(selectRef)
+                .interaction(_.highlightSelect)
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            htmlBefore <- HtmlRenderer.render(root, Seq.empty)
+            _ = assert(
+                !htmlBefore.contains("stroke=\"#000000\""),
+                s"No live line may carry the select stroke before selection, but got:\n${htmlBefore.take(2000)}"
+            )
+            _         <- selectRef.set(Present(Sale("Jan", Rev(1000.0))))
+            htmlAfter <- HtmlRenderer.render(root, Seq.empty)
+        yield assert(
+            htmlAfter.contains("stroke=\"#000000\"") && htmlAfter.contains("stroke-width=\"2px\""),
+            s"LIVE line with highlightSelect must carry stroke=#000000 after selection, but got:\n${htmlAfter.take(2000)}"
+        )
+    }
+
+    // Test 24: live area carries onClick handler from onSelect
+    "LIVE area with onSelect: rendered path carries data-kyo-ev=click (live-path interaction bug)" in run {
+        // Before the fix: lowerAreaWithTransitions calls lowerArea without internalHoverRef for the
+        // non-stacked path, so no interaction attrs are on the area path element.
+        for
+            selectRef <- Signal.initRef[Maybe[Sale]](Absent)
+            rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+            signal = Signal.initConst(rows)
+            spec = UI.chart(signal: Signal[Chunk[Sale]])(area(x = _.month, y = _.revenue))
+                .onSelect(selectRef)
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield assert(
+            html.contains("data-kyo-ev") && html.contains("click"),
+            s"LIVE area with onSelect must carry data-kyo-ev=click on rendered path, but got:\n${html.take(3000)}"
+        )
+    }
+
+    // Test 25: live area with highlightSelect fires after selection
+    "LIVE area with highlightSelect: after selectRef is set, the active series path carries stroke=#000000 (live-path highlight bug)" in run {
+        for
+            selectRef <- Signal.initRef[Maybe[Sale]](Absent)
+            rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
+            signal = Signal.initConst(rows)
+            spec = UI.chart(signal: Signal[Chunk[Sale]])(area(x = _.month, y = _.revenue))
+                .yScale(_.linear(0, 2000))
+                .onSelect(selectRef)
+                .interaction(_.highlightSelect)
+            root = summon[Conversion[ChartSpec[Sale], Svg.Root]](spec)
+            htmlBefore <- HtmlRenderer.render(root, Seq.empty)
+            _ = assert(
+                !htmlBefore.contains("stroke=\"#000000\""),
+                s"No live area may carry the select stroke before selection, but got:\n${htmlBefore.take(2000)}"
+            )
+            _         <- selectRef.set(Present(Sale("Jan", Rev(1000.0))))
+            htmlAfter <- HtmlRenderer.render(root, Seq.empty)
+        yield assert(
+            htmlAfter.contains("stroke=\"#000000\"") && htmlAfter.contains("stroke-width=\"2px\""),
+            s"LIVE area with highlightSelect must carry stroke=#000000 after selection, but got:\n${htmlAfter.take(2000)}"
+        )
+    }
+
 end ChartInteractionTest
