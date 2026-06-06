@@ -1163,6 +1163,9 @@ object Tasty:
           *
           * Stats all files, sorts by mtime ascending (oldest first), deletes until the first non-stale entry, then stops.
           * This avoids unnecessary delete calls for files within the retention window and is O(N) stat syscalls + O(N log N) sort.
+          *
+          * INV-009 site-4: realised effects are {list, stat, delete}. The AllowUnsafe gate lives inside FileSource's
+          * platform implementations (list, stat) and in `kyo.Path.remove` (delete default).
           */
         private[kyo] def evictOlderThanWithSource(
             cacheDir: String,
@@ -1190,10 +1193,10 @@ object Tasty:
             source: kyo.internal.tasty.query.FileSource,
             path: String
         )(using Frame): Unit < (Sync & Abort[TastyError]) =
-            // Rename to a tombstone then discard; if rename fails (already gone) we just continue.
-            val tombstone = path + ".deleting"
-            source.rename(path, tombstone).andThen:
-                source.rename(tombstone, tombstone + ".gone").andThen(Kyo.unit)
+            // F-001: single source.delete call. INV-009 site-4 effect set rotates to {list, stat, delete}.
+            // Concurrent-writer races (path already gone) are absorbed by the outer Abort.run[TastyError]
+            // wrapper at the evictOlderThanWithSource call site.
+            source.delete(path)
         end deleteFile
 
     end Snapshot

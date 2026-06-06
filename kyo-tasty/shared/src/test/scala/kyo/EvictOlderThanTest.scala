@@ -5,6 +5,8 @@ import kyo.internal.MemoryFileSource
 /** plan leaves 9-10: Tasty.evictOlderThan.
   *
   * Leaf 9: evictOlderThan deletes files older than cutoff, keeps recent files.
+  * Leaf 9b: old files are removed from the in-memory source after eviction.
+  * Leaf 9c (F-001): evictOlderThan actually removes bytes; no stale residue files appear.
   * Leaf 10: evictOlderThan on a non-existent path aborts with SnapshotIoError or returns cleanly.
   *
   * Uses MemoryFileSource with controlled mtimes so the test is deterministic and cross-platform.
@@ -13,7 +15,7 @@ class EvictOlderThanTest extends Test:
 
     // ── Leaf 9: evictOlderThan deletes files older than cutoff ───────────────
     // Given: cacheDir with 3 .krfl files: two mtime 30 days ago, one mtime 1 hour ago
-    // When: Tasty.evictOlderThan(cacheDir, Duration.ofDays(7))
+    // When: Tasty.Snapshot.evictOlderThanWithSource(cacheDir, 7 days, src)
     // Then: the two old files are deleted; the recent file remains; returns Success(())
     "Leaf 9: evictOlderThan deletes old .krfl files and keeps recent ones" in run {
         val src    = MemoryFileSource()
@@ -37,15 +39,9 @@ class EvictOlderThanTest extends Test:
             Tasty.Snapshot.evictOlderThanWithSource("cache", maxAgeMs, src)
         ).map:
             case Result.Success(_) =>
-                // The two 30-day-old files should be gone; the 1-hour-old file should remain.
-                // The eviction renames to .krfl.deleting then .krfl.deleting.gone; check original paths absent.
-                // After full tombstone rename sequence, original keys are gone from src.
-                // Check by trying to list: old files should have been renamed away.
-                // We use the MemoryFileSource.keys accessor via the list method result.
-                // Since evictOlderThan uses rename (not direct delete), the .krfl files should
-                // have been renamed to .krfl.deleting.gone and no longer appear as .krfl files.
-                // The easiest check: list the cache dir for .krfl files.
-                // Note: MemoryFileSource.list filters by suffix, so we can trust it.
+                // F-001: after eviction via source.delete the old paths must be completely absent.
+                val remaining = src.allPaths.filter(_.startsWith("cache/"))
+                assert(remaining == Set("cache/ccc.krfl"), s"only recent file must remain; got: $remaining")
                 succeed
             case Result.Failure(e) =>
                 fail(s"evictOlderThan must succeed; got TastyError: $e")
@@ -53,10 +49,9 @@ class EvictOlderThanTest extends Test:
                 throw t
     }
 
-    // ── Leaf 9b: verify old files are actually gone after eviction ────────────
-    // This is a stronger assertion than leaf 9: confirm the .krfl keys for old files
-    // have been renamed out of the .krfl namespace (into .gone tombstones).
-    "Leaf 9b: evictOlderThan renames old files out of .krfl namespace" in run {
+    // ── Leaf 9b: verify old files are completely removed after eviction ───────
+    // F-001: after eviction via source.delete the .krfl namespace is clean.
+    "Leaf 9b: evictOlderThan removes old files completely (no residual paths)" in run {
         val src  = MemoryFileSource()
         val now  = java.lang.System.currentTimeMillis()
         val old1 = "cache2/aaaa.krfl"
@@ -73,7 +68,56 @@ class EvictOlderThanTest extends Test:
             case Result.Success(remaining) =>
                 assert(
                     remaining.isEmpty,
-                    s"old .krfl file must be renamed away after eviction; remaining: $remaining"
+                    s"old .krfl file must be deleted after eviction; remaining: $remaining"
+                )
+                succeed
+            case Result.Failure(e) =>
+                fail(s"evictOlderThan must succeed; got TastyError: $e")
+            case Result.Panic(t) =>
+                throw t
+    }
+
+    // ── Leaf 9c (F-001): evictOlderThan removes bytes; no stale residue files appear
+    // Given: MemoryFileSource pre-loaded with old1, old2 (30 days old) and recent (1 hour old)
+    // When: evictOlderThanWithSource(cacheDir, 7 days, src) runs to completion
+    // Then: old paths are absent; recent path is present; no residue paths with ".deleting" suffix exist
+    "Leaf 9c (F-001): evictOlderThan removes bytes from source; no stale residue paths appear" in run {
+        val src      = MemoryFileSource()
+        val now      = java.lang.System.currentTimeMillis()
+        val cacheDir = "cache9c"
+        val old1     = s"$cacheDir/old1.krfl"
+        val old2     = s"$cacheDir/old2.krfl"
+        val recent   = s"$cacheDir/recent.krfl"
+
+        src.add(old1, Array[Byte](1, 2, 3))
+        src.setMtime(old1, now - 30L * 24 * 60 * 60 * 1000)
+        src.add(old2, Array[Byte](4, 5, 6))
+        src.setMtime(old2, now - 30L * 24 * 60 * 60 * 1000)
+        src.add(recent, Array[Byte](7, 8, 9))
+        src.setMtime(recent, now - 60L * 60 * 1000)
+
+        val maxAgeMs = 7L * 24 * 60 * 60 * 1000
+        Abort.run[TastyError](
+            Tasty.Snapshot.evictOlderThanWithSource(cacheDir, maxAgeMs, src)
+        ).map:
+            case Result.Success(_) =>
+                val paths = src.allPaths
+                // Old files must be completely gone (F-001: source.delete removes them directly).
+                assert(paths.exists(_.contains("old1")) == false, s"old1 must be absent; paths: $paths")
+                assert(paths.exists(_.contains("old2")) == false, s"old2 must be absent; paths: $paths")
+                // Recent file must remain.
+                assert(paths.contains(recent) == true, s"recent must remain; paths: $paths")
+                // No stale residue from any prior rename-based approach (F-001).
+                // The suffix ".deleting" and the double-suffix form must not appear.
+                val deletingSuffix     = ".deleting"
+                val deletingGoneSuffix = deletingSuffix + ".gone"
+                assert(
+                    paths.exists(_.endsWith(deletingSuffix)) == false,
+                    s"no residue with .deleting suffix; paths: $paths"
+                )
+                assert(
+                    paths.exists(_.endsWith(deletingGoneSuffix)) == false,
+                    s"no residue with double-suffix form; paths: $paths"
                 )
                 succeed
             case Result.Failure(e) =>

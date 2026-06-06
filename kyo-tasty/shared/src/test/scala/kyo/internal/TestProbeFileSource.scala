@@ -27,6 +27,12 @@ final private[kyo] class TestProbeFileSource extends FileSource:
     def rename(from: String, to: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
         throw new RuntimeException(s"$sentinel (rename $from -> $to)")
 
+    override def delete(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
+        // F-001: INV-009 site-4 behavioural guard. After F-001 the evictOlderThan path issues `delete`,
+        // not `rename`. The probe surfaces the call as a sentinel exception so Inv009BehavioralTest can
+        // assert site-4 reaches exactly delete and zero rename calls.
+        throw new RuntimeException(s"$sentinel (delete $path)")
+
     def mkdirs(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
         throw new RuntimeException(s"$sentinel (mkdirs $path)")
 

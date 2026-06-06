@@ -31,6 +31,18 @@ trait FileSource:
       */
     def rename(from: String, to: String)(using Frame): Unit < (Sync & Abort[TastyError])
 
+    /** Delete the file at the given path.
+      *
+      * Trait-body default delegates to `kyo.Path.remove`, which is cross-platform (JVM and Native via NioPathUnsafe,
+      * JS via Node fs unlink). A missing path is a no-op (`kyo.Path.remove` returns false). Any `FileFsException` raised
+      * by the platform layer is mapped to `TastyError.SnapshotIoError` so call sites see a uniform error type.
+      *
+      * INV-009 site-4: realised by `Tasty.Snapshot.deleteFile` after F-001.
+      */
+    def delete(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
+        Abort.recover[FileFsException](err => Abort.fail(TastyError.SnapshotIoError(s"delete $path: ${err.getMessage}"))):
+            kyo.Path(path).remove.unit
+
     /** Create directory and all ancestors at the given path. No-op if already exists. */
     def mkdirs(path: String)(using Frame): Unit < (Sync & Abort[TastyError])
 

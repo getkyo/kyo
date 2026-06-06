@@ -54,6 +54,13 @@ class SnapshotRoundTripTest extends Test:
                 case None =>
                     Abort.fail(TastyError.SnapshotIoError(s"rename: $from not found"))
 
+        override def delete(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
+            // F-001: override trait-body default so delete operates on the in-memory map
+            // instead of attempting a real filesystem call via kyo.Path.remove.
+            Sync.defer:
+                val _ = files.remove(path)
+                ()
+
         def mkdirs(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
             Kyo.unit
 
@@ -304,10 +311,9 @@ class SnapshotRoundTripTest extends Test:
             Tasty.Snapshot.evictOlderThanWithSource("cache", 0L, evictSrc)
         ).map:
             case Result.Success(_) =>
-                // All .krfl files in cache/ should have been processed (renamed to tombstones or removed)
-                // evictOlderThanWithSource renames x.krfl to x.krfl.deleting then x.krfl.deleting.gone
-                // So no original .krfl key should remain
-                val remainingKrfl = evictSrc.keys.filter(k => k.endsWith(".krfl") && !k.contains(".deleting"))
+                // F-001: evictOlderThanWithSource calls source.delete(path) for each stale .krfl file.
+                // After deletion the path is completely absent; the fix removes the prior rename-based approach.
+                val remainingKrfl = evictSrc.keys.filter(k => k.startsWith("cache/") && k.endsWith(".krfl"))
                 assert(
                     remainingKrfl.isEmpty,
                     s"Expected all .krfl files to be removed by eviction, remaining: $remainingKrfl"

@@ -64,7 +64,7 @@ contract violation and requires a plan change and a bump to this list.
 **Site 4: `Tasty.evictOlderThan(cacheDir, maxAge)`**
 - Effect: lists and deletes `.krfl` files older than `maxAge`.
 - AllowUnsafe gate: `FileSource.list`, `FileSource.stat`,
-  `FileSource.rename` inside `Tasty.evictOlderThan`.
+  `FileSource.delete` inside `Tasty.evictOlderThan`.
 
 Every call to `AllowUnsafe` or `Sync.Unsafe.defer` anywhere in `src/main` must
 name one of these four sites in a `// Unsafe:` comment. A fifth unlabeled site

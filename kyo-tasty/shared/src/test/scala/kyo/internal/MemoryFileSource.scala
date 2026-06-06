@@ -28,6 +28,9 @@ final class MemoryFileSource(
     /** Register a path-to-bytes entry. Overwrites any prior entry for the same path. */
     def add(path: String, bytes: Array[Byte]): Unit = files(path) = bytes
 
+    /** Return a snapshot of all currently registered paths. Used by tests to verify post-eviction state. */
+    def allPaths: Set[String] = files.keySet.toSet
+
     /** Set the mtime in milliseconds for a path. If unset, `stat` reports `mtimeMs = 0L`.
       *
       * Provided for tests that exercise `DigestComputer.compute` semantics (mtime-driven cache invalidation) without depending on a real
@@ -51,6 +54,14 @@ final class MemoryFileSource(
                     files(to) = b
             case None =>
                 Abort.fail(TastyError.SnapshotIoError(s"rename: $from not found"))
+
+    override def delete(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
+        // F-001: override the trait-body default so the in-memory test source honours delete locally
+        // without crossing into the platform kyo.Path layer (which would attempt a real filesystem op).
+        Sync.defer:
+            val _ = files.remove(path)
+            val _ = mtimes.remove(path)
+            ()
 
     def mkdirs(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) = Kyo.unit
 

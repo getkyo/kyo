@@ -14,7 +14,7 @@ import scala.collection.mutable
   * Leaf 10: coldLoadBinding with probe raises the sentinel on first source.list/exists call.
   * Leaf 11: withPickles does not touch the probe FileSource at all.
   * Leaf 12: no public Unsafe-tier mirrors exist on object Tasty.*.
-  * Leaf 13: evictOlderThanWithSource call log contains list + rename entries.
+  * Leaf 13: evictOlderThanWithSource call log contains list + delete entries (F-001: no rename).
   * Leaf 14: all 13 prior leaves also pass on JS and Native (cross-platform placement).
   */
 class Inv009BehavioralTest extends Test:
@@ -68,6 +68,11 @@ class Inv009BehavioralTest extends Test:
 
         def rename(from: String, to: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
             log += s"rename $from -> $to"
+            Kyo.unit
+
+        // F-001: override to log delete calls; trait-body default would attempt real filesystem op.
+        override def delete(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
+            log += s"delete $path"
             Kyo.unit
 
         def mkdirs(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
@@ -356,12 +361,13 @@ class Inv009BehavioralTest extends Test:
         succeed
     }
 
-    // ── Leaf 13: evictOlderThan delete path observed via call log ─────────────
+    // ── Leaf 13: evictOlderThan site-4 calls FileSource.delete, not rename ──────
+    // F-001: INV-009 site-4 effect set rotates from {list, stat, rename} to {list, stat, delete}.
     // Given: a RecordingFileSource pre-loaded with one stale *.krfl file
     //        (mtime = 0, maxAge = 1 ms => always stale)
     // When: Tasty.Snapshot.evictOlderThanWithSource("cache13", 1L, rec) invoked
-    // Then: rec.calls contains "list cache13" and at least one "rename ..." entry
-    "Leaf 13: evictOlderThan delete path observed via probe call log" in run {
+    // Then: rec.calls contains "list cache13" and "delete cache13/dead.krfl"; no "rename ..." entry
+    "Leaf 13: evictOlderThan site-4 calls FileSource.delete, not rename" in run {
         val cacheDir  = "cache13"
         val staleFile = s"$cacheDir/dead.krfl"
         // filesToList=staleFile so list returns a file; mtime=0 means infinitely old
@@ -374,15 +380,23 @@ class Inv009BehavioralTest extends Test:
                 callLog.exists(_.startsWith(s"list $cacheDir")),
                 s"call log must contain 'list $cacheDir'; got: $callLog"
             )
+            // F-001: the call log must contain a delete entry, not a rename entry.
             assert(
-                callLog.exists(_.startsWith("rename ")),
-                s"call log must contain at least one 'rename ...' entry (double-rename delete); got: $callLog"
+                callLog.exists(_.startsWith("delete ")),
+                s"call log must contain at least one 'delete ...' entry (F-001 fix); got: $callLog"
+            )
+            assert(
+                callLog.forall(!_.startsWith("rename ")),
+                s"call log must NOT contain any 'rename ...' entries after F-001; got: $callLog"
+            )
+            // The delete entry must name the stale file.
+            assert(
+                callLog.contains(s"delete $staleFile"),
+                s"call log must contain 'delete $staleFile'; got: $callLog"
             )
             result match
-                case Result.Panic(t)   => throw t
+                case Result.Panic(t) => throw t
                 case Result.Failure(e) =>
-                    // The impl absorbs rename failures with Abort.run[TastyError].
-                    // A Failure here would be unexpected.
                     fail(s"evictOlderThanWithSource must not abort under recording source; got $e")
                 case Result.Success(_) => succeed
             end match
