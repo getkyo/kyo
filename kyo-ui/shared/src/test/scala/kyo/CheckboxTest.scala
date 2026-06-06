@@ -7,39 +7,39 @@ class CheckboxTest extends UITest:
 
     // ---- Rendering ----
 
-    "type checkbox" in run {
+    "type checkbox" in {
         withUI(UI.div(UI.checkbox.id("c"))) {
-            Browser.assertAttribute(Selector.id("c"), "type", "checkbox").andThen(succeed)
+            Browser.assertAttribute(Selector.id("c"), "type", "checkbox").unit
         }
     }
 
-    "checked true" in run {
+    "checked true" in {
         withUI(UI.div(UI.checkbox.checked(true).id("c"))) {
-            Browser.assertChecked(Selector.id("c")).andThen(succeed)
+            Browser.assertChecked(Selector.id("c")).unit
         }
     }
 
-    "checked false" in run {
+    "checked false" in {
         withUI(UI.div(UI.checkbox.checked(false).id("c"))) {
-            Browser.assertVisible(Selector.id("c")).andThen(succeed)
+            Browser.assertVisible(Selector.id("c")).unit
         }
     }
 
-    "default unchecked" in run {
+    "default unchecked" in {
         withUI(UI.div(UI.checkbox.id("c"))) {
-            Browser.assertVisible(Selector.id("c")).andThen(succeed)
+            Browser.assertVisible(Selector.id("c")).unit
         }
     }
 
-    "exists by id" in run {
+    "exists by id" in {
         withUI(UI.div(UI.checkbox.id("c"))) {
-            Browser.assertExists(Selector.id("c")).andThen(succeed)
+            Browser.assertExists(Selector.id("c")).unit
         }
     }
 
     // ---- Interaction (pending due to kyo-browser double-click bug) ----
 
-    "check sets checked" in run {
+    "check sets checked" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef(false)
@@ -52,11 +52,11 @@ class CheckboxTest extends UITest:
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertChecked(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "uncheck clears checked" in run {
+    "uncheck clears checked" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef(true)
@@ -68,11 +68,11 @@ class CheckboxTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "false")
-            yield succeed
+            yield ()
         }
     }
 
-    "check fires onChange true" in run {
+    "check fires onChange true" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -84,11 +84,11 @@ class CheckboxTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "onChange updates signal" in run {
+    "onChange updates signal" in {
 
         val app: UI < Async =
             for counter <- Signal.initRef(0)
@@ -100,11 +100,11 @@ class CheckboxTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "disabled check no fire" in run {
+    "disabled check no fire" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef(0)
@@ -116,20 +116,20 @@ class CheckboxTest extends UITest:
             for
                 _ <- Browser.assertDisabled(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "0")
-            yield succeed
+            yield ()
         }
     }
 
-    "checked signal true" in run {
+    "checked signal true" in {
         val app: UI < Async =
             for ref <- Signal.initRef(true)
             yield UI.div(ref.map(v => UI.checkbox.checked(v).id("c")))
         withUI(app) {
-            Browser.assertChecked(Selector.id("c")).andThen(succeed)
+            Browser.assertChecked(Selector.id("c")).unit
         }
     }
 
-    "check uncheck check cycle" in run {
+    "check uncheck check cycle" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef(0)
@@ -145,11 +145,11 @@ class CheckboxTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "2")
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "3")
-            yield succeed
+            yield ()
         }
     }
 
-    "uncheck fires onChange false" in run {
+    "uncheck fires onChange false" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -161,13 +161,13 @@ class CheckboxTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "false")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Keyboard ----
 
-    "pressKey Enter toggles" in run {
+    "pressKey Enter toggles" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -178,11 +178,11 @@ class CheckboxTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("c"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "pressKey Space toggles" in run {
+    "pressKey Space toggles" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -193,23 +193,23 @@ class CheckboxTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("c"), Key.Space)
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Focus ----
 
-    "focus assertFocused" in run {
+    "focus assertFocused" in {
 
         withUI(UI.div(UI.checkbox.id("c"))) {
             for
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertVisible(Selector.id("c"))
-            yield succeed
+            yield ()
         }
     }
 
-    "onFocus fires" in run {
+    "onFocus fires" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef(false)
@@ -221,11 +221,11 @@ class CheckboxTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "onBlur fires" in run {
+    "onBlur fires" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef(false)
@@ -239,13 +239,13 @@ class CheckboxTest extends UITest:
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Disabled ----
 
-    "disabled signal toggle" in run {
+    "disabled signal toggle" in {
 
         val app: UI < Async =
             for
@@ -264,11 +264,11 @@ class CheckboxTest extends UITest:
                 _ <- Browser.assertEnabled(Selector.id("c"))
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "checked signal toggle via button" in run {
+    "checked signal toggle via button" in {
 
         val app: UI < Async =
             for flag <- Signal.initRef(true)
@@ -281,13 +281,13 @@ class CheckboxTest extends UITest:
                 _ <- Browser.assertChecked(Selector.id("c"))
                 _ <- Browser.click(Selector.id("t"))
                 _ <- Browser.assertExists(Selector.id("c"))
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Merged from CheckboxRadioTest (checkbox scenarios) ----
 
-    "checkbox check fires onChange true (merged)" in run {
+    "checkbox check fires onChange true (merged)" in {
         val app: UI < Async =
             for ref <- Signal.initRef("none")
             yield UI.div(
@@ -298,11 +298,11 @@ class CheckboxTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "checkbox uncheck fires onChange false (merged)" in run {
+    "checkbox uncheck fires onChange false (merged)" in {
         val app: UI < Async =
             for ref <- Signal.initRef("none")
             yield UI.div(
@@ -313,11 +313,11 @@ class CheckboxTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "false")
-            yield succeed
+            yield ()
         }
     }
 
-    "checkbox toggle updates span (merged)" in run {
+    "checkbox toggle updates span (merged)" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -330,11 +330,11 @@ class CheckboxTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "true")
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "false")
-            yield succeed
+            yield ()
         }
     }
 
-    "three checkboxes independent" in run {
+    "three checkboxes independent" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef(false)
@@ -354,13 +354,13 @@ class CheckboxTest extends UITest:
                 _ <- Browser.assertText(Selector.id("va"), "a:true")
                 _ <- Browser.assertText(Selector.id("vb"), "b:false")
                 _ <- Browser.assertText(Selector.id("vc"), "c:false")
-            yield succeed
+            yield ()
         }
     }
 
-    "checkbox disabled (merged)" in run {
+    "checkbox disabled (merged)" in {
         withUI(UI.div(UI.checkbox.id("c").disabled(true))) {
-            Browser.assertDisabled(Selector.id("c")).andThen(succeed)
+            Browser.assertDisabled(Selector.id("c")).unit
         }
     }
 

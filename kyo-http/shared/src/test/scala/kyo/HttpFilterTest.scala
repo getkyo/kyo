@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 
-class HttpFilterTest extends Test:
+class HttpFilterTest extends BaseHttpTest:
 
     def req: HttpRequest[Any] = HttpRequest.getRaw(HttpUrl.fromUri("/test"))
 

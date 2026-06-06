@@ -1,6 +1,6 @@
 package kyo
 
-class InstantTest extends Test:
+class InstantTest extends kyo.test.Test[Any]:
 
     "parse" - {
         "valid ISO-8601 string" in {

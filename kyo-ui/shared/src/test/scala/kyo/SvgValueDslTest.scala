@@ -3,7 +3,7 @@ package kyo
 import kyo.UI.Ast.*
 import scala.language.implicitConversions
 
-class SvgValueDslTest extends Test:
+class SvgValueDslTest extends kyo.test.Test[Any]:
 
     // PathData builder accumulates commands in order
     "PathData builder accumulates commands in order" in {

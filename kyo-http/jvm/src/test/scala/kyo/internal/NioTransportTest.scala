@@ -6,7 +6,7 @@ import java.nio.channels.SocketChannel
 import kyo.*
 import kyo.internal.transport.*
 
-class NioTransportTest extends kyo.Test:
+class NioTransportTest extends kyo.BaseHttpTest:
 
     import AllowUnsafe.embrace.danger
 
@@ -26,7 +26,6 @@ class NioTransportTest extends kyo.Test:
         val transport = mkTransport()
         try
             assert(transport.pool ne null)
-            succeed
         finally
             transport.close()
         end try
@@ -38,7 +37,6 @@ class NioTransportTest extends kyo.Test:
         try
             val driver = transport.pool.next()
             assert(driver ne null)
-            succeed
         finally
             transport.close()
         end try
@@ -48,7 +46,7 @@ class NioTransportTest extends kyo.Test:
     // connect — plain TCP
     // -----------------------------------------------------------------------
 
-    "connect to loopback server returns open connection" in run {
+    "connect to loopback server returns open connection" in {
         given Frame   = Frame.internal
         val transport = mkTransport()
 
@@ -75,7 +73,6 @@ class NioTransportTest extends kyo.Test:
         transport.connect("127.0.0.1", port).safe.get.map { conn =>
             try
                 assert(conn.isOpen)
-                succeed
             finally
                 latch.countDown()
                 conn.close()
@@ -84,7 +81,7 @@ class NioTransportTest extends kyo.Test:
         }
     }
 
-    "connect returns Closed failure for unreachable port" in run {
+    "connect returns Closed failure for unreachable port" in {
         given Frame   = Frame.internal
         val transport = mkTransport()
         // Port 1 — connection refused on loopback
@@ -92,7 +89,6 @@ class NioTransportTest extends kyo.Test:
             transport.close()
             // Either refused (Failure) or panicked; a success would be unusual but allowed
             assert(result.isFailure || result.isPanic || result.isSuccess)
-            succeed
         }
     }
 
@@ -100,7 +96,7 @@ class NioTransportTest extends kyo.Test:
     // listen — TCP server
     // -----------------------------------------------------------------------
 
-    "listen binds and returns Listener with valid port" in run {
+    "listen binds and returns Listener with valid port" in {
         given Frame     = Frame.internal
         val transport   = mkTransport()
         val listenFiber = transport.listen("127.0.0.1", 0, 50)(_ => ())
@@ -108,28 +104,26 @@ class NioTransportTest extends kyo.Test:
             try
                 assert(listener.port > 0)
                 assert(listener.port <= 65535)
-                succeed
             finally
                 listener.close()
                 transport.close()
         }
     }
 
-    "listen binds to the given host" in run {
+    "listen binds to the given host" in {
         given Frame     = Frame.internal
         val transport   = mkTransport()
         val listenFiber = transport.listen("127.0.0.1", 0, 50)(_ => ())
         listenFiber.safe.get.map { listener =>
             try
                 assert(listener.host.nonEmpty)
-                succeed
             finally
                 listener.close()
                 transport.close()
         }
     }
 
-    "listen returns Closed failure for already-bound port" in run {
+    "listen returns Closed failure for already-bound port" in {
         given Frame   = Frame.internal
         val transport = mkTransport()
 
@@ -139,7 +133,6 @@ class NioTransportTest extends kyo.Test:
                 listener1.close()
                 transport.close()
                 assert(result2.isFailure)
-                succeed
             }
         }
     }
@@ -148,7 +141,7 @@ class NioTransportTest extends kyo.Test:
     // accept connection via listen
     // -----------------------------------------------------------------------
 
-    "listen accepts connecting clients" in run {
+    "listen accepts connecting clients" in {
         given Frame   = Frame.internal
         val transport = mkTransport()
 
@@ -169,7 +162,6 @@ class NioTransportTest extends kyo.Test:
                 listener.close()
                 transport.close()
                 assert(accepted.get())
-                succeed
             }
         }
     }
@@ -178,7 +170,7 @@ class NioTransportTest extends kyo.Test:
     // end-to-end connection
     // -----------------------------------------------------------------------
 
-    "connect + listen — both sides are open connections" in run {
+    "connect + listen — both sides are open connections" in {
         given Frame   = Frame.internal
         val transport = mkTransport()
 
@@ -199,7 +191,6 @@ class NioTransportTest extends kyo.Test:
                 transport.connect("127.0.0.1", port).safe.get.map { clientConn =>
                     try
                         assert(clientConn.isOpen)
-                        succeed
                     finally
                         latch.countDown()
                         clientConn.close()
@@ -213,7 +204,7 @@ class NioTransportTest extends kyo.Test:
     // connect with TLS
     // -----------------------------------------------------------------------
 
-    "connect with TLS to loopback TLS server completes handshake" in run {
+    "connect with TLS to loopback TLS server completes handshake" in {
         given Frame   = Frame.internal
         val transport = mkTransport()
 
@@ -230,7 +221,7 @@ class NioTransportTest extends kyo.Test:
                 result match
                     case Result.Success(conn) =>
                         conn.close()
-                        succeed
+                        succeed("TLS handshake completed successfully")
                     case Result.Failure(e) =>
                         fail(s"TLS connect failed: $e")
                     case Result.Panic(e) =>
@@ -244,7 +235,7 @@ class NioTransportTest extends kyo.Test:
     // listen Listener.close stops accepting
     // -----------------------------------------------------------------------
 
-    "listener.close marks listener as closed" in run {
+    "listener.close marks listener as closed" in {
         given Frame   = Frame.internal
         val transport = mkTransport()
 
@@ -257,7 +248,6 @@ class NioTransportTest extends kyo.Test:
                 transport.close()
                 // Either connection refused (failure) or the port was taken — either way listener is closed
                 assert(result.isFailure || result.isSuccess)
-                succeed
             }
         }
     }
@@ -273,7 +263,6 @@ class NioTransportTest extends kyo.Test:
         // Should be able to create an engine without exceptions
         val engine = ctx.createSSLEngine()
         assert(engine ne null)
-        succeed
     }
 
     "createSslContext with server PEM cert/key loads key managers" in {
@@ -283,21 +272,19 @@ class NioTransportTest extends kyo.Test:
         val engine = ctx.createSSLEngine()
         engine.setUseClientMode(false)
         assert(engine ne null)
-        succeed
     }
 
     // -----------------------------------------------------------------------
     // Unix domain sockets — non-existent path
     // -----------------------------------------------------------------------
 
-    "connectUnix returns Closed for non-existent socket path" in run {
+    "connectUnix returns Closed for non-existent socket path" in {
         given Frame   = Frame.internal
         val transport = mkTransport()
         val badPath   = "/tmp/kyo-nio-test-does-not-exist-" + java.util.UUID.randomUUID() + ".sock"
         Abort.run[Closed](transport.connectUnix(badPath).safe.get).map { result =>
             transport.close()
             assert(result.isFailure)
-            succeed
         }
     }
 

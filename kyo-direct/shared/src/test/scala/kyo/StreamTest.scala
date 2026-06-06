@@ -1,14 +1,14 @@
 package kyo
 
-class StreamTest extends Test:
+class StreamTest extends kyo.test.Test[Any]:
 
-    def check(stream: Stream[Int, Var[Int]] < Var[Int], expected: Chunk[Int]): Assertion < Any =
+    def check(stream: Stream[Int, Var[Int]] < Var[Int], expected: Chunk[Int])(using kyo.test.AssertScope): Unit < Any =
         Var.run(0):
             Stream.unwrap(stream).run.map: chunk =>
                 assert(chunk == expected)
 
     "Stream" - {
-        "map" in run {
+        "map" in {
             val stream = Stream.init(Seq(1, 2, 3))
 
             def f(i: Int): Int < Var[Int] =
@@ -16,7 +16,7 @@ class StreamTest extends Test:
 
             val magicStream = stream
             typeCheckFailure(
-                """val newStream1: Stream[Int, Any] < Var[Int] = direct(magicStream.map(x => f(x).now))""".stripMargin
+                """val newStream1: Stream[Int, Any] < Var[Int] = direct(magicStream.map(x => f(x).now))"""
             )("Calling `.now` inside a lazy structure breaks effect handling, and allow for escaping behavior.")
 
             val newStream2: Stream[Int, Var[Int]] < Any = direct:
@@ -38,7 +38,7 @@ class StreamTest extends Test:
 
         }
 
-        "filter" in run {
+        "filter" in {
             val stream = Stream.init(Seq(1, 2, 3))
 
             def f(i: Int): Boolean < Var[Int] =

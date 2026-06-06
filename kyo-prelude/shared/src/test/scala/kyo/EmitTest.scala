@@ -1,6 +1,6 @@
 package kyo
 
-class EmitTest extends Test:
+class EmitTest extends kyo.test.Test[Any]:
 
     "int" in {
         val v: String < Emit[Int] =
@@ -240,7 +240,7 @@ class EmitTest extends Test:
     }
 
     "runFirst" - {
-        "basic operation" in run {
+        "basic operation" in {
             val v =
                 for
                     _ <- Emit.value(1)
@@ -262,7 +262,7 @@ class EmitTest extends Test:
             end for
         }
 
-        "empty emission" in run {
+        "empty emission" in {
             val v: String < Emit[Int] = "done"
 
             for
@@ -275,7 +275,7 @@ class EmitTest extends Test:
             end for
         }
 
-        "with effects" in run {
+        "with effects" in {
             val v =
                 for
                     _ <- Emit.value(1)
@@ -433,7 +433,7 @@ class EmitTest extends Test:
 
     "isolate" - {
         "merge" - {
-            "combines emitted values from isolated and outer scopes" in run {
+            "combines emitted values from isolated and outer scopes" in {
                 val result = Emit.run {
                     for
                         _ <- Emit.value(1)
@@ -449,7 +449,7 @@ class EmitTest extends Test:
                 assert(result.eval == (Chunk(1, 2, 3, 4), "inner"))
             }
 
-            "proper state restoration after nested isolations" in run {
+            "proper state restoration after nested isolations" in {
                 val result = Emit.run {
                     for
                         _ <- Emit.value("start")
@@ -469,7 +469,7 @@ class EmitTest extends Test:
         }
 
         "discard" - {
-            "inner emissions don't affect outer scope" in run {
+            "inner emissions don't affect outer scope" in {
                 val result = Emit.run {
                     for
                         _ <- Emit.value(1)
@@ -485,7 +485,7 @@ class EmitTest extends Test:
                 assert(result.eval == (Chunk(1, 4), "inner"))
             }
 
-            "nested discards maintain isolation" in run {
+            "nested discards maintain isolation" in {
                 val result = Emit.run {
                     for
                         _ <- Emit.value("outer")
@@ -505,7 +505,7 @@ class EmitTest extends Test:
         }
 
         "composition" - {
-            "can combine with Var isolate" in run {
+            "can combine with Var isolate" in {
                 val emitIsolate = Emit.isolate.merge[Int]
                 val varIsolate  = Var.isolate.discard[Int]
 
@@ -526,7 +526,7 @@ class EmitTest extends Test:
                 assert(result.eval == (Chunk(1, 1), (0, "done")))
             }
 
-            "can combine with Memo isolate" in run {
+            "can combine with Memo isolate" in {
                 var count = 0
                 val f = Memo[Int, Int, Any] { x =>
                     count += 1
@@ -554,7 +554,7 @@ class EmitTest extends Test:
                 assert(count == 1)
             }
 
-            "preserves individual isolation behaviors when composed" in run {
+            "preserves individual isolation behaviors when composed" in {
                 val emitDiscard = Emit.isolate.discard[Int]
                 val emitMerge   = Emit.isolate.merge[Int]
 
@@ -627,7 +627,7 @@ class EmitTest extends Test:
             assert(result == (2, (Chunk(1, 2), "done")))
         }
 
-        "with complex conditions" in run {
+        "with complex conditions" in {
             val isEven     = (n: Int) => n % 2 == 0
             val isPositive = (n: Int) => n > 0
 
@@ -662,18 +662,18 @@ class EmitTest extends Test:
                 _ <- Emit.value[T.T2](T.T2("two"))
             yield ()
 
-        "run" in run {
+        "run" in {
             assert(Emit.runDiscard(Emit.run[T.T1](emit)).eval == (Chunk(T.T1(0), T.T1(1), T.T1(2)), ()))
             assert(Emit.run(Emit.runDiscard[T.T1](emit)).eval == (Chunk(T.T2("zero"), T.T2("one"), T.T2("two")), ()))
         }
 
-        "runForeach" in run {
+        "runForeach" in {
             var chunk = Chunk.empty[T.T1]
             Emit.runDiscard(Emit.runForeach[T.T1](emit)(t1 => chunk = chunk.appended(t1))).eval
             assert(chunk == Chunk(T.T1(0), T.T1(1), T.T1(2)))
         }
 
-        "runWhile" in run {
+        "runWhile" in {
             var chunk = Chunk.empty[T.T1]
             Emit.runDiscard(Emit.runWhile[T.T1](emit)(t1 =>
                 chunk = chunk.appended(t1)
@@ -682,7 +682,7 @@ class EmitTest extends Test:
             assert(chunk == Chunk(T.T1(0), T.T1(1)))
         }
 
-        "runFirst" in run {
+        "runFirst" in {
             val ranFirst = Emit.runDiscard:
                 Emit.runFirst[T.T2](emit).map:
                     case (mv2, cont) =>

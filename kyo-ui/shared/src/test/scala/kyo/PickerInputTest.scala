@@ -5,39 +5,39 @@ import scala.language.implicitConversions
 
 class PickerInputTest extends UITest:
 
-    "date type" in run {
+    "date type" in {
         withUI(UI.div(UI.dateInput.id("d"))) {
-            Browser.assertAttribute(Selector.id("d"), "type", "date").andThen(succeed)
+            Browser.assertAttribute(Selector.id("d"), "type", "date").unit
         }
     }
 
-    "date disabled" in run {
+    "date disabled" in {
         withUI(UI.div(UI.dateInput.disabled(true).id("d"))) {
-            Browser.assertDisabled(Selector.id("d")).andThen(succeed)
+            Browser.assertDisabled(Selector.id("d")).unit
         }
     }
 
-    "time type" in run {
+    "time type" in {
         withUI(UI.div(UI.timeInput.id("t"))) {
-            Browser.assertAttribute(Selector.id("t"), "type", "time").andThen(succeed)
+            Browser.assertAttribute(Selector.id("t"), "type", "time").unit
         }
     }
 
-    "color type" in run {
+    "color type" in {
         withUI(UI.div(UI.colorInput.id("c"))) {
-            Browser.assertAttribute(Selector.id("c"), "type", "color").andThen(succeed)
+            Browser.assertAttribute(Selector.id("c"), "type", "color").unit
         }
     }
 
-    "color disabled" in run {
+    "color disabled" in {
         withUI(UI.div(UI.colorInput.disabled(true).id("c"))) {
-            Browser.assertDisabled(Selector.id("c")).andThen(succeed)
+            Browser.assertDisabled(Selector.id("c")).unit
         }
     }
 
     // ---- DateInput ----
 
-    "date onChange fires" in run {
+    "date onChange fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -48,11 +48,11 @@ class PickerInputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("d"), "2024-01-15")
                 _ <- Browser.assertText(Selector.id("v"), "D:2024-01-15")
-            yield succeed
+            yield ()
         }
     }
 
-    "date value signalRef binding" in run {
+    "date value signalRef binding" in {
         val app: UI < Async =
             for ref <- Signal.initRef("2024-06-01")
             yield UI.div(
@@ -64,11 +64,11 @@ class PickerInputTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "D:2024-06-01")
                 _ <- Browser.fill(Selector.id("d"), "2025-01-01")
                 _ <- Browser.assertText(Selector.id("v"), "D:2025-01-01")
-            yield succeed
+            yield ()
         }
     }
 
-    "date disabled signal toggle" in run {
+    "date disabled signal toggle" in {
         val app: UI < Async =
             for
                 disabled <- Signal.initRef(true)
@@ -83,20 +83,20 @@ class PickerInputTest extends UITest:
                 _ <- Browser.assertDisabled(Selector.id("d"))
                 _ <- Browser.click(Selector.id("en"))
                 _ <- Browser.assertEnabled(Selector.id("d"))
-            yield succeed
+            yield ()
         }
     }
 
-    "date focus" in run {
+    "date focus" in {
         withUI(UI.div(UI.dateInput.id("d"))) {
             for
                 _ <- Browser.click(Selector.id("d"))
                 _ <- Browser.assertVisible(Selector.id("d"))
-            yield succeed
+            yield ()
         }
     }
 
-    "date onFocus fires" in run {
+    "date onFocus fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -107,11 +107,11 @@ class PickerInputTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("d"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "date onBlur fires" in run {
+    "date onBlur fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -124,13 +124,13 @@ class PickerInputTest extends UITest:
                 _ <- Browser.click(Selector.id("d"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- TimeInput ----
 
-    "time onChange fires" in run {
+    "time onChange fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -141,11 +141,11 @@ class PickerInputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("t"), "14:30")
                 _ <- Browser.assertText(Selector.id("v"), "T:14:30")
-            yield succeed
+            yield ()
         }
     }
 
-    "time value signalRef binding" in run {
+    "time value signalRef binding" in {
         val app: UI < Async =
             for ref <- Signal.initRef("09:00")
             yield UI.div(
@@ -157,17 +157,17 @@ class PickerInputTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "T:09:00")
                 _ <- Browser.fill(Selector.id("t"), "18:45")
                 _ <- Browser.assertText(Selector.id("v"), "T:18:45")
-            yield succeed
+            yield ()
         }
     }
 
-    "time disabled" in run {
+    "time disabled" in {
         withUI(UI.div(UI.timeInput.disabled(true).id("t"))) {
-            Browser.assertDisabled(Selector.id("t")).andThen(succeed)
+            Browser.assertDisabled(Selector.id("t")).unit
         }
     }
 
-    "time disabled signal toggle" in run {
+    "time disabled signal toggle" in {
         val app: UI < Async =
             for
                 disabled <- Signal.initRef(true)
@@ -182,22 +182,22 @@ class PickerInputTest extends UITest:
                 _ <- Browser.assertDisabled(Selector.id("t"))
                 _ <- Browser.click(Selector.id("en"))
                 _ <- Browser.assertEnabled(Selector.id("t"))
-            yield succeed
+            yield ()
         }
     }
 
-    "time focus" in run {
+    "time focus" in {
         withUI(UI.div(UI.timeInput.id("t"))) {
             for
                 _ <- Browser.click(Selector.id("t"))
                 _ <- Browser.assertVisible(Selector.id("t"))
-            yield succeed
+            yield ()
         }
     }
 
     // ---- ColorInput ----
 
-    "color onChange fires" in run {
+    "color onChange fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -208,11 +208,11 @@ class PickerInputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("c"), "#ff0000")
                 _ <- Browser.assertText(Selector.id("v"), "C:#ff0000")
-            yield succeed
+            yield ()
         }
     }
 
-    "color value signalRef binding" in run {
+    "color value signalRef binding" in {
         val app: UI < Async =
             for ref <- Signal.initRef("#00ff00")
             yield UI.div(
@@ -224,11 +224,11 @@ class PickerInputTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "C:#00ff00")
                 _ <- Browser.fill(Selector.id("c"), "#0000ff")
                 _ <- Browser.assertText(Selector.id("v"), "C:#0000ff")
-            yield succeed
+            yield ()
         }
     }
 
-    "color disabled signal toggle" in run {
+    "color disabled signal toggle" in {
         val app: UI < Async =
             for
                 disabled <- Signal.initRef(true)
@@ -243,19 +243,19 @@ class PickerInputTest extends UITest:
                 _ <- Browser.assertDisabled(Selector.id("c"))
                 _ <- Browser.click(Selector.id("en"))
                 _ <- Browser.assertEnabled(Selector.id("c"))
-            yield succeed
+            yield ()
         }
     }
 
-    "date value initial" in run {
+    "date value initial" in {
         withUI(UI.div(UI.dateInput.value("2024-01-15").id("d"))) {
-            Browser.assertAttribute(Selector.id("d"), "value", "2024-01-15").andThen(succeed)
+            Browser.assertAttribute(Selector.id("d"), "value", "2024-01-15").unit
         }
     }
 
-    "time value initial" in run {
+    "time value initial" in {
         withUI(UI.div(UI.timeInput.value("14:30").id("t"))) {
-            Browser.assertAttribute(Selector.id("t"), "value", "14:30").andThen(succeed)
+            Browser.assertAttribute(Selector.id("t"), "value", "14:30").unit
         }
     }
 

@@ -2,7 +2,7 @@ package kyo
 
 import kyo.UI.Ast.*
 
-class SvgTest extends Test:
+class SvgTest extends kyo.test.Test[Any]:
 
     // circle factory builds a Circle
     "circle factory stores cx/cy/r in svgAttrs" in {

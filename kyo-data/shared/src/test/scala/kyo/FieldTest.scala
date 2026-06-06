@@ -2,7 +2,7 @@ package kyo
 
 import Record.*
 
-class FieldTest extends Test:
+class FieldTest extends kyo.test.Test[Any]:
 
     "apply with ConstValue and Tag" in {
         val f = Field["name", String]

@@ -13,7 +13,7 @@ import scala.language.implicitConversions
   * (Block, Inline, Text, Svg.Root) and their reactive/foreach/fragment wrappers are accepted.
   * SVG containers enforce the `SvgElement`-bounded equivalents on the SVG side.
   */
-class UIContentModelTest extends Test:
+class UIContentModelTest extends kyo.test.Test[Any]:
 
     private def renderHtml(ui: UI)(using Frame): String < Sync =
         HtmlRenderer.render(ui, Seq.empty)
@@ -23,7 +23,7 @@ class UIContentModelTest extends Test:
     private def flag(b: Boolean): Boolean = b
 
     // existing HTML children still compile and render correctly (no regression)
-    "existing HTML children compile and render (no regression)" in run {
+    "existing HTML children compile and render (no regression)" in {
         val sig    = Signal.initConst(Chunk("a", "b"))
         val cond   = Signal.initConst(true)
         val ui: UI = UI.div(UI.span("a"), UI.p("b"), UI.when(cond)(UI.span("c")), sig.foreach(x => UI.li(x)))
@@ -80,7 +80,7 @@ class UIContentModelTest extends Test:
     }
 
     // foreach over HtmlContent renders inside a div
-    "foreach producing HtmlContent renders inside a div" in run {
+    "foreach producing HtmlContent renders inside a div" in {
         val sig    = Signal.initConst(Chunk("x", "y"))
         val fe     = sig.foreach(x => UI.li(x))
         val ui     = UI.ul(fe)
@@ -169,12 +169,12 @@ class UIContentModelTest extends Test:
     // direct container child, so the common "render this element or render nothing" pattern
     // compiles and renders nothing for the empty branch. `flag` returns a non-constant `Boolean`
     // so the if/else genuinely forms the union type rather than constant-folding to a single branch.
-    "if/else UI.empty compiles as a direct div child and renders the element" in run {
+    "if/else UI.empty compiles as a direct div child and renders the element" in {
         val ui = UI.div(if flag(true) then UI.span("x").id("x") else UI.empty)
         renderHtml(ui).map(html => assert(html.contains("<span") && html.contains(">x<")))
     }
 
-    "if/else UI.empty renders nothing for the empty branch" in run {
+    "if/else UI.empty renders nothing for the empty branch" in {
         val ui = UI.div(if flag(false) then UI.span("x").id("x") else UI.empty)
         renderHtml(ui).map(html => assert(!html.contains("<span")))
     }
@@ -183,7 +183,7 @@ class UIContentModelTest extends Test:
     // because `render`'s `C` is inferred independently of the container (it would otherwise widen
     // to `UI`, which has no `AsHtmlChild`). With `render[Elem | Fragment[Nothing]]` the emptyOr
     // given resolves and the element-or-nothing body compiles.
-    "signal.render[union] body with else UI.empty compiles and renders the element" in run {
+    "signal.render[union] body with else UI.empty compiles and renders the element" in {
         val sig = Signal.initConst(true)
         val ui  = UI.div(sig.render[SpanElement | Fragment[Nothing]](b => if b then UI.span("y").id("y") else UI.empty))
         renderHtml(ui).map(html => assert(html.contains("<span")))
@@ -192,7 +192,7 @@ class UIContentModelTest extends Test:
     // The genuinely-reactive "show this element while the signal is true, else nothing" form is
     // `UI.when(signal)(element)`: `when` renders the element when true and `UI.empty` (nothing)
     // otherwise, so no `else UI.empty` union is needed at the call site.
-    "UI.when(signal)(element) renders the element and nothing otherwise" in run {
+    "UI.when(signal)(element) renders the element and nothing otherwise" in {
         val sig = Signal.initConst(true)
         val ui  = UI.div(UI.when(sig)(UI.span("z").id("z")))
         renderHtml(ui).map(html => assert(html.contains("<span")))

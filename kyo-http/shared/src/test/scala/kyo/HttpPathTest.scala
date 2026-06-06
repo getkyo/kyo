@@ -3,7 +3,7 @@ package kyo
 import kyo.*
 import scala.language.implicitConversions
 
-class HttpPathTest extends Test:
+class HttpPathTest extends BaseHttpTest:
 
     import HttpPath.*
 

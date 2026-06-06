@@ -7,19 +7,19 @@ import kyo.doctest.*
   *
   * These tests use fixture 09-per-readme-defaults.md.
   */
-class DefaultsParserTest extends Test:
+class DefaultsParserTest extends kyo.test.Test[Any]:
 
     private val dummyFile: kyo.Path = kyo.Path("test.md")
 
     // Helper: load a fixture file as a kyo.Path.
     // getResource returns a java.net.URL; we convert to a filesystem path via URI.getPath.
-    private def fixturePath(name: String): kyo.Path =
+    private def fixturePath(name: String)(using kyo.test.AssertScope): kyo.Path =
         val url = getClass.getResource(s"/parser-fixtures/$name")
         assert(url != null, s"fixture file not found: $name")
         kyo.Path(url.toURI.getPath)
     end fixturePath
 
-    "per-README defaults block applies expect=runs and scope=inherited to subsequent blocks" in run {
+    "per-README defaults block applies expect=runs and scope=inherited to subsequent blocks" in {
         val path = fixturePath("09-per-readme-defaults.md")
         Abort.run(MarkdownParser.parse(path)).map {
             case Result.Success(blocks) =>
@@ -35,7 +35,7 @@ class DefaultsParserTest extends Test:
         }
     }
 
-    "per-block scope=isolated overrides per-README default scope=inherited" in run {
+    "per-block scope=isolated overrides per-README default scope=inherited" in {
         val path = fixturePath("09-per-readme-defaults.md")
         Abort.run(MarkdownParser.parse(path)).map {
             case Result.Success(blocks) =>
@@ -53,7 +53,7 @@ class DefaultsParserTest extends Test:
     }
 
     // Additional: DefaultsParser.parse returns empty modifiers when no defaults block is present
-    "DefaultsParser.parse returns empty modifiers when no defaults block is present" in run {
+    "DefaultsParser.parse returns empty modifiers when no defaults block is present" in {
         val content = "# Just a heading\n\nSome prose.\n"
         Abort.run(DefaultsParser.parse(content, dummyFile)).map {
             case Result.Success(mods) =>
@@ -66,7 +66,7 @@ class DefaultsParserTest extends Test:
     }
 
     // Additional: DefaultsParser.parse handles a single-line defaults block
-    "DefaultsParser.parse handles single-line defaults block" in run {
+    "DefaultsParser.parse handles single-line defaults block" in {
         val content = "<!-- doctest:default expect=runs -->\n\n# Content\n"
         Abort.run(DefaultsParser.parse(content, dummyFile)).map {
             case Result.Success(mods) =>

@@ -3,7 +3,7 @@ package kyo
 import kyo.*
 import scala.language.implicitConversions
 
-class HttpClientTest extends Test:
+class HttpClientTest extends BaseHttpTest:
 
     import HttpPath.*
 
@@ -13,8 +13,8 @@ class HttpClientTest extends Test:
     val client = internal.HttpTestPlatformBackend.client
 
     private def tlsTest(handlers: Seq[HttpHandler[?, ?, ?]])(
-        test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
-    )(using Frame): Assertion < (Async & Abort[Any] & Scope) =
+        test: kyo.test.AssertScope ?=> HttpUrl => Unit < (Async & Abort[Any] & Scope)
+    )(using Frame, kyo.test.AssertScope): Unit < (Async & Abort[Any] & Scope) =
         initTrustAllClient().map { httpClient =>
             HttpServer.init(
                 HttpServerConfig.default.port(0).host("localhost").tls(internal.HttpTestPlatformBackend.serverTlsConfig)
@@ -26,9 +26,9 @@ class HttpClientTest extends Test:
         }
 
     def runServer(handlers: HttpHandler[?, ?, ?]*)(
-        test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
+        test: kyo.test.AssertScope ?=> HttpUrl => Unit < (Async & Abort[Any] & Scope)
     )(using Frame): Unit =
-        "plain" in runNotNative {
+        "plain".notNative in {
             initTrustAllClient().map { httpClient =>
                 HttpServer.init(0, "localhost")(handlers*).map(s =>
                     HttpClient.let(httpClient) {
@@ -37,15 +37,15 @@ class HttpClientTest extends Test:
                 )
             }
         }
-        "tls" in runNotNative {
+        "tls".notNative in {
             tlsTest(handlers)(test)
         }
     end runServer
 
     def runServerJvmTls(handlers: HttpHandler[?, ?, ?]*)(
-        test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
+        test: kyo.test.AssertScope ?=> HttpUrl => Unit < (Async & Abort[Any] & Scope)
     )(using Frame): Unit =
-        "plain" in runNotNative {
+        "plain".notNative in {
             initTrustAllClient().map { httpClient =>
                 HttpServer.init(0, "localhost")(handlers*).map(s =>
                     HttpClient.let(httpClient) {
@@ -54,14 +54,14 @@ class HttpClientTest extends Test:
                 )
             }
         }
-        "tls" in runJVM {
+        "tls".onlyJvm in {
             tlsTest(handlers)(test)
         }
     end runServerJvmTls
 
     def withServer(handlers: HttpHandler[?, ?, ?]*)(
-        test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
-    )(using Frame): Assertion < (Scope & Async & Abort[Any]) =
+        test: kyo.test.AssertScope ?=> HttpUrl => Unit < (Async & Abort[Any] & Scope)
+    )(using Frame, kyo.test.AssertScope): Unit < (Scope & Async & Abort[Any]) =
         initTrustAllClient().map { httpClient =>
             HttpServer.init(0, "localhost")(handlers*).map(s =>
                 HttpClient.let(httpClient) {
@@ -84,12 +84,14 @@ class HttpClientTest extends Test:
         }
 
     def withClient[A, S](f: HttpClient => A < (S & Async & Abort[HttpException]))(using
-        Frame
+        Frame,
+        kyo.test.AssertScope
     ): A < (S & Async & Abort[HttpException] & Scope) =
         initTrustAllClient().map(f)
 
     def withClient[A, S](maxConnectionsPerHost: Int)(f: HttpClient => A < (S & Async & Abort[HttpException]))(using
-        Frame
+        Frame,
+        kyo.test.AssertScope
     ): A < (S & Async & Abort[HttpException] & Scope) =
         initTrustAllClient(maxConnectionsPerHost).map(f)
 
@@ -116,25 +118,25 @@ class HttpClientTest extends Test:
         }
 
         "negative maxRedirects throws" in {
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 HttpClientConfig(maxRedirects = -1)
             }
         }
 
         "zero timeout throws" in {
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 HttpClientConfig(timeout = Duration.Zero)
             }
         }
 
         "zero connectTimeout throws" in {
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 HttpClientConfig(connectTimeout = Duration.Zero)
             }
         }
 
         "maxConnectionsPerHost must be positive" in {
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 HttpClient.initUnscoped(maxConnectionsPerHost = 0)
             }
         }
@@ -792,7 +794,7 @@ class HttpClientTest extends Test:
                         ).map {
                             case Result.Failure(_: HttpRedirectLoopException) =>
                                 called = true
-                                succeed
+                                ()
                             case other => fail(s"Expected TooManyRedirects, got $other")
                         }
                     }
@@ -913,7 +915,7 @@ class HttpClientTest extends Test:
 
     "retry" - {
 
-        "on server error" in runNotNative {
+        "on server error".notNative in {
             var attempts = 0
             val route    = HttpRoute.getRaw("flaky").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -937,7 +939,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "no retry on client error" in runNotNative {
+        "no retry on client error".notNative in {
             var attempts = 0
             val route    = HttpRoute.getRaw("bad").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -959,7 +961,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "no retry after success" in runNotNative {
+        "no retry after success".notNative in {
             var attempts = 0
             val route    = HttpRoute.getRaw("ok").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -981,7 +983,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "custom predicate" in runNotNative {
+        "custom predicate".notNative in {
             var attempts = 0
             val route    = HttpRoute.getRaw("custom").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -1010,7 +1012,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "exponential backoff" in runNotNative {
+        "exponential backoff".notNative in {
             var attempts   = 0
             var timestamps = List.empty[Long]
             val route      = HttpRoute.getRaw("slow").response(_.bodyText)
@@ -1039,7 +1041,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "retry after redirect to flaky endpoint" in runNotNative {
+        "retry after redirect to flaky endpoint".notNative in {
             var attempts   = 0
             val flakyRoute = HttpRoute.getRaw("flaky").response(_.bodyText)
             val flakyEp = flakyRoute.handler { _ =>
@@ -1067,7 +1069,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "retry gets redirect then succeeds" in runNotNative {
+        "retry gets redirect then succeeds".notNative in {
             var attempts    = 0
             val route       = HttpRoute.getRaw("ep").response(_.bodyText)
             val targetRoute = HttpRoute.getRaw("target").response(_.bodyText)
@@ -1095,7 +1097,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "connection error aborts without retry" in runNotNative {
+        "connection error aborts without retry".notNative in {
             // Connection errors propagate immediately — retryOn only checks HTTP status
             val route = HttpRoute.getRaw("unreachable").response(_.bodyText)
             HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.fixed(1.millis).take(3)))) {
@@ -1108,7 +1110,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "exhausted returns last response" in runNotNative {
+        "exhausted returns last response".notNative in {
             var attempts = 0
             val route    = HttpRoute.getRaw("fail").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -1147,8 +1149,9 @@ class HttpClientTest extends Test:
                         Abort.run[HttpException](
                             client.sendWith(route, request)(identity)
                         ).map {
-                            case Result.Failure(_: HttpTimeoutException) => succeed
-                            case other                                   => fail(s"Expected TimeoutError, got $other")
+                            case Result.Failure(_: HttpTimeoutException) =>
+                                succeed("expected: request timed out with HttpTimeoutException")
+                            case other => fail(s"Expected TimeoutError, got $other")
                         }
                     }
                 }
@@ -1174,7 +1177,7 @@ class HttpClientTest extends Test:
                                 ).map {
                                     case Result.Failure(_: HttpPoolExhaustedException) =>
                                         called = true
-                                        succeed
+                                        ()
                                     case other => fail(s"Expected ConnectionPoolExhausted, got $other")
                                 }
                             }
@@ -1184,7 +1187,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "works after error responses" in runNotNative {
+        "works after error responses".notNative in {
             var count = 0
             val route = HttpRoute.getRaw("maybe").response(_.bodyText)
             val ep = route.handler { _ =>
@@ -1275,7 +1278,7 @@ class HttpClientTest extends Test:
                     s"Bodies: ${results.map(_.fields.body)}"
                 ))
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
         }
 
@@ -1310,7 +1313,7 @@ class HttpClientTest extends Test:
                     }
                 yield assert(result.status == HttpStatus.OK && result.fields.body == "buffered"))
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
         }
 
@@ -1318,9 +1321,9 @@ class HttpClientTest extends Test:
 
     "close" - {
 
-        "idempotent" in runNotNative {
+        "idempotent".notNative in {
             initTrustAllClient().map { c =>
-                c.closeNow.andThen(c.closeNow).andThen(succeed)
+                c.closeNow.andThen(c.closeNow).map(_ => succeed("runs without error: double-close is safe"))
             }
         }
     }
@@ -1416,7 +1419,7 @@ class HttpClientTest extends Test:
                     }
                 yield assert(successes + poolExhausted == size * 3 && successes > 0))
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
         }
 
@@ -1442,7 +1445,7 @@ class HttpClientTest extends Test:
                     results <- Kyo.foreach(fibers)(_.get)
                 yield assert(results.forall(_.status == HttpStatus.OK)))
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
         }
 
@@ -1478,7 +1481,7 @@ class HttpClientTest extends Test:
                     }
                 yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
         }
 
@@ -1530,7 +1533,7 @@ class HttpClientTest extends Test:
                     assert(streamData.forall(_.contains("chunk1")))
                 )
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
         }
 
@@ -1576,7 +1579,7 @@ class HttpClientTest extends Test:
                     results <- Kyo.foreach(fibers)(_.get)
                 yield assert(results.forall { (i, body) => body.contains(s"marker-$i") }))
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
         }
     }
@@ -1584,13 +1587,13 @@ class HttpClientTest extends Test:
     "maxContentLength" - {
 
         def withServerConfig[A, S](config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(
-            test: HttpUrl => A < (S & Async & Abort[HttpException])
-        )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
+            test: kyo.test.AssertScope ?=> HttpUrl => A < (S & Async & Abort[HttpException])
+        )(using Frame, kyo.test.AssertScope): A < (S & Async & Scope & Abort[HttpException]) =
             HttpServer.init(config)(handlers*).map(s =>
                 test(HttpUrl.parse(s"http://localhost:${s.port}").getOrThrow)
             )
 
-        "accepts body within limit" in runNotNative {
+        "accepts body within limit".notNative in {
             val route = HttpRoute.postRaw("data")
                 .request(_.bodyBinary)
                 .response(_.bodyText)
@@ -1604,7 +1607,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "rejects body exceeding limit with 413" in runNotNative {
+        "rejects body exceeding limit with 413".notNative in {
             val route = HttpRoute.postRaw("data")
                 .request(_.bodyBinary)
                 .response(_.bodyText)
@@ -1618,7 +1621,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "exact boundary: body equal to limit succeeds" in runNotNative {
+        "exact boundary: body equal to limit succeeds".notNative in {
             val route = HttpRoute.postRaw("data")
                 .request(_.bodyBinary)
                 .response(_.bodyText)
@@ -1632,7 +1635,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "one byte over limit gets 413" in runNotNative {
+        "one byte over limit gets 413".notNative in {
             val route = HttpRoute.postRaw("data")
                 .request(_.bodyBinary)
                 .response(_.bodyText)
@@ -1646,7 +1649,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "empty body always succeeds" in runNotNative {
+        "empty body always succeeds".notNative in {
             val route  = HttpRoute.getRaw("data").response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
             val config = HttpServerConfig.default.port(0).host("localhost").maxContentLength(1)
@@ -1657,7 +1660,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "server still works after rejecting oversized request" in runNotNative {
+        "server still works after rejecting oversized request".notNative in {
             val route = HttpRoute.postRaw("data")
                 .request(_.bodyText)
                 .response(_.bodyText)
@@ -1812,8 +1815,8 @@ class HttpClientTest extends Test:
                                 assert(resp.status == HttpStatus.OK)
                                 // Stream should either deliver partial data or error, but not hang
                                 Abort.run[Throwable](Abort.catching[Throwable] {
-                                    resp.fields.body.run.map { _ => succeed }
-                                }).map(_ => succeed)
+                                    resp.fields.body.run.map { _ => () }
+                                }).map(_ => ())
                             }
                         }
                     }
@@ -1821,14 +1824,16 @@ class HttpClientTest extends Test:
             }
         }
 
-        "buffered response: connection error is classified as HttpException" in runNotNative {
+        "buffered response: connection error is classified as HttpException".notNative in {
             val route = HttpRoute.getRaw("test").response(_.bodyText)
             Abort.run[HttpException] {
                 send(HttpUrl(Present("http"), "localhost", 1, "/", Absent), route, HttpRequest.getRaw(HttpUrl.fromUri("/test")))
             }.map { result =>
                 result match
-                    case Result.Failure(e: HttpConnectException) => succeed
-                    case other                                   => fail(s"Expected ConnectionError but got $other")
+                    case Result.Failure(e: HttpConnectException) =>
+                        // connection refused: the typed failure carries the target host and port
+                        assert(e.host == "localhost" && e.port == 1)
+                    case other => fail(s"Expected ConnectionError but got $other")
             }
         }
 
@@ -1864,7 +1869,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "client close while requests in-flight" in runNotNative {
+        "client close while requests in-flight".notNative in {
             val slowRoute = HttpRoute.getRaw("slow-close").response(_.bodyText)
             // Handler blocks forever — cancelled when client closes
             val slowEp = slowRoute.handler(_ => Latch.init(1).map(_.await).andThen(HttpResponse.ok("late")))
@@ -1891,7 +1896,7 @@ class HttpClientTest extends Test:
                     // All fibers must complete (success or failure), not hang
                     assert(results.size == size))
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
         }
     }
@@ -2483,7 +2488,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "invalid URL returns ParseError" in runNotNative {
+        "invalid URL returns ParseError".notNative in {
             HttpClient.withConfig(noTimeout) {
                 Abort.run(HttpClient.getText("not a valid url")).map { result =>
                     assert(result.isFailure)
@@ -2535,7 +2540,7 @@ class HttpClientTest extends Test:
 
     "config stacking" - {
 
-        "nested withConfig composes" in runNotNative {
+        "nested withConfig composes".notNative in {
             val route    = HttpRoute.getRaw("stack").response(_.bodyText)
             var attempts = 0
             val ep = route.handler { _ =>
@@ -2559,7 +2564,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "withConfig transform preserves untouched fields" in runNotNative {
+        "withConfig transform preserves untouched fields".notNative in {
             val base = HttpUrl(Present("http"), "localhost", 1234, "/", Absent)
             val config = noTimeout.copy(
                 baseUrl = Present(base),
@@ -2571,7 +2576,7 @@ class HttpClientTest extends Test:
                     HttpClient.use { _ =>
                         // Can't directly read config from outside, but we can verify
                         // the transform API compiles and works by checking behavior
-                        succeed
+                        succeed("compile and runtime check: nested withConfig transforms compose without error")
                     }
                 }
             }
@@ -2580,7 +2585,7 @@ class HttpClientTest extends Test:
 
     "pump pipeline" - {
 
-        "buffered GET response with large body" in runNotNative {
+        "buffered GET response with large body".notNative in {
             val body100k = "A" * (100 * 1024) // 100KB
             val route    = HttpRoute.getRaw("pump-large-get").response(_.bodyText)
             val ep       = route.handler(_ => HttpResponse.ok(body100k))
@@ -2598,7 +2603,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "buffered POST with request body" in runNotNative {
+        "buffered POST with request body".notNative in {
             val route = HttpRoute.postRaw("pump-echo")
                 .request(_.bodyJson[User])
                 .response(_.bodyJson[User])
@@ -2620,7 +2625,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "streaming response (chunked)" in runNotNative {
+        "streaming response (chunked)".notNative in {
             val route = HttpRoute.getRaw("pump-stream").response(_.bodyStream)
             val ep = route.handler { _ =>
                 val chunks = Stream.init(Seq(
@@ -2651,7 +2656,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "connection pool reuse" in runNotNative {
+        "connection pool reuse".notNative in {
             val route = HttpRoute.getRaw("pump-reuse").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("reused"))
             withServer(ep) { url =>
@@ -2680,7 +2685,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "error response decoding (4xx)" in runNotNative {
+        "error response decoding (4xx)".notNative in {
             val route = HttpRoute.getRaw("pump-notfound").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.notFound.addField("body", "no such item"))
             withServer(ep) { url =>
@@ -2696,7 +2701,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "error response decoding (5xx)" in runNotNative {
+        "error response decoding (5xx)".notNative in {
             val route = HttpRoute.getRaw("pump-error").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.serverError.addField("body", "internal failure"))
             withServer(ep) { url =>
@@ -2712,7 +2717,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "concurrent requests to same host" in runNotNative {
+        "concurrent requests to same host".notNative in {
             val route = HttpRoute.getRaw("pump-parallel").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("parallel-ok"))
             withServer(ep) { url =>
@@ -2731,7 +2736,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "request with custom headers" in runNotNative {
+        "request with custom headers".notNative in {
             val route = HttpRoute.getRaw("pump-headers")
                 .request(_.header[String]("X-Custom-In"))
                 .response(_.header[String]("X-Custom-Out").bodyText)
@@ -2755,7 +2760,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "response header parsing" in runNotNative {
+        "response header parsing".notNative in {
             val route = HttpRoute.getRaw("pump-multi-header")
                 .response(_.header[String]("X-First").header[String]("X-Second").bodyText)
             val ep = route.handler { _ =>
@@ -3363,7 +3368,7 @@ class HttpClientTest extends Test:
             runServer(ep) { url =>
                 HttpClient.withConfig(noTimeout) {
                     HttpClient.postUnit(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/unit-post", "data").map { _ =>
-                        succeed
+                        succeed("runs without error: postUnit completes on 200")
                     }
                 }
             }
@@ -3375,7 +3380,7 @@ class HttpClientTest extends Test:
             runServer(ep) { url =>
                 HttpClient.withConfig(noTimeout) {
                     HttpClient.postUnit(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/unit-post-204", "data").map { _ =>
-                        succeed
+                        succeed("runs without error: postUnit completes on 204")
                     }
                 }
             }
@@ -3404,7 +3409,7 @@ class HttpClientTest extends Test:
             runServer(ep) { url =>
                 HttpClient.withConfig(noTimeout) {
                     HttpClient.deleteUnit(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/unit-delete").map { _ =>
-                        succeed
+                        succeed("runs without error: deleteUnit completes on 200")
                     }
                 }
             }
@@ -3433,7 +3438,7 @@ class HttpClientTest extends Test:
             runServer(ep) { url =>
                 HttpClient.withConfig(noTimeout) {
                     HttpClient.putUnit(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/unit-put", "data").map { _ =>
-                        succeed
+                        succeed("runs without error: putUnit completes on 200")
                     }
                 }
             }
@@ -3445,7 +3450,7 @@ class HttpClientTest extends Test:
             runServer(ep) { url =>
                 HttpClient.withConfig(noTimeout) {
                     HttpClient.patchUnit(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/unit-patch", "fix").map { _ =>
-                        succeed
+                        succeed("runs without error: patchUnit completes on 200")
                     }
                 }
             }
@@ -3490,7 +3495,6 @@ class HttpClientTest extends Test:
                             assert(conn != null)
                             assert(conn.read != null)
                             assert(conn.write != null)
-                            succeed
                         case Result.Failure(e) =>
                             fail(s"Expected success, got failure: $e")
                         case Result.Panic(t) =>
@@ -3528,7 +3532,7 @@ class HttpClientTest extends Test:
                 val customVal = req.headers.get("X-Custom-Header").getOrElse("missing")
                 HttpResponse.ok.addField("body", customVal)
             }
-            "plain" in runNotNative {
+            "plain".notNative in {
                 withServer(ep) { url =>
                     HttpClient.withConfig(noTimeout) {
                         // Use the low-level client to verify the header was sent
@@ -3563,7 +3567,7 @@ class HttpClientTest extends Test:
                 // Echo back the received body
                 HttpResponse.ok.addField("body", req.fields.body)
             }
-            "plain" in runNotNative {
+            "plain".notNative in {
                 withServer(ep) { url =>
                     HttpClient.withConfig(noTimeout) {
                         val rawUrl = url.copy(path = "/raw-body")
@@ -3606,7 +3610,7 @@ class HttpClientTest extends Test:
                         )
                     }.map { _ =>
                         // If we get here without error, the scope cleaned up successfully
-                        succeed
+                        succeed("runs without error: connectRaw connection closes when scope exits")
                     }
                 }
             }
@@ -3629,7 +3633,7 @@ class HttpClientTest extends Test:
                         conn.read.take(1).run.map { chunks =>
                             // Either we got some bytes or the stream completed (empty).
                             // Both are valid for a normal HTTP response.
-                            succeed
+                            assert(chunks != null) // read stream is accessible after connectRaw
                         }
                     }
                 }

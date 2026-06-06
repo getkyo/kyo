@@ -4,7 +4,7 @@ import java.util.concurrent.Flow.*
 import kyo.*
 import kyo.interop.flow.StreamSubscriber.EmitStrategy
 
-final class FromPublisherTest extends Test:
+final class FromPublisherTest extends kyo.test.Test[Any]:
     import FromPublisherTest.*
 
     private def simplePublisher(size: Int): Publisher[Int] =
@@ -50,7 +50,7 @@ final class FromPublisherTest extends Test:
                     override def cancel(): Unit = ())
             end subscribe
 
-    "fromPublisher with Eager strategy" in run {
+    "fromPublisher with Eager strategy" in {
         val publisher = simplePublisher(StreamLength)
         for
             stream  <- fromPublisher(publisher, BufferSize, EmitStrategy.Eager)
@@ -59,7 +59,7 @@ final class FromPublisherTest extends Test:
         end for
     }
 
-    "fromPublisher with Buffer strategy" in run {
+    "fromPublisher with Buffer strategy" in {
         val publisher = simplePublisher(StreamLength)
         for
             stream  <- fromPublisher(publisher, BufferSize, EmitStrategy.Buffer)
@@ -68,7 +68,7 @@ final class FromPublisherTest extends Test:
         end for
     }
 
-    "fromPublisher should propagate errors" in run {
+    "fromPublisher should propagate errors" in {
         val publisher = failingPublisher(5, TestError)
         for
             stream <- fromPublisher(publisher, BufferSize)
@@ -78,7 +78,7 @@ final class FromPublisherTest extends Test:
         end for
     }
 
-    "fromPublisher should handle immediate completion" in run {
+    "fromPublisher should handle immediate completion" in {
         val publisher = simplePublisher(0)
         for
             stream  <- fromPublisher(publisher, BufferSize)
@@ -87,7 +87,7 @@ final class FromPublisherTest extends Test:
         end for
     }
 
-    "fromPublisher should handle immediate error" in run {
+    "fromPublisher should handle immediate error" in {
         val publisher = failingPublisher(0, TestError)
         for
             stream <- fromPublisher(publisher, BufferSize)
@@ -97,7 +97,7 @@ final class FromPublisherTest extends Test:
         end for
     }
 
-    "fromPublisher should preserve element order" in run {
+    "fromPublisher should preserve element order" in {
         val publisher = simplePublisher(StreamLength)
         for
             stream <- fromPublisher(publisher, BufferSize)

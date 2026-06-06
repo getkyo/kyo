@@ -3,11 +3,11 @@ package kyo
 import scala.util.Failure
 import scala.util.Success
 
-class ConstructorsTest extends Test:
+class ConstructorsTest extends kyo.test.Test[Any]:
 
     "Kyo constructors" - {
         "emit" - {
-            "should emit a value" in run {
+            "should emit a value" in {
                 val effect =
                     for
                         _ <- Kyo.emit(1)
@@ -20,7 +20,7 @@ class ConstructorsTest extends Test:
         }
 
         "poll" - {
-            "should poll a value" in run {
+            "should poll a value" in {
                 val effect =
                     for
                         v1 <- Kyo.poll[Int]
@@ -106,7 +106,7 @@ class ConstructorsTest extends Test:
         }
 
         "logInfo" - {
-            "should log an informational message" in run {
+            "should log an informational message" in {
                 val effect = Kyo.logInfo("Info message")
                 effect.map { result =>
                     assert(result == ())
@@ -115,7 +115,7 @@ class ConstructorsTest extends Test:
         }
 
         "logWarn" - {
-            "should log a warning message" in run {
+            "should log a warning message" in {
                 val effect = Kyo.logWarn("Warning message")
                 effect.map { result =>
                     assert(result == ())
@@ -124,7 +124,7 @@ class ConstructorsTest extends Test:
         }
 
         "logDebug" - {
-            "should log a debug message" in run {
+            "should log a debug message" in {
                 val effect = Kyo.logDebug("Debug message")
                 effect.map { result =>
                     assert(result == ())
@@ -133,7 +133,7 @@ class ConstructorsTest extends Test:
         }
 
         "logError" - {
-            "should log an error message" in run {
+            "should log an error message" in {
                 val effect = Kyo.logError("Error message")
                 effect.map { result =>
                     assert(result == ())
@@ -142,7 +142,7 @@ class ConstructorsTest extends Test:
         }
 
         "logTrace" - {
-            "should log a trace message" in run {
+            "should log a trace message" in {
                 val effect = Kyo.logTrace("Trace message")
                 effect.map { result =>
                     assert(result == ())
@@ -151,7 +151,7 @@ class ConstructorsTest extends Test:
         }
 
         "suspend" - {
-            "should suspend an effect using Sync" in run {
+            "should suspend an effect using Sync" in {
                 var executed = false
                 val effect = Kyo.defer {
                     executed = true
@@ -166,14 +166,14 @@ class ConstructorsTest extends Test:
         }
 
         "foreachPar" - {
-            "should apply a function to each element in parallel" in run {
+            "should apply a function to each element in parallel" in {
                 val input  = Seq(1, 2, 3, 4, 5)
                 val result = Kyo.foreachPar(input)(x => Async.sleep(1.millis).andThen(x * 2))
                 result.map { r =>
                     assert(r == Seq(2, 4, 6, 8, 10))
                 }
             }
-            "should support context effects" in run {
+            "should support context effects" in {
                 val input  = Seq(1, 2, 3, 4, 5)
                 val result = Kyo.foreachPar(input)(x => Env.use[Int](d => Async.sleep(d.millis)).andThen(x * 2))
                 Env.run(1) {
@@ -185,7 +185,7 @@ class ConstructorsTest extends Test:
         }
 
         "foreachParDiscard" - {
-            "should apply a function to each element in parallel and discard the results" in run {
+            "should apply a function to each element in parallel and discard the results" in {
                 val input = Seq(1, 2, 3, 4, 5)
                 AtomicInt.init(0).map { counter =>
                     Kyo.foreachParDiscard(input) { x =>
@@ -197,7 +197,7 @@ class ConstructorsTest extends Test:
                     }
                 }
             }
-            "should support context effects" in run {
+            "should support context effects" in {
                 val input = Seq(1, 2, 3, 4, 5)
                 Env.run(1) {
                     AtomicInt.init(0).map { counter =>

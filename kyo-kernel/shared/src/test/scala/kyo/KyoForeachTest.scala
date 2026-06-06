@@ -1,6 +1,5 @@
 package kyo
 
-import Tagged.*
 import kyo.kernel.*
 import scala.annotation.tailrec
 

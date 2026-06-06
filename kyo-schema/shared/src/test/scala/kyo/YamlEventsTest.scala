@@ -1,6 +1,6 @@
 package kyo
 
-class YamlEventsTest extends Test:
+class YamlEventsTest extends kyo.test.Test[Any]:
 
     import YamlEventsTest.*
 
@@ -238,7 +238,7 @@ class YamlEventsTest extends Test:
                         case other => fail(s"Expected profile mapping, got $other")
                     end match
                     entries(1) match
-                        case (Yaml.Node.Scalar("again", _), Yaml.Node.Alias(Yaml.Anchor("name"), _)) => succeed
+                        case (Yaml.Node.Scalar("again", _), Yaml.Node.Alias(Yaml.Anchor("name"), _)) => ()
                         case other => fail(s"Expected alias entry, got $other")
                     end match
                 case other => fail(s"Expected mapping, got $other")

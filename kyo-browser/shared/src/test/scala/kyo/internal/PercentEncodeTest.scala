@@ -5,7 +5,7 @@ package kyo.internal
   * Verifies the ASCII unreserved pass-through plus the non-ASCII (`>= 0x80`) UTF-8 multi-byte percent-encoding path. The encoder feeds
   * `data:` URLs so a regression that misencodes high-byte sequences would corrupt every non-ASCII page literal.
   */
-class PercentEncodeTest extends kyo.Test:
+class PercentEncodeTest extends kyo.BaseBrowserTest:
 
     "PercentEncode" - {
 

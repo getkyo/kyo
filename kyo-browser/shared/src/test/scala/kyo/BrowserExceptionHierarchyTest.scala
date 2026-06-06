@@ -1,44 +1,44 @@
 package kyo
 
-class BrowserExceptionHierarchyTest extends Test:
+class BrowserExceptionHierarchyTest extends BaseBrowserTest:
 
     // ---- Read-row topical-category pins ----
 
     "BrowserConnectionLostException extends BrowserConnectionException with BrowserReadException" in {
         discard(summon[BrowserConnectionLostException <:< BrowserConnectionException])
         discard(summon[BrowserConnectionLostException <:< BrowserReadException])
-        succeed
+        succeed("BrowserConnectionLostException is a BrowserConnectionException and a BrowserReadException")
     }
 
     "BrowserProtocolErrorException extends BrowserConnectionException with BrowserReadException" in {
         discard(summon[BrowserProtocolErrorException <:< BrowserConnectionException])
         discard(summon[BrowserProtocolErrorException <:< BrowserReadException])
-        succeed
+        succeed("BrowserProtocolErrorException is a BrowserConnectionException and a BrowserReadException")
     }
 
     "BrowserIFrameInvalidException extends BrowserIFrameException with BrowserReadException" in {
         discard(summon[BrowserIFrameInvalidException <:< BrowserIFrameException])
         discard(summon[BrowserIFrameInvalidException <:< BrowserReadException])
-        succeed
+        succeed("BrowserIFrameInvalidException is a BrowserIFrameException and a BrowserReadException")
     }
 
     "BrowserNavigationFailedException extends BrowserNavigationException with BrowserReadException" in {
         discard(summon[BrowserNavigationFailedException <:< BrowserNavigationException])
         discard(summon[BrowserNavigationFailedException <:< BrowserReadException])
-        succeed
+        succeed("BrowserNavigationFailedException is a BrowserNavigationException and a BrowserReadException")
     }
 
     "BrowserScriptErrorException extends BrowserScriptException with BrowserReadException" in {
         discard(summon[BrowserScriptErrorException <:< BrowserScriptException])
         discard(summon[BrowserScriptErrorException <:< BrowserReadException])
-        succeed
+        succeed("BrowserScriptErrorException is a BrowserScriptException and a BrowserReadException")
     }
 
     // ---- BrowserDecodingException folds directly into the read row ----
 
     "BrowserDecodingException extends BrowserReadException" in {
         discard(summon[BrowserDecodingException <:< BrowserReadException])
-        succeed
+        succeed("BrowserDecodingException is a BrowserReadException")
     }
 
     // ---- element-not-found is element + mutation + assertion ----
@@ -47,7 +47,7 @@ class BrowserExceptionHierarchyTest extends Test:
         discard(summon[BrowserElementNotFoundException <:< BrowserElementException])
         discard(summon[BrowserElementNotFoundException <:< BrowserMutationException])
         discard(summon[BrowserElementNotFoundException <:< BrowserAssertionException])
-        succeed
+        succeed("BrowserElementNotFoundException is an element, mutation, and assertion exception")
     }
 
     // ---- element-not-actionable is mutation only ----
@@ -55,7 +55,7 @@ class BrowserExceptionHierarchyTest extends Test:
     "BrowserElementNotActionableException extends BrowserElementException with BrowserMutationException" in {
         discard(summon[BrowserElementNotActionableException <:< BrowserElementException])
         discard(summon[BrowserElementNotActionableException <:< BrowserMutationException])
-        succeed
+        succeed("BrowserElementNotActionableException is an element and mutation exception")
     }
 
     // ---- assertion-timed-out is an assertion failure and also extends BrowserMutationException ----
@@ -63,16 +63,16 @@ class BrowserExceptionHierarchyTest extends Test:
     "BrowserAssertionTimedOutException extends BrowserAssertionException with BrowserMutationException" in {
         discard(summon[BrowserAssertionTimedOutException <:< BrowserAssertionException])
         discard(summon[BrowserAssertionTimedOutException <:< BrowserMutationException])
-        succeed
+        succeed("BrowserAssertionTimedOutException is an assertion and mutation exception")
     }
 
     // ---- linear ordering: BrowserReadException ⊂ BrowserMutationException; BrowserAssertionException ⊂ BrowserMutationException ----
 
     "BrowserReadException ⊂ BrowserMutationException; BrowserAssertionException ⊂ BrowserMutationException (linear ordering)" in {
-        discard(summon[BrowserReadException <:< Object])
+        // The marker traits layer so that a single BrowserReadException handler catches mutation and assertion failures.
         discard(summon[BrowserMutationException <:< BrowserReadException])
         discard(summon[BrowserAssertionException <:< BrowserMutationException])
-        succeed
+        succeed("mutation and assertion exceptions linearize under BrowserReadException")
     }
 
     // ---- BrowserInvalidArgumentException is a read-row API-misuse exception ----
@@ -80,7 +80,7 @@ class BrowserExceptionHierarchyTest extends Test:
     "BrowserInvalidArgumentException extends BrowserReadException with BrowserException" in {
         discard(summon[BrowserInvalidArgumentException <:< BrowserReadException])
         discard(summon[BrowserInvalidArgumentException <:< BrowserException])
-        succeed
+        succeed("BrowserInvalidArgumentException is a BrowserReadException and a BrowserException")
     }
 
     // ---- Reason types nested under their exception ----

@@ -1,6 +1,6 @@
 package kyo
 
-class YamlPipelineTest extends Test:
+class YamlPipelineTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 

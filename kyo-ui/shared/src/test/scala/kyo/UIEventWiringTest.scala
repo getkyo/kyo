@@ -14,7 +14,7 @@ import scala.language.implicitConversions
   * HTML and SVG elements, which share the `Interactive` trait, plus the SSR `data-kyo-ev` emission and the wire-payload
   * round-trip for the redefined `UIEvent.Scroll`/`Hover`/`Unhover` cases.
   */
-class UIEventWiringTest extends Test:
+class UIEventWiringTest extends kyo.test.Test[Any]:
 
     import UI.*
 
@@ -31,7 +31,7 @@ class UIEventWiringTest extends Test:
 
     // ---- onHover action fires (HTML) ----
 
-    "onHover(action) fires on Hover dispatch (HTML div)" in run {
+    "onHover(action) fires on Hover dispatch (HTML div)" in {
         for
             ref <- AtomicRef.init(false)
             ui = UI.div.onHover(ref.set(true))
@@ -43,7 +43,7 @@ class UIEventWiringTest extends Test:
 
     // ---- onHover payload MouseEvent (HTML) ----
 
-    "onHover(f) receives MouseEvent with targetId (HTML div)" in run {
+    "onHover(f) receives MouseEvent with targetId (HTML div)" in {
         for
             ref <- AtomicRef.init(Absent: Maybe[String])
             ui = UI.div.id("x").onHover((e: UI.MouseEvent) => ref.set(e.targetId))
@@ -55,7 +55,7 @@ class UIEventWiringTest extends Test:
 
     // ---- onUnhover fires (HTML) ----
 
-    "onUnhover(action) fires on Unhover dispatch (HTML div)" in run {
+    "onUnhover(action) fires on Unhover dispatch (HTML div)" in {
         for
             ref <- AtomicRef.init(false)
             ui = UI.div.onUnhover(ref.set(true))
@@ -67,7 +67,7 @@ class UIEventWiringTest extends Test:
 
     // ---- onScroll WheelEvent deltaY (HTML) ----
 
-    "onScroll(f) receives WheelEvent deltaY (HTML div)" in run {
+    "onScroll(f) receives WheelEvent deltaY (HTML div)" in {
         for
             ref <- AtomicRef.init(0.0)
             ui = UI.div.onScroll((w: UI.WheelEvent) => ref.set(w.deltaY))
@@ -82,7 +82,7 @@ class UIEventWiringTest extends Test:
 
     // ---- onHover fires on SVG element ----
 
-    "onHover(action) fires on an SVG circle (shared Interactive)" in run {
+    "onHover(action) fires on an SVG circle (shared Interactive)" in {
         for
             ref <- AtomicRef.init(false)
             ui = Svg.circle.cx(1).cy(1).r(1).onHover(ref.set(true))
@@ -94,7 +94,7 @@ class UIEventWiringTest extends Test:
 
     // ---- onScroll SVG rect both deltas ----
 
-    "onScroll(f) receives both deltas on an SVG rect" in run {
+    "onScroll(f) receives both deltas on an SVG rect" in {
         for
             ref <- AtomicRef.init((0.0, 0.0))
             ui = Svg.rect.onScroll((w: UI.WheelEvent) => ref.set((w.deltaX, w.deltaY)))
@@ -107,7 +107,7 @@ class UIEventWiringTest extends Test:
 
     // ---- data-kyo-ev emits the 3 events ----
 
-    "data-kyo-ev emits mouseover, mouseout, and wheel for the 3 setters" in run {
+    "data-kyo-ev emits mouseover, mouseout, and wheel for the 3 setters" in {
         val ui = UI.div.onHover(()).onUnhover(()).onScroll(())
         for html <- HtmlRenderer.render(ui, Seq.empty)
         yield
@@ -120,7 +120,7 @@ class UIEventWiringTest extends Test:
 
     // ---- no event attr when no handler ----
 
-    "no data-kyo-ev attribute when an SVG rect has no handlers" in run {
+    "no data-kyo-ev attribute when an SVG rect has no handlers" in {
         val ui = Svg.rect
         for html <- HtmlRenderer.render(ui, Seq.empty)
         yield assert(!html.contains("data-kyo-ev"))
@@ -128,7 +128,7 @@ class UIEventWiringTest extends Test:
 
     // ---- hover handler error does not break the row ----
 
-    "a hover handler error does not re-throw; dispatch returns true" in run {
+    "a hover handler error does not re-throw; dispatch returns true" in {
         // The child's failing handler runs through safeDispatch, which recovers and keeps bubbling.
         val child = UI.div.id("c").onHover { (_: UI.MouseEvent) =>
             Abort.fail(new RuntimeException("Boom"))
@@ -143,7 +143,7 @@ class UIEventWiringTest extends Test:
 
     // ---- onClick + onHover coexist ----
 
-    "onClick and onHover coexist on the same element" in run {
+    "onClick and onHover coexist on the same element" in {
         for
             clickRef <- AtomicRef.init(0)
             hoverRef <- AtomicRef.init(false)
@@ -160,7 +160,7 @@ class UIEventWiringTest extends Test:
 
     // ---- WheelEvent ctrl modifier ----
 
-    "onScroll(f) observes the ctrl modifier (ctrl-wheel zoom)" in run {
+    "onScroll(f) observes the ctrl modifier (ctrl-wheel zoom)" in {
         for
             ref <- AtomicRef.init(false)
             ui = UI.div.onScroll((w: UI.WheelEvent) => ref.set(w.modifiers.ctrl))
@@ -172,7 +172,7 @@ class UIEventWiringTest extends Test:
 
     // ---- no inert stub remains ----
 
-    "the 3 events return true with no handler registered (real arm, not a stub)" in run {
+    "the 3 events return true with no handler registered (real arm, not a stub)" in {
         for
             dispatch <- makeDispatch(UI.div)
             h        <- dispatch(Seq.empty, UIEvent.Hover(Seq.empty, MouseEventData(UI.Modifiers.none, Absent)))
@@ -186,7 +186,7 @@ class UIEventWiringTest extends Test:
 
     // ---- Hover via ancestor data-kyo-ev gate ----
 
-    "only the div carrying onHover gets mouseover; the child span does not" in run {
+    "only the div carrying onHover gets mouseover; the child span does not" in {
         val ui = UI.div.onHover(Sync.defer(()))(UI.span("child"))
         for html <- HtmlRenderer.render(ui, Seq.empty)
         yield
@@ -218,7 +218,7 @@ class UIEventWiringTest extends Test:
 
     // ---- two overloads distinct ----
 
-    "the action and typed onHover overloads both fire (distinct Attrs fields)" in run {
+    "the action and typed onHover overloads both fire (distinct Attrs fields)" in {
         for
             actionRef <- AtomicRef.init(false)
             evtRef    <- AtomicRef.init(Absent: Maybe[String])

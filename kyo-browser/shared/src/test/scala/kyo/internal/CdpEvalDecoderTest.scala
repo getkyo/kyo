@@ -7,7 +7,7 @@ import kyo.*
   * All scenarios are pure (no browser, no I/O). The helpers under test are pure JSON-shape transforms over CDP `Runtime.evaluate`
   * responses.
   */
-class CdpEvalDecoderTest extends kyo.Test:
+class CdpEvalDecoderTest extends kyo.BaseBrowserTest:
 
     // CDP wire = full envelope: `{"id":N,"result":<EvalResult>}` or `{"id":N,"error":<CdpError>}`.
     // The CdpClient dispatcher passes the whole wire to awaiting callers; this helper wraps the inner EvalResult JSON.
@@ -18,7 +18,7 @@ class CdpEvalDecoderTest extends kyo.Test:
     // parseAndExtractEvalValue
     // -------------------------------------------------------------------------
 
-    "parseAndExtractEvalValue - string value" in run {
+    "parseAndExtractEvalValue - string value" in {
         val json = replyOk("""{"result":{"type":"string","value":"foo"}}""")
         Abort.run[BrowserConnectionException](CdpEvalDecoder.parseAndExtractEvalValue(json)).map {
             case Result.Success(s) => assert(s == "foo")
@@ -26,7 +26,7 @@ class CdpEvalDecoderTest extends kyo.Test:
         }
     }
 
-    "parseAndExtractEvalValue - number value" in run {
+    "parseAndExtractEvalValue - number value" in {
         val json = replyOk("""{"result":{"type":"number","value":42,"description":"42"}}""")
         Abort.run[BrowserConnectionException](CdpEvalDecoder.parseAndExtractEvalValue(json)).map {
             case Result.Success(s) => assert(s == "42")
@@ -34,7 +34,7 @@ class CdpEvalDecoderTest extends kyo.Test:
         }
     }
 
-    "parseAndExtractEvalValue - undefined yields empty string" in run {
+    "parseAndExtractEvalValue - undefined yields empty string" in {
         val json = replyOk("""{"result":{"type":"undefined"}}""")
         Abort.run[BrowserConnectionException](CdpEvalDecoder.parseAndExtractEvalValue(json)).map {
             case Result.Success(s) => assert(s == "")
@@ -47,7 +47,7 @@ class CdpEvalDecoderTest extends kyo.Test:
     // re-parsing the captured raw JSON literal via Json.decode[String]).
     // -------------------------------------------------------------------------
 
-    "RemoteObject string Schema decodes \\n, \\\", and unicode escapes back to the source characters" in run {
+    "RemoteObject string Schema decodes \\n, \\\", and unicode escapes back to the source characters" in {
         // Case 1: "hello\nworld" encoded as JSON string "hello\nworld"
         val jsonNewline = replyOk("""{"result":{"type":"string","value":"hello\nworld"}}""")
         Abort.run[BrowserConnectionException](CdpEvalDecoder.parseAndExtractEvalValue(jsonNewline)).map {
@@ -77,7 +77,7 @@ class CdpEvalDecoderTest extends kyo.Test:
     // `CdpClient.decodeCdpMessage` forwards the WHOLE wire frame (CdpReply envelope). The envelope decoder
     // surfaces a `wire.error` payload as a typed `BrowserProtocolErrorException` carrying the CDP code+message.
 
-    "decodeEvalEnvelope - CDP error payload surfaces as typed exception with code+message" in run {
+    "decodeEvalEnvelope - CDP error payload surfaces as typed exception with code+message" in {
         val json = replyErr("""{"code":-32000,"message":"Cannot find context with specified id"}""")
         Abort.run[BrowserReadException](CdpEvalEnvelope.decodeEvalEnvelope(json, "eval")(_ => "should-not-reach")).map {
             case Result.Failure(ex: BrowserProtocolErrorException) =>
@@ -90,7 +90,7 @@ class CdpEvalDecoderTest extends kyo.Test:
         }
     }
 
-    "decodeEvalEnvelope - wire with neither result nor error surfaces a typed protocol error" in run {
+    "decodeEvalEnvelope - wire with neither result nor error surfaces a typed protocol error" in {
         // CdpReply has both `result` and `error` as Maybe[…] defaulted to Absent, so a wire missing
         // both decodes successfully into an empty envelope. The decoder must still flag it.
         val json = """{"id":1}"""
@@ -104,7 +104,7 @@ class CdpEvalDecoderTest extends kyo.Test:
         }
     }
 
-    "decodeEvalEnvelope - genuinely malformed JSON surfaces wire-decode failure" in run {
+    "decodeEvalEnvelope - genuinely malformed JSON surfaces wire-decode failure" in {
         val json = """not json at all"""
         Abort.run[BrowserReadException](CdpEvalEnvelope.decodeEvalEnvelope(json, "eval")(_ => "should-not-reach")).map {
             case Result.Failure(ex: BrowserProtocolErrorException) =>
@@ -116,7 +116,7 @@ class CdpEvalDecoderTest extends kyo.Test:
         }
     }
 
-    "decodeEvalEnvelope - valid EvalResult still routes to onValue" in run {
+    "decodeEvalEnvelope - valid EvalResult still routes to onValue" in {
         val json = replyOk("""{"result":{"type":"string","value":"ok"}}""")
         Abort.run[BrowserReadException] {
             CdpEvalEnvelope.decodeEvalEnvelope(json, "eval") { env =>
@@ -136,7 +136,7 @@ class CdpEvalDecoderTest extends kyo.Test:
     // the extractor must emit "42" (not "42.0") so callers see the original CDP literal.
     // -------------------------------------------------------------------------
 
-    "parseAndExtractEvalValue - integer-valued double round-trips through Long.toString (\"42\", not \"42.0\")" in run {
+    "parseAndExtractEvalValue - integer-valued double round-trips through Long.toString (\"42\", not \"42.0\")" in {
         val json = replyOk("""{"result":{"type":"number","value":42}}""")
         Abort.run[BrowserReadException](CdpEvalDecoder.parseAndExtractEvalValue(json)).map {
             case Result.Success(s) =>
@@ -146,7 +146,7 @@ class CdpEvalDecoderTest extends kyo.Test:
         }
     }
 
-    "parseAndExtractEvalValue - non-integer double survives via Double.toString (\"3.14\")" in run {
+    "parseAndExtractEvalValue - non-integer double survives via Double.toString (\"3.14\")" in {
         val json = replyOk("""{"result":{"type":"number","value":3.14}}""")
         Abort.run[BrowserReadException](CdpEvalDecoder.parseAndExtractEvalValue(json)).map {
             case Result.Success(s) =>
@@ -155,7 +155,7 @@ class CdpEvalDecoderTest extends kyo.Test:
         }
     }
 
-    "parseAndExtractEvalValue - integer-valued double with negative sign round-trips (\"-7\", not \"-7.0\")" in run {
+    "parseAndExtractEvalValue - integer-valued double with negative sign round-trips (\"-7\", not \"-7.0\")" in {
         val json = replyOk("""{"result":{"type":"number","value":-7}}""")
         Abort.run[BrowserReadException](CdpEvalDecoder.parseAndExtractEvalValue(json)).map {
             case Result.Success(s) =>
@@ -170,7 +170,7 @@ class CdpEvalDecoderTest extends kyo.Test:
     // BrowserProtocolErrorException.decodeFailure (CdpWire.scala:186-194).
     // -------------------------------------------------------------------------
 
-    "decodeStringListReply - empty input is the no-match sentinel (Chunk.empty, no abort)" in run {
+    "decodeStringListReply - empty input is the no-match sentinel (Chunk.empty, no abort)" in {
         Abort.run[BrowserReadException](CdpEvalDecoder.decodeStringListReply("textAll", "")).map {
             case Result.Success(chunk) =>
                 assert(chunk.isEmpty, s"expected empty Chunk for empty input but got $chunk")
@@ -178,7 +178,7 @@ class CdpEvalDecoderTest extends kyo.Test:
         }
     }
 
-    "decodeStringListReply - well-formed JSON array of strings decodes verbatim" in run {
+    "decodeStringListReply - well-formed JSON array of strings decodes verbatim" in {
         val json = """["alpha","beta","gamma"]"""
         Abort.run[BrowserReadException](CdpEvalDecoder.decodeStringListReply("textAll", json)).map {
             case Result.Success(chunk) =>
@@ -187,7 +187,7 @@ class CdpEvalDecoderTest extends kyo.Test:
         }
     }
 
-    "decodeStringListReply - malformed JSON warns + aborts with BrowserProtocolErrorException carrying the label" in run {
+    "decodeStringListReply - malformed JSON warns + aborts with BrowserProtocolErrorException carrying the label" in {
         val json = "this is definitely not a JSON array"
         Abort.run[BrowserReadException](CdpEvalDecoder.decodeStringListReply("textAll", json)).map {
             case Result.Failure(ex: BrowserProtocolErrorException) =>
@@ -204,7 +204,7 @@ class CdpEvalDecoderTest extends kyo.Test:
         }
     }
 
-    "decodeStringListReply - JSON of the wrong shape (object, not array) aborts with BrowserProtocolErrorException" in run {
+    "decodeStringListReply - JSON of the wrong shape (object, not array) aborts with BrowserProtocolErrorException" in {
         val json = """{"not":"an array"}"""
         Abort.run[BrowserReadException](CdpEvalDecoder.decodeStringListReply("attributeAll", json)).map {
             case Result.Failure(ex: BrowserProtocolErrorException) =>

@@ -5,7 +5,7 @@ import scala.language.implicitConversions
 
 class RealtimeScenarioItTest extends UITest:
 
-    "external signal set between keystrokes" in run {
+    "external signal set between keystrokes" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -19,11 +19,11 @@ class RealtimeScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "sig:typed")
                 _ <- Browser.click(Selector.id("ext"))
                 _ <- Browser.assertText(Selector.id("v"), "sig:external")
-            yield succeed
+            yield ()
         }
     }
 
-    "external signal replaces value" in run {
+    "external signal replaces value" in {
         val app: UI < Async =
             for ref <- Signal.initRef("initial")
             yield UI.div(
@@ -36,11 +36,11 @@ class RealtimeScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "sig:initial")
                 _ <- Browser.click(Selector.id("replace"))
                 _ <- Browser.assertText(Selector.id("v"), "sig:replaced")
-            yield succeed
+            yield ()
         }
     }
 
-    "rapid external updates final state correct" in run {
+    "rapid external updates final state correct" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -51,11 +51,11 @@ class RealtimeScenarioItTest extends UITest:
             for
                 _ <- Kyo.foreachDiscard(0 until 50)(_ => Browser.click(Selector.id("inc")))
                 _ <- Browser.assertText(Selector.id("v"), "val:50")
-            yield succeed
+            yield ()
         }
     }
 
-    "typing into a two-way-bound email input preserves character order" in run {
+    "typing into a two-way-bound email input preserves character order" in {
         // Regression: email/number inputs do not support selectionStart, so echoing each keystroke back as a
         // Replace reset the caret to 0, reversing typed text (e.g. "abcdef" -> "fedcba"). The framework now skips
         // re-rendering the focused field. Type character by character (Browser.fill sets the value in one shot
@@ -76,7 +76,7 @@ class RealtimeScenarioItTest extends UITest:
         }
     }
 
-    "typing then external update external wins" in run {
+    "typing then external update external wins" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -89,11 +89,11 @@ class RealtimeScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "typed")
                 _ <- Browser.click(Selector.id("btn"))
                 _ <- Browser.assertText(Selector.id("v"), "sig:override")
-            yield succeed
+            yield ()
         }
     }
 
-    "external update then type appends to external" in run {
+    "external update then type appends to external" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -107,11 +107,11 @@ class RealtimeScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "sig:ext")
                 _ <- Browser.fill(Selector.id("i"), "ext+more")
                 _ <- Browser.assertText(Selector.id("v"), "sig:ext+more")
-            yield succeed
+            yield ()
         }
     }
 
-    "typing then external update external wins (variant)" in run {
+    "typing then external update external wins (variant)" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -125,11 +125,11 @@ class RealtimeScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "sig:typed")
                 _ <- Browser.click(Selector.id("btn"))
                 _ <- Browser.assertText(Selector.id("v"), "sig:override")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal updates from external source while typing both reflected" in run {
+    "signal updates from external source while typing both reflected" in {
         val app: UI < Async =
             for
                 input   <- Signal.initRef("")
@@ -147,7 +147,7 @@ class RealtimeScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("ext"))
                 _ <- Browser.assertText(Selector.id("ve"), "ext:1")
                 _ <- Browser.assertText(Selector.id("vi"), "input:hello")
-            yield succeed
+            yield ()
         }
     }
 

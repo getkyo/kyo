@@ -720,7 +720,9 @@ object Result:
         def asString(value: ResultEA): String = value match
             case Success(a)    => s"Success(${ra.asString(a.asInstanceOf[A])})"
             case f: Failure[?] => s"Failure(${re.asString(f.failure.asInstanceOf[E])})"
-            case other         => other.toString()
+            // A bare `Success(null)` is the raw `null` representation and does not match `Success(a)`, so it reaches
+            // here as a null `other`; String.valueOf renders it as "null" instead of throwing an NPE.
+            case other => String.valueOf(other)
     end given
 
     /** A subtype of Result representing computations that can succeed or fail with an expected error. Result is effectively the Kyo

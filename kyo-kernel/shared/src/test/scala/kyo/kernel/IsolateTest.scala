@@ -4,7 +4,7 @@ import kyo.*
 import kyo.Result.Error
 import kyo.kernel.internal.*
 
-class IsolateTest extends Test:
+class IsolateTest extends kyo.test.Test[Any]:
 
     sealed trait TestEffect1      extends ContextEffect[Int]
     sealed trait TestEffect2      extends ContextEffect[String]
@@ -15,7 +15,7 @@ class IsolateTest extends Test:
         "creates an isolate for context effects" in {
             val isolate                                         = Isolate.derive[TestEffect1 & TestEffect2, Any, Any]
             val _: Isolate[TestEffect1 & TestEffect2, Any, Any] = isolate
-            succeed
+            succeed("compile-time type check: Isolate.derive produces the correct type")
         }
 
         val error = "This operation requires isolation for effects"
@@ -136,7 +136,7 @@ class IsolateTest extends Test:
         "supports residual effects in S type parameter" in {
             val isolate                                      = Isolate.derive[TestEffect1, ResidualEffect, Any]
             val _: Isolate[TestEffect1, ResidualEffect, Any] = isolate
-            succeed
+            succeed("compile-time type check: Isolate with residual effects has the correct type")
         }
 
         "allows using residual effects within isolate" in {
@@ -237,7 +237,7 @@ class IsolateTest extends Test:
             "accepts subtypes" in {
                 val isolate: Isolate[TestEffect1, Any, Any]   = Isolate.derive[TestEffect1, Any, Any]
                 val _: Isolate[TestEffect1, TestEffect2, Any] = isolate
-                succeed
+                succeed("compile-time type check: Keep parameter is contravariant (accepts subtypes)")
             }
 
             "does not accept supertypes" in {
@@ -254,7 +254,7 @@ class IsolateTest extends Test:
             "accepts supertypes" in {
                 val isolate: Isolate[TestEffect1, Any, Any]   = Isolate.derive[TestEffect1, Any, Any]
                 val _: Isolate[TestEffect1, Any, TestEffect1] = isolate
-                succeed
+                succeed("compile-time type check: Restore parameter is covariant (accepts supertypes)")
             }
 
             "does not accept subtypes" in {
@@ -271,7 +271,7 @@ class IsolateTest extends Test:
             "contravariant Keep with covariant Restore" in {
                 val isolate: Isolate[TestEffect1, Any, Any]           = Isolate.derive[TestEffect1, Any, Any]
                 val _: Isolate[TestEffect1, TestEffect2, TestEffect1] = isolate
-                succeed
+                succeed("compile-time type check: Keep contravariant and Restore covariant work together")
             }
 
             "variance preserved through andThen" in {
@@ -280,20 +280,20 @@ class IsolateTest extends Test:
 
                 val composed                                                                      = isolate1.andThen(isolate2)
                 val _: Isolate[TestEffect1 & TestEffect2, TestEffect3, TestEffect1 & TestEffect2] = composed
-                succeed
+                succeed("compile-time type check: variance is preserved through andThen composition")
             }
 
             "complex intersection types" in {
                 val isolate: Isolate[TestEffect1 & TestEffect2, Any, Any] =
                     Isolate.derive[TestEffect1 & TestEffect2, Any, Any]
                 val _: Isolate[TestEffect1 & TestEffect2, TestEffect3, TestEffect1] = isolate
-                succeed
+                succeed("compile-time type check: variance works with complex intersection types")
             }
 
             "all three variance interactions" in {
                 val isolate: Isolate[TestEffect1, Any, Any]                                       = Isolate.derive[TestEffect1, Any, Any]
                 val _: Isolate[TestEffect1, TestEffect2 & TestEffect3, TestEffect1 & TestEffect2] = isolate
-                succeed
+                succeed("compile-time type check: all three variance parameters interact correctly")
             }
         }
     }
@@ -333,7 +333,7 @@ class IsolateTest extends Test:
 
             val nested: Int < TestEffect2 < TestEffect1 = isolate.nest(effect)
             val _: Int < TestEffect2 < TestEffect1      = nested
-            succeed
+            succeed("compile-time type check: nest transforms Remove type param to Restore")
         }
     }
 

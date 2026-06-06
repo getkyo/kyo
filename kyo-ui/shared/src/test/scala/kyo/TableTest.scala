@@ -6,46 +6,46 @@ import scala.language.implicitConversions
 
 class TableTest extends UITest:
 
-    "table exists" in run {
+    "table exists" in {
         withUI(UI.div(UI.table(UI.tr(UI.td("A"))).id("t"))) {
-            Browser.assertVisible(Selector.id("t")).andThen(succeed)
+            Browser.assertVisible(Selector.id("t")).unit
         }
     }
 
-    "table cell text" in run {
+    "table cell text" in {
         withUI(UI.table(UI.tr(UI.td("Hello").id("c")))) {
-            Browser.assertText(Selector.id("c"), "Hello").andThen(succeed)
+            Browser.assertText(Selector.id("c"), "Hello").unit
         }
     }
 
-    "th text" in run {
+    "th text" in {
         withUI(UI.table(UI.tr(UI.th("Header").id("h")))) {
-            Browser.assertText(Selector.id("h"), "Header").andThen(succeed)
+            Browser.assertText(Selector.id("h"), "Header").unit
         }
     }
 
-    "td colspan attribute" in run {
+    "td colspan attribute" in {
         withUI(UI.div(UI.table(UI.tr(UI.td("W").colspan(2).id("c"))))) {
-            Browser.assertAttribute(Selector.id("c"), "colspan", "2").andThen(succeed)
+            Browser.assertAttribute(Selector.id("c"), "colspan", "2").unit
         }
     }
 
-    "td rowspan attribute" in run {
+    "td rowspan attribute" in {
         withUI(UI.div(UI.table(UI.tr(UI.td("T").rowspan(3).id("c"))))) {
-            Browser.assertAttribute(Selector.id("c"), "rowspan", "3").andThen(succeed)
+            Browser.assertAttribute(Selector.id("c"), "rowspan", "3").unit
         }
     }
 
-    "td colspan and rowspan" in run {
+    "td colspan and rowspan" in {
         withUI(UI.div(UI.table(UI.tr(UI.td("X").colspan(2).rowspan(3).id("c"))))) {
             for
                 _ <- Browser.assertAttribute(Selector.id("c"), "colspan", "2")
                 _ <- Browser.assertAttribute(Selector.id("c"), "rowspan", "3")
-            yield succeed
+            yield ()
         }
     }
 
-    "header + data rows visible" in run {
+    "header + data rows visible" in {
         val table = UI.table(
             UI.tr(UI.th("Name").id("hN"), UI.th("Age").id("hA")),
             UI.tr(UI.td("Alice").id("a"), UI.td("30").id("a30")),
@@ -59,26 +59,26 @@ class TableTest extends UITest:
                 _ <- Browser.assertText(Selector.id("a30"), "30")
                 _ <- Browser.assertText(Selector.id("b"), "Bob")
                 _ <- Browser.assertText(Selector.id("b25"), "25")
-            yield succeed
+            yield ()
         }
     }
 
-    "label for attribute" in run {
+    "label for attribute" in {
         withUI(UI.div(UI.label("Name:").forId("inp").id("l"), UI.input.id("inp"))) {
-            Browser.assertAttribute(Selector.id("l"), "for", "inp").andThen(succeed)
+            Browser.assertAttribute(Selector.id("l"), "for", "inp").unit
         }
     }
 
-    "empty cells no crash" in run {
+    "empty cells no crash" in {
         withUI(UI.table(UI.tr(UI.td.id("c1"), UI.td.id("c2")))) {
             for
                 _ <- Browser.assertExists(Selector.id("c1"))
                 _ <- Browser.assertExists(Selector.id("c2"))
-            yield succeed
+            yield ()
         }
     }
 
-    "td onClick fires" in run {
+    "td onClick fires" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -89,11 +89,11 @@ class TableTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "tr onClick click on td bubbles" in run {
+    "tr onClick click on td bubbles" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -104,11 +104,11 @@ class TableTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "button inside td click works" in run {
+    "button inside td click works" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -119,11 +119,11 @@ class TableTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "input inside td fill works" in run {
+    "input inside td fill works" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -134,11 +134,11 @@ class TableTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "data")
                 _ <- Browser.assertText(Selector.id("v"), "data")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach rows add remove" in run {
+    "foreach rows add remove" in {
         val app: UI < Async =
             for rows <- Signal.initRef(Chunk("A", "B"))
             yield UI.div(
@@ -155,11 +155,11 @@ class TableTest extends UITest:
                 _ <- Browser.click(Selector.id("rm"))
                 _ <- assertContains("A")
                 _ <- assertContains("B")
-            yield succeed
+            yield ()
         }
     }
 
-    "reactive cell content signal updates" in run {
+    "reactive cell content signal updates" in {
         val app: UI < Async =
             for ref <- Signal.initRef("before")
             yield UI.div(
@@ -171,16 +171,16 @@ class TableTest extends UITest:
                 _ <- Browser.assertText(Selector.id("cell"), "before")
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("cell"), "after")
-            yield succeed
+            yield ()
         }
     }
 
-    "label click focuses input" in run {
+    "label click focuses input" in {
         withUI(UI.div(UI.label("Name:").forId("inp").id("l"), UI.input.id("inp"))) {
             for
                 _ <- Browser.click(Selector.id("l"))
                 _ <- Browser.assertVisible(Selector.id("inp"))
-            yield succeed
+            yield ()
         }
     }
 

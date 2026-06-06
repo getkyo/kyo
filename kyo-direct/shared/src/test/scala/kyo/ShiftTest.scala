@@ -1,12 +1,9 @@
 package kyo
 
-import kyo.internal.BaseKyoCoreTest
-import org.scalatest.Assertions
-import org.scalatest.freespec.AnyFreeSpec
 import scala.collection.IterableOps
 import scala.util.Try
 
-class ShiftHygieneTest extends Test:
+class ShiftHygieneTest extends kyo.test.Test[Any]:
     "invalid nested" in {
         typeCheckFailure(
             """
@@ -22,7 +19,7 @@ class ShiftHygieneTest extends Test:
     }
 end ShiftHygieneTest
 
-class ShiftTest extends AnyFreeSpec with Assertions:
+class ShiftTest extends kyo.test.Test[Any]:
 
     "basic" in {
         val x1: Seq[Int < Any] = Seq[Int < Any](1, 2, 3)
@@ -53,6 +50,8 @@ class ShiftTest extends AnyFreeSpec with Assertions:
             def innerF(i: Int) = i + 1
             Sync.defer(innerF(1)).now
 
+        assert(x2.eval == Seq(2, 3, 4))
+        forReference.map(v => assert(v == 2))
     }
 
     "val binding inside async-shifted lambda body" in {
@@ -68,7 +67,7 @@ class ShiftTest extends AnyFreeSpec with Assertions:
 
 end ShiftTest
 
-class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
+class ShiftMethodSupportTest extends kyo.test.Test[Any]:
     "Option" - {
         val x: Option[Int < Any] = Option(1)
         val y: Option[Int]       = Option(1)
@@ -311,16 +310,25 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
         }
 
         "panic" in {
-            val x: Result[Throwable, Int] = Result.Panic(new Exception("panic"))
+            val ex                        = new Exception("panic")
+            val x: Result[Throwable, Int] = Result.Panic(ex)
 
-            def f(i: Int): Int < Any        = ???
-            def pred(i: Int): Boolean < Any = ???
+            def f(i: Int): Int < Any        = i
+            def pred(i: Int): Boolean < Any = true
 
             val prg = direct:
                 val x1 = x.map(i => f(i).now)
                 val x2 = x1.filter(i => pred(i).now)
                 val x3 = x2.flatMap(i => Result.succeed(f(i).now))
+                x3
 
+            // Panic propagates through all Result operations in direct: block
+            // f and pred are never called because Panic short-circuits map/filter/flatMap
+            val result = prg.eval
+            assert(result.isPanic)
+            result match
+                case Result.Panic(t) => assert(t eq ex) // panic identity is preserved through direct: block
+                case _               => fail("expected Panic result")
         }
 
     }

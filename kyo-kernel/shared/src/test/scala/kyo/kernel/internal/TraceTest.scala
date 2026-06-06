@@ -3,10 +3,9 @@ package kyo.kernel.internal
 import java.io.PrintWriter
 import java.io.StringWriter
 import kyo.*
-import kyo.Tagged.*
 import kyo.kernel.*
 
-class TraceTest extends Test:
+class TraceTest extends kyo.test.Test[Any]:
 
     sealed trait TestEffect extends ArrowEffect[Const[Int], Const[Int]]
     object TestEffect:
@@ -37,44 +36,44 @@ class TraceTest extends Test:
     def repeatedFrames = loop(100).eval
 
     "jvm" - {
-        "only eval" taggedAs jvmOnly in {
+        "only eval".onlyJvm in {
             assertTrace(
                 evalOnly,
                 """
                 |java.lang.Exception: test exception
-                |	at kyo.kernel.internal.TraceTest.ex(TraceTest.scala:20)
-                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo.kernel.internal.TraceTest.boom(TraceTest.scala:22)
-                |	at                        def evalOnly = boom(10).eval @ kyo.kernel.internal.TraceTest.evalOnly(TraceTest.scala:24)
+                |	at kyo.kernel.internal.TraceTest.ex(TraceTest.scala:19)
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo.kernel.internal.TraceTest.boom(TraceTest.scala:21)
+                |	at                        def evalOnly = boom(10).eval @ kyo.kernel.internal.TraceTest.evalOnly(TraceTest.scala:23)
                 """
             )
         }
 
-        "with effects" taggedAs jvmOnly in {
+        "with effects".onlyJvm in {
             assertTrace(
                 withEffects,
                 """
                 |java.lang.Exception: test exception
-                |	at kyo.kernel.internal.TraceTest.ex(TraceTest.scala:20)
-                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo.kernel.internal.TraceTest.boom(TraceTest.scala:22)
-                |	at          val z = Kyo.zip(x, y).map(_ + _).map(boom) @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:29)
-                |	at                    val z = Kyo.zip(x, y).map(_ + _) @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:29)
-                |	at                               val z = Kyo.zip(x, y) @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:29)
-                |	at                                                   ) @ kyo.kernel.internal.TraceTest.TestEffect$.run(TraceTest.scala:17)
-                |	at                               val z = Kyo.zip(x, y) @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:29)
-                |	at                                                   ) @ kyo.kernel.internal.TraceTest.TestEffect$.run(TraceTest.scala:17)
-                |	at                              TestEffect.run(z).eval @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:30)
+                |	at kyo.kernel.internal.TraceTest.ex(TraceTest.scala:19)
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo.kernel.internal.TraceTest.boom(TraceTest.scala:21)
+                |	at          val z = Kyo.zip(x, y).map(_ + _).map(boom) @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:28)
+                |	at                    val z = Kyo.zip(x, y).map(_ + _) @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:28)
+                |	at                               val z = Kyo.zip(x, y) @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:28)
+                |	at                                                   ) @ kyo.kernel.internal.TraceTest.TestEffect$.run(TraceTest.scala:16)
+                |	at                               val z = Kyo.zip(x, y) @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:28)
+                |	at                                                   ) @ kyo.kernel.internal.TraceTest.TestEffect$.run(TraceTest.scala:16)
+                |	at                              TestEffect.run(z).eval @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:29)
                 """
             )
         }
 
-        "repeated frames" taggedAs jvmOnly in {
+        "repeated frames".onlyJvm in {
             assertTrace(
                 repeatedFrames,
                 """
                 |java.lang.Exception: test exception
-                |	at kyo.kernel.internal.TraceTest.ex(TraceTest.scala:20)
-                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo.kernel.internal.TraceTest.boom(TraceTest.scala:22)
-                |	at          else ((depth - 1): Int < Any).map(loop(_)) @ kyo.kernel.internal.TraceTest.loop(TraceTest.scala:35)
+                |	at kyo.kernel.internal.TraceTest.ex(TraceTest.scala:19)
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo.kernel.internal.TraceTest.boom(TraceTest.scala:21)
+                |	at          else ((depth - 1): Int < Any).map(loop(_)) @ kyo.kernel.internal.TraceTest.loop(TraceTest.scala:34)
                 """
             )
         }
@@ -85,33 +84,37 @@ class TraceTest extends Test:
     // and positions. It doesn't fail, only generates a stack trace with Kyo's
     // frames at the wrong poition.
     "js" - {
-        "only eval" taggedAs jsOnly in pendingUntilFixed {
+        "only eval".onlyJs.pendingUntilFixed(
+            "JS does not preserve source file/line positions, so Kyo trace frames land at the wrong stack position"
+        ) in {
             assertTrace(
                 evalOnly,
                 """
                 |java.lang.Exception: test exception
-                |	at kyo.kernel.internal.TraceTest.ex(TraceTest.scala:20)
-                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo.kernel.internal.TraceTest.boom(TraceTest.scala:22)
-                |	at                        def evalOnly = boom(10).eval @ kyo.kernel.internal.TraceTest.evalOnly(TraceTest.scala:24)
+                |	at kyo.kernel.internal.TraceTest.ex(TraceTest.scala:19)
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo.kernel.internal.TraceTest.boom(TraceTest.scala:21)
+                |	at                        def evalOnly = boom(10).eval @ kyo.kernel.internal.TraceTest.evalOnly(TraceTest.scala:23)
                 """
             )
             ()
         }
 
-        "with effects" taggedAs jsOnly in pendingUntilFixed {
+        "with effects".onlyJs.pendingUntilFixed(
+            "JS does not preserve source file/line positions, so Kyo trace frames land at the wrong stack position"
+        ) in {
             assertTrace(
                 withEffects,
                 """
                 |java.lang.Exception: test exception
-                |	at kyo.kernel.internal.TraceTest.ex(TraceTest.scala:20)
-                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo.kernel.internal.TraceTest.boom(TraceTest.scala:22)
-                |	at          val z = Kyo.zip(x, y).map(_ + _).map(boom) @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:29)
-                |	at                    val z = Kyo.zip(x, y).map(_ + _) @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:29)
-                |	at                               val z = Kyo.zip(x, y) @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:29)
-                |	at                                                   ) @ kyo.kernel.internal.TraceTest.TestEffect$.run(TraceTest.scala:17)
-                |	at                               val z = Kyo.zip(x, y) @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:29)
-                |	at                                                   ) @ kyo.kernel.internal.TraceTest.TestEffect$.run(TraceTest.scala:17)
-                |	at                              TestEffect.run(z).eval @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:30)
+                |	at kyo.kernel.internal.TraceTest.ex(TraceTest.scala:19)
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo.kernel.internal.TraceTest.boom(TraceTest.scala:21)
+                |	at          val z = Kyo.zip(x, y).map(_ + _).map(boom) @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:28)
+                |	at                    val z = Kyo.zip(x, y).map(_ + _) @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:28)
+                |	at                               val z = Kyo.zip(x, y) @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:28)
+                |	at                                                   ) @ kyo.kernel.internal.TraceTest.TestEffect$.run(TraceTest.scala:16)
+                |	at                               val z = Kyo.zip(x, y) @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:28)
+                |	at                                                   ) @ kyo.kernel.internal.TraceTest.TestEffect$.run(TraceTest.scala:16)
+                |	at                              TestEffect.run(z).eval @ kyo.kernel.internal.TraceTest.withEffects(TraceTest.scala:29)
                 """
             )
             ()
@@ -119,19 +122,19 @@ class TraceTest extends Test:
     }
 
     "no trace if exception is NoStackTrace" - {
-        "jvm" taggedAs jvmOnly in {
+        "jvm".onlyJvm in {
             import scala.util.control.NoStackTrace
             assertTrace(
                 throw new NoStackTrace {},
                 "kyo.kernel.internal.TraceTest$$anon$1"
             )
         }
-        "js" taggedAs jsOnly in {
+        "js".onlyJs in {
             import scala.util.control.NoStackTrace
             assertTrace(
                 throw new NoStackTrace {},
                 """
-                |kyo.kernel.internal.TraceTest$$anon$2
+                |kyo.kernel.internal.TraceTest$$anon$1
                 |  <no stack trace available>
                 """
             )
@@ -142,10 +145,10 @@ class TraceTest extends Test:
         val safepoint = Safepoint.get // Trace.Owner
         safepoint.pushFrame(null.asInstanceOf[Frame])
         safepoint.enrich(new Exception)
-        succeed
+        succeed("runs without error: enrich with null frame does not throw (regression for #1172)")
     }
 
-    def assertTrace[A](f: => A, expected: String) =
+    def assertTrace[A](f: => A, expected: String)(using kyo.test.AssertScope) =
         try
             f
             fail()

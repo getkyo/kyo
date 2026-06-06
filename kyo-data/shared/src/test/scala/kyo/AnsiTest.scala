@@ -1,6 +1,6 @@
 package kyo
 
-class AnsiTest extends Test:
+class AnsiTest extends kyo.test.Test[Any]:
 
     import Ansi.*
 

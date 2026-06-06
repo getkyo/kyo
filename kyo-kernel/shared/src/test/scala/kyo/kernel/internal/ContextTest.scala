@@ -3,7 +3,7 @@ package kyo.kernel.internal
 import kyo.*
 import kyo.kernel.*
 
-class ContextTest extends Test:
+class ContextTest extends kyo.test.Test[Any]:
 
     sealed trait TestEffect1 extends ContextEffect[Int]
     sealed trait TestEffect2 extends ContextEffect[String]

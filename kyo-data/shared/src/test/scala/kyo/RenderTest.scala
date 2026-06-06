@@ -1,7 +1,7 @@
 package kyo
 import scala.language.implicitConversions
 
-class RenderTest extends Test:
+class RenderTest extends kyo.test.Test[Any]:
     type Wr[A] = Wr.Type[A]
     object Wr:
         opaque type Type[A] = A | Null

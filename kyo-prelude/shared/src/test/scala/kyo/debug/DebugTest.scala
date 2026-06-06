@@ -2,10 +2,8 @@ package kyo.debug
 
 import java.io.ByteArrayOutputStream
 import kyo.*
-import kyo.Tagged.jsOnly
-import kyo.Tagged.jvmOnly
 
-class DebugTest extends Test:
+class DebugTest extends kyo.test.Test[Any]:
 
     def pureValueComputation = Debug(42)
 
@@ -78,7 +76,7 @@ class DebugTest extends Test:
         def doIt(using Frame) = Debug.trace(Env.use[Int](_ + 1).map(_ + 2))
         doIt
 
-    inline def testOutput(fragments: String*)(code: => Any): Assertion =
+    inline def testOutput(fragments: String*)(code: => Any)(using kyo.test.AssertScope): Unit =
         import kyo.Ansi.*
         val outContent = new ByteArrayOutputStream()
         scala.Console.withOut(outContent)(code)
@@ -88,13 +86,13 @@ class DebugTest extends Test:
             assert(idx >= 0, "Fragment not found: " + fragment + " Output: \n" + out)
             out.drop(idx + fragment.size)
         }
-        succeed
+        ()
     end testOutput
 
     "apply" - {
         "pure value" in
             testOutput(
-                "DebugTest.scala:10:41",
+                "DebugTest.scala:8:41",
                 "42"
             ) {
                 pureValueComputation.eval
@@ -102,7 +100,7 @@ class DebugTest extends Test:
 
         "with effects" in
             testOutput(
-                "DebugTest.scala:16:61",
+                "DebugTest.scala:14:61",
                 "31"
             ) {
                 effectsComputation.eval
@@ -110,7 +108,7 @@ class DebugTest extends Test:
 
         "with pipe" in
             testOutput(
-                "DebugTest.scala:21:57",
+                "DebugTest.scala:19:57",
                 "11"
             ) {
                 handleComputation.eval
@@ -118,8 +116,8 @@ class DebugTest extends Test:
 
         "nested Debug calls" in
             testOutput(
-                "DebugTest.scala:23:49",
-                "DebugTest.scala:23:50",
+                "DebugTest.scala:21:49",
+                "DebugTest.scala:21:50",
                 "42"
             ) {
                 nestedDebugComputation.eval
@@ -127,7 +125,7 @@ class DebugTest extends Test:
 
         "value truncation" in
             testOutput(
-                "DebugTest.scala:69:59",
+                "DebugTest.scala:67:59",
                 "... (truncated)"
             ) {
                 largeValueComputation.eval
@@ -137,7 +135,7 @@ class DebugTest extends Test:
     "trace" - {
         "simple computation" in
             testOutput(
-                "DebugTest.scala:30:44",
+                "DebugTest.scala:28:44",
                 "Env.get[Int]",
                 "5",
                 "Var.update[Int]",
@@ -150,9 +148,9 @@ class DebugTest extends Test:
 
         "with Memo effect" in
             testOutput(
-                "DebugTest.scala:39:57",
+                "DebugTest.scala:37:57",
                 "10",
-                "DebugTest.scala:39:57",
+                "DebugTest.scala:37:57",
                 "12",
                 "memoizedFn(6)",
                 "(10, 10, 12)"
@@ -160,21 +158,21 @@ class DebugTest extends Test:
                 memoEffectComputation.eval
             }
 
-        "with Stream JVM" taggedAs jvmOnly in
+        "with Stream JVM".onlyJvm in
             testOutput(
-                "DebugTest.scala:55:36",
+                "DebugTest.scala:53:36",
                 "()",
-                "DebugTest.scala:57:10",
+                "DebugTest.scala:55:10",
                 "Seq(6)"
             ) {
                 streamComputation.eval
             }
 
-        "with Stream JS" taggedAs jsOnly in
+        "with Stream JS".onlyJs in
             testOutput(
-                "DebugTest.scala:54:28",
+                "DebugTest.scala:52:28",
                 "undefined",
-                "DebugTest.scala:57:10",
+                "DebugTest.scala:55:10",
                 "Seq(6)"
             ) {
                 streamComputation.eval
@@ -182,11 +180,11 @@ class DebugTest extends Test:
 
         "with Choice" in
             testOutput(
-                "DebugTest.scala:65:28",
+                "DebugTest.scala:63:28",
                 "(4, 5, 6)",
-                "DebugTest.scala:65:28",
+                "DebugTest.scala:63:28",
                 "6",
-                "DebugTest.scala:66:14",
+                "DebugTest.scala:64:14",
                 "Seq(Seq(Seq(7)))"
             ) {
                 choiceComputation.eval
@@ -194,7 +192,7 @@ class DebugTest extends Test:
 
         "hides internal frame transformations" in
             testOutput(
-                "DebugTest.scala:79:13",
+                "DebugTest.scala:77:13",
                 "8"
             ) {
                 Env.run(5)(internalTransformationComputation).eval
@@ -204,7 +202,7 @@ class DebugTest extends Test:
     "values" - {
         "pure values" in
             testOutput(
-                "DebugTest.scala:71:52",
+                "DebugTest.scala:69:52",
                 """Params("1" -> 1, "\"test\"" -> "test")"""
             ) {
                 valuesComputation
@@ -212,7 +210,7 @@ class DebugTest extends Test:
 
         "complex values" in
             testOutput(
-                "DebugTest.scala:73:77",
+                "DebugTest.scala:71:77",
                 """"List(1, 2, 3)" -> List(1, 2, 3)""",
                 """"Env.get[Int]" -> Kyo("""
             ) {
@@ -221,7 +219,7 @@ class DebugTest extends Test:
 
         "parameter values" in
             testOutput(
-                "DebugTest.scala:75:95",
+                "DebugTest.scala:73:95",
                 """Params("param1" -> 1, "param2" -> "test")"""
             ) {
                 parameterValuesComputation(1, "test")

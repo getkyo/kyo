@@ -16,7 +16,7 @@ class BrowserSnapshotConfigLocalTest extends kyo.BrowserTest:
     // test budget). restoreSnapshot's internal waitForLoad call exhausts the loadSchedule's maxDuration
     // and the call surfaces a typed failure. We time the call: the configured 50ms cap must bound the
     // elapsed time well under the default 5s.
-    "restoreSnapshot consults Browser.configLocal.loadSchedule (does not hardcode the default)" in run {
+    "restoreSnapshot consults Browser.configLocal.loadSchedule (does not hardcode the default)" in {
         withBrowserOnLocalhost {
             slowImageServer { (host, port) =>
                 Browser.use { tab =>

@@ -5,7 +5,7 @@ import kyo.Style.*
 import kyo.internal.CssStyleRenderer
 import scala.language.implicitConversions
 
-class StyleTest extends Test:
+class StyleTest extends kyo.test.Test[Any]:
 
     extension (s: Style)
         def toCss: String = CssStyleRenderer.render(s)
@@ -151,15 +151,15 @@ class StyleTest extends Test:
 
         "hex String overloads removed" - {
             "Style.bg(String) does not compile" in {
-                assertDoesNotCompile("""Style.bg("#ff0000")""")
+                typeCheckFailure("""Style.bg("#ff0000")""")
             }
 
             "Style.color(String) does not compile" in {
-                assertDoesNotCompile("""Style.color("#000000")""")
+                typeCheckFailure("""Style.color("#000000")""")
             }
 
             "Style.borderColor(String) does not compile" in {
-                assertDoesNotCompile("""Style.borderColor("#abc")""")
+                typeCheckFailure("""Style.borderColor("#abc")""")
             }
         }
 
@@ -386,7 +386,7 @@ class StyleTest extends Test:
         }
 
         "fontFamily string arg does not compile" in {
-            assertDoesNotCompile("""Style.fontFamily("monospace")""")
+            typeCheckFailure("""Style.fontFamily("monospace")""")
         }
 
         "textAlign" in {
@@ -538,7 +538,7 @@ class StyleTest extends Test:
         }
 
         "hex String overload removed: borderTop(width, String) does not compile" in {
-            assertDoesNotCompile("""Style.borderTop(1.px, "#ef4444")""")
+            typeCheckFailure("""Style.borderTop(1.px, "#ef4444")""")
         }
 
     }

@@ -6,7 +6,7 @@ import scala.language.implicitConversions
 
 class ChatScenarioItTest extends UITest:
 
-    "type message Enter appears in list input clears" in run {
+    "type message Enter appears in list input clears" in {
         val app: UI < Async =
             for
                 input    <- Signal.initRef("")
@@ -29,11 +29,11 @@ class ChatScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("inp"), "hello")
                 _ <- Browser.press(Selector.id("inp"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("count"), "count:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "second message appears below first" in run {
+    "second message appears below first" in {
         val app: UI < Async =
             for
                 input    <- Signal.initRef("")
@@ -56,11 +56,11 @@ class ChatScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("inp"), "world")
                 _ <- Browser.click(Selector.id("send"))
                 _ <- Browser.assertText(Selector.id("count"), "count:2")
-            yield succeed
+            yield ()
         }
     }
 
-    "Enter on empty input nothing sent" in run {
+    "Enter on empty input nothing sent" in {
         val app: UI < Async =
             for
                 input    <- Signal.initRef("")
@@ -82,11 +82,11 @@ class ChatScenarioItTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("inp"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("count"), "count:0")
-            yield succeed
+            yield ()
         }
     }
 
-    "multiple rapid messages all appear" in run {
+    "multiple rapid messages all appear" in {
         val app: UI < Async =
             for
                 input    <- Signal.initRef("")
@@ -108,11 +108,11 @@ class ChatScenarioItTest extends UITest:
                     Browser.fill(Selector.id("inp"), s"msg$i").andThen(Browser.click(Selector.id("send")))
                 }
                 _ <- Browser.assertText(Selector.id("count"), "count:5")
-            yield succeed
+            yield ()
         }
     }
 
-    "very long message signal preserves" in run {
+    "very long message signal preserves" in {
         val longMsg = "x" * 500
         val app: UI < Async =
             for
@@ -134,11 +134,11 @@ class ChatScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("inp"), longMsg)
                 _ <- Browser.click(Selector.id("send"))
                 _ <- Browser.assertText(Selector.id("v"), "len:500")
-            yield succeed
+            yield ()
         }
     }
 
-    "messages display correct content" in run {
+    "messages display correct content" in {
         val app: UI < Async =
             for
                 input    <- Signal.initRef("")
@@ -162,11 +162,11 @@ class ChatScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("send"))
                 _ <- assertContains("hello")
                 _ <- assertContains("world")
-            yield succeed
+            yield ()
         }
     }
 
-    "50 messages all in list" in run {
+    "50 messages all in list" in {
         val app: UI < Async =
             for messages <- Signal.initRef(Chunk.from(0 until 50))
             yield UI.div(
@@ -178,11 +178,11 @@ class ChatScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "count:50")
                 _ <- assertContains("msg0")
                 _ <- assertContains("msg49")
-            yield succeed
+            yield ()
         }
     }
 
-    "input focuses after send" in run {
+    "input focuses after send" in {
         val app: UI < Async =
             for
                 input    <- Signal.initRef("")
@@ -206,7 +206,7 @@ class ChatScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("inp"), "world")
                 _ <- Browser.click(Selector.id("send"))
                 _ <- Browser.assertText(Selector.id("count"), "count:2")
-            yield succeed
+            yield ()
         }
     }
 

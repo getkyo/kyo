@@ -6,7 +6,7 @@ import kyo.internal.codec.*
 import kyo.internal.http1.*
 import kyo.internal.util.*
 
-class Http1ClientConnectionTest extends kyo.Test:
+class Http1ClientConnectionTest extends kyo.BaseHttpTest:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -47,7 +47,7 @@ class Http1ClientConnectionTest extends kyo.Test:
         headers: HttpHeaders,
         body: Span[Byte],
         responseBytes: String
-    ): ParsedResponse =
+    )(using kyo.test.AssertScope): ParsedResponse =
         // Pre-stage response bytes in inbound channel BEFORE sending the request.
         // When send() starts the parser, it will find data already available and parse synchronously.
         discard(inbound.offer(Span.fromUnsafe(responseBytes.getBytes(StandardCharsets.US_ASCII))))
@@ -87,7 +87,6 @@ class Http1ClientConnectionTest extends kyo.Test:
             // Body bytes from same chunk should be extracted
             assert(bodyResult.size == 5)
             assert(new String(bodyResult.toArray, StandardCharsets.US_ASCII) == "hello")
-            succeed
         }
 
         "parse 404 response" in {
@@ -105,7 +104,6 @@ class Http1ClientConnectionTest extends kyo.Test:
             assert(result != null)
             assert(result.statusCode == 404)
             assert(result.contentLength == 0)
-            succeed
         }
 
         "parse response with multiple headers" in {
@@ -131,7 +129,6 @@ class Http1ClientConnectionTest extends kyo.Test:
             assert(headers.get("Content-Type") == Present("text/plain"))
             assert(headers.get("X-Request-Id") == Present("abc123"))
             assert(headers.get("Content-Length") == Present("0"))
-            succeed
         }
 
         "parse chunked response" in {
@@ -149,7 +146,6 @@ class Http1ClientConnectionTest extends kyo.Test:
             assert(result != null)
             assert(result.isChunked)
             assert(result.contentLength == -1)
-            succeed
         }
 
         "parse Connection: close" in {
@@ -166,7 +162,6 @@ class Http1ClientConnectionTest extends kyo.Test:
 
             assert(result != null)
             assert(!result.isKeepAlive)
-            succeed
         }
 
         "parse 500 response" in {
@@ -183,7 +178,6 @@ class Http1ClientConnectionTest extends kyo.Test:
 
             assert(result != null)
             assert(result.statusCode == 500)
-            succeed
         }
 
         "incremental data - small chunks" in {
@@ -207,7 +201,6 @@ class Http1ClientConnectionTest extends kyo.Test:
             assert(result != null, "Response should have been parsed from incremental chunks")
             assert(result.statusCode == 200)
             assert(result.contentLength == 0)
-            succeed
         }
 
         "channel closed triggers onClosed" in {
@@ -221,7 +214,6 @@ class Http1ClientConnectionTest extends kyo.Test:
             parser.start()
 
             assert(closedCalled, "onClosed should have been called when channel is closed")
-            succeed
         }
 
         "header exceeds max size" in {
@@ -242,7 +234,6 @@ class Http1ClientConnectionTest extends kyo.Test:
 
             assert(closedCalled, "Parser should have called onClosed for oversized headers")
             assert(parsed == null, "Parser should not have produced a response for oversized headers")
-            succeed
         }
     }
 
@@ -278,7 +269,6 @@ class Http1ClientConnectionTest extends kyo.Test:
             val bodySpan = conn.lastBodySpan
             assert(bodySpan.size == 5)
             assert(new String(bodySpan.toArray, StandardCharsets.US_ASCII) == "hello")
-            succeed
         }
 
         "send POST with body" in {
@@ -305,7 +295,6 @@ class Http1ClientConnectionTest extends kyo.Test:
 
             assert(resp.statusCode == 200)
             assert(resp.contentLength == 11)
-            succeed
         }
 
         "response headers parsed correctly" in {
@@ -327,7 +316,6 @@ class Http1ClientConnectionTest extends kyo.Test:
             assert(headers.get("X-Request-Id") == Present("req-456"))
             assert(headers.get("Cache-Control") == Present("no-cache"))
             assert(headers.get("Content-Length") == Present("2"))
-            succeed
         }
 
         "response with body" in {
@@ -351,7 +339,6 @@ class Http1ClientConnectionTest extends kyo.Test:
             val bodySpan = conn.lastBodySpan
             assert(bodySpan.size == bodyContent.length)
             assert(new String(bodySpan.toArray, StandardCharsets.US_ASCII) == bodyContent)
-            succeed
         }
 
         "sequential requests on same connection" in {
@@ -386,7 +373,6 @@ class Http1ClientConnectionTest extends kyo.Test:
             assert(request2Str.contains("GET /second HTTP/1.1"), s"Expected second request, got: $request2Str")
             assert(resp2.statusCode == 200)
             assert(new String(conn.lastBodySpan.toArray, StandardCharsets.US_ASCII) == "second")
-            succeed
         }
 
         "connection close detection" in {
@@ -404,7 +390,6 @@ class Http1ClientConnectionTest extends kyo.Test:
 
             assert(resp.statusCode == 200)
             assert(!resp.isKeepAlive, "Connection: close should set isKeepAlive to false")
-            succeed
         }
 
         "PUT method serialization" in {
@@ -428,7 +413,6 @@ class Http1ClientConnectionTest extends kyo.Test:
             assert(requestStr.startsWith("PUT /resource HTTP/1.1\r\n"), s"Expected PUT request line, got: $requestStr")
             assert(requestStr.contains("Content-Type: application/json\r\n"), s"Expected Content-Type, got: $requestStr")
             assert(resp.statusCode == 204)
-            succeed
         }
 
         "DELETE method serialization" in {
@@ -447,7 +431,6 @@ class Http1ClientConnectionTest extends kyo.Test:
             val requestStr = collectOutbound(outbound)
             assert(requestStr.startsWith("DELETE /resource/42 HTTP/1.1\r\n"), s"Expected DELETE request line, got: $requestStr")
             assert(resp.statusCode == 200)
-            succeed
         }
 
         "empty body GET has no body chunk" in {
@@ -470,7 +453,6 @@ class Http1ClientConnectionTest extends kyo.Test:
             val afterHeaders = requestStr.substring(requestStr.indexOf("\r\n\r\n") + 4)
             assert(afterHeaders.isEmpty, s"Expected no body after headers, got: '$afterHeaders'")
             assert(resp.statusCode == 200)
-            succeed
         }
     }
 
