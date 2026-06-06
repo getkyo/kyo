@@ -2566,6 +2566,10 @@ object UI:
               * (the series is hidden), a label already present is removed (the series is shown again). The marks
               * lowering reads `ref` and drops rows whose color-channel label is in the hidden set, applying the
               * filter before color-splitting so the visible categories keep their stable palette order.
+              *
+              * The hidden labels are held in a plain `scala.Predef.Set[String]`: this is genuine set membership
+              * (unordered, unique, toggled with `contains`/`+`/`-`), for which kyo has no first-class primitive
+              * and a `Chunk` would be the wrong shape.
               */
             def interactive(ref: Signal.SignalRef[Set[String]]): LegendConfig =
                 copy(isInteractive = true, hiddenSeries = Present(ref))
