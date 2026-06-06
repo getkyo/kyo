@@ -2,7 +2,7 @@ package kyo
 
 import scala.util.Try
 
-class SpanTest extends Test:
+class SpanTest extends kyo.test.Test[Any]:
 
     "Span.apply" - {
         "creates a Span from varargs" in {
@@ -218,14 +218,14 @@ class SpanTest extends Test:
 
         "throws for negative index" in {
             val arr = Span(1, 2, 3)
-            assertThrows[Throwable] {
+            interceptThrown[Throwable] {
                 arr(-1)
             }
         }
 
         "throws for index >= size" in {
             val arr = Span(1, 2, 3)
-            assertThrows[Throwable] {
+            interceptThrown[Throwable] {
                 arr(3)
             }
         }
@@ -270,9 +270,8 @@ class SpanTest extends Test:
                 assert(tail(0) == 2)
                 assert(tail(1) == 3)
                 assert(tail(2) == 4)
-                ()
             }
-            succeed
+            ()
         }
 
         "returns Absent for empty Span" in {
@@ -286,9 +285,8 @@ class SpanTest extends Test:
             assert(tailResult.isDefined)
             tailResult.foreach { tail =>
                 assert(tail.isEmpty)
-                ()
             }
-            succeed
+            ()
         }
     }
 
@@ -1182,14 +1180,14 @@ class SpanTest extends Test:
 
         "throws for invalid size" in {
             val arr = Span(1, 2, 3)
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 arr.sliding(0)
             }
         }
 
         "throws for invalid step" in {
             val arr = Span(1, 2, 3)
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 arr.sliding(2, 0)
             }
         }
@@ -1267,7 +1265,7 @@ class SpanTest extends Test:
             assert(it.hasNext)
             assert(it.next().is(Span(3)))
             assert(!it.hasNext)
-            assertThrows[NoSuchElementException] {
+            interceptThrown[NoSuchElementException] {
                 it.next()
             }
         }
@@ -1453,7 +1451,7 @@ class SpanTest extends Test:
             }
 
             "throws for step = 0" in {
-                assertThrows[IllegalArgumentException] {
+                interceptThrown[IllegalArgumentException] {
                     Span.range(1, 5, 0)
                 }
             }
@@ -1511,7 +1509,7 @@ class SpanTest extends Test:
         "throws an exception for Chains of different sizes" in {
             val chain1 = Span(1, 2, 3)
             val chain2 = Span(4, 5)
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 Span.existsZip(chain1, chain2)(_ == _)
             }
         }
@@ -1536,7 +1534,7 @@ class SpanTest extends Test:
             val chain1 = Span(1, 2, 3)
             val chain2 = Span(4, 5)
             val chain3 = Span(7, 8, 9)
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 Span.existsZip(chain1, chain2, chain3)((_, _, _) => true)
             }
         }
@@ -1558,7 +1556,7 @@ class SpanTest extends Test:
         "throws an exception for Chains of different sizes" in {
             val chain1 = Span(1, 2, 3)
             val chain2 = Span(1, 2)
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 Span.forallZip(chain1, chain2)(_ == _)
             }
         }
@@ -1583,7 +1581,7 @@ class SpanTest extends Test:
             val chain1 = Span(1, 2, 3)
             val chain2 = Span(1, 2)
             val chain3 = Span(1, 2, 3)
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 Span.forallZip(chain1, chain2, chain3)((_, _, _) => true)
             }
         }
@@ -1687,7 +1685,7 @@ class SpanTest extends Test:
                 animals.foreach { animal =>
                     assert(animal.isInstanceOf[Bird])
                 }
-                succeed
+                ()
             }
 
             "works with empty spans" in {

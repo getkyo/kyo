@@ -2,7 +2,7 @@ package kyo.stats.otlp
 
 import kyo.*
 
-class OTLPModelTest extends Test:
+class OTLPModelTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -24,7 +24,7 @@ class OTLPModelTest extends Test:
     )
 
     "AnyValue" - {
-        "string" in run {
+        "string" in {
             val v = AnyValue.string("hello")
             assert(v.stringValue == Present("hello"))
             assert(v.intValue.isEmpty)
@@ -32,48 +32,48 @@ class OTLPModelTest extends Test:
             assert(v.boolValue.isEmpty)
         }
 
-        "int" in run {
+        "int" in {
             val v = AnyValue.int(42L)
             assert(v.intValue == Present("42"))
             assert(v.stringValue.isEmpty)
         }
 
-        "int negative" in run {
+        "int negative" in {
             val v = AnyValue.int(-1L)
             assert(v.intValue == Present("-1"))
         }
 
-        "int zero" in run {
+        "int zero" in {
             val v = AnyValue.int(0L)
             assert(v.intValue == Present("0"))
         }
 
-        "double" in run {
+        "double" in {
             val v = AnyValue.double(3.14)
             assert(v.doubleValue == Present(3.14))
             assert(v.stringValue.isEmpty)
         }
 
-        "boolean true" in run {
+        "boolean true" in {
             val v = AnyValue.boolean(true)
             assert(v.boolValue == Present(true))
             assert(v.stringValue.isEmpty)
         }
 
-        "boolean false" in run {
+        "boolean false" in {
             val v = AnyValue.boolean(false)
             assert(v.boolValue == Present(false))
         }
     }
 
     "KeyValue" - {
-        "construction" in run {
+        "construction" in {
             val kv = KeyValue("key", AnyValue.string("value"))
             assert(kv.key == "key")
             assert(kv.value.stringValue == Present("value"))
         }
 
-        "with different value types" in run {
+        "with different value types" in {
             val kvStr  = KeyValue("str", AnyValue.string("hello"))
             val kvInt  = KeyValue("num", AnyValue.int(42))
             val kvDbl  = KeyValue("dbl", AnyValue.double(3.14))
@@ -87,18 +87,18 @@ class OTLPModelTest extends Test:
     }
 
     "OTLPModel constants" - {
-        "temporality values" in run {
+        "temporality values" in {
             assert(OTLPModel.DeltaTemporality == 1)
             assert(OTLPModel.CumulativeTemporality == 2)
         }
 
-        "span kind values" in run {
+        "span kind values" in {
             assert(OTLPModel.SpanKindInternal == 1)
             assert(OTLPModel.SpanKindServer == 2)
             assert(OTLPModel.SpanKindClient == 3)
         }
 
-        "status code values" in run {
+        "status code values" in {
             assert(OTLPModel.StatusUnset == 0)
             assert(OTLPModel.StatusOk == 1)
             assert(OTLPModel.StatusError == 2)
@@ -106,13 +106,13 @@ class OTLPModelTest extends Test:
     }
 
     "data model defaults" - {
-        "SpanStatus defaults" in run {
+        "SpanStatus defaults" in {
             val status = SpanStatus()
             assert(status.code == 0)
             assert(status.message == "")
         }
 
-        "SpanStatus with values" in run {
+        "SpanStatus with values" in {
             val ok    = SpanStatus(code = OTLPModel.StatusOk)
             val error = SpanStatus(code = OTLPModel.StatusError, message = "something failed")
 
@@ -122,7 +122,7 @@ class OTLPModelTest extends Test:
             assert(error.message == "something failed")
         }
 
-        "OTLPSpan defaults" in run {
+        "OTLPSpan defaults" in {
             val span = OTLPSpan(
                 traceId = "abc",
                 spanId = "def",
@@ -137,7 +137,7 @@ class OTLPModelTest extends Test:
             assert(span.status.code == 0 && span.status.message == "")
         }
 
-        "OTLPSpan with all fields" in run {
+        "OTLPSpan with all fields" in {
             val span = OTLPSpan(
                 traceId = "0af7651916cd43dd8448eb211c80319c",
                 spanId = "b7ad6b7169203331",
@@ -160,7 +160,7 @@ class OTLPModelTest extends Test:
             assert(span.status.code == OTLPModel.StatusError)
         }
 
-        "SpanEvent construction" in run {
+        "SpanEvent construction" in {
             val event = SpanEvent(
                 name = "exception",
                 timeUnixNano = "1234567890",
@@ -174,21 +174,21 @@ class OTLPModelTest extends Test:
             assert(event.attributes.size == 2)
         }
 
-        "SpanEvent defaults" in run {
+        "SpanEvent defaults" in {
             val event = SpanEvent(name = "log", timeUnixNano = "100")
             assert(event.attributes.isEmpty)
         }
     }
 
     "OTLPClient.buildResource" - {
-        "includes service name" in run {
+        "includes service name" in {
             val resource = OTLPClient.buildResource(testConfig)
             assert(resource.attributes.exists(kv =>
                 kv.key == "service.name" && kv.value.stringValue == Present("test-service")
             ))
         }
 
-        "includes SDK metadata" in run {
+        "includes SDK metadata" in {
             val resource = OTLPClient.buildResource(testConfig)
             assert(resource.attributes.exists(kv =>
                 kv.key == "telemetry.sdk.name" && kv.value.stringValue == Present("kyo")
@@ -201,7 +201,7 @@ class OTLPModelTest extends Test:
             ))
         }
 
-        "includes resource attributes" in run {
+        "includes resource attributes" in {
             val resource = OTLPClient.buildResource(testConfig)
             assert(resource.attributes.exists(kv =>
                 kv.key == "env" && kv.value.stringValue == Present("test")
@@ -211,24 +211,24 @@ class OTLPModelTest extends Test:
             ))
         }
 
-        "empty resource attributes" in run {
+        "empty resource attributes" in {
             val config   = testConfig.copy(resourceAttributes = Map.empty)
             val resource = OTLPClient.buildResource(config)
             assert(resource.attributes.size == 4)
         }
 
-        "attribute count with resource attributes" in run {
+        "attribute count with resource attributes" in {
             val resource = OTLPClient.buildResource(testConfig)
             assert(resource.attributes.size == 6)
         }
     }
 
     "OTLPConfig" - {
-        "loadIfEnabled returns None when endpoint not set" in run {
+        "loadIfEnabled returns None when endpoint not set" in {
             assert(OTLPConfig.loadIfEnabled().isEmpty)
         }
 
-        "case class construction" in run {
+        "case class construction" in {
             assert(testConfig.endpoint == "http://localhost:4318")
             assert(testConfig.serviceName == "test-service")
             assert(testConfig.compression == "none")
@@ -238,7 +238,7 @@ class OTLPModelTest extends Test:
     }
 
     "metrics model" - {
-        "Metric with histogram" in run {
+        "Metric with histogram" in {
             val metric = Metric(
                 name = "http.request.duration",
                 description = "Request duration in ms",
@@ -262,7 +262,7 @@ class OTLPModelTest extends Test:
             assert(metric.gauge.isEmpty)
         }
 
-        "Metric with sum" in run {
+        "Metric with sum" in {
             val metric = Metric(
                 name = "http.request.count",
                 description = "Total requests",
@@ -282,7 +282,7 @@ class OTLPModelTest extends Test:
             assert(metric.histogram.isEmpty)
         }
 
-        "Metric with gauge" in run {
+        "Metric with gauge" in {
             val metric = Metric(
                 name = "system.cpu.usage",
                 description = "CPU usage",
@@ -299,7 +299,7 @@ class OTLPModelTest extends Test:
             assert(metric.gauge.get.dataPoints.head.asDouble == Present(0.75))
         }
 
-        "ExportMetricsRequest structure" in run {
+        "ExportMetricsRequest structure" in {
             val request = ExportMetricsRequest(
                 resourceMetrics = Seq(ResourceMetrics(
                     resource = OTLPClient.buildResource(testConfig),
@@ -313,7 +313,7 @@ class OTLPModelTest extends Test:
             assert(request.resourceMetrics.head.scopeMetrics.head.scope.name == "kyo-stats")
         }
 
-        "ExportTraceRequest structure" in run {
+        "ExportTraceRequest structure" in {
             val request = ExportTraceRequest(
                 resourceSpans = Seq(ResourceSpans(
                     resource = OTLPClient.buildResource(testConfig),

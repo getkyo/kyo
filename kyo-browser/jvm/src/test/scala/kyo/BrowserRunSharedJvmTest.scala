@@ -11,14 +11,14 @@ import kyo.internal.SharedChrome
   * of `runShared` without requiring Chrome-boot timing assertions (which are flaky on CI). They focus on correctness: the shared Chrome
   * does serve usable browser tabs, and successive `runShared` calls are independently scoped.
   */
-class BrowserRunSharedJvmTest extends Test:
+class BrowserRunSharedJvmTest extends BaseBrowserTest:
 
     // 3-minute envelope: under full-suite load, each `runShared` boot/navigate/title round-trip can take
     // 30s+ when Chrome is contending with preceding tests' I/O; the test does two sequential round-trips
     // (parallel-tabs check), so a 60s envelope is too tight.
     override def timeout = 3.minutes
 
-    "runShared attaches a usable tab (URL is about:blank initially)" in run {
+    "runShared attaches a usable tab (URL is about:blank initially)" in {
         Scope.run {
             Browser.runShared() {
                 Browser.url.map { u =>
@@ -28,7 +28,7 @@ class BrowserRunSharedJvmTest extends Test:
         }
     }
 
-    "runShared second call reuses the already-booted Chrome without error" in run {
+    "runShared second call reuses the already-booted Chrome without error" in {
         Scope.run {
             // First call boots Chrome (or reuses it if test order landed SharedChrome.init already).
             Browser.runShared() {
@@ -45,7 +45,7 @@ class BrowserRunSharedJvmTest extends Test:
         }
     }
 
-    "runShared tabs are independent: navigation in one does not affect the other" in run {
+    "runShared tabs are independent: navigation in one does not affect the other" in {
         val p1 = page("<html><head><title>Page1</title></head><body></body></html>")
         val p2 = page("<html><head><title>Page2</title></head><body></body></html>")
         Scope.run {

@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 
-class HttpResponseCookieTest extends Test:
+class HttpResponseCookieTest extends BaseHttpTest:
 
     "stores value and codec" in {
         val c = HttpCookie("session123")

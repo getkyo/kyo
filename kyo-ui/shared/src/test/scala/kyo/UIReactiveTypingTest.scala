@@ -9,13 +9,13 @@ import scala.language.implicitConversions
 /** Tests for the reactive-boundary typing: parameterized `Reactive[C]`, `Foreach[A, C]`, `Fragment[C]`,
   * and the narrowed return types on `when`, `render`, `foreach*`, and the Signal-overloaded setters.
   */
-class UIReactiveTypingTest extends Test:
+class UIReactiveTypingTest extends kyo.test.Test[Any]:
 
     private def renderHtml(ui: UI)(using Frame): String < Sync =
         HtmlRenderer.render(ui, Seq.empty)
 
     // UI.when returns Reactive[C] at the static type
-    "UI.when returns Reactive typed to its body" in run {
+    "UI.when returns Reactive typed to its body" in {
         val cond: Signal[Boolean]    = Signal.initConst(true)
         val r: Reactive[SpanElement] = UI.when(cond)(UI.span("x"))
         assert(r.isInstanceOf[Reactive[?]])
@@ -45,7 +45,7 @@ class UIReactiveTypingTest extends Test:
     }
 
     // UI.when runtime renders true branch
-    "UI.when runtime renders true branch" in run {
+    "UI.when runtime renders true branch" in {
         val cond = Signal.initConst(true)
         val r    = UI.when(cond)(UI.span("visible"))
         val html = renderHtml(r)
@@ -60,7 +60,7 @@ class UIReactiveTypingTest extends Test:
     }
 
     // Checkbox.indeterminate(Signal) returns Reactive[Checkbox]
-    "Checkbox.indeterminate(Signal) returns Reactive[Checkbox]" in run {
+    "Checkbox.indeterminate(Signal) returns Reactive[Checkbox]" in {
         for ref <- Signal.initRef(true)
         yield
             val r: Reactive[Checkbox] = UI.checkbox.indeterminate(ref: Signal[Boolean])

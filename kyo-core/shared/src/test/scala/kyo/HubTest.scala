@@ -1,10 +1,10 @@
 package kyo
 
-class HubTest extends Test:
+class HubTest extends kyo.test.Test[Any]:
     val repeats = 100
 
     "initWith" - {
-        "listen, offer, take" in run {
+        "listen, offer, take" in {
             Hub.initWith[Int](10) { h =>
                 for
                     l <- h.listen
@@ -14,7 +14,7 @@ class HubTest extends Test:
             }
         }
 
-        "scope" in run {
+        "scope" in {
             val effect: (Int, Hub[Int]) < (Abort[Closed] & Async) = Scope.run:
                 Hub.initWith[Int](10) { h =>
                     for
@@ -30,7 +30,7 @@ class HubTest extends Test:
     }
 
     "use" - {
-        "listen, offer, take" in run {
+        "listen, offer, take" in {
             Hub.use[Int](10) { h =>
                 for
                     l <- h.listen
@@ -40,7 +40,7 @@ class HubTest extends Test:
             }
         }
 
-        "scope" in run {
+        "scope" in {
             Hub.use[Int](10) { h =>
                 for
                     l <- h.listen
@@ -56,7 +56,7 @@ class HubTest extends Test:
 
     "basic operations" - {
 
-        "empty/full state" in run {
+        "empty/full state" in {
             for
                 h  <- Hub.init[Int](2)
                 _  <- h.listen(0)
@@ -70,7 +70,7 @@ class HubTest extends Test:
             yield assert(e1 && !e2 && f)
         }
 
-        "offer returns false when full" in run {
+        "offer returns false when full" in {
             for
                 h <- Hub.init[Int](2)
                 _ <- h.listen(0)
@@ -81,7 +81,7 @@ class HubTest extends Test:
             yield assert(!r)
         }
 
-        "backpressure when hub is full" in run {
+        "backpressure when hub is full" in {
             for
                 h     <- Hub.init[Int](1)
                 latch <- Latch.init(1)
@@ -97,7 +97,7 @@ class HubTest extends Test:
     }
 
     "listeners" - {
-        "multiple listeners receive same messages" in run {
+        "multiple listeners receive same messages" in {
             for
                 h  <- Hub.init[Int](4)
                 l1 <- h.listen
@@ -108,7 +108,7 @@ class HubTest extends Test:
             yield assert(v1 == 1 && v2 == 1)
         }
 
-        "filtered listeners" in run {
+        "filtered listeners" in {
             for
                 h  <- Hub.init[Int](4)
                 l1 <- h.listen(_ % 2 == 0)
@@ -120,7 +120,7 @@ class HubTest extends Test:
             yield assert(v1 == 2 && v2 == 1)
         }
 
-        "listener buffer size" in run {
+        "listener buffer size" in {
             for
                 h    <- Hub.init[Int](1)
                 l    <- h.listen(2)
@@ -132,7 +132,7 @@ class HubTest extends Test:
             yield assert(size == 2)
         }
 
-        "late listeners don't receive past messages" in run {
+        "late listeners don't receive past messages" in {
             for
                 h <- Hub.init[Int](4)
                 _ <- h.put(1)
@@ -145,7 +145,7 @@ class HubTest extends Test:
     }
 
     "closing" - {
-        "close terminates all listeners" in run {
+        "close terminates all listeners" in {
             for
                 h  <- Hub.init[Int](4)
                 l1 <- h.listen
@@ -158,7 +158,7 @@ class HubTest extends Test:
             yield assert(r1.isFailure && r2.isFailure && c1 && c2)
         }
 
-        "close returns buffered messages" in run {
+        "close returns buffered messages" in {
             for
                 h <- Hub.init[Int](4)
                 _ <- h.listen(0)
@@ -170,7 +170,7 @@ class HubTest extends Test:
             yield assert(r == Maybe(Seq(2, 3)))
         }
 
-        "operations fail after close" in run {
+        "operations fail after close" in {
             for
                 h <- Hub.init[Int](4)
                 _ <- h.close
@@ -182,7 +182,7 @@ class HubTest extends Test:
     }
 
     "streaming" - {
-        "stream delivers messages until closed" in run {
+        "stream delivers messages until closed" in {
             for
                 h <- Hub.init[Int](4)
                 l <- h.listen
@@ -195,7 +195,7 @@ class HubTest extends Test:
             yield assert(r == Chunk(1, 2, 3, 4))
         }
 
-        "streamFailing fails on close" in run {
+        "streamFailing fails on close" in {
             for
                 h     <- Hub.init[Int](4)
                 l     <- h.listen
@@ -205,7 +205,7 @@ class HubTest extends Test:
             yield assert(res.isFailure)
         }
 
-        "stream respects chunk size" in run {
+        "stream respects chunk size" in {
             for
                 h <- Hub.init[Int](4)
                 l <- h.listen
@@ -215,7 +215,7 @@ class HubTest extends Test:
             yield assert(r.forall(_.size <= 2))
         }
 
-        "stream handles rapid publish-consume cycles" in run {
+        "stream handles rapid publish-consume cycles" in {
             for
                 h <- Hub.init[Int](4)
                 l <- h.listen
@@ -227,7 +227,7 @@ class HubTest extends Test:
     }
 
     "concurrency" - {
-        "publishers and subscribers" in run {
+        "publishers and subscribers" in {
             (for
                 hub   <- Hub.init[Int](1)
                 l1    <- hub.listen
@@ -267,10 +267,10 @@ class HubTest extends Test:
                 assert(subs2.count(_.isSuccess) == pubs.count(_.isSuccess))
                 assert(subs3.count(_.isSuccess) == pubs.count(_.isSuccess))
             ).handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "concurrent listeners and close" in run {
+        "concurrent listeners and close" in {
             (for
                 size  <- Choice.eval(1, 2, 10, 100)
                 hub   <- Hub.init[Int](size)
@@ -286,10 +286,10 @@ class HubTest extends Test:
                 backlog    <- closeFiber.get
                 isClosed   <- hub.closed
             yield assert(isClosed)).handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "message ordering" in runJVM {
+        "message ordering".onlyJvm in {
             for
                 hub   <- Hub.init[Int](1000)
                 l1    <- hub.listen
@@ -328,7 +328,7 @@ class HubTest extends Test:
             )
         }
 
-        "backpressure with slow consumers" in run {
+        "backpressure with slow consumers" in {
             for
                 hub          <- Hub.init[Int](10)
                 latch        <- Latch.init(1)
@@ -353,7 +353,7 @@ class HubTest extends Test:
             yield assert(elapsed >= 8.millis && result == (1 to 10))
         }
 
-        "concurrent filtered listeners" in runJVM {
+        "concurrent filtered listeners".onlyJvm in {
             for
                 hub   <- Hub.init[Int](100)
                 latch <- Latch.init(1)
@@ -387,7 +387,7 @@ class HubTest extends Test:
     }
 
     "scope management" - {
-        "listeners are cleaned up when hub closes" in run {
+        "listeners are cleaned up when hub closes" in {
             for
                 h  <- Hub.init[Int](4)
                 l1 <- h.listen
@@ -398,7 +398,7 @@ class HubTest extends Test:
             yield assert(c1 && c2)
         }
 
-        "listeners can be closed independently" in run {
+        "listeners can be closed independently" in {
             for
                 h  <- Hub.init[Int](4)
                 l1 <- h.listen
@@ -411,7 +411,7 @@ class HubTest extends Test:
             yield assert(c1 && !c2 && v == 1)
         }
 
-        "scope safety" in run {
+        "scope safety" in {
             for
                 h <- Hub.init[Int](4)
                 r <- Scope.run {
@@ -427,17 +427,18 @@ class HubTest extends Test:
     }
 
     "edge cases" - {
-        "zero capacity" in run {
+        "zero capacity" in {
             for
                 h <- Hub.init[Int](0)
                 l <- h.listen
                 f <- Fiber.initUnscoped(h.put(1))
                 v <- l.take
+                _ <- f.get
                 d <- f.done
             yield assert(v == 1 && d)
         }
 
-        "max buffer sizes" in run {
+        "max buffer sizes" in {
             for
                 h <- Hub.init[Int](Int.MaxValue)
                 l <- h.listen(Int.MaxValue)
@@ -449,7 +450,7 @@ class HubTest extends Test:
 
     "batch operations" - {
         "putBatch" - {
-            "delivers to all listeners" in run {
+            "delivers to all listeners" in {
                 for
                     h  <- Hub.init[Int](4)
                     l1 <- h.listen
@@ -460,7 +461,7 @@ class HubTest extends Test:
                 yield assert(r1 == r2 && r1 == Chunk.from(1 to 4))
             }
 
-            "respects listener filters" in run {
+            "respects listener filters" in {
                 for
                     h  <- Hub.init[Int](4)
                     l1 <- h.listen(_ % 2 == 0)
@@ -471,7 +472,7 @@ class HubTest extends Test:
                 yield assert(r1 == Chunk(2, 4) && r2 == Chunk(1, 3))
             }
 
-            "handles backpressure" in run {
+            "handles backpressure" in {
                 for
                     h     <- Hub.init[Int](2)
                     l     <- h.listen(2)
@@ -483,7 +484,7 @@ class HubTest extends Test:
                 yield assert(!done && size == 2)
             }
 
-            "fails after hub is closed" in run {
+            "fails after hub is closed" in {
                 for
                     h      <- Hub.init[Int](4)
                     _      <- h.close
@@ -493,7 +494,7 @@ class HubTest extends Test:
         }
 
         "takeExactly" - {
-            "blocks until enough elements" in run {
+            "blocks until enough elements" in {
                 for
                     h     <- Hub.init[Int](4)
                     l     <- h.listen
@@ -506,7 +507,7 @@ class HubTest extends Test:
                 yield assert(!done1 && done2 && res == Chunk.from(1 to 4))
             }
 
-            "respects filters" in run {
+            "respects filters" in {
                 for
                     h <- Hub.init[Int](4)
                     l <- h.listen(_ % 2 == 0)
@@ -515,7 +516,7 @@ class HubTest extends Test:
                 yield assert(r == Chunk(2, 4))
             }
 
-            "fails if hub closes before enough elements" in run {
+            "fails if hub closes before enough elements" in {
                 for
                     h     <- Hub.init[Int](4)
                     l     <- h.listen
@@ -528,7 +529,7 @@ class HubTest extends Test:
         }
 
         "drainUpTo" - {
-            "takes available elements up to max" in run {
+            "takes available elements up to max" in {
                 for
                     h  <- Hub.init[Int](4)
                     l  <- h.listen
@@ -540,7 +541,7 @@ class HubTest extends Test:
                     r1.concat(r2) == Chunk.from(1 to 4))
             }
 
-            "returns empty chunk when no elements available" in run {
+            "returns empty chunk when no elements available" in {
                 for
                     h <- Hub.init[Int](4)
                     l <- h.listen

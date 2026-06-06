@@ -37,7 +37,7 @@ import scala.jdk.CollectionConverters.*
   * injects a unique `--user-agent=<tag>` extra-arg into the `Browser.LaunchConfig`; the tag is a UUID-suffixed string scanned via
   * `ProcessHandle.info().arguments()`.
   */
-class BrowserLauncherCleanupJvmTest extends Test:
+class BrowserLauncherCleanupJvmTest extends BaseBrowserTest:
 
     // Hang-guard only: must exceed the legitimate worst-case runtime of any single test so it fires
     // solely on a true hang, never on a correct-but-slow run. Worst case ≈ Chrome launch (≤90s
@@ -115,7 +115,7 @@ class BrowserLauncherCleanupJvmTest extends Test:
     // Browser.run that throws mid-action terminates the Chrome subprocess
     // ─────────────────────────────────────────────────────────────────────────
 
-    "Browser.run that throws mid-action terminates the Chrome subprocess" in run {
+    "Browser.run that throws mid-action terminates the Chrome subprocess" in {
         val tag = freshTag()
         // Capture the (pid, dir) pairs observed inside the action block.
         AtomicRef.initWith(Seq.empty[(Long, String)]) { capturedRef =>
@@ -170,7 +170,7 @@ class BrowserLauncherCleanupJvmTest extends Test:
     // Browser.run that throws mid-action deletes the user-data-dir
     // ─────────────────────────────────────────────────────────────────────────
 
-    "Browser.run that throws mid-action deletes the user-data-dir" in run {
+    "Browser.run that throws mid-action deletes the user-data-dir" in {
         val tag = freshTag()
         AtomicRef.initWith(Seq.empty[(Long, String)]) { capturedRef =>
             Abort.run[Throwable] {
@@ -227,7 +227,7 @@ class BrowserLauncherCleanupJvmTest extends Test:
     // (SIGKILL) while the action is mid-flight; the CDP socket then drops and any subsequent CDP request
     // raises BrowserConnectionLostException. Cleanup must still complete and not leave a zombie subprocess
     // or locked user-data-dir behind.
-    "Browser.run with abrupt CDP WebSocket close cleans up" in run {
+    "Browser.run with abrupt CDP WebSocket close cleans up" in {
         val tag = freshTag()
         AtomicRef.initWith(Seq.empty[(Long, String)]) { capturedRef =>
             Abort.run[Throwable] {
@@ -290,7 +290,7 @@ class BrowserLauncherCleanupJvmTest extends Test:
     // ─────────────────────────────────────────────────────────────────────────
 
     // Cascading-failure pattern: leftover state from a failed run must NOT poison subsequent launches.
-    "back-to-back Browser.run after a failure both succeed" in run {
+    "back-to-back Browser.run after a failure both succeed" in {
         val tag1 = freshTag()
         val tag2 = freshTag()
         val tag3 = freshTag()
@@ -320,27 +320,28 @@ class BrowserLauncherCleanupJvmTest extends Test:
                 r1 <- firstRun
                 _ <- Sync.defer {
                     r1 match
-                        case Result.Failure(ex) if ex.getMessage == "first deliberate boom" => ()
+                        case Result.Failure(ex) if ex.getMessage == "first deliberate boom" =>
+                            assert(ex.getMessage == "first deliberate boom", s"sentinel message mismatch: ${ex.getMessage}")
                         case other => fail(s"test: first run expected to abort with sentinel, got $other")
                     end match
                 }
                 r2 <- trivialRun(tag2)
                 _ <- Sync.defer {
                     r2 match
-                        case Result.Success("42") => ()
-                        case Result.Success(v)    => fail(s"test: second run got unexpected value $v")
-                        case other                => fail(s"test: second run failed unexpectedly: $other")
+                        case Result.Success(v) =>
+                            assert(v == "42", s"test: second run expected '42' but got '$v'")
+                        case other => fail(s"test: second run failed unexpectedly: $other")
                     end match
                 }
                 r3 <- trivialRun(tag3)
                 _ <- Sync.defer {
                     r3 match
-                        case Result.Success("42") => ()
-                        case Result.Success(v)    => fail(s"test: third run got unexpected value $v")
-                        case other                => fail(s"test: third run failed unexpectedly: $other")
+                        case Result.Success(v) =>
+                            assert(v == "42", s"test: third run expected '42' but got '$v'")
+                        case other => fail(s"test: third run failed unexpectedly: $other")
                     end match
                 }
-            yield succeed
+            yield ()
         }
     }
 
@@ -348,7 +349,7 @@ class BrowserLauncherCleanupJvmTest extends Test:
     // parallel Browser.run instances each get a unique user-data-dir
     // ─────────────────────────────────────────────────────────────────────────
 
-    "parallel Browser.run instances each get a unique user-data-dir" in run {
+    "parallel Browser.run instances each get a unique user-data-dir" in {
         val tagA = freshTag()
         val tagB = freshTag()
 

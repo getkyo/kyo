@@ -5,7 +5,7 @@ import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.Duration as ScalaDuration
 
-class DurationTest extends Test:
+class DurationTest extends kyo.test.Test[Any]:
 
     given CanEqual[ScalaDuration, ScalaDuration] = CanEqual.derived
     given CanEqual[JavaDuration, JavaDuration]   = CanEqual.derived
@@ -24,7 +24,7 @@ class DurationTest extends Test:
                 assert(i.minutes.toMinutes == i)
                 assert(i.hours.toHours == i)
             }
-            succeed
+            ()
         }
 
         "conversion for value 1" in {
@@ -65,14 +65,14 @@ class DurationTest extends Test:
             genLong(0, maxNanos).foreach { i =>
                 assert(i.nanos.toJava == java.time.Duration.ofNanos(i))
             }
-            succeed
+            ()
         }
 
         "toScala" in {
             genLong(0, maxNanos).foreach { i =>
                 assert(i.nanos.toScala == scala.concurrent.duration.Duration.fromNanos(i))
             }
-            succeed
+            ()
         }
 
         "math" in {
@@ -86,7 +86,7 @@ class DurationTest extends Test:
                 assert(added.toJava == expectedAdd)
                 assert(mult.toJava == expectedMult)
             }
-            succeed
+            ()
         }
 
         "overflow" in {
@@ -124,7 +124,7 @@ class DurationTest extends Test:
             testCases.foreach { case (input, expected) =>
                 assert(Duration.parse(input) == Result.succeed(expected))
             }
-            succeed
+            ()
         }
 
         "invalid durations" in {
@@ -139,7 +139,7 @@ class DurationTest extends Test:
             testCases.foreach { input =>
                 assert(Duration.parse(input).isFailure)
             }
-            succeed
+            ()
         }
 
         "case insensitivity" in {

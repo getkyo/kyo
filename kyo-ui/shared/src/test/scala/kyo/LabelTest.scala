@@ -5,37 +5,37 @@ import scala.language.implicitConversions
 
 class LabelTest extends UITest:
 
-    "label text" in run {
+    "label text" in {
         withUI(UI.div(UI.label("Name:").id("l"))) {
-            Browser.assertText(Selector.id("l"), "Name:").andThen(succeed)
+            Browser.assertText(Selector.id("l"), "Name:").unit
         }
     }
 
-    "label forId" in run {
+    "label forId" in {
         withUI(UI.div(UI.label("Name:").forId("inp").id("l"))) {
             for
                 _ <- Browser.assertText(Selector.id("l"), "Name:")
                 _ <- Browser.assertAttribute(Selector.id("l"), "for", "inp")
-            yield succeed
+            yield ()
         }
     }
 
-    "label for backtick" in run {
+    "label for backtick" in {
         withUI(UI.div(UI.label("Name:").`for`("inp").id("l"))) {
-            Browser.assertAttribute(Selector.id("l"), "for", "inp").andThen(succeed)
+            Browser.assertAttribute(Selector.id("l"), "for", "inp").unit
         }
     }
 
-    "label with style" in run {
+    "label with style" in {
         withUI(UI.div(UI.label("X").style(Style.bold).id("l"))) {
             for
                 _ <- Browser.assertText(Selector.id("l"), "X")
                 _ <- Browser.assertAttributeSatisfies(Selector.id("l"), "style", "ignore")(_.contains("font-weight"))
-            yield succeed
+            yield ()
         }
     }
 
-    "label onClick" in run {
+    "label onClick" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -46,31 +46,31 @@ class LabelTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("l"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "label exists" in run {
+    "label exists" in {
         withUI(UI.div(UI.label("X").id("l"))) {
             for
                 _ <- Browser.assertExists(Selector.id("l"))
                 _ <- Browser.assertText(Selector.id("l"), "X")
-            yield succeed
+            yield ()
         }
     }
 
-    "label hidden" in run {
+    "label hidden" in {
         withUI(UI.div(UI.label("X").hidden(true).id("l"))) {
-            Browser.assertAttribute(Selector.id("l"), "hidden", "").andThen(succeed)
+            Browser.assertAttribute(Selector.id("l"), "hidden", "").unit
         }
     }
 
-    "label wrapping input" in run {
+    "label wrapping input" in {
         withUI(UI.div(UI.label(UI.input.id("i"))("Wrapped").id("l"))) {
             for
                 _ <- Browser.assertVisible(Selector.id("l"))
                 _ <- Browser.assertVisible(Selector.id("i"))
-            yield succeed
+            yield ()
         }
     }
 

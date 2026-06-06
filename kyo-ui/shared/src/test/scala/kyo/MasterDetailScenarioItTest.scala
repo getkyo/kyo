@@ -6,7 +6,7 @@ import scala.language.implicitConversions
 
 class MasterDetailScenarioItTest extends UITest:
 
-    "click item shows detail" in run {
+    "click item shows detail" in {
         val app: UI < Async =
             for
                 items    <- Signal.initRef(Chunk.from(Seq("Alice", "Bob", "Carol")))
@@ -21,11 +21,11 @@ class MasterDetailScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("detail"), "detail:Bob")
                 _ <- Browser.click(Selector.id("item-Alice"))
                 _ <- Browser.assertText(Selector.id("detail"), "detail:Alice")
-            yield succeed
+            yield ()
         }
     }
 
-    "edit detail save updates list" in run {
+    "edit detail save updates list" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("Alice", "Bob")))
@@ -60,11 +60,11 @@ class MasterDetailScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("edit"), "Alicia")
                 _ <- Browser.click(Selector.id("save"))
                 _ <- Browser.assertText(Selector.id("v"), "list:Alicia,Bob")
-            yield succeed
+            yield ()
         }
     }
 
-    "add new item to list" in run {
+    "add new item to list" in {
         val app: UI < Async =
             for
                 items <- Signal.initRef(Chunk.from(Seq("A", "B")))
@@ -85,11 +85,11 @@ class MasterDetailScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("new"), "C")
                 _ <- Browser.click(Selector.id("add"))
                 _ <- Browser.assertText(Selector.id("v"), "count:3")
-            yield succeed
+            yield ()
         }
     }
 
-    "delete item from list" in run {
+    "delete item from list" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
             yield UI.div(
@@ -100,11 +100,11 @@ class MasterDetailScenarioItTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("rm"))
                 _ <- Browser.assertText(Selector.id("v"), "list:A,C")
-            yield succeed
+            yield ()
         }
     }
 
-    "20 items all clickable" in run {
+    "20 items all clickable" in {
         val app: UI < Async =
             for
                 items    <- Signal.initRef(Chunk.from(0 until 20))
@@ -121,11 +121,11 @@ class MasterDetailScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "sel:19")
                 _ <- Browser.click(Selector.id("item-10"))
                 _ <- Browser.assertText(Selector.id("v"), "sel:10")
-            yield succeed
+            yield ()
         }
     }
 
-    "edit without save switch item edits lost" in run {
+    "edit without save switch item edits lost" in {
         val app: UI < Async =
             for
                 selected <- Signal.initRef("")
@@ -146,11 +146,11 @@ class MasterDetailScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "editing:Modified Alice")
                 _ <- Browser.click(Selector.id("item-b"))
                 _ <- Browser.assertText(Selector.id("v"), "editing:Bob")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill new item save list shows new" in run {
+    "fill new item save list shows new" in {
         val app: UI < Async =
             for
                 items <- Signal.initRef(Chunk.from(Seq("Alice", "Bob")))
@@ -171,11 +171,11 @@ class MasterDetailScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("new"), "Carol")
                 _ <- Browser.click(Selector.id("add"))
                 _ <- Browser.assertText(Selector.id("v"), "list:Alice,Bob,Carol")
-            yield succeed
+            yield ()
         }
     }
 
-    "select item after delete correct item" in run {
+    "select item after delete correct item" in {
         val app: UI < Async =
             for
                 items    <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
@@ -190,7 +190,7 @@ class MasterDetailScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("rm"))
                 _ <- Browser.click(Selector.id("item-C"))
                 _ <- Browser.assertText(Selector.id("v"), "sel:C")
-            yield succeed
+            yield ()
         }
     }
 

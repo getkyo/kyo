@@ -1,6 +1,6 @@
 package kyo
 
-class EnvTest extends Test:
+class EnvTest extends kyo.test.Test[Any]:
 
     "value" in {
         val v1 =
@@ -42,7 +42,7 @@ class EnvTest extends Test:
             Env.run("a")(v)
         val _: Int < Any =
             t3(42)
-        succeed
+        succeed("type-resolution compile check: Env inference is a compile-time property")
     }
 
     "intersection type env rejects get on intersection" in {

@@ -19,7 +19,7 @@ class BrowserSelectorEdgeCaseTest extends BrowserTest:
       * resolver matches every empty text node, matches only whitespace-trimmed empties, or short-circuits to no match. The test asserts the
       * resolver returns a typed Result (Success xor typed Failure) and pins the observed shape inline.
       */
-    "Selector.text(\"\", exact = true) against empty and whitespace spans pins observed resolver behavior" in run {
+    "Selector.text(\"\", exact = true) against empty and whitespace spans pins observed resolver behavior" in {
         withBrowser {
             onPage(
                 """<span id="a"></span><span id="b"> </span><span id="c">hello</span>"""
@@ -34,9 +34,13 @@ class BrowserSelectorEdgeCaseTest extends BrowserTest:
                     // satisfy the predicate, so assertExists succeeds. If a future change formalizes a different contract (e.g. constructor
                     // rejects empty strings, or resolver short-circuits on empty values), this test must update in lockstep.
                     result match
-                        case Result.Success(_)                                    => succeed
-                        case Result.Failure(_: BrowserElementNotFoundException)   => succeed
-                        case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                        case Result.Success(_) =>
+                            // Both success and element-not-found are acceptable outcomes; either proves no panic.
+                            succeed("text(\"\", exact = true) resolves without panic")
+                        case Result.Failure(_: BrowserElementNotFoundException) =>
+                            succeed("text(\"\", exact = true) surfaces a typed BrowserElementNotFoundException, not a panic")
+                        case Result.Failure(_: BrowserAssertionTimedOutException) =>
+                            succeed("text(\"\", exact = true) surfaces a typed BrowserAssertionTimedOutException, not a panic")
                         case other =>
                             fail(s"expected typed Success or typed Failure for text(\"\", exact = true), got $other")
                     end match
@@ -48,7 +52,7 @@ class BrowserSelectorEdgeCaseTest extends BrowserTest:
     /** Empirical property: `text("", exact = false)` against a page with non-empty content does not panic; pins whether the substring
       * resolver treats empty as "every string contains the empty substring" (matches the first text-bearing node) or short-circuits.
       */
-    "Selector.text(\"\", exact = false) against a page with content pins observed resolver behavior" in run {
+    "Selector.text(\"\", exact = false) against a page with content pins observed resolver behavior" in {
         withBrowser {
             onPage("""<span>hello</span>""") {
                 Abort.run[BrowserElementException | BrowserAssertionException] {
@@ -60,9 +64,13 @@ class BrowserSelectorEdgeCaseTest extends BrowserTest:
                     // which is `true` for every string. The resolver therefore returns the first text node, and assertExists succeeds.
                     // If the contract is later changed to reject empty substrings, this test must update.
                     result match
-                        case Result.Success(_)                                    => succeed
-                        case Result.Failure(_: BrowserElementNotFoundException)   => succeed
-                        case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                        case Result.Success(_) =>
+                            // Both success and element-not-found are acceptable outcomes; either proves no panic.
+                            succeed("text(\"\", exact = false) resolves without panic")
+                        case Result.Failure(_: BrowserElementNotFoundException) =>
+                            succeed("text(\"\", exact = false) surfaces a typed BrowserElementNotFoundException, not a panic")
+                        case Result.Failure(_: BrowserAssertionTimedOutException) =>
+                            succeed("text(\"\", exact = false) surfaces a typed BrowserAssertionTimedOutException, not a panic")
                         case other =>
                             fail(s"expected typed Success or typed Failure for text(\"\", exact = false), got $other")
                     end match
@@ -78,7 +86,7 @@ class BrowserSelectorEdgeCaseTest extends BrowserTest:
       * input), so this test exists purely as a refactor guard: if a future change to `or` or `fromNode` introduces an empty FirstOf path,
       * this test pins the resolver's typed-failure behavior so the regression surfaces deterministically.
       */
-    "Selector.fromNode(FirstOf(Chunk.empty)) resolves to a typed failure, not a panic" in run {
+    "Selector.fromNode(FirstOf(Chunk.empty)) resolves to a typed failure, not a panic" in {
         // Refactor guard: empty FirstOf is unreachable via the public Selector.or; this test pins resolver behavior in case a future change
         // to `or` / `fromNode` introduces an empty path.
         val emptyFirstOf: Browser.Selector =
@@ -93,7 +101,8 @@ class BrowserSelectorEdgeCaseTest extends BrowserTest:
                     Abort.run[BrowserReadException] {
                         Browser.assertExists(emptyFirstOf)
                     }.map {
-                        case Result.Failure(_: BrowserReadException) => succeed
+                        case Result.Failure(_: BrowserReadException) =>
+                            succeed("empty FirstOf surfaces a typed BrowserReadException, not a panic or silent success")
                         case Result.Panic(ex) =>
                             fail(s"empty FirstOf must not panic (refactor guard), got Panic($ex)")
                         case Result.Success(_) =>
@@ -116,7 +125,7 @@ class BrowserSelectorEdgeCaseTest extends BrowserTest:
       * parent scope. Both children match the inner `find`, but the second is `display:none`; the outer `.visible` filter must skip it and
       * land on "X".
       */
-    "Selector parent.find(child).visible resolves to the visible child (Visible wraps Within)" in run {
+    "Selector parent.find(child).visible resolves to the visible child (Visible wraps Within)" in {
         withBrowser {
             onPage(visibleFindPage) {
                 val sel = Browser.Selector.id("parent").find(Browser.Selector.css(".child")).visible
@@ -133,7 +142,7 @@ class BrowserSelectorEdgeCaseTest extends BrowserTest:
     /** Empirical property: `parent.find(child.visible)` resolves to `Within(Id, Visible(Css))` and picks the visible child inside the parent
       * scope. Inner `.visible` filtering must apply within the parent root; the result should equal the outer-visible ordering ("X").
       */
-    "Selector parent.find(child.visible) resolves to the visible child (Visible wraps the inner)" in run {
+    "Selector parent.find(child.visible) resolves to the visible child (Visible wraps the inner)" in {
         withBrowser {
             onPage(visibleFindPage) {
                 val sel = Browser.Selector.id("parent").find(Browser.Selector.css(".child").visible)
@@ -150,13 +159,13 @@ class BrowserSelectorEdgeCaseTest extends BrowserTest:
     /** Empirical property: when the child path matches nothing under the parent (`.missing`), the nested `.visible` filter still surfaces a
       * typed `BrowserElementNotFoundException`, not a panic or a silent zero-result. Pins the failure shape for the no-match case.
       */
-    "Selector parent.find(missing.visible) raises BrowserElementNotFoundException, not a panic" in run {
+    "Selector parent.find(missing.visible) raises BrowserElementNotFoundException, not a panic" in {
         withBrowser {
             onPage(visibleFindPage) {
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).maxDuration(500.millis))) {
                     val sel = Browser.Selector.id("parent").find(Browser.Selector.css(".missing").visible)
                     Abort.run[BrowserReadException](Browser.text(sel)).map {
-                        case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                        case Result.Failure(ex: BrowserElementNotFoundException) => assert(ex.getMessage.contains("Element not found"))
                         case other =>
                             fail(s"expected BrowserElementNotFoundException for missing child, got $other")
                     }

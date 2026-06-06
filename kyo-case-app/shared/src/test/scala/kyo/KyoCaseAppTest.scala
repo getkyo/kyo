@@ -3,15 +3,14 @@ package kyo
 import caseapp.*
 import caseapp.core.RemainingArgs
 import kyo.internal.Platform
-import org.scalatest.compatible.Assertion
 import scala.collection.mutable.ListBuffer
 import scala.util.Try
 
 final case class GreetOptions(@Name("name") name: String = "world")
 
-class KyoCaseAppTest extends Test:
+class KyoCaseAppTest extends kyo.test.Test[Any]:
 
-    "main" in runNotJS {
+    "main".notJs in {
         for
             ref <- AtomicRef.init[Maybe[(GreetOptions, RemainingArgs)]](Absent)
             app = new KyoCaseApp[GreetOptions]:
@@ -28,7 +27,7 @@ class KyoCaseAppTest extends Test:
                 fail("options were not captured")
     }
 
-    "KyoCommand" in runNotJS {
+    "KyoCommand".notJs in {
         for
             ref <- AtomicRef.init[Maybe[(GreetOptions, RemainingArgs)]](Absent)
             cmd = new KyoCommand[GreetOptions]:
@@ -46,23 +45,22 @@ class KyoCaseAppTest extends Test:
                 fail("options were not captured")
     }
 
-    "multiple runs" in {
+    "multiple runs".notJs in {
         assume(!Platform.isNative, "KyoCaseApp.main too slow on Native for repeated calls")
-        runNotJS {
-            for
-                ref <- AtomicInt.init(0)
-                app = new KyoCaseApp[GreetOptions]:
-                    run { (_, _) => ref.getAndIncrement }
-                    run { (_, _) => ref.getAndIncrement }
-                    run { (_, _) => ref.getAndIncrement }
+        for
+            ref <- AtomicInt.init(0)
+            app = new KyoCaseApp[GreetOptions]:
+                run { (_, _) => ref.getAndIncrement }
+                run { (_, _) => ref.getAndIncrement }
+                run { (_, _) => ref.getAndIncrement }
 
-                _    <- Sync.defer(app.main(Array.empty))
-                runs <- ref.get
-            yield assert(runs == 3)
-        }
+            _    <- Sync.defer(app.main(Array.empty))
+            runs <- ref.get
+        yield assert(runs == 3)
+        end for
     }
 
-    "multiple runs share parsed cli" in runNotJS {
+    "multiple runs share parsed cli".notJs in {
         val captured = new ListBuffer[(String, Seq[String])]
         val app = new KyoCaseApp[GreetOptions]:
             run { (options, remainingArgs) =>
@@ -79,7 +77,7 @@ class KyoCaseAppTest extends Test:
         ))
     }
 
-    "run without cli params" in runNotJS {
+    "run without cli params".notJs in {
         val log = new ListBuffer[String]
         val app = new KyoCaseApp[GreetOptions]:
             run { Sync.defer(log += "no-cli") }
@@ -91,7 +89,7 @@ class KyoCaseAppTest extends Test:
         yield assert(log.toList == List("no-cli", "with-cli:cli"))
     }
 
-    "mixed run overloads keep registration order" in runNotJS {
+    "mixed run overloads keep registration order".notJs in {
         val log = new ListBuffer[String]
         val app = new KyoCaseApp[GreetOptions]:
             run { Sync.defer(log += "a") }
@@ -106,17 +104,19 @@ class KyoCaseAppTest extends Test:
     "ordered runs" in {
         assume(!Platform.isNative, "KyoCaseApp.main too slow on Native")
         val x       = new ListBuffer[Int]
-        val promise = scala.concurrent.Promise[Assertion]()
+        val promise = scala.concurrent.Promise[Unit]()
         val app = new KyoCaseApp[GreetOptions]:
             run { (_, _) => Async.delay(10.millis)(Sync.defer(x += 1)) }
             run { (_, _) => Async.delay(10.millis)(Sync.defer(x += 2)) }
             run { (_, _) => Async.delay(10.millis)(Sync.defer(x += 3)) }
             run { (_, _) => Sync.defer(promise.complete(Try(assert(x.toList == List(1, 2, 3))))) }
         app.main(Array.empty)
-        promise.future
+        // The 4 run-blocks fire asynchronously; the last completes the promise with the assertion outcome.
+        // Bridge that scala Future into the kyo leaf (ScalaTest returned the Future directly).
+        Async.fromFuture(promise.future)
     }
 
-    "empty run blocks" in runNotJS {
+    "empty run blocks".notJs in {
         var exitCode = -1
         val app = new KyoCaseApp[GreetOptions]:
             override def exitHook(code: Int)(using AllowUnsafe): Unit = exitCode = code

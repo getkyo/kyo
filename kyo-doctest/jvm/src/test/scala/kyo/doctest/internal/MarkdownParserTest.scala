@@ -6,19 +6,19 @@ import kyo.*
   *
   * Fixture files are used for most tests; inline strings are used where the content is simpler to express directly.
   */
-class MarkdownParserTest extends Test:
+class MarkdownParserTest extends kyo.test.Test[Any]:
 
     private val dummyFile: kyo.Path = kyo.Path("test.md")
 
     // Helper: load a fixture file as a kyo.Path.
     // getResource returns a java.net.URL; we convert to a filesystem path via URI.getPath.
-    private def fixturePath(name: String): kyo.Path =
+    private def fixturePath(name: String)(using kyo.test.AssertScope): kyo.Path =
         val url = getClass.getResource(s"/parser-fixtures/$name")
         assert(url != null, s"fixture file not found: $name")
         kyo.Path(url.toURI.getPath)
     end fixturePath
 
-    "bare scala block extracted with default modifiers (Isolated, Compiles, all platforms)" in run {
+    "bare scala block extracted with default modifiers (Isolated, Compiles, all platforms)" in {
         val path = fixturePath("01-bare-default.md")
         Abort.run(MarkdownParser.parse(path)).map {
             case Result.Success(blocks) =>
@@ -35,7 +35,7 @@ class MarkdownParserTest extends Test:
         }
     }
 
-    "bare sbt block extracted and treated as Scala source" in run {
+    "bare sbt block extracted and treated as Scala source" in {
         val content =
             """|# Example
                |
@@ -60,7 +60,7 @@ class MarkdownParserTest extends Test:
         }
     }
 
-    "bash, markdown, and text blocks are not extracted" in run {
+    "bash, markdown, and text blocks are not extracted" in {
         val path = fixturePath("03-non-scala-ignored.md")
         Abort.run(MarkdownParser.parse(path)).map {
             case Result.Success(blocks) =>
@@ -72,7 +72,7 @@ class MarkdownParserTest extends Test:
         }
     }
 
-    "<details> wrap with one block gives Block.Carrier.Visible" in run {
+    "<details> wrap with one block gives Block.Carrier.Visible" in {
         val path = fixturePath("04-details-single-block.md")
         Abort.run(MarkdownParser.parse(path)).map {
             case Result.Success(blocks) =>
@@ -86,7 +86,7 @@ class MarkdownParserTest extends Test:
         }
     }
 
-    "multiple scala blocks inside an HTML wrapper all parse as Carrier.Visible" in run {
+    "multiple scala blocks inside an HTML wrapper all parse as Carrier.Visible" in {
         val path = fixturePath("05-details-multi-block.md")
         Abort.run(MarkdownParser.parse(path)).map {
             case Result.Success(blocks) =>
@@ -100,7 +100,7 @@ class MarkdownParserTest extends Test:
         }
     }
 
-    "prose between code blocks is ignored" in run {
+    "prose between code blocks is ignored" in {
         val path = fixturePath("05-details-multi-block.md")
         Abort.run(MarkdownParser.parse(path)).map {
             case Result.Success(blocks) =>
@@ -114,7 +114,7 @@ class MarkdownParserTest extends Test:
         }
     }
 
-    "non-scala code fences are ignored" in run {
+    "non-scala code fences are ignored" in {
         val path = fixturePath("05-details-multi-block.md")
         Abort.run(MarkdownParser.parse(path)).map {
             case Result.Success(blocks) =>
@@ -128,7 +128,7 @@ class MarkdownParserTest extends Test:
         }
     }
 
-    "unrecognized HTML wrapper tags do not affect block parsing" in run {
+    "unrecognized HTML wrapper tags do not affect block parsing" in {
         val path = fixturePath("08-html-comment-setup.md")
         Abort.run(MarkdownParser.parse(path)).map {
             case Result.Success(blocks) =>
@@ -144,7 +144,7 @@ class MarkdownParserTest extends Test:
         }
     }
 
-    "HTML comment doctest:setup produces Block.Carrier.Hidden block with Env(\"__doc__\") scope" in run {
+    "HTML comment doctest:setup produces Block.Carrier.Hidden block with Env(\"__doc__\") scope" in {
         val path = fixturePath("08-html-comment-setup.md")
         Abort.run(MarkdownParser.parse(path)).map {
             case Result.Success(blocks) =>
@@ -160,7 +160,7 @@ class MarkdownParserTest extends Test:
         }
     }
 
-    "HTML comment with doctest:expect=fails-compile produces FailsCompile expectation" in run {
+    "HTML comment with doctest:expect=fails-compile produces FailsCompile expectation" in {
         val path = fixturePath("08-html-comment-setup.md")
         Abort.run(MarkdownParser.parse(path)).map {
             case Result.Success(blocks) =>
@@ -176,7 +176,7 @@ class MarkdownParserTest extends Test:
         }
     }
 
-    "multiple HTML comment blocks each produce distinct Hidden blocks" in run {
+    "multiple HTML comment blocks each produce distinct Hidden blocks" in {
         val path = fixturePath("08-html-comment-setup.md")
         Abort.run(MarkdownParser.parse(path)).map {
             case Result.Success(blocks) =>
@@ -191,7 +191,7 @@ class MarkdownParserTest extends Test:
         }
     }
 
-    "lineStart=3 and lineEnd=5 for first block in 01-bare-default.md" in run {
+    "lineStart=3 and lineEnd=5 for first block in 01-bare-default.md" in {
         val path = fixturePath("01-bare-default.md")
         Abort.run(MarkdownParser.parse(path)).map {
             case Result.Success(blocks) =>
@@ -212,7 +212,7 @@ class MarkdownParserTest extends Test:
         }
     }
 
-    "consecutive blocks have distinct non-overlapping line ranges" in run {
+    "consecutive blocks have distinct non-overlapping line ranges" in {
         val path = fixturePath("01-bare-default.md")
         Abort.run(MarkdownParser.parse(path)).map {
             case Result.Success(blocks) =>
@@ -235,7 +235,7 @@ class MarkdownParserTest extends Test:
         }
     }
 
-    "empty README returns empty Chunk" in run {
+    "empty README returns empty Chunk" in {
         Abort.run(MarkdownParser.parseString("", dummyFile)).map {
             case Result.Success(blocks) =>
                 assert(blocks.isEmpty)

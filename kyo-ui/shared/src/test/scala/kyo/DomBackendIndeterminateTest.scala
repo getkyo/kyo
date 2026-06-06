@@ -7,7 +7,7 @@ import scala.language.implicitConversions
 // applying the JS-side .indeterminate property on mount.
 class DomBackendIndeterminateTest extends UITest:
 
-    "indeterminate(true) sets JS property and removes data-kyo-prop-* attribute on mount" in run {
+    "indeterminate(true) sets JS property and removes data-kyo-prop-* attribute on mount" in {
         withUI(UI.checkbox.indeterminate(true).id("chk")) {
             for
                 _ <- Browser.assertVisible(Selector.id("chk"))
@@ -22,7 +22,7 @@ class DomBackendIndeterminateTest extends UITest:
                 // Read the JS-side .indeterminate property via evalBoolean to confirm it was set.
                 indeterminate <- Browser.evalBoolean("document.getElementById('chk').indeterminate")
                 _ = assert(indeterminate, "expected .indeterminate === true on the DOM element")
-            yield succeed
+            yield ()
         }
     }
 

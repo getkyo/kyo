@@ -6,7 +6,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- text (retrying) ----
 
-    "text reads heading content" in run {
+    "text reads heading content" in {
         withBrowser {
             onPage("<h1 role='heading'>Hello World</h1>") {
                 Browser.text(Browser.Selector.heading).map { t =>
@@ -16,7 +16,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "text with nested children returns combined innerText" in run {
+    "text with nested children returns combined innerText" in {
         withBrowser {
             onPage("<div id='parent'>Hello <span>World</span> Foo</div>") {
                 Browser.text(Browser.Selector.css("#parent")).map { t =>
@@ -28,7 +28,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "text with no text returns empty string" in run {
+    "text with no text returns empty string" in {
         withBrowser {
             onPage("<div id='empty'></div>") {
                 Browser.text(Browser.Selector.css("#empty")).map { t =>
@@ -38,7 +38,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "text with non-existent selector fails with BrowserElementNotFoundException" in run {
+    "text with non-existent selector fails with BrowserElementNotFoundException" in {
         withBrowser {
             onPage("<div>Nothing here</div>") {
                 tight {
@@ -47,14 +47,14 @@ class BrowserReadTest extends BrowserTest:
                     }
                 }.map { result =>
                     result match
-                        case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                        case Result.Failure(ex: BrowserElementNotFoundException) => assert(ex.selector.contains("#does-not-exist"))
                         case other => fail(s"Expected Result.Failure(_: BrowserElementNotFoundException) but got $other")
                 }
             }
         }
     }
 
-    "text with dynamic element retries until found" in run {
+    "text with dynamic element retries until found" in {
         withBrowser {
             onPage(
                 "<div id='container'></div><script>setTimeout(function(){document.getElementById('container').innerHTML='<span id=\"target\">loaded</span>'},200)</script>"
@@ -66,7 +66,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "text with fast schedule fails quickly" in run {
+    "text with fast schedule fails quickly" in {
         withBrowser {
             onPage("<div>Nothing</div>") {
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(20.millis).take(3))) {
@@ -75,7 +75,7 @@ class BrowserReadTest extends BrowserTest:
                     }
                 }.map { result =>
                     result match
-                        case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                        case Result.Failure(ex: BrowserElementNotFoundException) => assert(ex.selector.contains("#nonexistent"))
                         case other => fail(s"Expected Result.Failure(_: BrowserElementNotFoundException) but got $other")
                 }
             }
@@ -84,7 +84,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- attribute (retrying) ----
 
-    "attribute reads href from link" in run {
+    "attribute reads href from link" in {
         withBrowser {
             onPage("<a role='link' href='https://example.com'>Link</a>") {
                 Browser.attribute(Browser.Selector.css("a"), "href").map { v =>
@@ -94,7 +94,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "attribute reads type from input" in run {
+    "attribute reads type from input" in {
         withBrowser {
             onPage("<input role='textbox' type='text' />") {
                 Browser.attribute(Browser.Selector.css("input"), "type").map { v =>
@@ -104,7 +104,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "attribute returns empty for non-existent attribute" in run {
+    "attribute returns empty for non-existent attribute" in {
         withBrowser {
             onPage("<div id='el'>Hi</div>") {
                 Browser.attribute(Browser.Selector.css("#el"), "data-missing").map { v =>
@@ -114,7 +114,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "attribute with element not found retries then fails" in run {
+    "attribute with element not found retries then fails" in {
         withBrowser {
             onPage("<div>Nothing</div>") {
                 tight {
@@ -123,7 +123,7 @@ class BrowserReadTest extends BrowserTest:
                     }
                 }.map { result =>
                     result match
-                        case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                        case Result.Failure(ex: BrowserElementNotFoundException) => assert(ex.selector.contains("#absent"))
                         case other => fail(s"Expected Result.Failure(_: BrowserElementNotFoundException) but got $other")
                 }
             }
@@ -132,7 +132,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- count (retrying) ----
 
-    "count returns number of buttons" in run {
+    "count returns number of buttons" in {
         withBrowser {
             onPage("<button role='button'>A</button><button role='button'>B</button>") {
                 Browser.count(Browser.Selector.css("button")).map { n =>
@@ -142,7 +142,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "count on empty page returns zero" in run {
+    "count on empty page returns zero" in {
         withBrowser {
             onPage("<div>No buttons here</div>") {
                 tight {
@@ -154,7 +154,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "count with multiple element types" in run {
+    "count with multiple element types" in {
         withBrowser {
             onPage(
                 "<div id='container'><span class='item'>A</span><span class='item'>B</span></div>"
@@ -168,7 +168,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- boundingBox ----
 
-    "boundingBox returns Present rect with declared CSS width and height for a known-size div" in run {
+    "boundingBox returns Present rect with declared CSS width and height for a known-size div" in {
         withBrowser {
             onPage(
                 "<div id='b' style='position:absolute;left:50px;top:30px;width:120px;height:80px;background:red'></div>"
@@ -194,7 +194,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "boundingBox reports actual rect for an off-viewport element (negative or beyond-viewport coords)" in run {
+    "boundingBox reports actual rect for an off-viewport element (negative or beyond-viewport coords)" in {
         withBrowser {
             onPage(
                 "<div id='b' style='position:absolute;left:-500px;top:5000px;width:50px;height:50px;background:blue'></div>"
@@ -220,7 +220,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "boundingBox returns Absent for a non-existent selector" in run {
+    "boundingBox returns Absent for a non-existent selector" in {
         withBrowser {
             onPage("<div>nothing matching</div>") {
                 Browser.setViewport(1024, 768).andThen {
@@ -232,7 +232,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "boundingBox returns Absent for a display:none element (no box model)" in run {
+    "boundingBox returns Absent for a display:none element (no box model)" in {
         withBrowser {
             onPage(
                 "<div id='b' style='display:none;width:100px;height:100px'></div>"
@@ -249,7 +249,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "boundingBox rect matches getBoundingClientRect within 1px for in-viewport element" in run {
+    "boundingBox rect matches getBoundingClientRect within 1px for in-viewport element" in {
         withBrowser {
             onPage(
                 "<div id='b' style='position:absolute;left:10px;top:20px;width:200px;height:100px;background:green'></div>"
@@ -293,7 +293,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "boundingBox inside a same-origin iframe returns coords in top-level viewport" in run {
+    "boundingBox inside a same-origin iframe returns coords in top-level viewport" in {
         val parent =
             """<body>
                 <iframe id="f" data-testid="frame" srcdoc="{srcdoc}"
@@ -334,7 +334,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "boundingBox inside a cross-origin iframe returns coords within outer iframe rect" in run {
+    "boundingBox inside a cross-origin iframe returns coords within outer iframe rect" in {
         val outerHtml =
             """<html><body><iframe id="f" data-testid="frame" src="{iframe-src}"
                         style="position:absolute;left:100px;top:50px;width:300px;height:200px;border:0"></iframe></body></html>"""
@@ -375,7 +375,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "boundingBox is idempotent: two consecutive calls return the same rect" in run {
+    "boundingBox is idempotent: two consecutive calls return the same rect" in {
         withBrowser {
             onPage(
                 "<div id='b' style='position:absolute;left:50px;top:30px;width:120px;height:80px;background:red'></div>"
@@ -393,7 +393,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- accessibilityNodes / role / accessibleName ----
 
-    "accessibilityNodes contains a button node with role and name" in run {
+    "accessibilityNodes contains a button node with role and name" in {
         withBrowser {
             onPage("<button id='b'>Click me</button>") {
                 Browser.accessibilityNodes.map { tree =>
@@ -405,7 +405,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "accessibilityNodes includes the document root (WebArea or RootWebArea)" in run {
+    "accessibilityNodes includes the document root (WebArea or RootWebArea)" in {
         withBrowser {
             onPage("<p>x</p>") {
                 Browser.accessibilityNodes.map { tree =>
@@ -430,7 +430,7 @@ class BrowserReadTest extends BrowserTest:
     // A regression that surfaces ONLY the root and drops all descendants would pass the "root exists" test
     // above but fail this child-shape assertion. We pin role="heading" and role="paragraph" / role="StaticText"
     // (Chrome reports paragraph content via StaticText leaves; either is a valid descendant).
-    "accessibilityNodes exposes child descendants of the root (heading + paragraph/text) on a simple <h1>+<p> page" in run {
+    "accessibilityNodes exposes child descendants of the root (heading + paragraph/text) on a simple <h1>+<p> page" in {
         withBrowser {
             onPage("<h1 id='h'>Title</h1><p id='p'>Body text</p>") {
                 Browser.accessibilityNodes.map { tree =>
@@ -475,7 +475,7 @@ class BrowserReadTest extends BrowserTest:
     // The KEY contract this test pins: AxValue's Schema decodes every discriminator Chrome emits (integer, number, boolean,
     // string, token, idref/nodeList) without UnknownVariantException; asString routes each stringifiable variant correctly;
     // opaque variants (idref/nodeList) drop from the public properties map while the relation still drives `name`.
-    "accessibilityNodes routes each ARIA discriminator (integer / number / boolean / token / idref) correctly" in run {
+    "accessibilityNodes routes each ARIA discriminator (integer / number / boolean / token / idref) correctly" in {
         withBrowser {
             onPage(
                 """<h2 id='lbl'>Volume</h2>
@@ -558,7 +558,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "role(selector) returns Present(\"button\") for a real <button>" in run {
+    "role(selector) returns Present(\"button\") for a real <button>" in {
         withBrowser {
             onPage("<button id='b'>Save</button>") {
                 Browser.role(Browser.Selector.id("b")).map { r =>
@@ -568,7 +568,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "role respects ARIA role attribute over the tag name" in run {
+    "role respects ARIA role attribute over the tag name" in {
         withBrowser {
             onPage("<div id='d' role='alert'>!</div>") {
                 Browser.role(Browser.Selector.id("d")).map { r =>
@@ -578,7 +578,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "role on a nonexistent selector returns Absent" in run {
+    "role on a nonexistent selector returns Absent" in {
         withBrowser {
             onPage("<p>x</p>") {
                 Browser.role(Browser.Selector.id("missing")).map { r =>
@@ -588,7 +588,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "accessibleName honours aria-label priority over textContent" in run {
+    "accessibleName honours aria-label priority over textContent" in {
         withBrowser {
             onPage("<button id='b' aria-label='Save'>Discard</button>") {
                 Browser.accessibleName(Browser.Selector.id("b")).map { n =>
@@ -598,7 +598,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "accessibleName falls back to textContent when no aria-label is present" in run {
+    "accessibleName falls back to textContent when no aria-label is present" in {
         withBrowser {
             onPage("<button id='b'>Submit</button>") {
                 Browser.accessibleName(Browser.Selector.id("b")).map { n =>
@@ -608,7 +608,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "accessibleName for a decorative image is Absent or empty string" in run {
+    "accessibleName for a decorative image is Absent or empty string" in {
         withBrowser {
             onPage("<img id='i' role='presentation' alt=''>") {
                 Browser.accessibleName(Browser.Selector.id("i")).map { n =>
@@ -622,7 +622,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "accessibilityNodes inside withIFrame returns the iframe's nodes (same-origin)" in run {
+    "accessibilityNodes inside withIFrame returns the iframe's nodes (same-origin)" in {
         val parent =
             """<body>
                 <iframe id="f" data-testid="frame" srcdoc="{srcdoc}"
@@ -654,7 +654,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- url / title ----
 
-    "url returns correct value after goto" in run {
+    "url returns correct value after goto" in {
         withBrowser {
             onPage("<h1>URL%20Test</h1>") {
                 Browser.url.map { u =>
@@ -664,7 +664,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "title returns correct value after goto" in run {
+    "title returns correct value after goto" in {
         withBrowser {
             onPage("<html><head><title>MyTitle</title></head><body>content</body></html>") {
                 Browser.title.map { t =>
@@ -674,7 +674,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "title returns empty for page without title" in run {
+    "title returns empty for page without title" in {
         withBrowser {
             onPage("<body>No title here</body>") {
                 Browser.title.map { t =>
@@ -684,7 +684,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "url returns data URL string" in run {
+    "url returns data URL string" in {
         withBrowser {
             onPage("<h1>DataURL</h1>") {
                 Browser.url.map { u =>
@@ -696,7 +696,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- screenshot ----
 
-    "screenshot returns non-empty Image" in run {
+    "screenshot returns non-empty Image" in {
         withBrowser {
             onPage("<h1>ScreenshotRead</h1>") {
                 Browser.screenshot().map { img =>
@@ -706,7 +706,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "screenshot restores the original viewport after a successful capture" in run {
+    "screenshot restores the original viewport after a successful capture" in {
         withBrowser {
             onPage("<html><body><div id='marker'>X</div></body></html>") {
                 Browser.eval("window.innerWidth").map { preWidthStr =>
@@ -732,7 +732,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "screenshot restores the original viewport when the capture aborts" in run {
+    "screenshot restores the original viewport when the capture aborts" in {
         withBrowser {
             onPage("<html><body>abort-restore-test</body></html>") {
                 Browser.use { tab =>
@@ -780,7 +780,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- setViewport / resetViewport ----
 
-    "setViewport overrides window.innerWidth and window.innerHeight" in run {
+    "setViewport overrides window.innerWidth and window.innerHeight" in {
         withBrowser {
             onPage("<html><body>setViewport-test</body></html>") {
                 Browser.setViewport(640, 480).andThen(
@@ -795,7 +795,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "setViewport is sticky: a subsequent operation observes the override" in run {
+    "setViewport is sticky: a subsequent operation observes the override" in {
         withBrowser {
             onPage("<html><body>sticky-test</body></html>") {
                 Browser.setViewport(800, 600).andThen(
@@ -810,7 +810,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "resetViewport restores the natural viewport after setViewport" in run {
+    "resetViewport restores the natural viewport after setViewport" in {
         withBrowser {
             onPage("<html><body>resetViewport-test</body></html>") {
                 Browser.eval("window.innerWidth").map { naturalWidthStr =>
@@ -832,7 +832,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "resetViewport without a prior setViewport is a no-op" in run {
+    "resetViewport without a prior setViewport is a no-op" in {
         withBrowser {
             onPage("<html><body>no-op-test</body></html>") {
                 Browser.eval("window.innerWidth").map { preStr =>
@@ -846,7 +846,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "successive setViewport calls: last one wins" in run {
+    "successive setViewport calls: last one wins" in {
         withBrowser {
             onPage("<html><body>last-wins-test</body></html>") {
                 Browser.setViewport(640, 480).andThen(
@@ -863,7 +863,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "withViewport applies the override inside the body and clears it on exit" in run {
+    "withViewport applies the override inside the body and clears it on exit" in {
         withBrowser {
             onPage("<html><body>with-viewport-test</body></html>") {
                 Browser.eval("window.innerWidth").map { naturalStr =>
@@ -884,7 +884,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "withViewport clears the override even when body aborts" in run {
+    "withViewport clears the override even when body aborts" in {
         withBrowser {
             onPage("<html><body>with-viewport-abort-test</body></html>") {
                 Browser.eval("window.innerWidth").map { naturalStr =>
@@ -922,7 +922,7 @@ class BrowserReadTest extends BrowserTest:
           <rect width='1280' height='720' fill='url(#g)'/>
         </svg></body></html>"""
 
-    "screenshot in PNG format ignores the quality argument" in run {
+    "screenshot in PNG format ignores the quality argument" in {
         // PNG is lossless; Chrome ignores the quality field entirely. Two captures of the same page at
         // quality 30 and quality 90 must therefore yield identical byte payloads.
         withBrowser {
@@ -941,7 +941,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "screenshot in JPEG format produces a smaller payload at quality 30 than at quality 90" in run {
+    "screenshot in JPEG format produces a smaller payload at quality 30 than at quality 90" in {
         withBrowser {
             onPage(gradientPageHtml) {
                 Browser.screenshot(width = 400, height = 300, format = Browser.ScreenshotFormat.Jpeg, quality = 30).map { low =>
@@ -958,7 +958,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "screenshot in WEBP format produces a valid image" in run {
+    "screenshot in WEBP format produces a valid image" in {
         withBrowser {
             onPage(gradientPageHtml) {
                 Browser.screenshot(width = 400, height = 300, format = Browser.ScreenshotFormat.Webp).map { img =>
@@ -979,7 +979,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "screenshotElement honors the format parameter" in run {
+    "screenshotElement honors the format parameter" in {
         withBrowser {
             onPage("""<html><body style="margin:0;padding:0;">
                 <div id="t" style="width:300px;height:200px;background:linear-gradient(45deg,red,blue);"></div>
@@ -1000,7 +1000,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "screenshotElement in JPEG mode forwards quality to CDP" in run {
+    "screenshotElement in JPEG mode forwards quality to CDP" in {
         withBrowser {
             onPage("""<html><body style="margin:0;padding:0;">
                 <div id="t" style="width:300px;height:200px;background:linear-gradient(45deg,red,green,blue,yellow);"></div>
@@ -1020,7 +1020,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "nested screenshot calls leave the outer device metrics unchanged" in run {
+    "nested screenshot calls leave the outer device metrics unchanged" in {
         withBrowser {
             onPage("<html><body>nested</body></html>") {
                 Browser.eval("window.innerWidth").map { preWidthStr =>
@@ -1051,7 +1051,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- eval ----
 
-    "eval arithmetic" in run {
+    "eval arithmetic" in {
         withBrowser {
             Browser.eval("1 + 1").map { result =>
                 assert(result == "2", s"Expected '2' but got '$result'")
@@ -1059,7 +1059,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "eval document.title" in run {
+    "eval document.title" in {
         withBrowser {
             onPage("<html><head><title>EvalTitle</title></head><body></body></html>") {
                 Browser.eval("document.title").map { result =>
@@ -1069,19 +1069,19 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "eval syntax error throws BrowserScriptException" in run {
+    "eval syntax error throws BrowserScriptException" in {
         withBrowser {
             Abort.run[BrowserScriptException] {
                 Browser.eval("this is not valid javascript !!!{{{")
             }.map { result =>
                 result match
-                    case Result.Failure(_: BrowserScriptErrorException) => succeed
+                    case Result.Failure(ex: BrowserScriptErrorException) => assert(ex.getMessage.contains("Script evaluation failed"))
                     case other => fail(s"Expected Result.Failure(_: BrowserScriptErrorException) but got $other")
             }
         }
     }
 
-    "eval undefined returns empty string" in run {
+    "eval undefined returns empty string" in {
         withBrowser {
             Browser.eval("undefined").map { result =>
                 assert(result == "", s"Expected empty string but got '$result'")
@@ -1089,7 +1089,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "eval returning object returns stringified result" in run {
+    "eval returning object returns stringified result" in {
         withBrowser {
             Browser.eval("JSON.stringify({a: 1})").map { result =>
                 assert(result.contains("a"), s"Expected JSON with 'a' but got '$result'")
@@ -1099,7 +1099,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- readableContent ----
 
-    "readableContent returns article text" in run {
+    "readableContent returns article text" in {
         withBrowser {
             onPage("<body><nav>Nav</nav><article><p>ArticleContent</p></article></body>") {
                 Browser.readableContent.map { content =>
@@ -1111,7 +1111,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- textAll ----
 
-    "textAll returns text of all matching elements" in run {
+    "textAll returns text of all matching elements" in {
         withBrowser {
             onPage("<ul><li class='item'>Apple</li><li class='item'>Banana</li><li class='item'>Cherry</li></ul>") {
                 Browser.textAll(Browser.Selector.css("li.item")).map { texts =>
@@ -1124,7 +1124,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "textAll returns empty Chunk for no matches" in run {
+    "textAll returns empty Chunk for no matches" in {
         withBrowser {
             onPage("<div>No items</div>") {
                 tight {
@@ -1136,7 +1136,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "textAll returns Chunk.empty without retrying when no elements match" in run {
+    "textAll returns Chunk.empty without retrying when no elements match" in {
         withBrowser {
             // Configure a deliberately long retry budget; the fast-path must skip it entirely on the empty case.
             Browser.withConfig(_.retrySchedule(Schedule.fixed(500.millis).take(20))) {
@@ -1155,7 +1155,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- attributeAll ----
 
-    "attributeAll returns all href values" in run {
+    "attributeAll returns all href values" in {
         withBrowser {
             onPage(
                 "<a href='https://a.com'>A</a><a href='https://b.com'>B</a><a href='https://c.com'>C</a>"
@@ -1170,7 +1170,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "attributeAll returns Chunk.empty without retrying when no elements match" in run {
+    "attributeAll returns Chunk.empty without retrying when no elements match" in {
         withBrowser {
             Browser.withConfig(_.retrySchedule(Schedule.fixed(500.millis).take(20))) {
                 onPage("<div>No links</div>") {
@@ -1188,7 +1188,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- html ----
 
-    "html returns innerHTML" in run {
+    "html returns innerHTML" in {
         withBrowser {
             onPage("<div id='wrapper'><span>inner</span></div>") {
                 Browser.html(Browser.Selector.css("#wrapper")).map { h =>
@@ -1200,7 +1200,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- outerHtml ----
 
-    "outerHtml returns outerHTML with tag" in run {
+    "outerHtml returns outerHTML with tag" in {
         withBrowser {
             onPage("<div id='wrapper'><span>inner</span></div>") {
                 Browser.outerHtml(Browser.Selector.css("#wrapper")).map { h =>
@@ -1213,7 +1213,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- pdf ----
 
-    "pdf returns non-empty byte array" in run {
+    "pdf returns non-empty byte array" in {
         withBrowserOnLocalhost {
             Browser.pdf.map { bytes =>
                 assert(bytes.size > 0, "Expected non-empty PDF byte array")
@@ -1224,7 +1224,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "pdf raises BrowserDecodingException on malformed wire base64" in run {
+    "pdf raises BrowserDecodingException on malformed wire base64" in {
         // The CDP server always returns valid base64 in the wild, but `pdf` must still surface a malformed
         // payload through the typed Abort channel rather than letting the underlying `IllegalArgumentException`
         // escape. We exercise the wire-decoder helper directly with a non-base64 payload tagged
@@ -1238,7 +1238,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "screenshot raises BrowserDecodingException on malformed wire base64" in run {
+    "screenshot raises BrowserDecodingException on malformed wire base64" in {
         // Mirror of the `pdf` wire-decoder check: the screenshot path decodes a Base64 image payload via
         // `decodeScreenshotImage`. A malformed wire response must surface through the typed Abort channel
         // tagged `"Page.captureScreenshot"` rather than escaping as a thrown `IllegalArgumentException`.
@@ -1256,7 +1256,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- evalJson ----
 
-    "evalJson decodes simple case class" in run {
+    "evalJson decodes simple case class" in {
         withBrowser {
             onPage("<html><body>test</body></html>") {
                 Browser.evalJson[EvalJsonTestData]("({name: 'Alice', age: 30})").map { result =>
@@ -1267,21 +1267,22 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "evalJson syntax error throws BrowserScriptException" in run {
+    "evalJson syntax error throws BrowserScriptException" in {
         withBrowser {
             onPage("<html><body>test</body></html>") {
                 Abort.run[BrowserScriptException] {
                     Browser.evalJson[EvalJsonTestData]("({invalid syntax !!}")
                 }.map { result =>
                     result match
-                        case Result.Failure(_: BrowserScriptException) => succeed
+                        case Result.Failure(_: BrowserScriptException) =>
+                            succeed("evalJson on a syntactically invalid script surfaces as BrowserScriptException")
                         case other => fail(s"Expected BrowserScriptException for syntax error but got $other")
                 }
             }
         }
     }
 
-    "evalJson decode failure aborts with BrowserDecodingException, not BrowserScriptException" in run {
+    "evalJson decode failure aborts with BrowserDecodingException, not BrowserScriptException" in {
         withBrowser {
             onPage("<html><body>test</body></html>") {
                 // Script returns a plain number; cannot be decoded into EvalJsonTestData.
@@ -1301,7 +1302,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- evalBoolean / evalInt / evalLong / evalDouble / evalDiscard ----
 
-    "evalBoolean decodes a boolean expression" in run {
+    "evalBoolean decodes a boolean expression" in {
         withBrowser {
             onPage("<html><body>typed-eval</body></html>") {
                 Browser.evalBoolean("(1 + 1) === 2").map { v =>
@@ -1311,7 +1312,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "evalInt decodes an integer expression" in run {
+    "evalInt decodes an integer expression" in {
         withBrowser {
             onPage("<html><body>typed-eval</body></html>") {
                 Browser.evalInt("21 * 2").map { v =>
@@ -1321,7 +1322,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "evalLong decodes a long expression" in run {
+    "evalLong decodes a long expression" in {
         withBrowser {
             onPage("<html><body>typed-eval</body></html>") {
                 Browser.evalLong("9999999999").map { v =>
@@ -1331,7 +1332,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "evalDouble decodes a double expression" in run {
+    "evalDouble decodes a double expression" in {
         withBrowser {
             onPage("<html><body>typed-eval</body></html>") {
                 Browser.evalDouble("1.5 + 0.25").map { v =>
@@ -1341,7 +1342,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "evalDiscard runs JS for side effect and ignores the result" in run {
+    "evalDiscard runs JS for side effect and ignores the result" in {
         // Confirms evalDiscard actually executes the script (window.__sentinel becomes 42)
         // and does NOT require the JS to be JSON-encodable.
         withBrowser {
@@ -1355,7 +1356,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "evalBoolean type mismatch surfaces as BrowserDecodingException" in run {
+    "evalBoolean type mismatch surfaces as BrowserDecodingException" in {
         withBrowser {
             onPage("<html><body>typed-eval</body></html>") {
                 Abort.run[BrowserDecodingException] {
@@ -1371,7 +1372,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- screenshotElement ----
 
-    "screenshotElement returns image of specific element" in run {
+    "screenshotElement returns image of specific element" in {
         withBrowser {
             onPage("""<html><body style="margin:0;padding:0;">
             <div id="target" style="width:100px;height:50px;background:red;">Target</div>
@@ -1385,7 +1386,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- screenshot no-arg overload ----
 
-    "screenshot(using Frame) captures the viewport with default dims, same as screenshot(1280, 720, 90)" in run {
+    "screenshot(using Frame) captures the viewport with default dims, same as screenshot(1280, 720, 90)" in {
         val p = page("<html><body><h1>Screenshot Test</h1></body></html>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -1411,7 +1412,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- countNow (point-in-time, no retry) ----
 
-    "countNow returns 0 immediately on an absent selector" in run {
+    "countNow returns 0 immediately on an absent selector" in {
         withBrowser {
             onPage("<div>nothing here</div>") {
                 tight {
@@ -1423,7 +1424,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "count retries on the active schedule (CDP transients), returns 0 on permanently-absent" in run {
+    "count retries on the active schedule (CDP transients), returns 0 on permanently-absent" in {
         // count is retried on BrowserMutationException only; locateCount returns 0 for "no match"
         // without raising, so a permanently-absent selector returns 0 on the first probe and does
         // NOT block. The retried form behaves identically to countNow for this case.
@@ -1440,7 +1441,7 @@ class BrowserReadTest extends BrowserTest:
 
     // ---- Boolean point-in-time reads ----
 
-    "value reads el.value property updated via JS, not the value attribute" in run {
+    "value reads el.value property updated via JS, not the value attribute" in {
         withBrowser {
             onPage(
                 "<input id='x' type='text' value='initial'>" +
@@ -1457,7 +1458,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "value on absent selector fails with BrowserElementNotFoundException" in run {
+    "value on absent selector fails with BrowserElementNotFoundException" in {
         withBrowser {
             onPage("<div>no inputs</div>") {
                 tight {
@@ -1465,14 +1466,14 @@ class BrowserReadTest extends BrowserTest:
                         Browser.value(Browser.Selector.css("#never"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                    case Result.Failure(ex: BrowserElementNotFoundException) => assert(ex.selector.contains("#never"))
                     case other => fail(s"expected BrowserElementNotFoundException but got $other")
                 }
             }
         }
     }
 
-    "isVisible distinguishes visible / display:none / visibility:hidden / aria-hidden ancestor" in run {
+    "isVisible distinguishes visible / display:none / visibility:hidden / aria-hidden ancestor" in {
         withBrowser {
             onPage(
                 "<div id='vis'>visible</div>" +
@@ -1495,7 +1496,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "isEnabled true on enabled button, false on disabled" in run {
+    "isEnabled true on enabled button, false on disabled" in {
         withBrowser {
             onPage("<button id='a'>A</button><button id='b' disabled>B</button>") {
                 for
@@ -1508,7 +1509,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "isChecked true on checked checkbox, false on unchecked" in run {
+    "isChecked true on checked checkbox, false on unchecked" in {
         withBrowser {
             onPage(
                 "<input id='c1' type='checkbox' checked>" +
@@ -1524,7 +1525,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "isFocused true after Browser.focus, false on a sibling" in run {
+    "isFocused true after Browser.focus, false on a sibling" in {
         withBrowser {
             onPage("<input id='in1' type='text'><input id='in2' type='text'>") {
                 Browser.focus(Browser.Selector.css("#in1")).andThen {
@@ -1539,7 +1540,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "hasNoVisibleText true on empty/whitespace, false on textContent" in run {
+    "hasNoVisibleText true on empty/whitespace, false on textContent" in {
         withBrowser {
             onPage(
                 "<div id='e'></div>" +
@@ -1558,7 +1559,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "hasEmptyValue true on empty input, false on populated" in run {
+    "hasEmptyValue true on empty input, false on populated" in {
         withBrowser {
             onPage(
                 "<input id='e' type='text' value=''>" +
@@ -1577,7 +1578,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "exists returns true when present, false when absent (no retry, no exception)" in run {
+    "exists returns true when present, false when absent (no retry, no exception)" in {
         withBrowser {
             onPage("<div id='here'>hi</div>") {
                 tight {
@@ -1592,7 +1593,7 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
-    "hasAttribute true for set attribute (even with empty value), false for missing" in run {
+    "hasAttribute true for set attribute (even with empty value), false for missing" in {
         withBrowser {
             onPage(
                 "<input id='a' data-foo>" +

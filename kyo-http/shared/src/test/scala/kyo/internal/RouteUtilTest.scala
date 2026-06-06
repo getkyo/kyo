@@ -3,7 +3,7 @@ package kyo.internal
 import kyo.*
 import kyo.internal.server.*
 
-class RouteUtilTest extends kyo.Test:
+class RouteUtilTest extends kyo.BaseHttpTest:
 
     import HttpPath./
 
@@ -629,7 +629,7 @@ class RouteUtilTest extends kyo.Test:
             )
         }
 
-        "user-set Content-Type preserved for streaming request" in run {
+        "user-set Content-Type preserved for streaming request" in {
             val route  = HttpRoute.postRaw("api").request(_.bodyStream)
             val stream = kyo.Stream.init[Span[Byte], kyo.Async](Seq(Span.fromUnsafe("data".getBytes("UTF-8"))))
             val request = HttpRequest(
@@ -971,7 +971,7 @@ class RouteUtilTest extends kyo.Test:
             )
         }
 
-        "user-set Content-Type preserved for streaming response" in run {
+        "user-set Content-Type preserved for streaming response" in {
             val route  = HttpRoute.getRaw("events").response(_.bodyStream)
             val stream = kyo.Stream.init[Span[Byte], kyo.Async](Seq(Span.fromUnsafe("data".getBytes("UTF-8"))))
             val response = HttpResponse.ok.addField("body", stream)
@@ -1088,7 +1088,7 @@ class RouteUtilTest extends kyo.Test:
     // ==================== SSE encoding ====================
 
     "SSE encoding" - {
-        "encodeResponse produces SSE frames" in run {
+        "encodeResponse produces SSE frames" in {
             val route = HttpRoute.getRaw("events").response(_.bodySseJson[User])
             val events: kyo.Stream[HttpSseEvent[User], kyo.Async] = kyo.Stream.init(Seq(
                 HttpSseEvent(User("Alice", 30)),
@@ -1128,7 +1128,7 @@ class RouteUtilTest extends kyo.Test:
     // ==================== SSE decoding ====================
 
     "SSE decoding" - {
-        "decodeStreamingResponse parses SSE frames" in run {
+        "decodeStreamingResponse parses SSE frames" in {
             val route  = HttpRoute.getRaw("events").response(_.bodySseJson[User])
             val frame1 = "data: {\"name\":\"Alice\",\"age\":30}\n\n"
             val frame2 = "event: update\ndata: {\"name\":\"Bob\",\"age\":25}\n\n"
@@ -1196,7 +1196,7 @@ class RouteUtilTest extends kyo.Test:
     // ==================== NDJSON line splitting ====================
 
     "NDJSON line splitting" - {
-        "handles multiple lines in one chunk" in run {
+        "handles multiple lines in one chunk" in {
             val route    = HttpRoute.getRaw("events").response(_.bodyNdjson[User])
             val combined = "{\"name\":\"Alice\",\"age\":30}\n{\"name\":\"Bob\",\"age\":25}\n"
             val rawStream = kyo.Stream.init(Seq(
@@ -1224,7 +1224,7 @@ class RouteUtilTest extends kyo.Test:
             end match
         }
 
-        "handles line split across chunks" in run {
+        "handles line split across chunks" in {
             val route = HttpRoute.getRaw("events").response(_.bodyNdjson[User])
             val part1 = "{\"name\":\"Ali"
             val part2 = "ce\",\"age\":30}\n"
@@ -1257,7 +1257,7 @@ class RouteUtilTest extends kyo.Test:
     // ==================== Multipart streaming closing boundary ====================
 
     "multipart streaming encoding" - {
-        "includes closing boundary" in run {
+        "includes closing boundary" in {
             val route = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
             val parts: kyo.Stream[HttpRequest.Part, kyo.Async] = kyo.Stream.init(Seq(
                 HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8")))

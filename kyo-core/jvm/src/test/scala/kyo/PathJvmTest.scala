@@ -4,7 +4,7 @@ import java.nio.file.Files as JFiles
 
 // JVM-only Path tests that require java.nio.file features not available on
 // Scala.js: toJava, Path.of(java.nio.file.Path), and symlink creation.
-class PathJvmTest extends Test:
+class PathJvmTest extends kyo.test.Test[Any]:
 
     // =========================================================================
     // toJava / Path.of
@@ -38,7 +38,7 @@ class PathJvmTest extends Test:
     // Symlink tests (require JFiles.createSymbolicLink)
     // =========================================================================
 
-    "isSymbolicLink returns true for a symbolic link" in run {
+    "isSymbolicLink returns true for a symbolic link" in {
         val tmp    = JFiles.createTempDirectory("kyo-test")
         val target = tmp.resolve("target.txt")
         val link   = tmp.resolve("link.txt")
@@ -52,7 +52,7 @@ class PathJvmTest extends Test:
         end for
     }
 
-    "realPath follows a symbolic link to its underlying target" in run {
+    "realPath follows a symbolic link to its underlying target" in {
         val tmp    = JFiles.createTempDirectory("kyo-test")
         val target = tmp.resolve("target.txt")
         val link   = tmp.resolve("link.txt")
@@ -66,7 +66,7 @@ class PathJvmTest extends Test:
         end for
     }
 
-    "confinedTo rejects a symlink inside root that escapes to outside root" in run {
+    "confinedTo rejects a symlink inside root that escapes to outside root" in {
         // tmp/root contains a symlink `escape` -> tmp/outside.txt. Without realPath the
         // syntactic check would accept it (no `..`, not absolute, no `.`), but
         // confinedTo resolves the link and rejects.
@@ -88,7 +88,7 @@ class PathJvmTest extends Test:
         end for
     }
 
-    "exists(followLinks=false) on symlink returns true; exists(true) returns false for dangling link" in run {
+    "exists(followLinks=false) on symlink returns true; exists(true) returns false for dangling link" in {
         val tmp    = JFiles.createTempDirectory("kyo-test")
         val target = tmp.resolve("ghost-target.txt")
         val link   = tmp.resolve("dangling-link.txt")
@@ -102,7 +102,7 @@ class PathJvmTest extends Test:
         end for
     }
 
-    "walk with followLinks=false does not follow symlinks" in run {
+    "walk with followLinks=false does not follow symlinks" in {
         val tmp    = JFiles.createTempDirectory("kyo-path-dir-test")
         val target = JFiles.createTempDirectory("kyo-path-dir-test-target")
         val inner  = target.resolve("inner.txt")
@@ -120,7 +120,7 @@ class PathJvmTest extends Test:
         end for
     }
 
-    "walk with followLinks=false terminates on a symlink cycle" in run {
+    "walk with followLinks=false terminates on a symlink cycle" in {
         val tmp      = JFiles.createTempDirectory("kyo-path-edge-test")
         val dir      = Path(tmp.toString)
         val linkPath = tmp.resolve("cycle-link")
@@ -132,13 +132,12 @@ class PathJvmTest extends Test:
             case Result.Success(paths) =>
                 val names = paths.toList.map(_.parts.last)
                 assert(names.contains("cycle-link"))
-                succeed
             case Result.Failure(e) =>
                 fail(s"Expected walk to succeed without error, got failure: $e")
         end for
     }
 
-    "walk(followLinks=true) follows symlinks into target directory" in run {
+    "walk(followLinks=true) follows symlinks into target directory" in {
         val dirA  = JFiles.createTempDirectory("kyo-path-dir-test-a")
         val dirB  = JFiles.createTempDirectory("kyo-path-dir-test-b")
         val inner = dirA.resolve("inner.txt")
@@ -156,7 +155,7 @@ class PathJvmTest extends Test:
         end for
     }
 
-    "copy with followLinks=false copies symlink as symlink" in run {
+    "copy with followLinks=false copies symlink as symlink" in {
         val tmp    = JFiles.createTempDirectory("kyo-path-dir-test")
         val target = tmp.resolve("target.txt")
         JFiles.createFile(target)

@@ -5,7 +5,7 @@ import scala.language.implicitConversions
 
 class WizardScenarioItTest extends UITest:
 
-    "step 1 fill next step 2 shown" in run {
+    "step 1 fill next step 2 shown" in {
         val app: UI < Async =
             for
                 step <- Signal.initRef(1)
@@ -24,11 +24,11 @@ class WizardScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("name"), "Alice")
                 _ <- Browser.click(Selector.id("next1"))
                 _ <- Browser.assertText(Selector.id("s2"), "Step 2")
-            yield succeed
+            yield ()
         }
     }
 
-    "premium path completes with all values" in run {
+    "premium path completes with all values" in {
         val app: UI < Async =
             for
                 step        <- Signal.initRef(1)
@@ -81,11 +81,11 @@ class WizardScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("card"), "1234")
                 _ <- Browser.click(Selector.id("finish"))
                 _ <- Browser.assertText(Selector.id("v"), "result:Alice|premium|1234")
-            yield succeed
+            yield ()
         }
     }
 
-    "free path skips billing" in run {
+    "free path skips billing" in {
         val app: UI < Async =
             for
                 step        <- Signal.initRef(1)
@@ -131,11 +131,11 @@ class WizardScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("next2"))
                 _ <- Browser.click(Selector.id("finish"))
                 _ <- Browser.assertText(Selector.id("v"), "result:Bob|free")
-            yield succeed
+            yield ()
         }
     }
 
-    "back to step 1 name preserved" in run {
+    "back to step 1 name preserved" in {
         val app: UI < Async =
             for
                 step <- Signal.initRef(1)
@@ -157,11 +157,11 @@ class WizardScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("next1"))
                 _ <- Browser.click(Selector.id("back2"))
                 _ <- Browser.assertAttribute(Selector.id("name"), "value", "Alice")
-            yield succeed
+            yield ()
         }
     }
 
-    "back change name forward shows updated" in run {
+    "back change name forward shows updated" in {
         val app: UI < Async =
             for
                 step   <- Signal.initRef(1)
@@ -191,11 +191,11 @@ class WizardScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("next1"))
                 _ <- Browser.click(Selector.id("done"))
                 _ <- Browser.assertText(Selector.id("v"), "result:Bob")
-            yield succeed
+            yield ()
         }
     }
 
-    "all steps signal backed values preserved" in run {
+    "all steps signal backed values preserved" in {
         val app: UI < Async =
             for
                 step <- Signal.initRef(1)
@@ -226,11 +226,11 @@ class WizardScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("va"), "a:step1val")
                 _ <- Browser.click(Selector.id("n1"))
                 _ <- Browser.assertText(Selector.id("vb"), "b:step2val")
-            yield succeed
+            yield ()
         }
     }
 
-    "Enter advances step via form submit" in run {
+    "Enter advances step via form submit" in {
         val app: UI < Async =
             for step <- Signal.initRef(1)
             yield UI.div(
@@ -246,7 +246,7 @@ class WizardScenarioItTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("s2"), "step2")
-            yield succeed
+            yield ()
         }
     }
 

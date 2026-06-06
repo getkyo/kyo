@@ -3,7 +3,13 @@ package kyo.doctest
 import kyo.*
 
 /** Integration tests for Doctest.check covering Driver lifecycle and setup block visibility. */
-class DoctestCheckTest extends Test:
+class DoctestCheckTest extends kyo.test.Test[Any]:
+
+    // The "Driver lifecycle" leaf counts `doctest-out*` dirs in the shared tmp dir before and after a run, so a
+    // sibling leaf's concurrent Doctest.check (which also creates a doctest-out dir) would pollute the count.
+    // ScalaTest's AsyncFreeSpec ran a suite's leaves sequentially; kyo-test runs them in parallel by default, so
+    // serialize this suite's leaves to keep the before/after window free of sibling-created dirs.
+    override def config = super.config.sequential
 
     private def testClasspath(using Frame): Chunk[kyo.Path] < Sync =
         for
@@ -38,7 +44,7 @@ class DoctestCheckTest extends Test:
     // Doctest.check opens and closes the Driver via Scope.acquireRelease.
     // Verified by confirming the Scope finalizers run (no leaked temp output dirs from doctest-out*).
     // We count doctest-out directories before and after a run with Scope.run and assert cleanup.
-    "Driver lifecycle: Scope.acquireRelease ensures cleanup" in run {
+    "Driver lifecycle: Scope.acquireRelease ensures cleanup" in {
         withTempCacheDir { cacheDir =>
             val md = """|# Test
                         |
@@ -87,7 +93,7 @@ class DoctestCheckTest extends Test:
 
     // A file WITH a setup block: subsequent Isolated blocks see the setup bindings.
     // A file WITHOUT a setup block: Isolated blocks do NOT see setup-only types (compile error if they reference them).
-    "setup-having file: isolated block sees setup bindings" in run {
+    "setup-having file: isolated block sees setup bindings" in {
         withTempCacheDir { cacheDir =>
             // The setup block defines `case class SetupType(n: Int)`.
             // The subsequent isolated block uses `SetupType` without redefining it.
@@ -131,7 +137,7 @@ class DoctestCheckTest extends Test:
         }
     }
 
-    "setup-free file: isolated block does not see undeclared bindings" in run {
+    "setup-free file: isolated block does not see undeclared bindings" in {
         withTempCacheDir { cacheDir =>
             // No setup block in this file. The isolated block tries to use `SetupTypeB` which was
             // never defined. This should produce a compile failure (not a success).

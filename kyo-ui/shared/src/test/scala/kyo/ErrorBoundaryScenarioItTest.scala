@@ -5,7 +5,7 @@ import scala.language.implicitConversions
 
 class ErrorBoundaryScenarioItTest extends UITest:
 
-    "handler throws other elements still interactive" in run {
+    "handler throws other elements still interactive" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -18,11 +18,11 @@ class ErrorBoundaryScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("boom"))
                 _ <- Browser.click(Selector.id("good"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "onInput throws type again works" in run {
+    "onInput throws type again works" in {
         val app: UI < Async =
             for
                 broken  <- Signal.initRef(true)
@@ -43,11 +43,11 @@ class ErrorBoundaryScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("fix"))
                 _ <- Browser.fill(Selector.id("i"), "b")
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "handler throws first call succeeds second" in run {
+    "handler throws first call succeeds second" in {
         val app: UI < Async =
             for callCount <- Signal.initRef(0)
             yield UI.div(
@@ -64,11 +64,11 @@ class ErrorBoundaryScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "2")
-            yield succeed
+            yield ()
         }
     }
 
-    "multiple buttons one throws others work" in run {
+    "multiple buttons one throws others work" in {
         val app: UI < Async =
             for bCount <- Signal.initRef(0)
             yield UI.div(
@@ -83,11 +83,11 @@ class ErrorBoundaryScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("a"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "b:2")
-            yield succeed
+            yield ()
         }
     }
 
-    "handler throws retry succeeds state correct" in run {
+    "handler throws retry succeeds state correct" in {
         val app: UI < Async =
             for
                 attempts <- Signal.initRef(0)
@@ -108,7 +108,7 @@ class ErrorBoundaryScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "success on attempt 2")
-            yield succeed
+            yield ()
         }
     }
 

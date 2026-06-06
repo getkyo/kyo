@@ -7,7 +7,7 @@ import kyo.stats.internal.TraceExporter
 import kyo.stats.internal.TraceSpan
 import kyo.stats.internal.UnsafeTraceSpan
 
-class OTLPTraceExporterTest extends Test:
+class OTLPTraceExporterTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -24,13 +24,13 @@ class OTLPTraceExporterTest extends Test:
         "end is safe" in {
             val span = exporter.startSpan(List("test"), "op", now())
             span.end(now())
-            succeed
+            succeed("runs without error: noop span.end does not throw")
         }
 
         "event is safe" in {
             val span = exporter.startSpan(List("test"), "op", now())
             span.event("test-event", Attributes.empty, now())
-            succeed
+            succeed("runs without error: noop span.event does not throw")
         }
 
         "setStatus is safe for all statuses" in {
@@ -38,48 +38,48 @@ class OTLPTraceExporterTest extends Test:
             span.setStatus(UnsafeTraceSpan.Status.Unset)
             span.setStatus(UnsafeTraceSpan.Status.Ok)
             span.setStatus(UnsafeTraceSpan.Status.Error("test error"))
-            succeed
+            succeed("runs without error: noop span.setStatus handles all status variants")
         }
     }
 
     "trace integration" - {
         val exporter = TraceExporter.noop
 
-        "executes body when disabled" in run {
+        "executes body when disabled" in {
             TraceSpan.trace(exporter, List("test"), "op") {
                 42
             }.map(result => assert(result == 42))
         }
 
-        "sets current span in trace block" in run {
+        "sets current span in trace block" in {
             TraceSpan.trace(exporter, List("test"), "op") {
                 TraceSpan.current
             }.map { span =>
                 span match
-                    case Present(_) => succeed
+                    case Present(_) => succeed("current span was set inside trace block")
                     case _          => fail("Expected current span to be set")
             }
         }
 
-        "nested traces work" in run {
+        "nested traces work" in {
             TraceSpan.trace(exporter, List("test"), "outer") {
                 TraceSpan.trace(exporter, List("test"), "inner") {
                     TraceSpan.current
                 }
             }.map { span =>
                 span match
-                    case Present(_) => succeed
+                    case Present(_) => succeed("current span is set inside nested trace block")
                     case _          => fail("Expected current span")
             }
         }
 
-        "trace with attributes" in run {
+        "trace with attributes" in {
             val attrs = Attributes.add("http.method", "GET").add("http.status_code", 200)
             TraceSpan.trace(exporter, List("http"), "request", attrs) {
                 TraceSpan.current
             }.map { span =>
                 span match
-                    case Present(_) => succeed
+                    case Present(_) => succeed("current span is set in trace block with attributes")
                     case _          => fail("Expected current span")
             }
         }
@@ -127,7 +127,7 @@ class OTLPTraceExporterTest extends Test:
 
     "startSpan" - {
 
-        "generates valid hex trace and span IDs" taggedAs (jvmOnly) in run {
+        "generates valid hex trace and span IDs".onlyJvm in {
             Clock.withTimeControl { control =>
                 for
                     traceCh <- Channel.init[ExportTraceRequest](10)
@@ -153,7 +153,7 @@ class OTLPTraceExporterTest extends Test:
             }
         }
 
-        "child inherits traceId from Propagatable parent" taggedAs (jvmOnly) in run {
+        "child inherits traceId from Propagatable parent".onlyJvm in {
             Clock.withTimeControl { control =>
                 for
                     traceCh <- Channel.init[ExportTraceRequest](10)
@@ -182,7 +182,7 @@ class OTLPTraceExporterTest extends Test:
             }
         }
 
-        "non-Propagatable parent generates new traceId" taggedAs (jvmOnly) in run {
+        "non-Propagatable parent generates new traceId".onlyJvm in {
             Clock.withTimeControl { control =>
                 for
                     traceCh <- Channel.init[ExportTraceRequest](10)
@@ -209,7 +209,7 @@ class OTLPTraceExporterTest extends Test:
 
     "flush" - {
 
-        "recursive flush drains all spans at exact batch boundary" taggedAs (jvmOnly) in run {
+        "recursive flush drains all spans at exact batch boundary".onlyJvm in {
             Clock.withTimeControl { control =>
                 for
                     traceCh <- Channel.init[ExportTraceRequest](10)
@@ -241,7 +241,7 @@ class OTLPTraceExporterTest extends Test:
 
     "queue overflow" - {
 
-        "drops spans when queue is full" taggedAs (jvmOnly) in run {
+        "drops spans when queue is full".onlyJvm in {
             Clock.withTimeControl { control =>
                 for
                     traceCh <- Channel.init[ExportTraceRequest](10)
@@ -271,7 +271,7 @@ class OTLPTraceExporterTest extends Test:
 
     "flush signal" - {
 
-        "triggers eager flush on batch size threshold" taggedAs (jvmOnly) in run {
+        "triggers eager flush on batch size threshold".onlyJvm in {
             Clock.withTimeControl { control =>
                 for
                     traceCh <- Channel.init[ExportTraceRequest](10)

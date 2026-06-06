@@ -11,10 +11,10 @@ import scala.language.implicitConversions
 /** Tests SVG reactive resolution via the engine's rebuildSvgElement and resolveReactives, and the `<g>`-based
   * reactive placeholders used for a reactive boundary in SVG context.
   */
-class SvgReactiveTest extends Test:
+class SvgReactiveTest extends kyo.test.Test[Any]:
 
     // A reactive child inside svg resolves for server-side rendering.
-    "reactive child inside svg resolves for SSR" in run {
+    "reactive child inside svg resolves for SSR" in {
         val sig  = Signal.initConst(Chunk(1, 2, 3))
         val root = Svg.svg.width(10).height(10)(sig.foreach(i => Svg.rect.x(i.toDouble).y(0).width(1).height(1)))
         for html <- HtmlRenderer.render(root, Seq.empty)
@@ -22,7 +22,7 @@ class SvgReactiveTest extends Test:
     }
 
     // A g container rebuilds its children on resolveReactives.
-    "g container rebuilds children on resolveReactives" in run {
+    "g container rebuilds children on resolveReactives" in {
         val g = Svg.g(UI.when(Signal.initConst(true))(Svg.circle.cx(5).cy(5).r(3)))
         for
             resolved <- ReactiveUI.resolveReactives(g)
@@ -34,7 +34,7 @@ class SvgReactiveTest extends Test:
     }
 
     // An empty reactive boundary inside <svg> renders a <g> placeholder, not <span>.
-    "empty reactive in svg emits <g> placeholder" in run {
+    "empty reactive in svg emits <g> placeholder" in {
         val emptySig = Signal.initConst(Chunk.empty[Int])
         val root     = Svg.svg(emptySig.foreach(i => Svg.rect.x(i.toDouble).y(0).width(1).height(1)))
         for html <- HtmlRenderer.render(root, Seq.empty)
@@ -48,7 +48,7 @@ class SvgReactiveTest extends Test:
     }
 
     // Once the SVG signal resolves to children, the SVG children appear under the <g> boundary.
-    "reactive in svg renders children after signal resolves" in run {
+    "reactive in svg renders children after signal resolves" in {
         val sig  = Signal.initConst(Chunk(1, 2))
         val root = Svg.svg(sig.foreach(i => Svg.rect.x(i.toDouble).y(0).width(1).height(1)))
         for html <- HtmlRenderer.render(root, Seq.empty)
@@ -59,7 +59,7 @@ class SvgReactiveTest extends Test:
     }
 
     // An empty reactive boundary in HTML context still renders a <span> placeholder.
-    "empty reactive in HTML emits <span> placeholder" in run {
+    "empty reactive in HTML emits <span> placeholder" in {
         val emptySig = Signal.initConst(Chunk.empty[Int])
         val root     = UI.div(emptySig.foreach(i => UI.span(i.toString)))
         for html <- HtmlRenderer.render(root, Seq.empty)
@@ -71,7 +71,7 @@ class SvgReactiveTest extends Test:
     }
 
     // A reactive inside foreignObject (the HTML bridge) renders <span>, not <g>.
-    "reactive inside foreignObject resets to <span>" in run {
+    "reactive inside foreignObject resets to <span>" in {
         val emptySig = Signal.initConst(Chunk.empty[Int])
         val root     = Svg.svg(Svg.foreignObject(UI.div(emptySig.foreach(i => UI.span(i.toString)))))
         for html <- HtmlRenderer.render(root, Seq.empty)
@@ -85,7 +85,7 @@ class SvgReactiveTest extends Test:
     }
 
     // Nested svg/foreignObject/div/svg toggles the placeholder tag per boundary.
-    "nested svg/html/svg toggles placeholder tag" in run {
+    "nested svg/html/svg toggles placeholder tag" in {
         val emptySig = Signal.initConst(Chunk.empty[Int])
         val inner    = Svg.svg(emptySig.foreach(i => Svg.rect.x(i.toDouble).y(0).width(1).height(1)))
         val root     = Svg.svg(Svg.foreignObject(UI.div(inner)))
@@ -99,7 +99,7 @@ class SvgReactiveTest extends Test:
     }
 
     // normalize records svgContext == true for a reactive inside <svg>.
-    "normalize records svgContext true in svg" in run {
+    "normalize records svgContext true in svg" in {
         val sig  = Signal.initConst(Svg.circle.cx(1).cy(1).r(1): UI)
         val root = Svg.svg(UI.when(Signal.initConst(true))(Svg.circle.cx(1).cy(1).r(1)))
         for node <- ReactiveUI.normalize(root, Seq.empty)
@@ -112,7 +112,7 @@ class SvgReactiveTest extends Test:
     }
 
     // normalize records svgContext == false for a reactive inside <div>.
-    "normalize records svgContext false in div" in run {
+    "normalize records svgContext false in div" in {
         val root = UI.div(UI.when(Signal.initConst(true))(UI.span("x")))
         for node <- ReactiveUI.normalize(root, Seq.empty)
         yield
@@ -123,7 +123,7 @@ class SvgReactiveTest extends Test:
     }
 
     // The UISession SSE wrapper uses <g> for a reactive in SVG context.
-    "UISession SSE wrapper uses <g> in svg context" in run {
+    "UISession SSE wrapper uses <g> in svg context" in {
         val sig  = Signal.initConst(Chunk.empty[Int])
         val root = Svg.svg(sig.foreach(i => Svg.rect.x(i.toDouble).y(0).width(1).height(1)))
         for
@@ -139,7 +139,7 @@ class SvgReactiveTest extends Test:
 
     // Cross-target consistency: two HtmlRenderer.render calls (the shared path used by both runRender
     // and the DomBackend non-empty serialize) emit byte-identical placeholder markup.
-    "cross-target placeholder markup is identical" in run {
+    "cross-target placeholder markup is identical" in {
         val sig  = Signal.initConst(Chunk.empty[Int])
         val root = Svg.svg(sig.foreach(i => Svg.rect.x(i.toDouble).y(0).width(1).height(1)))
         for

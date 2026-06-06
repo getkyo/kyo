@@ -4,7 +4,7 @@ import StreamSubscriber.EmitStrategy
 import java.util.concurrent.Flow.*
 import kyo.*
 
-final class StreamSubscriberTest extends Test:
+final class StreamSubscriberTest extends kyo.test.Test[Any]:
     import StreamSubscriberTest.*
 
     def getPublisher(
@@ -39,7 +39,7 @@ final class StreamSubscriberTest extends Test:
                 subscriber.onSubscribe(subscription)
             end subscribe
 
-    "Concurrent publisher & eager subscriber" in run {
+    "Concurrent publisher & eager subscriber" in {
         val publisher = getPublisher(BatchSize)
         for
             subscriber <- StreamSubscriber[Int](BufferSize, EmitStrategy.Eager)
@@ -50,7 +50,7 @@ final class StreamSubscriberTest extends Test:
         end for
     }
 
-    "Concurrent publisher & buffer subscriber" in run {
+    "Concurrent publisher & buffer subscriber" in {
         val publisher = getPublisher(BatchSize)
         for
             subscriber <- StreamSubscriber[Int](BufferSize, EmitStrategy.Buffer)
@@ -61,7 +61,7 @@ final class StreamSubscriberTest extends Test:
         end for
     }
 
-    "Concurrent publisher & multiple subscribers" in run {
+    "Concurrent publisher & multiple subscribers" in {
         val publisher = getPublisher(BatchSize)
         for
             subscriber1 <- StreamSubscriber[Int](BufferSize, EmitStrategy.Eager)

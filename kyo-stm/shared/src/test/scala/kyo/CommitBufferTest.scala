@@ -2,7 +2,7 @@ package kyo
 
 import scala.concurrent.Future
 
-class CommitBufferTest extends Test:
+class CommitBufferTest extends kyo.test.Test[Any]:
 
     // CommitBuffer is internal: its extension methods require AllowUnsafe and operate on
     // internal-only types. These specs exercise it transitively via `STM.run` with 2+ TRefs;
@@ -12,7 +12,7 @@ class CommitBufferTest extends Test:
 
     "CommitBuffer (via STM.run multi-ref commits)" - {
 
-        "concurrent inverted-order multi-ref commits do not deadlock" in runNotJS {
+        "concurrent inverted-order multi-ref commits do not deadlock".notJs in {
             for
                 r0 <- TRef.init(0)
                 r1 <- TRef.init(0)
@@ -45,7 +45,7 @@ class CommitBufferTest extends Test:
             yield assert(v0 == 200 && v1 == 200 && v2 == 200 && v3 == 200)
         }
 
-        "sort boundary at insertionSortThreshold: sizes 7, 8, 9 all commit correctly" in run {
+        "sort boundary at insertionSortThreshold: sizes 7, 8, 9 all commit correctly" in {
             def buildCommit(n: Int) =
                 for
                     refs <- Kyo.foreach(1 to n)(i => TRef.init(i))
@@ -63,7 +63,7 @@ class CommitBufferTest extends Test:
             end for
         }
 
-        "buffer is reset after a conflicting commit that returns false" in runNotJS {
+        "buffer is reset after a conflicting commit that returns false".notJs in {
             for
                 r0 <- TRef.init(0)
                 r1 <- TRef.init(0)
@@ -91,7 +91,7 @@ class CommitBufferTest extends Test:
             yield assert(v0 == 999 && v1 == 50 && v2 == 777)
         }
 
-        "commit applies Writes and ignores Reads when iterating the buffer" in run {
+        "commit applies Writes and ignores Reads when iterating the buffer" in {
             for
                 r0 <- TRef.init(10)
                 r1 <- TRef.init(20)
@@ -107,7 +107,7 @@ class CommitBufferTest extends Test:
             yield assert(v0 == 10 && v1 == 99)
         }
 
-        "TRef ids are non-negative for normal allocation regime (1000 refs)" in run {
+        "TRef ids are non-negative for normal allocation regime (1000 refs)" in {
             for
                 refs <- Kyo.foreach(1 to 1000)(_ => TRef.init(0))
             yield
@@ -115,7 +115,7 @@ class CommitBufferTest extends Test:
                 assert(ids.forall(_ >= 0), s"Found negative TRef id in normal-allocation regime: ${ids.filter(_ < 0)}")
         }
 
-        "9-ref multi-ref commit terminates quickSort recursion base case" in run {
+        "9-ref multi-ref commit terminates quickSort recursion base case" in {
             for
                 refs <- Kyo.foreach(1 to 9)(i => TRef.init(i))
                 _    <- STM.run(Kyo.foreachDiscard(refs)(r => r.update(_ + 1)))
@@ -123,7 +123,7 @@ class CommitBufferTest extends Test:
             yield assert(outs == (2 to 10))
         }
 
-        "100-ref multi-ref commit terminates without StackOverflowError" in run {
+        "100-ref multi-ref commit terminates without StackOverflowError" in {
             for
                 refs <- Kyo.foreach(1 to 100)(i => TRef.init(i))
                 _    <- STM.run(Kyo.foreachDiscard(refs)(r => r.update(_ + 1)))
@@ -131,7 +131,7 @@ class CommitBufferTest extends Test:
             yield assert(outs == (2 to 101))
         }
 
-        "read-only multi-ref commit yields stable reads (witness Read-entry path)" in run {
+        "read-only multi-ref commit yields stable reads (witness Read-entry path)" in {
             for
                 r0 <- TRef.init(7)
                 r1 <- TRef.init(11)
@@ -144,7 +144,7 @@ class CommitBufferTest extends Test:
             yield assert(vs == (7, 11))
         }
 
-        "read-only and read-write multi-ref commits both yield correct final state" in run {
+        "read-only and read-write multi-ref commits both yield correct final state" in {
             for
                 r0 <- TRef.init(1)
                 r1 <- TRef.init(2)
@@ -155,7 +155,7 @@ class CommitBufferTest extends Test:
             yield assert(ab == (1, 2) && v0 == 1 && v1 == 11)
         }
 
-        "sequential STM.run calls do not contaminate each other" in run {
+        "sequential STM.run calls do not contaminate each other" in {
             for
                 r0 <- TRef.init(0)
                 r1 <- TRef.init(0)
@@ -170,7 +170,7 @@ class CommitBufferTest extends Test:
             yield assert(values == (300, 100, 300))
         }
 
-        "multi-ref commit with last-index conflict exits within the retry budget" in runNotJS {
+        "multi-ref commit with last-index conflict exits within the retry budget".notJs in {
             for
                 refs <- Kyo.foreach(1 to 4)(_ => TRef.init(0))
                 // Background contention on the highest-id ref (post-sort, this is the last lock acquired).
@@ -190,7 +190,7 @@ class CommitBufferTest extends Test:
                 assert(r.isSuccess)
         }
 
-        "size-8 (insertionSort) and size-9 (quickSort) multi-ref commits both succeed" in run {
+        "size-8 (insertionSort) and size-9 (quickSort) multi-ref commits both succeed" in {
             def buildCommit(n: Int) =
                 for
                     refs <- Kyo.foreach(1 to n)(i => TRef.init(i))
@@ -206,7 +206,7 @@ class CommitBufferTest extends Test:
             end for
         }
 
-        "normal STM.run pipeline always sorts before lock (no-deadlock under inverted-order contention)" in runNotJS {
+        "normal STM.run pipeline always sorts before lock (no-deadlock under inverted-order contention)".notJs in {
             for
                 r0 <- TRef.init(0)
                 r1 <- TRef.init(0)

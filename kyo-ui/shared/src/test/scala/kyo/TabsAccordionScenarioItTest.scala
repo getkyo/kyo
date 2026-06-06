@@ -5,7 +5,7 @@ import scala.language.implicitConversions
 
 class TabsAccordionScenarioItTest extends UITest:
 
-    "click tab switches content" in run {
+    "click tab switches content" in {
         val app: UI < Async =
             for activeTab <- Signal.initRef("general")
             yield UI.div(
@@ -24,11 +24,11 @@ class TabsAccordionScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("content"), "Profile content")
                 _ <- Browser.click(Selector.id("tab-general"))
                 _ <- Browser.assertText(Selector.id("content"), "General content")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill field in tab switch back values preserved" in run {
+    "fill field in tab switch back values preserved" in {
         val app: UI < Async =
             for
                 activeTab <- Signal.initRef("a")
@@ -53,11 +53,11 @@ class TabsAccordionScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("vb"), "b:world")
                 _ <- Browser.click(Selector.id("ta"))
                 _ <- Browser.assertText(Selector.id("va"), "a:hello")
-            yield succeed
+            yield ()
         }
     }
 
-    "submit from any tab captures all" in run {
+    "submit from any tab captures all" in {
         val app: UI < Async =
             for
                 activeTab <- Signal.initRef("a")
@@ -87,11 +87,11 @@ class TabsAccordionScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("ib"), "bbb")
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "result:aaa|bbb")
-            yield succeed
+            yield ()
         }
     }
 
-    "4 tabs each with different content" in run {
+    "4 tabs each with different content" in {
         val app: UI < Async =
             for tab <- Signal.initRef(1)
             yield UI.div(
@@ -110,11 +110,11 @@ class TabsAccordionScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("content"), "Tab 4 content")
                 _ <- Browser.click(Selector.id("t1"))
                 _ <- Browser.assertText(Selector.id("content"), "Tab 1 content")
-            yield succeed
+            yield ()
         }
     }
 
-    "Shift Tab from content back to header" in run {
+    "Shift Tab from content back to header" in {
         val app: UI < Async =
             for active <- Signal.initRef("a")
             yield UI.div(
@@ -127,11 +127,11 @@ class TabsAccordionScenarioItTest extends UITest:
                 _ <- Browser.assertFocused(Selector.id("content-input"))
                 _ <- Browser.press(Selector.id("content-input"), Key.Tab, KeyModifiers(shift = true))
                 _ <- Browser.assertFocused(Selector.id("h-a"))
-            yield succeed
+            yield ()
         }
     }
 
-    "ArrowRight Left between tab headers" in run {
+    "ArrowRight Left between tab headers" in {
         val app: UI < Async =
             for active <- Signal.initRef("a")
             yield UI.div(
@@ -147,11 +147,11 @@ class TabsAccordionScenarioItTest extends UITest:
                 _ <- Browser.assertFocused(Selector.id("h-b"))
                 _ <- Browser.press(Selector.id("h-b"), Key.ArrowLeft)
                 _ <- Browser.assertFocused(Selector.id("h-a"))
-            yield succeed
+            yield ()
         }
     }
 
-    "ArrowRight wraps from last to first tab" in run {
+    "ArrowRight wraps from last to first tab" in {
         val app: UI < Async =
             for active <- Signal.initRef("a")
             yield UI.div(
@@ -166,11 +166,11 @@ class TabsAccordionScenarioItTest extends UITest:
                 _ <- Browser.assertFocused(Selector.id("h-c"))
                 _ <- Browser.press(Selector.id("h-c"), Key.ArrowRight)
                 _ <- Browser.assertFocused(Selector.id("h-a"))
-            yield succeed
+            yield ()
         }
     }
 
-    "Enter on tab header activates content" in run {
+    "Enter on tab header activates content" in {
         // HTML <button> elements natively fire click on Enter when focused.
         // No HtmlRenderer shim needed; native behaviour drives the onClick handler.
         val app: UI < Async =
@@ -189,7 +189,7 @@ class TabsAccordionScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("content"), "Profile content")
                 _ <- Browser.press(Selector.id("tab-general"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("content"), "General content")
-            yield succeed
+            yield ()
         }
     }
 

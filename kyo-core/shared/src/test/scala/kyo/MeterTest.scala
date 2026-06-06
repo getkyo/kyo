@@ -1,29 +1,29 @@
 package kyo
 
-class MeterTest extends Test:
+class MeterTest extends kyo.test.Test[Any]:
 
     "mutex" - {
-        "init" in run {
+        "init" in {
             Scope.run(Meter.initMutex).map: meter =>
                 meter.closed.map: isClosed =>
                     assert(isClosed)
         }
 
-        "use" in run {
+        "use" in {
             Meter.useMutex(meter => Kyo.zip(meter.closed, meter)).map:
                 case (isClosed1, meter) =>
                     meter.closed.map: isClosed2 =>
                         assert(!isClosed1 && isClosed2)
         }
 
-        "ok" in run {
+        "ok" in {
             for
                 t <- Meter.initMutex
                 v <- t.run(2)
             yield assert(v == 2)
         }
 
-        "run" in run {
+        "run" in {
             for
                 t  <- Meter.initMutex
                 p  <- Promise.init[Int, Any]
@@ -34,7 +34,7 @@ class MeterTest extends Test:
                 w1 <- t.pendingWaiters
                 b2 <- Promise.init[Unit, Any]
                 f2 <- Fiber.initUnscoped(b2.completeUnit.map(_ => t.run(2)))
-                _  <- b2.get.andThen(untilTrue(t.pendingWaiters.map(_ > 0)))
+                _  <- b2.get.andThen(assertEventually(t.pendingWaiters.map(_ > 0)))
                 a2 <- t.availablePermits
                 w2 <- t.pendingWaiters
                 d1 <- f1.done
@@ -49,7 +49,7 @@ class MeterTest extends Test:
             )
         }
 
-        "tryRun" in run {
+        "tryRun" in {
             for
                 sem <- Meter.initMutex
                 p   <- Promise.init[Int, Any]
@@ -67,20 +67,20 @@ class MeterTest extends Test:
     }
 
     "semaphore" - {
-        "init" in run {
+        "init" in {
             Scope.run(Meter.initSemaphore(3)).map: meter =>
                 meter.closed.map: isClosed =>
                     assert(isClosed)
         }
 
-        "use" in run {
+        "use" in {
             Meter.useSemaphore(3)(meter => Kyo.zip(meter.closed, meter)).map:
                 case (isClosed1, meter) =>
                     meter.closed.map: isClosed2 =>
                         assert(!isClosed1 && isClosed2)
         }
 
-        "ok" in run {
+        "ok" in {
             for
                 t  <- Meter.initSemaphore(2)
                 v1 <- t.run(2)
@@ -88,7 +88,7 @@ class MeterTest extends Test:
             yield assert(v1 == 2 && v2 == 3)
         }
 
-        "run" in run {
+        "run" in {
             for
                 t  <- Meter.initSemaphore(2)
                 p  <- Promise.init[Int, Any]
@@ -102,7 +102,7 @@ class MeterTest extends Test:
                 w1 <- t.pendingWaiters
                 b3 <- Promise.init[Unit, Any]
                 f3 <- Fiber.initUnscoped(b3.completeUnit.andThen(t.run(2)))
-                _  <- b3.get.andThen(untilTrue(t.pendingWaiters.map(_ > 0)))
+                _  <- b3.get.andThen(assertEventually(t.pendingWaiters.map(_ > 0)))
                 a2 <- t.availablePermits
                 w2 <- t.pendingWaiters
                 d1 <- f1.done
@@ -118,7 +118,7 @@ class MeterTest extends Test:
                 v1.contains(1) && v2.contains(1) && v3 == 2 && a3 == 2 && w3 == 0)
         }
 
-        "tryRun" in run {
+        "tryRun" in {
             for
                 sem <- Meter.initSemaphore(2)
                 p   <- Promise.init[Int, Any]
@@ -146,7 +146,7 @@ class MeterTest extends Test:
 
             val repeats = 10
 
-            "run" in run {
+            "run" in {
                 (for
                     size    <- Choice.eval(1, 2, 3, 50, 100)
                     meter   <- Meter.initSemaphore(size)
@@ -163,10 +163,10 @@ class MeterTest extends Test:
                     assert(permits == size)
                 )
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
 
-            "close" in run {
+            "close" in {
                 (for
                     size    <- Choice.eval(1, 2, 3, 50, 100)
                     meter   <- Meter.initSemaphore(size)
@@ -190,10 +190,10 @@ class MeterTest extends Test:
                     assert(available.isFailure)
                 )
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
 
-            "with interruptions" in runJVM {
+            "with interruptions".onlyJvm in {
                 (for
                     size    <- Choice.eval(1, 2, 3, 50)
                     meter   <- Meter.initSemaphore(size)
@@ -214,7 +214,7 @@ class MeterTest extends Test:
                     count       <- counter.get
                 yield assert(interrupted.count(identity) + completed.count(_.isSuccess) == 100))
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
         }
     }
@@ -225,27 +225,27 @@ class MeterTest extends Test:
     val panic = Result.Panic(new Exception)
 
     "rate limiter" - {
-        "init" in run {
+        "init" in {
             Scope.run(Meter.initRateLimiter(2, 1.milli)).map: meter =>
                 meter.closed.map: isClosed =>
                     assert(isClosed)
         }
 
-        "use" in run {
+        "use" in {
             Meter.useRateLimiter(2, 1.milli)(meter => Kyo.zip(meter.closed, meter)).map:
                 case (isClosed1, meter) =>
                     meter.closed.map: isClosed2 =>
                         assert(!isClosed1 && isClosed2)
         }
 
-        "ok" in run {
+        "ok" in {
             for
                 t  <- Meter.initRateLimiter(2, 1.milli)
                 v1 <- t.run(2)
                 v2 <- t.run(3)
             yield assert(v1 == 2 && v2 == 3)
         }
-        "one loop" in run {
+        "one loop" in {
             for
                 meter   <- Meter.initRateLimiter(10, 1.milli)
                 counter <- AtomicInt.init(0)
@@ -255,7 +255,7 @@ class MeterTest extends Test:
                 v1      <- counter.get
             yield assert(v1 >= 2 && v1 <= 200)
         }
-        "two loops" in run {
+        "two loops" in {
             for
                 meter   <- Meter.initRateLimiter(10, 1.milli)
                 counter <- AtomicInt.init(0)
@@ -267,7 +267,7 @@ class MeterTest extends Test:
                 v1      <- counter.get
             yield assert(v1 >= 2 && v1 <= 200)
         }
-        "replenish doesn't overflow" in run {
+        "replenish doesn't overflow" in {
             for
                 meter     <- Meter.initRateLimiter(5, 5.millis)
                 _         <- Async.sleep(32.millis)
@@ -278,7 +278,7 @@ class MeterTest extends Test:
 
     "pipeline" - {
 
-        "run" in run {
+        "run" in {
             for
                 meter   <- Meter.pipeline(Meter.initRateLimiter(2, 1.milli), Meter.initMutex)
                 counter <- AtomicInt.init(0)
@@ -291,19 +291,19 @@ class MeterTest extends Test:
             yield assert(v1 >= 0 && v1 < 200)
         }
 
-        "tryRun" in run {
+        "tryRun" in {
             for
                 meter <- Meter.pipeline(Meter.initRateLimiter(2, 10.millis), Meter.initMutex)
                 f1    <- Fiber.initUnscoped(meter.run(Async.never))
-                _     <- untilTrue(meter.tryRun(()).map(_.isEmpty))
+                _     <- assertEventually(meter.tryRun(()).map(_.isEmpty))
                 _     <- f1.interrupt(panic)
-            yield succeed
+            yield ()
         }
     }
 
     "reentrancy" - {
         "mutex" - {
-            "reentrant by default" in run {
+            "reentrant by default" in {
                 for
                     mutex <- Meter.initMutex
                     result <- mutex.run {
@@ -314,7 +314,7 @@ class MeterTest extends Test:
                 yield assert(result == 42)
             }
 
-            "non-reentrant" in run {
+            "non-reentrant" in {
                 for
                     meter  <- Meter.initMutex(reentrant = false)
                     p      <- Promise.init[Int, Any]
@@ -326,7 +326,7 @@ class MeterTest extends Test:
                 yield assert(!done && result.isPanic)
             }
 
-            "nested forked fiber can't reenter" in run {
+            "nested forked fiber can't reenter" in {
                 for
                     meter <- Meter.initMutex
                     (done, result) <- meter.run {
@@ -345,7 +345,7 @@ class MeterTest extends Test:
         }
 
         "semaphore" - {
-            "reentrant by default" in run {
+            "reentrant by default" in {
                 for
                     sem <- Meter.initSemaphore(1)
                     result <- sem.run {
@@ -356,7 +356,7 @@ class MeterTest extends Test:
                 yield assert(result == 42)
             }
 
-            "non-reentrant" in run {
+            "non-reentrant" in {
                 for
                     meter  <- Meter.initSemaphore(1, reentrant = false)
                     p      <- Promise.init[Int, Any]
@@ -368,7 +368,7 @@ class MeterTest extends Test:
                 yield assert(!done && result.isPanic)
             }
 
-            "nested forked fiber can't reenter" in run {
+            "nested forked fiber can't reenter" in {
                 for
                     meter <- Meter.initSemaphore(1)
                     (done, result) <- meter.run {
@@ -387,7 +387,7 @@ class MeterTest extends Test:
         }
 
         "rate limiter" - {
-            "reentrant by default" in run {
+            "reentrant by default" in {
                 for
                     rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
                     result <- rateLimiter.run {
@@ -398,7 +398,7 @@ class MeterTest extends Test:
                 yield assert(result == 42)
             }
 
-            "non-reentrant" in run {
+            "non-reentrant" in {
                 for
                     meter  <- Meter.initRateLimiter(1, 60.seconds, reentrant = false)
                     p      <- Promise.init[Int, Any]
@@ -410,7 +410,7 @@ class MeterTest extends Test:
                 yield assert(!done && result.isPanic)
             }
 
-            "nested forked fiber can't reenter" in run {
+            "nested forked fiber can't reenter" in {
                 for
                     meter <- Meter.initRateLimiter(1, 60.seconds)
                     (done, result) <- meter.run {
@@ -429,7 +429,7 @@ class MeterTest extends Test:
         }
 
         "pipeline" - {
-            "reentrant when all components are reentrant" in run {
+            "reentrant when all components are reentrant" in {
                 for
                     mutex       <- Meter.initMutex
                     sem         <- Meter.initSemaphore(1)
@@ -443,7 +443,7 @@ class MeterTest extends Test:
                 yield assert(result == 42)
             }
 
-            "non-reentrant when any component is non-reentrant" in run {
+            "non-reentrant when any component is non-reentrant" in {
                 for
                     mutex       <- Meter.initMutex
                     sem         <- Meter.initSemaphore(1, reentrant = false)
@@ -460,7 +460,7 @@ class MeterTest extends Test:
                 yield assert(!done && result.isPanic)
             }
 
-            "nested forked fiber can't reenter" in run {
+            "nested forked fiber can't reenter" in {
                 for
                     mutex       <- Meter.initMutex
                     sem         <- Meter.initSemaphore(1)

@@ -5,17 +5,17 @@ import scala.language.implicitConversions
 
 class FormTest extends UITest:
 
-    "form renders with children" in run {
+    "form renders with children" in {
         withUI(UI.div(UI.form(UI.input.id("i"), UI.button("Go").id("go")).id("f"))) {
             for
                 _ <- Browser.assertVisible(Selector.id("f"))
                 _ <- Browser.assertVisible(Selector.id("i"))
                 _ <- Browser.assertText(Selector.id("go"), "Go")
-            yield succeed
+            yield ()
         }
     }
 
-    "form onSubmit fires via button click" in run {
+    "form onSubmit fires via button click" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -30,11 +30,11 @@ class FormTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "false")
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "form onSubmit counter" in run {
+    "form onSubmit counter" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -49,11 +49,11 @@ class FormTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "1")
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "2")
-            yield succeed
+            yield ()
         }
     }
 
-    "onSubmit reads SignalRef values" in run {
+    "onSubmit reads SignalRef values" in {
         val app: UI < Async =
             for
                 inputRef <- Signal.initRef("")
@@ -75,11 +75,11 @@ class FormTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "hello")
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "submitted:hello")
-            yield succeed
+            yield ()
         }
     }
 
-    "pressKey Enter on input triggers submit" in run {
+    "pressKey Enter on input triggers submit" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -93,11 +93,11 @@ class FormTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "disabled submit button not clickable" in run {
+    "disabled submit button not clickable" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -110,11 +110,11 @@ class FormTest extends UITest:
             for
                 _ <- Browser.assertDisabled(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "0")
-            yield succeed
+            yield ()
         }
     }
 
-    "text checkbox select form fill all submit" in run {
+    "text checkbox select form fill all submit" in {
         val app: UI < Async =
             for
                 textRef  <- Signal.initRef("")
@@ -144,11 +144,11 @@ class FormTest extends UITest:
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "hello|true|")
-            yield succeed
+            yield ()
         }
     }
 
-    "form inside div still works" in run {
+    "form inside div still works" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -163,11 +163,11 @@ class FormTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "multiple forms submit one other unaffected" in run {
+    "multiple forms submit one other unaffected" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef(0)
@@ -187,11 +187,11 @@ class FormTest extends UITest:
                 _ <- Browser.click(Selector.id("sub1"))
                 _ <- Browser.assertText(Selector.id("va"), "a:1")
                 _ <- Browser.assertText(Selector.id("vb"), "b:0")
-            yield succeed
+            yield ()
         }
     }
 
-    "form with conditional fields" in run {
+    "form with conditional fields" in {
         val app: UI < Async =
             for
                 showExtra <- Signal.initRef(false)
@@ -217,11 +217,11 @@ class FormTest extends UITest:
                 _ <- Browser.fill(Selector.id("extra"), "data")
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "extra:data")
-            yield succeed
+            yield ()
         }
     }
 
-    "form with nested div containing inputs" in run {
+    "form with nested div containing inputs" in {
         val app: UI < Async =
             for
                 ref    <- Signal.initRef("")
@@ -243,11 +243,11 @@ class FormTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "nested")
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "got:nested")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal driven error message" in run {
+    "signal driven error message" in {
         val app: UI < Async =
             for
                 error <- Signal.initRef("")
@@ -271,11 +271,11 @@ class FormTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "data")
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("err"), "")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal driven submit enable" in run {
+    "signal driven submit enable" in {
         val app: UI < Async =
             for
                 ref <- Signal.initRef("")
@@ -297,25 +297,25 @@ class FormTest extends UITest:
                 _ <- Browser.assertEnabled(Selector.id("sub"))
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "focus submit button" in run {
+    "focus submit button" in {
         withUI(UI.div(UI.form(UI.button("Submit").id("sub")).id("f"))) {
             for
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertVisible(Selector.id("sub"))
-            yield succeed
+            yield ()
         }
     }
 
-    "form with no onSubmit no crash" in run {
+    "form with no onSubmit no crash" in {
         withUI(UI.div(UI.form(UI.button("Go").id("sub")).id("f"))) {
             for
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertVisible(Selector.id("sub"))
-            yield succeed
+            yield ()
         }
     }
 

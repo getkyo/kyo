@@ -9,12 +9,12 @@ import kyo.interop.flow.StreamSubscription.StreamCanceled
 import kyo.interop.flow.StreamSubscription.StreamComplete
 import kyo.kernel.ArrowEffect
 
-abstract private class PublisherToSubscriberTest extends Test:
+abstract private class PublisherToSubscriberTest extends kyo.test.Test[Any]:
     import PublisherToSubscriberTest.*
 
     protected def streamSubscriber: StreamSubscriber[Int] < Sync
 
-    "should have the same output as input" in run {
+    "should have the same output as input" in {
         val stream = Stream.range(0, MaxStreamLength, 1, BufferSize)
         for
             publisher  <- stream.toPublisher
@@ -29,7 +29,7 @@ abstract private class PublisherToSubscriberTest extends Test:
         end for
     }
 
-    "should propagate errors downstream" in run {
+    "should propagate errors downstream" in {
         val inputStream: Stream[Int, Sync] = Stream
             .range(0, 10, 1, 1)
             .map { int =>
@@ -50,7 +50,7 @@ abstract private class PublisherToSubscriberTest extends Test:
     }
 
     "single publisher & multiple subscribers" - {
-        "contention" in run {
+        "contention" in {
             def emit(counter: AtomicInt): Unit < (Emit[Chunk[Int]] & Sync) =
                 counter.getAndIncrement.map: value =>
                     if value >= MaxStreamLength then ()
@@ -99,7 +99,7 @@ abstract private class PublisherToSubscriberTest extends Test:
             end for
         }
 
-        "one subscriber's failure does not affect others." in run {
+        "one subscriber's failure does not affect others." in {
             def emit(counter: AtomicInt): Unit < (Emit[Chunk[Int]] & Sync) =
                 counter.getAndIncrement.map: value =>
                     if value >= MaxStreamLength then
@@ -156,7 +156,7 @@ abstract private class PublisherToSubscriberTest extends Test:
             end for
         }
 
-        "publisher's interuption should end all subscribed parties" in run {
+        "publisher's interuption should end all subscribed parties" in {
             def emit(counter: AtomicInt): Unit < (Emit[Chunk[Int]] & Sync) =
                 counter.getAndIncrement.map: value =>
                     if value >= MaxStreamLength then
@@ -205,11 +205,11 @@ abstract private class PublisherToSubscriberTest extends Test:
                 _ <- fiber2.interrupt.unit
                 _ <- fiber3.interrupt.unit
                 _ <- fiber4.interrupt.unit
-            yield assert(true)
+            yield succeed("publisher interruption ended all subscribed parties without hanging")
             end for
         }
 
-        "when complete, associated subscription should be canceled" in run {
+        "when complete, associated subscription should be canceled" in {
             val stream: Stream[Int, Any] =
                 Stream(
                     Loop(0)(cur => Emit.valueWith(Chunk(cur))(Loop.continue(cur + 1)))

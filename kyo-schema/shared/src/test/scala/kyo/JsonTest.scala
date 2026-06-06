@@ -4,7 +4,7 @@ import kyo.Json.JsonSchema
 import kyo.internal.JsonReader
 import kyo.internal.JsonWriter
 
-class JsonTest extends Test:
+class JsonTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -205,7 +205,7 @@ class JsonTest extends Test:
                     s"Failed for $original -> $json -> $decoded"
                 )
             }
-            succeed
+            ()
         }
 
         // 2. LARGE NUMBER DOS PREVENTION
@@ -215,10 +215,10 @@ class JsonTest extends Test:
 
             val result = Json.decode[BigDecimal](json)
             result match
-                case Result.Success(v) =>
-                    assert(v.scale >= 0 || v.scale < 0)
+                case Result.Success(_) =>
+                    succeed("decode of an extreme exponent terminated with a value (no DoS); reaching this branch is the proof")
                 case Result.Failure(_) =>
-                    succeed
+                    succeed("decode of an extreme exponent terminated with a rejection (no DoS); rejection is also correct")
             end match
         }
 
@@ -227,7 +227,7 @@ class JsonTest extends Test:
             val result = Json.decode[Double](json)
             result match
                 case Result.Success(v) => assert(!v.isNaN && !v.isInfinite)
-                case Result.Failure(_) => succeed
+                case Result.Failure(_) => ()
         }
 
         "number with many digits does not cause DoS" in {
@@ -247,8 +247,8 @@ class JsonTest extends Test:
 
             val result = Json.decode[List[Int]](nestedJson)
             result match
-                case Result.Success(_) => succeed
-                case Result.Failure(_) => succeed
+                case Result.Success(_) => succeed("deeply nested array parsed without stack overflow; reaching this branch is the proof")
+                case Result.Failure(_) => succeed("deeply nested array rejected without stack overflow; reaching this branch is the proof")
         }
 
         "deeply nested objects handled safely" in {
@@ -257,10 +257,11 @@ class JsonTest extends Test:
 
             try
                 val reader = JsonReader(nestedJson)
-                succeed
+                discard(reader)
+                succeed("JsonReader constructed for deeply nested objects without stack overflow")
             catch
                 case _: StackOverflowError => fail("Stack overflow on nested JSON")
-                case _: Exception          => succeed
+                case _: Exception => succeed("a parse error on deeply nested objects is acceptable; the contract is no stack overflow")
             end try
         }
 
@@ -371,7 +372,8 @@ class JsonTest extends Test:
             result match
                 case Result.Success(_)                       => fail("Should not decode null to String")
                 case Result.Failure(_: NullPointerException) => fail("Should not throw NPE")
-                case Result.Failure(_)                       => succeed
+                case Result.Failure(_) =>
+                    succeed("null String field rejected with a non-NPE failure; reaching this branch is the verification")
             end match
         }
 
@@ -397,7 +399,7 @@ class JsonTest extends Test:
                 case Result.Success(v) =>
                     assert(!v.isNaN, "null should not decode to NaN")
                     fail("null should not decode to Double at all")
-                case Result.Failure(_) => succeed
+                case Result.Failure(_) => succeed("null is rejected as a Double value; reaching the Failure branch is the verification")
             end match
         }
 
@@ -417,7 +419,7 @@ class JsonTest extends Test:
                 case Result.Success(map) =>
                     assert(map("a") == 1 || map("a") == 2)
                 case Result.Failure(_) =>
-                    succeed
+                    ()
             end match
         }
 
@@ -449,7 +451,7 @@ class JsonTest extends Test:
                 val decoded = Json.decode[String](json).getOrThrow
                 assert(decoded == original, s"Failed for: $original")
             }
-            succeed
+            ()
         }
 
         "escaped unicode sequences decode correctly" in {
@@ -493,7 +495,7 @@ class JsonTest extends Test:
                 val decoded = Json.decode[Long](json).getOrThrow
                 assert(decoded == original, s"Failed for $original")
             }
-            succeed
+            ()
         }
 
         // 8. FLOAT/DOUBLE PRECISION
@@ -505,7 +507,7 @@ class JsonTest extends Test:
                 val decoded = Json.decode[Float](json).getOrThrow
                 assert(decoded == original, s"Failed for $original")
             }
-            succeed
+            ()
         }
 
         "Double special values handled" in {
@@ -703,7 +705,7 @@ class JsonTest extends Test:
                 val decoded = Json.decode[EdgeShape](json).getOrThrow
                 assert(decoded == original, s"Failed for $original")
             }
-            succeed
+            ()
         }
 
         // 12. RECURSIVE TYPES
@@ -743,7 +745,7 @@ class JsonTest extends Test:
                 val decoded = Json.decode[BigInt](json).getOrThrow
                 assert(decoded == original, s"Failed for $original")
             }
-            succeed
+            ()
         }
 
         // 14. WHITESPACE HANDLING
@@ -765,7 +767,7 @@ class JsonTest extends Test:
                 val decoded = Json.decode[Person](json).getOrThrow
                 assert(decoded == Person("Alice", 30), s"Failed for: $json")
             }
-            succeed
+            ()
         }
 
         // 15. NUMERIC EDGE CASES
@@ -774,8 +776,9 @@ class JsonTest extends Test:
             val json   = "007"
             val result = Json.decode[Int](json)
             result match
-                case Result.Success(7)     => succeed
-                case Result.Failure(_)     => succeed
+                case Result.Success(7) => succeed("parsed '007' as 7, ignoring leading zeros; the literal pattern is the verification")
+                case Result.Failure(_) =>
+                    succeed("rejected leading zeros as invalid per strict JSON; reaching the Failure branch is the verification")
                 case Result.Success(other) => fail(s"Unexpected value: $other")
             end match
         }
@@ -797,7 +800,7 @@ class JsonTest extends Test:
             val result = Json.decode[BigDecimal](json)
             result match
                 case Result.Success(v) => assert(v == BigDecimal("0.9"))
-                case Result.Failure(_) => succeed
+                case Result.Failure(_) => ()
         }
 
         // 16. COLLECTIONS
@@ -1482,7 +1485,7 @@ class JsonTest extends Test:
                     childrenSchema match
                         case arr: JsonSchema.Arr =>
                             arr.items match
-                                case _: JsonSchema.Obj => succeed
+                                case _: JsonSchema.Obj => ()
                                 case other             => fail(s"Expected Obj for recursive TreeNode items, got $other")
                         case other => fail(s"Expected Arr for children, got $other")
                     end match
@@ -1689,7 +1692,7 @@ class JsonTest extends Test:
                 case Result.Success(v) =>
                     // Must NOT silently wrap to Long.MinValue
                     assert(v != Long.MinValue, "Must not silently wrap overflow")
-                case Result.Failure(_) => succeed // rejecting is also correct
+                case Result.Failure(_) => succeed("rejecting the overflow is also correct; reaching the Failure branch is the verification")
             end match
         }
 
@@ -1700,7 +1703,7 @@ class JsonTest extends Test:
             result match
                 case Result.Success(v) =>
                     assert(v != -25.toByte, "Must not silently wrap Byte overflow")
-                case Result.Failure(_) => succeed
+                case Result.Failure(_) => succeed("rejecting the overflow is also correct; reaching the Failure branch is the verification")
             end match
         }
 
@@ -1710,7 +1713,7 @@ class JsonTest extends Test:
             result match
                 case Result.Success(v) =>
                     assert(v != -31073.toShort, "Must not silently wrap Short overflow")
-                case Result.Failure(_) => succeed
+                case Result.Failure(_) => succeed("rejecting the overflow is also correct; reaching the Failure branch is the verification")
             end match
         }
 
@@ -1720,7 +1723,7 @@ class JsonTest extends Test:
             result match
                 case Result.Success(v) =>
                     assert(v != 1410065407, "Must not silently wrap Int overflow")
-                case Result.Failure(_) => succeed
+                case Result.Failure(_) => succeed("rejecting the overflow is also correct; reaching the Failure branch is the verification")
             end match
         }
 
@@ -1789,7 +1792,7 @@ class JsonTest extends Test:
             result match
                 case Result.Success(v) =>
                     assert(v == 0 || v == 1) // either parse as 0 (stop at '1') or as 1 is debatable
-                case Result.Failure(_) => succeed
+                case Result.Failure(_) => ()
             end match
         }
 
@@ -1883,7 +1886,7 @@ class JsonTest extends Test:
                 val decoded = Json.decode[Float](json).getOrThrow
                 assert(decoded == v, s"Float round-trip failed: $v -> $json -> $decoded")
             }
-            succeed
+            ()
         }
 
         // -----------------------------------------------------------------
@@ -1978,7 +1981,7 @@ class JsonTest extends Test:
                     val encoded  = Json.encode(v)
                     val elapsed2 = java.lang.System.currentTimeMillis() - start2
                     assert(elapsed2 < 5000, s"BigDecimal re-encoding took ${elapsed2}ms")
-                case Result.Failure(_) => succeed
+                case Result.Failure(_) => ()
             end match
         }
 
@@ -2052,7 +2055,7 @@ class JsonTest extends Test:
             assert(elapsed < 5000, s"Parsing 100K unicode escapes took ${elapsed}ms")
             result match
                 case Result.Success(s) => assert(s == "A" * 100000)
-                case Result.Failure(_) => succeed
+                case Result.Failure(_) => ()
         }
 
         "double round-trip: boundary values" in {
@@ -2076,7 +2079,7 @@ class JsonTest extends Test:
                 val decoded = Json.decode[Double](json).getOrThrow
                 assert(decoded == v, s"Double round-trip failed: $v -> $json -> $decoded")
             }
-            succeed
+            ()
         }
     }
 
@@ -2098,7 +2101,7 @@ class JsonTest extends Test:
             // previously crashed at macro-expansion. Summoning the Schema here forces the
             // macro to run; a regression would fail the compile, not the assertion.
             val _ = summon[Schema[MTGenericDefault[Int]]]
-            succeed
+            succeed("Schema derivation for a generic case class with defaults does not crash; the summon above is the compile-time check")
         }
 
         "MTGenericDefault[Int]: omitted default decodes to the declared default" in {

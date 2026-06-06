@@ -1,6 +1,6 @@
 package kyo
 
-class DictTest extends Test:
+class DictTest extends kyo.test.Test[Any]:
 
     def largeDict: Dict[String, Int] =
         var d = Dict.empty[String, Int]
@@ -67,17 +67,17 @@ class DictTest extends Test:
             assert(smallDict("a") == 1)
         }
         "throws for missing key small" in {
-            assertThrows[NoSuchElementException] {
+            interceptThrown[NoSuchElementException] {
                 smallDict("z")
             }
         }
         "throws for missing key large" in {
-            assertThrows[NoSuchElementException] {
+            interceptThrown[NoSuchElementException] {
                 largeDict("missing")
             }
         }
         "throws on empty" in {
-            assertThrows[NoSuchElementException] {
+            interceptThrown[NoSuchElementException] {
                 Dict.empty[String, Int]("x")
             }
         }

@@ -3,7 +3,7 @@ package kyo.kernel
 import kyo.*
 import kyo.kernel.*
 
-class RuntimeEffectTest extends Test:
+class RuntimeEffectTest extends kyo.test.Test[Any]:
 
     sealed trait TestRuntimeEffect1 extends ContextEffect[Int]
     sealed trait TestRuntimeEffect2 extends ContextEffect[String]
@@ -19,8 +19,9 @@ class RuntimeEffectTest extends Test:
         ContextEffect.suspend(Tag[TestRuntimeEffect3])
 
     "suspend" in {
-        val effect = testRuntimeEffect1
-        assert(effect.isInstanceOf[Int < TestRuntimeEffect1])
+        val effect: Int < TestRuntimeEffect1 = testRuntimeEffect1
+        discard(effect)
+        succeed("ContextEffect.suspend produces an Int < TestRuntimeEffect1; the type ascription above is the verification")
     }
 
     "handle" - {

@@ -3,7 +3,7 @@ package kyo.stats.otlp
 import kyo.*
 import kyo.stats.*
 
-class OTLPClientTest extends Test:
+class OTLPClientTest extends kyo.test.Test[Any]:
 
     def testConfig(port: Int) = OTLPConfig(
         endpoint = s"http://localhost:$port",
@@ -80,7 +80,7 @@ class OTLPClientTest extends Test:
 
     "sendTraces" - {
 
-        "sends spans to collector" in runJVM {
+        "sends spans to collector".onlyJvm in {
             withCollector { (config, traceCh, _) =>
                 val span = OTLPSpan(
                     traceId = "0af7651916cd43dd8448eb211c80319c",
@@ -112,7 +112,7 @@ class OTLPClientTest extends Test:
             }
         }
 
-        "includes resource attributes" in runJVM {
+        "includes resource attributes".onlyJvm in {
             withCollector { (config, traceCh, _) =>
                 val request = ExportTraceRequest(
                     resourceSpans = Seq(ResourceSpans(
@@ -141,7 +141,7 @@ class OTLPClientTest extends Test:
             }
         }
 
-        "includes span attributes and events" in runJVM {
+        "includes span attributes and events".onlyJvm in {
             withCollector { (config, traceCh, _) =>
                 val span = OTLPSpan(
                     traceId = "abc",
@@ -181,7 +181,7 @@ class OTLPClientTest extends Test:
             }
         }
 
-        "sends multiple spans in batch" in runJVM {
+        "sends multiple spans in batch".onlyJvm in {
             withCollector { (config, traceCh, _) =>
                 val spans = (1 to 5).map(i =>
                     OTLPSpan(
@@ -210,12 +210,12 @@ class OTLPClientTest extends Test:
                     (1 to 5).foreach(i =>
                         assert(receivedSpans.exists(_.name == s"op-$i"))
                     )
-                    succeed
+                    ()
                 end for
             }
         }
 
-        "parent-child relationship preserved" in runJVM {
+        "parent-child relationship preserved".onlyJvm in {
             withCollector { (config, traceCh, _) =>
                 val parent = OTLPSpan(
                     traceId = "aaa",
@@ -254,7 +254,7 @@ class OTLPClientTest extends Test:
             }
         }
 
-        "retries after 503 and delivers" in runJVM {
+        "retries after 503 and delivers".onlyJvm in {
             val attempts = new java.util.concurrent.atomic.AtomicInteger(0)
             for
                 traceCh <- Channel.init[ExportTraceRequest](10)
@@ -276,7 +276,7 @@ class OTLPClientTest extends Test:
             end for
         }
 
-        "retries after 429 and delivers" in runJVM {
+        "retries after 429 and delivers".onlyJvm in {
             val attempts = new java.util.concurrent.atomic.AtomicInteger(0)
             for
                 traceCh <- Channel.init[ExportTraceRequest](10)
@@ -298,7 +298,7 @@ class OTLPClientTest extends Test:
             end for
         }
 
-        "handles partial success with rejected spans" in runJVM {
+        "handles partial success with rejected spans".onlyJvm in {
             for
                 traceCh <- Channel.init[ExportTraceRequest](10)
                 traceHandler = mkTraceRoute.handler { req =>
@@ -324,7 +324,7 @@ class OTLPClientTest extends Test:
 
     "sendMetrics" - {
 
-        "sends counter metrics" in runJVM {
+        "sends counter metrics".onlyJvm in {
             withCollector { (config, _, metricCh) =>
                 val request = ExportMetricsRequest(
                     resourceMetrics = Seq(ResourceMetrics(
@@ -362,7 +362,7 @@ class OTLPClientTest extends Test:
             }
         }
 
-        "sends histogram metrics" in runJVM {
+        "sends histogram metrics".onlyJvm in {
             withCollector { (config, _, metricCh) =>
                 val request = ExportMetricsRequest(
                     resourceMetrics = Seq(ResourceMetrics(
@@ -404,7 +404,7 @@ class OTLPClientTest extends Test:
             }
         }
 
-        "sends gauge metrics" in runJVM {
+        "sends gauge metrics".onlyJvm in {
             withCollector { (config, _, metricCh) =>
                 val request = ExportMetricsRequest(
                     resourceMetrics = Seq(ResourceMetrics(
@@ -438,7 +438,7 @@ class OTLPClientTest extends Test:
             }
         }
 
-        "handles partial success with rejected data points" in runJVM {
+        "handles partial success with rejected data points".onlyJvm in {
             for
                 metricCh <- Channel.init[ExportMetricsRequest](10)
                 traceHandler = mkTraceRoute.handler { _ =>

@@ -2,19 +2,18 @@ package kyo
 
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.Actor.Subject
-import org.scalatest.compatible.Assertion
 
-class ActorTest extends Test:
+class ActorTest extends kyo.test.Test[Any]:
 
     "basic actor operations" - {
-        "completes with final value" in run {
+        "completes with final value" in {
             for
                 actor  <- Actor.run("a")
                 result <- actor.await
             yield assert(result == "a")
         }
 
-        "processes messages" in run {
+        "processes messages" in {
             for
                 sum      <- AtomicInt.init(0)
                 actor    <- Actor.run(Actor.receiveMax[Int](3)(sum.addAndGet(_)))
@@ -26,7 +25,7 @@ class ActorTest extends Test:
             yield assert(finalSum == 6)
         }
 
-        "processes messages and returns value" in run {
+        "processes messages and returns value" in {
             for
                 sum      <- AtomicInt.init(0)
                 actor    <- Actor.run(Actor.receiveMax[Int](3)(sum.addAndGet(_)).andThen(sum.get))
@@ -37,7 +36,7 @@ class ActorTest extends Test:
             yield assert(finalSum == 6)
         }
 
-        "stops after processing N messages" in run {
+        "stops after processing N messages" in {
             for
                 counter <- AtomicInt.init(0)
                 actor   <- Actor.run(Actor.receiveMax[Int](1)(_ => counter.incrementAndGet))
@@ -50,7 +49,7 @@ class ActorTest extends Test:
     }
 
     "inter-actor communication" - {
-        "ping pong between actors" in run {
+        "ping pong between actors" in {
             case class Ping(replyTo: Subject[Pong])
             case class Pong(replyTo: Subject[Ping])
 
@@ -75,7 +74,7 @@ class ActorTest extends Test:
             end for
         }
 
-        "broadcast to multiple actors" in run {
+        "broadcast to multiple actors" in {
             for
                 results <- Queue.Unbounded.init[Int]()
                 workers <-
@@ -101,7 +100,7 @@ class ActorTest extends Test:
     "error handling" - {
         case object TestError
 
-        "propagates errors" in run {
+        "propagates errors" in {
             for
                 actor <- Actor.run {
                     Actor.receiveAll[Int] { v =>
@@ -117,7 +116,7 @@ class ActorTest extends Test:
     }
 
     "actor hierarchy" - {
-        "child actors are properly cleaned up when parent finishes" in run {
+        "child actors are properly cleaned up when parent finishes" in {
             for
                 consumed         <- Latch.init(2)
                 cleanedUp        <- Latch.init(2)
@@ -158,7 +157,7 @@ class ActorTest extends Test:
                 assert(events.contains("child2 cleaned up"))
         }
 
-        "child actors are cleaned up when parent fails" in run {
+        "child actors are cleaned up when parent fails" in {
             case object ParentError
 
             for
@@ -185,7 +184,7 @@ class ActorTest extends Test:
             end for
         }
 
-        "parallel child actor creation and cleanup works correctly" in runNotJS {
+        "parallel child actor creation and cleanup works correctly".notJs in {
             val actorCount = 50
 
             for
@@ -210,14 +209,14 @@ class ActorTest extends Test:
                 }
                 result     <- parentActor.await
                 startCount <- startCounter.get
-                _          <- untilTrue(cleanupCounter.get.map(_ == actorCount))
+                _          <- assertEventually(cleanupCounter.get.map(_ == actorCount))
             yield
                 assert(result == "parent done")
                 assert(startCount == actorCount)
             end for
         }
 
-        "multi-level hierarchy" in run {
+        "multi-level hierarchy" in {
             case class Message(value: Int, replyTo: Subject[Int])
 
             for
@@ -249,7 +248,7 @@ class ActorTest extends Test:
                 promise   <- Promise.init[Int, Any]
                 _         <- grandparent.send(Message(5, Subject.init(promise)))
                 _         <- promise.get
-                _         <- untilTrue(results.size.map(_ == 4))
+                _         <- assertEventually(results.size.map(_ == 4))
                 processed <- results.drain
             yield assert(processed.toSet == Set(5 * 1 * 1, 5 * 1 * 2, 5 * 2 * 1, 5 * 2 * 2))
             end for
@@ -257,7 +256,7 @@ class ActorTest extends Test:
     }
 
     "backpressure and capacity" - {
-        "handles mailbox at capacity" in runJVM {
+        "handles mailbox at capacity".onlyJvm in {
             for
                 counter <- AtomicInt.init(0)
                 actor   <- Actor.run(100)(Actor.receiveMax[Int](150)(counter.addAndGet(_)))
@@ -267,7 +266,7 @@ class ActorTest extends Test:
             yield assert(sum == (1 to 150).sum)
         }
 
-        "under concurrency" in runJVM {
+        "under concurrency".onlyJvm in {
             for
                 results  <- Queue.Unbounded.init[Int]()
                 actor    <- Actor.run(50)(Actor.receiveMax[Int](1000)(results.add(_)))
@@ -280,7 +279,7 @@ class ActorTest extends Test:
         }
     }
 
-    "graceful shutdown" in run {
+    "graceful shutdown" in {
         for
             started   <- Latch.init(1)
             exit      <- Latch.init(1)
@@ -298,12 +297,12 @@ class ActorTest extends Test:
             _ <- started.await
             _ <- actor.close
             _ <- exit.release
-            _ <- untilTrue(processed.get)
-        yield succeed
+            _ <- assertEventually(processed.get)
+        yield ()
     }
 
     "resource management" - {
-        "properly cleans up resources on normal completion" in run {
+        "properly cleans up resources on normal completion" in {
             for
                 resourceCleaned <- AtomicBoolean.init(false)
                 actor <- Actor.run {
@@ -319,7 +318,7 @@ class ActorTest extends Test:
             yield assert(cleaned)
         }
 
-        "cleans up resources on error" in run {
+        "cleans up resources on error" in {
             case object TestError
             for
                 resourceCleaned <- AtomicBoolean.init(false)
@@ -332,14 +331,14 @@ class ActorTest extends Test:
                 }
                 _      <- actor.send(1)
                 result <- Abort.run(actor.await)
-                _      <- untilTrue(resourceCleaned.get)
+                _      <- assertEventually(resourceCleaned.get)
             yield assert(result == Result.fail(TestError))
             end for
         }
     }
 
     "concurrency" - {
-        "handles multiple senders" in runJVM {
+        "handles multiple senders".onlyJvm in {
             for
                 sum    <- AtomicInt.init(0)
                 actor  <- Actor.run(Actor.receiveMax[Int](100)(sum.addAndGet(_).unit))
@@ -349,7 +348,7 @@ class ActorTest extends Test:
             yield assert(result == 5050)
         }
 
-        "maintains message order" in runJVM {
+        "maintains message order".onlyJvm in {
             for
                 queue  <- Queue.Unbounded.init[Int]()
                 actor  <- Actor.run(Actor.receiveMax[Int](100)(queue.add(_)))
@@ -371,7 +370,7 @@ class ActorTest extends Test:
 
         case class Transaction(accountId: Int, kind: String, amount: Double, balance: Double)
 
-        "handles concurrent transactions correctly" in run {
+        "handles concurrent transactions correctly" in {
             for
                 loggedTransactions <- Queue.Unbounded.init[Transaction]()
                 logger <- Actor.run {
@@ -426,7 +425,7 @@ class ActorTest extends Test:
     }
 
     "receiveLoop" - {
-        "processes messages until done" in run {
+        "processes messages until done" in {
             for
                 sum <- AtomicInt.init(0)
                 actor <- Actor.run {
@@ -444,7 +443,7 @@ class ActorTest extends Test:
             yield assert(finalSum == 6)
         }
 
-        "can maintain state between iterations" in run {
+        "can maintain state between iterations" in {
             for
                 results <- Queue.Unbounded.init[String]()
                 actor <- Actor.run {
@@ -468,7 +467,7 @@ class ActorTest extends Test:
             yield assert(received == List("a-1", "b-2", "c-3"))
         }
 
-        "can maintain single state value" in run {
+        "can maintain single state value" in {
             for
                 actor <- Actor.run {
                     Actor.receiveLoop[Int](0) { (msg, sum) =>
@@ -484,7 +483,7 @@ class ActorTest extends Test:
             yield assert(result == 60)
         }
 
-        "can maintain two state values" in run {
+        "can maintain two state values" in {
             for
                 actor <- Actor.run {
                     Actor.receiveLoop[String]("", 0) { (msg, str, count) =>
@@ -500,7 +499,7 @@ class ActorTest extends Test:
             yield assert(result == ("abc", 3))
         }
 
-        "can maintain three state values" in run {
+        "can maintain three state values" in {
             for
                 actor <- Actor.run {
                     Actor.receiveLoop[Int](0, 0, 1) { (msg, sum, count, product) =>
@@ -516,7 +515,7 @@ class ActorTest extends Test:
             yield assert(result == (9, 3, 24))
         }
 
-        "can maintain four state values" in run {
+        "can maintain four state values" in {
             for
                 actor <- Actor.run {
                     Actor.receiveLoop[String]("", 0, 0, true) { (msg, str, length, wordCount, valid) =>
@@ -542,7 +541,7 @@ class ActorTest extends Test:
 
     "multiple receive calls" - {
 
-        "combines receiveMax and receiveAll" in run {
+        "combines receiveMax and receiveAll" in {
             for
                 results <- Queue.Unbounded.init[String]()
                 actor <- Actor.run {
@@ -558,13 +557,13 @@ class ActorTest extends Test:
                 _        <- actor.send(1)
                 _        <- actor.send(2)
                 _        <- actor.send(3)
-                _        <- untilTrue(results.size.map(_ == 3))
+                _        <- assertEventually(results.size.map(_ == 3))
                 _        <- actor.close
                 received <- results.drain
             yield assert(received == List("receiveMax: 1", "receiveMax: 2", "receiveAll: 3"))
         }
 
-        "combines receiveLoop and receiveMax" in run {
+        "combines receiveLoop and receiveMax" in {
             for
                 results <- Queue.Unbounded.init[String]()
                 actor <- Actor.run {
@@ -598,7 +597,7 @@ class ActorTest extends Test:
 
         case class TestMessage(v: Int, replyTo: Subject[Int])
 
-        "Retry" in run {
+        "Retry" in {
             for
                 attempts <- AtomicInt.init(0)
                 actor <- Actor.run {
@@ -623,7 +622,7 @@ class ActorTest extends Test:
             )
         }
 
-        "Retry limit" in run {
+        "Retry limit" in {
             for
                 attempts <- AtomicInt.init(0)
                 actor <- Actor.run {
@@ -650,7 +649,7 @@ class ActorTest extends Test:
             )
         }
 
-        "Abort" in run {
+        "Abort" in {
             for
                 events <- Queue.Unbounded.init[String]()
                 actor <- Actor.run {
@@ -681,7 +680,7 @@ class ActorTest extends Test:
             ))
         }
 
-        "mixed" in run {
+        "mixed" in {
             for
                 attempts <- AtomicInt.init(0)
                 events   <- Queue.Unbounded.init[String]()

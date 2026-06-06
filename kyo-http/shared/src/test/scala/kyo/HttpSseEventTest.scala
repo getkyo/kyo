@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 
-class HttpSseEventTest extends Test:
+class HttpSseEventTest extends BaseHttpTest:
 
     "construction" - {
         "data only" in {

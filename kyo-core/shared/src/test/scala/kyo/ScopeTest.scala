@@ -6,7 +6,7 @@ import kyo.Result.Error
 import kyo.Result.Panic
 import scala.util.control.NoStackTrace
 
-class ScopeTest extends Test:
+class ScopeTest extends kyo.test.Test[Any]:
 
     case class TestResource(id: Int, var closes: Int = 0) extends Closeable derives CanEqual:
         var acquires = 0
@@ -28,7 +28,7 @@ class ScopeTest extends Test:
             yield EffectfulResource(id, cl)
     end EffectfulResource
 
-    "acquire + tranform + close" in run {
+    "acquire + tranform + close" in {
         val r1 = TestResource(1)
         val r2 = TestResource(2)
         Scope.acquire(r1()).map(_ => assert(r1.closes == 0))
@@ -41,7 +41,7 @@ class ScopeTest extends Test:
             }
     }
 
-    "two acquires + close" in run {
+    "two acquires + close" in {
         val r1 = TestResource(1)
         val r2 = TestResource(2)
         Scope.acquire(r1()).map(_ => Scope.acquire(r2()))
@@ -54,7 +54,7 @@ class ScopeTest extends Test:
             }
     }
 
-    "two acquires + for-comp + close" in run {
+    "two acquires + for-comp + close" in {
         val r1 = TestResource(1)
         val r2 = TestResource(2)
         val io =
@@ -74,7 +74,7 @@ class ScopeTest extends Test:
             }
     }
 
-    "nested" in run {
+    "nested" in {
         val r1 = TestResource(1)
         Scope.acquire(r1())
             .handle(
@@ -87,11 +87,11 @@ class ScopeTest extends Test:
             }
     }
 
-    "empty run" in run {
+    "empty run" in {
         Scope.run("a").map(s => assert(s == "a"))
     }
 
-    "effectful acquireRelease" in run {
+    "effectful acquireRelease" in {
         val io =
             for
                 r          <- Scope.acquireRelease(EffectfulResource(1))(_.close)
@@ -109,7 +109,7 @@ class ScopeTest extends Test:
 
     "integration with other effects" - {
 
-        "ensure" in run {
+        "ensure" in {
             var closes = 0
             Scope.ensure(Fiber.initUnscoped(closes += 1).map(_.get).unit)
                 .handle(
@@ -120,7 +120,7 @@ class ScopeTest extends Test:
                 }
         }
 
-        "acquireRelease" in run {
+        "acquireRelease" in {
             var closes = 0
             // any effects in acquire
             val acquire = Abort.get(Some(42))
@@ -140,7 +140,7 @@ class ScopeTest extends Test:
                 }
         }
 
-        "acquire" in run {
+        "acquire" in {
             val r = TestResource(1)
             Scope.acquire(Fiber.initUnscoped(r).map(_.get))
                 .handle(
@@ -155,7 +155,7 @@ class ScopeTest extends Test:
     "failures" - {
         case object TestException extends NoStackTrace
 
-        "acquire fails" in run {
+        "acquire fails" in {
             val io = Scope.acquireRelease(Sync.defer[Int, Any](throw TestException))(_ => ())
             Scope.run(io)
                 .handle(Abort.run)
@@ -165,7 +165,7 @@ class ScopeTest extends Test:
                 }
         }
 
-        "release fails" in run {
+        "release fails" in {
             var acquired = false
             var released = false
             val io = Scope.acquireRelease(Sync.defer { acquired = true; "resource" }) { _ =>
@@ -182,7 +182,7 @@ class ScopeTest extends Test:
             }
         }
 
-        "ensure fails" in run {
+        "ensure fails" in {
             var ensureCalled = false
             val io           = Scope.ensure(Sync.defer { ensureCalled = true; throw TestException })
             Scope.run(io)
@@ -190,7 +190,7 @@ class ScopeTest extends Test:
 
         }
 
-        "fiber escapes the scope of Scope.run" in run {
+        "fiber escapes the scope of Scope.run" in {
             var called = false
             val io =
                 for
@@ -205,7 +205,7 @@ class ScopeTest extends Test:
             end for
         }
 
-        "concurrent acquireRelease all cleaned up" in run {
+        "concurrent acquireRelease all cleaned up" in {
             AtomicInt.init.map { counter =>
                 Scope.run {
                     for
@@ -225,7 +225,7 @@ class ScopeTest extends Test:
 
     "parallel close" - {
 
-        "cleans up resources in parallel" in run {
+        "cleans up resources in parallel" in {
             Latch.init(3).map { latch =>
                 def makeResource(id: Int) =
                     Scope.acquireRelease(Sync.defer(id))(_ => latch.release)
@@ -241,7 +241,7 @@ class ScopeTest extends Test:
             }
         }
 
-        "respects parallelism limit" in run {
+        "respects parallelism limit" in {
             AtomicInt.init.map { counter =>
                 def makeResource(id: Int) =
                     Scope.acquireRelease(Sync.defer(id)) { _ =>
@@ -249,9 +249,7 @@ class ScopeTest extends Test:
                             current <- counter.getAndIncrement
                             _       <- Async.sleep(1.millis)
                             _       <- counter.decrementAndGet
-                        yield
-                            assert(current < 3)
-                            ()
+                        yield assert(current < 3)
                     }
 
                 val resources = Kyo.foreach(1 to 10)(makeResource)
@@ -267,7 +265,7 @@ class ScopeTest extends Test:
 
     "backpressure" - {
 
-        "computation failure" in run {
+        "computation failure" in {
             var finalizerCalled = false
             val io = Scope.ensure {
                 Async.sleep(50.millis).andThen { finalizerCalled = true }
@@ -282,7 +280,7 @@ class ScopeTest extends Test:
             }
         }
 
-        "finalizer failure" in run {
+        "finalizer failure" in {
             var mainActionExecuted = false
             var finalizerStarted   = false
             val io = Scope.ensure {
@@ -302,7 +300,7 @@ class ScopeTest extends Test:
                 }
         }
 
-        "chained resources" in run {
+        "chained resources" in {
             var firstFinalizerCalled  = false
             var secondFinalizerCalled = false
 
@@ -326,7 +324,7 @@ class ScopeTest extends Test:
                 }
         }
 
-        "slow finalizers" in run {
+        "slow finalizers" in {
             val r1                = TestResource(1)
             var slowFinalizerDone = false
 
@@ -350,7 +348,7 @@ class ScopeTest extends Test:
     "ensure with Maybe[Error[Any]]" - {
         case object TestException extends NoStackTrace
 
-        "receives Absent on normal completion" in run {
+        "receives Absent on normal completion" in {
             var receivedValue: Maybe[Error[Any]] = null
 
             Scope.ensure { t =>
@@ -363,7 +361,7 @@ class ScopeTest extends Test:
                 }
         }
 
-        "receives Present with exception on failure" in run {
+        "receives Present with exception on failure" in {
             var receivedValue: Maybe[Error[Any]] = null
             val exception                        = TestException
 
@@ -384,7 +382,7 @@ class ScopeTest extends Test:
             }
         }
 
-        "with nested ensures passes correct exception to each handler" in run {
+        "with nested ensures passes correct exception to each handler" in {
             var outerException: Maybe[Error[Any]] = null
             var innerException: Maybe[Error[Any]] = null
             val testException                     = TestException
@@ -414,7 +412,7 @@ class ScopeTest extends Test:
             }
         }
 
-        "can use exception information for recovery" in run {
+        "can use exception information for recovery" in {
             var recoveryAction = ""
 
             val io = Scope.ensure { t =>
@@ -439,7 +437,7 @@ class ScopeTest extends Test:
 
     "finalizer ordering (#1439)" - {
 
-        "documents release order with parallelism 1" in run {
+        "documents release order with parallelism 1" in {
             var order = List.empty[Int]
             Scope.run {
                 for
@@ -452,7 +450,7 @@ class ScopeTest extends Test:
             }
         }
 
-        "releases all with parallel close" in run {
+        "releases all with parallel close" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run(3) {
                     for
@@ -466,12 +464,11 @@ class ScopeTest extends Test:
             }
         }
 
-        "nested Scope.run releases inner before outer" in run {
+        "nested Scope.run releases inner before outer" in {
             var innerDone = false
             Scope.run {
                 Scope.ensure {
                     assert(innerDone)
-                    ()
                 }.andThen {
                     Scope.run {
                         Scope.ensure {
@@ -483,7 +480,7 @@ class ScopeTest extends Test:
             }.map(_ => assert(innerDone))
         }
 
-        "many resources all released" in run {
+        "many resources all released" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run {
                     Kyo.foreach(1 to 100) { i =>
@@ -499,7 +496,7 @@ class ScopeTest extends Test:
     "acquireRelease safety (#1224)" - {
         case object TestAcquireException extends scala.util.control.NoStackTrace
 
-        "finalizer runs after normal acquire" in run {
+        "finalizer runs after normal acquire" in {
             var released = false
             Scope.run {
                 Scope.acquireRelease(Sync.defer("resource"))(_ => Sync.defer { released = true }.unit)
@@ -508,7 +505,7 @@ class ScopeTest extends Test:
             }
         }
 
-        "acquire failure skips release" in run {
+        "acquire failure skips release" in {
             var released = false
             Abort.run {
                 Scope.run {
@@ -522,7 +519,7 @@ class ScopeTest extends Test:
             }
         }
 
-        "ensure on closed scope panics with Closed" in run {
+        "ensure on closed scope panics with Closed" in {
             var called = false
             val io =
                 for
@@ -537,7 +534,7 @@ class ScopeTest extends Test:
             end for
         }
 
-        "concurrent acquireRelease all cleaned up" in run {
+        "concurrent acquireRelease all cleaned up" in {
             AtomicInt.init.map { counter =>
                 Scope.run {
                     for
@@ -558,7 +555,7 @@ class ScopeTest extends Test:
 
     "scope + fiber" - {
 
-        "scoped fiber interrupted on scope exit" in run {
+        "scoped fiber interrupted on scope exit" in {
             for
                 interrupted <- AtomicBoolean.init(false)
                 promise     <- Promise.init[Int, Any]
@@ -568,13 +565,13 @@ class ScopeTest extends Test:
                         f <- Fiber.init(promise.get)
                     yield ()
                 }
-                _    <- untilTrue(interrupted.get)
+                _    <- assertEventually(interrupted.get)
                 flag <- interrupted.get
             yield assert(flag)
             end for
         }
 
-        "multiple fibers in scope all interrupted" in run {
+        "multiple fibers in scope all interrupted" in {
             for
                 counter  <- AtomicInt.init(0)
                 promises <- Kyo.fill(5)(Promise.init[Int, Any])
@@ -584,13 +581,13 @@ class ScopeTest extends Test:
                         fibers <- Kyo.foreach(promises)(p => Fiber.init(p.get))
                     yield ()
                 }
-                _ <- untilTrue(counter.get.map(_ == 5))
+                _ <- assertEventually(counter.get.map(_ == 5))
                 c <- counter.get
             yield assert(c == 5)
             end for
         }
 
-        "Sync.ensure inside forked fiber runs" in run {
+        "Sync.ensure inside forked fiber runs" in {
             var called = false
             for
                 fiber <- Fiber.initUnscoped {
@@ -603,7 +600,7 @@ class ScopeTest extends Test:
             end for
         }
 
-        "Scope.ensure inside forked fiber runs at scope exit" in run {
+        "Scope.ensure inside forked fiber runs at scope exit" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run {
                     for
@@ -618,7 +615,7 @@ class ScopeTest extends Test:
             }
         }
 
-        "Scope.ensure from multiple fibers all run" in run {
+        "Scope.ensure from multiple fibers all run" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run {
                     for
@@ -639,7 +636,7 @@ class ScopeTest extends Test:
     "finalizer failure isolation" - {
         case object TestException extends scala.util.control.NoStackTrace
 
-        "failing finalizer doesn't mask primary result" in run {
+        "failing finalizer doesn't mask primary result" in {
             Scope.run {
                 Scope.ensure(throw TestException).andThen(42)
             }.handle(Abort.run).map { result =>
@@ -647,7 +644,7 @@ class ScopeTest extends Test:
             }
         }
 
-        "failing finalizer doesn't mask primary error" in run {
+        "failing finalizer doesn't mask primary error" in {
             val primaryEx = new RuntimeException("primary")
             Abort.run {
                 Scope.run {
@@ -659,9 +656,11 @@ class ScopeTest extends Test:
             }
         }
 
-        "multiple finalizers one fails others still run" in pending
+        "multiple finalizers one fails others still run".ignore(
+            "when one Scope finalizer fails the remaining finalizers are not yet guaranteed to still run"
+        ) in { () }
 
-        "all finalizers fail" in run {
+        "all finalizers fail" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run {
                     for
@@ -678,12 +677,12 @@ class ScopeTest extends Test:
 
     "edge cases" - {
 
-        "empty Scope.run returns value" in run {
+        "empty Scope.run returns value" in {
             val v: Int < Scope = 42
             Scope.run(v).map(r => assert(r == 42))
         }
 
-        "very large number of finalizers" in run {
+        "very large number of finalizers" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run {
                     Kyo.foreach(1 to 10000) { _ =>
@@ -695,7 +694,7 @@ class ScopeTest extends Test:
             }
         }
 
-        "scope with async finalizer" in run {
+        "scope with async finalizer" in {
             var finalizerRan = false
             Scope.run {
                 Scope.ensure {
@@ -707,7 +706,7 @@ class ScopeTest extends Test:
             }
         }
 
-        "concurrent ensure registration from multiple fibers" in run {
+        "concurrent ensure registration from multiple fibers" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run {
                     for
@@ -724,12 +723,11 @@ class ScopeTest extends Test:
             }
         }
 
-        "Scope.run wrapping Scope.run" in run {
+        "Scope.run wrapping Scope.run" in {
             var innerDone = false
             Scope.run {
                 Scope.ensure {
                     assert(innerDone)
-                    ()
                 }.andThen {
                     Scope.run {
                         Scope.ensure {
@@ -744,7 +742,7 @@ class ScopeTest extends Test:
 
     "scope isolation (#1381)" - {
 
-        "Scope.run on generic effect type with Scope should not run caller's finalizers" in run {
+        "Scope.run on generic effect type with Scope should not run caller's finalizers" in {
             def handleScoped[A, S](v: A < (Scope & S)): A < (Async & S) =
                 Scope.run(v)
 

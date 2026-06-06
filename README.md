@@ -55,7 +55,7 @@ val d: Result[String, Int] < Sync = Abort.run(c)
 
 `.eval` is the universal "give me the value" call, but the compiler will refuse it until every effect in the row has been handled. A `< (Sync & Abort[E])` value cannot escape into plain Scala without `Sync` and `Abort` being explicitly handled first; the unhandled-effect set is part of the value's type. This is the single property that makes the rest of Kyo work: every signature spells out exactly which capabilities it consumes, and the call site decides where each one gets interpreted.
 
-The expected way to discharge `Sync` is through an entrypoint that owns the side-effecting boundary: `kyo.KyoApp` for applications (see [`kyo-core`](kyo-core/README.md)), `kyo.Test` (from a module's test framework binding) for tests. A direct `Sync.Unsafe.evalOrThrow` exists for scripts and REPL exploration but requires an explicit `AllowUnsafe` witness in scope, which is the project-wide convention for "I am opting into an escape hatch that bypasses suspension." Importing `kyo.AllowUnsafe.embrace.danger` provides that witness:
+The expected way to discharge `Sync` is through an entrypoint that owns the side-effecting boundary: `kyo.KyoApp` for applications (see [`kyo-core`](kyo-core/README.md)), `kyo.test.Test` for tests (the project's own cross-platform test framework, see [`kyo-test`](kyo-test/README.md)). A direct `Sync.Unsafe.evalOrThrow` exists for scripts and REPL exploration but requires an explicit `AllowUnsafe` witness in scope, which is the project-wide convention for "I am opting into an escape hatch that bypasses suspension." Importing `kyo.AllowUnsafe.embrace.danger` provides that witness:
 
 ```scala doctest:scope=inherited
 // Bring an AllowUnsafe witness into scope. Anyone reading the code sees the opt-in,
@@ -203,7 +203,7 @@ With this much vocabulary in hand, the table below maps your current ecosystem o
 | `scala.concurrent.Future[A]`                                 | `A < (Async & Abort[Throwable])`, referentially transparent, one auto-sized scheduler in place of ad-hoc `ExecutionContext`s                                                                   |
 | ZIO `ZLayer`                                                 | Kyo `Layer` (see [kyo-prelude](kyo-prelude/README.md))                                                                                                                                         |
 | ZIO `ZStream` / fs2 `Stream` / Akka Streams                  | Kyo `Stream` (pull-based, chunked, fused), see [kyo-prelude](kyo-prelude/README.md)                                                                                                            |
-| ZIO Test                                                     | [`kyo-zio-test`](kyo-zio-test/README.md), or plain ScalaTest / MUnit                                                                                                                           |
+| ZIO Test                                                     | [`kyo-test`](kyo-test/README.md), the project's own cross-platform test framework; or [`kyo-zio-test`](kyo-zio-test/README.md) to keep writing `zio-test` `Spec`s with Kyo bodies                                                                                                                           |
 | zio-schema / circe / jsoniter                                | [`kyo-schema`](kyo-schema/README.md)                                                                                                                                                           |
 | `Resource[IO, A]` / `ZIO.scoped`                             | `Scope` effect with `Scope.acquireRelease`, see [kyo-core](kyo-core/README.md)                                                                                                                 |
 | `Ref[IO, A]` / `zio.Ref`                                     | `AtomicRef`, `AtomicInt`, `AtomicLong`, `AtomicBoolean`                                                                                                                                        |
@@ -285,6 +285,14 @@ Domain-shaped modules: parsing, durable workflows, container management, low-lat
 | [kyo-aeron](kyo-aeron/README.md)                       | ✅   | ❌   | ❌      | Typed pub/sub on Aeron: shared-memory IPC, UDP unicast, UDP multicast through one `Topic` API             |
 | [kyo-browser](kyo-browser/README.md)                   | ✅   | ✅   | ✅      | Browser automation over Chrome DevTools Protocol; settlement-aware actions, `readableContent` as Markdown |
 | [kyo-ui](kyo-ui/README.md)                             | ✅   | ✅   | ✅      | Web UIs as pure values: one `UI` runs as a Scala.js DOM app (`runMount`), server HTML-over-SSE (`runHandlers`), or SSR stream (`runRender`); first-class `Signal` reactivity, compile-checked HTML |
+
+### Testing
+
+The project's own cross-platform test framework. (To run `zio-test` suites with Kyo bodies, see [`kyo-zio-test`](kyo-zio-test/README.md) under [Interop](#interop-with-other-effect-stacks).)
+
+| Module                                       | JVM | JS  | Native | Identity                                                                                                  |
+| -------------------------------------------- | --- | --- | ------ | --------------------------------------------------------------------------------------------------------- |
+| [kyo-test](kyo-test/README.md)               | ✅   | ✅   | ✅      | Cross-platform test framework: `Test[S]` suites (`-` groups, `in` leaves), a single power-`assert`, property-based (`PropertyTest`) and snapshot (`SnapshotTest`) testing, run-time no-assertion enforcement, sbt plugin |
 
 ### Observability
 

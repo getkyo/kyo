@@ -23,7 +23,7 @@ final case class YamlWriterNestedFirst(items: List[Int], name: String) derives C
 
 final case class YamlWriterTextFirst(text: String, name: String) derives CanEqual
 
-class YamlWriterTest extends Test:
+class YamlWriterTest extends kyo.test.Test[Any]:
 
     "encode" - {
 
@@ -233,7 +233,7 @@ class YamlWriterTest extends Test:
             floatValues.foreach { (value, expected) =>
                 assert(Yaml.encode(value) == expected)
             }
-            succeed
+            ()
         }
 
         "writes configured special float spellings that round-trip through YAML decode" in {

@@ -2,10 +2,10 @@ package kyo
 
 import kyo.Clock.TimeControl
 
-class StreamCoreExtensionsTest extends Test:
+class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
     "factory" - {
-        "collectAll" in run {
+        "collectAll" in {
             Choice.run {
                 for
                     size <- Choice.eval(0, 1, 32, 100)
@@ -15,7 +15,7 @@ class StreamCoreExtensionsTest extends Test:
                     merged = Stream.collectAll(Seq(s1, s2, s3), size)
                     res <- merged.run
                 yield assert(res.sorted == (0 to 99))
-            }.andThen(succeed)
+            }.unit
         }
 
         // Skipped on Native: this test merges an infinite producer with a finite producer and
@@ -23,8 +23,8 @@ class StreamCoreExtensionsTest extends Test:
         // finite stream halts. Reliably passes on JVM (sub-second). On Linux Native CI runners
         // (both x64 and arm64) the halt path consistently exceeds the 1-minute test timeout —
         // tracked as a flaky test in the Scala Native scheduler/scope interaction, separate from
-        // any single fix. Prefer `runJVM` over `runNotJS` to keep the suite green on Native CI.
-        "collectAllHalting" in runJVM {
+        // any single fix. Using `.onlyJvm` to keep the suite green on Native CI.
+        "collectAllHalting".onlyJvm in {
             Choice.run {
                 for
                     size <- Choice.eval(0, 1, 32, 1024)
@@ -33,10 +33,10 @@ class StreamCoreExtensionsTest extends Test:
                     merged = Stream.collectAllHalting(Seq(s1, s2), size)
                     res <- merged.run
                 yield assert((0 to 50).toSet.subsetOf(res.toSet))
-            }.andThen(succeed)
+            }.unit
         }
 
-        "multiple effects" in runNotNative {
+        "multiple effects".notNative in {
             // Env[Int] & Abort[String]
             val s1 = Stream:
                 Env.get[Int].map(i =>
@@ -55,7 +55,7 @@ class StreamCoreExtensionsTest extends Test:
     }
 
     "combinator" - {
-        "merge variance" in run {
+        "merge variance" in {
             enum T:
                 case T1(int: Int)
                 case T2(str: String)
@@ -73,7 +73,7 @@ class StreamCoreExtensionsTest extends Test:
         }
 
         "mergeHaltingLeft/Right" - {
-            "should halt if non-halting side completes" in runJVM {
+            "should halt if non-halting side completes".onlyJvm in {
                 Choice.run {
                     for
                         size <- Choice.eval(0, 1, 32, 1024)
@@ -83,10 +83,10 @@ class StreamCoreExtensionsTest extends Test:
                         merged = if left then s1.mergeHaltingLeft(s2, size) else s2.mergeHaltingRight(s1, size)
                         res <- merged.run
                     yield assert(res.sorted.startsWith(0 to 50))
-                }.andThen(succeed)
+                }.unit
             }
 
-            "should not halt if non-halting side completes" in runJVM {
+            "should not halt if non-halting side completes".onlyJvm in {
                 val s1Set = Set.from(0 to 20)
                 val s2Set = Set(21, 22)
                 val s1 = Stream:
@@ -109,11 +109,11 @@ class StreamCoreExtensionsTest extends Test:
                             end if
                         }
                     yield assertion
-                }.andThen(succeed)
+                }.unit
             }
         }
 
-        "multiple effects" in runNotNative {
+        "multiple effects".notNative in {
             // Env[Int] & Abort[String]
             val s1 = Stream:
                 Env.get[Int].map(i =>
@@ -133,7 +133,7 @@ class StreamCoreExtensionsTest extends Test:
         val randomSleep = Random.nextInt(10).map(i => Async.sleep(i.millis))
 
         "mapPar" - {
-            "should map all elements preserving order" in run {
+            "should map all elements preserving order" in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
@@ -147,10 +147,10 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.run(test).unit
             }
 
-            "should preserve order when first transformation is delayed" in runNotNative {
+            "should preserve order when first transformation is delayed".notNative in {
                 val stream = Stream.init(1 to 4)
                 val test =
                     for
@@ -164,10 +164,10 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.run(test).unit
             }
 
-            "should propagate errors" in run {
+            "should propagate errors" in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
@@ -181,12 +181,12 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.run(test).unit
             }
         }
 
         "mapParUnordered" - {
-            "should map all elements" in run {
+            "should map all elements" in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
@@ -200,10 +200,10 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.run(test).unit
             }
 
-            "should not preserve order when first transformation is delayed" in runNotNative {
+            "should not preserve order when first transformation is delayed".notNative in {
                 val stream = Stream.init(1 to 4)
                 val test =
                     for
@@ -215,10 +215,10 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.run(test).unit
             }
 
-            "should propagate errors" in run {
+            "should propagate errors" in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
@@ -232,12 +232,12 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.run(test).unit
             }
         }
 
         "mapChunkPar" - {
-            "should map all chunks preserving order" in run {
+            "should map all chunks preserving order" in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
@@ -251,10 +251,10 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.run(test).unit
             }
 
-            "should preserve order when first transformation is delayed" in runNotNative {
+            "should preserve order when first transformation is delayed".notNative in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
                 val test =
                     for
@@ -269,10 +269,10 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.run(test).unit
             }
 
-            "should propagate errors" in run {
+            "should propagate errors" in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
@@ -286,12 +286,12 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.run(test).unit
             }
         }
 
         "mapChunkParUnordered" - {
-            "should map all chunks" in run {
+            "should map all chunks" in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
@@ -305,10 +305,10 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.run(test).unit
             }
 
-            "should not preserve order when first transformation is delayed" in runNotNative {
+            "should not preserve order when first transformation is delayed".notNative in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
                 val test =
                     for
@@ -322,10 +322,10 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.run(test).unit
             }
 
-            "should propagate errors" in run {
+            "should propagate errors" in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
@@ -341,31 +341,31 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.run(test).unit
             }
         }
 
         def fromIteratorTests(chunkSize: Int): Unit =
             s"chunkSize = $chunkSize" - {
-                "basic" in run {
+                "basic" in {
                     val it     = Iterator(1, 2, 3, 4, 5)
                     val stream = Stream.fromIterator(it, chunkSize)
                     stream.run.map(res => assert(res == Chunk(1, 2, 3, 4, 5)))
                 }
 
-                "call by name" in run {
+                "call by name" in {
 
                     val stream = Stream.fromIterator(Iterator(1, 2, 3, 4, 5), chunkSize)
                     stream.run.map(res => assert(res == Chunk(1, 2, 3, 4, 5)))
                 }
 
-                "empty iterator" in run {
+                "empty iterator" in {
                     val it     = Iterator.empty
                     val stream = Stream.fromIterator(it, chunkSize)
                     stream.run.map(res => assert(res.isEmpty))
                 }
 
-                "reuse same stream" in run {
+                "reuse same stream" in {
                     val it     = Iterator(1, 2, 3)
                     val stream = Stream.fromIterator(it, chunkSize)
                     for
@@ -375,14 +375,14 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 }
 
-                "large iterator" in run {
+                "large iterator" in {
                     val size   = 10000
                     val it     = Iterator.from(0).take(size)
                     val stream = Stream.fromIterator(it, chunkSize)
                     stream.run.map(res => assert(res == Chunk.from(0 until size)))
                 }
 
-                "map with Choice" in run {
+                "map with Choice" in {
                     val it = Iterator("a", "b", "c")
 
                     val stream: Stream[String, Sync & Choice] =
@@ -398,7 +398,7 @@ class StreamCoreExtensionsTest extends Test:
 
                 }
 
-                "recover from Panic" in run {
+                "recover from Panic" in {
                     val it = Iterator.tabulate(5)({
                         case 3 => throw new RuntimeException("fail")
                         case i => i
@@ -424,24 +424,24 @@ class StreamCoreExtensionsTest extends Test:
         def fromIteratorCatchingTests(chunkSize: Int): Unit =
             s"bufferSize = $chunkSize" - {
 
-                "basic" in run {
+                "basic" in {
                     val it     = Iterator(1, 2, 3, 4, 5)
                     val stream = Stream.fromIteratorCatching[Throwable](it, chunkSize)
                     stream.run.map(res => assert(res == Chunk(1, 2, 3, 4, 5)))
                 }
 
-                "call by name" in run {
+                "call by name" in {
                     val stream = Stream.fromIteratorCatching[Throwable](Iterator(1, 2, 3, 4, 5), chunkSize)
                     stream.run.map(res => assert(res == Chunk(1, 2, 3, 4, 5)))
                 }
 
-                "empty iterator" in run {
+                "empty iterator" in {
                     val it     = Iterator.empty
                     val stream = Stream.fromIteratorCatching[Throwable](it, chunkSize)
                     stream.run.map(res => assert(res.isEmpty))
                 }
 
-                "reuse same stream" in run {
+                "reuse same stream" in {
                     val it     = Iterator(1, 2, 3)
                     val stream = Stream.fromIteratorCatching[Throwable](it, chunkSize)
                     for
@@ -451,14 +451,14 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 }
 
-                "large iterator" in run {
+                "large iterator" in {
                     val size   = 9999
                     val it     = Iterator.from(0).take(size)
                     val stream = Stream.fromIteratorCatching[Throwable](it, chunkSize)
                     stream.run.map(res => assert(res == Chunk.from(0 until size)))
                 }
 
-                "lazy" in run {
+                "lazy" in {
                     val it = Iterator.tabulate(5)({
                         case 3 => throw new RuntimeException("fail")
                         case i => i
@@ -470,7 +470,7 @@ class StreamCoreExtensionsTest extends Test:
                         assert(chunk == Chunk(0, 1, 2))
                 }
 
-                "catching exception after values" in run {
+                "catching exception after values" in {
                     val it = Iterator.tabulate(5)({
                         case 3 => throw new RuntimeException("fail")
                         case i => i
@@ -484,7 +484,7 @@ class StreamCoreExtensionsTest extends Test:
                         assert(chunk == Chunk(0, 1, 2, 42))
                 }
 
-                "compile error" in run {
+                "compile error" in {
                     val it = Iterator.tabulate(5)({
                         case 3 => throw new RuntimeException("fail")
                         case i => i
@@ -495,7 +495,7 @@ class StreamCoreExtensionsTest extends Test:
                     )
                 }
 
-                "catching specific exception after values" in run {
+                "catching specific exception after values" in {
                     class Oups(val value: Int) extends RuntimeException("fail")
 
                     val it = Iterator.tabulate(5)({
@@ -511,7 +511,7 @@ class StreamCoreExtensionsTest extends Test:
                         assert(chunk == Chunk(0, 1, 2, 42))
                 }
 
-                "catching specific exception, panic" in run {
+                "catching specific exception, panic" in {
                     class Oups(val value: Int) extends RuntimeException("fail")
 
                     val it = Iterator.tabulate(5)({
@@ -524,13 +524,13 @@ class StreamCoreExtensionsTest extends Test:
                     ))
 
                     Abort.run(stream.run).map({
-                        case Result.Panic(_) => succeed
+                        case Result.Panic(_) => succeed("expected: non-matching exception becomes Panic")
                         case _               => fail("should not be caught")
 
                     })
                 }
 
-                "map with Choice" in run {
+                "map with Choice" in {
                     val it = Iterator("a", "b", "c")
                     val stream: Stream[String, Sync & Choice & Abort[Throwable]] =
                         Stream.fromIteratorCatching[Throwable](it, chunkSize).rechunk(10).map: str =>
@@ -553,7 +553,7 @@ class StreamCoreExtensionsTest extends Test:
         "broadcast" - {
             val stream = Stream.init(0 to 10)
 
-            "broadcastDynamicWith" in run {
+            "broadcastDynamicWith" in {
                 stream.broadcastDynamicWith { streamHub =>
                     Kyo.zip(streamHub.subscribe, streamHub.subscribe)
                 }.map:
@@ -564,44 +564,44 @@ class StreamCoreExtensionsTest extends Test:
                                 case (c1, c2) => assert(c1 == c2 && c1 == (0 to 10))
             }
 
-            "broadcast2" in run {
+            "broadcast2" in {
                 stream.broadcast2().map:
                     case (s1, s2) =>
                         Kyo.zip(s1.run, s2.run).map:
                             case (c1, c2) => assert(Set(c1, c2).size == 1 && c1 == (0 to 10))
             }
 
-            "broadcast3" in run {
+            "broadcast3" in {
                 stream.broadcast3().map:
                     case (s1, s2, s3) =>
                         Kyo.zip(s1.run, s2.run, s3.run).map:
                             case (c1, c2, c3) => assert(Set(c1, c2, c3).size == 1 && c1 == (0 to 10))
             }
 
-            "broadcast4" in run {
+            "broadcast4" in {
                 stream.broadcast4().map:
                     case (s1, s2, s3, s4) =>
                         Kyo.zip(s1.run, s2.run, s3.run, s4.run).map:
                             case (c1, c2, c3, c4) => assert(Set(c1, c2, c3, c4).size == 1 && c1 == (0 to 10))
             }
 
-            "broadcast5" in run {
+            "broadcast5" in {
                 stream.broadcast5().map:
                     case (s1, s2, s3, s4, s5) =>
                         Kyo.zip(s1.run, s2.run, s3.run, s4.run, s5.run).map:
                             case (c1, c2, c3, c4, c5) => assert(Set(c1, c2, c3, c4, c5).size == 1 && c1 == (0 to 10))
             }
 
-            "broadcastN" in run {
+            "broadcastN" in {
                 stream.broadcastN(50).map: streamChunk =>
                     Kyo.foreach(streamChunk)(_.run).map: resultChunks =>
                         assert(resultChunks.size == 50 && resultChunks.toSet.size == 1 && resultChunks.headMaybe.contains(0 to 10))
             }
 
             "dynamic" - {
-                "broadcasted in unison" in {
+                "broadcasted in unison".notJs in {
                     assume(Runtime.getRuntime.availableProcessors() > 4, "Needs >4 cores for 10 concurrent fibers")
-                    runNotJS {
+                    {
                         Channel.initWith[Maybe[Int]](1024): channel =>
                             val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
                             lazyStream.broadcasted().map: reusableStream =>
@@ -619,14 +619,14 @@ class StreamCoreExtensionsTest extends Test:
                     }
                 }
 
-                "broadcasted should produce empty results when running after original stream completes" in run {
+                "broadcasted should produce empty results when running after original stream completes" in {
                     stream.broadcasted().map: reusableStream =>
                         reusableStream.run.map: res1 =>
                             reusableStream.run.map: res2 =>
                                 assert(res1 == (0 to 10) && res2.isEmpty)
                 }
 
-                "broadcasted should produce failure when running after original stream fails" in run {
+                "broadcasted should produce failure when running after original stream fails" in {
                     val failingStream = Stream(Stream.init(0 to 10).emit.andThen(Abort.fail("message")))
                     failingStream.broadcasted().map: reusableStream =>
                         Abort.run[String](reusableStream.run).map: res1 =>
@@ -634,9 +634,9 @@ class StreamCoreExtensionsTest extends Test:
                                 assert(res1 == Result.Failure("message") && res2 == Result.Failure("message"))
                 }
 
-                "broadcastDynamic in unison" in {
+                "broadcastDynamic in unison".notJs in {
                     assume(Runtime.getRuntime.availableProcessors() > 4, "Needs >4 cores for 10 concurrent fibers")
-                    runNotJS {
+                    {
                         Channel.initWith[Maybe[Int]](1024): channel =>
                             val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
                             lazyStream.broadcastDynamic().map: streamHub =>
@@ -655,14 +655,14 @@ class StreamCoreExtensionsTest extends Test:
                     }
                 }
 
-                "broadcastDynamic subscriptions should be empty when subscribing after original stream completes" in run {
+                "broadcastDynamic subscriptions should be empty when subscribing after original stream completes" in {
                     stream.broadcastDynamic().map: streamHub =>
                         streamHub.subscribe.map(_.run).map: res1 =>
                             streamHub.subscribe.map(_.run).map: res2 =>
                                 assert(res1 == (0 to 10) && res2.isEmpty)
                 }
 
-                "broadcasted subscriptions should fail when subscribing after original stream fails" in run {
+                "broadcasted subscriptions should fail when subscribing after original stream fails" in {
                     val failingStream = Stream(Stream.init(0 to 10).emit.andThen(Abort.fail("message")))
                     failingStream.broadcastDynamic().map: streamHub =>
                         Abort.run[String](streamHub.subscribe.map(_.run)).map: res1 =>
@@ -680,31 +680,31 @@ class StreamCoreExtensionsTest extends Test:
                             .andThen(Loop.continue(i + 1))
             }.take(11)
 
-            "group by size" in run {
+            "group by size" in {
                 Clock.withTimeControl { tc =>
                     stream(tc).groupedWithin(3, Duration.Infinity).run.map: result =>
                         assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5, 6), Chunk(7, 8, 9), Chunk(10, 11)))
                 }
             }
 
-            "group to single chunk with max size + time" in run {
+            "group to single chunk with max size + time" in {
                 Clock.withTimeControl { tc =>
                     stream(tc).groupedWithin(Int.MaxValue, Duration.Infinity).run.map: result =>
                         assert(result == Chunk(1 to 11))
                 }
             }
 
-            "empty" in run {
+            "empty" in {
                 Stream.empty[Int].groupedWithin(3, 10.millis).run.map: result =>
                     assert(result.isEmpty)
             }
 
-            "single" in run {
+            "single" in {
                 Stream.range(0, 1).groupedWithin(5, Duration.Infinity).run.map: result =>
                     assert(result == Chunk(Chunk(0)))
             }
 
-            "with Env" in run {
+            "with Env" in {
                 Clock.withTimeControl { tc =>
                     val envStream = Stream {
                         Env.use[Int]: maxValue =>
@@ -723,7 +723,7 @@ class StreamCoreExtensionsTest extends Test:
                 }
             }
 
-            "with Abort" in run {
+            "with Abort" in {
                 val abortStream = Stream {
                     Loop(1): i =>
                         if i > 3 then Abort.fail("Stream failed")
@@ -737,18 +737,17 @@ class StreamCoreExtensionsTest extends Test:
                     case Result.Success(_)   => fail("Expected stream to fail")
             }
 
-            "buffer sizes" in run {
+            "buffer sizes" in {
                 val stream = Stream.range(1, 11)
                 Choice.run {
                     for
                         bufSize <- Choice.eval(0, 1, 2, 5, 10)
                         result  <- stream.groupedWithin(3, Duration.Infinity, bufSize).run
                     yield assert(result.flatten == (1 to 10))
-                }.andThen(succeed)
+                }.unit
             }
 
-            "scope" in run {
-                pending
+            "scope".ignore("groupedWithin does not yet close scoped resources with the same semantics as a plain stream run") in {
                 class TestResource(var closes: Int = 0) extends java.io.Closeable:
                     def close() = closes += 1
 
@@ -762,7 +761,7 @@ class StreamCoreExtensionsTest extends Test:
     }
 
     "stream resource cleanup (#1398)" - {
-        "Scope.ensure runs after full stream consumption" in run {
+        "Scope.ensure runs after full stream consumption" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run {
                     Scope.ensure(counter.incrementAndGet.unit).andThen(Stream.init(1 to 10).run)
@@ -774,7 +773,7 @@ class StreamCoreExtensionsTest extends Test:
             }
         }
 
-        "Scope.run wrapping stream take" in run {
+        "Scope.run wrapping stream take" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run {
                     Scope.ensure(counter.incrementAndGet.unit).andThen(Stream.init(1 to 10).take(3).run)
@@ -786,7 +785,7 @@ class StreamCoreExtensionsTest extends Test:
             }
         }
 
-        "Channel.use with stream take" in run {
+        "Channel.use with stream take" in {
             AtomicRef.init[Maybe[Channel[Int]]](Maybe.empty).map { ref =>
                 Channel.use[Int](10) { c =>
                     ref.set(Maybe(c))
@@ -803,7 +802,7 @@ class StreamCoreExtensionsTest extends Test:
             }
         }
 
-        "take(0) still runs scope finalizers" in run {
+        "take(0) still runs scope finalizers" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run {
                     Scope.ensure(counter.incrementAndGet.unit).andThen(Stream.init(1 to 10).take(0).run)
@@ -815,7 +814,7 @@ class StreamCoreExtensionsTest extends Test:
             }
         }
 
-        "Abort in stream with Scope.ensure" in run {
+        "Abort in stream with Scope.ensure" in {
             AtomicInt.init(0).map { counter =>
                 val stream = Stream[Int, Abort[String]] {
                     Emit.valueWith(Chunk(1, 2, 3)) {
@@ -834,9 +833,11 @@ class StreamCoreExtensionsTest extends Test:
             }
         }
 
-        "Sync.ensure with take documents current behavior" in pending
+        "Sync.ensure with take documents current behavior".ignore("Sync.ensure interaction with Stream.take is not yet specified") in {
+            ()
+        }
 
-        "takeWhile early exit with scope ensure" in run {
+        "takeWhile early exit with scope ensure" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run {
                     Scope.ensure(counter.incrementAndGet.unit).andThen(Stream.init(1 to 10).takeWhile(_ < 1).run)
@@ -850,14 +851,14 @@ class StreamCoreExtensionsTest extends Test:
     }
 
     "mapPar Closed error propagation (#1387)" - {
-        "should not deadlock when f fails with Abort[Closed]" in run {
+        "should not deadlock when f fails with Abort[Closed]" in {
             val failure = Closed("fail", summon[Frame])
             val stream  = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
             val stream2 = stream.mapPar(2)(i => if i == 5 then Abort.fail(failure) else i + 1)
             Abort.run(stream2.run).map(res => assert(res.isError))
         }
 
-        "should not deadlock with various parallelism" in run {
+        "should not deadlock with various parallelism" in {
             val failure = Closed("fail", summon[Frame])
             Choice.run {
                 for
@@ -866,35 +867,35 @@ class StreamCoreExtensionsTest extends Test:
                     stream2 = stream.mapPar(par)(i => if i == 5 then Abort.fail(failure) else i + 1)
                     res <- Abort.run(stream2.run)
                 yield assert(res.isError)
-            }.andThen(succeed)
+            }.unit
         }
 
-        "should propagate non-Closed errors as Failure" in run {
+        "should propagate non-Closed errors as Failure" in {
             val stream  = Stream.init(1 to 12)
             val stream2 = stream.mapPar(2)(i => if i == 5 then Abort.fail("failure") else i + 1)
             Abort.run(stream2.run).map(res => assert(res == Result.Failure("failure")))
         }
 
-        "should propagate non-Closed errors in mapParUnordered as Failure" in run {
+        "should propagate non-Closed errors in mapParUnordered as Failure" in {
             val stream  = Stream.init(1 to 12)
             val stream2 = stream.mapParUnordered(4)(i => if i == 5 then Abort.fail("failure") else i + 1)
             Abort.run(stream2.run).map(res => assert(res == Result.Failure("failure")))
         }
 
-        "should not deadlock in mapParUnordered with Abort[Closed]" in run {
+        "should not deadlock in mapParUnordered with Abort[Closed]" in {
             val failure = Closed("fail", summon[Frame])
             val stream  = Stream.init(1 to 12)
             val stream2 = stream.mapParUnordered(4)(i => if i == 5 then Abort.fail(failure) else i + 1)
             Abort.run(stream2.run).map(res => assert(res.isError))
         }
 
-        "should still work after early error" in run {
+        "should still work after early error" in {
             val stream  = Stream.init(1 to 4)
             val stream2 = stream.mapPar(2)(i => i + 1)
             stream2.run.map(res => assert(res == Chunk(2, 3, 4, 5)))
         }
 
-        "mapChunkPar propagates Closed as error" in run {
+        "mapChunkPar propagates Closed as error" in {
             val stream = Stream.init(1 to 12)
             val stream2 = stream.mapChunkPar(2)(chunk =>
                 if chunk.exists(_ == 5) then Abort.fail(Closed("test", summon[Frame]))
@@ -903,7 +904,7 @@ class StreamCoreExtensionsTest extends Test:
             Abort.run(stream2.run).map(res => assert(res.isError))
         }
 
-        "mapChunkParUnordered propagates Closed as error" in run {
+        "mapChunkParUnordered propagates Closed as error" in {
             val stream = Stream.init(1 to 12)
             val stream2 = stream.mapChunkParUnordered(2)(chunk =>
                 if chunk.exists(_ == 5) then Abort.fail(Closed("test", summon[Frame]))
@@ -912,7 +913,7 @@ class StreamCoreExtensionsTest extends Test:
             Abort.run(stream2.run).map(res => assert(res.isError))
         }
 
-        "mapPar cleans up resources on Closed" in run {
+        "mapPar cleans up resources on Closed" in {
             AtomicInt.init(0).map { counter =>
                 val stream = Stream.init(1 to 12)
                 val stream2 = stream.mapPar(2) { i =>
@@ -930,13 +931,13 @@ class StreamCoreExtensionsTest extends Test:
             }
         }
 
-        "mapPar with non-Closed error still propagates" in run {
+        "mapPar with non-Closed error still propagates" in {
             val stream  = Stream.init(1 to 12)
             val stream2 = stream.mapPar(2)(i => if i == 5 then Abort.fail("custom-error") else i + 1)
             Abort.run(stream2.run).map(res => assert(res == Result.Failure("custom-error")))
         }
 
-        "concurrent stream ops clean up fibers on error" in run {
+        "concurrent stream ops clean up fibers on error" in {
             AtomicInt.init(0).map { active =>
                 val stream = Stream.init(1 to 100)
                 val stream2 = stream.mapPar(4) { i =>
@@ -956,7 +957,7 @@ class StreamCoreExtensionsTest extends Test:
             }
         }
 
-        "mapParUnordered propagates Closed as error" in run {
+        "mapParUnordered propagates Closed as error" in {
             val stream = Stream.init(1 to 12)
             val stream2 = stream.mapParUnordered(2)(i =>
                 if i == 5 then Abort.fail(Closed("test", summon[Frame]))
@@ -965,7 +966,7 @@ class StreamCoreExtensionsTest extends Test:
             Abort.run(stream2.run).map(res => assert(res.isError))
         }
 
-        "mapParUnordered error with small buffer does not deadlock" in run {
+        "mapParUnordered error with small buffer does not deadlock" in {
             val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
             Choice.run {
                 for
@@ -973,10 +974,10 @@ class StreamCoreExtensionsTest extends Test:
                     s2 = stream.mapParUnordered(par, 1)(i => if i == 5 then Abort.fail("failure") else i + 1)
                     res <- Abort.run(s2.run)
                 yield assert(res == Result.Failure("failure"))
-            }.andThen(succeed)
+            }.unit
         }
 
-        "mapChunkParUnordered error with small buffer does not deadlock" in run {
+        "mapChunkParUnordered error with small buffer does not deadlock" in {
             val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
             Choice.run {
                 for
@@ -986,12 +987,12 @@ class StreamCoreExtensionsTest extends Test:
                     )
                     res <- Abort.run(s2.run)
                 yield assert(res == Result.Failure("failure"))
-            }.andThen(succeed)
+            }.unit
         }
     }
 
     "mapParUnordered buffer closed (#1328)" - {
-        "should not throw buffer closed unexpectedly" in run {
+        "should not throw buffer closed unexpectedly" in {
             val stream = Stream
                 .init(1 to 500, 1)
                 .mapParUnordered(10) { v =>
@@ -1002,7 +1003,7 @@ class StreamCoreExtensionsTest extends Test:
                 assert(result.toSet == (1 to 500).toSet)
         }
 
-        "should handle Closed from channel operations gracefully" in runNotNative {
+        "should handle Closed from channel operations gracefully".notNative in {
             val stream = Stream
                 .init(1 to 100, 1)
                 .mapParUnordered(4) { v =>

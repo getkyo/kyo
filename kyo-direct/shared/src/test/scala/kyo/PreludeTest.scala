@@ -1,9 +1,9 @@
 package kyo
 
-class PreludeTest extends Test:
+class PreludeTest extends kyo.test.Test[Any]:
 
     "abort" - {
-        "basic usage" in run {
+        "basic usage" in {
             val effect: Int < Abort[String] =
                 direct {
                     if true then Abort.fail("error").now
@@ -15,7 +15,7 @@ class PreludeTest extends Test:
             }
         }
 
-        "abort with recovery" in run {
+        "abort with recovery" in {
             val effect: Int < Abort[String] =
                 direct {
                     val result: Int = Abort.get[String](Left("first error")).now
@@ -29,7 +29,7 @@ class PreludeTest extends Test:
     }
 
     "env" - {
-        "basic usage" in run {
+        "basic usage" in {
             val effect =
                 direct {
                     val env = Env.get[Int].now
@@ -41,7 +41,7 @@ class PreludeTest extends Test:
             }
         }
 
-        "nested environments" in run {
+        "nested environments" in {
             val effect =
                 direct {
                     val outer = Env.get[String].now
@@ -59,7 +59,7 @@ class PreludeTest extends Test:
             }
         }
 
-        "multiple environments" in run {
+        "multiple environments" in {
             val effect =
                 direct {
                     val str = Env.get[String].now
@@ -76,7 +76,7 @@ class PreludeTest extends Test:
     }
 
     "var" - {
-        "basic operations" in run {
+        "basic operations" in {
             val effect =
                 direct {
                     val initial = Var.get[Int].now
@@ -94,7 +94,7 @@ class PreludeTest extends Test:
             }
         }
 
-        "nested vars" in run {
+        "nested vars" in {
             val effect =
                 direct {
                     val outer = Var.get[Int].now
@@ -114,7 +114,7 @@ class PreludeTest extends Test:
             }
         }
 
-        "var with other effects" in run {
+        "var with other effects" in {
             val effect =
                 direct {
                     val env     = Env.get[Int].now
@@ -140,7 +140,7 @@ class PreludeTest extends Test:
     }
 
     "memo" - {
-        "basic memoization" in run {
+        "basic memoization" in {
             var count = 0
             val f = Memo[Int, Int, Any] { x =>
                 count += 1
@@ -163,7 +163,7 @@ class PreludeTest extends Test:
             }
         }
 
-        "memo with other effects" in run {
+        "memo with other effects" in {
             var count = 0
             val f = Memo[Int, Int, Env[Int]] { x =>
                 count += 1
@@ -190,7 +190,7 @@ class PreludeTest extends Test:
     }
 
     "choice" - {
-        "basic choices" in run {
+        "basic choices" in {
             val effect =
                 direct {
                     val x = Choice.eval(1, 2, 3).now
@@ -203,7 +203,7 @@ class PreludeTest extends Test:
             }
         }
 
-        "choice with conditions" in run {
+        "choice with conditions" in {
             val effect =
                 direct {
                     val x = Choice.eval(1, -2, -3).now
@@ -217,7 +217,7 @@ class PreludeTest extends Test:
             }
         }
 
-        "choice with filtering" in run {
+        "choice with filtering" in {
             val effect =
                 direct {
                     val x = Choice.eval(1, 2, 3, 4).now
@@ -232,7 +232,7 @@ class PreludeTest extends Test:
     }
 
     "emit" - {
-        "basic emissions" in run {
+        "basic emissions" in {
             val effect =
                 direct {
                     Emit.value(1).now
@@ -247,7 +247,7 @@ class PreludeTest extends Test:
             }
         }
 
-        "emit with conditions" in run {
+        "emit with conditions" in {
             val effect =
                 direct {
                     val a = Env.get[Int].now
@@ -269,7 +269,7 @@ class PreludeTest extends Test:
             }
         }
 
-        "nested emit effects" in run {
+        "nested emit effects" in {
             val effect =
                 direct {
                     Emit.value(1).now
@@ -293,7 +293,7 @@ class PreludeTest extends Test:
     }
 
     "poll" - {
-        "basic polling" in run {
+        "basic polling" in {
             val effect =
                 direct {
                     Poll.one[Int].now
@@ -304,7 +304,7 @@ class PreludeTest extends Test:
             }
         }
 
-        "poll with fold" in run {
+        "poll with fold" in {
             val effect = Poll.fold[Int](0) { (acc, v) =>
                 direct {
                     Sync.defer(acc).now + v
@@ -318,7 +318,7 @@ class PreludeTest extends Test:
     }
 
     "stream" - {
-        "basic operations" in run {
+        "basic operations" in {
             direct {
                 val stream =
                     Stream.init(Seq(1, 2, 3, 4, 5))
@@ -334,7 +334,7 @@ class PreludeTest extends Test:
             }
         }
 
-        "stream with other effects" in run {
+        "stream with other effects" in {
             val effect =
                 direct {
                     val env = Env.get[Int].now
@@ -357,7 +357,7 @@ class PreludeTest extends Test:
         }
     }
 
-    "Choice" in run {
+    "Choice" in {
         val x = Choice.eval(1, -2, -3)
         val y = Choice.eval("ab", "cde")
 
@@ -375,7 +375,7 @@ class PreludeTest extends Test:
         }
     }
 
-    "Choice + filter" in run {
+    "Choice + filter" in {
         val x = Choice.eval(1, -2, -3)
         val y = Choice.eval("ab", "cde")
 

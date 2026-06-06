@@ -6,7 +6,7 @@ import kyo.Cache.Unsafe.internal.*
 import kyo.internal.Platform
 import scala.util.Random
 
-class CacheTest extends Test:
+class CacheTest extends kyo.test.Test[Any]:
 
     override def timeout = if Platform.isNative then 30.seconds else super.timeout
 
@@ -19,7 +19,7 @@ class CacheTest extends Test:
         override def toString: String = s"Key($id, hash=$hash)"
     end Key
 
-    def assertConsistent(store: Cache.Unsafe[?, ?], context: String = "", quiescent: Boolean = true): Assertion =
+    def assertConsistent(store: Cache.Unsafe[?, ?], context: String = "", quiescent: Boolean = true)(using kyo.test.AssertScope): Unit =
         val s = store.stats
         // Ghost detection reads values + keys non-atomically, so it can report false positives during concurrent ops
         if quiescent then
@@ -29,7 +29,7 @@ class CacheTest extends Test:
         end if
         discard(assert(s.orphanKeys == 0, s"${s.orphanKeys} orphan keys (key set but value empty). $s. $context"))
         discard(assert(s.orphanValues == 0, s"${s.orphanValues} orphan values (value set but key absent). $s. $context"))
-        succeed
+        ()
     end assertConsistent
 
     def cache(
@@ -64,7 +64,7 @@ class CacheTest extends Test:
             assert(s.contents.get(k) == Maybe("hello"))
         }
 
-        "returns empty for expired entry (expireAfterWrite)" in run {
+        "returns empty for expired entry (expireAfterWrite)" in {
             Clock.withTimeControl { tc =>
                 for
                     clock <- Clock.get
@@ -78,7 +78,7 @@ class CacheTest extends Test:
             }
         }
 
-        "returns empty for expired entry (expireAfterAccess)" in run {
+        "returns empty for expired entry (expireAfterAccess)" in {
             Clock.withTimeControl { tc =>
                 for
                     clock <- Clock.get
@@ -111,7 +111,7 @@ class CacheTest extends Test:
             assert(s.contents.size == 5)
         }
 
-        "updates accessTime on hit" in run {
+        "updates accessTime on hit" in {
             Clock.withTimeControl { tc =>
                 for
                     clock <- Clock.get
@@ -147,7 +147,7 @@ class CacheTest extends Test:
             assert(s.contents.get(k) == Maybe("first"))
         }
 
-        "replaces expired entry in-place (size unchanged)" in run {
+        "replaces expired entry in-place (size unchanged)" in {
             Clock.withTimeControl { tc =>
                 for
                     clock <- Clock.get
@@ -171,7 +171,7 @@ class CacheTest extends Test:
             val c = s.contents
             assert(c.size == 5)
             for i <- 1 to 5 do assert(c.get(new Key(i, 0)) == Maybe(s"val-$i")): Unit
-            succeed
+            ()
         }
 
         "triggers eviction when size exceeds maxSize" in {
@@ -276,7 +276,7 @@ class CacheTest extends Test:
 
     "expiration" - {
 
-        "expireAfterWrite — entry expires" in run {
+        "expireAfterWrite — entry expires" in {
             Clock.withTimeControl { tc =>
                 for
                     clock <- Clock.get
@@ -293,7 +293,7 @@ class CacheTest extends Test:
             }
         }
 
-        "expireAfterWrite — entry valid before deadline" in run {
+        "expireAfterWrite — entry valid before deadline" in {
             Clock.withTimeControl { tc =>
                 for
                     clock <- Clock.get
@@ -304,7 +304,7 @@ class CacheTest extends Test:
             }
         }
 
-        "expireAfterAccess — entry expires when not accessed" in run {
+        "expireAfterAccess — entry expires when not accessed" in {
             Clock.withTimeControl { tc =>
                 for
                     clock <- Clock.get
@@ -320,7 +320,7 @@ class CacheTest extends Test:
             }
         }
 
-        "expireAfterAccess — accessing keeps entry alive" in run {
+        "expireAfterAccess — accessing keeps entry alive" in {
             Clock.withTimeControl { tc =>
                 for
                     clock <- Clock.get
@@ -340,7 +340,7 @@ class CacheTest extends Test:
             }
         }
 
-        "both enabled — write expires first" in run {
+        "both enabled — write expires first" in {
             Clock.withTimeControl { tc =>
                 for
                     clock <- Clock.get
@@ -352,7 +352,7 @@ class CacheTest extends Test:
             }
         }
 
-        "both enabled — access expires first" in run {
+        "both enabled — access expires first" in {
             Clock.withTimeControl { tc =>
                 for
                     clock <- Clock.get
@@ -364,7 +364,7 @@ class CacheTest extends Test:
             }
         }
 
-        "expired entry does not break probe chain" in run {
+        "expired entry does not break probe chain" in {
             Clock.withTimeControl { tc =>
                 for
                     clock <- Clock.get
@@ -650,7 +650,7 @@ class CacheTest extends Test:
             assertConsistent(s)
         }
 
-        "add replacing expired entry does not change size" in run {
+        "add replacing expired entry does not change size" in {
             Clock.withTimeControl { tc =>
                 for
                     clock <- Clock.get
@@ -708,7 +708,7 @@ class CacheTest extends Test:
             assert(s.contents.isEmpty)
         }
 
-        "onExpire fires when add replaces expired entry" in run {
+        "onExpire fires when add replaces expired entry" in {
             Clock.withTimeControl { tc =>
                 var expired = List.empty[(Int, String)]
                 for
@@ -725,7 +725,7 @@ class CacheTest extends Test:
             }
         }
 
-        "onExpire includes old value, not new" in run {
+        "onExpire includes old value, not new" in {
             Clock.withTimeControl { tc =>
                 var expired = List.empty[(Int, String)]
                 for
@@ -760,7 +760,7 @@ class CacheTest extends Test:
             for i <- 10 to 20 do s.add(new Key(i, i), s"val-$i")
             assert(evicted.nonEmpty)
             evicted.foreach { (id, v) => discard(assert(v == s"val-$id" || v == "b", s"Evicted key $id had wrong value: $v")) }
-            succeed
+            ()
         }
     }
 
@@ -770,7 +770,7 @@ class CacheTest extends Test:
 
         "add" - {
 
-            "parallel adds, same key — all threads agree on winner" in runNotJS {
+            "parallel adds, same key — all threads agree on winner".notJs in {
                 // Each thread adds a DIFFERENT value for the same key.
                 // All must get back the same value (the winner's).
                 // Uses shared key object to test the eq fast-path.
@@ -782,10 +782,10 @@ class CacheTest extends Test:
                 yield
                     val unique = results.toSet
                     discard(assert(unique.size == 1, s"Expected all same value, got $unique"))
-                ).handle(Choice.run, _.unit, Loop.repeat(10)).andThen(succeed)
+                ).handle(Choice.run, _.unit, Loop.repeat(10)).unit
             }
 
-            "parallel adds, same key with eviction pressure — value coherence" in runNotJS {
+            "parallel adds, same key with eviction pressure — value coherence".notJs in {
                 // Flood cache so the target key gets evicted and re-inserted.
                 // After each add, any get must return a valid value for that key.
                 (for
@@ -807,10 +807,10 @@ class CacheTest extends Test:
                             }
                         end if
                     })
-                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "parallel adds, colliding keys — different values per key" in runNotJS {
+            "parallel adds, colliding keys — different values per key".notJs in {
                 // All keys hash to 0, maximum probe chain contention.
                 // Each key has a unique value format — catches key/value slot mixups.
                 (for
@@ -827,10 +827,10 @@ class CacheTest extends Test:
                         discard(assert(v == s"val-$i", s"Key $i got wrong value: $v"))
                     }
                     discard(assertConsistent(s))
-                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "add with eviction — bounded size, correct values" in runNotJS {
+            "add with eviction — bounded size, correct values".notJs in {
                 // 100 unique keys into tiny cache. Every add must return its own value
                 // (never another key's value). Tests CAS retry + eviction interaction.
                 (for
@@ -846,10 +846,10 @@ class CacheTest extends Test:
                 yield
                     discard(assert(s.stats.entries <= maxSize + 1, s"Expected <= ${maxSize + 1} entries, got ${s.stats.entries}"))
                     discard(assertConsistent(s))
-                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "pure adds into full table — eviction + tombstone reclamation" in runNotJS {
+            "pure adds into full table — eviction + tombstone reclamation".notJs in {
                 // Only adds (no explicit removes), rely on eviction to make room.
                 // Eviction creates tombstones, which adds reclaim.
                 (for
@@ -865,10 +865,10 @@ class CacheTest extends Test:
                 yield
                     discard(assert(s.stats.entries <= maxSize + 1, s"Expected <= ${maxSize + 1} entries, got ${s.stats.entries}"))
                     discard(assertConsistent(s))
-                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "add-then-get within same thread — immediate visibility" in runNotJS {
+            "add-then-get within same thread — immediate visibility".notJs in {
                 // Within a single Sync.Unsafe.defer (same thread), add then get
                 // must return the value unless another thread evicted it.
                 (for
@@ -883,10 +883,10 @@ class CacheTest extends Test:
                             }
                         }
                     )
-                yield succeed).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                yield ()).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "concurrent getOrElse — all callers agree on value" in runNotJS {
+            "concurrent getOrElse — all callers agree on value".notJs in {
                 // getOrElse = get + add. Multiple threads calling getOrElse for the
                 // same key with different fallback values must all get the same result.
                 (for
@@ -899,10 +899,10 @@ class CacheTest extends Test:
                 yield
                     val unique = results.toSet
                     discard(assert(unique.size == 1, s"Expected all same value, got $unique"))
-                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "concurrent add with different values — return value matches stored" in runNotJS {
+            "concurrent add with different values — return value matches stored".notJs in {
                 // Thread A adds key with "A", thread B adds same key with "B".
                 // Whatever add returns, a subsequent get must agree (or be empty).
                 (for
@@ -920,13 +920,13 @@ class CacheTest extends Test:
                     // All returned values must be the same (first writer wins)
                     val returned = results.map(_._1).toSet
                     discard(assert(returned.size == 1, s"Different return values: $returned"))
-                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
         }
 
         "remove" - {
 
-            "parallel removes, same key — onRemove fires exactly once" in runNotJS {
+            "parallel removes, same key — onRemove fires exactly once".notJs in {
                 (for
                     maxSize <- Choice.eval(4, 16, 64)
                     removeCount = new java.util.concurrent.atomic.AtomicInteger(0)
@@ -938,10 +938,10 @@ class CacheTest extends Test:
                     Choice.run,
                     _.unit,
                     Loop.repeat(repeats)
-                ).andThen(succeed)
+                ).unit
             }
 
-            "parallel removes, same probe chain — remaining keys reachable" in runNotJS {
+            "parallel removes, same probe chain — remaining keys reachable".notJs in {
                 // 8 colliding keys, remove first 4 concurrently, verify last 4 survive.
                 // Stresses concurrent tombstone creation on overlapping chain.
                 (for
@@ -955,10 +955,10 @@ class CacheTest extends Test:
                         discard(assert(s.get(k) == Maybe(s"val-${k.id}"), s"Key ${k.id} should still be reachable"))
                     }
                     discard(assertConsistent(s))
-                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "concurrent removes at chain head — cascading ghost creation" in runNotJS {
+            "concurrent removes at chain head — cascading ghost creation".notJs in {
                 // Remove the first N entries in a long chain concurrently.
                 // Each removal creates a tombstone. Probes must skip past tombstones
                 // to find tail entries.
@@ -974,10 +974,10 @@ class CacheTest extends Test:
                         discard(assert(s.get(k) == Maybe(s"val-${k.id}"), s"Key ${k.id} unreachable after head removal"))
                     }
                     discard(assertConsistent(s))
-                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "remove every-other slot in chain — interleaved gaps" in runNotJS {
+            "remove every-other slot in chain — interleaved gaps".notJs in {
                 // Remove entries at positions 0, 2, 4, ... concurrently.
                 // The non-contiguous tombstones test that probing correctly skips
                 // over tombstones to find surviving entries.
@@ -994,13 +994,13 @@ class CacheTest extends Test:
                         discard(assert(s.get(k) == Maybe(s"val-${k.id}"), s"Key ${k.id} unreachable after interleaved removal"))
                     }
                     discard(assertConsistent(s))
-                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
         }
 
         "tombstone races" - {
 
-            "remove vs add race on tombstone — size accuracy" in runNotJS {
+            "remove vs add race on tombstone — size accuracy".notJs in {
                 // Pre-fill a chain, then half the threads remove entries
                 // (creating tombstones) while the other half add new entries
                 // (reclaiming tombstones). Checks size == entries.
@@ -1022,10 +1022,10 @@ class CacheTest extends Test:
                             discard(s.add(k, s"val-$i"))
                         end if
                     })
-                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "concurrent removes on shared chain" in runNotJS {
+            "concurrent removes on shared chain".notJs in {
                 // Multiple removes on the same probe chain create adjacent tombstones.
                 // Checks for lost entries and size drift.
                 (for
@@ -1038,10 +1038,10 @@ class CacheTest extends Test:
                         val k   = keys(rng.nextInt(keys.length))
                         s.remove(k)
                     })
-                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "add and remove, colliding keys — tombstone contention" in runNotJS {
+            "add and remove, colliding keys — tombstone contention".notJs in {
                 (for
                     maxSize <- Choice.eval(4, 16)
                     s = cache(maxSize = maxSize)
@@ -1052,10 +1052,10 @@ class CacheTest extends Test:
                         if rng.nextBoolean() then discard(s.add(k, s"val-$i"))
                         else s.remove(k)
                     })
-                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "add reclaiming tombstones — colliding chain" in runNotJS {
+            "add reclaiming tombstones — colliding chain".notJs in {
                 // Remove creates tombstones. Concurrent add reclaims them.
                 // Tests tombstone reclamation + CAS interaction.
                 (for
@@ -1075,10 +1075,10 @@ class CacheTest extends Test:
                             discard(assert(v == s"val-$i", s"Key $i got: $v"))
                         end if
                     })
-                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "heavy remove and add on long chain" in runNotJS {
+            "heavy remove and add on long chain".notJs in {
                 // Long probe chain, remove from head and tail concurrently
                 // while other threads add new entries that reclaim tombstones.
                 (for
@@ -1104,13 +1104,13 @@ class CacheTest extends Test:
                                 s.remove(k)
                         end match
                     })
-                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
         }
 
         "mixed operations" - {
 
-            "get during concurrent writes — no wrong values" in runNotJS {
+            "get during concurrent writes — no wrong values".notJs in {
                 // Writers continuously add/remove while readers check values.
                 // Readers may see empty (evicted/removed) but never a wrong key's value.
                 // Uses shared key objects so get uses the eq fast-path.
@@ -1131,10 +1131,10 @@ class CacheTest extends Test:
                                 }
                         end match
                     })
-                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "add and remove, same key rapid cycles" in runNotJS {
+            "add and remove, same key rapid cycles".notJs in {
                 // Each thread adds then removes in a tight loop.
                 // Threads interleave: one thread's add may see another's in-progress remove.
                 (for
@@ -1149,10 +1149,10 @@ class CacheTest extends Test:
                     Choice.run,
                     _.unit,
                     Loop.repeat(if Platform.isNative then 10 else repeats)
-                ).andThen(succeed)
+                ).unit
             }
 
-            "rapid remove-then-add of same key — size accuracy" in runNotJS {
+            "rapid remove-then-add of same key — size accuracy".notJs in {
                 // Single key, many threads doing remove then add in tight loops.
                 // The add after remove reclaims the tombstone left by remove.
                 (for
@@ -1164,10 +1164,10 @@ class CacheTest extends Test:
                         s.remove(k)
                         discard(s.add(k, "val"))
                     })
-                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "remove during get of neighbor in probe chain" in runNotJS {
+            "remove during get of neighbor in probe chain".notJs in {
                 // Shared key objects: get uses eq fast-path, remove creates tombstones.
                 // Tests that tombstones don't break a concurrent get's probe walk.
                 (for
@@ -1186,10 +1186,10 @@ class CacheTest extends Test:
                             }
                         end if
                     })
-                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "size consistent after mixed operations" in runNotJS {
+            "size consistent after mixed operations".notJs in {
                 (for
                     maxSize <- Choice.eval(4, 8, 16)
                     s = cache(maxSize = maxSize)
@@ -1208,10 +1208,10 @@ class CacheTest extends Test:
                     discard(assert(stats.entries <= maxSize + 1, s"Expected <= ${maxSize + 1} entries, got ${stats.entries}"))
                     discard(assert(stats.entries >= 0))
                     discard(assertConsistent(s))
-                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "sustained churn with periodic consistency check" in runNotJS {
+            "sustained churn with periodic consistency check".notJs in {
                 // Run adds/removes for a longer period, checking assertConsistent
                 // periodically via an atomic counter to catch transient corruption.
                 (for
@@ -1229,13 +1229,13 @@ class CacheTest extends Test:
                             discard(assertConsistent(s, s"at operation ${counter.get()}", quiescent = false))
                         end if
                     })
-                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
         }
 
         "eviction" - {
 
-            "eviction + add + remove triple race" in runNotJS {
+            "eviction + add + remove triple race".notJs in {
                 // Small cache (maxSize=2), many keys. Eviction, add, and remove
                 // all race to claim/tombstone the same slots.
                 (for
@@ -1256,10 +1256,10 @@ class CacheTest extends Test:
                                 }
                         end match
                     })
-                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "onEvict count consistency" in runNotJS {
+            "onEvict count consistency".notJs in {
                 (for
                     maxSize <- Choice.eval(2, 4, 8)
                     evictCount = new java.util.concurrent.atomic.AtomicInteger(0)
@@ -1277,10 +1277,10 @@ class CacheTest extends Test:
                         s"evicted=${evictCount.get()} remaining=$remaining total adds=100"
                     ))
                     discard(assertConsistent(s))
-                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "all-same-hash with maxSize=1 — maximum conflict" in runNotJS {
+            "all-same-hash with maxSize=1 — maximum conflict".notJs in {
                 // Every operation fights over the same 1-2 slots with tombstones
                 // on every remove. The smallest possible table with maximum contention.
                 (for
@@ -1296,13 +1296,13 @@ class CacheTest extends Test:
                             s.remove(k)
                         end if
                     })
-                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
         }
 
         "phantom values" - {
 
-            "no phantom values — unique value per key detects slot mixup" in runNotJS {
+            "no phantom values — unique value per key detects slot mixup".notJs in {
                 // Each key i always maps to "val-$i". If get/add ever returns a
                 // value belonging to a different key, the key/value arrays are out of sync.
                 // Uses tiny cache to force heavy eviction + CAS retries.
@@ -1325,10 +1325,10 @@ class CacheTest extends Test:
                                 s.remove(k)
                         end match
                     })
-                yield succeed).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                yield ()).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "no phantom values — colliding keys, same hash" in runNotJS {
+            "no phantom values — colliding keys, same hash".notJs in {
                 // Same as above but all keys hash to 0. This forces every operation
                 // through the same probe chain, maximizing tombstone/evict interference.
                 (for
@@ -1350,13 +1350,13 @@ class CacheTest extends Test:
                                 s.remove(k)
                         end match
                     })
-                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                yield discard(assertConsistent(s))).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
         }
 
         "stress" - {
 
-            "all operations, small cache" in runNotJS {
+            "all operations, small cache".notJs in {
                 (for
                     maxSize <- Choice.eval(2, 4, 8)
                     s = cache(maxSize = maxSize)
@@ -1377,10 +1377,10 @@ class CacheTest extends Test:
                 yield
                     discard(assert(s.stats.entries <= maxSize + 1))
                     discard(assertConsistent(s))
-                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
 
-            "all same hash — maximum probe chain contention" in runNotJS {
+            "all same hash — maximum probe chain contention".notJs in {
                 (for
                     maxSize <- Choice.eval(2, 4, 8)
                     s = cache(maxSize = maxSize)
@@ -1404,7 +1404,7 @@ class CacheTest extends Test:
                     // adds can overshoot before eviction catches up.
                     discard(assert(s.stats.entries <= maxSize * 2))
                     discard(assertConsistent(s))
-                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).andThen(succeed)
+                ).handle(Choice.run, _.unit, Loop.repeat(repeats)).unit
             }
         }
     }
@@ -1428,7 +1428,7 @@ class CacheTest extends Test:
             for i <- 1 to 200 do
                 s.add(new Key(i, i % 3), s"val-$i")
                 if i % 10 == 0 then discard(assertConsistent(s, s"after $i insertions"))
-            succeed
+            ()
         }
     }
 
@@ -1497,7 +1497,7 @@ class CacheTest extends Test:
 
     "memo" - {
 
-        "sync" in run {
+        "sync" in {
             for
                 m <- Cache.memo(4) { (v: Int) =>
                     v + 1
@@ -1508,7 +1508,7 @@ class CacheTest extends Test:
             end for
         }
 
-        "async" in run {
+        "async" in {
             for
                 m <- Cache.memo(4) { (v: Int) =>
                     Fiber.initUnscoped {
@@ -1521,7 +1521,7 @@ class CacheTest extends Test:
             end for
         }
 
-        "failure invalidates entry" in run {
+        "failure invalidates entry" in {
             val ex    = new Exception
             var calls = 0
             for
@@ -1541,7 +1541,7 @@ class CacheTest extends Test:
             end for
         }
 
-        "distinct keys" in run {
+        "distinct keys" in {
             val calls = new AtomicInteger(0)
             for
                 m <- Cache.memo(100) { (v: Int) =>
@@ -1555,7 +1555,7 @@ class CacheTest extends Test:
             end for
         }
 
-        "memo2" in run {
+        "memo2" in {
             var calls = 0
             for
                 m <- Cache.memo2(4) { (a: Int, b: Int) =>
@@ -1569,7 +1569,7 @@ class CacheTest extends Test:
             end for
         }
 
-        "memo3" in run {
+        "memo3" in {
             var calls = 0
             for
                 m <- Cache.memo3(4) { (a: Int, b: Int, c: Int) =>
@@ -1582,7 +1582,7 @@ class CacheTest extends Test:
             end for
         }
 
-        "memo4" in run {
+        "memo4" in {
             var calls = 0
             for
                 m <- Cache.memo4(4) { (a: Int, b: Int, c: Int, d: Int) =>
@@ -1598,7 +1598,7 @@ class CacheTest extends Test:
 
     "memo eviction" - {
 
-        "respects maxSize" in run {
+        "respects maxSize" in {
             val calls = new AtomicInteger(0)
             for
                 m <- Cache.memo(4) { (v: Int) =>
@@ -1616,7 +1616,7 @@ class CacheTest extends Test:
             end for
         }
 
-        "evicted entries are recomputed" in run {
+        "evicted entries are recomputed" in {
             val calls = new AtomicInteger(0)
             for
                 m <- Cache.memo(2) { (v: Int) =>
@@ -1641,7 +1641,7 @@ class CacheTest extends Test:
 
         val repeats = if Platform.isNative then 10 else 100
 
-        "parallel calls to same key compute exactly once" in runNotJS {
+        "parallel calls to same key compute exactly once".notJs in {
             Loop.repeat(repeats) {
                 for
                     calls = new AtomicInteger(0)
@@ -1659,10 +1659,10 @@ class CacheTest extends Test:
                     assert(calls.get() == 1)
                     assert(results.forall(_ == 43))
                 end for
-            }.andThen(succeed)
+            }.unit
         }
 
-        "parallel calls to different keys" in runNotJS {
+        "parallel calls to different keys".notJs in {
             Loop.repeat(repeats) {
                 for
                     calls = new AtomicInteger(0)
@@ -1680,10 +1680,10 @@ class CacheTest extends Test:
                     assert(calls.get() == 50)
                     assert(results.toSet == (1 to 50).map(_ * 10).toSet)
                 end for
-            }.andThen(succeed)
+            }.unit
         }
 
-        "parallel calls with async computation" in runNotJS {
+        "parallel calls with async computation".notJs in {
             Loop.repeat(repeats) {
                 for
                     calls = new AtomicInteger(0)
@@ -1703,10 +1703,10 @@ class CacheTest extends Test:
                     assert(calls.get() == 1)
                     assert(results.forall(_ == 2))
                 end for
-            }.andThen(succeed)
+            }.unit
         }
 
-        "concurrent failure and retry" in runNotJS {
+        "concurrent failure and retry".notJs in {
             Loop.repeat(repeats) {
                 for
                     calls = new AtomicInteger(0)
@@ -1727,10 +1727,10 @@ class CacheTest extends Test:
                     assert(failures + successes == results.size)
                     assert(results.filter(_.isSuccess).forall(_.contains(2)))
                 end for
-            }.andThen(succeed)
+            }.unit
         }
 
-        "concurrent eviction under contention" in runNotJS {
+        "concurrent eviction under contention".notJs in {
             Loop.repeat(repeats) {
                 for
                     latch <- Latch.init(1)
@@ -1742,10 +1742,10 @@ class CacheTest extends Test:
                     results <- Kyo.foreach(fibers)(_.get)
                 yield assert(results.toSet == (1 to 20).map(_ * 10).toSet)
                 end for
-            }.andThen(succeed)
+            }.unit
         }
 
-        "concurrent memo and invalidation via failure" in runNotJS {
+        "concurrent memo and invalidation via failure".notJs in {
             Loop.repeat(repeats) {
                 for
                     calls = new AtomicInteger(0)
@@ -1769,10 +1769,10 @@ class CacheTest extends Test:
                     }
                 })
                 end for
-            }.andThen(succeed)
+            }.unit
         }
 
-        "high contention same key repeated calls" in runNotJS {
+        "high contention same key repeated calls".notJs in {
             Loop.repeat(repeats) {
                 for
                     calls = new AtomicInteger(0)
@@ -1786,10 +1786,10 @@ class CacheTest extends Test:
                     assert(calls.get() == 1)
                     assert(results.forall(_ == 2))
                 end for
-            }.andThen(succeed)
+            }.unit
         }
 
-        "interleaved puts and gets across many keys" in runNotJS {
+        "interleaved puts and gets across many keys".notJs in {
             Loop.repeat(repeats) {
                 for
                     latch <- Latch.init(1)
@@ -1807,10 +1807,10 @@ class CacheTest extends Test:
                     writeResults.zipWithIndex.foreach { (v, i) => assert(v == i + 1) }
                     readResults.zipWithIndex.foreach { (v, i) => assert(v == i + 1) }
                 end for
-            }.andThen(succeed)
+            }.unit
         }
 
-        "no lost updates under concurrent eviction" in runNotJS {
+        "no lost updates under concurrent eviction".notJs in {
             Loop.repeat(repeats) {
                 for
                     m     <- Cache.memo(8) { (v: Int) => v * v }
@@ -1825,10 +1825,10 @@ class CacheTest extends Test:
                     sqrt * sqrt == v
                 })
                 end for
-            }.andThen(succeed)
+            }.unit
         }
 
-        "concurrent calls during slow computation" in runNotJS {
+        "concurrent calls during slow computation".notJs in {
             Loop.repeat(10) {
                 for
                     calls = new AtomicInteger(0)
@@ -1848,10 +1848,10 @@ class CacheTest extends Test:
                     assert(calls.get() == 1)
                     assert(results.forall(_ == 2))
                 end for
-            }.andThen(succeed)
+            }.unit
         }
 
-        "stress test - many keys, small cache, high parallelism" in runNotJS {
+        "stress test - many keys, small cache, high parallelism".notJs in {
             for
                 m       <- Cache.memo(16) { (v: Int) => v * 3 }
                 results <- Async.fill(500, 500)(m(Random.nextInt(100)))
@@ -1861,7 +1861,7 @@ class CacheTest extends Test:
 
     "stack safety" - {
 
-        "add under contention" in runJVM {
+        "add under contention".onlyJvm in {
             for
                 c     <- Cache.init[Int, String](1)
                 latch <- Latch.init(1)
@@ -1877,7 +1877,7 @@ class CacheTest extends Test:
             end for
         }
 
-        "add and remove under contention" in runJVM {
+        "add and remove under contention".onlyJvm in {
             for
                 c     <- Cache.init[Int, String](1)
                 latch <- Latch.init(1)
@@ -1899,7 +1899,7 @@ class CacheTest extends Test:
                 Seq(final0, final1, final2, final3).foreach { v =>
                     v.foreach(s => discard(assert(s.startsWith("val-"))))
                 }
-                succeed
+                ()
             end for
         }
     }

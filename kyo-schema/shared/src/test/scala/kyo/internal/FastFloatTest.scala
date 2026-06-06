@@ -1,7 +1,6 @@
 package kyo.internal
 
 import java.nio.charset.StandardCharsets
-import kyo.Test
 import scala.util.Random
 
 /** Tests for [[FastFloat]] — the Eisel-Lemire fast-path double/float parser.
@@ -24,7 +23,7 @@ import scala.util.Random
   *   - L. Boundaries (3).
   *   - M. Float32 parallel (2).
   */
-class FastFloatTest extends Test:
+class FastFloatTest extends kyo.test.Test[Any]:
 
     import FastFloat.DoubleBailOut
     import FastFloat.FloatBailOut
@@ -35,7 +34,7 @@ class FastFloatTest extends Test:
     // java.lang.Double.parseDouble, OR (b) it returned the bail-out sentinel. Bail-out is a legal outcome
     // (the caller falls back to Double.parseDouble); the test succeeds as long as the algorithm does not
     // return a wrong-but-non-sentinel value.
-    private def assertParsesTo(s: String): org.scalatest.Assertion =
+    private def assertParsesTo(s: String)(using kyo.test.AssertScope): Unit =
         val bytes = bytesOf(s)
         val bits  = FastFloat.parseDouble(bytes, 0, bytes.length)
         if bits == DoubleBailOut then
@@ -53,7 +52,7 @@ class FastFloatTest extends Test:
     end assertParsesTo
 
     // Strict version — fails if FastFloat bails out (used where fast path MUST succeed).
-    private def assertFastPathBitsMatch(s: String): org.scalatest.Assertion =
+    private def assertFastPathBitsMatch(s: String)(using kyo.test.AssertScope): Unit =
         val bytes = bytesOf(s)
         val bits  = FastFloat.parseDouble(bytes, 0, bytes.length)
         assert(bits != DoubleBailOut, s"FastFloat.parseDouble($s) unexpectedly bailed out")
@@ -93,7 +92,6 @@ class FastFloatTest extends Test:
             end while
             val total   = hits + bailOut
             val hitRate = hits.toDouble / total
-            info(f"Fast-path hit rate: $hits / $total = ${hitRate * 100}%.2f%%")
             assert(hitRate >= 0.95, s"Fast-path hit rate $hitRate < 0.95 threshold")
         }
     }

@@ -6,59 +6,59 @@ import scala.language.implicitConversions
 
 class ListTest extends UITest:
 
-    "ul li text visible and ordered" in run {
+    "ul li text visible and ordered" in {
         withUI(UI.ul(UI.li("first").id("f"), UI.li("second").id("s"))) {
             for
                 _ <- Browser.assertText(Selector.id("f"), "first")
                 _ <- Browser.assertText(Selector.id("s"), "second")
-            yield succeed
+            yield ()
         }
     }
 
-    "ol items visible and ordered" in run {
+    "ol items visible and ordered" in {
         withUI(UI.ol(UI.li("alpha").id("a"), UI.li("beta").id("b"))) {
             for
                 _ <- Browser.assertText(Selector.id("a"), "alpha")
                 _ <- Browser.assertText(Selector.id("b"), "beta")
-            yield succeed
+            yield ()
         }
     }
 
-    "nested list" in run {
+    "nested list" in {
         withUI(UI.ul(UI.li(UI.ul(UI.li("nested").id("n"))))) {
-            Browser.assertText(Selector.id("n"), "nested").andThen(succeed)
+            Browser.assertText(Selector.id("n"), "nested").unit
         }
     }
 
-    "empty ul no crash" in run {
+    "empty ul no crash" in {
         withUI(UI.ul.id("u")) {
-            Browser.assertExists(Selector.id("u")).andThen(succeed)
+            Browser.assertExists(Selector.id("u")).unit
         }
     }
 
-    "li with nested elements span and button" in run {
+    "li with nested elements span and button" in {
         withUI(UI.ul(UI.li(UI.span("text").id("s"), UI.button("click").id("b")).id("item"))) {
             for
                 _ <- Browser.assertText(Selector.id("s"), "text")
                 _ <- Browser.assertText(Selector.id("b"), "click")
-            yield succeed
+            yield ()
         }
     }
 
-    "li long text" in run {
+    "li long text" in {
         val longText = "a" * 200
         withUI(UI.ul(UI.li(longText).id("item"))) {
-            Browser.assertText(Selector.id("item"), longText).andThen(succeed)
+            Browser.assertText(Selector.id("item"), longText).unit
         }
     }
 
-    "empty li renders" in run {
+    "empty li renders" in {
         withUI(UI.ul(UI.li.id("item"))) {
-            Browser.assertExists(Selector.id("item")).andThen(succeed)
+            Browser.assertExists(Selector.id("item")).unit
         }
     }
 
-    "li onClick fires" in run {
+    "li onClick fires" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -69,11 +69,11 @@ class ListTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("item"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "button inside li click works" in run {
+    "button inside li click works" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -84,11 +84,11 @@ class ListTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "input inside li fill works" in run {
+    "input inside li fill works" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -99,20 +99,20 @@ class ListTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "typed")
                 _ <- Browser.assertText(Selector.id("v"), "typed")
-            yield succeed
+            yield ()
         }
     }
 
-    "focus button inside li" in run {
+    "focus button inside li" in {
         withUI(UI.ul(UI.li(UI.button("Go").id("b")))) {
             for
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertVisible(Selector.id("b"))
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach li add item" in run {
+    "foreach li add item" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk("A", "B"))
             yield UI.div(
@@ -125,11 +125,11 @@ class ListTest extends UITest:
                 _ <- assertContains("B")
                 _ <- Browser.click(Selector.id("add"))
                 _ <- assertContains("C")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach li remove item" in run {
+    "foreach li remove item" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk("A", "B", "C"))
             yield UI.div(
@@ -141,11 +141,11 @@ class ListTest extends UITest:
                 _ <- Browser.click(Selector.id("rm"))
                 _ <- Browser.assertText(Selector.id("li-A"), "A")
                 _ <- Browser.assertText(Selector.id("li-B"), "B")
-            yield succeed
+            yield ()
         }
     }
 
-    "ol foreach numbers update" in run {
+    "ol foreach numbers update" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk("X", "Y"))
             yield UI.div(
@@ -158,11 +158,11 @@ class ListTest extends UITest:
                 _ <- assertContains("Y")
                 _ <- Browser.click(Selector.id("add"))
                 _ <- assertContains("Z")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach li with click handler" in run {
+    "foreach li with click handler" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk("A", "B"))
@@ -177,18 +177,18 @@ class ListTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("li-B"))
                 _ <- Browser.assertText(Selector.id("v"), "clicked:B")
-            yield succeed
+            yield ()
         }
     }
 
-    "30 li items all render" in run {
+    "30 li items all render" in {
         val items = (1 to 30).map(i => s"item$i")
         withUI(UI.ul(items.map(item => UI.li(item))*)) {
             for
                 _ <- assertContains("item1")
                 _ <- assertContains("item15")
                 _ <- assertContains("item30")
-            yield succeed
+            yield ()
         }
     }
 
