@@ -14,6 +14,7 @@ import kyo.internal.tasty.snapshot.SnapshotWriter
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.stats.Attributes
 import scala.collection.immutable.IntMap
+import scala.util.control.NonFatal
 
 /** kyo-tasty public entry object.
   *
@@ -1015,7 +1016,7 @@ object Tasty:
                             cached match
                                 case Result.Success(t) => Maybe(t)
                                 case Result.Failure(e) => Abort.fail(e)
-                                case Result.Panic(t)   => throw t
+                                // F-015: the memo only stores Success/Failure; the prior Result.Panic arm was dead.
                         else
                             val result: Result[TastyError, Tree] =
                                 try
@@ -1033,11 +1034,21 @@ object Tasty:
                                     case _: IllegalStateException =>
                                         // mmap arena closed before bodyTree ran; documented contract is ClasspathClosed.
                                         Result.Failure(TastyError.ClasspathClosed(s"bodyTree(sym.id=${sym.id.value})"))
+                                    // F-015 / INV-013: NonFatal final arm wraps every other decoder bug into
+                                    // MalformedSection, preserving the documented Abort[TastyError] error channel.
+                                    // Fatal throwables (OOM, InterruptedException) propagate untouched because
+                                    // NonFatal filters them out.
+                                    case ex: Throwable if NonFatal(ex) =>
+                                        Result.Failure(TastyError.MalformedSection(
+                                            "ASTs",
+                                            s"${ex.getClass.getSimpleName}: ${ex.getMessage}",
+                                            0L
+                                        ))
                             ctx.bodyMemo.put(sym.id, result)
                             result match
                                 case Result.Success(t) => Maybe(t)
                                 case Result.Failure(e) => Abort.fail(e)
-                                case Result.Panic(t)   => throw t
+                                // F-015: dead Result.Panic arm removed; memo never stores Panic.
                             end match
                         end if
                 end if
