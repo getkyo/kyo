@@ -73,6 +73,19 @@ object ChartFeatureGallery extends KyoApp:
         SaleRow("Feb", 72, 64, 80, Region.APAC)
     )
 
+    /** One value per region for the colored-text-annotation demo. Region is the x category (one bar per
+      * band), so a text mark's per-band label centers over its bar. A text mark positions by its x channel
+      * and does NOT dodge to follow a grouped bar, so labeling dodged sub-bars (region inside a shared
+      * month band) would land the labels at the band centre, not over each sub-bar.
+      */
+    case class RegionVal(name: String, value: Double, region: Region)
+
+    val regionVals: Chunk[RegionVal] = Chunk(
+        RegionVal("NA", 120, Region.NA),
+        RegionVal("EU", 80, Region.EU),
+        RegionVal("APAC", 60, Region.APAC)
+    )
+
     // Long category labels for the tick-rotation demo
     case class CatRow(category: String, value: Double)
 
@@ -203,14 +216,15 @@ object ChartFeatureGallery extends KyoApp:
 
     /** 9. Colored text annotations via colorScale: each bar's value label uses the region's color.
       *
-      * Combines a `bar` mark with a `text` mark; the `text` carries `color = _.region` so the label
-      * above each bar matches the region's colorScale color from the legend. Pure value annotation
-      * without the uniform grey of an uncolored `text` mark.
+      * Region is the x category (one bar per band), so the `text` mark's per-band label centers over its
+      * bar. The `text` carries `color = _.region`, so each value label is drawn in that region's colorScale
+      * color, matching the bar and the legend. Pure value annotation without the uniform grey of an
+      * uncolored `text` mark.
       */
     val coloredText: Svg.Root =
-        UI.chart(saleData)(
-            bar(x = _.month, y = _.units, color = _.region),
-            text(x = _.month, y = _.units, label = r => r.units.toInt.toString, color = _.region, anchor = UI.TextAnchor.Middle)
+        UI.chart(regionVals)(
+            bar(x = _.name, y = _.value, color = _.region),
+            text(x = _.name, y = _.value, label = r => r.value.toInt.toString, color = _.region, anchor = UI.TextAnchor.Middle)
         )
             .yScale(_.withNice(true))
             .yAxis(_.ticks(4))
