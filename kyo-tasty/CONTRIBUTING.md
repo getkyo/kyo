@@ -96,6 +96,28 @@ the cleanup campaign when `UnhandledSubtypingCase`, `UnresolvedReference`,
 A snapshot with the wrong minor version is rejected immediately with
 `TastyError.SnapshotVersionMismatch`; there is no downgrade path.
 
+### Type and Tree tag extensions also require a minor version bump
+
+The snapshot format serializes `Tasty.Type` values with a one-byte integer tag in
+`SnapshotWriter.writeType` / `SnapshotReader.readType`
+(`kyo/internal/tasty/snapshot/SnapshotWriter.scala` and `SnapshotReader.scala`).
+Adding a new `Tasty.Type` case that must survive a snapshot round-trip requires:
+
+1. Assign the next free integer tag in `SnapshotWriter.writeType`.
+2. Add the matching reader arm in `SnapshotReader.readType`.
+3. Increment `SnapshotFormat.minorVersion` by 1
+   (`kyo/internal/tasty/snapshot/SnapshotFormat.scala`, currently `11`).
+4. Add a round-trip test leaf in `SnapshotFidelity2Test` or a dedicated test.
+
+The same rule applies if a new `Tasty.Tree` sub-case is added and snapshots embed
+tree-level data serialized with a similar integer-tag scheme. As of minor version 11
+the snapshot format does not serialize `Tree` nodes directly; if that changes, the
+same append-only tag discipline applies.
+
+**Never reuse or renumber an existing tag.** The tag sequence is append-only; removed
+cases leave a gap. Old snapshot files are rejected by the minor-version guard rather
+than silently mis-decoded.
+
 ---
 
 ## Tasty.Java.* namespace convention

@@ -52,10 +52,10 @@ object AstUnpickler:
       *   Pre-indexed map from each symbol to its declared type. Consumed by Pass C.
       * @param ownerBySymbol
       *   Map from each symbol to its owner symbol (the partial Symbol used during Pass 1). Used by Pass C to build ownerId fields.
-      *   Retained: Pass A/B pipeline still produces partial Tasty.Symbol instances; SymbolDescriptor migration is out of campaign scope.
+      *   Retained: Pass A/B pipeline still produces partial Tasty.Symbol instances; SymbolDescriptor migration is not yet handled.
       * @param bodyDataByAddr
       *   Map from TASTy byte address to (bodyStart, bodyEnd) for symbols that have a body. File-level body data. Retained: Pass A/B
-      *   pipeline still produces partial Tasty.Symbol instances; SymbolDescriptor migration is out of campaign scope.
+      *   pipeline still produces partial Tasty.Symbol instances; SymbolDescriptor migration is not yet handled.
       * @param sectionBytes
       *   The raw AST section bytes for this file (shared across all symbols). For Pass C SymbolBody construction.
       * @param sectionOffset

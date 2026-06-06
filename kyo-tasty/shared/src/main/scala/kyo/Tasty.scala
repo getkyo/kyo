@@ -1220,7 +1220,7 @@ object Tasty:
           * `children`, `foreach`, `collect`, `find`, `foldLeft`, and `exists` so the hot traversal path does
           * not materialize a Chunk per node.
           */
-        def visit(f: Tree => Unit): Unit = this match
+        private[kyo] def visit(f: Tree => Unit): Unit = this match
             case Tree.Ident(_, _) => ()
             case Tree.Select(qualifier, _, _) =>
                 f(qualifier)
@@ -1375,7 +1375,7 @@ object Tasty:
         end children
 
         /** Pre-order traversal: visits this node then all descendants. */
-        def foreach(f: Tree => Unit): Unit =
+        private[kyo] def foreach(f: Tree => Unit): Unit =
             f(this)
             visit(_.foreach(f))
         end foreach

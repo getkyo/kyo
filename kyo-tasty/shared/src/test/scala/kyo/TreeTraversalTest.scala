@@ -116,4 +116,29 @@ class TreeTraversalTest extends Test:
         assert(sum == 3, s"Expected 3, got $sum")
     }
 
+    // visit and foreach are private[kyo]: accessible within package kyo, blocked from user code.
+    "visit is not accessible from outside package kyo" in {
+        // From inside package kyo, private[kyo] is accessible.
+        val errs = compiletime.testing.typeCheckErrors(
+            "(kyo.Tasty.Tree.Literal(kyo.Tasty.Constant.IntConst(1)): kyo.Tasty.Tree).visit(_ => ())"
+        )
+        assert(errs.isEmpty, "visit should be accessible from inside package kyo (private[kyo])")
+        // From a user package, visit must not be accessible.
+        val errsFromUser = compiletime.testing.typeCheckErrors(
+            "package testuser; object Probe { kyo.Tasty.Tree.Literal(kyo.Tasty.Constant.IntConst(1)).visit(_ => ()) }"
+        )
+        assert(errsFromUser.nonEmpty, "Expected compile error for visit from outside package kyo")
+    }
+
+    "foreach is not accessible from outside package kyo" in {
+        val errs = compiletime.testing.typeCheckErrors(
+            "(kyo.Tasty.Tree.Literal(kyo.Tasty.Constant.IntConst(1)): kyo.Tasty.Tree).foreach(_ => ())"
+        )
+        assert(errs.isEmpty, "foreach should be accessible from inside package kyo (private[kyo])")
+        val errsFromUser = compiletime.testing.typeCheckErrors(
+            "package testuser; object Probe { kyo.Tasty.Tree.Literal(kyo.Tasty.Constant.IntConst(1)).foreach(_ => ()) }"
+        )
+        assert(errsFromUser.nonEmpty, "Expected compile error for foreach from outside package kyo")
+    }
+
 end TreeTraversalTest
