@@ -734,7 +734,7 @@ private[kyo] object ChartLower:
         def effectivePad(ov: Maybe[ScaleOverride], axisCfg: AxisConfig): Double =
             ov.flatMap(o => if o.pad != 0.0 then Present(o.pad) else Absent).getOrElse(axisCfg.padding)
 
-        // Apply symmetric fractional padding to a continuous extent (G5).
+        // Apply symmetric fractional padding to a continuous extent.
         def padExtent(ext: Extent, pad: Double): Extent = ext match
             case Extent.Continuous(lo, hi) if pad != 0.0 =>
                 val delta = pad * (hi - lo)
@@ -773,8 +773,8 @@ private[kyo] object ChartLower:
                 // Pad applies to an explicit linear domain too; withPad must win.
                 case Present(ScaleKind.Linear(domLo, domHi)) =>
                     (padExtent(Extent.Continuous(domLo, domHi), pad), rLoBase, rHiBase, false)
-                // G7: log scale uses the no-zero extent computation.
-                // WARN-3: apply pad to the log extent too (every other arm pads).
+                // Log scale uses the no-zero extent computation.
+                // Apply pad to the log extent too (every other arm pads).
                 case Present(ScaleKind.Log) =>
                     (padExtent(extNoZero, pad), rLoBase, rHiBase, false)
                 case _ => (padExtent(ext, pad), rLoBase, rHiBase, nice)
@@ -840,7 +840,7 @@ private[kyo] object ChartLower:
       * axis labels, and the color legend.
       *
       * Returns a flat `Chunk` of `Svg.SvgElement`s that are prepended to the root before the marks group.
-      * All shapes are plain rects/lines/text; no `url(#id)` references are emitted (N4-guard satisfied).
+      * All shapes are plain rects/lines/text; no `url(#id)` references are emitted.
       */
     private[kyo] def buildFrame[A](
         layout: Layout,
@@ -1182,8 +1182,8 @@ private[kyo] object ChartLower:
 
     /** Build the legend `Svg.g` elements for any color channel present in the marks.
       *
-      * Categories are collected in enum-ordinal order when the color values are enums (N3 carry-over:
-      * real `Plottable` ordering, not encounter order). The palette comes from `legendCfg.colorScale`
+      * Categories are collected in enum-ordinal order when the color values are enums (real `Plottable`
+      * ordering, not encounter order). The palette comes from `legendCfg.colorScale`
       * when set; otherwise from `theme.palette` or the `DefaultPalette`.
       *
       * When no mark has a `color` channel but a Bar or Area mark carries a `stack` grouping, the legend is
@@ -1423,7 +1423,7 @@ private[kyo] object ChartLower:
       *
       * For enum values (detected via `scala.reflect.Enum`), the first encountered value's ordinal is used as
       * a sort key so that the legend lists cases in enum declaration order rather than encounter order. This
-      * satisfies the N3 carry-over: "order via the real color accessor's Plottable, not the string stand-in".
+      * ensures ordering via the real color accessor's `Plottable`, not the string stand-in.
       *
       * Returns `Chunk[(label, rawValue)]` where `rawValue` is the first encountered raw color-channel value
       * for that label. The raw value is passed to `colorScale` so typed enum functions can be applied
@@ -1667,7 +1667,7 @@ private[kyo] object ChartLower:
 
     // ---- marks region ----
 
-    // ---- Phase 07: interaction helpers ----
+    // ---- interaction helpers ----
 
     /** Build `UI.Ast.Attrs` that wire hover and click handlers for a single data row.
       *
@@ -2057,7 +2057,7 @@ private[kyo] object ChartLower:
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
         highlight: Maybe[Highlight[A]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
-        // Collect distinct color categories (label + raw value) in enum-ordinal order (N3 carry-over).
+        // Collect distinct color categories (label + raw value) in enum-ordinal order.
         // The raw values feed the same Sequential-aware palette resolution lowerPoint/lowerArea use, so a
         // numeric color channel under a Sequential `colorScale` paints each bar with its gradient color.
         val colorCats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, colorEnc)
@@ -2342,9 +2342,10 @@ private[kyo] object ChartLower:
       * contain multiple `MoveTo` commands in a single `PathData` (one for each contiguous run of defined points).
       * When a `color` channel is present each distinct color series produces its own path.
       *
-      * When `spec` is supplied, hover and click handlers are attached to each path. A line path represents all
-      * rows in a series, so the hover handler publishes `Absent` (line paths cover multiple rows and no single
-      * row is hovered). Per-row interaction is better suited to `point` marks layered over the line.
+      * When `spec` is supplied, hover and click handlers are attached to each path. A line path represents
+      * all rows in a series; the hover handler publishes `Present(firstRow)` (the series representative row,
+      * i.e. the first element of the series chunk). Per-row interaction is better suited to `point` marks
+      * layered over the line.
       */
     private def lowerLine[A, X, Y](
         rows: Chunk[A],
@@ -2431,7 +2432,7 @@ private[kyo] object ChartLower:
                                     // continuous scales) so line vertices align with the centred tick labels.
                                     val px = xs.apply(x) + xs.bandwidth / 2.0
                                     val py = ys.apply(y)
-                                    // WARN-2 (phase-1 audit): skip non-finite pixel coordinates.
+                                    // Skip non-finite pixel coordinates: they produce invisible or corrupt SVG paths.
                                     if java.lang.Double.isFinite(px) && java.lang.Double.isFinite(py) then
                                         loop(i + 1, curSeg.append((px, py)), segs)
                                     else
@@ -2730,7 +2731,7 @@ private[kyo] object ChartLower:
             case Absent => Absent
             case Present(yEnc) =>
                 val baseline = layout.plotBaseline
-                // Collect (px, py) pairs, skipping non-finite gaps (WARN-2 from phase-1 audit).
+                // Collect (px, py) pairs, skipping non-finite values (NaN/Infinity produce corrupt SVG paths).
                 val points: Chunk[(Double, Double)] = seriesRows.flatMap: row =>
                     yEnc.accessor(row) match
                         case Absent => Chunk.empty
@@ -2884,7 +2885,7 @@ private[kyo] object ChartLower:
         // Both y0 and y1 must be Present for a valid band.
         (mark.y0, mark.y1) match
             case (Present(ch0), Present(ch1)) =>
-                // Collect (xPx, y0Px, y1Px) triples for each row, skipping non-finite values (WARN-2).
+                // Collect (xPx, y0Px, y1Px) triples for each row, skipping non-finite values (NaN/Infinity produce corrupt SVG paths).
                 val pts: Chunk[(Double, Double, Double)] = rows.flatMap: row =>
                     val xd  = mark.x.plottable.toDomain(mark.x.accessor(row))
                     val y0d = ch0.plottable.toDomain(ch0.accessor(row))
@@ -3164,11 +3165,11 @@ private[kyo] object ChartLower:
             case Absent => Absent
 
         // Build per-row color lookup: CatKey -> Style.Color.
-        val colorByKey: scala.collection.immutable.Map[ChartFoundations.CatKey, Style.Color] =
+        val colorByKey: Map[ChartFoundations.CatKey, Style.Color] =
             colorResolved match
-                case Absent => scala.collection.immutable.Map.empty
+                case Absent => Map.empty
                 case Present((cats, palette, tag)) =>
-                    cats.zipWithIndex.foldLeft(scala.collection.immutable.Map.empty[ChartFoundations.CatKey, Style.Color]): (m, pair) =>
+                    cats.zipWithIndex.foldLeft(Map.empty[ChartFoundations.CatKey, Style.Color]): (m, pair) =>
                         val ((label, raw), idx) = pair
                         val key                 = ChartFoundations.categoryKey(tag, raw)
                         val color               = if idx < palette.size then palette(idx) else DefaultPalette(idx % DefaultPalette.size)
@@ -3196,7 +3197,7 @@ private[kyo] object ChartLower:
                                 // continuous scales) so glyphs align with the centred tick labels.
                                 val cx = xs.apply(x) + xs.bandwidth / 2.0
                                 val cy = ys.apply(y)
-                                // WARN-2 (phase-1 audit): skip non-finite pixel coordinates.
+                                // Skip non-finite pixel coordinates: they produce invisible or corrupt SVG elements.
                                 if !java.lang.Double.isFinite(cx) || !java.lang.Double.isFinite(cy) then (glyphs, labels)
                                 else
                                     // Resolve radius: sizePx > size > DefaultRadius.
@@ -3346,7 +3347,7 @@ private[kyo] object ChartLower:
       * single child is a `Reactive[Svg.Line]` that re-renders whenever the signal emits a new value. This
       * `Svg.G` is itself a `Svg.SvgElement` so it fits into the marks-region fold without type widening.
       *
-      * N4-guard: no `url(#id)` references are emitted (plain lines only).
+      * No `url(#id)` references are emitted (plain lines only).
       */
     private def lowerRuleChildren[A](
         mark: Mark.Rule[A],
@@ -3410,7 +3411,7 @@ private[kyo] object ChartLower:
         xChildren ++ yChildren
     end lowerRuleChildren
 
-    // ---- Phase 06: keyed transitions and animation ----
+    // ---- keyed transitions and animation ----
 
     /** Per-key geometry captured from one render frame.
       *
@@ -3529,7 +3530,7 @@ private[kyo] object ChartLower:
       * since `begin="0s"` resolves to page-load time). Instead the reactive runtime calls `beginElement()`
       * on each freshly-inserted `<animate>` after a mount/patch (DomBackend.beginAnimationsSync and the
       * server client-script `ba(...)`), which starts the tween relative to insertion time. `repeatCount("1")`
-      * plays it once. N4-guard: no `url(#id)` refs.
+      * plays it once. No `url(#id)` references are emitted.
       */
     private def smilAnimate(attributeName: String, from: Double, to: Double, dur: String)(using Frame): Svg.Animate =
         Svg.animate
@@ -3548,7 +3549,7 @@ private[kyo] object ChartLower:
       *
       * Used for the declarative line/area path morph: when the previous and new paths have the same
       * command structure (same count and types), the browser interpolates the vertex coordinates.
-      * N4-guard: no `url(#id)` refs.
+      * No `url(#id)` references are emitted.
       */
     private def smilAnimatePath(fromD: String, toD: String, dur: String)(using Frame): Svg.Animate =
         Svg.animate
@@ -3713,7 +3714,7 @@ private[kyo] object ChartLower:
       * limitation as the legend's `hiddenSeries: Set[String]`; label-based keying is the correct
       * improvement over positional-index keying for add/remove/reorder stability.
       *
-      * N4-guard: no `url(#id)` refs.
+      * No `url(#id)` references are emitted.
       */
     private def lowerLineWithTransitions[A, X, Y](
         rows: Chunk[A],
@@ -3818,7 +3819,7 @@ private[kyo] object ChartLower:
       * Structural path morphs (different command-type signature) snap: see `lowerLineWithTransitions`
       * scaladoc for the v1 limitation note and the type-signature rationale.
       *
-      * N4-guard: no `url(#id)` refs.
+      * No `url(#id)` references are emitted.
       */
     private def lowerAreaWithTransitions[A, X, Y](
         rows: Chunk[A],
@@ -4061,7 +4062,7 @@ private[kyo] object ChartLower:
       * (which tracks the current category set) and are therefore placed inside the reactive region by
       * `buildReactiveRegion`. Only the axis border lines (bottom and left) are static.
       *
-      * No `url(#id)` references are emitted (N4-guard satisfied).
+      * No `url(#id)` references are emitted.
       */
     private[kyo] def buildStaticFrameLive[A](
         layout: Layout,
@@ -4210,19 +4211,21 @@ private[kyo] object ChartLower:
       *     ticks and the marks live inside the reactive `Svg.G` so the tick labels update with the data.
       *
       * The x-scale is always computed from the first emission via `initialRows`. For a categorically-typed x
-      * axis (band scale) the category set is fixed to the initial categories; this is the Phase-05 constraint
-      * (dynamic category insertion is a Phase-06+ concern).
+      * axis (band scale) the category set is fixed to the initial categories; dynamic category insertion
+      * requires re-resolving the x-scale reactively, which is not yet implemented.
       *
-      * Phase 06: when `spec.animateCfg.enabled` is true, a chart-private `AtomicRef.Unsafe[TransState[A]]`
-      * is created once and closed over by the reactive render function. The `TransState` carries three
-      * slots: `lastRows` (the row chunk of the last committed render), `fromGeom` (animation origin), and
+      * When `spec.animateCfg.enabled` is true, a chart-private `AtomicRef.Unsafe[TransState[A]]` is
+      * created once and closed over by the reactive render function. The `TransState` carries three slots:
+      * `lastRows` (the row chunk of the last committed render), `fromGeom` (animation origin), and
       * `currentGeom` (animation target). Each call to the render projection compares the incoming rows to
       * `lastRows`. A new emission writes the ref once; repeat pulls of the same emission reuse the stored
       * from/to and produce identical SVG, making the projection idempotent. Bar marks emit SMIL `animate`
-      * children; line/area marks snap (no animate) in Phase 06 with the bounded stepped-morph tween
-      * deferred to Phase 08.
+      * children. Line and area marks emit a declarative SMIL `d` morph when the command-type signature
+      * of the previous and new paths matches (same ordered sequence of MoveTo/LineTo/Close types); they
+      * snap with no animate child when the signature differs (structural change such as a gap introduction
+      * or a category add/remove).
       *
-      * N4-guard: no `url(#id)` references are emitted; `Frame.internal` is safe.
+      * No `url(#id)` references are emitted; `Frame.internal` is safe.
       *
       * Unsafe boundary: `stateRef` uses `AtomicRef.Unsafe` so it can be read and written from within the
       * pure render function. The ref is private to this chart instance and writes occur only on genuine row
@@ -4231,9 +4234,9 @@ private[kyo] object ChartLower:
     private[kyo] def lowerLive[A](spec: ChartSpec[A], signal: Signal[Chunk[A]], gradPrefix: String)(using Frame): Svg.Root =
         val layout = buildLayout(spec)
         // Use a fixed initial row set for the layout/x-scale/ysR-presence check.
-        // For Phase 05 the x-scale is computed from the signal's current value via initConst or the first
-        // emission. We resolve from Chunk.empty to get a stable layout; the reactive region re-resolves the
-        // y-scale per emission.
+        // The x-scale is computed from the signal's current value via initConst or the first emission.
+        // We resolve from Chunk.empty to get a stable layout; the reactive region re-resolves the y-scale
+        // per emission.
         val initialRows: Chunk[A] = Chunk.empty
         val hasRight = spec.marks.exists:
             case m: Mark.Bar[A, ?, ?]      => m.axis == Axis.Right
@@ -4274,7 +4277,7 @@ private[kyo] object ChartLower:
                 case t: Svg.Text => acc(t)
                 case g: Svg.G    => acc(g)
                 case other       => acc(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
-        // Phase 06: create the chart-private transition-state ref when animation is enabled.
+        // Create the chart-private transition-state ref when animation is enabled.
         // Unsafe: AtomicRef.Unsafe bypasses kyo effects tracking; sound because the ref is private to this
         // chart and writes occur only on genuine row changes (idempotent within any single emission).
         val stateRefMaybe: Maybe[AtomicRef.Unsafe[TransState[A]]] =
@@ -4282,7 +4285,7 @@ private[kyo] object ChartLower:
                 import AllowUnsafe.embrace.danger
                 Present(AtomicRef.Unsafe.init(TransState.empty[A]))
             else Absent
-        // Phase 07: create an internal hover ref when a tooltip is configured so shape handlers can drive it.
+        // Create an internal hover ref when a tooltip is configured so shape handlers can drive it.
         // Unsafe: SignalRef.Unsafe.init bypasses kyo effects; sound because the ref is private to this chart.
         val internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = spec.tooltip match
             case Present(_) =>
@@ -4309,7 +4312,7 @@ private[kyo] object ChartLower:
             val ysLLive = ysLFixed.getOrElse(ysLLiveResolved)
             buildReactiveRegion(rows, spec, layout, xsLive, ysLLive, ysRLive, stateRefMaybe, gradPrefix, internalHoverRef)
         val withMarks = withFrame(reactiveMarks)
-        // Phase 07: append the tooltip overlay as the last child so it renders on top.
+        // Append the tooltip overlay as the last child so it renders on top.
         (spec.tooltip, internalHoverRef) match
             case (Present(fn), Present(ref)) =>
                 withMarks(buildTooltipOverlay(ref, fn, layout))
@@ -4395,7 +4398,7 @@ private[kyo] object ChartLower:
       * The `internalHoverRef` is created once per chart instance (in `lowerStatic`/`lowerLive`) and
       * is separate from `spec.onHover` so the tooltip can work without a user-visible hover ref.
       *
-      * N4-guard: no `url(#id)` references are emitted (plain rect + text).
+      * No `url(#id)` references are emitted (plain rect + text).
       */
     private def buildTooltipOverlay[A](
         internalHoverRef: Signal.SignalRef[Maybe[A]],
@@ -4478,7 +4481,7 @@ private[kyo] object ChartLower:
         // category (built from the full rows) so the user can still toggle a hidden series back on.
         val visibleRows = visibleRowsFor(rows, spec)
         val frame       = buildFrame(layout, xs, ysL, ysR, spec, rows, gradPrefix)
-        // Phase 07: create an internal hover ref when a tooltip is configured so shape handlers can drive it.
+        // Create an internal hover ref when a tooltip is configured so shape handlers can drive it.
         // Unsafe: SignalRef.Unsafe.init bypasses kyo effects; sound because the ref is private to this chart.
         val internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = spec.tooltip match
             case Present(_) =>
@@ -4496,7 +4499,7 @@ private[kyo] object ChartLower:
                 case g: Svg.G    => acc(g)
                 case other       => acc(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
         val withMarks = withFrame(marksG)
-        // Phase 07: append the tooltip overlay as the last child so it renders on top.
+        // Append the tooltip overlay as the last child so it renders on top.
         (spec.tooltip, internalHoverRef) match
             case (Present(fn), Present(ref)) =>
                 withMarks(buildTooltipOverlay(ref, fn, layout))

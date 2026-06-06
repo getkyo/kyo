@@ -8,8 +8,8 @@ import scala.annotation.targetName
 /** Cross-cutting foundation helpers for the charts lowering.
   *
   * Houses the identity key that replaces `toString` category keying, the finite guard
-  * used at every extent fold, the per-chart id prefix for `url(#id)`-bearing defs
-  * (the N4 constraint), and the `Chunk`-native ordered-distinct helper. Kept
+  * used at every extent fold, the per-chart id prefix for `url(#id)`-bearing gradient defs
+  * (so each chart's defs are self-contained and do not collide with sibling charts), and the `Chunk`-native ordered-distinct helper. Kept
   * `private[kyo]`: these are engine internals, never public surface.
   */
 private[kyo] object ChartFoundations:

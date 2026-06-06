@@ -25,8 +25,8 @@ end Scale
 /** Companion object providing `Scale.Kind`, `Scale.Tick`, `Extent`, and the `fit` factory.
   *
   * `Scale.fit` is the single entry point: supply a `Kind`, the domain `Extent`, and the pixel range, and get back a
-  * fully resolved `Scale`. All five concrete implementations (`Linear`, `Log`, `Band`, `Time`, `Ordinal`) are
-  * produced exclusively through `fit`.
+  * fully resolved `Scale`. All seven concrete implementations (`Linear`, `Log`, `Band`, `Time`, `Ordinal`, `Point`,
+  * `Symlog`) are produced exclusively through `fit`.
   *
   * `niceTicks` is exposed for direct use in tests and for axis tick generation at chart-build time.
   */
@@ -293,7 +293,7 @@ private[kyo] object Scale:
 
         def ticks(maxTicks: Int): Chunk[Tick] =
             val n = keys.size
-            // Use original key indices so pixel positions reflect actual band positions (G4).
+            // Use original key indices so pixel positions reflect actual band positions.
             val visible: Chunk[(String, Int)] =
                 if maxTicks >= n then keys.zipWithIndex.to(Chunk)
                 else

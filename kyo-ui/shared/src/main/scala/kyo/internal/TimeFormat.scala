@@ -4,7 +4,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
-/** Cross-platform temporal tick-label formatter (catalog #15, Q-004).
+/** Cross-platform temporal tick-label formatter.
   *
   * Formats epoch millis to a calendar label whose granularity is derived from the tick step: sub-day step uses
   * HH:mm, day-to-month step uses yyyy-MM-dd, year-scale step uses yyyy. Uses java.time directly in shared
