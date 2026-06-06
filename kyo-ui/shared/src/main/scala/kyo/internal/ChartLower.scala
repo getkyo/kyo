@@ -1443,7 +1443,7 @@ private[kyo] object ChartLower:
                 case _                     => encounterIdx // stable encounter-order index
             (label, raw, ordinal)
         // Sort by ordinal so enum cases appear in declaration order.
-        // toSeq here is acceptable: it is a terminal operation on a small collection, not a hot membership scan.
+        // toSeq here is a genuine stdlib boundary: Chunk has no sortBy; the sort is a terminal operation on a small collection.
         triples.toSeq.sortBy(_._3).foldLeft(Chunk.empty[(String, Any)])((acc, t) => acc.append((t._1, t._2)))
     end collectColorCategoriesWithRaw
 
@@ -1469,9 +1469,9 @@ private[kyo] object ChartLower:
             case Absent =>
                 spec.theme.palette match
                     case Present(p) => categories.zipWithIndex.map: (_, i) =>
-                            p.toSeq.apply(i % p.size)
+                            p(i % p.size)
                     case Absent => categories.zipWithIndex.map: (_, i) =>
-                            DefaultPalette.toSeq.apply(i % DefaultPalette.size)
+                            DefaultPalette(i % DefaultPalette.size)
     end resolvePalette
 
     /** Numeric extent over the raw category values, used to normalize a sequential color scale.
@@ -1622,7 +1622,7 @@ private[kyo] object ChartLower:
             if i >= categories.size then acc
             else
                 val (cat, _) = categories(i)
-                val color    = if i < palette.size then palette(i) else DefaultPalette.toSeq.apply(i % DefaultPalette.size)
+                val color    = if i < palette.size then palette(i) else DefaultPalette(i % DefaultPalette.size)
                 val clickAttrs = toggleAction(cat) match
                     case Present(a) => UI.Ast.Attrs(onClick = Present(a))
                     case Absent     => UI.Ast.Attrs()
@@ -1688,21 +1688,24 @@ private[kyo] object ChartLower:
         if !hasHover && !hasSelect && !hasTooltip then UI.Ast.Attrs()
         else
             // Hover action: set user ref + internal tooltip ref (if present), combined sequentially.
+            // Each Maybe[Unit < Async] is folded directly, with no Option/Seq materialization.
             val hoverAction: Maybe[Any < Async] =
                 if hasHover || hasTooltip then
-                    val actions: Seq[Any < Async] =
-                        spec.onHover.map(_.set(Present(row))).toOption.toSeq ++
-                            internalHoverRef.map(_.set(Present(row))).toOption.toSeq
-                    val combined: Any < Async = actions.foldLeft((): Any < Async)((acc, a) => acc.andThen(a))
+                    val base: Any < Async = (): Any < Async
+                    val withHover: Any < Async =
+                        spec.onHover.fold(base)(ref => base.andThen(ref.set(Present(row))))
+                    val combined: Any < Async =
+                        internalHoverRef.fold(withHover)(ref => withHover.andThen(ref.set(Present(row))))
                     Present(combined)
                 else Absent
             // Unhover action: clear user ref + internal tooltip ref, combined sequentially.
             val unhoverAction: Maybe[Any < Async] =
                 if hasHover || hasTooltip then
-                    val actions: Seq[Any < Async] =
-                        spec.onHover.map(_.set(Absent)).toOption.toSeq ++
-                            internalHoverRef.map(_.set(Absent)).toOption.toSeq
-                    val combined: Any < Async = actions.foldLeft((): Any < Async)((acc, a) => acc.andThen(a))
+                    val base: Any < Async = (): Any < Async
+                    val withHover: Any < Async =
+                        spec.onHover.fold(base)(ref => base.andThen(ref.set(Absent)))
+                    val combined: Any < Async =
+                        internalHoverRef.fold(withHover)(ref => withHover.andThen(ref.set(Absent)))
                     Present(combined)
                 else Absent
             // Click action: set select ref.
@@ -2072,10 +2075,10 @@ private[kyo] object ChartLower:
                     case Present(_) => resolvePalette(s, colorCats)
                     case Absent =>
                         colorKeys.zipWithIndex.map: (_, i) =>
-                            basePalette.toSeq.apply(i % basePalette.size)
+                            basePalette(i % basePalette.size)
             case Absent =>
                 colorKeys.zipWithIndex.map: (_, i) =>
-                    basePalette.toSeq.apply(i % basePalette.size)
+                    basePalette(i % basePalette.size)
         val baseline = layout.plotBaseline
 
         // Degenerate-grouping guard: a `color` channel only DODGES (subdivides a band into sub-slots) when
@@ -2223,9 +2226,9 @@ private[kyo] object ChartLower:
             else
                 val xKey = xKeys(xi)
                 // O(1) lookup of the first-seen x Domain for this key (precomputed in buildMap).
-                val bandX = xDomainByKey.get(xKey) match
-                    case Some(d) => xs.apply(d)
-                    case None    => xs.apply(Domain.Category(xKey))
+                val bandX = Maybe.fromOption(xDomainByKey.get(xKey)) match
+                    case Present(d) => xs.apply(d)
+                    case Absent     => xs.apply(Domain.Category(xKey))
                 val bandW    = xs.bandwidth
                 val groupMap = dataMap.getOrElse(xKey, Map.empty)
                 val totalY   = groupKeys.foldLeft(0.0)((s, gk) => s + groupMap.getOrElse(gk, 0.0))
@@ -2279,9 +2282,7 @@ private[kyo] object ChartLower:
                                     .fill(Svg.Paint.Color(fillColor))
                                 // Look up the row for this x+group combination to apply per-datum channels.
                                 // (There is at most one row per x+group; rowBySlot holds the first match.)
-                                val rowForSlot: Maybe[A] = rowBySlot.get((xKey, gk)) match
-                                    case Some(r) => Present(r)
-                                    case None    => Absent
+                                val rowForSlot: Maybe[A] = Maybe.fromOption(rowBySlot.get((xKey, gk)))
                                 val withChannels: Chunk[Svg.SvgElement] = rowForSlot match
                                     case Absent => Chunk(baseRect)
                                     case Present(r) =>
@@ -2317,7 +2318,7 @@ private[kyo] object ChartLower:
     /** Convenience: resolve a palette from DefaultPalette for the stacked-bar Absent-spec fallback. */
     private def resolvePaletteFromCfg(categories: Chunk[String]): Chunk[Style.Color] =
         categories.zipWithIndex.map: (_, i) =>
-            DefaultPalette.toSeq.apply(i % DefaultPalette.size)
+            DefaultPalette(i % DefaultPalette.size)
 
     /** Lower a `Mark.Line` to a `Chunk` of `Svg.Path`s.
       *
@@ -2346,10 +2347,10 @@ private[kyo] object ChartLower:
                 // INV-023: pass spec/internalHoverRef so click/hover handlers are attached to the path.
                 // INV-024: tag the series path with the representative row (first row) and wrap via withHighlight.
                 val path   = lowerLineSeries(rows, mark, layout, xs, ys, defaultColor, spec, internalHoverRef)
-                val repRow = rows.toSeq.headOption
+                val repRow = rows.headMaybe
                 val tagged: Chunk[(A, Svg.SvgElement)] = repRow match
-                    case Some(r) => Chunk((r, path))
-                    case None    => Chunk.empty
+                    case Present(r) => Chunk((r, path))
+                    case Absent     => Chunk.empty
                 withHighlight(tagged, highlight)
             case Present(colorEnc) =>
                 // FIX B: resolve per-series colors via resolvePalette (the same path the legend and stacked
@@ -2364,13 +2365,13 @@ private[kyo] object ChartLower:
                     case Absent     => DefaultPalette
                 val tagged: Chunk[(A, Svg.SvgElement)] = colorKeys.zipWithIndex.flatMap: (key, idx) =>
                     val seriesRows  = rows.filter(r => colorEnc.accessor(r).toString == key)
-                    val strokeColor = palette.toSeq.apply(idx % palette.size)
+                    val strokeColor = palette(idx % palette.size)
                     // INV-023: thread interaction into each per-series path.
                     val path = lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor, spec, internalHoverRef)
                     // The series-representative row is the first row of the series chunk.
-                    seriesRows.toSeq.headOption match
-                        case Some(r) => Chunk((r, path))
-                        case None    => Chunk.empty
+                    seriesRows.headMaybe match
+                        case Present(r) => Chunk((r, path))
+                        case Absent     => Chunk.empty
                 withHighlight(tagged, highlight)
     end lowerLine
 
@@ -2457,25 +2458,25 @@ private[kyo] object ChartLower:
         val withOpacity = mark.opacity match
             case Present(fn) =>
                 // Use the first row to evaluate line-level opacity (series-level channel, not per-datum).
-                rows.toSeq.headOption match
-                    case Some(r) => basePath.strokeOpacity(math.max(0.0, math.min(1.0, fn(r))))
-                    case None    => basePath
+                rows.headMaybe match
+                    case Present(r) => basePath.strokeOpacity(math.max(0.0, math.min(1.0, fn(r))))
+                    case Absent     => basePath
             case Absent => basePath
         // Tooltip channel: attach a title child on the path element for browser tooltip.
         val withTooltip = mark.tooltip match
             case Present(fn) =>
-                rows.toSeq.headOption match
-                    case Some(r) => withOpacity(Svg.title(fn(r)))
-                    case None    => withOpacity
+                rows.headMaybe match
+                    case Present(r) => withOpacity(Svg.title(fn(r)))
+                    case Absent     => withOpacity
             case Absent => withOpacity
         // INV-023: attach interaction attrs to the line path. The representative row for a line series
         // is the first row of the series chunk (path-level, not per-datum).
         spec match
             case Absent => withTooltip
             case Present(s) =>
-                rows.toSeq.headOption match
-                    case None    => withTooltip
-                    case Some(r) => withTooltip.withAttrs(buildInteractionAttrs(r, s, internalHoverRef))
+                rows.headMaybe match
+                    case Absent     => withTooltip
+                    case Present(r) => withTooltip.withAttrs(buildInteractionAttrs(r, s, internalHoverRef))
         end match
     end lowerLineSeries
 
@@ -2512,7 +2513,7 @@ private[kyo] object ChartLower:
             else
                 spec match
                     case Present(s) => resolvePalette(s, colorCatsWithRaw)
-                    case Absent     => colorCatsWithRaw.zipWithIndex.map((_, i) => basePaletteText.toSeq.apply(i % basePaletteText.size))
+                    case Absent     => colorCatsWithRaw.zipWithIndex.map((_, i) => basePaletteText(i % basePaletteText.size))
         // Precompute catKey -> index once (first-seen wins, matching indexWhere); replaces per-row scan.
         val catIdxText: Map[String, Int] =
             colorCatsWithRaw.zipWithIndex.foldLeft(Map.empty[String, Int]): (m, ci) =>
@@ -2585,7 +2586,7 @@ private[kyo] object ChartLower:
             else
                 spec match
                     case Present(s) => resolvePalette(s, colorCatsWithRaw)
-                    case Absent     => colorCatsWithRaw.zipWithIndex.map((_, i) => basePaletteErr.toSeq.apply(i % basePaletteErr.size))
+                    case Absent     => colorCatsWithRaw.zipWithIndex.map((_, i) => basePaletteErr(i % basePaletteErr.size))
         // Precompute catKey -> index once (first-seen wins, matching indexWhere); replaces per-row scan.
         val catIdxErr: Map[String, Int] =
             colorCatsWithRaw.zipWithIndex.foldLeft(Map.empty[String, Int]): (m, ci) =>
@@ -2728,23 +2729,23 @@ private[kyo] object ChartLower:
                     val baseOpacity = 0.7
                     val opacity = mark.opacity match
                         case Present(fn) =>
-                            seriesRows.toSeq.headOption.map(r => math.max(0.0, math.min(1.0, fn(r)))).getOrElse(baseOpacity)
+                            seriesRows.headMaybe.map(r => math.max(0.0, math.min(1.0, fn(r)))).getOrElse(baseOpacity)
                         case Absent => baseOpacity
                     val basePath = Svg.path.d(pd2).fill(Svg.Paint.Color(fill)).fillOpacity(opacity)
                     val withTooltip = mark.tooltip match
                         case Present(fn) =>
-                            seriesRows.toSeq.headOption match
-                                case Some(r) => basePath(Svg.title(fn(r)))
-                                case None    => basePath
+                            seriesRows.headMaybe match
+                                case Present(r) => basePath(Svg.title(fn(r)))
+                                case Absent     => basePath
                         case Absent => basePath
                     // INV-023: attach interaction attrs to the area path.
                     // The representative row is the first defined row.
                     val withInteraction = spec match
                         case Absent => withTooltip
                         case Present(s) =>
-                            seriesRows.toSeq.headOption match
-                                case None    => withTooltip
-                                case Some(r) => withTooltip.withAttrs(buildInteractionAttrs(r, s, internalHoverRef))
+                            seriesRows.headMaybe match
+                                case Absent     => withTooltip
+                                case Present(r) => withTooltip.withAttrs(buildInteractionAttrs(r, s, internalHoverRef))
                     Present(withInteraction)
                 end if
         end match
@@ -2777,10 +2778,10 @@ private[kyo] object ChartLower:
                         // INV-024: stacked area has no natural per-row identity; tag with the first row of rows
                         // as the series-representative for highlight (series-level granularity per design §0.4).
                         val stacked = lowerAreaStacked(rows, mark, yEnc, layout, xs, ys, spec, internalHoverRef)
-                        val repRow  = rows.toSeq.headOption
+                        val repRow  = rows.headMaybe
                         val tagged: Chunk[(A, Svg.SvgElement)] = repRow match
-                            case None    => stacked.map(el => (rows(0), el)) // unreachable when stacked is non-empty
-                            case Some(r) => stacked.map(el => (r, el))
+                            case Absent     => stacked.map(el => (rows(0), el)) // unreachable when stacked is non-empty
+                            case Present(r) => stacked.map(el => (r, el))
                         withHighlight(tagged, highlight)
                     case Absent =>
                         // Non-stacked: dispatch on mark.color (mirrors lowerLine).
@@ -2792,9 +2793,9 @@ private[kyo] object ChartLower:
                                 val tagged: Chunk[(A, Svg.SvgElement)] = pathMaybe match
                                     case Absent => Chunk.empty
                                     case Present(path) =>
-                                        rows.toSeq.headOption match
-                                            case Some(r) => Chunk((r, path))
-                                            case None    => Chunk.empty
+                                        rows.headMaybe match
+                                            case Present(r) => Chunk((r, path))
+                                            case Absent     => Chunk.empty
                                 withHighlight(tagged, highlight)
                             case Present(colorEnc) =>
                                 // Color channel: split rows by category, one path per series.
@@ -2808,23 +2809,23 @@ private[kyo] object ChartLower:
                                     case Absent     => DefaultPalette
                                 val tagged: Chunk[(A, Svg.SvgElement)] = colorKeys.zipWithIndex.flatMap: (key, idx) =>
                                     val seriesRows = rows.filter(r => colorEnc.accessor(r).toString == key)
-                                    val fillColor  = palette.toSeq.apply(idx % palette.size)
+                                    val fillColor  = palette(idx % palette.size)
                                     buildSimpleAreaPath(seriesRows, mark, layout, xs, ys, fillColor, spec, internalHoverRef) match
                                         case Absent => Chunk.empty
                                         case Present(path) =>
-                                            seriesRows.toSeq.headOption match
-                                                case Some(r) => Chunk((r, path))
-                                                case None    => Chunk.empty
+                                            seriesRows.headMaybe match
+                                                case Present(r) => Chunk((r, path))
+                                                case Absent     => Chunk.empty
                                     end match
                                 withHighlight(tagged, highlight)
             case Absent =>
                 // y0/y1 band form: render a closed ribbon between the two edges (INV-017).
                 // INV-024: tag the ribbon with the first row as the series-representative for highlight.
                 val ribbon = buildBandRibbon(rows, mark, xs, ys, defaultColor)
-                val repRow = rows.toSeq.headOption
+                val repRow = rows.headMaybe
                 val tagged: Chunk[(A, Svg.SvgElement)] = repRow match
-                    case None    => Chunk.empty
-                    case Some(r) => ribbon.map(el => (r, el))
+                    case Absent     => Chunk.empty
+                    case Present(r) => ribbon.map(el => (r, el))
                 withHighlight(tagged, highlight)
         end match
     end lowerArea
@@ -2870,20 +2871,20 @@ private[kyo] object ChartLower:
                     // (leaf 19): both band edges must reflect the curve, not just the forward y1 edge.
                     // The connecting edge from the last y1 vertex down to the last y0 vertex is a single
                     // lineTo; the remaining reversed y0 vertices feed CurvePath.append so the y0 edge curves.
-                    val y0ptsRev    = Chunk.from(pts.toSeq.reverse.map(t => (t._1, t._2)))
+                    val y0ptsRev    = Chunk.from(pts.reverse.map(t => (t._1, t._2)))
                     val connectedPd = forwardPd.lineTo(y0ptsRev(0)._1, y0ptsRev(0)._2)
                     val ribbonPd    = CurvePath.append(connectedPd, y0ptsRev.drop(1), mark.curve).close
                     val baseOpacity = 0.7
                     val opacity = mark.opacity match
                         case Present(fn) =>
-                            rows.toSeq.headOption.map(r => math.max(0.0, math.min(1.0, fn(r)))).getOrElse(baseOpacity)
+                            rows.headMaybe.map(r => math.max(0.0, math.min(1.0, fn(r)))).getOrElse(baseOpacity)
                         case Absent => baseOpacity
                     val basePath = Svg.path.d(ribbonPd).fill(Svg.Paint.Color(fillColor)).fillOpacity(opacity)
                     val withTooltip = mark.tooltip match
                         case Present(fn) =>
-                            rows.toSeq.headOption match
-                                case Some(r) => basePath(Svg.title(fn(r)))
-                                case None    => basePath
+                            rows.headMaybe match
+                                case Present(r) => basePath(Svg.title(fn(r)))
+                                case Absent     => basePath
                         case Absent => basePath
                     Chunk(withTooltip)
                 end if
@@ -3002,9 +3003,9 @@ private[kyo] object ChartLower:
                     // continuous scales). Tick labels sit at band centres, so left-edge vertices leave the last
                     // band slot empty (a wedge of unfilled plot to the right of the final vertex).
                     val px =
-                        (xDomainByKey.get(xk) match
-                            case Some(d) => xs.apply(d)
-                            case None    => xs.apply(Domain.Category(xk))
+                        (Maybe.fromOption(xDomainByKey.get(xk)) match
+                            case Present(d) => xs.apply(d)
+                            case Absent     => xs.apply(Domain.Category(xk))
                         ) + xs.bandwidth / 2.0
                     val (py0, py1) =
                         if mark.stack.normalize then
@@ -3018,7 +3019,7 @@ private[kyo] object ChartLower:
                     Chunk((px, py0, py1))
 
                 // Skip groups that contribute nothing at every x (FIX 3a: no zero-height paths)
-                val hasContribution = xKeys.toSeq.exists: xk =>
+                val hasContribution = xKeys.exists: xk =>
                     dataMap.getOrElse(xk, Map.empty).getOrElse(gk, 0.0) > 0.0
 
                 val newAcc =
@@ -3029,7 +3030,7 @@ private[kyo] object ChartLower:
                             Svg.PathData.from(bands(0)._1, bands(0)._3)
                         ): (pd, b) =>
                             pd.lineTo(b._1, b._3)
-                        val fullPath = bands.toSeq.reverse.foldLeft(topEdge): (pd, b) =>
+                        val fullPath = bands.reverse.foldLeft(topEdge): (pd, b) =>
                             pd.lineTo(b._1, b._2)
                         // Fill each band in its group's palette color (mirrors the non-stacked area
                         // convention: a color fill at 0.7 opacity), so stacked bands are not colorless.
@@ -3040,9 +3041,9 @@ private[kyo] object ChartLower:
                         val withInteraction = spec match
                             case Absent => basePath
                             case Present(s) =>
-                                rowByGroup.get(gk) match
-                                    case None    => basePath
-                                    case Some(r) => basePath.withAttrs(buildInteractionAttrs(r, s, internalHoverRef))
+                                Maybe.fromOption(rowByGroup.get(gk)) match
+                                    case Absent     => basePath
+                                    case Present(r) => basePath.withAttrs(buildInteractionAttrs(r, s, internalHoverRef))
                         acc.append(withInteraction)
 
                 // Update accumulated fractions for the next group
@@ -3113,7 +3114,7 @@ private[kyo] object ChartLower:
                 val cats = collectColorCategoriesWithRaw(rows, colorEnc)
                 val palette = spec match
                     case Present(s) => resolvePalette(s, cats)
-                    case Absent     => cats.zipWithIndex.map((_, i) => DefaultPalette.toSeq.apply(i % DefaultPalette.size))
+                    case Absent     => cats.zipWithIndex.map((_, i) => DefaultPalette(i % DefaultPalette.size))
                 Present((cats, palette, colorEnc.tag.asInstanceOf[ConcreteTag[Any]]))
             case Absent => Absent
 
@@ -3125,7 +3126,7 @@ private[kyo] object ChartLower:
                     cats.zipWithIndex.foldLeft(scala.collection.immutable.Map.empty[ChartFoundations.CatKey, Style.Color]): (m, pair) =>
                         val ((label, raw), idx) = pair
                         val key                 = ChartFoundations.categoryKey(tag, raw)
-                        val color = if idx < palette.size then palette(idx) else DefaultPalette.toSeq.apply(idx % DefaultPalette.size)
+                        val color               = if idx < palette.size then palette(idx) else DefaultPalette(idx % DefaultPalette.size)
                         m.updated(key, color)
 
         // Glyph elements are tagged with their source row so the built-in highlight (INV-024) can re-style the
@@ -3618,9 +3619,9 @@ private[kyo] object ChartLower:
                                 val r: Svg.SvgElement =
                                     if !animOk then channelRect
                                     else
-                                        val (fromH, fromY) = fromGeom.get(key) match
-                                            case Some(MarkGeom.Bar(ph, py)) => (ph, py)
-                                            case _                          => (0.0, baseline) // enter from baseline
+                                        val (fromH, fromY) = Maybe.fromOption(fromGeom.get(key)) match
+                                            case Present(MarkGeom.Bar(ph, py)) => (ph, py)
+                                            case _                             => (0.0, baseline) // enter from baseline
                                         // channelRect is a Svg.Rect at runtime (applyBarChannels returns the rect with
                                         // opacity/title applied; only .fillOpacity and .apply(ShapeChild) are called,
                                         // both returning Svg.Rect). Cast back to Svg.Rect to attach the SMIL animate
@@ -3695,8 +3696,8 @@ private[kyo] object ChartLower:
                             ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r.asInstanceOf[A])) == catKey
                         )
                         val strokeColor =
-                            if resolved.isEmpty then DefaultPalette.toSeq.apply(seriesIdx % DefaultPalette.size)
-                            else resolved.toSeq.apply(seriesIdx                           % resolved.size)
+                            if resolved.isEmpty then DefaultPalette(seriesIdx % DefaultPalette.size)
+                            else resolved(seriesIdx                           % resolved.size)
                         (lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor), seriesIdx)
         // For each raw path: optionally attach a SMIL animate on `d`, then record the new PathData.
         // pathKey = "line-$markIdx-$seriesIdx" is stable per (mark identity, series identity), so a prior
@@ -3709,8 +3710,8 @@ private[kyo] object ChartLower:
                 val emittedPath: Svg.SvgElement =
                     if !animOk then rawPath
                     else
-                        fromGeom.get(pathKey) match
-                            case Some(MarkGeom.LinePath(prevPd)) =>
+                        Maybe.fromOption(fromGeom.get(pathKey)) match
+                            case Present(MarkGeom.LinePath(prevPd)) =>
                                 val prevCount = Svg.PathData.commands(prevPd).size
                                 val newCount  = Svg.PathData.commands(newPd).size
                                 if prevCount == newCount && prevCount > 0 then
@@ -3779,8 +3780,8 @@ private[kyo] object ChartLower:
                     val emittedPath: Svg.SvgElement =
                         if !animOk then rawPath
                         else
-                            fromGeom.get(pathKey) match
-                                case Some(MarkGeom.LinePath(prevPd)) =>
+                            Maybe.fromOption(fromGeom.get(pathKey)) match
+                                case Present(MarkGeom.LinePath(prevPd)) =>
                                     val prevCount = Svg.PathData.commands(prevPd).size
                                     val newCount  = Svg.PathData.commands(newPd).size
                                     if prevCount == newCount && prevCount > 0 then

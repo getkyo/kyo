@@ -260,9 +260,9 @@ private[kyo] object Scale:
 
         def apply(d: Domain): Double = d match
             case Domain.Category(key) =>
-                keyIndex.get(key) match
-                    case None => rangeLo
-                    case Some(i) =>
+                Maybe.fromOption(keyIndex.get(key)) match
+                    case Absent => rangeLo
+                    case Present(i) =>
                         val xOffset = i.toDouble * slot + (slot - bandW) / 2.0
                         rangeLo + xOffset
             case Domain.Continuous(v) =>
@@ -270,11 +270,11 @@ private[kyo] object Scale:
                 // where the data is a numeric type but the scale was forced to Band via xScale(_.band)).
                 // This converts e.g. Continuous(2020.0) to "2020" before trying integer index lookup.
                 val keyStr = NumberFormat.double(v)
-                keyIndex.get(keyStr) match
-                    case Some(i) =>
+                Maybe.fromOption(keyIndex.get(keyStr)) match
+                    case Present(i) =>
                         val xOffset = i.toDouble * slot + (slot - bandW) / 2.0
                         rangeLo + xOffset
-                    case None =>
+                    case Absent =>
                         // Fall back to treating v as a 0-based index (original behavior)
                         val i = v.toInt
                         if i >= 0 && i < n then
@@ -354,7 +354,8 @@ private[kyo] object Scale:
 
         def apply(d: Domain): Double = d match
             case Domain.Category(key) =>
-                keyIndex.get(key).map(_.toDouble).getOrElse(-1.0)
+                // Maybe.fromOption at the stdlib Map.get boundary; getOrElse on Kyo Maybe.
+                Maybe.fromOption(keyIndex.get(key)).map(_.toDouble).getOrElse(-1.0)
             case Domain.Continuous(v) => v
             case Domain.Temporal(ms)  => ms.toDouble
 

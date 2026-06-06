@@ -2595,7 +2595,8 @@ object UI:
                         // Match the raw category value against each pair by value equality. The closure scans a small
                         // pairs collection (typically 2-10 entries) once per category, not a hot membership scan.
                         // Style.Color.blue is the unmatched fallback (the first default-palette color); never null.
-                        chunk.collectFirst { case (k, c) if k.equals(v) => c }.getOrElse(Style.Color.blue)
+                        // Maybe.fromOption at the stdlib collectFirst boundary; getOrElse on Kyo Maybe.
+                        Maybe.fromOption(chunk.collectFirst { case (k, c) if k.equals(v) => c }).getOrElse(Style.Color.blue)
                     ))
                 )
             end colorScale
