@@ -38,6 +38,1167 @@ import scala.collection.immutable.IntMap
   */
 object Tasty:
 
+    // Bring the `value` extension into scope for the entirety of `object Tasty` so that
+    // internal code can write `id.value` without per-site imports. The extension itself is
+    // defined inside `object SymbolId` in the "Nested types" section below; this forward
+    // reference is legal because the extension is a member of a sibling nested object.
+    import SymbolId.value
+
+    // ── Suspend / create ───────────────────────────────────────────────────
+
+    /** Bind a fresh Classpath loaded from `roots` and run `f` in that scope.
+      *
+      * Loads the classpath from the given file-system roots using `ErrorMode.SoftFail`. When
+      * `cacheDir` is `Present(dir)`, attempts to read a snapshot from `dir` first; on a miss,
+      * cold-loads and writes the snapshot before returning. Resources (mmap arenas, JAR handles)
+      * are released when the scope exits via the internal `Scope.run`.
+      *
+      * INV-009 site-1: init from file-system roots (cold-load) via `ClasspathOrchestrator.coldLoadBinding`.
+      * This is the ONLY entry point that reads the file system during classpath construction. All
+      * `Tasty.*` query methods called inside `f` are pure and perform no IO.
+      *
+      * Diagnostics accumulated during the scope by `Tasty.isSubtypeOf` (e.g.,
+      * `TastyError.UnhandledSubtypingCase`) are folded into `cp.errors` on any call to
+      * `Tasty.classpath` within `f` (Q-003 binding: errors appear in `cp.errors`).
+      *
+      * Effect row: `A < (Async & Abort[TastyError] & S)` -- `Scope` is consumed internally.
+      */
+    def withClasspath[A, S](
+        roots: Seq[String],
+        cacheDir: Maybe[String] = Maybe.Absent
+    )(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
+        Scope.run:
+            ClasspathOrchestrator.coldLoadBinding(roots, ErrorMode.SoftFail, cacheDir).map: binding =>
+                TastyState.bindingLocal.let(Maybe.Present(binding))(f)
+
+    /** Bind a pre-existing (deserialized) Classpath and run `f` in that scope.
+      *
+      * No filesystem access, no Scope overhead. The bound Binding carries a fresh DecodeContext so
+      * that `Tasty.isSubtypeOf` can accumulate `TastyError.UnhandledSubtypingCase` diagnostics.
+      * `Tasty.bodyTree` returns `Maybe.Absent` for every symbol inside `f` because the DecodeContext
+      * carries no body source handle.
+      *
+      * Diagnostics accumulated during the scope are folded into `cp.errors` on any call to
+      * `Tasty.classpath` within `f` (Q-003 binding: errors appear in `cp.errors`).
+      *
+      * Effect row: `A < S` -- identical to `f`'s row.
+      */
+    def withClasspath[A, S](cp: Classpath)(f: => A < S)(using Frame): A < S =
+        TastyState.bindingLocal.let(Maybe.Present(Binding(cp, Maybe.Present(DecodeContext.fresh()))))(f)
+
+    /** Bind a Classpath decoded from in-memory pickles and run `f` in that scope.
+      *
+      * Decodes the pickles sequentially using an in-memory FileSource. The resulting Binding carries
+      * a fresh DecodeContext so `Tasty.bodyTree` can decode body bytes on demand.
+      *
+      * INV-009 site-1-related (in-memory alt-init; no real-FS contact): constructs an anonymous
+      * in-memory FileSource from the pickle bytes map; never reads `PlatformFileSource.get` and
+      * never touches the real file system. All `Tasty.*` query methods called inside `f` are pure and perform no IO.
+      *
+      * Effect row: `A < (Async & Abort[TastyError] & S)`.
+      */
+    def withPickles[A, S](pickles: Chunk[Pickle])(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
+        Scope.run:
+            ClasspathOrchestrator.loadPickles(pickles).map: binding =>
+                TastyState.bindingLocal.let(Maybe.Present(binding))(f)
+
+    /** Delete snapshot files in `cacheDir` whose modification time is older than `maxAge`.
+      *
+      * Delegates to `Tasty.Snapshot.evictOlderThan`. Only deletes `*.krfl` files; does not recurse.
+      * INV-009 site-4: the underlying file-deletion logic uses AllowUnsafe via the FileSource.
+      */
+    def evictOlderThan(cacheDir: String, maxAge: Duration)(using Frame): Unit < (Sync & Abort[TastyError]) =
+        Snapshot.evictOlderThan(cacheDir, maxAge)
+
+    // ── Access ─────────────────────────────────────────────────────────────
+
+    /** Get the current Classpath from the active binding, falling back to the module-level JVM classpath.
+      *
+      * Returns the JVM classpath stub when called outside a `withClasspath` scope.
+      *
+      * When called inside a `withClasspath` scope, folds any `TastyError.UnhandledSubtypingCase`
+      * diagnostics accumulated by `isSubtypeOf` calls during the scope into the returned
+      * `Classpath.errors` field. This makes `cp.errors` the user-visible channel for
+      * unhandled-shape diagnostics (Q-003 binding).
+      *
+      * Effect row: Sync, because reading the lazy val TastyState.global may trigger initialization.
+      */
+    def classpath(using Frame): Classpath < Sync =
+        TastyState.bindingLocal.use: mbind =>
+            val binding = mbind.getOrElse(TastyState.global)
+            Sync.defer:
+                binding.decodeCtx match
+                    case Maybe.Present(ctx) if ctx.subtypingErrors.nonEmpty =>
+                        Classpath.copyWithErrors(binding.cp, binding.cp.errors ++ Chunk.from(ctx.subtypingErrors))
+                    case _ =>
+                        binding.cp
+
+    // ── Tasty.* query operations ────────────────────────────────────────────
+    // All query operations read the active binding from TastyState.bindingLocal. They carry
+    // < Sync in their effect row because the lazy fallback TastyState.global may trigger
+    // initialization on the first call (INV-009 site-2).
+
+    /** Expand to the fully-qualified dotted name of `A` at compile time via the `Tag` machinery.
+      *
+      * Use when the type is known statically and the caller wants the FQN string for a `findClass` / `requireClass`
+      * lookup without spelling out the literal. `classFqn[example.Circle]` evaluates to `"example.Circle"`;
+      * `classFqn[scala.collection.immutable.List]` evaluates to `"scala.collection.immutable.List"`.
+      *
+      * The dotted form matches what `Classpath.findClass`, `findClassLike`, and `findSymbol` accept; the JVM
+      * binary form (`example/Circle$Inner`) is reachable through `Classpath.findClassByBinary` instead.
+      */
+    def classFqn[A](using t: Tag[A]): String = t.show
+
+    /** Look up a class symbol by fully-qualified dotted name.
+      *
+      * Delegates to `Classpath.findClass`, which performs a pure O(1) index lookup. Returns
+      * `Maybe.Absent` when the FQN is not in the loaded classpath or when the resolved symbol
+      * is not a `Symbol.Class` (e.g., a Trait or Object at the same FQN is silently absent).
+      *
+      * Abstract classes, sealed abstract classes (e.g. `scala.Option`), and concrete classes
+      * are all included. Use `findConcreteClass` to restrict to non-abstract classes.
+      *
+      * Effect row: `< Sync`. The suspension arises because the first access may trigger lazy
+      * classpath initialization through `TastyState.bindingLocal`.
+      *
+      * @param fqn dotted fully-qualified name (e.g. `"scala.collection.immutable.List"`)
+      * @return the class symbol wrapped in `Maybe.Present`, or `Maybe.Absent` if not found
+      */
+    def findClass(fqn: String)(using Frame): Maybe[Symbol.Class] < Sync =
+        classpath.map(_.findClass(fqn))
+
+    /** Look up any class-like symbol by fully-qualified dotted name.
+      *
+      * Matches `Symbol.Class`, `Symbol.Trait`, `Symbol.Object`, and `Symbol.EnumCase` at the
+      * given FQN. Use this when the caller does not know whether the target is a class, trait,
+      * or object, or when any class-like shape is acceptable.
+      *
+      * Returns `Maybe.Absent` when the FQN is absent from the classpath or when the resolved
+      * symbol is a non-class-like kind (e.g., a `Symbol.Package` or `Symbol.Method`).
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param fqn dotted fully-qualified name
+      * @return the class-like symbol wrapped in `Maybe.Present`, or `Maybe.Absent`
+      */
+    def findClassLike(fqn: String)(using Frame): Maybe[Symbol.ClassLike] < Sync =
+        classpath.map(_.findClassLike(fqn))
+
+    /** Look up a Scala object (module) symbol by fully-qualified name.
+      *
+      * Accepts both the source form (`"mypackage.MyObject"`) and the binary `$`-suffix form
+      * (`"mypackage.MyObject$"`). When given the source form, the lookup first tries a direct
+      * FQN match and, on miss, appends `"$"` and retries against the binary-name index.
+      *
+      * Returns `Maybe.Absent` when neither variant resolves to a `Symbol.Object`. Use
+      * `findClassLike` if you want to match objects together with classes and traits.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param fqn dotted source-form or `$`-suffixed binary-form FQN of the object
+      * @return the object symbol wrapped in `Maybe.Present`, or `Maybe.Absent`
+      */
+    def findObject(fqn: String)(using Frame): Maybe[Symbol.Object] < Sync =
+        classpath.map(_.findObject(fqn))
+
+    /** Look up any symbol by fully-qualified dotted name.
+      *
+      * The most permissive lookup: returns `Maybe.Present` for any registered symbol kind
+      * (Class, Trait, Object, Method, Val, Package, etc.). Use the typed variants
+      * (`findClass`, `findClassLike`, `findObject`, `findPackage`) when a specific kind
+      * is expected; use this method when the kind is unknown or irrelevant.
+      *
+      * Returns `Maybe.Absent` when the FQN has no entry in the loaded classpath.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param fqn dotted fully-qualified name of the target symbol
+      * @return the symbol wrapped in `Maybe.Present`, or `Maybe.Absent`
+      */
+    def findSymbol(fqn: String)(using Frame): Maybe[Symbol] < Sync =
+        classpath.map(_.findSymbol(fqn))
+
+    /** Look up a package symbol by fully-qualified dotted name.
+      *
+      * Returns `Maybe.Present` only when the FQN resolves to a `Symbol.Package`. Any other
+      * symbol kind at the same name (e.g. a companion object) produces `Maybe.Absent`.
+      *
+      * Packages are synthesized during classpath loading from the directory structure of
+      * each root. The root package is registered under the empty string `""`.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param fqn dotted package name (e.g. `"scala.collection.immutable"`), or `""` for root
+      * @return the package symbol wrapped in `Maybe.Present`, or `Maybe.Absent`
+      */
+    def findPackage(fqn: String)(using Frame): Maybe[Symbol.Package] < Sync =
+        classpath.map(_.findPackage(fqn))
+
+    /** Look up a JPMS module descriptor by module name.
+      *
+      * Returns `Maybe.Present` only when a `module-info.class` entry for `name` was found
+      * in the loaded classpath roots and successfully decoded. Module descriptors are populated
+      * during classpath loading from JVM module roots (e.g. a JDK image passed via
+      * `Classpath.Root.jrt`).
+      *
+      * Returns `Maybe.Absent` when no module with that name was loaded, or when the classpath
+      * was opened without JDK/module roots.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param name JPMS module name (e.g. `"java.base"`, `"com.example.mymodule"`)
+      * @return the module descriptor wrapped in `Maybe.Present`, or `Maybe.Absent`
+      */
+    def findModule(name: String)(using Frame): Maybe[Java.Module.Descriptor] < Sync =
+        classpath.map(_.findModule(name))
+
+    /** Look up a concrete (non-abstract) class by fully-qualified dotted name.
+      *
+      * Equivalent to `findClass(fqn).filter(!_.isAbstract)`. Returns `Maybe.Absent` when the
+      * FQN is missing from the classpath, when it resolves to a non-Class symbol, or when the
+      * class has the Abstract modifier (e.g. `scala.Option`, `scala.collection.AbstractMap`).
+      *
+      * Use this when you need a class that can be instantiated or that carries concrete
+      * implementations. Use `findClass` when abstract classes are acceptable.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param fqn dotted fully-qualified name of the target class
+      * @return the class symbol wrapped in `Maybe.Present`, or `Maybe.Absent`
+      */
+    def findConcreteClass(fqn: String)(using Frame): Maybe[Symbol.Class] < Sync =
+        classpath.map(_.findConcreteClass(fqn))
+
+    /** Find all class symbols whose simple (unqualified) name matches the given string.
+      *
+      * Unlike `findClass`, which requires the fully-qualified dotted name, this method searches
+      * across all packages and returns every `Symbol.Class` whose `simpleName` equals
+      * `simpleName`. The result may contain multiple symbols when the same name appears in
+      * different packages (e.g. `"List"` in `scala.collection.immutable` and `java.util`).
+      *
+      * The search is backed by an O(1) index built during classpath loading.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param simpleName unqualified class name (e.g. `"List"`, `"Option"`)
+      * @return all matching class symbols; empty `Chunk` when none are found
+      */
+    def findClassesByName(simpleName: String)(using Frame): Chunk[Symbol.Class] < Sync =
+        classpath.map(_.findClassesByName(simpleName))
+
+    /** Find a method symbol by owner FQN and simple method name.
+      *
+      * Resolves the owner symbol by `ownerFqn`, expects it to be a `Symbol.ClassLike`, then
+      * scans the owner's `declarationIds` for the first `Symbol.Method` whose `simpleName`
+      * equals `methodName`. Returns `Maybe.Absent` when the owner FQN is not found, when the
+      * owner is not a class-like, or when no declared method with that simple name exists.
+      *
+      * When multiple overloads share the same name, the first one in declaration order is
+      * returned. Use `declarations` or `members` followed by manual filtering when overload
+      * discrimination is needed.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param ownerFqn   dotted FQN of the class-like that owns the method
+      * @param methodName simple (unqualified) name of the method
+      * @return the first matching method symbol, or `Maybe.Absent`
+      */
+    def findMethod(ownerFqn: String, methodName: String)(using Frame): Maybe[Symbol.Method] < Sync =
+        classpath.map: cp =>
+            cp.findSymbol(ownerFqn).flatMap:
+                case cl: Symbol.ClassLike =>
+                    import Name.asString
+                    Maybe.fromOption(cl.declarationIds.flatMap: id =>
+                        cp.symbol(id) match
+                            case Maybe.Present(m: Symbol.Method) if m.name.asString == methodName => Chunk(m)
+                            case _                                                                => Chunk.empty
+                    .headOption)
+                case _ => Maybe.Absent
+
+    /** Require a class symbol by FQN, aborting when not found.
+      *
+      * Equivalent to `findClass(fqn)` followed by an explicit check: if the result is
+      * `Maybe.Absent`, the computation aborts with `TastyError.NotFound(fqn)`.
+      *
+      * Use this in pipelines where the class is expected to be present and absence is an
+      * unrecoverable error. Use `findClass` when the caller wants to handle absence explicitly.
+      *
+      * Effect row: `< Sync & Abort[TastyError]`. The `Abort` arm fires only on `NotFound`.
+      *
+      * @param fqn dotted fully-qualified name of the expected class
+      * @return the class symbol, or `Abort.fail(TastyError.NotFound(fqn))`
+      */
+    def requireClass(fqn: String)(using Frame): Symbol.Class < (Sync & Abort[TastyError]) =
+        findClass(fqn).map:
+            case Maybe.Present(c) => c
+            case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
+
+    /** Require a class-like symbol by FQN, aborting when not found.
+      *
+      * Equivalent to `findClassLike(fqn)` followed by an explicit check: if the result is
+      * `Maybe.Absent`, the computation aborts with `TastyError.NotFound(fqn)`.
+      *
+      * Matches Class, Trait, Object, and EnumCase at the given FQN. Use `requireClass` when
+      * only `Symbol.Class` is acceptable.
+      *
+      * Effect row: `< Sync & Abort[TastyError]`. The `Abort` arm fires only on `NotFound`.
+      *
+      * @param fqn dotted fully-qualified name of the expected class-like symbol
+      * @return the class-like symbol, or `Abort.fail(TastyError.NotFound(fqn))`
+      */
+    def requireClassLike(fqn: String)(using Frame): Symbol.ClassLike < (Sync & Abort[TastyError]) =
+        findClassLike(fqn).map:
+            case Maybe.Present(c) => c
+            case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
+
+    /** Require an object symbol by FQN, aborting when not found.
+      *
+      * Equivalent to `findObject(fqn)` followed by an explicit check: if the result is
+      * `Maybe.Absent`, the computation aborts with `TastyError.NotFound(fqn)`.
+      *
+      * Accepts both source-form (`"mypackage.MyObject"`) and `$`-suffix binary-form FQNs.
+      *
+      * Effect row: `< Sync & Abort[TastyError]`. The `Abort` arm fires only on `NotFound`.
+      *
+      * @param fqn dotted source-form or `$`-suffixed binary-form FQN of the expected object
+      * @return the object symbol, or `Abort.fail(TastyError.NotFound(fqn))`
+      */
+    def requireObject(fqn: String)(using Frame): Symbol.Object < (Sync & Abort[TastyError]) =
+        findObject(fqn).map:
+            case Maybe.Present(o) => o
+            case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
+
+    /** Require any symbol by FQN, aborting when not found.
+      *
+      * Equivalent to `findSymbol(fqn)` followed by an explicit check: if the result is
+      * `Maybe.Absent`, the computation aborts with `TastyError.NotFound(fqn)`.
+      *
+      * The most permissive require variant: succeeds for any registered symbol kind. Use the
+      * typed variants (`requireClass`, `requireClassLike`, `requireObject`) when a specific
+      * symbol subtype is expected.
+      *
+      * Effect row: `< Sync & Abort[TastyError]`. The `Abort` arm fires only on `NotFound`.
+      *
+      * @param fqn dotted fully-qualified name of the expected symbol
+      * @return the symbol, or `Abort.fail(TastyError.NotFound(fqn))`
+      */
+    def requireSymbol(fqn: String)(using Frame): Symbol < (Sync & Abort[TastyError]) =
+        findSymbol(fqn).map:
+            case Maybe.Present(s) => s
+            case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
+
+    /** Require a package symbol by FQN, aborting when not found.
+      *
+      * Equivalent to `findPackage(fqn)` followed by an explicit check: if the result is
+      * `Maybe.Absent`, the computation aborts with `TastyError.NotFound(fqn)`.
+      *
+      * Useful in tools that assert that a specific package exists in the loaded classpath
+      * (e.g., a static analysis pass that requires `scala.collection`).
+      *
+      * Effect row: `< Sync & Abort[TastyError]`. The `Abort` arm fires only on `NotFound`.
+      *
+      * @param fqn dotted package name, or `""` for the root package
+      * @return the package symbol, or `Abort.fail(TastyError.NotFound(fqn))`
+      */
+    def requirePackage(fqn: String)(using Frame): Symbol.Package < (Sync & Abort[TastyError]) =
+        findPackage(fqn).map:
+            case Maybe.Present(p) => p
+            case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
+
+    /** Require a method symbol by owner FQN and simple name, aborting when not found.
+      *
+      * Equivalent to `findMethod(ownerFqn, methodName)` followed by an explicit check: if the
+      * result is `Maybe.Absent`, the computation aborts with
+      * `TastyError.NotFound("ownerFqn.methodName")`.
+      *
+      * When multiple overloads share the same name, the first one in declaration order is
+      * returned (same behaviour as `findMethod`).
+      *
+      * Effect row: `< Sync & Abort[TastyError]`. The `Abort` arm fires only on `NotFound`.
+      *
+      * @param ownerFqn   dotted FQN of the class-like that owns the method
+      * @param methodName simple (unqualified) name of the method
+      * @return the first matching method symbol, or `Abort.fail(TastyError.NotFound(...))`
+      */
+    def requireMethod(ownerFqn: String, methodName: String)(using Frame): Symbol.Method < (Sync & Abort[TastyError]) =
+        findMethod(ownerFqn, methodName).map:
+            case Maybe.Present(m) => m
+            case Maybe.Absent     => Abort.fail(TastyError.NotFound(s"$ownerFqn.$methodName"))
+
+    /** All class-like symbols in the loaded classpath.
+      *
+      * Returns every `Symbol.ClassLike` regardless of sub-kind: includes `Symbol.Class`,
+      * `Symbol.Trait`, `Symbol.Object`, and `Symbol.EnumCase`. The result spans all packages
+      * and all classpath roots supplied to `Tasty.withClasspath`.
+      *
+      * Use the narrower variants (`allClasses`, `allObjects`, `allTraits`) when only a single
+      * kind is needed.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @return all class-like symbols across the classpath; empty when the classpath is empty
+      */
+    def allClassLike(using Frame): Chunk[Symbol.ClassLike] < Sync =
+        classpath.map(_.allClassLike)
+
+    /** All class symbols in the loaded classpath.
+      *
+      * Returns every `Symbol.Class` across all packages and classpath roots. Does not include
+      * `Symbol.Trait`, `Symbol.Object`, or `Symbol.EnumCase`; use `allClassLike` to include
+      * those. Abstract classes are included; use `findConcreteClass` per-FQN when concreteness
+      * matters.
+      *
+      * The result is computed by filtering `cp.symbols` on each call; for large classpaths
+      * (tens of thousands of symbols) consider caching the result in the caller.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @return all `Symbol.Class` instances across the classpath; empty when none are found
+      */
+    def allClasses(using Frame): Chunk[Symbol.Class] < Sync =
+        classpath.map(cp =>
+            cp.symbols.flatMap:
+                case c: Symbol.Class => Chunk(c)
+                case _               => Chunk.empty
+        )
+
+    /** All object (module) symbols in the loaded classpath.
+      *
+      * Returns every `Symbol.Object` across all packages and classpath roots. Scala `object`
+      * declarations and Java-style singleton patterns registered as objects are included.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @return all `Symbol.Object` instances across the classpath; empty when none are found
+      */
+    def allObjects(using Frame): Chunk[Symbol.Object] < Sync =
+        classpath.map(_.allObjects)
+
+    /** All trait symbols in the loaded classpath.
+      *
+      * Returns every `Symbol.Trait` across all packages and classpath roots. Sealed traits,
+      * open traits, and abstract class-backed traits are all included.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @return all `Symbol.Trait` instances across the classpath; empty when none are found
+      */
+    def allTraits(using Frame): Chunk[Symbol.Trait] < Sync =
+        classpath.map(_.allTraits)
+
+    /** All method symbols in the loaded classpath.
+      *
+      * Returns every `Symbol.Method` across all owners and classpath roots. Includes
+      * constructors (`<init>`), extension methods, and synthetic methods generated by the
+      * compiler. Use `declarations` or `members` on a specific owner symbol to restrict
+      * results to a single class or package.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @return all `Symbol.Method` instances across the classpath; empty when none are found
+      */
+    def allMethods(using Frame): Chunk[Symbol.Method] < Sync =
+        classpath.map(_.allMethods)
+
+    /** All val symbols in the loaded classpath.
+      *
+      * Returns every `Symbol.Val` (immutable value definition) across all owners and
+      * classpath roots. Includes top-level vals, member vals, and lazy vals. Does not
+      * include `Symbol.Var`, `Symbol.Field`, or parameters.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @return all `Symbol.Val` instances across the classpath; empty when none are found
+      */
+    def allVals(using Frame): Chunk[Symbol.Val] < Sync =
+        classpath.map(_.allVals)
+
+    /** All var symbols in the loaded classpath.
+      *
+      * Returns every `Symbol.Var` (mutable variable definition) across all owners and
+      * classpath roots. Includes member vars but does not include `Symbol.Val` or
+      * `Symbol.Field`. Java mutable fields are represented as `Symbol.Field`.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @return all `Symbol.Var` instances across the classpath; empty when none are found
+      */
+    def allVars(using Frame): Chunk[Symbol.Var] < Sync =
+        classpath.map(_.allVars)
+
+    /** All field symbols in the loaded classpath.
+      *
+      * Returns every `Symbol.Field` across all owners and classpath roots. Fields are the
+      * Java-level representation: raw instance/static fields from `.class` files decoded via
+      * the Java class reader. Scala `var` and `val` members compiled to JVM fields appear
+      * as `Symbol.Field` in the Java class model; `Symbol.Var` and `Symbol.Val` are the
+      * TASTy-model equivalents from Scala sources.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @return all `Symbol.Field` instances across the classpath; empty when none are found
+      */
+    def allFields(using Frame): Chunk[Symbol.Field] < Sync =
+        classpath.map(_.allFields)
+
+    /** All type declaration symbols in the loaded classpath.
+      *
+      * Aggregates `Symbol.TypeAlias`, `Symbol.OpaqueType`, and `Symbol.AbstractType` from
+      * all owners and classpath roots. `Symbol.TypeParam` is excluded because type parameters
+      * are part of their enclosing symbol's structure rather than independent declarations.
+      *
+      * The result is the union of `cp.allTypeAliases`, `cp.allOpaqueTypes`, and
+      * `cp.allAbstractTypes`, returned as a flat `Chunk[Symbol]`.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @return all type declaration symbols across the classpath; empty when none are found
+      */
+    def allTypes(using Frame): Chunk[Symbol] < Sync =
+        classpath.map(cp =>
+            // flow-allow: asInstanceOf -- covariant upcast of Chunk[Symbol.TypeAlias/OpaqueType/AbstractType] to Chunk[Symbol]; safe because Chunk is covariant in its element type and all subtypes extend Symbol.
+            cp.allTypeAliases.asInstanceOf[Chunk[Symbol]] ++
+                cp.allOpaqueTypes.asInstanceOf[Chunk[Symbol]] ++
+                cp.allAbstractTypes.asInstanceOf[Chunk[Symbol]]
+        )
+
+    /** All package symbols in the loaded classpath.
+      *
+      * Returns every `Symbol.Package` synthesized during classpath loading. Package symbols
+      * are derived from the directory structure of each root; the root package itself is
+      * included and is registered under the empty string `""`.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @return all `Symbol.Package` instances across the classpath; never empty (root is always present)
+      */
+    def allPackages(using Frame): Chunk[Symbol.Package] < Sync =
+        classpath.map(_.allPackages)
+
+    /** Return the lexically enclosing (owner) symbol of `sym`.
+      *
+      * Returns `Maybe.Absent` for root symbols whose `ownerId` is `-1` (the synthetic root
+      * package and symbols loaded from roots that have no declared parent).
+      *
+      * Note: the result is the immediate owner one level up. For the full enclosing chain use
+      * `ownersChain`, which walks up until reaching a root or a cycle.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param sym the symbol whose owner is requested
+      * @return the owner symbol wrapped in `Maybe.Present`, or `Maybe.Absent` for root symbols
+      */
+    def owner(sym: Symbol)(using Frame): Maybe[Symbol] < Sync =
+        classpath.map(_.symbol(sym.ownerId))
+
+    /** Compute the dotted fully-qualified name of `sym`.
+      *
+      * Walks the owner chain from `sym` up to the root package, joining each segment with
+      * `"."`. The returned `Name` can be converted to a `String` with `import Name.asString`.
+      *
+      * For the human-readable code-form or simple-name alternatives, use `show(sym, format)`.
+      * This method always returns the dotted FQN regardless of format.
+      *
+      * Effect row: `< Sync`. The computation is synchronous but suspends because `classpath`
+      * access may trigger lazy initialization.
+      *
+      * @param sym the symbol whose FQN is computed
+      * @return the fully-qualified dotted name
+      */
+    def fullName(sym: Symbol)(using Frame): Name < Sync =
+        classpath.flatMap(cp => cp.fullName(sym))
+
+    /** Render `sym` as a human-readable string using the given format.
+      *
+      * Three formats are supported via `ShowFormat`:
+      * - `ShowFormat.Code` (default): the Scala source code signature, e.g. `"def foo[A](x: A): A"`.
+      *   Computed by `SymbolSignature.compute`, which resolves type parameter names and parent types.
+      * - `ShowFormat.FullyQualified`: the dotted FQN string, equivalent to
+      *   `fullName(sym).map(_.asString)`.
+      * - `ShowFormat.Simple`: the unqualified simple name, e.g. `"List"`, computed without
+      *   classpath access.
+      *
+      * Effect row: `< Sync`. `ShowFormat.Simple` still suspends because `classpath` must be
+      * obtained to satisfy the binding contract.
+      *
+      * @param sym    the symbol to render
+      * @param format rendering format; defaults to `ShowFormat.Code`
+      * @return the rendered string
+      */
+    def show(sym: Symbol, format: ShowFormat = ShowFormat.Code)(using Frame): String < Sync =
+        classpath.flatMap: cp =>
+            format match
+                case ShowFormat.FullyQualified =>
+                    import Name.asString
+                    cp.fullName(sym).map(_.asString)
+                case ShowFormat.Simple => sym.simpleName
+                case ShowFormat.Code   => kyo.internal.tasty.symbol.SymbolSignature.compute(sym, cp)
+
+    /** Compute the human-readable signature of a method symbol.
+      *
+      * Delegates to `SymbolSignature.compute`, producing a string in Scala source syntax,
+      * e.g. `"def map[B](f: A => B): List[B]"`. Resolves type parameter and return-type
+      * references to their names via the classpath.
+      *
+      * This is equivalent to `show(method, ShowFormat.Code)` but typed to accept only
+      * `Symbol.Method`, providing a cleaner API at call sites where the method kind is
+      * already known.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param method the method symbol to render
+      * @return the Scala-syntax signature string
+      */
+    def signature(method: Symbol.Method)(using Frame): String < Sync =
+        classpath.flatMap(cp => kyo.internal.tasty.symbol.SymbolSignature.compute(method, cp))
+
+    /** Compute the full owner chain of `sym`, from `sym` itself up to the root.
+      *
+      * The first element is `sym`; subsequent elements are its owner, the owner's owner, and
+      * so on. The walk stops when `ownerId` is `-1` (root symbol with no owner) or when a
+      * cycle is detected (visited set). The chain is capped at depth 64 to guard against
+      * pathological inputs.
+      *
+      * Useful for determining nesting depth, computing enclosing packages, or checking whether
+      * a symbol is a member of a specific owner chain (e.g. `ownersChain(sym).exists(_.simpleName == "MyClass")`).
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param sym the symbol whose owner chain is computed
+      * @return ordered chain starting with `sym`; single-element when `sym` has no owner
+      */
+    def ownersChain(sym: Symbol)(using Frame): Chunk[Symbol] < Sync =
+        classpath.map: cp =>
+            val out     = Chunk.newBuilder[Symbol]
+            val visited = new java.util.HashSet[Int]()
+            @scala.annotation.tailrec
+            def go(cur: Symbol, depth: Int): Unit =
+                if depth >= 64 || !visited.add(cur.id.value) then ()
+                else
+                    out += cur
+                    cp.symbol(cur.ownerId) match
+                        case Maybe.Present(ownerSym) if ownerSym.id != cur.id => go(ownerSym, depth + 1)
+                        case _                                                => ()
+            go(sym, 0)
+            out.result()
+
+    /** Compute the JVM binary name of `sym`.
+      *
+      * The binary name uses `$` as the separator for nested and companion symbols rather than
+      * `.`, following the JVM class-file convention. For example, `example.Outer.Inner` maps
+      * to `"example/Outer$Inner"` and a companion object `example.MyObj` maps to
+      * `"example/MyObj$"`.
+      *
+      * Computed by `BinaryName.compute` using the owner chain and module flags on each symbol.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param sym the symbol whose binary name is computed
+      * @return the JVM binary class name (slash-separated, `$` for nesting)
+      */
+    def binaryName(sym: Symbol)(using Frame): String < Sync =
+        classpath.map(cp => kyo.internal.tasty.symbol.BinaryName.compute(sym, cp))
+
+    /** Return the companion object or companion class of `sym`, if one exists.
+      *
+      * For a `Symbol.Class`, returns the associated `Symbol.Object` companion if present.
+      * For a `Symbol.Object`, returns the associated `Symbol.Class` companion if present.
+      * Returns `Maybe.Absent` when no companion exists, when `sym` is not a class or object,
+      * or when the companion is not present in the loaded classpath.
+      *
+      * The lookup is O(1) via the `Classpath.companion` index built during loading.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param sym the class or object symbol whose companion is requested
+      * @return the companion symbol wrapped in `Maybe.Present`, or `Maybe.Absent`
+      */
+    def companion(sym: Symbol)(using Frame): Maybe[Symbol] < Sync =
+        classpath.map(_.companion(sym))
+
+    /** Return the type parameters declared on `sym`.
+      *
+      * Applies to `Symbol.ClassLike`, `Symbol.Method`, `Symbol.TypeAlias`, and
+      * `Symbol.OpaqueType`. Returns an empty `Chunk` for all other symbol kinds (Val, Var,
+      * Field, Package, etc.).
+      *
+      * Each element is a `Symbol.TypeParam` resolved from the classpath. `typeParamIds` that
+      * do not resolve to a live symbol (e.g., from an incomplete classpath) are silently
+      * dropped.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param sym the symbol whose type parameters are requested
+      * @return the type parameter symbols in declaration order; empty when none exist
+      */
+    def typeParams(sym: Symbol)(using Frame): Chunk[Symbol] < Sync =
+        classpath.map: cp =>
+            (sym match
+                case c: Symbol.ClassLike   => c.typeParamIds
+                case m: Symbol.Method      => m.typeParamIds
+                case ta: Symbol.TypeAlias  => ta.typeParamIds
+                case ot: Symbol.OpaqueType => ot.typeParamIds
+                case _                     => Chunk.empty
+            ).flatMap(id => cp.symbol(id).toChunk)
+
+    /** Return the symbols declared directly on `sym`.
+      *
+      * For `Symbol.ClassLike`, reads `declarationIds` (methods, vals, vars, nested types,
+      * and nested classes declared on the class body). For `Symbol.Package`, reads `memberIds`
+      * (top-level classes and objects in the package). Returns an empty `Chunk` for all
+      * other symbol kinds.
+      *
+      * Does not include inherited members. Use `members(sym, MemberScope.All)` to include
+      * symbols inherited from parent types.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param sym the symbol whose direct declarations are requested
+      * @return the declared symbols in registration order; empty for non-container symbols
+      */
+    def declarations(sym: Symbol)(using Frame): Chunk[Symbol] < Sync =
+        classpath.map: cp =>
+            (sym match
+                case c: Symbol.ClassLike => c.declarationIds
+                case p: Symbol.Package   => p.memberIds
+                case _                   => Chunk.empty
+            ).flatMap(id => cp.symbol(id).toChunk)
+
+    /** Return the permitted direct subclasses of a sealed class or trait.
+      *
+      * For sealed `Symbol.Class` or sealed `Symbol.Trait`, returns the symbols recorded in
+      * `permittedSubclassIds`. Returns an empty `Chunk` for non-sealed symbols and for
+      * symbol kinds other than `Symbol.Class` and `Symbol.Trait`.
+      *
+      * IMPORTANT: the result contains only the directly permitted subclasses as encoded in
+      * the TASTy/classfile. Indirect subtypes (sub-subtypes) are not included; call this
+      * method recursively on each element when a full sealed hierarchy is needed.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param sym the sealed class or trait whose permitted subclasses are requested
+      * @return the permitted subclass symbols; empty for non-sealed or non-class-like symbols
+      */
+    def permittedSubclasses(sym: Symbol)(using Frame): Chunk[Symbol] < Sync =
+        classpath.map: cp =>
+            (sym match
+                case c: Symbol.Class => c.permittedSubclassIds
+                case t: Symbol.Trait => t.permittedSubclassIds
+                case _               => Maybe.Absent
+            ).map(_.flatMap(id => cp.symbol(id).toChunk)).getOrElse(Chunk.empty)
+
+    /** Return the direct parent class-like symbols of `cl`.
+      *
+      * Reads `cl.parentTypes`, filters for `Type.Named` entries, and resolves each `SymbolId`
+      * to the corresponding symbol in the classpath. Parent types of other shapes (e.g.
+      * `Type.Applied` for generic parents) are not resolved here; use `cl.parentTypes` directly
+      * when raw type information is needed.
+      *
+      * IMPORTANT: only direct (first-generation) parents are returned. Use `ownersChain` or
+      * recursive calls to `parents` for deeper ancestry traversal.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param cl the class-like symbol whose direct parents are requested
+      * @return the resolved parent symbols; may be empty for `AnyRef`-rooted classes
+      */
+    def parents(cl: Symbol.ClassLike)(using Frame): Chunk[Symbol] < Sync =
+        classpath.map: cp =>
+            cl.parentTypes.flatMap { case Type.Named(pid) => cp.symbol(pid).toChunk; case _ => Chunk.empty }
+
+    /** Return the members of `sym` filtered by the given `MemberScope`.
+      *
+      * Three scopes are available:
+      * - `MemberScope.Declared` (default): symbols declared directly on `sym` (same as
+      *   `declarations`). O(n) in the number of declared members.
+      * - `MemberScope.Inherited`: symbols inherited from parent types and not redeclared on
+      *   `sym`. The parent walk deduplicates by `simpleName`; the first (most-specific)
+      *   occurrence wins.
+      * - `MemberScope.All`: union of Declared and Inherited, deduplicated by `simpleName`.
+      *   Most-specific (nearest in the hierarchy) symbol wins on name clash.
+      *
+      * For Package symbols, `Declared` and `All` both read `memberIds`; `Inherited` returns
+      * empty (packages do not inherit). Non-container symbols return empty for all scopes.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param sym   the symbol whose members are requested
+      * @param scope which members to include; defaults to `MemberScope.Declared`
+      * @return the member symbols; empty when `sym` has no members in the given scope
+      */
+    def members(sym: Symbol, scope: MemberScope = MemberScope.Declared)(using Frame): Chunk[Symbol] < Sync =
+        classpath.map: cp =>
+            scope match
+                case MemberScope.Declared =>
+                    (sym match
+                        case c: Symbol.ClassLike => c.declarationIds
+                        case p: Symbol.Package   => p.memberIds
+                        case _                   => Chunk.empty
+                    ).flatMap(id => cp.symbol(id).toChunk)
+                case MemberScope.Inherited =>
+                    val declIds = sym match
+                        case c: Symbol.ClassLike => c.declarationIds
+                        case p: Symbol.Package   => p.memberIds
+                        case _                   => Chunk.empty
+                    val directNames = scala.collection.mutable.HashSet.empty[String]
+                    declIds.foreach(id => cp.symbol(id).foreach(s => discard(directNames.add(s.simpleName))))
+                    allMembersOf(sym, cp).filter(s => !directNames.contains(s.simpleName))
+                case MemberScope.All => allMembersOf(sym, cp)
+
+    /** Find a member of `sym` by simple name within the given scope.
+      *
+      * Calls `members(sym, scope)` and returns the first symbol whose `simpleName` equals
+      * `name`. Returns `Maybe.Absent` when no member with that name is found in the given
+      * scope.
+      *
+      * When multiple overloads exist under the same simple name, the first one in the
+      * `members` result is returned. Use `members(sym, scope)` and filter manually when
+      * overload discrimination is required.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param sym   the owning symbol to search
+      * @param name  the simple (unqualified) member name to look up
+      * @param scope which members to search; defaults to `MemberScope.Declared`
+      * @return the first matching member symbol, or `Maybe.Absent`
+      */
+    def findMember(sym: Symbol, name: String, scope: MemberScope = MemberScope.Declared)(using Frame): Maybe[Symbol] < Sync =
+        members(sym, scope).map(ms => Maybe.fromOption(ms.find(_.simpleName == name)))
+
+    /** Find a directly-declared member of `sym` by simple name.
+      *
+      * Shorthand for `findMember(sym, name, MemberScope.Declared)`. Searches only symbols
+      * declared on `sym` itself, not symbols inherited from parent types.
+      *
+      * Returns `Maybe.Absent` when no declared member with that simple name exists. When
+      * inherited members should be considered, use `findMember` with `MemberScope.All`.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param sym  the owning symbol to search
+      * @param name the simple (unqualified) member name to look up
+      * @return the first matching declared member symbol, or `Maybe.Absent`
+      */
+    def findDeclaredMember(sym: Symbol, name: String)(using Frame): Maybe[Symbol] < Sync =
+        findMember(sym, name, MemberScope.Declared)
+
+    /** Return `true` when `sym` carries the Scala or Java annotation with the given FQN.
+      *
+      * Checks the annotation list of `sym` against `fqn`:
+      * - For Scala annotations: resolves `annotationType` to its FQN string via
+      *   `cp.typeFqnStringUnsafe` and compares to `fqn`.
+      * - For Java annotations (`Symbol.Field` and `Symbol.ClassLike`): resolves
+      *   `annotationClass` to its full name via `cp.fullNameUnsafe` and compares.
+      *
+      * Symbol kinds with no annotation storage (e.g. raw `Symbol.Package`) always return
+      * `false`. The check is linear in the number of annotations on `sym`.
+      *
+      * Effect row: `< Sync`. The `Sync.Unsafe.defer` inside confines the unsafe FQN
+      * resolution within a safe effect boundary.
+      *
+      * @param sym the symbol to inspect
+      * @param fqn dotted FQN of the annotation class (e.g. `"scala.annotation.tailrec"`)
+      * @return `true` if at least one matching annotation is present, `false` otherwise
+      */
+    def hasAnnotation(sym: Symbol, fqn: String)(using Frame): Boolean < Sync =
+        classpath.flatMap: cp =>
+            Sync.Unsafe.defer:
+                def matchScala(a: Annotation): Boolean =
+                    cp.typeFqnStringUnsafe(a.annotationType) == fqn
+                def matchJava(a: Java.Annotation): Boolean =
+                    import Name.asString
+                    cp.fullNameUnsafe(a.annotationClass).asString == fqn
+                sym match
+                    case c: Symbol.ClassLike    => c.annotations.exists(matchScala) || c.javaAnnotations.exists(matchJava)
+                    case m: Symbol.Method       => m.annotations.exists(matchScala)
+                    case v: Symbol.Val          => v.annotations.exists(matchScala)
+                    case w: Symbol.Var          => w.annotations.exists(matchScala)
+                    case f: Symbol.Field        => f.javaAnnotations.exists(matchJava)
+                    case t: Symbol.TypeAlias    => t.annotations.exists(matchScala)
+                    case t: Symbol.OpaqueType   => t.annotations.exists(matchScala)
+                    case t: Symbol.AbstractType => t.annotations.exists(matchScala)
+                    case p: Symbol.Parameter    => p.annotations.exists(matchScala)
+                    case _                      => false
+                end match
+
+    /** Find the first Scala or Java annotation matching `fqn` on `sym`.
+      *
+      * Returns `Maybe.Present(annotation)` for the first annotation whose class FQN equals
+      * `fqn`, where the union type `Annotation | Java.Annotation` carries either a decoded
+      * Scala `Annotation` (with typed arguments) or a raw `Java.Annotation`.
+      *
+      * For `Symbol.ClassLike`, Scala annotations are checked first; if none match, Java
+      * annotations are checked. For `Symbol.Field`, only Java annotations are checked.
+      *
+      * Returns `Maybe.Absent` when no matching annotation exists on `sym`, or when `sym`
+      * is a kind that does not carry annotations (e.g., a bare `Symbol.Package`).
+      *
+      * Effect row: `< Sync`. The `Sync.Unsafe.defer` confines unsafe FQN resolution.
+      *
+      * @param sym the symbol to inspect
+      * @param fqn dotted FQN of the annotation class
+      * @return the first matching annotation, or `Maybe.Absent`
+      */
+    def findAnnotation(sym: Symbol, fqn: String)(using Frame): Maybe[Annotation | Java.Annotation] < Sync =
+        classpath.flatMap: cp =>
+            Sync.Unsafe.defer:
+                def matchScala(a: Annotation): Boolean =
+                    cp.typeFqnStringUnsafe(a.annotationType) == fqn
+                def matchJava(a: Java.Annotation): Boolean =
+                    import Name.asString
+                    cp.fullNameUnsafe(a.annotationClass).asString == fqn
+                sym match
+                    case c: Symbol.ClassLike =>
+                        Maybe.fromOption(c.annotations.find(matchScala).orElse(c.javaAnnotations.find(matchJava)))
+                    case m: Symbol.Method       => Maybe.fromOption(m.annotations.find(matchScala))
+                    case v: Symbol.Val          => Maybe.fromOption(v.annotations.find(matchScala))
+                    case w: Symbol.Var          => Maybe.fromOption(w.annotations.find(matchScala))
+                    case f: Symbol.Field        => Maybe.fromOption(f.javaAnnotations.find(matchJava))
+                    case t: Symbol.TypeAlias    => Maybe.fromOption(t.annotations.find(matchScala))
+                    case t: Symbol.OpaqueType   => Maybe.fromOption(t.annotations.find(matchScala))
+                    case t: Symbol.AbstractType => Maybe.fromOption(t.annotations.find(matchScala))
+                    case p: Symbol.Parameter    => Maybe.fromOption(p.annotations.find(matchScala))
+                    case _                      => Maybe.Absent
+                end match
+
+    /** Return all symbols in the loaded classpath carrying the annotation with `fqn`.
+      *
+      * Delegates to `Classpath.symbolsAnnotatedWith`, which performs a full linear scan of
+      * `cp.symbols` and checks each symbol against the given annotation FQN (same matching
+      * logic as `hasAnnotation`). For large classpaths this is O(n) in the number of loaded
+      * symbols; consider caching the result in the caller when querying the same annotation
+      * repeatedly.
+      *
+      * Effect row: `< Sync`. The scan runs inside a `Sync`-suspended fiber step to confine
+      * the unsafe annotation resolution.
+      *
+      * @param fqn dotted FQN of the annotation class to scan for
+      * @return all symbols carrying at least one annotation of the given FQN; empty when none
+      */
+    def symbolsAnnotatedWith(fqn: String)(using Frame): Chunk[Symbol] < Sync =
+        classpath.flatMap(_.symbolsAnnotatedWith(fqn))
+
+    /** Decode the body tree of sym, memoizing the result in the active DecodeContext.
+      *
+      * Returns `Absent` for symbols whose `bodyRecord` slot is `Absent` (Package, Java, and symbols without an AST
+      * body slice), and also returns `Absent` when called outside a `withClasspath(roots,...)` or `withPickles`
+      * scope (i.e. when `TastyState.bindingLocal` holds a `Binding` with no `DecodeContext`).
+      *
+      * Memoization: the first call for a given `sym` decodes the bytes and stores the result (success or failure)
+      * in the `DecodeContext`'s `bodyMemo`. All subsequent calls for the same `sym` return the stored result
+      * without re-decoding. The memo is keyed by `sym.id` (SymbolId) and is per-`withClasspath` invocation;
+      * a second `withClasspath` call produces a fresh `DecodeContext` with an empty memo.
+      *
+      * INV-009 site-3: `AllowUnsafe` is confined to `Sync.Unsafe.defer`; it does not appear on this signature.
+      * INV-010: the top-level signature does not carry `AllowUnsafe`.
+      */
+    def bodyTree(sym: Symbol)(using frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
+        TastyState.bindingLocal.use: mbind =>
+            val maybeCtx = mbind.flatMap(_.decodeCtx)
+            if maybeCtx.isEmpty then Maybe.Absent
+            else
+                val ctx  = maybeCtx.get
+                val blob = ctx.bodyStore.get(sym.id)
+                if blob == null then Maybe.Absent
+                else
+                    val cp = mbind.get.cp
+                    Sync.Unsafe.defer:
+                        // INV-009 site-3: Sync.Unsafe.defer is the only AllowUnsafe in the public query layer.
+                        val cached = ctx.bodyMemo.get(sym.id)
+                        if cached != null then
+                            cached match
+                                case Result.Success(t) => Maybe(t)
+                                case Result.Failure(e) => Abort.fail(e)
+                                case Result.Panic(t)   => throw t
+                        else
+                            val result: Result[TastyError, Tree] =
+                                try
+                                    val syms = cp.symbols
+                                    Result.Success(kyo.internal.tasty.reader.TreeUnpickler.decodeSync(
+                                        blob,
+                                        sym,
+                                        idx => if idx >= 0 && idx < syms.size then syms(idx) else sym
+                                    ))
+                                catch
+                                    case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
+                                        Result.Failure(TastyError.MalformedSection("ASTs", ex.getMessage, ex.byteOffset))
+                                    case _: ArrayIndexOutOfBoundsException =>
+                                        Result.Failure(TastyError.MalformedSection("ASTs", "truncated body", 0L))
+                                    case _: IllegalStateException =>
+                                        // mmap arena closed before bodyTree ran; documented contract is ClasspathClosed.
+                                        Result.Failure(TastyError.ClasspathClosed(s"bodyTree(sym.id=${sym.id.value})"))
+                            ctx.bodyMemo.put(sym.id, result)
+                            result match
+                                case Result.Success(t) => Maybe(t)
+                                case Result.Failure(e) => Abort.fail(e)
+                                case Result.Panic(t)   => throw t
+                            end match
+                        end if
+                end if
+            end if
+    end bodyTree
+
+    /** Resolve the symbol referenced by a `Type.Named`.
+      *
+      * Returns `Maybe.Present(symbol)` when `tpe` is a `Type.Named` whose `SymbolId` resolves
+      * to a live symbol in the loaded classpath. Returns `Maybe.Absent` for all other `Type`
+      * shapes (e.g. `Type.Applied`, `Type.Array`, `Type.Function`).
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param tpe the type whose referenced symbol is requested
+      * @return the symbol wrapped in `Maybe.Present`, or `Maybe.Absent` for non-Named types
+      */
+    def typeSymbol(tpe: Type)(using Frame): Maybe[Symbol] < Sync =
+        classpath.map: cp =>
+            tpe match
+                case Type.Named(id) => cp.symbol(id)
+                case _              => Maybe.Absent
+
+    /** Structural subtype check between two `Type` values.
+      *
+      * Returns a `SubtypeVerdict`:
+      * - `SubtypeVerdict.Sub`: `tpe` is a structural subtype of `other`.
+      * - `SubtypeVerdict.NotSub`: `tpe` is not a subtype of `other`.
+      * - `SubtypeVerdict.Indeterminate`: the walk exhausted the budget (depth 64) without
+      *   a definitive answer, or the type shapes were unsupported.
+      *
+      * Unhandled parent-walk shapes are collected in `decodeCtx.subtypingErrors` during the
+      * call and folded into `cp.errors` on the next `Tasty.classpath` read within the scope
+      * (Q-003 binding). The verdict signature carries no `Abort[TastyError]` row; diagnostics
+      * are surfaced through the error channel.
+      *
+      * Effect row: `< Sync`. The check runs inside `Sync.defer` rather than returning a
+      * plain value because it reads the `TastyState.bindingLocal`.
+      *
+      * @param tpe   the candidate subtype
+      * @param other the candidate supertype
+      * @return the subtype verdict
+      */
+    def isSubtypeOf(tpe: Type, other: Type)(using Frame): SubtypeVerdict < Sync =
+        TastyState.bindingLocal.use: mbind =>
+            val binding = mbind.getOrElse(TastyState.global)
+            val cp      = binding.cp
+            val errAcc  = binding.decodeCtx.map(_.subtypingErrors).getOrElse(null)
+            Sync.defer(kyo.internal.tasty.type_.Subtyping.isSubtype(tpe, other, cp, budget = 64, errAcc))
+
+    /** Render a `Type` as a human-readable string.
+      *
+      * Recursively converts the `Type` ADT to a display string. `Type.Named` nodes are
+      * resolved to their symbol's `simpleName` via the classpath; unresolved ids render as
+      * `"<unresolved>"`. Composite types render in a Scala-like syntax (e.g.
+      * `"List[String]"`, `"(Int, String) => Boolean"`).
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access).
+      *
+      * @param tpe the type to render
+      * @return a human-readable string representation
+      */
+    def typeShow(tpe: Type)(using Frame): String < Sync =
+        classpath.map: cp =>
+            import Name.asString
+            def renderType(t: Type): String = t match
+                case Type.Named(id)           => cp.symbol(id).map(_.name.asString).getOrElse("<unresolved>")
+                case Type.Applied(base, args) => s"${renderType(base)}[${args.map(renderType).mkString(", ")}]"
+                case Type.Array(elem)         => s"${renderType(elem)}[]"
+                case Type.Function(ps, r) =>
+                    s"(${ps.map(renderType).mkString(", ")}) => ${renderType(r)}"
+                case Type.ContextFunction(ps, r) => s"(${ps.map(renderType).mkString(", ")}) ?=> ${renderType(r)}"
+                case Type.Tuple(es)              => s"(${es.map(renderType).mkString(", ")})"
+                case Type.Nothing                => "Nothing"
+                case Type.Any                    => "Any"
+                case other                       => other.toString
+            renderType(tpe)
+
+    /** Human-readable rendering of a Tree (resolves symbols and types via the Classpath). */
+    def treeShow(tree: Tree)(using Frame): String < Sync =
+        classpath.map(cp => kyo.internal.tasty.reader.TreeShow.show(tree, cp))
+
+    // ── Snapshot management ─────────────────────────────────────────────────
+
+    /** Snapshot cache management utilities for the `Tasty.withClasspath(roots, cacheDir)` path.
+      *
+      * `withClasspath(roots, Present(cacheDir))` writes a binary snapshot file (extension `.krfl`) keyed by a
+      * digest of the input roots, so repeat opens of the same classpath restore the in-memory state without
+      * re-decoding the underlying `.tasty` / `.class` files. Over time the cache directory accumulates snapshots
+      * for roots that are no longer relevant (different commits, different sbt projects, transient builds);
+      * this companion exposes the maintenance operations a long-running process needs.
+      *
+      * **Eviction.** `evictOlderThan(cacheDir, maxAge)` deletes any `*.krfl` file in `cacheDir` whose
+      * modification time is older than `maxAge`, returning silently. It does not recurse, and it does not look
+      * at file contents; the policy is purely age-based. The operation carries `Sync & Abort[TastyError]`
+      * because it touches the disk; expect `SnapshotIoError` when the directory cannot be read.
+      *
+      * **What lives elsewhere.** The snapshot read / write path is internal; the only public surface for
+      * snapshot files is `Tasty.withClasspath` (writes on miss, reads on hit) and this object (eviction).
+      * Errors produced by the snapshot path are all in `TastyError` (`SnapshotFormatError`,
+      * `SnapshotVersionMismatch`, `SnapshotIoError`, `DigestMismatch`).
+      */
+    object Snapshot:
+
+        /** Delete snapshot files in `cacheDir` whose modification time is older than `maxAge`.
+          *
+          * Only deletes files matching `*.krfl`. Does not recurse into subdirectories.
+          *
+          * Performance: stats all `.krfl` files, sorts them by mtime ascending (oldest first), deletes in order and stops at the
+          * first file whose age is within `maxAge`. When most files are fresh this early-exit avoids unnecessary delete attempts on files
+          * that are clearly within the retention window.
+          *
+          * @param cacheDir
+          *   directory containing snapshot files
+          * @param maxAge
+          *   maximum age; files older than this are deleted
+          */
+        def evictOlderThan(cacheDir: String, maxAge: Duration)(using Frame): Unit < (Sync & Abort[TastyError]) =
+            val source = PlatformFileSource.get
+            evictOlderThanWithSource(cacheDir, maxAge.toMillis, source)
+        end evictOlderThan
+
+        /** Internal overload that accepts a custom FileSource for testing.
+          *
+          * Stats all files, sorts by mtime ascending (oldest first), deletes until the first non-stale entry, then stops.
+          * This avoids unnecessary delete calls for files within the retention window and is O(N) stat syscalls + O(N log N) sort.
+          */
+        private[kyo] def evictOlderThanWithSource(
+            cacheDir: String,
+            maxAgeMs: Long,
+            source: kyo.internal.tasty.query.FileSource
+        )(using Frame): Unit < (Sync & Abort[TastyError]) =
+            source.list(cacheDir, Chunk(".krfl")).flatMap: files =>
+                // Collect (path, mtime) for each file that can be statted; skip files with stat errors.
+                Kyo.collect(files): path =>
+                    Abort.run[TastyError](source.stat(path)).map:
+                        case Result.Success(st) => Maybe((path, st.mtimeMs))
+                        case _                  => Maybe.Absent
+                .flatMap: pairs =>
+                    // Sort by mtime ascending so oldest files come first. Convert to Seq for sortBy.
+                    val now    = java.lang.System.currentTimeMillis()
+                    val sorted = pairs.toSeq.sortBy(_._2)
+                    // Delete in order; stop at the first non-stale file (early exit).
+                    Kyo.foreachDiscard(sorted.takeWhile { case (_, mtimeMs) => now - mtimeMs > maxAgeMs }):
+                        case (path, _) =>
+                            // Ignore errors: concurrent writers may have already replaced or removed the file.
+                            Abort.run[TastyError](deleteFile(source, path)).andThen(Kyo.unit)
+        end evictOlderThanWithSource
+
+        private def deleteFile(
+            source: kyo.internal.tasty.query.FileSource,
+            path: String
+        )(using Frame): Unit < (Sync & Abort[TastyError]) =
+            // Rename to a tombstone then discard; if rename fails (already gone) we just continue.
+            val tombstone = path + ".deleting"
+            source.rename(path, tombstone).andThen:
+                source.rename(tombstone, tombstone + ".gone").andThen(Kyo.unit)
+        end deleteFile
+
+    end Snapshot
+
+    // ── Nested types ────────────────────────────────────────────────────────
+    // The vocabulary (SymbolId, Version, Name, Flags, ErrorMode, SubtypeVerdict,
+    // Constant, Position, Annotation, Type, Tree, Symbol, Java, Pickle, Classpath)
+    // referenced by the public API above. Read top-to-bottom for an overview of the
+    // model; jump back up for callable entry points.
+
     // ── SymbolId ────────────────────────────────────────────────────────────
 
     /** Opaque integer handle used to reference a Symbol within a Classpath instance.
@@ -69,10 +1230,6 @@ object Tasty:
         given schemaSymbolId: Schema[SymbolId] = summon[Schema[Int]]
 
     end SymbolId
-
-    // Bring the `value` extension into scope for the entirety of `object Tasty` so that
-    // internal code can write `id.value` without per-site imports.
-    import SymbolId.value
 
     // ── Version ─────────────────────────────────────────────────────────────
 
@@ -3185,1155 +4342,6 @@ object Tasty:
 
     /** CanEqual[Classpath, Classpath] derived after the companion closes; same placement rationale as schemaClasspath. */
     given canEqualClasspath: CanEqual[Classpath, Classpath] = CanEqual.canEqualAny
-
-    // ── Suspend / create ───────────────────────────────────────────────────
-
-    /** Bind a fresh Classpath loaded from `roots` and run `f` in that scope.
-      *
-      * Loads the classpath from the given file-system roots using `ErrorMode.SoftFail`. When
-      * `cacheDir` is `Present(dir)`, attempts to read a snapshot from `dir` first; on a miss,
-      * cold-loads and writes the snapshot before returning. Resources (mmap arenas, JAR handles)
-      * are released when the scope exits via the internal `Scope.run`.
-      *
-      * INV-009 site-1: init from file-system roots (cold-load) via `ClasspathOrchestrator.coldLoadBinding`.
-      * This is the ONLY entry point that reads the file system during classpath construction. All
-      * `Tasty.*` query methods called inside `f` are pure and perform no IO.
-      *
-      * Diagnostics accumulated during the scope by `Tasty.isSubtypeOf` (e.g.,
-      * `TastyError.UnhandledSubtypingCase`) are folded into `cp.errors` on any call to
-      * `Tasty.classpath` within `f` (Q-003 binding: errors appear in `cp.errors`).
-      *
-      * Effect row: `A < (Async & Abort[TastyError] & S)` -- `Scope` is consumed internally.
-      */
-    def withClasspath[A, S](
-        roots: Seq[String],
-        cacheDir: Maybe[String] = Maybe.Absent
-    )(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
-        Scope.run:
-            ClasspathOrchestrator.coldLoadBinding(roots, ErrorMode.SoftFail, cacheDir).map: binding =>
-                TastyState.bindingLocal.let(Maybe.Present(binding))(f)
-
-    /** Bind a pre-existing (deserialized) Classpath and run `f` in that scope.
-      *
-      * No filesystem access, no Scope overhead. The bound Binding carries a fresh DecodeContext so
-      * that `Tasty.isSubtypeOf` can accumulate `TastyError.UnhandledSubtypingCase` diagnostics.
-      * `Tasty.bodyTree` returns `Maybe.Absent` for every symbol inside `f` because the DecodeContext
-      * carries no body source handle.
-      *
-      * Diagnostics accumulated during the scope are folded into `cp.errors` on any call to
-      * `Tasty.classpath` within `f` (Q-003 binding: errors appear in `cp.errors`).
-      *
-      * Effect row: `A < S` -- identical to `f`'s row.
-      */
-    def withClasspath[A, S](cp: Classpath)(f: => A < S)(using Frame): A < S =
-        TastyState.bindingLocal.let(Maybe.Present(Binding(cp, Maybe.Present(DecodeContext.fresh()))))(f)
-
-    /** Bind a Classpath decoded from in-memory pickles and run `f` in that scope.
-      *
-      * Decodes the pickles sequentially using an in-memory FileSource. The resulting Binding carries
-      * a fresh DecodeContext so `Tasty.bodyTree` can decode body bytes on demand.
-      *
-      * INV-009 site-1-related (in-memory alt-init; no real-FS contact): constructs an anonymous
-      * in-memory FileSource from the pickle bytes map; never reads `PlatformFileSource.get` and
-      * never touches the real file system. All `Tasty.*` query methods called inside `f` are pure and perform no IO.
-      *
-      * Effect row: `A < (Async & Abort[TastyError] & S)`.
-      */
-    def withPickles[A, S](pickles: Chunk[Pickle])(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
-        Scope.run:
-            ClasspathOrchestrator.loadPickles(pickles).map: binding =>
-                TastyState.bindingLocal.let(Maybe.Present(binding))(f)
-
-    /** Delete snapshot files in `cacheDir` whose modification time is older than `maxAge`.
-      *
-      * Delegates to `Tasty.Snapshot.evictOlderThan`. Only deletes `*.krfl` files; does not recurse.
-      * INV-009 site-4: the underlying file-deletion logic uses AllowUnsafe via the FileSource.
-      */
-    def evictOlderThan(cacheDir: String, maxAge: Duration)(using Frame): Unit < (Sync & Abort[TastyError]) =
-        Snapshot.evictOlderThan(cacheDir, maxAge)
-
-    // ── Access ─────────────────────────────────────────────────────────────
-
-    /** Get the current Classpath from the active binding, falling back to the module-level JVM classpath.
-      *
-      * Returns the JVM classpath stub when called outside a `withClasspath` scope.
-      *
-      * When called inside a `withClasspath` scope, folds any `TastyError.UnhandledSubtypingCase`
-      * diagnostics accumulated by `isSubtypeOf` calls during the scope into the returned
-      * `Classpath.errors` field. This makes `cp.errors` the user-visible channel for
-      * unhandled-shape diagnostics (Q-003 binding).
-      *
-      * Effect row: Sync, because reading the lazy val TastyState.global may trigger initialization.
-      */
-    def classpath(using Frame): Classpath < Sync =
-        TastyState.bindingLocal.use: mbind =>
-            val binding = mbind.getOrElse(TastyState.global)
-            Sync.defer:
-                binding.decodeCtx match
-                    case Maybe.Present(ctx) if ctx.subtypingErrors.nonEmpty =>
-                        Classpath.copyWithErrors(binding.cp, binding.cp.errors ++ Chunk.from(ctx.subtypingErrors))
-                    case _ =>
-                        binding.cp
-
-    // ── Snapshot management ─────────────────────────────────────────────────
-
-    /** Snapshot cache management utilities for the `Tasty.withClasspath(roots, cacheDir)` path.
-      *
-      * `withClasspath(roots, Present(cacheDir))` writes a binary snapshot file (extension `.krfl`) keyed by a
-      * digest of the input roots, so repeat opens of the same classpath restore the in-memory state without
-      * re-decoding the underlying `.tasty` / `.class` files. Over time the cache directory accumulates snapshots
-      * for roots that are no longer relevant (different commits, different sbt projects, transient builds);
-      * this companion exposes the maintenance operations a long-running process needs.
-      *
-      * **Eviction.** `evictOlderThan(cacheDir, maxAge)` deletes any `*.krfl` file in `cacheDir` whose
-      * modification time is older than `maxAge`, returning silently. It does not recurse, and it does not look
-      * at file contents; the policy is purely age-based. The operation carries `Sync & Abort[TastyError]`
-      * because it touches the disk; expect `SnapshotIoError` when the directory cannot be read.
-      *
-      * **What lives elsewhere.** The snapshot read / write path is internal; the only public surface for
-      * snapshot files is `Tasty.withClasspath` (writes on miss, reads on hit) and this object (eviction).
-      * Errors produced by the snapshot path are all in `TastyError` (`SnapshotFormatError`,
-      * `SnapshotVersionMismatch`, `SnapshotIoError`, `DigestMismatch`).
-      */
-    object Snapshot:
-
-        /** Delete snapshot files in `cacheDir` whose modification time is older than `maxAge`.
-          *
-          * Only deletes files matching `*.krfl`. Does not recurse into subdirectories.
-          *
-          * Performance: stats all `.krfl` files, sorts them by mtime ascending (oldest first), deletes in order and stops at the
-          * first file whose age is within `maxAge`. When most files are fresh this early-exit avoids unnecessary delete attempts on files
-          * that are clearly within the retention window.
-          *
-          * @param cacheDir
-          *   directory containing snapshot files
-          * @param maxAge
-          *   maximum age; files older than this are deleted
-          */
-        def evictOlderThan(cacheDir: String, maxAge: Duration)(using Frame): Unit < (Sync & Abort[TastyError]) =
-            val source = PlatformFileSource.get
-            evictOlderThanWithSource(cacheDir, maxAge.toMillis, source)
-        end evictOlderThan
-
-        /** Internal overload that accepts a custom FileSource for testing.
-          *
-          * Stats all files, sorts by mtime ascending (oldest first), deletes until the first non-stale entry, then stops.
-          * This avoids unnecessary delete calls for files within the retention window and is O(N) stat syscalls + O(N log N) sort.
-          */
-        private[kyo] def evictOlderThanWithSource(
-            cacheDir: String,
-            maxAgeMs: Long,
-            source: kyo.internal.tasty.query.FileSource
-        )(using Frame): Unit < (Sync & Abort[TastyError]) =
-            source.list(cacheDir, Chunk(".krfl")).flatMap: files =>
-                // Collect (path, mtime) for each file that can be statted; skip files with stat errors.
-                Kyo.collect(files): path =>
-                    Abort.run[TastyError](source.stat(path)).map:
-                        case Result.Success(st) => Maybe((path, st.mtimeMs))
-                        case _                  => Maybe.Absent
-                .flatMap: pairs =>
-                    // Sort by mtime ascending so oldest files come first. Convert to Seq for sortBy.
-                    val now    = java.lang.System.currentTimeMillis()
-                    val sorted = pairs.toSeq.sortBy(_._2)
-                    // Delete in order; stop at the first non-stale file (early exit).
-                    Kyo.foreachDiscard(sorted.takeWhile { case (_, mtimeMs) => now - mtimeMs > maxAgeMs }):
-                        case (path, _) =>
-                            // Ignore errors: concurrent writers may have already replaced or removed the file.
-                            Abort.run[TastyError](deleteFile(source, path)).andThen(Kyo.unit)
-        end evictOlderThanWithSource
-
-        private def deleteFile(
-            source: kyo.internal.tasty.query.FileSource,
-            path: String
-        )(using Frame): Unit < (Sync & Abort[TastyError]) =
-            // Rename to a tombstone then discard; if rename fails (already gone) we just continue.
-            val tombstone = path + ".deleting"
-            source.rename(path, tombstone).andThen:
-                source.rename(tombstone, tombstone + ".gone").andThen(Kyo.unit)
-        end deleteFile
-
-    end Snapshot
-
-    // ── Tasty.* query operations ────────────────────────────────────────────
-    // All query operations read the active binding from TastyState.bindingLocal. They carry
-    // < Sync in their effect row because the lazy fallback TastyState.global may trigger
-    // initialization on the first call (INV-009 site-2).
-
-    /** Expand to the fully-qualified dotted name of `A` at compile time via the `Tag` machinery.
-      *
-      * Use when the type is known statically and the caller wants the FQN string for a `findClass` / `requireClass`
-      * lookup without spelling out the literal. `classFqn[example.Circle]` evaluates to `"example.Circle"`;
-      * `classFqn[scala.collection.immutable.List]` evaluates to `"scala.collection.immutable.List"`.
-      *
-      * The dotted form matches what `Classpath.findClass`, `findClassLike`, and `findSymbol` accept; the JVM
-      * binary form (`example/Circle$Inner`) is reachable through `Classpath.findClassByBinary` instead.
-      */
-    def classFqn[A](using t: Tag[A]): String = t.show
-
-    /** Look up a class symbol by fully-qualified dotted name.
-      *
-      * Delegates to `Classpath.findClass`, which performs a pure O(1) index lookup. Returns
-      * `Maybe.Absent` when the FQN is not in the loaded classpath or when the resolved symbol
-      * is not a `Symbol.Class` (e.g., a Trait or Object at the same FQN is silently absent).
-      *
-      * Abstract classes, sealed abstract classes (e.g. `scala.Option`), and concrete classes
-      * are all included. Use `findConcreteClass` to restrict to non-abstract classes.
-      *
-      * Effect row: `< Sync`. The suspension arises because the first access may trigger lazy
-      * classpath initialization through `TastyState.bindingLocal`.
-      *
-      * @param fqn dotted fully-qualified name (e.g. `"scala.collection.immutable.List"`)
-      * @return the class symbol wrapped in `Maybe.Present`, or `Maybe.Absent` if not found
-      */
-    def findClass(fqn: String)(using Frame): Maybe[Symbol.Class] < Sync =
-        classpath.map(_.findClass(fqn))
-
-    /** Look up any class-like symbol by fully-qualified dotted name.
-      *
-      * Matches `Symbol.Class`, `Symbol.Trait`, `Symbol.Object`, and `Symbol.EnumCase` at the
-      * given FQN. Use this when the caller does not know whether the target is a class, trait,
-      * or object, or when any class-like shape is acceptable.
-      *
-      * Returns `Maybe.Absent` when the FQN is absent from the classpath or when the resolved
-      * symbol is a non-class-like kind (e.g., a `Symbol.Package` or `Symbol.Method`).
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param fqn dotted fully-qualified name
-      * @return the class-like symbol wrapped in `Maybe.Present`, or `Maybe.Absent`
-      */
-    def findClassLike(fqn: String)(using Frame): Maybe[Symbol.ClassLike] < Sync =
-        classpath.map(_.findClassLike(fqn))
-
-    /** Look up a Scala object (module) symbol by fully-qualified name.
-      *
-      * Accepts both the source form (`"mypackage.MyObject"`) and the binary `$`-suffix form
-      * (`"mypackage.MyObject$"`). When given the source form, the lookup first tries a direct
-      * FQN match and, on miss, appends `"$"` and retries against the binary-name index.
-      *
-      * Returns `Maybe.Absent` when neither variant resolves to a `Symbol.Object`. Use
-      * `findClassLike` if you want to match objects together with classes and traits.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param fqn dotted source-form or `$`-suffixed binary-form FQN of the object
-      * @return the object symbol wrapped in `Maybe.Present`, or `Maybe.Absent`
-      */
-    def findObject(fqn: String)(using Frame): Maybe[Symbol.Object] < Sync =
-        classpath.map(_.findObject(fqn))
-
-    /** Look up any symbol by fully-qualified dotted name.
-      *
-      * The most permissive lookup: returns `Maybe.Present` for any registered symbol kind
-      * (Class, Trait, Object, Method, Val, Package, etc.). Use the typed variants
-      * (`findClass`, `findClassLike`, `findObject`, `findPackage`) when a specific kind
-      * is expected; use this method when the kind is unknown or irrelevant.
-      *
-      * Returns `Maybe.Absent` when the FQN has no entry in the loaded classpath.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param fqn dotted fully-qualified name of the target symbol
-      * @return the symbol wrapped in `Maybe.Present`, or `Maybe.Absent`
-      */
-    def findSymbol(fqn: String)(using Frame): Maybe[Symbol] < Sync =
-        classpath.map(_.findSymbol(fqn))
-
-    /** Look up a package symbol by fully-qualified dotted name.
-      *
-      * Returns `Maybe.Present` only when the FQN resolves to a `Symbol.Package`. Any other
-      * symbol kind at the same name (e.g. a companion object) produces `Maybe.Absent`.
-      *
-      * Packages are synthesized during classpath loading from the directory structure of
-      * each root. The root package is registered under the empty string `""`.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param fqn dotted package name (e.g. `"scala.collection.immutable"`), or `""` for root
-      * @return the package symbol wrapped in `Maybe.Present`, or `Maybe.Absent`
-      */
-    def findPackage(fqn: String)(using Frame): Maybe[Symbol.Package] < Sync =
-        classpath.map(_.findPackage(fqn))
-
-    /** Look up a JPMS module descriptor by module name.
-      *
-      * Returns `Maybe.Present` only when a `module-info.class` entry for `name` was found
-      * in the loaded classpath roots and successfully decoded. Module descriptors are populated
-      * during classpath loading from JVM module roots (e.g. a JDK image passed via
-      * `Classpath.Root.jrt`).
-      *
-      * Returns `Maybe.Absent` when no module with that name was loaded, or when the classpath
-      * was opened without JDK/module roots.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param name JPMS module name (e.g. `"java.base"`, `"com.example.mymodule"`)
-      * @return the module descriptor wrapped in `Maybe.Present`, or `Maybe.Absent`
-      */
-    def findModule(name: String)(using Frame): Maybe[Java.Module.Descriptor] < Sync =
-        classpath.map(_.findModule(name))
-
-    /** Look up a concrete (non-abstract) class by fully-qualified dotted name.
-      *
-      * Equivalent to `findClass(fqn).filter(!_.isAbstract)`. Returns `Maybe.Absent` when the
-      * FQN is missing from the classpath, when it resolves to a non-Class symbol, or when the
-      * class has the Abstract modifier (e.g. `scala.Option`, `scala.collection.AbstractMap`).
-      *
-      * Use this when you need a class that can be instantiated or that carries concrete
-      * implementations. Use `findClass` when abstract classes are acceptable.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param fqn dotted fully-qualified name of the target class
-      * @return the class symbol wrapped in `Maybe.Present`, or `Maybe.Absent`
-      */
-    def findConcreteClass(fqn: String)(using Frame): Maybe[Symbol.Class] < Sync =
-        classpath.map(_.findConcreteClass(fqn))
-
-    /** Find all class symbols whose simple (unqualified) name matches the given string.
-      *
-      * Unlike `findClass`, which requires the fully-qualified dotted name, this method searches
-      * across all packages and returns every `Symbol.Class` whose `simpleName` equals
-      * `simpleName`. The result may contain multiple symbols when the same name appears in
-      * different packages (e.g. `"List"` in `scala.collection.immutable` and `java.util`).
-      *
-      * The search is backed by an O(1) index built during classpath loading.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param simpleName unqualified class name (e.g. `"List"`, `"Option"`)
-      * @return all matching class symbols; empty `Chunk` when none are found
-      */
-    def findClassesByName(simpleName: String)(using Frame): Chunk[Symbol.Class] < Sync =
-        classpath.map(_.findClassesByName(simpleName))
-
-    /** Find a method symbol by owner FQN and simple method name.
-      *
-      * Resolves the owner symbol by `ownerFqn`, expects it to be a `Symbol.ClassLike`, then
-      * scans the owner's `declarationIds` for the first `Symbol.Method` whose `simpleName`
-      * equals `methodName`. Returns `Maybe.Absent` when the owner FQN is not found, when the
-      * owner is not a class-like, or when no declared method with that simple name exists.
-      *
-      * When multiple overloads share the same name, the first one in declaration order is
-      * returned. Use `declarations` or `members` followed by manual filtering when overload
-      * discrimination is needed.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param ownerFqn   dotted FQN of the class-like that owns the method
-      * @param methodName simple (unqualified) name of the method
-      * @return the first matching method symbol, or `Maybe.Absent`
-      */
-    def findMethod(ownerFqn: String, methodName: String)(using Frame): Maybe[Symbol.Method] < Sync =
-        classpath.map: cp =>
-            cp.findSymbol(ownerFqn).flatMap:
-                case cl: Symbol.ClassLike =>
-                    import Name.asString
-                    Maybe.fromOption(cl.declarationIds.flatMap: id =>
-                        cp.symbol(id) match
-                            case Maybe.Present(m: Symbol.Method) if m.name.asString == methodName => Chunk(m)
-                            case _                                                                => Chunk.empty
-                    .headOption)
-                case _ => Maybe.Absent
-
-    /** Require a class symbol by FQN, aborting when not found.
-      *
-      * Equivalent to `findClass(fqn)` followed by an explicit check: if the result is
-      * `Maybe.Absent`, the computation aborts with `TastyError.NotFound(fqn)`.
-      *
-      * Use this in pipelines where the class is expected to be present and absence is an
-      * unrecoverable error. Use `findClass` when the caller wants to handle absence explicitly.
-      *
-      * Effect row: `< Sync & Abort[TastyError]`. The `Abort` arm fires only on `NotFound`.
-      *
-      * @param fqn dotted fully-qualified name of the expected class
-      * @return the class symbol, or `Abort.fail(TastyError.NotFound(fqn))`
-      */
-    def requireClass(fqn: String)(using Frame): Symbol.Class < (Sync & Abort[TastyError]) =
-        findClass(fqn).map:
-            case Maybe.Present(c) => c
-            case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
-
-    /** Require a class-like symbol by FQN, aborting when not found.
-      *
-      * Equivalent to `findClassLike(fqn)` followed by an explicit check: if the result is
-      * `Maybe.Absent`, the computation aborts with `TastyError.NotFound(fqn)`.
-      *
-      * Matches Class, Trait, Object, and EnumCase at the given FQN. Use `requireClass` when
-      * only `Symbol.Class` is acceptable.
-      *
-      * Effect row: `< Sync & Abort[TastyError]`. The `Abort` arm fires only on `NotFound`.
-      *
-      * @param fqn dotted fully-qualified name of the expected class-like symbol
-      * @return the class-like symbol, or `Abort.fail(TastyError.NotFound(fqn))`
-      */
-    def requireClassLike(fqn: String)(using Frame): Symbol.ClassLike < (Sync & Abort[TastyError]) =
-        findClassLike(fqn).map:
-            case Maybe.Present(c) => c
-            case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
-
-    /** Require an object symbol by FQN, aborting when not found.
-      *
-      * Equivalent to `findObject(fqn)` followed by an explicit check: if the result is
-      * `Maybe.Absent`, the computation aborts with `TastyError.NotFound(fqn)`.
-      *
-      * Accepts both source-form (`"mypackage.MyObject"`) and `$`-suffix binary-form FQNs.
-      *
-      * Effect row: `< Sync & Abort[TastyError]`. The `Abort` arm fires only on `NotFound`.
-      *
-      * @param fqn dotted source-form or `$`-suffixed binary-form FQN of the expected object
-      * @return the object symbol, or `Abort.fail(TastyError.NotFound(fqn))`
-      */
-    def requireObject(fqn: String)(using Frame): Symbol.Object < (Sync & Abort[TastyError]) =
-        findObject(fqn).map:
-            case Maybe.Present(o) => o
-            case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
-
-    /** Require any symbol by FQN, aborting when not found.
-      *
-      * Equivalent to `findSymbol(fqn)` followed by an explicit check: if the result is
-      * `Maybe.Absent`, the computation aborts with `TastyError.NotFound(fqn)`.
-      *
-      * The most permissive require variant: succeeds for any registered symbol kind. Use the
-      * typed variants (`requireClass`, `requireClassLike`, `requireObject`) when a specific
-      * symbol subtype is expected.
-      *
-      * Effect row: `< Sync & Abort[TastyError]`. The `Abort` arm fires only on `NotFound`.
-      *
-      * @param fqn dotted fully-qualified name of the expected symbol
-      * @return the symbol, or `Abort.fail(TastyError.NotFound(fqn))`
-      */
-    def requireSymbol(fqn: String)(using Frame): Symbol < (Sync & Abort[TastyError]) =
-        findSymbol(fqn).map:
-            case Maybe.Present(s) => s
-            case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
-
-    /** Require a package symbol by FQN, aborting when not found.
-      *
-      * Equivalent to `findPackage(fqn)` followed by an explicit check: if the result is
-      * `Maybe.Absent`, the computation aborts with `TastyError.NotFound(fqn)`.
-      *
-      * Useful in tools that assert that a specific package exists in the loaded classpath
-      * (e.g., a static analysis pass that requires `scala.collection`).
-      *
-      * Effect row: `< Sync & Abort[TastyError]`. The `Abort` arm fires only on `NotFound`.
-      *
-      * @param fqn dotted package name, or `""` for the root package
-      * @return the package symbol, or `Abort.fail(TastyError.NotFound(fqn))`
-      */
-    def requirePackage(fqn: String)(using Frame): Symbol.Package < (Sync & Abort[TastyError]) =
-        findPackage(fqn).map:
-            case Maybe.Present(p) => p
-            case Maybe.Absent     => Abort.fail(TastyError.NotFound(fqn))
-
-    /** Require a method symbol by owner FQN and simple name, aborting when not found.
-      *
-      * Equivalent to `findMethod(ownerFqn, methodName)` followed by an explicit check: if the
-      * result is `Maybe.Absent`, the computation aborts with
-      * `TastyError.NotFound("ownerFqn.methodName")`.
-      *
-      * When multiple overloads share the same name, the first one in declaration order is
-      * returned (same behaviour as `findMethod`).
-      *
-      * Effect row: `< Sync & Abort[TastyError]`. The `Abort` arm fires only on `NotFound`.
-      *
-      * @param ownerFqn   dotted FQN of the class-like that owns the method
-      * @param methodName simple (unqualified) name of the method
-      * @return the first matching method symbol, or `Abort.fail(TastyError.NotFound(...))`
-      */
-    def requireMethod(ownerFqn: String, methodName: String)(using Frame): Symbol.Method < (Sync & Abort[TastyError]) =
-        findMethod(ownerFqn, methodName).map:
-            case Maybe.Present(m) => m
-            case Maybe.Absent     => Abort.fail(TastyError.NotFound(s"$ownerFqn.$methodName"))
-
-    /** All class-like symbols in the loaded classpath.
-      *
-      * Returns every `Symbol.ClassLike` regardless of sub-kind: includes `Symbol.Class`,
-      * `Symbol.Trait`, `Symbol.Object`, and `Symbol.EnumCase`. The result spans all packages
-      * and all classpath roots supplied to `Tasty.withClasspath`.
-      *
-      * Use the narrower variants (`allClasses`, `allObjects`, `allTraits`) when only a single
-      * kind is needed.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @return all class-like symbols across the classpath; empty when the classpath is empty
-      */
-    def allClassLike(using Frame): Chunk[Symbol.ClassLike] < Sync =
-        classpath.map(_.allClassLike)
-
-    /** All class symbols in the loaded classpath.
-      *
-      * Returns every `Symbol.Class` across all packages and classpath roots. Does not include
-      * `Symbol.Trait`, `Symbol.Object`, or `Symbol.EnumCase`; use `allClassLike` to include
-      * those. Abstract classes are included; use `findConcreteClass` per-FQN when concreteness
-      * matters.
-      *
-      * The result is computed by filtering `cp.symbols` on each call; for large classpaths
-      * (tens of thousands of symbols) consider caching the result in the caller.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @return all `Symbol.Class` instances across the classpath; empty when none are found
-      */
-    def allClasses(using Frame): Chunk[Symbol.Class] < Sync =
-        classpath.map(cp =>
-            cp.symbols.flatMap:
-                case c: Symbol.Class => Chunk(c)
-                case _               => Chunk.empty
-        )
-
-    /** All object (module) symbols in the loaded classpath.
-      *
-      * Returns every `Symbol.Object` across all packages and classpath roots. Scala `object`
-      * declarations and Java-style singleton patterns registered as objects are included.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @return all `Symbol.Object` instances across the classpath; empty when none are found
-      */
-    def allObjects(using Frame): Chunk[Symbol.Object] < Sync =
-        classpath.map(_.allObjects)
-
-    /** All trait symbols in the loaded classpath.
-      *
-      * Returns every `Symbol.Trait` across all packages and classpath roots. Sealed traits,
-      * open traits, and abstract class-backed traits are all included.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @return all `Symbol.Trait` instances across the classpath; empty when none are found
-      */
-    def allTraits(using Frame): Chunk[Symbol.Trait] < Sync =
-        classpath.map(_.allTraits)
-
-    /** All method symbols in the loaded classpath.
-      *
-      * Returns every `Symbol.Method` across all owners and classpath roots. Includes
-      * constructors (`<init>`), extension methods, and synthetic methods generated by the
-      * compiler. Use `declarations` or `members` on a specific owner symbol to restrict
-      * results to a single class or package.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @return all `Symbol.Method` instances across the classpath; empty when none are found
-      */
-    def allMethods(using Frame): Chunk[Symbol.Method] < Sync =
-        classpath.map(_.allMethods)
-
-    /** All val symbols in the loaded classpath.
-      *
-      * Returns every `Symbol.Val` (immutable value definition) across all owners and
-      * classpath roots. Includes top-level vals, member vals, and lazy vals. Does not
-      * include `Symbol.Var`, `Symbol.Field`, or parameters.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @return all `Symbol.Val` instances across the classpath; empty when none are found
-      */
-    def allVals(using Frame): Chunk[Symbol.Val] < Sync =
-        classpath.map(_.allVals)
-
-    /** All var symbols in the loaded classpath.
-      *
-      * Returns every `Symbol.Var` (mutable variable definition) across all owners and
-      * classpath roots. Includes member vars but does not include `Symbol.Val` or
-      * `Symbol.Field`. Java mutable fields are represented as `Symbol.Field`.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @return all `Symbol.Var` instances across the classpath; empty when none are found
-      */
-    def allVars(using Frame): Chunk[Symbol.Var] < Sync =
-        classpath.map(_.allVars)
-
-    /** All field symbols in the loaded classpath.
-      *
-      * Returns every `Symbol.Field` across all owners and classpath roots. Fields are the
-      * Java-level representation: raw instance/static fields from `.class` files decoded via
-      * the Java class reader. Scala `var` and `val` members compiled to JVM fields appear
-      * as `Symbol.Field` in the Java class model; `Symbol.Var` and `Symbol.Val` are the
-      * TASTy-model equivalents from Scala sources.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @return all `Symbol.Field` instances across the classpath; empty when none are found
-      */
-    def allFields(using Frame): Chunk[Symbol.Field] < Sync =
-        classpath.map(_.allFields)
-
-    /** All type declaration symbols in the loaded classpath.
-      *
-      * Aggregates `Symbol.TypeAlias`, `Symbol.OpaqueType`, and `Symbol.AbstractType` from
-      * all owners and classpath roots. `Symbol.TypeParam` is excluded because type parameters
-      * are part of their enclosing symbol's structure rather than independent declarations.
-      *
-      * The result is the union of `cp.allTypeAliases`, `cp.allOpaqueTypes`, and
-      * `cp.allAbstractTypes`, returned as a flat `Chunk[Symbol]`.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @return all type declaration symbols across the classpath; empty when none are found
-      */
-    def allTypes(using Frame): Chunk[Symbol] < Sync =
-        classpath.map(cp =>
-            // flow-allow: asInstanceOf -- covariant upcast of Chunk[Symbol.TypeAlias/OpaqueType/AbstractType] to Chunk[Symbol]; safe because Chunk is covariant in its element type and all subtypes extend Symbol.
-            cp.allTypeAliases.asInstanceOf[Chunk[Symbol]] ++
-                cp.allOpaqueTypes.asInstanceOf[Chunk[Symbol]] ++
-                cp.allAbstractTypes.asInstanceOf[Chunk[Symbol]]
-        )
-
-    /** All package symbols in the loaded classpath.
-      *
-      * Returns every `Symbol.Package` synthesized during classpath loading. Package symbols
-      * are derived from the directory structure of each root; the root package itself is
-      * included and is registered under the empty string `""`.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @return all `Symbol.Package` instances across the classpath; never empty (root is always present)
-      */
-    def allPackages(using Frame): Chunk[Symbol.Package] < Sync =
-        classpath.map(_.allPackages)
-
-    /** Return the lexically enclosing (owner) symbol of `sym`.
-      *
-      * Returns `Maybe.Absent` for root symbols whose `ownerId` is `-1` (the synthetic root
-      * package and symbols loaded from roots that have no declared parent).
-      *
-      * Note: the result is the immediate owner one level up. For the full enclosing chain use
-      * `ownersChain`, which walks up until reaching a root or a cycle.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param sym the symbol whose owner is requested
-      * @return the owner symbol wrapped in `Maybe.Present`, or `Maybe.Absent` for root symbols
-      */
-    def owner(sym: Symbol)(using Frame): Maybe[Symbol] < Sync =
-        classpath.map(_.symbol(sym.ownerId))
-
-    /** Compute the dotted fully-qualified name of `sym`.
-      *
-      * Walks the owner chain from `sym` up to the root package, joining each segment with
-      * `"."`. The returned `Name` can be converted to a `String` with `import Name.asString`.
-      *
-      * For the human-readable code-form or simple-name alternatives, use `show(sym, format)`.
-      * This method always returns the dotted FQN regardless of format.
-      *
-      * Effect row: `< Sync`. The computation is synchronous but suspends because `classpath`
-      * access may trigger lazy initialization.
-      *
-      * @param sym the symbol whose FQN is computed
-      * @return the fully-qualified dotted name
-      */
-    def fullName(sym: Symbol)(using Frame): Name < Sync =
-        classpath.flatMap(cp => cp.fullName(sym))
-
-    /** Render `sym` as a human-readable string using the given format.
-      *
-      * Three formats are supported via `ShowFormat`:
-      * - `ShowFormat.Code` (default): the Scala source code signature, e.g. `"def foo[A](x: A): A"`.
-      *   Computed by `SymbolSignature.compute`, which resolves type parameter names and parent types.
-      * - `ShowFormat.FullyQualified`: the dotted FQN string, equivalent to
-      *   `fullName(sym).map(_.asString)`.
-      * - `ShowFormat.Simple`: the unqualified simple name, e.g. `"List"`, computed without
-      *   classpath access.
-      *
-      * Effect row: `< Sync`. `ShowFormat.Simple` still suspends because `classpath` must be
-      * obtained to satisfy the binding contract.
-      *
-      * @param sym    the symbol to render
-      * @param format rendering format; defaults to `ShowFormat.Code`
-      * @return the rendered string
-      */
-    def show(sym: Symbol, format: ShowFormat = ShowFormat.Code)(using Frame): String < Sync =
-        classpath.flatMap: cp =>
-            format match
-                case ShowFormat.FullyQualified =>
-                    import Name.asString
-                    cp.fullName(sym).map(_.asString)
-                case ShowFormat.Simple => sym.simpleName
-                case ShowFormat.Code   => kyo.internal.tasty.symbol.SymbolSignature.compute(sym, cp)
-
-    /** Compute the human-readable signature of a method symbol.
-      *
-      * Delegates to `SymbolSignature.compute`, producing a string in Scala source syntax,
-      * e.g. `"def map[B](f: A => B): List[B]"`. Resolves type parameter and return-type
-      * references to their names via the classpath.
-      *
-      * This is equivalent to `show(method, ShowFormat.Code)` but typed to accept only
-      * `Symbol.Method`, providing a cleaner API at call sites where the method kind is
-      * already known.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param method the method symbol to render
-      * @return the Scala-syntax signature string
-      */
-    def signature(method: Symbol.Method)(using Frame): String < Sync =
-        classpath.flatMap(cp => kyo.internal.tasty.symbol.SymbolSignature.compute(method, cp))
-
-    /** Compute the full owner chain of `sym`, from `sym` itself up to the root.
-      *
-      * The first element is `sym`; subsequent elements are its owner, the owner's owner, and
-      * so on. The walk stops when `ownerId` is `-1` (root symbol with no owner) or when a
-      * cycle is detected (visited set). The chain is capped at depth 64 to guard against
-      * pathological inputs.
-      *
-      * Useful for determining nesting depth, computing enclosing packages, or checking whether
-      * a symbol is a member of a specific owner chain (e.g. `ownersChain(sym).exists(_.simpleName == "MyClass")`).
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param sym the symbol whose owner chain is computed
-      * @return ordered chain starting with `sym`; single-element when `sym` has no owner
-      */
-    def ownersChain(sym: Symbol)(using Frame): Chunk[Symbol] < Sync =
-        classpath.map: cp =>
-            val out     = Chunk.newBuilder[Symbol]
-            val visited = new java.util.HashSet[Int]()
-            @scala.annotation.tailrec
-            def go(cur: Symbol, depth: Int): Unit =
-                if depth >= 64 || !visited.add(cur.id.value) then ()
-                else
-                    out += cur
-                    cp.symbol(cur.ownerId) match
-                        case Maybe.Present(ownerSym) if ownerSym.id != cur.id => go(ownerSym, depth + 1)
-                        case _                                                => ()
-            go(sym, 0)
-            out.result()
-
-    /** Compute the JVM binary name of `sym`.
-      *
-      * The binary name uses `$` as the separator for nested and companion symbols rather than
-      * `.`, following the JVM class-file convention. For example, `example.Outer.Inner` maps
-      * to `"example/Outer$Inner"` and a companion object `example.MyObj` maps to
-      * `"example/MyObj$"`.
-      *
-      * Computed by `BinaryName.compute` using the owner chain and module flags on each symbol.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param sym the symbol whose binary name is computed
-      * @return the JVM binary class name (slash-separated, `$` for nesting)
-      */
-    def binaryName(sym: Symbol)(using Frame): String < Sync =
-        classpath.map(cp => kyo.internal.tasty.symbol.BinaryName.compute(sym, cp))
-
-    /** Return the companion object or companion class of `sym`, if one exists.
-      *
-      * For a `Symbol.Class`, returns the associated `Symbol.Object` companion if present.
-      * For a `Symbol.Object`, returns the associated `Symbol.Class` companion if present.
-      * Returns `Maybe.Absent` when no companion exists, when `sym` is not a class or object,
-      * or when the companion is not present in the loaded classpath.
-      *
-      * The lookup is O(1) via the `Classpath.companion` index built during loading.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param sym the class or object symbol whose companion is requested
-      * @return the companion symbol wrapped in `Maybe.Present`, or `Maybe.Absent`
-      */
-    def companion(sym: Symbol)(using Frame): Maybe[Symbol] < Sync =
-        classpath.map(_.companion(sym))
-
-    /** Return the type parameters declared on `sym`.
-      *
-      * Applies to `Symbol.ClassLike`, `Symbol.Method`, `Symbol.TypeAlias`, and
-      * `Symbol.OpaqueType`. Returns an empty `Chunk` for all other symbol kinds (Val, Var,
-      * Field, Package, etc.).
-      *
-      * Each element is a `Symbol.TypeParam` resolved from the classpath. `typeParamIds` that
-      * do not resolve to a live symbol (e.g., from an incomplete classpath) are silently
-      * dropped.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param sym the symbol whose type parameters are requested
-      * @return the type parameter symbols in declaration order; empty when none exist
-      */
-    def typeParams(sym: Symbol)(using Frame): Chunk[Symbol] < Sync =
-        classpath.map: cp =>
-            (sym match
-                case c: Symbol.ClassLike   => c.typeParamIds
-                case m: Symbol.Method      => m.typeParamIds
-                case ta: Symbol.TypeAlias  => ta.typeParamIds
-                case ot: Symbol.OpaqueType => ot.typeParamIds
-                case _                     => Chunk.empty
-            ).flatMap(id => cp.symbol(id).toChunk)
-
-    /** Return the symbols declared directly on `sym`.
-      *
-      * For `Symbol.ClassLike`, reads `declarationIds` (methods, vals, vars, nested types,
-      * and nested classes declared on the class body). For `Symbol.Package`, reads `memberIds`
-      * (top-level classes and objects in the package). Returns an empty `Chunk` for all
-      * other symbol kinds.
-      *
-      * Does not include inherited members. Use `members(sym, MemberScope.All)` to include
-      * symbols inherited from parent types.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param sym the symbol whose direct declarations are requested
-      * @return the declared symbols in registration order; empty for non-container symbols
-      */
-    def declarations(sym: Symbol)(using Frame): Chunk[Symbol] < Sync =
-        classpath.map: cp =>
-            (sym match
-                case c: Symbol.ClassLike => c.declarationIds
-                case p: Symbol.Package   => p.memberIds
-                case _                   => Chunk.empty
-            ).flatMap(id => cp.symbol(id).toChunk)
-
-    /** Return the permitted direct subclasses of a sealed class or trait.
-      *
-      * For sealed `Symbol.Class` or sealed `Symbol.Trait`, returns the symbols recorded in
-      * `permittedSubclassIds`. Returns an empty `Chunk` for non-sealed symbols and for
-      * symbol kinds other than `Symbol.Class` and `Symbol.Trait`.
-      *
-      * IMPORTANT: the result contains only the directly permitted subclasses as encoded in
-      * the TASTy/classfile. Indirect subtypes (sub-subtypes) are not included; call this
-      * method recursively on each element when a full sealed hierarchy is needed.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param sym the sealed class or trait whose permitted subclasses are requested
-      * @return the permitted subclass symbols; empty for non-sealed or non-class-like symbols
-      */
-    def permittedSubclasses(sym: Symbol)(using Frame): Chunk[Symbol] < Sync =
-        classpath.map: cp =>
-            (sym match
-                case c: Symbol.Class => c.permittedSubclassIds
-                case t: Symbol.Trait => t.permittedSubclassIds
-                case _               => Maybe.Absent
-            ).map(_.flatMap(id => cp.symbol(id).toChunk)).getOrElse(Chunk.empty)
-
-    /** Return the direct parent class-like symbols of `cl`.
-      *
-      * Reads `cl.parentTypes`, filters for `Type.Named` entries, and resolves each `SymbolId`
-      * to the corresponding symbol in the classpath. Parent types of other shapes (e.g.
-      * `Type.Applied` for generic parents) are not resolved here; use `cl.parentTypes` directly
-      * when raw type information is needed.
-      *
-      * IMPORTANT: only direct (first-generation) parents are returned. Use `ownersChain` or
-      * recursive calls to `parents` for deeper ancestry traversal.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param cl the class-like symbol whose direct parents are requested
-      * @return the resolved parent symbols; may be empty for `AnyRef`-rooted classes
-      */
-    def parents(cl: Symbol.ClassLike)(using Frame): Chunk[Symbol] < Sync =
-        classpath.map: cp =>
-            cl.parentTypes.flatMap { case Type.Named(pid) => cp.symbol(pid).toChunk; case _ => Chunk.empty }
-
-    /** Return the members of `sym` filtered by the given `MemberScope`.
-      *
-      * Three scopes are available:
-      * - `MemberScope.Declared` (default): symbols declared directly on `sym` (same as
-      *   `declarations`). O(n) in the number of declared members.
-      * - `MemberScope.Inherited`: symbols inherited from parent types and not redeclared on
-      *   `sym`. The parent walk deduplicates by `simpleName`; the first (most-specific)
-      *   occurrence wins.
-      * - `MemberScope.All`: union of Declared and Inherited, deduplicated by `simpleName`.
-      *   Most-specific (nearest in the hierarchy) symbol wins on name clash.
-      *
-      * For Package symbols, `Declared` and `All` both read `memberIds`; `Inherited` returns
-      * empty (packages do not inherit). Non-container symbols return empty for all scopes.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param sym   the symbol whose members are requested
-      * @param scope which members to include; defaults to `MemberScope.Declared`
-      * @return the member symbols; empty when `sym` has no members in the given scope
-      */
-    def members(sym: Symbol, scope: MemberScope = MemberScope.Declared)(using Frame): Chunk[Symbol] < Sync =
-        classpath.map: cp =>
-            scope match
-                case MemberScope.Declared =>
-                    (sym match
-                        case c: Symbol.ClassLike => c.declarationIds
-                        case p: Symbol.Package   => p.memberIds
-                        case _                   => Chunk.empty
-                    ).flatMap(id => cp.symbol(id).toChunk)
-                case MemberScope.Inherited =>
-                    val declIds = sym match
-                        case c: Symbol.ClassLike => c.declarationIds
-                        case p: Symbol.Package   => p.memberIds
-                        case _                   => Chunk.empty
-                    val directNames = scala.collection.mutable.HashSet.empty[String]
-                    declIds.foreach(id => cp.symbol(id).foreach(s => discard(directNames.add(s.simpleName))))
-                    allMembersOf(sym, cp).filter(s => !directNames.contains(s.simpleName))
-                case MemberScope.All => allMembersOf(sym, cp)
-
-    /** Find a member of `sym` by simple name within the given scope.
-      *
-      * Calls `members(sym, scope)` and returns the first symbol whose `simpleName` equals
-      * `name`. Returns `Maybe.Absent` when no member with that name is found in the given
-      * scope.
-      *
-      * When multiple overloads exist under the same simple name, the first one in the
-      * `members` result is returned. Use `members(sym, scope)` and filter manually when
-      * overload discrimination is required.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param sym   the owning symbol to search
-      * @param name  the simple (unqualified) member name to look up
-      * @param scope which members to search; defaults to `MemberScope.Declared`
-      * @return the first matching member symbol, or `Maybe.Absent`
-      */
-    def findMember(sym: Symbol, name: String, scope: MemberScope = MemberScope.Declared)(using Frame): Maybe[Symbol] < Sync =
-        members(sym, scope).map(ms => Maybe.fromOption(ms.find(_.simpleName == name)))
-
-    /** Find a directly-declared member of `sym` by simple name.
-      *
-      * Shorthand for `findMember(sym, name, MemberScope.Declared)`. Searches only symbols
-      * declared on `sym` itself, not symbols inherited from parent types.
-      *
-      * Returns `Maybe.Absent` when no declared member with that simple name exists. When
-      * inherited members should be considered, use `findMember` with `MemberScope.All`.
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param sym  the owning symbol to search
-      * @param name the simple (unqualified) member name to look up
-      * @return the first matching declared member symbol, or `Maybe.Absent`
-      */
-    def findDeclaredMember(sym: Symbol, name: String)(using Frame): Maybe[Symbol] < Sync =
-        findMember(sym, name, MemberScope.Declared)
-
-    /** Return `true` when `sym` carries the Scala or Java annotation with the given FQN.
-      *
-      * Checks the annotation list of `sym` against `fqn`:
-      * - For Scala annotations: resolves `annotationType` to its FQN string via
-      *   `cp.typeFqnStringUnsafe` and compares to `fqn`.
-      * - For Java annotations (`Symbol.Field` and `Symbol.ClassLike`): resolves
-      *   `annotationClass` to its full name via `cp.fullNameUnsafe` and compares.
-      *
-      * Symbol kinds with no annotation storage (e.g. raw `Symbol.Package`) always return
-      * `false`. The check is linear in the number of annotations on `sym`.
-      *
-      * Effect row: `< Sync`. The `Sync.Unsafe.defer` inside confines the unsafe FQN
-      * resolution within a safe effect boundary.
-      *
-      * @param sym the symbol to inspect
-      * @param fqn dotted FQN of the annotation class (e.g. `"scala.annotation.tailrec"`)
-      * @return `true` if at least one matching annotation is present, `false` otherwise
-      */
-    def hasAnnotation(sym: Symbol, fqn: String)(using Frame): Boolean < Sync =
-        classpath.flatMap: cp =>
-            Sync.Unsafe.defer:
-                def matchScala(a: Annotation): Boolean =
-                    cp.typeFqnStringUnsafe(a.annotationType) == fqn
-                def matchJava(a: Java.Annotation): Boolean =
-                    import Name.asString
-                    cp.fullNameUnsafe(a.annotationClass).asString == fqn
-                sym match
-                    case c: Symbol.ClassLike    => c.annotations.exists(matchScala) || c.javaAnnotations.exists(matchJava)
-                    case m: Symbol.Method       => m.annotations.exists(matchScala)
-                    case v: Symbol.Val          => v.annotations.exists(matchScala)
-                    case w: Symbol.Var          => w.annotations.exists(matchScala)
-                    case f: Symbol.Field        => f.javaAnnotations.exists(matchJava)
-                    case t: Symbol.TypeAlias    => t.annotations.exists(matchScala)
-                    case t: Symbol.OpaqueType   => t.annotations.exists(matchScala)
-                    case t: Symbol.AbstractType => t.annotations.exists(matchScala)
-                    case p: Symbol.Parameter    => p.annotations.exists(matchScala)
-                    case _                      => false
-                end match
-
-    /** Find the first Scala or Java annotation matching `fqn` on `sym`.
-      *
-      * Returns `Maybe.Present(annotation)` for the first annotation whose class FQN equals
-      * `fqn`, where the union type `Annotation | Java.Annotation` carries either a decoded
-      * Scala `Annotation` (with typed arguments) or a raw `Java.Annotation`.
-      *
-      * For `Symbol.ClassLike`, Scala annotations are checked first; if none match, Java
-      * annotations are checked. For `Symbol.Field`, only Java annotations are checked.
-      *
-      * Returns `Maybe.Absent` when no matching annotation exists on `sym`, or when `sym`
-      * is a kind that does not carry annotations (e.g., a bare `Symbol.Package`).
-      *
-      * Effect row: `< Sync`. The `Sync.Unsafe.defer` confines unsafe FQN resolution.
-      *
-      * @param sym the symbol to inspect
-      * @param fqn dotted FQN of the annotation class
-      * @return the first matching annotation, or `Maybe.Absent`
-      */
-    def findAnnotation(sym: Symbol, fqn: String)(using Frame): Maybe[Annotation | Java.Annotation] < Sync =
-        classpath.flatMap: cp =>
-            Sync.Unsafe.defer:
-                def matchScala(a: Annotation): Boolean =
-                    cp.typeFqnStringUnsafe(a.annotationType) == fqn
-                def matchJava(a: Java.Annotation): Boolean =
-                    import Name.asString
-                    cp.fullNameUnsafe(a.annotationClass).asString == fqn
-                sym match
-                    case c: Symbol.ClassLike =>
-                        Maybe.fromOption(c.annotations.find(matchScala).orElse(c.javaAnnotations.find(matchJava)))
-                    case m: Symbol.Method       => Maybe.fromOption(m.annotations.find(matchScala))
-                    case v: Symbol.Val          => Maybe.fromOption(v.annotations.find(matchScala))
-                    case w: Symbol.Var          => Maybe.fromOption(w.annotations.find(matchScala))
-                    case f: Symbol.Field        => Maybe.fromOption(f.javaAnnotations.find(matchJava))
-                    case t: Symbol.TypeAlias    => Maybe.fromOption(t.annotations.find(matchScala))
-                    case t: Symbol.OpaqueType   => Maybe.fromOption(t.annotations.find(matchScala))
-                    case t: Symbol.AbstractType => Maybe.fromOption(t.annotations.find(matchScala))
-                    case p: Symbol.Parameter    => Maybe.fromOption(p.annotations.find(matchScala))
-                    case _                      => Maybe.Absent
-                end match
-
-    /** Return all symbols in the loaded classpath carrying the annotation with `fqn`.
-      *
-      * Delegates to `Classpath.symbolsAnnotatedWith`, which performs a full linear scan of
-      * `cp.symbols` and checks each symbol against the given annotation FQN (same matching
-      * logic as `hasAnnotation`). For large classpaths this is O(n) in the number of loaded
-      * symbols; consider caching the result in the caller when querying the same annotation
-      * repeatedly.
-      *
-      * Effect row: `< Sync`. The scan runs inside a `Sync`-suspended fiber step to confine
-      * the unsafe annotation resolution.
-      *
-      * @param fqn dotted FQN of the annotation class to scan for
-      * @return all symbols carrying at least one annotation of the given FQN; empty when none
-      */
-    def symbolsAnnotatedWith(fqn: String)(using Frame): Chunk[Symbol] < Sync =
-        classpath.flatMap(_.symbolsAnnotatedWith(fqn))
-
-    /** Decode the body tree of sym, memoizing the result in the active DecodeContext.
-      *
-      * Returns `Absent` for symbols whose `bodyRecord` slot is `Absent` (Package, Java, and symbols without an AST
-      * body slice), and also returns `Absent` when called outside a `withClasspath(roots,...)` or `withPickles`
-      * scope (i.e. when `TastyState.bindingLocal` holds a `Binding` with no `DecodeContext`).
-      *
-      * Memoization: the first call for a given `sym` decodes the bytes and stores the result (success or failure)
-      * in the `DecodeContext`'s `bodyMemo`. All subsequent calls for the same `sym` return the stored result
-      * without re-decoding. The memo is keyed by `sym.id` (SymbolId) and is per-`withClasspath` invocation;
-      * a second `withClasspath` call produces a fresh `DecodeContext` with an empty memo.
-      *
-      * INV-009 site-3: `AllowUnsafe` is confined to `Sync.Unsafe.defer`; it does not appear on this signature.
-      * INV-010: the top-level signature does not carry `AllowUnsafe`.
-      */
-    def bodyTree(sym: Symbol)(using frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
-        TastyState.bindingLocal.use: mbind =>
-            val maybeCtx = mbind.flatMap(_.decodeCtx)
-            if maybeCtx.isEmpty then Maybe.Absent
-            else
-                val ctx  = maybeCtx.get
-                val blob = ctx.bodyStore.get(sym.id)
-                if blob == null then Maybe.Absent
-                else
-                    val cp = mbind.get.cp
-                    Sync.Unsafe.defer:
-                        // INV-009 site-3: Sync.Unsafe.defer is the only AllowUnsafe in the public query layer.
-                        val cached = ctx.bodyMemo.get(sym.id)
-                        if cached != null then
-                            cached match
-                                case Result.Success(t) => Maybe(t)
-                                case Result.Failure(e) => Abort.fail(e)
-                                case Result.Panic(t)   => throw t
-                        else
-                            val result: Result[TastyError, Tree] =
-                                try
-                                    val syms = cp.symbols
-                                    Result.Success(kyo.internal.tasty.reader.TreeUnpickler.decodeSync(
-                                        blob,
-                                        sym,
-                                        idx => if idx >= 0 && idx < syms.size then syms(idx) else sym
-                                    ))
-                                catch
-                                    case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
-                                        Result.Failure(TastyError.MalformedSection("ASTs", ex.getMessage, ex.byteOffset))
-                                    case _: ArrayIndexOutOfBoundsException =>
-                                        Result.Failure(TastyError.MalformedSection("ASTs", "truncated body", 0L))
-                                    case _: IllegalStateException =>
-                                        // mmap arena closed before bodyTree ran; documented contract is ClasspathClosed.
-                                        Result.Failure(TastyError.ClasspathClosed(s"bodyTree(sym.id=${sym.id.value})"))
-                            ctx.bodyMemo.put(sym.id, result)
-                            result match
-                                case Result.Success(t) => Maybe(t)
-                                case Result.Failure(e) => Abort.fail(e)
-                                case Result.Panic(t)   => throw t
-                            end match
-                        end if
-                end if
-            end if
-    end bodyTree
-
-    /** Resolve the symbol referenced by a `Type.Named`.
-      *
-      * Returns `Maybe.Present(symbol)` when `tpe` is a `Type.Named` whose `SymbolId` resolves
-      * to a live symbol in the loaded classpath. Returns `Maybe.Absent` for all other `Type`
-      * shapes (e.g. `Type.Applied`, `Type.Array`, `Type.Function`).
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param tpe the type whose referenced symbol is requested
-      * @return the symbol wrapped in `Maybe.Present`, or `Maybe.Absent` for non-Named types
-      */
-    def typeSymbol(tpe: Type)(using Frame): Maybe[Symbol] < Sync =
-        classpath.map: cp =>
-            tpe match
-                case Type.Named(id) => cp.symbol(id)
-                case _              => Maybe.Absent
-
-    /** Structural subtype check between two `Type` values.
-      *
-      * Returns a `SubtypeVerdict`:
-      * - `SubtypeVerdict.Sub`: `tpe` is a structural subtype of `other`.
-      * - `SubtypeVerdict.NotSub`: `tpe` is not a subtype of `other`.
-      * - `SubtypeVerdict.Indeterminate`: the walk exhausted the budget (depth 64) without
-      *   a definitive answer, or the type shapes were unsupported.
-      *
-      * Unhandled parent-walk shapes are collected in `decodeCtx.subtypingErrors` during the
-      * call and folded into `cp.errors` on the next `Tasty.classpath` read within the scope
-      * (Q-003 binding). The verdict signature carries no `Abort[TastyError]` row; diagnostics
-      * are surfaced through the error channel.
-      *
-      * Effect row: `< Sync`. The check runs inside `Sync.defer` rather than returning a
-      * plain value because it reads the `TastyState.bindingLocal`.
-      *
-      * @param tpe   the candidate subtype
-      * @param other the candidate supertype
-      * @return the subtype verdict
-      */
-    def isSubtypeOf(tpe: Type, other: Type)(using Frame): SubtypeVerdict < Sync =
-        TastyState.bindingLocal.use: mbind =>
-            val binding = mbind.getOrElse(TastyState.global)
-            val cp      = binding.cp
-            val errAcc  = binding.decodeCtx.map(_.subtypingErrors).getOrElse(null)
-            Sync.defer(kyo.internal.tasty.type_.Subtyping.isSubtype(tpe, other, cp, budget = 64, errAcc))
-
-    /** Render a `Type` as a human-readable string.
-      *
-      * Recursively converts the `Type` ADT to a display string. `Type.Named` nodes are
-      * resolved to their symbol's `simpleName` via the classpath; unresolved ids render as
-      * `"<unresolved>"`. Composite types render in a Scala-like syntax (e.g.
-      * `"List[String]"`, `"(Int, String) => Boolean"`).
-      *
-      * Effect row: `< Sync` (lazy classpath init on first access).
-      *
-      * @param tpe the type to render
-      * @return a human-readable string representation
-      */
-    def typeShow(tpe: Type)(using Frame): String < Sync =
-        classpath.map: cp =>
-            import Name.asString
-            def renderType(t: Type): String = t match
-                case Type.Named(id)           => cp.symbol(id).map(_.name.asString).getOrElse("<unresolved>")
-                case Type.Applied(base, args) => s"${renderType(base)}[${args.map(renderType).mkString(", ")}]"
-                case Type.Array(elem)         => s"${renderType(elem)}[]"
-                case Type.Function(ps, r) =>
-                    s"(${ps.map(renderType).mkString(", ")}) => ${renderType(r)}"
-                case Type.ContextFunction(ps, r) => s"(${ps.map(renderType).mkString(", ")}) ?=> ${renderType(r)}"
-                case Type.Tuple(es)              => s"(${es.map(renderType).mkString(", ")})"
-                case Type.Nothing                => "Nothing"
-                case Type.Any                    => "Any"
-                case other                       => other.toString
-            renderType(tpe)
-
-    /** Human-readable rendering of a Tree (resolves symbols and types via the Classpath). */
-    def treeShow(tree: Tree)(using Frame): String < Sync =
-        classpath.map(cp => kyo.internal.tasty.reader.TreeShow.show(tree, cp))
 
     // ── Private helpers ─────────────────────────────────────────────────────
 
