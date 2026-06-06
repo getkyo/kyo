@@ -823,4 +823,162 @@ class ChartMorphTest extends Test:
         end for
     }
 
+    // ---- Colliding-toString transition tests (the residual Phase-8 bug) ----
+    //
+    // Col.Red and Col.Blue both override toString to "color". Under the old label-string keying
+    // the transition geometry map stores both series under the same key "line-0-color" (or
+    // "area-0-color"), so Red's geometry silently overwrites Blue's (or vice versa). On the
+    // second emission each series looks up the wrong prior geometry and morphs from a crossed
+    // or merged path. After the fix (TransKey keyed by CatKey identity) the two series stay
+    // distinct and each morphs from its OWN prior path.
+    //
+    // Layout (color-channel line/area: legend at Top, reserveTop=true adds LegendReservedH=20):
+    //   plotY = MarginTop + LegendReservedH = 20 + 20 = 40
+    //   plotH = 480 - 20 (top) - 20 (legend) - 0 (bottom legend) - 40 (bottom margin) = 400
+    //   baseline = plotY + plotH = 440
+    //   Band scale (Jan, Feb): slot=280, bandW=252, px_Jan=200, px_Feb=480.
+    //   Y scale linear(0, 4000): pixel(v) = 440 - v * (400/4000) = 440 - v*0.1
+    //     1000 -> 340, 2000 -> 240, 3000 -> 140
+    //     500  -> 390, 1500 -> 290, 800 -> 360, 1200 -> 320
+
+    "colliding-toString LINE: Red morphs from Red's own prior path, Blue from Blue's own prior path" in run {
+        // Emission 1:
+        //   Red: Jan=1000 (py=340), Feb=2000 (py=240) -> "M200 340 L480 240"
+        //   Blue: Jan=500 (py=390), Feb=1500 (py=290)  -> "M200 390 L480 290"
+        //   Old bug: both stored under key "line-0-color"; Blue overwrites Red (last wins).
+        //   After emission 1, currentGeom["line-0-color"] = Blue's path "M200 390 L480 290".
+        // Emission 2:
+        //   Red: Jan=2000 (py=240), Feb=3000 (py=140) -> "M200 240 L480 140"
+        //   Blue: Jan=800 (py=360), Feb=1200 (py=320)  -> "M200 360 L480 320"
+        //   Old bug: both look up key "line-0-color" -> find Blue's emission-1 path "M200 390 L480 290"
+        //     -> Red morphs from Blue's path (WRONG), Blue morphs from itself only by accident.
+        //   After fix: Red looks up TransKey.Series(0, CatKey(ColTag, Red)) -> "M200 340 L480 240" (CORRECT).
+        //              Blue looks up TransKey.Series(0, CatKey(ColTag, Blue)) -> "M200 390 L480 290" (CORRECT).
+        val e1 = Chunk(
+            ColSale("Jan", Rev(1000.0), Col.Red),
+            ColSale("Feb", Rev(2000.0), Col.Red),
+            ColSale("Jan", Rev(500.0), Col.Blue),
+            ColSale("Feb", Rev(1500.0), Col.Blue)
+        )
+        val e2 = Chunk(
+            ColSale("Jan", Rev(2000.0), Col.Red),
+            ColSale("Feb", Rev(3000.0), Col.Red),
+            ColSale("Jan", Rev(800.0), Col.Blue),
+            ColSale("Feb", Rev(1200.0), Col.Blue)
+        )
+        for
+            ref <- Signal.initRef(e1)
+            spec = UI.chart(ref: Signal[Chunk[ColSale]])(
+                line(x = _.month, y = _.revenue, color = _.col)
+            ).yScale(_.linear(0.0, 4000.0))
+                .animate(_.ease(300.millis))
+            root = summon[Conversion[ChartSpec[ColSale], Svg.Root]](spec)
+            // Emission 1: store geometry for both series under CatKey-based keys.
+            _ <- HtmlRenderer.render(root, Seq.empty)
+            // Emission 2: each series must morph from its OWN prior path.
+            _    <- ref.set(e2)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // There must be exactly 2 <animate attributeName="d"> elements (one per series).
+            val animateCount = html.split("<animate").length - 1
+            assert(
+                animateCount == 2,
+                s"colliding-toString LINE: expected 2 animates (one per series), got $animateCount:\n$html"
+            )
+            // Red series must morph from Red's own emission-1 path "M200 340 L480 240".
+            assert(
+                html.contains("from=\"M200 340 L480 240\""),
+                s"colliding-toString LINE: Red must morph from its own prior path M200 340 L480 240, got:\n$html"
+            )
+            // Red series must morph to its emission-2 path "M200 240 L480 140".
+            assert(
+                html.contains("to=\"M200 240 L480 140\""),
+                s"colliding-toString LINE: Red must morph to M200 240 L480 140, got:\n$html"
+            )
+            // Blue series must morph from Blue's own emission-1 path "M200 390 L480 290".
+            assert(
+                html.contains("from=\"M200 390 L480 290\""),
+                s"colliding-toString LINE: Blue must morph from its own prior path M200 390 L480 290, got:\n$html"
+            )
+            // Blue series must morph to its emission-2 path "M200 360 L480 320".
+            assert(
+                html.contains("to=\"M200 360 L480 320\""),
+                s"colliding-toString LINE: Blue must morph to M200 360 L480 320, got:\n$html"
+            )
+            // Red must NOT morph from Blue's prior path (the bug symptom).
+            // Before fix: both series use from="M200 390 L480 290" (Blue's path overwrote Red's).
+            // After fix: Red uses from="M200 340 L480 240", Blue uses from="M200 390 L480 290".
+            val pathSegments = html.split("<path ").toSeq.drop(1)
+            val redSeg       = pathSegments.find(_.contains("stroke=\"#3b82f6\""))
+            assert(
+                redSeg.isDefined && redSeg.get.contains("from=\"M200 340 L480 240\""),
+                s"colliding-toString LINE: Red (blue-stroked) must morph from Red's own path, not Blue's:\n${redSeg}"
+            )
+        end for
+    }
+
+    "colliding-toString AREA: Red morphs from Red's own prior area path, Blue from Blue's own prior area path" in run {
+        // Same scenario as the colliding-toString LINE test but with area marks.
+        // Area path = top edge forward + baseline return + close (baseline=440).
+        // Emission 1:
+        //   Red: Jan=1000 (py=340), Feb=2000 (py=240) -> "M200 340 L480 240 L480 440 L200 440 Z"
+        //   Blue: Jan=500 (py=390), Feb=1500 (py=290)  -> "M200 390 L480 290 L480 440 L200 440 Z"
+        //   Old bug: both stored under key "area-0-color"; Blue overwrites Red.
+        // Emission 2:
+        //   Red: Jan=2000 (py=240), Feb=3000 (py=140) -> "M200 240 L480 140 L480 440 L200 440 Z"
+        //   Blue: Jan=800 (py=360), Feb=1200 (py=320)  -> "M200 360 L480 320 L480 440 L200 440 Z"
+        //   Old bug: Red morphs from Blue's E1 area path (WRONG).
+        //   After fix: Red morphs from Red's own E1 area path (CORRECT).
+        val e1 = Chunk(
+            ColSale("Jan", Rev(1000.0), Col.Red),
+            ColSale("Feb", Rev(2000.0), Col.Red),
+            ColSale("Jan", Rev(500.0), Col.Blue),
+            ColSale("Feb", Rev(1500.0), Col.Blue)
+        )
+        val e2 = Chunk(
+            ColSale("Jan", Rev(2000.0), Col.Red),
+            ColSale("Feb", Rev(3000.0), Col.Red),
+            ColSale("Jan", Rev(800.0), Col.Blue),
+            ColSale("Feb", Rev(1200.0), Col.Blue)
+        )
+        for
+            ref <- Signal.initRef(e1)
+            spec = UI.chart(ref: Signal[Chunk[ColSale]])(
+                area(x = _.month, y = _.revenue, color = _.col)
+            ).yScale(_.linear(0.0, 4000.0))
+                .animate(_.ease(300.millis))
+            root = summon[Conversion[ChartSpec[ColSale], Svg.Root]](spec)
+            _    <- HtmlRenderer.render(root, Seq.empty)
+            _    <- ref.set(e2)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // Each series must have its own animate element.
+            val animateCount = html.split("<animate").length - 1
+            assert(
+                animateCount == 2,
+                s"colliding-toString AREA: expected 2 animates (one per series), got $animateCount:\n$html"
+            )
+            // Red area must morph from Red's own emission-1 path.
+            assert(
+                html.contains("from=\"M200 340 L480 240 L480 440 L200 440 Z\""),
+                s"colliding-toString AREA: Red must morph from its own prior path M200 340 ..., got:\n$html"
+            )
+            // Red area must morph to its emission-2 path.
+            assert(
+                html.contains("to=\"M200 240 L480 140 L480 440 L200 440 Z\""),
+                s"colliding-toString AREA: Red must morph to M200 240 L480 140 ..., got:\n$html"
+            )
+            // Blue area must morph from Blue's own emission-1 path.
+            assert(
+                html.contains("from=\"M200 390 L480 290 L480 440 L200 440 Z\""),
+                s"colliding-toString AREA: Blue must morph from its own prior path M200 390 ..., got:\n$html"
+            )
+            // Blue area must morph to its emission-2 path.
+            assert(
+                html.contains("to=\"M200 360 L480 320 L480 440 L200 440 Z\""),
+                s"colliding-toString AREA: Blue must morph to M200 360 L480 320 ..., got:\n$html"
+            )
+        end for
+    }
+
 end ChartMorphTest

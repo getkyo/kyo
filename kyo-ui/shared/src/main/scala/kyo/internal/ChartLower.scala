@@ -3435,6 +3435,32 @@ private[kyo] object ChartLower:
         final case class LinePath(pathData: Svg.PathData) extends MarkGeom
     end MarkGeom
 
+    /** Key type for the transition geometry maps (`fromGeom` / `currentGeom`).
+      *
+      * Replaces the old `String` key (`"line-$markIdx-$seriesLabel"`, `"area-$markIdx-$seriesLabel"`)
+      * whose label was derived from the category's `toString`. Two distinct enum cases whose `toString`
+      * collides (e.g. both return `"color"`) would map to the SAME string key, causing one series to
+      * overwrite the other's stored geometry. The result: a surviving series morphs from the WRONG
+      * prior path (the other series' geometry). `TransKey` uses value identity, not string labels:
+      *
+      *   - `BarSlot(rowKey)`: a simple bar row, keyed by the x-domain string. The bar transition
+      *     already uses `rowKey(spec, mark, row)` (x-domain string); `BarSlot` wraps it so it
+      *     never collides with a line/area key even if the strings are identical.
+      *   - `Series(markIdx, cat)`: a line or area color-category series keyed by `(markIdx, CatKey)`.
+      *     `CatKey` pairs the raw value with its compile-time-derived `ConcreteTag`, so two enum cases
+      *     with identical `toString` stay distinct. Distinct-toString categories key identically to the
+      *     old label scheme (CatKey value-equality reproduces the old label grouping when `toString` is
+      *     injective), so the normal case is byte-identical.
+      *   - `SingleSeries(markIdx)`: a line or area with NO color channel (single-path series). Uses
+      *     only `markIdx` as the key, matching the old `"_single"` sentinel label but without any
+      *     string representation that could collide with a user-supplied category label.
+      */
+    private[kyo] enum TransKey derives CanEqual:
+        case BarSlot(rowKey: String)
+        case Series(markIdx: Int, cat: ChartFoundations.CatKey)
+        case SingleSeries(markIdx: Int)
+    end TransKey
+
     /** Three-slot transition state for a live chart, held in a chart-private `AtomicRef.Unsafe`.
       *
       * Slots:
@@ -3458,8 +3484,8 @@ private[kyo] object ChartLower:
       */
     final private[kyo] case class TransState[A](
         lastRows: Chunk[A],
-        fromGeom: Map[String, MarkGeom],
-        currentGeom: Map[String, MarkGeom]
+        fromGeom: Map[TransKey, MarkGeom],
+        currentGeom: Map[TransKey, MarkGeom]
     )
 
     private[kyo] object TransState:
@@ -3629,11 +3655,11 @@ private[kyo] object ChartLower:
         ys: Scale,
         defaultFill: Style.Color,
         spec: ChartSpec[A],
-        fromGeom: Map[String, MarkGeom],
-        newGeom: Map[String, MarkGeom],
+        fromGeom: Map[TransKey, MarkGeom],
+        newGeom: Map[TransKey, MarkGeom],
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
         highlight: Maybe[Highlight[A]] = Absent
-    )(using Frame): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
+    )(using Frame): (Chunk[Svg.SvgElement], Map[TransKey, MarkGeom]) =
         val baseline = layout.plotBaseline
         val durStr   = formatDur(spec.animateCfg.duration)
         val animOk   = spec.animateCfg.enabled
@@ -3641,9 +3667,9 @@ private[kyo] object ChartLower:
         def loop(
             i: Int,
             acc: Chunk[(A, Svg.SvgElement)],
-            geom: Map[String, MarkGeom],
+            geom: Map[TransKey, MarkGeom],
             labels: Chunk[Svg.SvgElement]
-        ): (Chunk[(A, Svg.SvgElement)], Map[String, MarkGeom], Chunk[Svg.SvgElement]) =
+        ): (Chunk[(A, Svg.SvgElement)], Map[TransKey, MarkGeom], Chunk[Svg.SvgElement]) =
             if i >= rows.size then (acc, geom, labels)
             else
                 val row     = rows(i)
@@ -3655,12 +3681,12 @@ private[kyo] object ChartLower:
                         xDomain match
                             case Absent => (acc, geom, labels)
                             case Present(xd) =>
-                                val barX  = xs.apply(xd)
-                                val barW  = xs.bandwidth
-                                val barY  = ys.apply(yd)
-                                val barH  = baseline - barY
-                                val key   = rowKey(spec, mark, row)
-                                val newG2 = geom.updated(key, MarkGeom.Bar(barH, barY))
+                                val barX     = xs.apply(xd)
+                                val barW     = xs.bandwidth
+                                val barY     = ys.apply(yd)
+                                val barH     = baseline - barY
+                                val transKey = TransKey.BarSlot(rowKey(spec, mark, row))
+                                val newG2    = geom.updated(transKey, MarkGeom.Bar(barH, barY))
                                 // Attach interaction attrs (mirrors lowerBarSimple: buildInteractionAttrs per row).
                                 val iAttrs = buildInteractionAttrs(row, spec, internalHoverRef)
                                 val baseRect =
@@ -3669,7 +3695,7 @@ private[kyo] object ChartLower:
                                 val r: Svg.SvgElement =
                                     if !animOk then channelRect
                                     else
-                                        val (fromH, fromY) = Maybe.fromOption(fromGeom.get(key)) match
+                                        val (fromH, fromY) = Maybe.fromOption(fromGeom.get(transKey)) match
                                             case Present(MarkGeom.Bar(ph, py)) => (ph, py)
                                             case _                             => (0.0, baseline) // enter from baseline
                                         // channelRect is a Svg.Rect at runtime (applyBarChannels returns the rect with
@@ -3731,26 +3757,26 @@ private[kyo] object ChartLower:
         ys: Scale,
         defaultColor: Style.Color,
         spec: ChartSpec[A],
-        fromGeom: Map[String, MarkGeom],
-        newGeom: Map[String, MarkGeom],
+        fromGeom: Map[TransKey, MarkGeom],
+        newGeom: Map[TransKey, MarkGeom],
         markIdx: Int,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
         highlight: Maybe[Highlight[A]] = Absent
-    )(using Frame): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
+    )(using Frame): (Chunk[Svg.SvgElement], Map[TransKey, MarkGeom]) =
         val animOk = spec.animateCfg.enabled
         val durStr = formatDur(spec.animateCfg.duration)
-        // rawPathsWithLabel carries the category display label and the series-representative row alongside
-        // each path so the pathKey is keyed by series category identity (label), not by positional index.
-        // This makes the key stable across series add/remove/reorder: a surviving series finds its OWN
-        // prior geometry in fromGeom even when other series are removed from the middle.
+        // rawPathsWithKey carries the TransKey (CatKey-based series identity) and the series-representative
+        // row alongside each path. TransKey.Series keys by value identity (CatKey = tag + value), so two
+        // enum cases with colliding toString stay distinct. TransKey.SingleSeries is used when there is no
+        // color channel. Both keys are stable across series add/remove/reorder.
         // The representative row (repRow) is needed for withHighlight (mirrors lowerLine's tagged approach).
-        val rawPathsWithLabel: Chunk[(Svg.Path, String, Maybe[A])] = mark.color match
+        val rawPathsWithKey: Chunk[(Svg.Path, TransKey, Maybe[A])] = mark.color match
             case Absent =>
-                // No color channel: single series. Use "_single" as a stable label (not "0") so the key
-                // cannot collide with a color-channel series whose label happens to be "0".
+                // No color channel: single series. Use TransKey.SingleSeries(markIdx) as a stable key so
+                // it cannot collide with any color-channel series key.
                 // Pass Present(spec) and internalHoverRef so interaction attrs are attached to the path.
                 val path = lowerLineSeries(rows, mark, layout, xs, ys, defaultColor, Present(spec), internalHoverRef)
-                Chunk((path, "_single", rows.headMaybe))
+                Chunk((path, TransKey.SingleSeries(markIdx), rows.headMaybe))
             case Present(colorEnc) =>
                 // FIX B (transitions path, mirrors lowerLine): resolve per-series colors via resolvePalette
                 // (the same path the legend and the static line use) so an explicit categorical/sequential
@@ -3765,12 +3791,6 @@ private[kyo] object ChartLower:
                     rows,
                     r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r.asInstanceOf[A]))
                 )
-                // Build a CatKey -> label map from cats so we can look up the label for each catKey
-                // in the distinct iteration. cats is ordinal-sorted; distinct is encounter-ordered.
-                val catLabelByKey: Map[ChartFoundations.CatKey, String] =
-                    cats.foldLeft(Map.empty[ChartFoundations.CatKey, String]): (m, labelAndRaw) =>
-                        val key = ChartFoundations.categoryKey(colorEnc.tag, labelAndRaw._2)
-                        m.updated(key, labelAndRaw._1)
                 distinct.zipWithIndex.map:
                     case ((catKey, rep), seriesIdx) =>
                         val seriesRows = rows.filter(r =>
@@ -3779,24 +3799,27 @@ private[kyo] object ChartLower:
                         val strokeColor =
                             if resolved.isEmpty then DefaultPalette(seriesIdx % DefaultPalette.size)
                             else resolved(seriesIdx                           % resolved.size)
-                        val seriesLabel = catLabelByKey.getOrElse(catKey, seriesIdx.toString)
+                        // TransKey.Series keys by (markIdx, CatKey): value identity, not toString label.
+                        // Two enum cases with identical toString stay distinct because CatKey pairs the
+                        // raw value with its compile-time ConcreteTag.
+                        val transKey = TransKey.Series(markIdx, catKey)
                         // Pass Present(spec) and internalHoverRef so interaction attrs are attached.
                         val path = lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor, Present(spec), internalHoverRef)
-                        (path, seriesLabel, seriesRows.headMaybe)
+                        (path, transKey, seriesRows.headMaybe)
         // For each raw path: optionally attach a SMIL animate on `d`, then record the new PathData.
         // Also accumulate (repRow, emittedPath) pairs for withHighlight (mirrors lowerLine's tagged approach).
-        // pathKey = "line-$markIdx-$seriesLabel" is stable per (mark identity, series category identity),
-        // so a prior mark's geometry-count change does NOT shift this mark's key, and removing/reordering
-        // a color series does not cause a surviving series to look up a different series' prior geometry.
-        val (tagged, updatedGeom) = rawPathsWithLabel.foldLeft((Chunk.empty[(A, Svg.SvgElement)], newGeom)):
-            case ((accTagged, accGeom), (rawPath, seriesLabel, repRowMaybe)) =>
-                val pathKey  = s"line-$markIdx-$seriesLabel"
+        // TransKey is stable per (mark identity, series category identity): a prior mark's geometry-count
+        // change does NOT shift this mark's key, and removing/reordering a color series does not cause a
+        // surviving series to look up a different series' prior geometry. Colliding-toString categories
+        // stay distinct because TransKey uses CatKey (tag + value), not the display label string.
+        val (tagged, updatedGeom) = rawPathsWithKey.foldLeft((Chunk.empty[(A, Svg.SvgElement)], newGeom)):
+            case ((accTagged, accGeom), (rawPath, transKey, repRowMaybe)) =>
                 val newPd    = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
-                val newGeom2 = accGeom.updated(pathKey, MarkGeom.LinePath(newPd))
+                val newGeom2 = accGeom.updated(transKey, MarkGeom.LinePath(newPd))
                 val emittedPath: Svg.SvgElement =
                     if !animOk then rawPath
                     else
-                        Maybe.fromOption(fromGeom.get(pathKey)) match
+                        Maybe.fromOption(fromGeom.get(transKey)) match
                             case Present(MarkGeom.LinePath(prevPd)) =>
                                 // Compare command-type signatures (ordered ordinals), not just counts.
                                 // M-L-L and M-M-L both have 3 commands but different ordinals: the count
@@ -3848,12 +3871,12 @@ private[kyo] object ChartLower:
         ys: Scale,
         defaultColor: Style.Color,
         spec: ChartSpec[A],
-        fromGeom: Map[String, MarkGeom],
-        newGeom: Map[String, MarkGeom],
+        fromGeom: Map[TransKey, MarkGeom],
+        newGeom: Map[TransKey, MarkGeom],
         markIdx: Int,
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
         highlight: Maybe[Highlight[A]] = Absent
-    )(using Frame): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
+    )(using Frame): (Chunk[Svg.SvgElement], Map[TransKey, MarkGeom]) =
         // Stacked area: fall through to plain lowerArea (no per-group path tracking yet).
         // Pass internalHoverRef and highlight so interaction and highlight fire for stacked paths too.
         val isStacked = mark.y.isDefined && mark.stack.group.isDefined
@@ -3873,36 +3896,35 @@ private[kyo] object ChartLower:
             // compute below (mirrors lowerLineWithTransitions).
             val rawPaths: Chunk[Svg.Path] = lowerArea(rows, mark, layout, xs, ys, defaultColor, Present(spec), internalHoverRef).collect:
                 case p: Svg.Path => p
-            // Compute category labels and representative rows for each series so the pathKey for each
-            // area path is keyed by series category IDENTITY (label) rather than positional index,
-            // and withHighlight can tag each emitted path with its series-representative row.
-            // lowerArea emits one path per category in the ordinal order of collectColorCategoriesWithRaw,
-            // so rawPaths(i) corresponds to cats(i). For the no-color single-series case, use "_single".
-            val (seriesLabels, seriesRepRows): (Chunk[String], Chunk[Maybe[A]]) = mark.color match
-                case Absent => (Chunk("_single"), Chunk(rows.headMaybe))
+            // Compute TransKeys and representative rows for each series so the key for each area path
+            // is keyed by CatKey value identity rather than the label string. TransKey.Series(markIdx, catKey)
+            // keeps colliding-toString categories distinct. lowerArea emits one path per category in the
+            // ordinal order of collectColorCategoriesWithRaw, so rawPaths(i) corresponds to transKeys(i).
+            // For the no-color single-series case, use TransKey.SingleSeries(markIdx).
+            val (seriesTransKeys, seriesRepRows): (Chunk[TransKey], Chunk[Maybe[A]]) = mark.color match
+                case Absent => (Chunk(TransKey.SingleSeries(markIdx)), Chunk(rows.headMaybe))
                 case Present(colorEnc) =>
                     val colorEncAny: Encoding[A, Any] = colorEnc.asInstanceOf[Encoding[A, Any]]
                     val cats                          = collectColorCategoriesWithRaw(rows, colorEncAny)
                     val catKeys: Chunk[ChartFoundations.CatKey] =
                         cats.map { case (_, raw) => ChartFoundations.categoryKey(colorEncAny.tag, raw) }
-                    val labels = cats.map(_._1)
+                    val transKeys = catKeys.map(ck => TransKey.Series(markIdx, ck))
                     val repRows = catKeys.map: catKey =>
                         rows.filter(r => ChartFoundations.categoryKey(colorEncAny.tag, colorEncAny.accessor(r)) == catKey).headMaybe
-                    (labels, repRows)
-            // pathKey = "area-$markIdx-$seriesLabel" is stable per (mark identity, series category
-            // identity), so a prior mark's geometry-count change does NOT shift this mark's key, and
-            // removing/reordering a color series does not cause a surviving series to look up a
-            // different series' prior geometry.
+                    (transKeys, repRows)
+            // TransKey is stable per (mark identity, series category identity): a prior mark's
+            // geometry-count change does NOT shift this mark's key, and removing/reordering a color
+            // series does not cause a surviving series to look up a different series' prior geometry.
+            // Colliding-toString categories stay distinct because TransKey uses CatKey (tag + value).
             val (tagged, updatedGeom) = rawPaths.zipWithIndex.foldLeft((Chunk.empty[(A, Svg.SvgElement)], newGeom)):
                 case ((accTagged, accGeom), (rawPath, seriesIdx)) =>
-                    val seriesLabel = if seriesIdx < seriesLabels.size then seriesLabels(seriesIdx) else seriesIdx.toString
-                    val pathKey     = s"area-$markIdx-$seriesLabel"
-                    val newPd       = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
-                    val newGeom2    = accGeom.updated(pathKey, MarkGeom.LinePath(newPd))
+                    val transKey = if seriesIdx < seriesTransKeys.size then seriesTransKeys(seriesIdx) else TransKey.SingleSeries(markIdx)
+                    val newPd    = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
+                    val newGeom2 = accGeom.updated(transKey, MarkGeom.LinePath(newPd))
                     val emittedPath: Svg.SvgElement =
                         if !animOk then rawPath
                         else
-                            Maybe.fromOption(fromGeom.get(pathKey)) match
+                            Maybe.fromOption(fromGeom.get(transKey)) match
                                 case Present(MarkGeom.LinePath(prevPd)) =>
                                     // Compare command-type signatures (ordered ordinals), not just counts.
                                     // Mirrors the type-signature fix in lowerLineWithTransitions.
@@ -3964,11 +3986,11 @@ private[kyo] object ChartLower:
         val isRepeatPull = rows.equals(t.lastRows)
         // The animation origin is the geometry from the previous emission.
         // For a repeat pull it is t.fromGeom (already stored); for a new emission it is t.currentGeom.
-        val fromGeom: Map[String, MarkGeom] =
+        val fromGeom: Map[TransKey, MarkGeom] =
             if isRepeatPull then t.fromGeom else t.currentGeom
         // Produce SVG shapes and accumulate new geometry in a single pass.
         // Each mark with no explicit color channel uses a distinct palette color by its index (per-mark default).
-        val (shapes, newGeom) = spec.marks.zipWithIndex.foldLeft((Chunk.empty[Svg.SvgElement], Map.empty[String, MarkGeom])):
+        val (shapes, newGeom) = spec.marks.zipWithIndex.foldLeft((Chunk.empty[Svg.SvgElement], Map.empty[TransKey, MarkGeom])):
             case ((accElems, accGeom), (mark, markIdx)) =>
                 val markColor = markDefaultColor(spec.theme, markIdx)
                 val ys = mark match
