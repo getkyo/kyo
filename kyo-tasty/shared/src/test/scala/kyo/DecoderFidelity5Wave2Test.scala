@@ -574,13 +574,14 @@ class DecoderFidelity5Wave2Test extends Test:
                     end match
     }
 
-    // W2.31: classFqn[A] for nested kyo types.
-    "W2.31: classFqn for kyo types returns a non-empty FQN" in run {
+    // W2.31: classFqn[A] yields the bare class FQN, stripping type parameters so the result is
+    // directly usable as a key into Classpath.findClass / findClassLike / findSymbol.
+    "W2.31: classFqn returns the bare dotted class FQN" in run {
         Sync.defer:
-            val a = Tasty.classFqn[Int]
-            val b = Tasty.classFqn[String]
-            assert(a.nonEmpty, "classFqn[Int] should be non-empty")
-            assert(b.nonEmpty, "classFqn[String] should be non-empty")
+            assert(Tasty.classFqn[Int] == "scala.Int")
+            assert(Tasty.classFqn[String] == "java.lang.String")
+            assert(Tasty.classFqn[List[Int]] == "scala.collection.immutable.List")
+            assert(Tasty.classFqn[Map[String, Int]] == "scala.collection.immutable.Map")
             succeed
     }
 

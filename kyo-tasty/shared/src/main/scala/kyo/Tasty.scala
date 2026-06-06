@@ -138,16 +138,21 @@ object Tasty:
     // < Sync in their effect row because the lazy fallback TastyState.global may trigger
     // initialization on the first call (INV-009 site-2).
 
-    /** Expand to the fully-qualified dotted name of `A` at compile time via the `Tag` machinery.
+    /** Expand to the fully-qualified dotted name of `A`'s class symbol at compile time.
       *
       * Use when the type is known statically and the caller wants the FQN string for a `findClass` / `requireClass`
       * lookup without spelling out the literal. `classFqn[example.Circle]` evaluates to `"example.Circle"`;
       * `classFqn[scala.collection.immutable.List]` evaluates to `"scala.collection.immutable.List"`.
       *
-      * The dotted form matches what `Classpath.findClass`, `findClassLike`, and `findSymbol` accept; the JVM
-      * binary form (`example/Circle$Inner`) is reachable through `Classpath.findClassByBinary` instead.
+      * Type parameters are stripped: `classFqn[List[Int]]` returns `"scala.collection.immutable.List"`, not
+      * `"scala.collection.immutable.List[scala.Int]"`. The bare dotted form is what `Classpath.findClass`,
+      * `findClassLike`, and `findSymbol` accept; the JVM binary form (`example/Circle$Inner`) is reachable
+      * through `Classpath.findClassByBinary` instead.
+      *
+      * Implemented as a Scala 3 quoted macro reading `TypeRepr.of[A].typeSymbol.fullName`; no runtime cost,
+      * no `Tag` dependency.
       */
-    def classFqn[A](using t: Tag[A]): String = t.show
+    inline def classFqn[A]: String = ${ kyo.internal.tasty.macros.ClassFqnMacro.impl[A] }
 
     /** Look up a class symbol by fully-qualified dotted name.
       *
