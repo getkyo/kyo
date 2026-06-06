@@ -3404,8 +3404,7 @@ private[kyo] object ChartLower:
       * If the command counts DIFFER (e.g. a category was added or removed), the path SNAPS with no
       * animate child. This is a documented v1 limitation: a structural path morph requires a bounded
       * stepped-interpolation fiber that can only be launched from an effectful mount hook, which the
-      * pure `Svg.Root` lowering does not provide. `AnimateConfig.morphSteps` is reserved for a future
-      * effectful chart mount API and is not used here.
+      * pure `Svg.Root` lowering does not provide.
       */
     sealed private[kyo] trait MarkGeom
     private[kyo] object MarkGeom:
@@ -3671,8 +3670,7 @@ private[kyo] object ChartLower:
       *   - Different count (structural change, e.g. a category added or removed): the path snaps with no
       *     animate child. This is a documented v1 limitation: a structural path morph requires a bounded
       *     stepped-interpolation fiber that can only be launched from an effectful mount hook, which the
-      *     pure `Svg.Root` lowering does not provide. `AnimateConfig.morphSteps` is reserved for a
-      *     future effectful chart mount API.
+      *     pure `Svg.Root` lowering does not provide.
       *
       * The current `PathData` is always recorded in `newGeom` under `"line-$markIdx-$seriesIdx"` keys so
       * the next emission can use it as the `from` path. The key is stable per (mark, series) identity:

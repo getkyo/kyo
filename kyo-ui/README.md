@@ -1337,7 +1337,7 @@ val livePage: UI < Async =
         UI.div(liveChart)
 ```
 
-`.animate(_.ease(300.millis))` tweens same-structure path morphs on a fixed ease-in-out-cubic curve (only the duration is configurable) and snaps on a structural change, such as a category added or removed; for bars, the height/y tween fires, but a bar carrying a color or stack channel snaps rather than tweens. `AnimateConfig.morphSteps` is reserved and not yet consulted.
+`.animate(_.ease(300.millis))` tweens same-structure path morphs on a fixed ease-in-out-cubic curve (only the duration is configurable) and snaps on a structural change, such as a category added or removed; for bars, the height/y tween fires, but a bar carrying a color or stack channel snaps rather than tweens.
 
 ### Interaction
 

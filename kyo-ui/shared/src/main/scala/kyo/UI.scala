@@ -2688,17 +2688,15 @@ object UI:
         /** Configures animation for live charts.
           *
           * `ease(d)` enables one-shot SMIL transitions with duration `d`. `none` disables all transitions. The easing
-          * function is fixed to ease-in-out-cubic (the demo's pattern); named easing variants are additive extensions.
-          * `morphSteps` is RESERVED and not consulted by the current declarative-SMIL lowering. The current lowering
+          * function is fixed to ease-in-out-cubic; named easing variants are additive extensions. The current lowering
           * animates same-structure path morphs (equal command count) with a declarative SMIL `animate` on `d` and
-          * snaps structural changes (different command count, i.e. a category added or removed); snapping is the
-          * documented v1 limitation. `morphSteps` is the hook for a future effectful chart-mount API.
+          * snaps structural changes (different command count, i.e. a category added or removed); snapping is a
+          * documented limitation.
           * Used as the argument to `.animate(f)`: write `_.ease(300.millis)` or `_.none`.
           */
         final case class AnimateConfig(
             enabled: Boolean,
-            duration: Duration,
-            morphSteps: Int
+            duration: Duration
         ):
             def ease(d: Duration): AnimateConfig = copy(enabled = true, duration = d)
             def none: AnimateConfig              = copy(enabled = false)
@@ -2707,7 +2705,7 @@ object UI:
 
         object AnimateConfig:
             val default: AnimateConfig =
-                AnimateConfig(true, Duration.fromJava(java.time.Duration.ofMillis(300)), morphSteps = 24)
+                AnimateConfig(true, Duration.fromJava(java.time.Duration.ofMillis(300)))
 
         /** Overrides the automatically-inferred scale for an axis.
           *

@@ -19,7 +19,7 @@ import scala.language.implicitConversions
   *   A structural path morph (different command count, e.g. a category added or removed) requires a
   *   bounded stepped-interpolation fiber that can only be launched from an effectful mount hook. The
   *   pure `Svg.Root` lowering does not provide such a hook, so structural morphs SNAP with no animate
-  *   child. `AnimateConfig.morphSteps` is reserved for a future effectful chart mount API.
+  *   child.
   *
   * Layout defaults: plotX=60, plotY=20, plotW=560, plotH=420, baseline=440
   * (chart 640x480, MarginL=60, MarginR=20, MarginT=20, MarginB=40).
