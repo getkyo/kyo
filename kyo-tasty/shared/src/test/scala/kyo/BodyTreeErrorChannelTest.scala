@@ -19,7 +19,9 @@ import scala.collection.immutable.IntMap
   *
   * Leaves:
   *   1. MalformedVarintException maps to TastyError.MalformedSection via the NonFatal arm.
-  *   2. ArrayIndexOutOfBoundsException still maps to TastyError.MalformedSection (regression).
+  *   2. ArrayIndexOutOfBoundsException still maps to TastyError.MalformedSection (regression). JVM
+  *      only (runJVM): on Scala.js the equivalent bounds violation throws UndefinedBehaviorError
+  *      (java.lang.Error), which is fatal; leaves 1, 3, and 4 cover this contract cross-platform.
   *   3. Cached failure re-serves as Failure, not Panic (dead Result.Panic arm confirmed removed).
   *   4. No Sync panic escapes under a synthetic corrupt-body scenario.
   */
@@ -106,7 +108,12 @@ class BodyTreeErrorChannelTest extends Test:
     // The previous catch block handled ArrayIndexOutOfBoundsException explicitly with a
     // "truncated body" message. After F-015, this arm is retained unchanged above the NonFatal arm.
     // This leaf confirms the specific arm still fires (not the broader NonFatal fallback).
-    "Leaf 2: ArrayIndexOutOfBoundsException still maps to TastyError.MalformedSection truncated-body" in run {
+    //
+    // JVM only: asserts JVM-specific ArrayIndexOutOfBoundsException identity. On Scala.js the
+    // equivalent bounds violation produces org.scalajs.linker.runtime.UndefinedBehaviorError (extends
+    // java.lang.Error, not Exception), which is fatal and would crash the test process because neither
+    // the AIOOBE arm nor NonFatal can catch it. The other 3 leaves remain cross-platform.
+    "Leaf 2: ArrayIndexOutOfBoundsException still maps to TastyError.MalformedSection truncated-body" in runJVM {
         // One byte: TERMREFdirect tag (0x3E). bodyEnd=12 is beyond the array length, so the JVM
         // throws ArrayIndexOutOfBoundsException when readByte tries to access bytes(1). The existing
         // specific arm catches this and converts it to MalformedSection("ASTs", "truncated body", 0L).
