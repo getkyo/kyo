@@ -3685,18 +3685,33 @@ private[kyo] object ChartLower:
       * the previous and new paths have the same command structure.
       *
       * When animation is enabled and a previous `MarkGeom.LinePath` entry exists in `fromGeom` for the
-      * same path slot, the command counts of the previous and new paths are compared:
-      *   - Same count (structural match, stable x-categories, changing y-values): the path is emitted
-      *     with one `Svg.animate` child `attributeName="d" from={prevD} to={newD}`. The browser drives
-      *     the interpolation declaratively; no fiber or mount hook is required.
-      *   - Different count (structural change, e.g. a category added or removed): the path snaps with no
-      *     animate child. This is a documented v1 limitation: a structural path morph requires a bounded
-      *     stepped-interpolation fiber that can only be launched from an effectful mount hook, which the
-      *     pure `Svg.Root` lowering does not provide.
+      * same path slot, the command-type signatures of the previous and new paths are compared:
+      *   - Same type signature (structural match, stable x-categories, changing y-values): the path is
+      *     emitted with one `Svg.animate` child `attributeName="d" from={prevD} to={newD}`. The browser
+      *     drives the interpolation declaratively; no fiber or mount hook is required.
+      *   - Different type signature (structural change, e.g. a gap introduction that inserts an extra
+      *     MoveTo, or a category added/removed): the path snaps with no animate child. This is a
+      *     documented v1 limitation: a structural path morph requires a bounded stepped-interpolation
+      *     fiber that can only be launched from an effectful mount hook, which the pure `Svg.Root`
+      *     lowering does not provide.
       *
-      * The current `PathData` is always recorded in `newGeom` under `"line-$markIdx-$seriesIdx"` keys so
-      * the next emission can use it as the `from` path. The key is stable per (mark, series) identity:
-      * a prior mark's geometry-count change does NOT shift a later mark's key.
+      * The type-signature comparison (ordered list of PathCommand ordinals) is strictly stronger than a
+      * count comparison: `M L L` and `M M L` both have 3 commands but different ordinal sequences and
+      * MUST NOT morph (SVG `d` interpolation requires identical command-type sequences). The count gate
+      * was a latent bug when a gap introduction kept the total count the same but changed the command
+      * types (e.g. one segment with 3 points -> two segments with 1 and 2 points after a gap).
+      *
+      * The current `PathData` is always recorded in `newGeom` under `"line-$markIdx-$seriesLabel"` keys
+      * so the next emission can use it as the `from` path. The key is stable per (mark, series CATEGORY
+      * IDENTITY): `seriesLabel` is the display label of the color category (from
+      * `collectColorCategoriesWithRaw`), so the key is stable across series add/remove/reorder. A prior
+      * mark's geometry-count change does NOT shift a later mark's key. For the no-color single-series
+      * case, `seriesLabel = "_single"`.
+      *
+      * Note: two color categories with identical display labels (e.g. both `toString` = "color") share
+      * the same `seriesLabel` and therefore share the same pathKey. This is the same documented
+      * limitation as the legend's `hiddenSeries: Set[String]`; label-based keying is the correct
+      * improvement over positional-index keying for add/remove/reorder stability.
       *
       * N4-guard: no `url(#id)` refs.
       */
@@ -3714,11 +3729,15 @@ private[kyo] object ChartLower:
     )(using Frame): (Chunk[Svg.SvgElement], Map[String, MarkGeom]) =
         val animOk = spec.animateCfg.enabled
         val durStr = formatDur(spec.animateCfg.duration)
-        // rawPathsWithIdx is enumerated by CatKey-stable seriesIdx so pathKey is stable per (mark, series).
-        // The color-split uses distinctKeyed (CatKey identity) instead of toString.
-        val rawPathsWithIdx: Chunk[(Svg.Path, Int)] = mark.color match
+        // rawPathsWithLabel carries the category display label alongside each path so the pathKey is
+        // keyed by series category identity (label), not by positional index. This makes the key stable
+        // across series add/remove/reorder: a surviving series finds its OWN prior geometry in fromGeom
+        // even when other series are removed from the middle.
+        val rawPathsWithLabel: Chunk[(Svg.Path, String)] = mark.color match
             case Absent =>
-                Chunk((lowerLineSeries(rows, mark, layout, xs, ys, defaultColor), 0))
+                // No color channel: single series. Use "_single" as a stable label (not "0") so the key
+                // cannot collide with a color-channel series whose label happens to be "0".
+                Chunk((lowerLineSeries(rows, mark, layout, xs, ys, defaultColor), "_single"))
             case Present(colorEnc) =>
                 // FIX B (transitions path, mirrors lowerLine): resolve per-series colors via resolvePalette
                 // (the same path the legend and the static line use) so an explicit categorical/sequential
@@ -3733,6 +3752,12 @@ private[kyo] object ChartLower:
                     rows,
                     r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r.asInstanceOf[A]))
                 )
+                // Build a CatKey -> label map from cats so we can look up the label for each catKey
+                // in the distinct iteration. cats is ordinal-sorted; distinct is encounter-ordered.
+                val catLabelByKey: Map[ChartFoundations.CatKey, String] =
+                    cats.foldLeft(Map.empty[ChartFoundations.CatKey, String]): (m, labelAndRaw) =>
+                        val key = ChartFoundations.categoryKey(colorEnc.tag, labelAndRaw._2)
+                        m.updated(key, labelAndRaw._1)
                 distinct.zipWithIndex.map:
                     case ((catKey, rep), seriesIdx) =>
                         val seriesRows = rows.filter(r =>
@@ -3741,13 +3766,15 @@ private[kyo] object ChartLower:
                         val strokeColor =
                             if resolved.isEmpty then DefaultPalette(seriesIdx % DefaultPalette.size)
                             else resolved(seriesIdx                           % resolved.size)
-                        (lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor), seriesIdx)
+                        val seriesLabel = catLabelByKey.getOrElse(catKey, seriesIdx.toString)
+                        (lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor), seriesLabel)
         // For each raw path: optionally attach a SMIL animate on `d`, then record the new PathData.
-        // pathKey = "line-$markIdx-$seriesIdx" is stable per (mark identity, series identity), so a prior
-        // mark's geometry-count change does NOT shift this mark's key.
-        val (elems, updatedGeom) = rawPathsWithIdx.foldLeft((Chunk.empty[Svg.SvgElement], newGeom)):
-            case ((accElems, accGeom), (rawPath, seriesIdx)) =>
-                val pathKey  = s"line-$markIdx-$seriesIdx"
+        // pathKey = "line-$markIdx-$seriesLabel" is stable per (mark identity, series category identity),
+        // so a prior mark's geometry-count change does NOT shift this mark's key, and removing/reordering
+        // a color series does not cause a surviving series to look up a different series' prior geometry.
+        val (elems, updatedGeom) = rawPathsWithLabel.foldLeft((Chunk.empty[Svg.SvgElement], newGeom)):
+            case ((accElems, accGeom), (rawPath, seriesLabel)) =>
+                val pathKey  = s"line-$markIdx-$seriesLabel"
                 val newPd    = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
                 val newGeom2 = accGeom.updated(pathKey, MarkGeom.LinePath(newPd))
                 val emittedPath: Svg.SvgElement =
@@ -3755,15 +3782,21 @@ private[kyo] object ChartLower:
                     else
                         Maybe.fromOption(fromGeom.get(pathKey)) match
                             case Present(MarkGeom.LinePath(prevPd)) =>
-                                val prevCount = Svg.PathData.commands(prevPd).size
-                                val newCount  = Svg.PathData.commands(newPd).size
-                                if prevCount == newCount && prevCount > 0 then
-                                    // Structural match: same command count -> declarative SMIL morph.
+                                // Compare command-type signatures (ordered ordinals), not just counts.
+                                // M-L-L and M-M-L both have 3 commands but different ordinals: the count
+                                // gate alone would wrongly morph between structurally incompatible paths
+                                // (e.g. when a gap introduction converts one segment into two, keeping
+                                // the total command count equal while changing the MoveTo/LineTo sequence).
+                                val prevSig = Svg.PathData.commands(prevPd).map(_.ordinal)
+                                val newSig  = Svg.PathData.commands(newPd).map(_.ordinal)
+                                if prevSig == newSig && prevSig.nonEmpty then
+                                    // Type-signature match: identical command-type sequences -> SMIL morph.
                                     val fromD = renderPathDataStr(prevPd)
                                     val toD   = renderPathDataStr(newPd)
                                     rawPath(smilAnimatePath(fromD, toD, durStr))
                                 else
-                                    // Structural change (category added/removed): path snaps, no animate.
+                                    // Type-signature change (gap introduced, category added/removed, etc.):
+                                    // path snaps, no animate.
                                     rawPath
                                 end if
                             case _ =>
@@ -3782,8 +3815,8 @@ private[kyo] object ChartLower:
       * Stacked area marks fall through to the plain `lowerArea` because multi-path stacking uses
       * per-group path indices that would need per-group geometry tracking not yet plumbed in v1.
       *
-      * Structural path morphs (different command count) snap: see `lowerLineWithTransitions` scaladoc
-      * for the v1 limitation note.
+      * Structural path morphs (different command-type signature) snap: see `lowerLineWithTransitions`
+      * scaladoc for the v1 limitation note and the type-signature rationale.
       *
       * N4-guard: no `url(#id)` refs.
       */
@@ -3812,22 +3845,34 @@ private[kyo] object ChartLower:
             // DefaultPalette. Mirrors the lowerLineWithTransitions FIX B pattern.
             val rawPaths: Chunk[Svg.Path] = lowerArea(rows, mark, layout, xs, ys, defaultColor, Present(spec)).collect:
                 case p: Svg.Path => p
-            // pathKey = "area-$markIdx-$seriesIdx" is stable per (mark identity, series position),
-            // so a prior mark's geometry-count change does NOT shift this mark's key.
-            // A non-stacked area with a color channel produces one path per category; seriesIdx tracks each.
+            // Compute category labels for the color channel (if present) so that the pathKey for each
+            // area path is keyed by series category IDENTITY (label) rather than positional index.
+            // lowerArea emits one path per category in the ordinal order of collectColorCategoriesWithRaw,
+            // so rawPaths(i) corresponds to cats(i). For the no-color single-series case, use "_single".
+            val seriesLabels: Chunk[String] = mark.color match
+                case Absent => Chunk("_single")
+                case Present(colorEnc) =>
+                    collectColorCategoriesWithRaw(rows, colorEnc).map(_._1)
+            // pathKey = "area-$markIdx-$seriesLabel" is stable per (mark identity, series category
+            // identity), so a prior mark's geometry-count change does NOT shift this mark's key, and
+            // removing/reordering a color series does not cause a surviving series to look up a
+            // different series' prior geometry.
             val (elems, updatedGeom) = rawPaths.zipWithIndex.foldLeft((Chunk.empty[Svg.SvgElement], newGeom)):
                 case ((accElems, accGeom), (rawPath, seriesIdx)) =>
-                    val pathKey  = s"area-$markIdx-$seriesIdx"
-                    val newPd    = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
-                    val newGeom2 = accGeom.updated(pathKey, MarkGeom.LinePath(newPd))
+                    val seriesLabel = if seriesIdx < seriesLabels.size then seriesLabels(seriesIdx) else seriesIdx.toString
+                    val pathKey     = s"area-$markIdx-$seriesLabel"
+                    val newPd       = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
+                    val newGeom2    = accGeom.updated(pathKey, MarkGeom.LinePath(newPd))
                     val emittedPath: Svg.SvgElement =
                         if !animOk then rawPath
                         else
                             Maybe.fromOption(fromGeom.get(pathKey)) match
                                 case Present(MarkGeom.LinePath(prevPd)) =>
-                                    val prevCount = Svg.PathData.commands(prevPd).size
-                                    val newCount  = Svg.PathData.commands(newPd).size
-                                    if prevCount == newCount && prevCount > 0 then
+                                    // Compare command-type signatures (ordered ordinals), not just counts.
+                                    // Mirrors the type-signature fix in lowerLineWithTransitions.
+                                    val prevSig = Svg.PathData.commands(prevPd).map(_.ordinal)
+                                    val newSig  = Svg.PathData.commands(newPd).map(_.ordinal)
+                                    if prevSig == newSig && prevSig.nonEmpty then
                                         val fromD = renderPathDataStr(prevPd)
                                         val toD   = renderPathDataStr(newPd)
                                         rawPath(smilAnimatePath(fromD, toD, durStr))

@@ -85,6 +85,14 @@ class ChartMorphTest extends Test:
     case class ColSale(month: String, revenue: Rev, col: Col)
     given CanEqual[ColSale, ColSale] = CanEqual.derived
 
+    // Row type for Bug A (gap/type-signature) tests: Maybe revenue for gap rows.
+    case class GapSale(month: String, rev: Maybe[Rev])
+    given CanEqual[GapSale, GapSale] = CanEqual.derived
+
+    // Row type for Bug B (category-identity keying) tests: String color label.
+    case class NamedColorSale(month: String, rev: Rev, series: String)
+    given CanEqual[NamedColorSale, NamedColorSale] = CanEqual.derived
+
     // ---- Test 1: LINE same-structure update emits a SMIL d-animate ----
 
     "LINE same-structure update emits exactly one animate attributeName=d with correct from/to" in run {
@@ -416,32 +424,38 @@ class ChartMorphTest extends Test:
     // ---- INV-036 Leaf 3: new series added in second emission snaps in ----
 
     "new series added in second emission snaps in (no false morph from prior slot)" in run {
-        // Emission 1: one series (Col.Red only), key "line-0-0", stroke #3b82f6 (blue, idx=0).
-        //   Jan and Feb are present -> 2-point path stored in fromGeom under "line-0-0".
-        // Emission 2: two series (Col.Red + Col.Blue), keys "line-0-0" (Red) and "line-0-1" (Blue).
-        //   Red series (line-0-0): Jan/Feb still present with new y-values -> same command count
+        // Emission 1: one series ("Red" only), key "line-0-Red", stroke #3b82f6 (blue, idx=0).
+        //   Jan and Feb are present -> 2-point path stored in fromGeom under "line-0-Red".
+        // Emission 2: two series ("Red" + "Blue"), keys "line-0-Red" (existing) and "line-0-Blue" (new).
+        //   Red series (line-0-Red): Jan/Feb still present with new y-values -> same type signature
         //     -> MORPHS via SMIL (has <animate attributeName="d">), stroke #3b82f6.
-        //   Blue series (line-0-1): no prior entry in fromGeom -> SNAPS (no <animate>), stroke #f97316.
+        //   Blue series (line-0-Blue): no prior entry in fromGeom -> SNAPS (no <animate>), stroke #f97316.
+        // The labels "Red" and "Blue" are distinct, so the pathKey per category is stable across add/remove.
         // Asserting that blue-stroked segment contains attributeName="d" and orange-stroked does not
         // proves the new series does NOT falsely morph off a stale prior slot.
+        //
+        // Note: this test uses NamedColorSale (String color field, distinct labels) rather than ColSale
+        // (Col enum, colliding toString="color") because the "new series snaps" behavior requires
+        // distinct labels to be tested cleanly. Two categories with identical labels share a pathKey by
+        // the documented same-limitation as legend hiddenSeries Set[String].
         val e1 = Chunk(
-            ColSale("Jan", Rev(1000.0), Col.Red),
-            ColSale("Feb", Rev(2000.0), Col.Red)
+            NamedColorSale("Jan", Rev(1000.0), "Red"),
+            NamedColorSale("Feb", Rev(2000.0), "Red")
         )
         val e2 = Chunk(
-            ColSale("Jan", Rev(1500.0), Col.Red),
-            ColSale("Feb", Rev(2500.0), Col.Red),
-            ColSale("Jan", Rev(800.0), Col.Blue),
-            ColSale("Feb", Rev(1200.0), Col.Blue)
+            NamedColorSale("Jan", Rev(1500.0), "Red"),
+            NamedColorSale("Feb", Rev(2500.0), "Red"),
+            NamedColorSale("Jan", Rev(800.0), "Blue"),
+            NamedColorSale("Feb", Rev(1200.0), "Blue")
         )
         for
             ref <- Signal.initRef(e1)
-            spec = UI.chart(ref: Signal[Chunk[ColSale]])(
-                line(x = _.month, y = _.revenue, color = _.col)
+            spec = UI.chart(ref: Signal[Chunk[NamedColorSale]])(
+                line(x = _.month, y = _.rev, color = _.series)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[ChartSpec[ColSale], Svg.Root]](spec)
-            // Emission 1: record "line-0-0" (Red, Jan+Feb) in fromGeom.
+            root = summon[Conversion[ChartSpec[NamedColorSale], Svg.Root]](spec)
+            // Emission 1: record "line-0-Red" (Jan+Feb) in fromGeom.
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Emission 2: Red series stable (morphs); Blue series new (snaps).
             _    <- ref.set(e2)
@@ -449,7 +463,7 @@ class ChartMorphTest extends Test:
         yield
             // Split on "<path " to isolate each path element's content.
             // The first segment (index 0) is pre-path preamble (axes, legend) and is skipped.
-            // Segment 1 starts with the blue (Red series) path attributes; segment 2 with the orange.
+            // Segment 1 starts with the blue-stroked (Red series, idx=0) path; segment 2 with orange-stroked.
             // The legend's line swatches also use stroke colors but appear in segment 0 only,
             // so segments 1 and 2 cleanly separate the two series paths.
             val rawSegments   = html.split("<path ").toSeq
@@ -458,12 +472,12 @@ class ChartMorphTest extends Test:
             val orangeSegment = pathSegs.find(_.contains("stroke=\"#f97316\""))
             assert(blueSegment.isDefined, s"INV-036 leaf 3: expected a blue-stroked path (Red series):\n$html")
             assert(orangeSegment.isDefined, s"INV-036 leaf 3: expected an orange-stroked path (Blue series):\n$html")
-            // Existing Red series (line-0-0) must MORPH: its path segment contains attributeName="d".
+            // Existing Red series (line-0-Red) must MORPH: its path segment contains attributeName="d".
             assert(
                 blueSegment.get.contains("attributeName=\"d\""),
                 s"INV-036 leaf 3: existing Red series must morph (attributeName=d), segment:\n${blueSegment.get}"
             )
-            // New Blue series (line-0-1) must SNAP: its path segment has no <animate at all.
+            // New Blue series (line-0-Blue) must SNAP: its path segment has no <animate at all.
             assert(
                 !orangeSegment.get.contains("<animate"),
                 s"INV-036 leaf 3: new Blue series must snap (no <animate>), segment:\n${orangeSegment.get}"
@@ -594,6 +608,218 @@ class ChartMorphTest extends Test:
                 s"INV-036 leaf 7: structural gate must fire for 2->3 point change (no animate):\n$html"
             )
             assert(html.contains("<path"), s"INV-036 leaf 7: path must still be present:\n$html")
+        end for
+    }
+
+    // ---- Bug A: same command COUNT but different command TYPES must snap, not morph ----
+
+    "BUG A (gap type-signature): gap change producing same command count but different types must snap" in run {
+        // Emission 1: 3 defined points -> one segment -> M L L (3 commands, types: MoveTo LineTo LineTo).
+        // Emission 2: row 1 defined, row 2 absent (gap), rows 3+4 defined -> two segments ->
+        //   segment1=(Jan only)->M, segment2=(Mar,Apr)->M L => total M M L (3 commands, types differ!).
+        //
+        // Both emissions have exactly 3 path commands, so the OLD count gate (prevCount==newCount) fires
+        // and emits a garbage SMIL morph interpolating between structurally incompatible paths.
+        // The FIX compares command-type signatures (ordinals), finds M-L-L != M-M-L, and snaps instead.
+        //
+        // Y scale linear(0, 4000), baseline=440: pixel(v) = 440 - v*0.105
+        //   Jan=1000 -> 335, Feb=2000 -> 230, Mar=3000 -> 125, Apr=4000 -> 20
+        // Band scale (Jan, Feb, Mar from emission 1) later updated: irrelevant for the type-sig check.
+        val e1 = Chunk(
+            GapSale("Jan", Present(Rev(1000.0))),
+            GapSale("Feb", Present(Rev(2000.0))),
+            GapSale("Mar", Present(Rev(3000.0)))
+        )
+        // Emission 2: Feb becomes a gap row; Apr is added as a 4th defined point.
+        // Segments: [(Jan)], [(Mar, Apr)] -> commands: M(Jan) M(Mar) L(Apr) = 3 cmds, types M-M-L.
+        val e2 = Chunk(
+            GapSale("Jan", Present(Rev(1000.0))),
+            GapSale("Feb", Absent),
+            GapSale("Mar", Present(Rev(3000.0))),
+            GapSale("Apr", Present(Rev(4000.0)))
+        )
+        for
+            ref <- Signal.initRef(e1)
+            spec = UI.chart(ref: Signal[Chunk[GapSale]])(line(x = _.month, y = _.rev))
+                .yScale(_.linear(0.0, 4000.0))
+                .animate(_.ease(300.millis))
+            root = summon[Conversion[ChartSpec[GapSale], Svg.Root]](spec)
+            // Emission 1: record "M L L" path geometry.
+            _ <- HtmlRenderer.render(root, Seq.empty)
+            // Emission 2: gap in middle produces "M M L" (same count, different types).
+            _    <- ref.set(e2)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // Must NOT emit a SMIL morph: the command type signature changed (M-L-L vs M-M-L).
+            // A morph here would interpolate between structurally incompatible paths.
+            assert(
+                !html.contains("<animate"),
+                s"BUG A: gap change with same command count but different types must snap (no <animate>), got:\n$html"
+            )
+            assert(html.contains("<path"), s"BUG A: path must still be present after snap:\n$html")
+        end for
+    }
+
+    // ---- Bug A area: type-signature gate applied to area (regression guard: normal morph still fires) ----
+
+    "BUG A area (type-sig fix regression): area stable-structure morph still fires after type-sig fix" in run {
+        // Area paths use buildSimpleAreaPath which skips gap rows (Absent y -> skip, not MoveTo gap).
+        // So area gap rows reduce the point count rather than inserting extra MoveTo commands.
+        // The type-signature fix for area is therefore equivalent to the count gate for linear area
+        // (same count implies same types for M-L-...-L-Z sequences without curve-generated CubicTos).
+        //
+        // This test is a regression guard: verifies the type-sig fix does NOT over-snap a stable-
+        // structure area morph. Emission 1 and emission 2 both have 3 defined area points, so the
+        // type signature is identical (M-L-L-L-L-Z) -> morph MUST fire (not snap after the fix).
+        //
+        // GapSale with Maybe[Rev]: area skips Absent rows, so emission 2 has 3 defined rows (Jan, Mar, Apr).
+        // The x-scale adapts but both emissions have 3 area points -> same type sequence -> morph fires.
+        val e1 = Chunk(
+            GapSale("Jan", Present(Rev(1000.0))),
+            GapSale("Feb", Present(Rev(2000.0))),
+            GapSale("Mar", Present(Rev(3000.0)))
+        )
+        val e2 = Chunk(
+            GapSale("Jan", Present(Rev(1500.0))),
+            GapSale("Feb", Absent),
+            GapSale("Mar", Present(Rev(2500.0))),
+            GapSale("Apr", Present(Rev(3500.0)))
+        )
+        for
+            ref <- Signal.initRef(e1)
+            spec = UI.chart(ref: Signal[Chunk[GapSale]])(area(x = _.month, y = _.rev))
+                .yScale(_.linear(0.0, 4000.0))
+                .animate(_.ease(300.millis))
+            root = summon[Conversion[ChartSpec[GapSale], Svg.Root]](spec)
+            _    <- HtmlRenderer.render(root, Seq.empty)
+            _    <- ref.set(e2)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // Same type structure (M-L-L-L-L-Z in both): type-sig fix must not over-snap.
+            // The morph must still fire after the fix.
+            assert(
+                html.contains("attributeName=\"d\""),
+                s"BUG A area regression: stable-structure area morph must still fire after type-sig fix:\n$html"
+            )
+            assert(html.contains("<path"), s"BUG A area: path must still be present:\n$html")
+        end for
+    }
+
+    // ---- Bug B: surviving series must morph from its OWN prior geometry, not a removed series' path ----
+
+    "BUG B line (series-identity keying): Blue series morphs from Blue's own prior path, not Red's old path" in run {
+        // Emission 1: two series [Red, Blue].
+        //   Red: Jan=1000 (py=340), Feb=2000 (py=240)  -> d = "M200 340 L480 240"
+        //   Blue: Jan=3000 (py=140), Feb=1000 (py=340)  -> d = "M200 140 L480 340"
+        //   Old (buggy) keys: line-0-0=Red's path, line-0-1=Blue's path.
+        // Emission 2: Red removed; only Blue series with NEW y-values (Jan=2000, Feb=1500).
+        //   Blue (new): Jan=2000 (py=240), Feb=1500 (py=290) -> d = "M200 240 L480 290"
+        //   Old (buggy) key lookup: Blue at seriesIdx=0 -> "line-0-0" -> finds Red's old path "M200 340 L480 240".
+        //   Command count (2) matches (bug fires a morph from Red's path!), from="M200 340 L480 240" (WRONG).
+        //   After fix: key is "line-0-Blue" by label. Blue's own prior path "M200 140 L480 340" is found.
+        //   from="M200 140 L480 340" (CORRECT, Blue's OWN prior path).
+        //
+        // Band scale (Jan, Feb): px_Jan=200, px_Feb=480.
+        // Y scale linear(0, 4000), plotH=400 (plotY=40, baseline=440): pixel(v) = 440 - v*0.1
+        //   1000 -> 340, 2000 -> 240, 3000 -> 140, 1500 -> 290
+        val e1 = Chunk(
+            NamedColorSale("Jan", Rev(1000.0), "Red"),
+            NamedColorSale("Feb", Rev(2000.0), "Red"),
+            NamedColorSale("Jan", Rev(3000.0), "Blue"),
+            NamedColorSale("Feb", Rev(1000.0), "Blue")
+        )
+        // Emission 2: Red removed; Blue with new y-values.
+        val e2 = Chunk(
+            NamedColorSale("Jan", Rev(2000.0), "Blue"),
+            NamedColorSale("Feb", Rev(1500.0), "Blue")
+        )
+        for
+            ref <- Signal.initRef(e1)
+            spec = UI.chart(ref: Signal[Chunk[NamedColorSale]])(
+                line(x = _.month, y = _.rev, color = _.series)
+            ).yScale(_.linear(0.0, 4000.0))
+                .animate(_.ease(300.millis))
+            root = summon[Conversion[ChartSpec[NamedColorSale], Svg.Root]](spec)
+            // Emission 1: records Red at key "line-0-Red" and Blue at key "line-0-Blue" (after fix).
+            _ <- HtmlRenderer.render(root, Seq.empty)
+            // Emission 2: only Blue series remains.
+            _    <- ref.set(e2)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // Blue's prior path in emission 1 was "M200 140 L480 340".
+            // Blue's new path in emission 2 is "M200 240 L480 290".
+            // The morph MUST use Blue's OWN prior path as from=, not Red's old path "M200 340 L480 240".
+            //
+            // Before fix: Blue at positional seriesIdx=0 finds Red's old path -> from="M200 340 L480 240" (WRONG).
+            // After fix:  Blue at label "Blue" finds Blue's own path -> from="M200 140 L480 340" (CORRECT).
+            assert(
+                html.contains("from=\"M200 140 L480 340\""),
+                s"BUG B line: Blue series must morph from Blue's OWN prior path M200 140 L480 340, got:\n$html"
+            )
+            assert(
+                html.contains("to=\"M200 240 L480 290\""),
+                s"BUG B line: Blue series must morph to M200 240 L480 290, got:\n$html"
+            )
+            // Must NOT morph from Red's old path (the buggy from= value).
+            assert(
+                !html.contains("from=\"M200 340 L480 240\""),
+                s"BUG B line: must NOT morph from Red's old path M200 340 L480 240, got:\n$html"
+            )
+        end for
+    }
+
+    // ---- Bug B area: same discipline for area paths ----
+
+    "BUG B area (series-identity keying): Blue area morphs from Blue's own prior path, not Red's old path" in run {
+        // Same scenario as Bug B line, but with area marks.
+        // Area path adds baseline returns (L..Z) commands after the top-edge path.
+        // Emission 1:
+        //   Red: Jan=1000, Feb=2000 -> top "M200 340 L480 240" -> area "M200 340 L480 240 L480 440 L200 440 Z"
+        //   Blue: Jan=3000, Feb=1000 -> top "M200 140 L480 340" -> area "M200 140 L480 340 L480 440 L200 440 Z"
+        //   Old (buggy) keys: area-0-0=Red's area path, area-0-1=Blue's area path.
+        // Emission 2 (Blue only with new values: Jan=2000, Feb=1500):
+        //   Blue new area: "M200 240 L480 290 L480 440 L200 440 Z"
+        //   Old (buggy) lookup: Blue at idx=0 -> "area-0-0" -> finds Red's area path (WRONG).
+        //   After fix: Blue at label "Blue" -> "area-0-Blue" -> finds Blue's own area path (CORRECT).
+        //
+        // Y scale linear(0, 4000), pixel(v) = 440 - v*0.1
+        val e1 = Chunk(
+            NamedColorSale("Jan", Rev(1000.0), "Red"),
+            NamedColorSale("Feb", Rev(2000.0), "Red"),
+            NamedColorSale("Jan", Rev(3000.0), "Blue"),
+            NamedColorSale("Feb", Rev(1000.0), "Blue")
+        )
+        val e2 = Chunk(
+            NamedColorSale("Jan", Rev(2000.0), "Blue"),
+            NamedColorSale("Feb", Rev(1500.0), "Blue")
+        )
+        for
+            ref <- Signal.initRef(e1)
+            spec = UI.chart(ref: Signal[Chunk[NamedColorSale]])(
+                area(x = _.month, y = _.rev, color = _.series)
+            ).yScale(_.linear(0.0, 4000.0))
+                .animate(_.ease(300.millis))
+            root = summon[Conversion[ChartSpec[NamedColorSale], Svg.Root]](spec)
+            _    <- HtmlRenderer.render(root, Seq.empty)
+            _    <- ref.set(e2)
+            html <- HtmlRenderer.render(root, Seq.empty)
+        yield
+            // Blue's own prior area path from emission 1: "M200 140 L480 340 L480 440 L200 440 Z".
+            // Before fix: from="M200 340 L480 240 L480 440 L200 440 Z" (Red's area path - WRONG).
+            // After fix:  from="M200 140 L480 340 L480 440 L200 440 Z" (Blue's own - CORRECT).
+            assert(
+                html.contains("from=\"M200 140 L480 340 L480 440 L200 440 Z\""),
+                s"BUG B area: Blue must morph from its OWN prior area path, got:\n$html"
+            )
+            assert(
+                html.contains("to=\"M200 240 L480 290 L480 440 L200 440 Z\""),
+                s"BUG B area: Blue must morph to new area path, got:\n$html"
+            )
+            // Must NOT morph from Red's old area path.
+            assert(
+                !html.contains("from=\"M200 340 L480 240 L480 440 L200 440 Z\""),
+                s"BUG B area: must NOT morph from Red's old area path, got:\n$html"
+            )
         end for
     }
 
