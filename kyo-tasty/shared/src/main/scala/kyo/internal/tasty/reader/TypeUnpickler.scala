@@ -19,7 +19,7 @@ import scala.collection.mutable
   *   - addrCache: Addr->Type, used for SHAREDtype back-references.
   *   - inProgressRec: Addr->Rec placeholder, used to break RECtype/RECthis cycles.
   *   - binderAddrMap: Addr->Chunk[Symbol], maps lambda start addr to param symbol list.
-  *   - cross-file references: produce Named(SymbolId(-1)) entries directly.
+  *   - cross-file references: produce Named(SymbolId(negId)) with negId < -1, tracked in session.unresolvedIdToFqn for finalizeMerge resolution.
   *
   * Cross-platform: no JVM-only APIs; all bit-pattern conversions use java.lang.Float/Double which are available on Scala.js and Scala
   * Native.
@@ -50,10 +50,12 @@ object TypeUnpickler:
       */
     private[kyo] val PHASE_B_ADDR_OFFSET: Int = 1 << 28
 
-    /** Sentinel SymbolId for unresolved-type fallbacks.
+    /** Sentinel SymbolId for unresolved-type fallbacks in the body-decode path.
       *
-      * Used in places where `session` is null (body decode path) and a unique tracked id is not available. The value -1 is the canonical
-      * unresolved sentinel. The finalizeMerge remapType pass leaves ids == -1 unchanged.
+      * Used only when `session` is null (lazy `Symbol.body` Tree decode via `readTypeForTree`). In that path the decoded types
+      * do not reach `typeBySymbol`, `parentsBySymbol`, or `annotationsBySymbol` in the symbol metadata pipeline, so this
+      * sentinel never leaks into the produced public ADT. When session is non-null (pass 1 via `readTypeIntoSession`),
+      * `session.nextUnresolvedId()` is used instead to assign a unique tracked negId < -1.
       */
     private[kyo] val sentinelId: kyo.Tasty.SymbolId = kyo.Tasty.SymbolId(-1)
 
@@ -615,8 +617,12 @@ object TypeUnpickler:
                 val termStart = view.positionInt
                 val endInt    = Math.toIntExact(end)
                 skipToEnd(view, end)
-                // Use interned sentinelUnresolved for the annotation-tycon placeholder position
-                val annotationType = Tasty.Type.Named(sentinelId)
+                // Use a tracked unique negId when session is available so finalizeMerge can attempt
+                // FQN resolution for this annotation type. Fall back to sentinelId (-1) only in the
+                // body-decode path (session == null) where the result does not reach the produced ADT.
+                val annotationType = ctx.session match
+                    case s: DecodeSession => Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
+                    case null             => Tasty.Type.Named(sentinelId)
                 val annotation =
                     if ctx.sectionBytes == null then
                         Tasty.Annotation(annotationType, Chunk.empty)

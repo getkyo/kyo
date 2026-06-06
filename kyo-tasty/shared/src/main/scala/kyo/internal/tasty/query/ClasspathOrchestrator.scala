@@ -863,7 +863,15 @@ object ClasspathOrchestrator:
                         fr.parentsBySymbol.foreach { case (symId, parents) =>
                             val idx = symbolIdMap.getOrElse(symId, -1)
                             if idx >= 0 && idx < count then
-                                descs(idx).parentTypes = parents.map(remapType(_, frRemap))
+                                // Remap temporary ids to final ids, then filter out any Named(SymbolId(-1))
+                                // sentinels that were not resolved. These arise when a type was decoded in a
+                                // session-null context (body decode) and slipped through, or from a cross-file
+                                // reference that could not be resolved. Dropping them is correct: a consumer
+                                // calling cp.symbol(id) on Named(SymbolId(-1)) would get Maybe.Absent anyway.
+                                descs(idx).parentTypes = parents.map(remapType(_, frRemap)).filter:
+                                    case Tasty.Type.Named(sid) => sid.value != -1
+                                    case _                     => true
+                            end if
                         }
                         frIdx2 += 1
                     end for
@@ -886,7 +894,15 @@ object ClasspathOrchestrator:
                         fr.typeBySymbol.foreach { case (symId, t) =>
                             val idx = symbolIdMap.getOrElse(symId, -1)
                             if idx >= 0 && idx < count && descs(idx).declaredType.isEmpty then
-                                descs(idx).declaredType = Maybe(remapType(t, frRemap3))
+                                val remapped = remapType(t, frRemap3)
+                                // Drop Named(SymbolId(-1)) sentinels: a sentinel in declaredType position
+                                // means the type could not be resolved. Leave declaredType as Absent so
+                                // FailFast can surface TastyError.MissingDeclaredType instead of exposing
+                                // a sentinel in the produced public ADT.
+                                remapped match
+                                    case Tasty.Type.Named(sid) if sid.value == -1 => ()
+                                    case _                                        => descs(idx).declaredType = Maybe(remapped)
+                            end if
                         }
                         frIdx3 += 1
                     end for
@@ -957,14 +973,19 @@ object ClasspathOrchestrator:
                     // Populate annotations from ANNOTATION modifier blocks decoded during per-file decode.
                     // Each annotation's tycon may contain Named(negId) cross-file refs; remap through
                     // the same FileRemap used for parent types so symbolsAnnotatedWith FQN matching works.
+                    // Annotations whose remapped tycon is Named(SymbolId(-1)) are dropped: an annotation
+                    // with an unresolvable type class is not meaningful in the produced public ADT.
                     var frIdxAnn = 0
                     for fr <- fileResults do
                         val frRemapAnn = fileRemaps(frIdxAnn)
                         fr.annotationsBySymbol.foreach { case (symId, annBuf) =>
                             val idx = symbolIdMap.getOrElse(symId, -1)
                             if idx >= 0 && idx < count then
-                                val remapped = annBuf.map: ann =>
-                                    Tasty.Annotation(remapType(ann.annotationType, frRemapAnn), ann.arguments)
+                                val remapped = annBuf.flatMap: ann =>
+                                    val remappedType = remapType(ann.annotationType, frRemapAnn)
+                                    remappedType match
+                                        case Tasty.Type.Named(sid) if sid.value == -1 => None
+                                        case _                                        => Some(Tasty.Annotation(remappedType, ann.arguments))
                                 descs(idx).annotations = Chunk.from(remapped.toSeq)
                             end if
                         }
@@ -998,25 +1019,28 @@ object ClasspathOrchestrator:
                         if classIdx >= 0 && classIdx < count then
                             // Resolve parent types using cfResult.parentBinaryNames.
                             // Binary names use '/' as separator (e.g. "java/lang/Object"); convert to dotted.
-                            val sentinelId = -1
-                            val wirableParents = cfResult.parentBinaryNames.map: bn =>
+                            // Unresolvable parents are dropped entirely; a Named(SymbolId(-1)) sentinel would
+                            // violate the invariant that no SymbolId.value < 0 survives in produced ADTs.
+                            val parentsBuf = new scala.collection.mutable.ArrayBuffer[Tasty.Type]()
+                            for bn <- cfResult.parentBinaryNames do
                                 val dottedFqn = bn.replace('/', '.')
-                                state.fqnIndex.get(dottedFqn) match
-                                    case Some(parentSym) =>
-                                        val parentIdx = symbolIdMap.getOrElse(parentSym.id.toLong, sentinelId)
-                                        if parentIdx >= 0 then Tasty.Type.Named(SymbolId(parentIdx))
-                                        else Tasty.Type.Named(SymbolId(sentinelId))
-                                    case None =>
-                                        // Try canonical source FQN (handles "$" inner class separators).
-                                        val srcFqn = kyo.internal.tasty.symbol.FqnNormalizer.canonicalSourceFqn(dottedFqn)
-                                        state.fqnIndex.get(srcFqn) match
-                                            case Some(parentSym) =>
-                                                val parentIdx = symbolIdMap.getOrElse(parentSym.id.toLong, sentinelId)
-                                                if parentIdx >= 0 then Tasty.Type.Named(SymbolId(parentIdx))
-                                                else Tasty.Type.Named(SymbolId(sentinelId))
-                                            case None => Tasty.Type.Named(SymbolId(sentinelId))
-                                        end match
-                                end match
+                                val resolved: Int =
+                                    state.fqnIndex.get(dottedFqn) match
+                                        case Some(parentSym) =>
+                                            symbolIdMap.getOrElse(parentSym.id.toLong, -1)
+                                        case None =>
+                                            // Try canonical source FQN (handles "$" inner class separators).
+                                            val srcFqn = kyo.internal.tasty.symbol.FqnNormalizer.canonicalSourceFqn(dottedFqn)
+                                            state.fqnIndex.get(srcFqn) match
+                                                case Some(parentSym) =>
+                                                    symbolIdMap.getOrElse(parentSym.id.toLong, -1)
+                                                case None => -1
+                                            end match
+                                    end match
+                                end resolved
+                                if resolved >= 0 then parentsBuf += Tasty.Type.Named(SymbolId(resolved))
+                            end for
+                            val wirableParents = Chunk.from(parentsBuf.toSeq)
                             if descs(classIdx).parentTypes.isEmpty then
                                 descs(classIdx).parentTypes = wirableParents
                             // Populate javaMetadata from the classSymbol's javaMetadata field.

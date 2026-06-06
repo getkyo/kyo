@@ -28,8 +28,9 @@ import scala.collection.mutable
   *   - qualified-modifier sub-tree skip (CRITICAL): PRIVATEqualified (98) and PROTECTEDqualified (99) are category 3 (tag + sub-AST). The
   *     modifier loop skips their sub-AST via skipTree(). Failing to do this corrupts the cursor.
   *
-  * TypeUnpickler resolves cross-file type references by creating synthetic unresolved symbols directly. Cross-file references become
-  * Named(SymbolId(-1)) entries resolved at Phase C finalizeMerge via fqnIndex lookup.
+  * TypeUnpickler resolves cross-file type references using unique negative SymbolIds (< -1) tracked in
+  * session.unresolvedIdToFqn. Phase C finalizeMerge resolves these via fqnIndex. Unresolvable entries
+  * are filtered out at the finalizeMerge boundary; no Named(SymbolId(-1)) sentinel survives in produced ADTs.
   */
 object AstUnpickler:
 
@@ -695,7 +696,8 @@ object AstUnpickler:
       * beginning.
       *
       * Returns the decoded parent types as a buffer. The caller records them into `parentsBySymbol` keyed by the class symbol. Parent types
-      * may contain Named(SymbolId(-1)) for cross-file parents; these are resolved during finalizeMerge via fqnIndex lookup.
+      * may contain Named(SymbolId(negId)) for cross-file parents (negId < -1, tracked in session.unresolvedIdToFqn); these are resolved or
+      * filtered out during finalizeMerge so no negative SymbolId survives in produced ADT parentTypes.
       */
     private def decodeTemplateParents(
         parentScanView: ByteView,

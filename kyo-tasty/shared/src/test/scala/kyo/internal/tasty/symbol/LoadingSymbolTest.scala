@@ -4,60 +4,29 @@ import kyo.*
 
 /** Tests for `LoadingSymbol` ADT: the internal loading-phase symbol representation.
   *
-  * Covers plan leaves 1, 2, 3 (Cat 19 LoadingSymbol architectural backbone):
-  *   - placeholderInaccessibleFromUserCode: LoadingSymbol is private[kyo]; user code cannot access it.
-  *   - placeholderShapeIsCorrect: Placeholder fields match constructor arguments; no id field.
+  * Covers:
+  *   - loadingSymbolInaccessibleFromUserCode: LoadingSymbol is private[kyo]; user code cannot access it.
   *   - materialisingHoldsId: Materialising.id holds the assigned value; structural equality on id.
+  *   - placeholderDeleted: LoadingSymbol.Placeholder no longer exists (deleted in Phase 18).
   */
 class LoadingSymbolTest extends kyo.Test:
 
-    // Leaf 1: placeholderInaccessibleFromUserCode
+    // loadingSymbolInaccessibleFromUserCode
     //
     // Given: a compileErrors probe that LoadingSymbol is NOT accessible through kyo.Tasty.
     // When: the test asserts.
     // Then: the type does not appear on the public Tasty surface; LoadingSymbol is an
     //       internal type (private[kyo]) not re-exported from object Tasty.
-    "placeholderInaccessibleFromUserCode: LoadingSymbol is not accessible through the public Tasty API" in {
+    "loadingSymbolInaccessibleFromUserCode: LoadingSymbol is not accessible through the public Tasty API" in {
         // kyo.Tasty does not expose LoadingSymbol: accessing it via Tasty.LoadingSymbol fails.
         val notOnTastySurface = compiletime.testing.typeCheckErrors(
             "(??? : kyo.Tasty.LoadingSymbol)"
         )
         assert(notOnTastySurface.nonEmpty, "LoadingSymbol must not be exposed on the Tasty public surface")
-        // The type IS accessible inside kyo.* (private[kyo] includes kyo.internal.tasty.symbol):
-        val witness: LoadingSymbol = LoadingSymbol.Placeholder(
-            SymbolKind.Class,
-            Tasty.Flags.empty,
-            Tasty.Name("X")
-        )
-        discard(witness)
         succeed
     }
 
-    // Leaf 2: placeholderShapeIsCorrect
-    //
-    // Given: a `LoadingSymbol.Placeholder(SymbolKind.Class, Flags.empty, Name("X"))` instance.
-    // When: the test pattern-matches and reads fields.
-    // Then: every field matches the constructor arguments; the Placeholder has no `id` field.
-    "placeholderShapeIsCorrect: Placeholder fields match constructor arguments and has no id field" in {
-        val ph = LoadingSymbol.Placeholder(
-            kind = SymbolKind.Class,
-            flags = Tasty.Flags.empty,
-            name = Tasty.Name("X")
-        )
-        ph match
-            case LoadingSymbol.Placeholder(k, f, n) =>
-                assert(k == SymbolKind.Class, s"Expected kind Class but got $k")
-                assert(f == Tasty.Flags.empty, s"Expected empty flags but got $f")
-                import Tasty.Name.asString
-                assert(n.asString == "X", s"Expected name 'X' but got ${n.asString}")
-        end match
-        // Verify no id field on Placeholder (compile-time check: accessing .id on a Placeholder should fail).
-        val noIdOnPlaceholder = compiletime.testing.typeCheckErrors("(??? : kyo.internal.tasty.symbol.LoadingSymbol.Placeholder).id")
-        assert(noIdOnPlaceholder.nonEmpty, "Placeholder must not have an id field")
-        succeed
-    }
-
-    // Leaf 3: materialisingHoldsId
+    // materialisingHoldsId
     //
     // Given: a `LoadingSymbol.Materialising(id = 42, kind = SymbolKind.Class, flags = Flags.empty, name = Name("X"))`.
     // When: the test reads `m.id`.
@@ -86,6 +55,19 @@ class LoadingSymbolTest extends kyo.Test:
             name = Tasty.Name("X")
         )
         assert(m1.id != m3.id, "Two Materialising instances with different ids should have different id fields")
+        succeed
+    }
+
+    // placeholderDeleted
+    //
+    // Given: the LoadingSymbol ADT after Phase 18.
+    // When: user code tries to reference LoadingSymbol.Placeholder.
+    // Then: the type does not exist; compile-time probe returns non-empty errors.
+    "placeholderDeleted: LoadingSymbol.Placeholder no longer exists after Phase 18" in {
+        val noPlaceholder = compiletime.testing.typeCheckErrors(
+            "(??? : kyo.internal.tasty.symbol.LoadingSymbol.Placeholder)"
+        )
+        assert(noPlaceholder.nonEmpty, "LoadingSymbol.Placeholder must not exist after Phase 18 deletion")
         succeed
     }
 

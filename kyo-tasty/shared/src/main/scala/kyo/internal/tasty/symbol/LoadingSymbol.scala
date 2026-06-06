@@ -12,8 +12,8 @@ import kyo.Tasty
   * Cross-file symbol references (where the defining file is not in the classpath) travel as `Tasty.Type.Named(SymbolId(negId))` with the
   * FQN stored in `Classpath.Indices.unresolvedFqnByNegId`. For FQN index entries that cannot be resolved at finalizeMerge time,
   * `TastyError.UnresolvedReference` is accumulated in `cp.errors` (soft-fail mode) or raises `TastyError.ClasspathBuilding`
-  * (fail-fast mode). The `Placeholder` case is reserved for future use in scenarios where a loading-phase symbol reference needs to be
-  * tracked before its kind is known.
+  * (fail-fast mode). Unresolvable parent-type references (where the parent FQN is absent from the loaded classpath) are filtered out
+  * at the `finalizeMerge` boundary; they do not survive as sentinel values in the produced `Tasty.Symbol` ADT.
   *
   * Visibility is `private[kyo]`: user code never sees loading-phase symbols; only the public `Tasty.Symbol` ADT is exposed.
   *
@@ -28,16 +28,6 @@ sealed private[kyo] trait LoadingSymbol:
 end LoadingSymbol
 
 private[kyo] object LoadingSymbol:
-
-    /** Reserved for future use: a cross-file symbol reference whose defining file is absent from the loaded classpath.
-      *
-      * In the current architecture, cross-file unresolved references travel as `Tasty.Type.Named(SymbolId(negId))` with the FQN tracked in
-      * `Classpath.Indices.unresolvedFqnByNegId`. Unresolvable FQN index entries produce `TastyError.UnresolvedReference` at finalizeMerge
-      * time. `Placeholder` is not currently constructed by any production code path.
-      */
-    final case class Placeholder(kind: SymbolKind, flags: Tasty.Flags, name: Tasty.Name)
-        extends LoadingSymbol
-        derives CanEqual
 
     /** A symbol under construction: all known fields are populated incrementally during Pass A and Pass B.
       *

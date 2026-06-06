@@ -123,19 +123,19 @@ Java-only concepts.
 ### LoadingSymbol
 
 `kyo.internal.tasty.symbol.LoadingSymbol` is the mutable intermediate
-representation used during unpickling. Its two subtypes are:
+representation used during unpickling. It has one subtype:
 
 - `LoadingSymbol.Materialising`: holds `var` fields that the unpicklers
   write incrementally.
-- `LoadingSymbol.Placeholder`: used when a forward reference is encountered
-  before the target has been seen. Placeholders that survive to the
-  conversion boundary become `TastyError.UnresolvedReference` entries in
-  `cp.errors`.
+
+Cross-file unresolved references travel as `Type.Named(SymbolId(negId))` with
+`negId < -1` tracked in `session.unresolvedIdToFqn`. The `finalizeMerge` pass
+resolves them or filters them out at the ADT boundary; no `Named(SymbolId(-1))`
+sentinel survives in the produced `Tasty.Symbol` fields.
 
 `LoadingSymbol` is `private[kyo]` and must never appear in the public surface.
 The conversion boundary is `ClasspathOrchestrator.materializeSymbols`, which
-converts every `Materialising` to a `Tasty.Symbol` and promotes every surviving
-`Placeholder` to an error.
+converts every `Materialising` to a `Tasty.Symbol`.
 
 ### DecodeContext
 

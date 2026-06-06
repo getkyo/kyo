@@ -1557,8 +1557,14 @@ object ClassfileUnpickler:
         if i >= idxs.length then acc
         else
             pool.classRef(idxs(i)).map: binaryName =>
-                // Sentinel id -1 for throws types (not resolved against classpath here).
-                resolveThrowsList(pool, path, idxs, i + 1, acc.appended(Tasty.Type.Named(kyo.Tasty.SymbolId(-1))))
+                // Encode the throws class as a TermRef carrying the dotted FQN as the name.
+                // This avoids emitting Named(SymbolId(-1)) sentinel while still preserving the
+                // class identity (accessible via pattern-match on Type.TermRef(..., name)).
+                // The fqnIndex is not available here; full resolution to a Named(SymbolId(idx))
+                // is deferred to a future finalizeMerge pass if needed.
+                val dottedFqn = binaryName.replace('/', '.')
+                val throwType = Tasty.Type.TermRef(Tasty.Type.Tuple(Chunk.empty), Tasty.Name(dottedFqn))
+                resolveThrowsList(pool, path, idxs, i + 1, acc.appended(throwType))
 
     private def buildInnerClassTable(
         pool: ConstantPool,

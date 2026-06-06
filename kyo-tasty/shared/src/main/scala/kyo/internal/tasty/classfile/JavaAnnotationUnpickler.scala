@@ -211,10 +211,17 @@ object JavaAnnotationUnpickler:
         ))
     end descriptorToUnresolvedSymbol
 
-    /** Convert a class descriptor to a Tasty.Type.Named wrapping the sentinel unresolved id. */
+    /** Convert a class descriptor to a Tasty.Type for a Java annotation class-literal value.
+      *
+      * The descriptor is a JVM class descriptor (e.g. "Ljava/lang/String;"). At decode time the
+      * classpath fqnIndex is not available, so the type cannot be resolved to a real SymbolId.
+      * Encodes the dotted FQN as a TermRef name so consumers can extract the class name via
+      * pattern-matching on Type.TermRef without encountering a Named(SymbolId(-1)) sentinel.
+      * Matches the SnapshotReader warm-load encoding for annotation FQNs.
+      */
     private def descriptorToType(descriptor: String)(using AllowUnsafe): Tasty.Type =
-        // Sentinel id -1 for annotation type references (not resolved against classpath here).
-        Tasty.Type.Named(kyo.Tasty.SymbolId(-1))
+        val fqn = descriptorToFqn(descriptor)
+        Tasty.Type.TermRef(Tasty.Type.Tuple(Chunk.empty), Tasty.Name(fqn))
 
     /** Strip "L" prefix and ";" suffix, replace "/" with ".". For non-L descriptors (primitives), return as-is.
       */
