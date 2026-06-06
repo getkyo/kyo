@@ -883,7 +883,9 @@ object Yaml:
                     @tailrec def loop(index: Int, acc: Chunk[Cst.Document]): Result[Err | DecodeException, Chunk[Cst.Document]] =
                         if index >= docs.size then Result.succeed(acc)
                         else
-                            internal.yaml.YamlEventScanner.collect(docs(index), current).flatMap(Yaml.Cst.fromEvents) match
+                            val parsed: Result[Err | DecodeException, Cst.Document] =
+                                internal.yaml.YamlEventScanner.collect(docs(index), current).flatMap(Yaml.Cst.fromEvents)
+                            parsed match
                                 case Result.Success(doc) => loop(index + 1, acc :+ doc)
                                 case Result.Failure(e)   => Result.fail(e)
                                 case Result.Panic(e)     => Result.panic(e)
