@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-class LineAssemblerTest extends kyo.Test:
+class LineAssemblerTest extends kyo.BasePodTest:
 
     private def runPipe(strings: String*)(using Frame): Chunk[String] < Sync =
         Stream.init(strings).into(LineAssembler.pipe).run
@@ -15,50 +15,50 @@ class LineAssemblerTest extends kyo.Test:
 
     "LineAssembler.pipe" - {
 
-        "empty input returns empty chunk" in run {
+        "empty input returns empty chunk" in {
             runPipe().map(r => assert(r.isEmpty))
         }
 
-        "single complete line" in run {
+        "single complete line" in {
             runPipe("hello\n").map(r => assert(r == Chunk("hello")))
         }
 
-        "partial line is dropped on stream end" in run {
+        "partial line is dropped on stream end" in {
             runPipe("hello").map(r => assert(r.isEmpty))
         }
 
-        "multi-line in one chunk" in run {
+        "multi-line in one chunk" in {
             runPipe("a\nb\nc\n").map(r => assert(r == Chunk("a", "b", "c")))
         }
 
-        "line straddling two chunks" in run {
+        "line straddling two chunks" in {
             runPipe("hello, ", "world!\n").map(r => assert(r == Chunk("hello, world!")))
         }
 
-        "line straddling three chunks" in run {
+        "line straddling three chunks" in {
             runPipe("one ", "two ", "three\n").map(r => assert(r == Chunk("one two three")))
         }
 
-        "trailing newline after complete and partial lines" in run {
+        "trailing newline after complete and partial lines" in {
             // First chunk: "a\nb" — complete "a", partial "b" carried
             // Second chunk: "c\n" — combined "bc\n" emits "bc"
             runPipe("a\nb", "c\n").map(r => assert(r == Chunk("a", "bc")))
         }
 
-        "consecutive newlines preserved as empty lines" in run {
+        "consecutive newlines preserved as empty lines" in {
             runPipe("\n\nhello\n").map(r => assert(r == Chunk("", "", "hello")))
         }
     }
 
     "LineAssembler.partitionedPipe" - {
 
-        "single complete line per key" in run {
+        "single complete line per key" in {
             runPart(("hello\n", Src.A), ("world\n", Src.B)).map { r =>
                 assert(r == Chunk(("hello", Src.A), ("world", Src.B)))
             }
         }
 
-        "interleaved partial+complete frames stitch per key" in run {
+        "interleaved partial+complete frames stitch per key" in {
             // A: "hello, " + "world!\n" = "hello, world!"
             // B: "foo " + "bar\n" = "foo bar"
             // Each key threads its own residual independently across interleaved fragments.
@@ -72,11 +72,11 @@ class LineAssemblerTest extends kyo.Test:
             }
         }
 
-        "partial residual per key dropped on stream end" in run {
+        "partial residual per key dropped on stream end" in {
             runPart(("partial-a", Src.A), ("partial-b", Src.B)).map(r => assert(r.isEmpty))
         }
 
-        "multi-line content in a single frame emits all lines under same key" in run {
+        "multi-line content in a single frame emits all lines under same key" in {
             runPart(("a\nb\nc\n", Src.A)).map(r => assert(r == Chunk(("a", Src.A), ("b", Src.A), ("c", Src.A))))
         }
     }

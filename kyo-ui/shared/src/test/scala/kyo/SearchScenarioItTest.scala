@@ -6,7 +6,7 @@ import scala.language.implicitConversions
 
 class SearchScenarioItTest extends UITest:
 
-    "type filters results" in run {
+    "type filters results" in {
         val app: UI < Async =
             for
                 query <- Signal.initRef("")
@@ -25,11 +25,11 @@ class SearchScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "results:2")
                 _ <- Browser.fill(Selector.id("q"), "apple")
                 _ <- Browser.assertText(Selector.id("v"), "results:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "clear search shows all" in run {
+    "clear search shows all" in {
         val app: UI < Async =
             for query <- Signal.initRef("")
             yield UI.div(
@@ -46,11 +46,11 @@ class SearchScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "results:3")
                 _ <- Browser.fill(Selector.id("q"), "")
                 _ <- Browser.assertText(Selector.id("v"), "results:10")
-            yield succeed
+            yield ()
         }
     }
 
-    "no results shows message" in run {
+    "no results shows message" in {
         val app: UI < Async =
             for query <- Signal.initRef("")
             yield UI.div(
@@ -65,11 +65,11 @@ class SearchScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "Has results")
                 _ <- Browser.fill(Selector.id("q"), "zzz")
                 _ <- Browser.assertText(Selector.id("v"), "No results")
-            yield succeed
+            yield ()
         }
     }
 
-    "click result selects it" in run {
+    "click result selects it" in {
         val app: UI < Async =
             for
                 query    <- Signal.initRef("")
@@ -89,11 +89,11 @@ class SearchScenarioItTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("r-banana"))
                 _ <- Browser.assertText(Selector.id("v"), "selected:banana")
-            yield succeed
+            yield ()
         }
     }
 
-    "type fast final results correct" in run {
+    "type fast final results correct" in {
         val app: UI < Async =
             for query <- Signal.initRef("")
             yield UI.div(
@@ -104,11 +104,11 @@ class SearchScenarioItTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("q"), "application")
                 _ <- Browser.assertText(Selector.id("v"), "q:application")
-            yield succeed
+            yield ()
         }
     }
 
-    "click clear clears search" in run {
+    "click clear clears search" in {
         val app: UI < Async =
             for query <- Signal.initRef("")
             yield UI.div(
@@ -122,11 +122,11 @@ class SearchScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "q:[something]")
                 _ <- Browser.click(Selector.id("clear"))
                 _ <- Browser.assertText(Selector.id("v"), "q:[]")
-            yield succeed
+            yield ()
         }
     }
 
-    "empty search shows all items" in run {
+    "empty search shows all items" in {
         val app: UI < Async =
             for query <- Signal.initRef("")
             yield UI.div(
@@ -143,11 +143,11 @@ class SearchScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "showing:2")
                 _ <- Browser.fill(Selector.id("q"), "")
                 _ <- Browser.assertText(Selector.id("v"), "showing:10")
-            yield succeed
+            yield ()
         }
     }
 
-    "search preserves across other interactions" in run {
+    "search preserves across other interactions" in {
         val app: UI < Async =
             for
                 query   <- Signal.initRef("")
@@ -164,7 +164,7 @@ class SearchScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("inc"))
                 _ <- Browser.assertText(Selector.id("vq"), "q:search text")
                 _ <- Browser.assertText(Selector.id("vc"), "c:1")
-            yield succeed
+            yield ()
         }
     }
 

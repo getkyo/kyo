@@ -9,11 +9,11 @@ import kyo.internal.SharedChrome
 // decode is itself stronger than the prior `contains("true")` substring check.
 final case class CloseTargetResult(success: Maybe[Boolean] = Absent) derives Schema
 
-class CdpClientTest extends Test:
+class CdpClientTest extends BaseBrowserTest:
 
     override def timeout = 2.minutes
 
-    private def withClient[A](f: CdpClient => A < (Async & Abort[BrowserReadException]))(using Frame): A < Async =
+    private def withClient[A](f: CdpClient => A < (Async & Abort[BrowserReadException]))(using Frame, kyo.test.AssertScope): A < Async =
         Abort.run[BrowserReadException | BrowserSetupException](
             SharedChrome.init.map(url => Scope.run(CdpClient.init(url, Browser.LaunchConfig.default).map(f)))
         ).map {
@@ -23,7 +23,7 @@ class CdpClientTest extends Test:
         }
     end withClient
 
-    "Target.getTargets returns targets" in run {
+    "Target.getTargets returns targets" in {
         // chrome-headless-shell launches with an empty target list (no auto-opened about:blank tab the way full Chrome
         // does). Create a target explicitly first so the test verifies the `Target.getTargets` decode path against a
         // known-non-empty response on every binary variant.
@@ -41,7 +41,7 @@ class CdpClientTest extends Test:
         }
     }
 
-    "Target.createTarget creates a new target" in run {
+    "Target.createTarget creates a new target" in {
         withClient { client =>
             client.send("Target.createTarget", CreateTargetParams("about:blank")).map { result =>
                 val created = decodeCdpResult[CreateTargetResult](result)
@@ -51,7 +51,7 @@ class CdpClientTest extends Test:
         }
     }
 
-    "Target.attachToTarget returns sessionId" in run {
+    "Target.attachToTarget returns sessionId" in {
         withClient { client =>
             client.send("Target.createTarget", CreateTargetParams("about:blank")).map { createJson =>
                 val created = decodeCdpResult[CreateTargetResult](createJson)
@@ -64,7 +64,7 @@ class CdpClientTest extends Test:
         }
     }
 
-    "session-scoped Page.navigate succeeds" in run {
+    "session-scoped Page.navigate succeeds" in {
         withClient { client =>
             client.send("Target.createTarget", CreateTargetParams("about:blank")).map { createJson =>
                 val created = decodeCdpResult[CreateTargetResult](createJson)
@@ -83,7 +83,7 @@ class CdpClientTest extends Test:
         }
     }
 
-    "session-scoped Runtime.evaluate returns result" in run {
+    "session-scoped Runtime.evaluate returns result" in {
         withClient { client =>
             client.send("Target.createTarget", CreateTargetParams("about:blank")).map { createJson =>
                 val created = decodeCdpResult[CreateTargetResult](createJson)
@@ -105,7 +105,7 @@ class CdpClientTest extends Test:
         }
     }
 
-    "Target.closeTarget succeeds" in run {
+    "Target.closeTarget succeeds" in {
         withClient { client =>
             client.send("Target.createTarget", CreateTargetParams("about:blank")).map { createJson =>
                 val created = decodeCdpResult[CreateTargetResult](createJson)
@@ -121,7 +121,7 @@ class CdpClientTest extends Test:
         }
     }
 
-    "concurrent sends all complete correctly" in run {
+    "concurrent sends all complete correctly" in {
         withClient { client =>
             client.send("Target.createTarget", CreateTargetParams("about:blank")).map { createJson =>
                 val created = decodeCdpResult[CreateTargetResult](createJson)
@@ -146,7 +146,7 @@ class CdpClientTest extends Test:
         }
     }
 
-    "close then send fails with ConnectionLost" in run {
+    "close then send fails with ConnectionLost" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 Scope.run {
@@ -159,7 +159,7 @@ class CdpClientTest extends Test:
             }
         }.map {
             case Result.Failure(_: BrowserConnectionLostException) =>
-                succeed
+                ()
             case Result.Failure(other) =>
                 fail(s"Expected BrowserConnectionLostException but got ${other.getClass.getName}")
             case Result.Success(_) =>
@@ -169,7 +169,7 @@ class CdpClientTest extends Test:
         }
     }
 
-    "init closes the client on scope exit" in run {
+    "init closes the client on scope exit" in {
         val probe: CdpClient => Unit < (Async & Abort[BrowserReadException]) =
             client => client.send("Target.getTargets").unit
 
@@ -186,14 +186,16 @@ class CdpClientTest extends Test:
                 yield ()
             }
         }.map {
-            case Result.Failure(_: BrowserConnectionLostException) => succeed
-            case Result.Failure(other)                             => fail(s"Expected ConnectionLost but got ${other.getClass.getName}")
-            case Result.Success(_)                                 => fail("Expected client to be closed after scope exit")
-            case Result.Panic(ex)                                  => fail(s"Panic: ${ex.getMessage}")
+            case Result.Failure(ex: BrowserConnectionLostException) =>
+                // Scope exit closed the client; the probe correctly surfaced ConnectionLost.
+                assert(ex.getMessage.contains("Connection lost"))
+            case Result.Failure(other) => fail(s"Expected ConnectionLost but got ${other.getClass.getName}")
+            case Result.Success(_)     => fail("Expected client to be closed after scope exit")
+            case Result.Panic(ex)      => fail(s"Panic: ${ex.getMessage}")
         }
     }
 
-    "initUnscoped survives scope exit and must be closed manually" in run {
+    "initUnscoped survives scope exit and must be closed manually" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 for
@@ -205,13 +207,15 @@ class CdpClientTest extends Test:
                     // After manual close, sends must fail.
                     afterClose <- Abort.run[BrowserConnectionException](capturedClient.send("Target.getTargets"))
                 yield afterClose match
-                    case Result.Failure(_: BrowserConnectionLostException) => succeed
+                    case Result.Failure(ex: BrowserConnectionLostException) =>
+                        // manual close surfaced ConnectionLost as expected
+                        assert(ex.getMessage.contains("Connection lost"))
                     case other => fail(s"Expected ConnectionLost after manual close, got $other")
             }
         }.orFail("Unexpected")
     }
 
-    "Scope.run(CdpClient.init(url, Browser.LaunchConfig.default).map(...)) releases the client after the body completes" in run {
+    "Scope.run(CdpClient.init(url, Browser.LaunchConfig.default).map(...)) releases the client after the body completes" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 for
@@ -221,13 +225,15 @@ class CdpClientTest extends Test:
                     // After the Scope.run block returns, the client must be closed: the next send must fail with ConnectionLost.
                     afterClose <- Abort.run[BrowserConnectionException](capturedClient.send("Target.getTargets"))
                 yield afterClose match
-                    case Result.Failure(_: BrowserConnectionLostException) => succeed
-                    case other                                             => fail(s"Expected ConnectionLost after scope exit, got $other")
+                    case Result.Failure(ex: BrowserConnectionLostException) =>
+                        // Scope exit closed the client; the send correctly surfaced ConnectionLost.
+                        assert(ex.getMessage.contains("Connection lost"))
+                    case other => fail(s"Expected ConnectionLost after scope exit, got $other")
             }
         }.orFail("Unexpected")
     }
 
-    "CdpClient.init(url, Browser.LaunchConfig.default).map runs the body then closes" in run {
+    "CdpClient.init(url, Browser.LaunchConfig.default).map runs the body then closes" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 for
@@ -238,13 +244,15 @@ class CdpClientTest extends Test:
                     }
                     afterClose <- Abort.run[BrowserConnectionException](capturedClient.send("Target.getTargets"))
                 yield afterClose match
-                    case Result.Failure(_: BrowserConnectionLostException) => succeed
-                    case other                                             => fail(s"Expected ConnectionLost after scope exit, got $other")
+                    case Result.Failure(ex: BrowserConnectionLostException) =>
+                        // init's .map closes the client after the body; the send correctly surfaced ConnectionLost.
+                        assert(ex.getMessage.contains("Connection lost"))
+                    case other => fail(s"Expected ConnectionLost after scope exit, got $other")
             }
         }.orFail("Unexpected")
     }
 
-    "CdpClient.close(gracePeriod = 1.second) returns within the grace period" in run {
+    "CdpClient.close(gracePeriod = 1.second) returns within the grace period" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 CdpClient.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { client =>
@@ -260,7 +268,7 @@ class CdpClientTest extends Test:
         }.orFail("Unexpected")
     }
 
-    "CdpClient.closeNow returns in less than 100ms" in run {
+    "CdpClient.closeNow returns in less than 100ms" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 CdpClient.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { client =>
@@ -280,7 +288,6 @@ class CdpClientTest extends Test:
         // Field access on the case class; no `getMessage` round-trip.
         assert(ex.message == "could not launch: port-in-use")
         assert(ex.cause == Present(cause))
-        succeed
     }
 
 end CdpClientTest

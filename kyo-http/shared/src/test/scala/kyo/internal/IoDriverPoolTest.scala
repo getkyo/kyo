@@ -7,7 +7,7 @@ import kyo.internal.transport.*
 import kyo.scheduler.IOPromise
 import scala.collection.mutable
 
-class IoDriverPoolTest extends kyo.Test:
+class IoDriverPoolTest extends kyo.BaseHttpTest:
 
     import AllowUnsafe.embrace.danger
 
@@ -45,7 +45,6 @@ class IoDriverPoolTest extends kyo.Test:
         val pool    = IoDriverPool.init(drivers)
         val d       = pool.next()
         assert(d eq drivers(0))
-        succeed
     }
 
     "init with multiple drivers — stores all drivers" in {
@@ -57,7 +56,6 @@ class IoDriverPoolTest extends kyo.Test:
         assert(d0 eq drivers(0))
         assert(d1 eq drivers(1))
         assert(d2 eq drivers(2))
-        succeed
     }
 
     "init with zero drivers throws IllegalArgumentException" in {
@@ -65,7 +63,6 @@ class IoDriverPoolTest extends kyo.Test:
             IoDriverPool.init(Array.empty[IoDriver[String]])
         }
         assert(thrown.getMessage.contains("at least one driver"))
-        succeed
     }
 
     "next returns drivers in round-robin order" in {
@@ -77,7 +74,7 @@ class IoDriverPoolTest extends kyo.Test:
             val expectedIdx = callIdx % 3
             assert(driver eq drivers(expectedIdx), s"Call $callIdx: expected driver $expectedIdx")
         }
-        succeed
+        ()
     }
 
     "next handles negative modulo via Math.abs — no ArrayIndexOutOfBoundsException" in {
@@ -88,10 +85,9 @@ class IoDriverPoolTest extends kyo.Test:
         val pool = IoDriverPool.init(drivers, -2L)
         val d    = pool.next()
         assert(d eq drivers(2))
-        succeed
     }
 
-    "next is thread-safe — concurrent calls only return valid drivers" in run {
+    "next is thread-safe — concurrent calls only return valid drivers" in {
         val drivers = mkDrivers(4)
         val pool    = IoDriverPool.init(drivers)
         val seen    = new ConcurrentHashMap[Int, Boolean]()
@@ -110,7 +106,6 @@ class IoDriverPoolTest extends kyo.Test:
         pool.start()
         val allStarted = rawDrivers.forall(d => d.startCount.get() == 1)
         assert(allStarted)
-        succeed
     }
 
     "start continues if one driver fails to start" in {
@@ -123,7 +118,6 @@ class IoDriverPoolTest extends kyo.Test:
         assert(rawDrivers(0).startCount.get() == 1)
         assert(rawDrivers(1).startCount.get() == 0) // failed, never incremented
         assert(rawDrivers(2).startCount.get() == 1)
-        succeed
     }
 
     "close is idempotent — second close skips driver close calls" in {
@@ -136,7 +130,6 @@ class IoDriverPoolTest extends kyo.Test:
         // Each driver's close() should be called exactly once
         val allClosedOnce = rawDrivers.forall(d => d.closeCount.get() == 1)
         assert(allClosedOnce)
-        succeed
     }
 
     "close closes drivers before interrupting fibers — driver close order preserved" in {
@@ -157,7 +150,6 @@ class IoDriverPoolTest extends kyo.Test:
         assert(rawDrivers(1).closeCount.get() == 1)
         // Driver close order: 0 then 1 (sequential closeLoop)
         assert(closeOrder.toList == List("driver-close-0", "driver-close-1"))
-        succeed
     }
 
     "close skips Absent fiber slots — no error when pool not started" in {
@@ -166,7 +158,7 @@ class IoDriverPoolTest extends kyo.Test:
         // Do NOT call pool.start() — all fiber slots remain Absent
         // close() must handle Absent slots gracefully without throwing
         pool.close()
-        succeed
+        succeed("runs without error: close() on a non-started pool must not throw")
     }
 
 end IoDriverPoolTest

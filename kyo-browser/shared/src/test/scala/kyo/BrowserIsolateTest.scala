@@ -10,7 +10,7 @@ class BrowserIsolateTest extends BrowserTest:
 
     // ---- withNewTab ----
 
-    "withNewTab creates tab at about:blank" in run {
+    "withNewTab creates tab at about:blank" in {
         withBrowser {
             Browser.withNewTab {
                 Browser.url.map { u =>
@@ -20,7 +20,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withNewTab goto and title works independently" in run {
+    "withNewTab goto and title works independently" in {
         val p = page("<html><head><title>FreshPage</title></head><body>Fresh</body></html>")
         withBrowser {
             Browser.withNewTab {
@@ -33,7 +33,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withNewTab parent tab unaffected" in run {
+    "withNewTab parent tab unaffected" in {
         val parentPage = page("<html><head><title>ParentPage</title></head><body>Parent</body></html>")
         val freshPage  = page("<html><head><title>FreshChild</title></head><body>Child</body></html>")
         withBrowser {
@@ -55,7 +55,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withNewTab error inside block still cleans up tab" in run {
+    "withNewTab error inside block still cleans up tab" in {
         withBrowser {
             // Count targets before
             Browser.eval("'before'").map { _ =>
@@ -80,7 +80,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withNewTab inside withNewTab - nested tabs" in run {
+    "withNewTab inside withNewTab - nested tabs" in {
         val p1 = page("<h1>Outer</h1>")
         val p2 = page("<h1>Inner</h1>")
         withBrowser {
@@ -103,7 +103,7 @@ class BrowserIsolateTest extends BrowserTest:
 
     // ---- withFork ----
 
-    "withFork preserves URL" in run {
+    "withFork preserves URL" in {
         val p = page("<h1>Clone Me</h1>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -116,7 +116,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withFork preserves page content" in run {
+    "withFork preserves page content" in {
         val p = page("<html><head><title>CloneTitle</title></head><body>CloneBody</body></html>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -129,7 +129,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withFork on about:blank works" in run {
+    "withFork on about:blank works" in {
         withBrowser {
             Browser.withFork {
                 Browser.url.map { u =>
@@ -139,7 +139,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withFork does not affect parent tab" in run {
+    "withFork does not affect parent tab" in {
         val parentPage = page("<html><head><title>Parent</title></head><body>Parent</body></html>")
         val childPage  = page("<html><head><title>Child</title></head><body>Child</body></html>")
         withBrowser {
@@ -161,7 +161,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withFork preserves form field values" in run {
+    "withFork preserves form field values" in {
         val p = page(
             """<body><input id="name" type="text" value=""><select id="color"><option value="red">Red</option><option value="blue">Blue</option></select></body>"""
         )
@@ -183,7 +183,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withFork on page with history gets current URL only" in run {
+    "withFork on page with history gets current URL only" in {
         val p1 = page("<html><head><title>Page1</title></head><body>Page1</body></html>")
         val p2 = page("<html><head><title>Page2</title></head><body>Page2</body></html>")
         withBrowser {
@@ -204,7 +204,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withFork mutations in fork don't affect parent" in run {
+    "withFork mutations in fork don't affect parent" in {
         val p1 = page("<html><head><title>Original</title></head><body>Original</body></html>")
         val p2 = page("<html><head><title>Mutated</title></head><body>Mutated</body></html>")
         withBrowser {
@@ -231,7 +231,7 @@ class BrowserIsolateTest extends BrowserTest:
 
     // ---- withNewTab / withFork resource cleanup ----
 
-    "withNewTab tabs cleaned up after scope exit" in run {
+    "withNewTab tabs cleaned up after scope exit" in {
         withBrowser {
             Browser.use { parent =>
                 // Snapshot CDP target IDs before opening the child tab.
@@ -292,7 +292,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withFork tabs cleaned up after scope exit" in run {
+    "withFork tabs cleaned up after scope exit" in {
         val p = page("<html><head><title>CleanupTest</title></head><body>test</body></html>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -316,7 +316,7 @@ class BrowserIsolateTest extends BrowserTest:
     // and restoring it in a new tab via navigation + JS restoration. Anything not
     // in that snapshot is lost.
 
-    "withFork does not preserve JS in-memory state" in run {
+    "withFork does not preserve JS in-memory state" in {
         // SPA state (Redux, Zustand, React component state, global variables) lives
         // in JS heap memory and is not part of the snapshot. After cloning, the page
         // is re-loaded from the URL, so all in-memory state is gone.
@@ -335,7 +335,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withFork does not preserve dynamically added DOM elements" in run {
+    "withFork does not preserve dynamically added DOM elements" in {
         // Clone navigates to the same URL, which re-renders the original HTML.
         // Any DOM mutations (appendChild, innerHTML changes) are lost because
         // the snapshot only captures the URL, not the live DOM tree.
@@ -362,7 +362,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withFork preserves scroll position" in run {
+    "withFork preserves scroll position" in {
         val p = page(
             """<html><body style="height:5000px"><div id="top">top</div><div id="bottom" style="position:absolute;top:4000px">bottom</div></body></html>"""
         )
@@ -383,7 +383,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withFork preserves focused element" in run {
+    "withFork preserves focused element" in {
         val p = page(
             """<html><body><input id="first" type="text"><input id="second" type="text"></body></html>"""
         )
@@ -401,7 +401,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withFork preserves cursor position in text input" in run {
+    "withFork preserves cursor position in text input" in {
         val p = page(
             """<html><body><input id="myinput" type="text" value=""></body></html>"""
         )
@@ -433,7 +433,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withFork form fields are restored after page re-render" in run {
+    "withFork form fields are restored after page re-render" in {
         // This test documents the HAPPY PATH: captureSnapshot reads form field values
         // from the live DOM, and restoreSnapshot re-applies them via JS after the
         // cloned page loads. This works for static HTML pages.
@@ -466,7 +466,7 @@ class BrowserIsolateTest extends BrowserTest:
 
     // ---- isolate.fresh ----
 
-    "isolate.fresh gives each fiber its own tab" in run {
+    "isolate.fresh gives each fiber its own tab" in {
         withBrowser {
             val p1 = page("<h1>Fiber1</h1>")
             val p2 = page("<h1>Fiber2</h1>")
@@ -481,7 +481,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "isolate.fresh 5 parallel fibers get independent tabs" in run {
+    "isolate.fresh 5 parallel fibers get independent tabs" in {
         withBrowser {
             val p1 = page("<html><head><title>F1</title></head><body>F1</body></html>")
             val p2 = page("<html><head><title>F2</title></head><body>F2</body></html>")
@@ -504,7 +504,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "isolate.fresh error in one fiber doesn't affect others" in run {
+    "isolate.fresh error in one fiber doesn't affect others" in {
         withBrowser {
             val p1 = page("<html><head><title>GoodFiber</title></head><body>Good</body></html>")
             Browser.isolate.fresh.use {
@@ -527,7 +527,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "isolate.fresh each fiber navigates independently no cross-contamination" in run {
+    "isolate.fresh each fiber navigates independently no cross-contamination" in {
         withBrowser {
             val pA = page("<html><head><title>PageA</title></head><body>A</body></html>")
             val pB = page("<html><head><title>PageB</title></head><body>B</body></html>")
@@ -555,7 +555,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "isolate.fresh parent tab unaffected by child fiber operations" in run {
+    "isolate.fresh parent tab unaffected by child fiber operations" in {
         val parentPage = page("<html><head><title>ParentIso</title></head><body>Parent</body></html>")
         withBrowser {
             Browser.goto(parentPage).map { _ =>
@@ -585,7 +585,7 @@ class BrowserIsolateTest extends BrowserTest:
 
     // ---- isolate.clone ----
 
-    "isolate.clone preserves URL across fibers" in run {
+    "isolate.clone preserves URL across fibers" in {
         val p = page("<html><head><title>Cloned</title></head><body>Hello</body></html>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -602,7 +602,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "isolate.clone parallel fibers each get clone with same URL" in run {
+    "isolate.clone parallel fibers each get clone with same URL" in {
         val p = page("<html><head><title>CloneSource</title></head><body>Source</body></html>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -621,7 +621,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "isolate.clone mutations in one clone don't affect other clone or parent" in run {
+    "isolate.clone mutations in one clone don't affect other clone or parent" in {
         val p1 = page("<html><head><title>CloneOrig</title></head><body>Original</body></html>")
         val p2 = page("<html><head><title>Navigated</title></head><body>Navigated</body></html>")
         withBrowser {
@@ -657,7 +657,7 @@ class BrowserIsolateTest extends BrowserTest:
 
     // ---- browserContextId: Maybe[String] (TYPES-9) ----
 
-    "withNewTab propagates parent's browserContextId as Maybe.Present to the child tab" in run {
+    "withNewTab propagates parent's browserContextId as Maybe.Present to the child tab" in {
         withBrowser {
             Browser.use { parent =>
                 val parentCtx = parent.browserContextId match
@@ -680,7 +680,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "BrowserTab constructed without a context has browserContextId == Maybe.Absent" in run {
+    "BrowserTab constructed without a context has browserContextId == Maybe.Absent" in {
         withBrowser {
             Browser.use { parent =>
                 for
@@ -704,7 +704,8 @@ class BrowserIsolateTest extends BrowserTest:
                     )
                 yield tab.browserContextId match
                     case Present(id) => fail(s"Expected Absent but got Present($id)")
-                    case Absent      => succeed
+                    case Absent =>
+                        assert(tab.browserContextId == Absent, "browserContextId must be Absent for a tab constructed without a context")
                 end for
             }
         }
@@ -712,7 +713,7 @@ class BrowserIsolateTest extends BrowserTest:
 
     // ---- withFork storage preservation ----
 
-    "withFork preserves localStorage" in run {
+    "withFork preserves localStorage" in {
         withBrowserOnLocalhost {
             Browser.eval("localStorage.setItem('lk', 'lv'); 'ok'").andThen {
                 Browser.withFork {
@@ -724,7 +725,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withFork preserves sessionStorage" in run {
+    "withFork preserves sessionStorage" in {
         withBrowserOnLocalhost {
             Browser.eval("sessionStorage.setItem('sk', 'sv'); 'ok'").andThen {
                 Browser.withFork {
@@ -738,7 +739,7 @@ class BrowserIsolateTest extends BrowserTest:
 
     // ---- isolate.clone per-field preservation ----
 
-    "isolate.clone preserves cookies across forks" in run {
+    "isolate.clone preserves cookies across forks" in {
         withBrowserOnLocalhost {
             Browser.setCookie("ck", "cv", "localhost").andThen {
                 Browser.isolate.clone.use {
@@ -754,7 +755,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "isolate.clone preserves form fields across forks" in run {
+    "isolate.clone preserves form fields across forks" in {
         withBrowser {
             onPage(
                 """<html><body><input id="name" type="text" value=""><input id="email" type="text" value=""></body></html>"""
@@ -776,7 +777,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "isolate.clone preserves localStorage across forks" in run {
+    "isolate.clone preserves localStorage across forks" in {
         withBrowserOnLocalhost {
             Browser.eval("localStorage.setItem('ik', 'iv'); 'ok'").andThen {
                 Browser.isolate.clone.use {
@@ -792,7 +793,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "isolate.clone preserves sessionStorage across forks" in run {
+    "isolate.clone preserves sessionStorage across forks" in {
         withBrowserOnLocalhost {
             Browser.eval("sessionStorage.setItem('sik', 'siv'); 'ok'").andThen {
                 Browser.isolate.clone.use {
@@ -808,7 +809,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "isolate.clone preserves scroll position across forks" in run {
+    "isolate.clone preserves scroll position across forks" in {
         withBrowser {
             onPage(
                 """<html><body style="height:5000px"><div id="top">top</div></body></html>"""
@@ -829,7 +830,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "isolate.clone preserves focused element across forks" in run {
+    "isolate.clone preserves focused element across forks" in {
         withBrowser {
             onPage(
                 """<html><body><input id="alpha" type="text"><input id="beta" type="text"></body></html>"""
@@ -850,7 +851,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "isolate.clone preserves cursor position across forks" in run {
+    "isolate.clone preserves cursor position across forks" in {
         withBrowser {
             onPage(
                 """<html><body><input id="myinput" type="text" value=""></body></html>"""
@@ -893,7 +894,7 @@ class BrowserIsolateTest extends BrowserTest:
 
     // ---- Cross-cutting: cleanup on interrupt, config inheritance, dialog isolation ----
 
-    "withFork cleanup runs when outer scope is interrupted" in run {
+    "withFork cleanup runs when outer scope is interrupted" in {
         val p = page("<html><head><title>InterruptTest</title></head><body>InterruptTest</body></html>")
         // Capture the shared Chrome's wsUrl so both the outer scope (used to observe targets) and the inner
         // timed-out Browser.run attach to the SAME Chrome process via separate connections.
@@ -952,7 +953,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "isolate.fresh inherits Browser.SessionConfig from the outer withConfig" in run {
+    "isolate.fresh inherits Browser.SessionConfig from the outer withConfig" in {
         val customGrace = 777.millis
         withBrowser {
             Browser.withConfig(_.mutationFirstMutationGrace(customGrace)) {
@@ -975,7 +976,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "isolate.fresh.use surfaces tab-create failure as typed Abort[BrowserConnectionException]" in run {
+    "isolate.fresh.use surfaces tab-create failure as typed Abort[BrowserConnectionException]" in {
         // `Browser.isolate.fresh` carries `Abort[BrowserConnectionException]` in its `Isolate.Keep` channel,
         // so a typed Abort raised inside the user computation flows through the Isolate ABI directly. There is no
         // throw-tunneling and no `BrowserIsolatedException`. We simulate a tab-create failure by injecting `Abort.fail`
@@ -990,13 +991,12 @@ class BrowserIsolateTest extends BrowserTest:
             }.map {
                 case Result.Failure(c: BrowserConnectionException) =>
                     assert(c eq cause, s"Expected the original cause to surface, got $c")
-                    succeed
                 case other => fail(s"Expected Result.Failure(BrowserConnectionException) but got $other")
             }
         }
     }
 
-    "isolate.clone.use surfaces snapshot-capture failure as typed Abort[BrowserConnectionException]" in run {
+    "isolate.clone.use surfaces snapshot-capture failure as typed Abort[BrowserConnectionException]" in {
         // `isolate.clone` also carries the typed Abort directly through the Isolate ABI; a typed `Abort.fail`
         // raised from the user computation handed to `.use { body }` surfaces as a typed `Result.Failure`,
         // never as a panic.
@@ -1009,13 +1009,12 @@ class BrowserIsolateTest extends BrowserTest:
             }.map {
                 case Result.Failure(c: BrowserConnectionException) =>
                     assert(c eq cause, s"Expected the original cause to surface, got $c")
-                    succeed
                 case other => fail(s"Expected Result.Failure(BrowserConnectionException) but got $other")
             }
         }
     }
 
-    "withFork surfaces nested isolate failures via typed Abort, not panic" in run {
+    "withFork surfaces nested isolate failures via typed Abort, not panic" in {
         // `Browser.isolate.{fresh,clone}` carry `Abort[BrowserConnectionException]` in their `Isolate.Keep`
         // channel, so a typed Abort raised inside the user computation flows through the Isolate ABI directly
         // without throw-tunneling. The `withFork` boundary preserves the typed Abort end-to-end.
@@ -1028,13 +1027,12 @@ class BrowserIsolateTest extends BrowserTest:
             }.map {
                 case Result.Failure(c: BrowserConnectionException) =>
                     assert(c eq cause, s"Expected the original cause to surface, got $c")
-                    succeed
                 case other => fail(s"Expected Result.Failure(BrowserConnectionException) but got $other")
             }
         }
     }
 
-    "withFork translates a typed Abort[BrowserConnectionException] inside isolate.fresh into a typed outer Abort" in run {
+    "withFork translates a typed Abort[BrowserConnectionException] inside isolate.fresh into a typed outer Abort" in {
         // End-to-end: a typed `Abort.fail[BrowserConnectionException]` raised inside the per-fiber computation
         // handed to `Browser.isolate.fresh.use` flows through the widened `Isolate.Keep` channel and surfaces
         // through the outer `withFork`'s typed `Abort[BrowserConnectionException]`. We assert the cause survives
@@ -1050,13 +1048,12 @@ class BrowserIsolateTest extends BrowserTest:
             }.map {
                 case Result.Failure(c: BrowserConnectionException) =>
                     assert(c eq cause, s"Expected the original cause to surface, got $c")
-                    succeed
                 case other => fail(s"Expected Result.Failure(BrowserConnectionException) but got $other")
             }
         }
     }
 
-    "isolate.fresh handles dialogs in parallel forks without cross-contamination" in run {
+    "isolate.fresh handles dialogs in parallel forks without cross-contamination" in {
         val p = page("""<html><body>
             <button id='b' onclick="window.__r1 = prompt('?');">go</button>
         </body></html>""")
@@ -1087,7 +1084,7 @@ class BrowserIsolateTest extends BrowserTest:
 
     // ---- withPopup ----
 
-    "withPopup captures new tab from window.open" in run {
+    "withPopup captures new tab from window.open" in {
         withBrowser {
             onPage("""<html><body>
             <button id='openBtn' onclick="window.open('about:blank', '_blank');">Open</button>
@@ -1107,7 +1104,7 @@ class BrowserIsolateTest extends BrowserTest:
 
     // ---- withFork (cookies / localStorage state) ----
 
-    "withFork preserves cookies set in the parent tab" in run {
+    "withFork preserves cookies set in the parent tab" in {
         withBrowserOnLocalhost {
             Browser.setCookie("forkCookie", "forkVal", "localhost").andThen {
                 Browser.withFork {
@@ -1120,7 +1117,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withFork preserves localStorage set in the parent tab" in run {
+    "withFork preserves localStorage set in the parent tab" in {
         withBrowserOnLocalhost {
             Browser.eval("localStorage.setItem('forkKey','forkVal'); 'ok'").andThen {
                 Browser.withFork {
@@ -1132,7 +1129,7 @@ class BrowserIsolateTest extends BrowserTest:
         }
     }
 
-    "withFork mutations do not leak back to the parent" in run {
+    "withFork mutations do not leak back to the parent" in {
         withBrowserOnLocalhost {
             Browser.eval("localStorage.removeItem('leakKey'); 'ok'").andThen {
                 Browser.withFork {
@@ -1151,7 +1148,7 @@ class BrowserIsolateTest extends BrowserTest:
     // wait at well under the default loadSchedule's 8 s; we assert the abort fires in [300, 1500) ms with
     // BrowserProtocolErrorException("withPopup", "no new tab detected"), proving the schedule actually
     // overrides the config default.
-    "withPopup with a schedule clause bounds the wait time" in run {
+    "withPopup with a schedule clause bounds the wait time" in {
         withBrowser {
             onPage("<div>no popup here</div>") {
                 val start = java.lang.System.currentTimeMillis()
@@ -1178,7 +1175,7 @@ class BrowserIsolateTest extends BrowserTest:
 
     // isolate.clone with 3 parallel forks: widens coverage beyond 2-fork tests to surface any concurrency
     // bug in BrowserSnapshot.captureSnapshot when multiple clones spin up in parallel.
-    "isolate.clone 3 parallel forks each see independent navigation, parent unaffected" in run {
+    "isolate.clone 3 parallel forks each see independent navigation, parent unaffected" in {
         val p1         = page("<html><head><title>C1</title></head><body>C1</body></html>")
         val p2         = page("<html><head><title>C2</title></head><body>C2</body></html>")
         val p3         = page("<html><head><title>C3</title></head><body>C3</body></html>")
@@ -1209,7 +1206,7 @@ class BrowserIsolateTest extends BrowserTest:
 
     // isolate.clone cleanup on per-fork failure: asserts that surviving forks complete normally and the
     // failed fork's child tab is torn down with no leaked CDP targets.
-    "isolate.clone error in one fork doesn't affect others, failed fork's context is torn down" in run {
+    "isolate.clone error in one fork doesn't affect others, failed fork's context is torn down" in {
         val p = page("<html><head><title>CloneCleanup</title></head><body>X</body></html>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -1268,7 +1265,7 @@ class BrowserIsolateTest extends BrowserTest:
     // isolate.fresh.use cleanup when outer scope is interrupted: outer Async.timeout(300.millis) wraps a
     // Browser.run whose body blocks indefinitely inside isolate.fresh.use. After the timeout fires, poll
     // CdpBackend.getTargets and assert the forked tab's targetId is gone.
-    "isolate.fresh.use cleanup runs when outer scope is interrupted" in run {
+    "isolate.fresh.use cleanup runs when outer scope is interrupted" in {
         val p = page("<html><head><title>InterruptFresh</title></head><body>X</body></html>")
         type E = BrowserReadException | Timeout
         kyo.internal.SharedChrome.init.map { wsUrl =>
@@ -1321,7 +1318,7 @@ class BrowserIsolateTest extends BrowserTest:
     // isolate.clone.use cleanup when outer scope is interrupted: same structure as the fresh.use interrupt
     // test, but for clone. clone additionally exercises the snapshot-capture path, pinning that the
     // snapshot-restore Scope also propagates interruption to its finalizers.
-    "isolate.clone.use cleanup runs when outer scope is interrupted" in run {
+    "isolate.clone.use cleanup runs when outer scope is interrupted" in {
         val p = page("<html><head><title>InterruptClone</title></head><body>X</body></html>")
         type E = BrowserReadException | Timeout
         kyo.internal.SharedChrome.init.map { wsUrl =>

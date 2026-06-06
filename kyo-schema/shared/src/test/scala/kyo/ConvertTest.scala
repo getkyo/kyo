@@ -9,7 +9,7 @@ case class BMPoint2D(x: Int, y: Int) derives CanEqual
 case class BMCoords(x: Int, y: Int) derives CanEqual
 case class BMPoint3D(x: Int, y: Int, z: Int) derives CanEqual
 
-class ConvertTest extends Test:
+class ConvertTest extends kyo.test.Test[Any]:
 
     // 1. Manual Convert with explicit function
     "manual convert with explicit function" in {

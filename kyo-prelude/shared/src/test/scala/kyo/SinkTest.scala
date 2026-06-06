@@ -1,9 +1,9 @@
 package kyo
 
-class SinkTest extends Test:
+class SinkTest extends kyo.test.Test[Any]:
 
     "sinks" - {
-        "discard" in run {
+        "discard" in {
             val sink = Sink.discard[Int]
             val stream = Stream:
                 Var.get[Int].map: init =>
@@ -17,42 +17,42 @@ class SinkTest extends Test:
             assert(result == (6, ()))
         }
 
-        "collect" in run {
+        "collect" in {
             val sink   = Sink.collect[Int]
             val stream = Stream.init(0 to 5)
             val result = sink.drain(stream).eval
             assert(result == (0 to 5))
         }
 
-        "count" in run {
+        "count" in {
             val sink   = Sink.count[Int]
             val stream = Stream.init(0 to 5)
             val result = sink.drain(stream).eval
             assert(result == 6)
         }
 
-        "foreach" in run {
+        "foreach" in {
             val sink   = Sink.foreach((i: Int) => Var.update[List[Int]](i :: _).unit)
             val stream = Stream.init(0 to 5)
             val result = Var.runTuple(Nil)(sink.drain(stream)).eval
             assert(result == ((5 to 0 by -1), ()))
         }
 
-        "foreachChunk" in run {
+        "foreachChunk" in {
             val sink   = Sink.foreachChunk((ch: Chunk[Int]) => Var.update[List[Chunk[Int]]](ch :: _).unit)
             val stream = Stream.init(0 to 1).concat(Stream.init(2 to 3)).concat(Stream.init(4 to 5))
             val result = Var.runTuple(Nil)(sink.drain(stream)).eval
             assert(result == (List(Chunk(4, 5), Chunk(2, 3), Chunk(0, 1)), ()))
         }
 
-        "fold" in run {
+        "fold" in {
             val sink   = Sink.fold(0)((a: Int, v: String) => a + v.length)
             val stream = Stream.init(Seq("a", "be", "see"))
             val result = sink.drain(stream).eval
             assert(result == 6)
         }
 
-        "foldKyo" in run {
+        "foldKyo" in {
             val sink   = Sink.foldKyo(0)((a: Int, v: String) => Var.update[String](_ + v).andThen(a + v.length))
             val stream = Stream.init(Seq("a", "be", "see"))
             val result = Var.runTuple("")(sink.drain(stream)).eval
@@ -61,7 +61,7 @@ class SinkTest extends Test:
     }
 
     "contramap" - {
-        "pure" in run {
+        "pure" in {
             val s1     = Sink.fold[Int, Int](0)(_ + _)
             val s2     = s1.contramap((_: String).length)
             val stream = Stream.init(Seq("a", "be", "see"))
@@ -69,7 +69,7 @@ class SinkTest extends Test:
             assert(result == 6)
         }
 
-        "effectful" in run {
+        "effectful" in {
             val s1 = Sink.fold[Int, Int](0)(_ + _)
             val s2 = s1.contramap: (str: String) =>
                 Var.update[Int](_ + 1).andThen(str.length)
@@ -79,7 +79,7 @@ class SinkTest extends Test:
         }
     }
 
-    "contramapPure" in run {
+    "contramapPure" in {
         val s1     = Sink.fold[Int, Int](0)(_ + _)
         val s2     = s1.contramapPure((_: String).length)
         val stream = Stream.init(Seq("a", "be", "see"))
@@ -88,7 +88,7 @@ class SinkTest extends Test:
     }
 
     "contramapChunk" - {
-        "pure" in run {
+        "pure" in {
             val s1     = Sink.fold[Int, Int](0)(_ + _)
             val s2     = s1.contramapChunk((_: Chunk[String]).map(_.length))
             val stream = Stream.init(Seq("a", "be", "see"))
@@ -96,7 +96,7 @@ class SinkTest extends Test:
             assert(result == 6)
         }
 
-        "effectful" in run {
+        "effectful" in {
             val s1 = Sink.fold[Int, Int](0)(_ + _)
             val s2 = s1.contramapChunk: (ch: Chunk[String]) =>
                 Var.update[Int](_ + 1).andThen(ch.map(_.length))
@@ -106,7 +106,7 @@ class SinkTest extends Test:
         }
     }
 
-    "contramapChunkPure" in run {
+    "contramapChunkPure" in {
         val s1     = Sink.fold[Int, Int](0)(_ + _)
         val s2     = s1.contramapChunkPure((_: Chunk[String]).map(_.length))
         val stream = Stream.init(Seq("a", "be", "see"))
@@ -115,7 +115,7 @@ class SinkTest extends Test:
     }
 
     "map" - {
-        "pure" in run {
+        "pure" in {
             val s1     = Sink.fold[Int, Int](0)(_ + _)
             val s2     = s1.map(_.toString)
             val stream = Stream.init(1 to 4)
@@ -123,7 +123,7 @@ class SinkTest extends Test:
             assert(result == "10")
         }
 
-        "effectful" in run {
+        "effectful" in {
             val s1 = Sink.fold[Int, Int](0)(_ + _)
             val s2 = s1.map: i =>
                 Var.update[Int](_ + 1).andThen(i.toString)

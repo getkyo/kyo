@@ -4,7 +4,7 @@ import kyo.*
 import kyo.kernel.*
 import scala.annotation.nowarn
 
-class PendingTest extends Test:
+class PendingTest extends kyo.test.Test[Any]:
 
     "map" in {
         val x: Int < Any    = 5

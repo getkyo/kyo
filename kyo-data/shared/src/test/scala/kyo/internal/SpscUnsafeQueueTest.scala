@@ -24,6 +24,7 @@ class SpscUnsafeQueueTest extends UnsafeQueueBaseTest:
             for _ <- 0 until 10 do
                 for i <- 0 until 8 do q.offer(i)
                 for _ <- 0 until 8 do q.poll()
+            assert(q.poll() == Maybe.empty) // queue must be empty after draining all elements
         }
 
         "producerConsumerOnSameThread" in {

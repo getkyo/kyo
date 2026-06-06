@@ -10,7 +10,7 @@ import kyo.*
 import kyo.internal.transport.*
 import kyo.scheduler.IOPromise
 
-class NioIoDriverTest extends kyo.Test:
+class NioIoDriverTest extends kyo.BaseHttpTest:
 
     import AllowUnsafe.embrace.danger
 
@@ -54,7 +54,6 @@ class NioIoDriverTest extends kyo.Test:
         try
             assert(driver ne null)
             assert(driver.label.contains("NioIoDriver"))
-            succeed
         finally
             given Frame = Frame.internal
             driver.close()
@@ -67,7 +66,6 @@ class NioIoDriverTest extends kyo.Test:
             given Frame = Frame.internal
             val fiber   = driver.start()
             assert(!fiber.done())
-            succeed
         finally
             given Frame = Frame.internal
             driver.close()
@@ -79,7 +77,6 @@ class NioIoDriverTest extends kyo.Test:
         try
             val lbl = driver.label
             assert(lbl.startsWith("NioIoDriver[sel="))
-            succeed
         finally
             given Frame = Frame.internal
             driver.close()
@@ -90,7 +87,6 @@ class NioIoDriverTest extends kyo.Test:
         withDriverAndHandle() { (driver, handle, _) =>
             val lbl = driver.handleLabel(handle)
             assert(lbl.startsWith("channel="))
-            succeed
         }
     }
 
@@ -106,7 +102,6 @@ class NioIoDriverTest extends kyo.Test:
             val handle = NioHandle.init(ch, 4096)
             val result = driver.registerChannel(handle)
             assert(result)
-            succeed
         finally
             ch.close()
             given Frame = Frame.internal
@@ -124,7 +119,6 @@ class NioIoDriverTest extends kyo.Test:
             val handle = NioHandle.init(ch, 4096)
             val result = driver.registerChannel(handle)
             assert(!result)
-            succeed
         finally
             ch.close()
         end try
@@ -139,7 +133,6 @@ class NioIoDriverTest extends kyo.Test:
             val handle = NioHandle.init(ch, 4096)
             val result = driver.registerChannel(handle)
             assert(!result)
-            succeed
         finally
             given Frame = Frame.internal
             driver.close()
@@ -155,7 +148,6 @@ class NioIoDriverTest extends kyo.Test:
             val data   = Span.fromUnsafe("hello".getBytes)
             val result = driver.write(handle, data)
             assert(result == WriteResult.Done)
-            succeed
         }
     }
 
@@ -163,7 +155,6 @@ class NioIoDriverTest extends kyo.Test:
         withDriverAndHandle() { (driver, handle, sv) =>
             val result = driver.write(handle, Span.empty[Byte])
             assert(result == WriteResult.Done)
-            succeed
         }
     }
 
@@ -178,7 +169,6 @@ class NioIoDriverTest extends kyo.Test:
             val data   = Span.fromUnsafe("hello".getBytes)
             val result = driver.write(handle, data)
             assert(result == WriteResult.Error)
-            succeed
         finally
             given Frame = Frame.internal
             driver.close()
@@ -189,7 +179,7 @@ class NioIoDriverTest extends kyo.Test:
     // awaitRead — registers interest and completes promise on read
     // -----------------------------------------------------------------------
 
-    "awaitRead completes promise when data arrives" in run {
+    "awaitRead completes promise when data arrives" in {
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
@@ -208,7 +198,6 @@ class NioIoDriverTest extends kyo.Test:
             driver.closeHandle(handle)
             driver.close()
             assert(result.nonEmpty)
-            succeed
         }
     }
 
@@ -216,7 +205,7 @@ class NioIoDriverTest extends kyo.Test:
     // awaitWritable — registers interest and completes promise when writable
     // -----------------------------------------------------------------------
 
-    "awaitWritable completes promise when channel is writable" in run {
+    "awaitWritable completes promise when channel is writable" in {
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
@@ -231,7 +220,7 @@ class NioIoDriverTest extends kyo.Test:
             sv.close()
             driver.closeHandle(handle)
             driver.close()
-            succeed
+            succeed("awaitWritable promise completed when channel became writable")
         }
     }
 
@@ -263,7 +252,7 @@ class NioIoDriverTest extends kyo.Test:
 
         ch.close()
         driver.close()
-        succeed
+        ()
     }
 
     // -----------------------------------------------------------------------
@@ -290,7 +279,7 @@ class NioIoDriverTest extends kyo.Test:
 
         sv.close()
         driver.close()
-        succeed
+        ()
     }
 
     "cancel is idempotent — second call does not throw" in {
@@ -303,7 +292,7 @@ class NioIoDriverTest extends kyo.Test:
         driver.cancel(handle) // must not throw
         sv.close()
         driver.close()
-        succeed
+        succeed("runs without error: cancel is idempotent")
     }
 
     // -----------------------------------------------------------------------
@@ -315,7 +304,6 @@ class NioIoDriverTest extends kyo.Test:
         withDriverAndHandle() { (driver, handle, sv) =>
             driver.closeHandle(handle)
             assert(!handle.channel.isOpen)
-            succeed
         }
     }
 
@@ -334,7 +322,7 @@ class NioIoDriverTest extends kyo.Test:
         assert(p.done())
         sv.close()
         driver.close()
-        succeed
+        ()
     }
 
     // -----------------------------------------------------------------------
@@ -360,7 +348,7 @@ class NioIoDriverTest extends kyo.Test:
             case _                          => false)
         client.close()
         sv.close()
-        succeed
+        ()
     }
 
     "close is idempotent — second close does not throw" in {
@@ -368,7 +356,7 @@ class NioIoDriverTest extends kyo.Test:
         val driver  = NioIoDriver.init()
         driver.close()
         driver.close() // must not throw
-        succeed
+        succeed("runs without error: driver close is idempotent")
     }
 
     // -----------------------------------------------------------------------
@@ -384,7 +372,6 @@ class NioIoDriverTest extends kyo.Test:
         try
             val result = driver.registerServerChannel(serverChannel)
             assert(result)
-            succeed
         finally
             serverChannel.close()
             driver.close()
@@ -400,7 +387,6 @@ class NioIoDriverTest extends kyo.Test:
         try
             val result = driver.registerServerChannel(serverChannel)
             assert(!result)
-            succeed
         finally
             serverChannel.close()
         end try
@@ -410,7 +396,7 @@ class NioIoDriverTest extends kyo.Test:
     // awaitAccept — registers accept interest
     // -----------------------------------------------------------------------
 
-    "awaitAccept completes promise when client connects" in run {
+    "awaitAccept completes promise when client connects" in {
         given Frame       = Frame.internal
         val driver        = NioIoDriver.init()
         val serverChannel = ServerSocketChannel.open()
@@ -431,7 +417,7 @@ class NioIoDriverTest extends kyo.Test:
             client.close()
             serverChannel.close()
             driver.close()
-            succeed
+            succeed("awaitAccept promise completed when client connected")
         }
     }
 
@@ -459,7 +445,7 @@ class NioIoDriverTest extends kyo.Test:
 
         serverChannel.close()
         driver.close()
-        succeed
+        ()
     }
 
     // -----------------------------------------------------------------------
@@ -477,7 +463,6 @@ class NioIoDriverTest extends kyo.Test:
             // May return Done or Partial depending on socket buffer, but must not throw
             val result = driver.write(handle, bigData)
             assert(result == WriteResult.Done || result.isInstanceOf[WriteResult.Partial])
-            succeed
         finally
             sv.close()
             given Frame = Frame.internal

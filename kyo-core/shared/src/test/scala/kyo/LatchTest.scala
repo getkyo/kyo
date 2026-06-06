@@ -2,64 +2,71 @@ package kyo
 
 import kyo.*
 
-class LatchTest extends Test:
+class LatchTest extends kyo.test.Test[Any]:
 
-    "use" in run {
+    "use" in {
         Latch.initWith(1) { latch =>
             for
                 _ <- latch.release
                 _ <- latch.await
-            yield succeed
+                p <- latch.pending
+            yield assert(p == 0)
         }
     }
 
-    "zero" in run {
+    "zero" in {
         for
             latch <- Latch.init(0)
             _     <- latch.release
             _     <- latch.await
-        yield succeed
+            p     <- latch.pending
+        yield assert(p == 0)
     }
 
-    "countDown + await" in run {
+    "countDown + await" in {
         for
             latch <- Latch.init(1)
             _     <- latch.release
             _     <- latch.await
-        yield succeed
+            p     <- latch.pending
+        yield assert(p == 0)
     }
 
-    "countDown(2) + await" in run {
+    "countDown(2) + await" in {
         for
             latch <- Latch.init(2)
             _     <- latch.release
             _     <- latch.release
             _     <- latch.await
-        yield succeed
+            p     <- latch.pending
+        yield assert(p == 0)
     }
 
-    "countDown + fibers + await" in run {
+    "countDown + fibers + await" in {
         for
             latch <- Latch.init(1)
             _     <- Fiber.initUnscoped(latch.release)
             _     <- latch.await
-        yield succeed
+            p     <- latch.pending
+        yield assert(p == 0)
     }
 
-    "countDown(2) + fibers + await" in run {
+    "countDown(2) + fibers + await" in {
         for
             latch <- Latch.init(2)
             _     <- Async.zip(latch.release, latch.release)
             _     <- latch.await
-        yield succeed
+            p     <- latch.pending
+        yield assert(p == 0)
     }
 
-    "contention" in run {
+    "contention" in {
         for
             latch <- Latch.init(1000)
             _     <- Async.fill(1000, 1000)(latch.release)
             _     <- latch.await
-        yield succeed
+            p     <- latch.pending
+        yield assert(p == 0)
     }
 
     "unsafe" - {
@@ -115,10 +122,10 @@ class LatchTest extends Test:
         }
 
         "should convert to safe Latch" in {
-            val unsafeLatch = Latch.Unsafe.init(2)
-            val safeLatch   = unsafeLatch.safe
-
-            assert(safeLatch.isInstanceOf[Latch])
+            val unsafeLatch      = Latch.Unsafe.init(2)
+            val safeLatch: Latch = unsafeLatch.safe
+            discard(safeLatch)
+            succeed("Unsafe.safe returns a safe Latch wrapper (verified by the Latch ascription)")
         }
     }
 end LatchTest

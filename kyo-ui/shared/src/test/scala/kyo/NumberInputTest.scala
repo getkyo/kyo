@@ -6,41 +6,41 @@ import scala.language.implicitConversions
 
 class NumberInputTest extends UITest:
 
-    "number type" in run {
+    "number type" in {
         withUI(UI.div(UI.numberInput.id("n"))) {
-            Browser.assertAttribute(Selector.id("n"), "type", "number").andThen(succeed)
+            Browser.assertAttribute(Selector.id("n"), "type", "number").unit
         }
     }
 
-    "number min attr" in run {
+    "number min attr" in {
         withUI(UI.div(UI.numberInput.min(0).id("n"))) {
-            Browser.assertAttribute(Selector.id("n"), "min", "0").andThen(succeed)
+            Browser.assertAttribute(Selector.id("n"), "min", "0").unit
         }
     }
 
-    "number max attr" in run {
+    "number max attr" in {
         withUI(UI.div(UI.numberInput.max(100).id("n"))) {
-            Browser.assertAttribute(Selector.id("n"), "max", "100").andThen(succeed)
+            Browser.assertAttribute(Selector.id("n"), "max", "100").unit
         }
     }
 
-    "number step attr" in run {
+    "number step attr" in {
         withUI(UI.div(UI.numberInput.step(5).id("n"))) {
-            Browser.assertAttribute(Selector.id("n"), "step", "5").andThen(succeed)
+            Browser.assertAttribute(Selector.id("n"), "step", "5").unit
         }
     }
 
-    "number all three attrs" in run {
+    "number all three attrs" in {
         withUI(UI.div(UI.numberInput.min(0).max(100).step(5).id("n"))) {
             for
                 _ <- Browser.assertAttribute(Selector.id("n"), "min", "0")
                 _ <- Browser.assertAttribute(Selector.id("n"), "max", "100")
                 _ <- Browser.assertAttribute(Selector.id("n"), "step", "5")
-            yield succeed
+            yield ()
         }
     }
 
-    "number onInput string" in run {
+    "number onInput string" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -51,31 +51,31 @@ class NumberInputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("n"), "7")
                 _ <- Browser.assertText(Selector.id("v"), "v:7")
-            yield succeed
+            yield ()
         }
     }
 
-    "number disabled" in run {
+    "number disabled" in {
         withUI(UI.div(UI.numberInput.disabled(true).id("n"))) {
-            Browser.assertDisabled(Selector.id("n")).andThen(succeed)
+            Browser.assertDisabled(Selector.id("n")).unit
         }
     }
 
     // ---- Range ----
 
-    "range min max step" in run {
+    "range min max step" in {
         withUI(UI.div(UI.rangeInput.min(0).max(100).step(1).id("r"))) {
             for
                 _ <- Browser.assertAttribute(Selector.id("r"), "min", "0")
                 _ <- Browser.assertAttribute(Selector.id("r"), "max", "100")
                 _ <- Browser.assertAttribute(Selector.id("r"), "step", "1")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Numeric events ----
 
-    "onChangeNumeric fires" in run {
+    "onChangeNumeric fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0.0)
             yield UI.div(
@@ -86,11 +86,11 @@ class NumberInputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("n"), "42")
                 _ <- Browser.assertText(Selector.id("v"), "n:42")
-            yield succeed
+            yield ()
         }
     }
 
-    "onInput + onChangeNumeric both fire" in run {
+    "onInput + onChangeNumeric both fire" in {
         val app: UI < Async =
             for
                 strRef <- Signal.initRef("")
@@ -104,11 +104,11 @@ class NumberInputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("n"), "7")
                 _ <- Browser.assertText(Selector.id("nv"), "n:7")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill float 3.14" in run {
+    "fill float 3.14" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0.0)
             yield UI.div(
@@ -119,11 +119,11 @@ class NumberInputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("n"), "3.14")
                 _ <- Browser.assertText(Selector.id("v"), "n:3.14")
-            yield succeed
+            yield ()
         }
     }
 
-    "value signalRef binding" in run {
+    "value signalRef binding" in {
         val app: UI < Async =
             for ref <- Signal.initRef("10")
             yield UI.div(
@@ -135,22 +135,22 @@ class NumberInputTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "v:10")
                 _ <- Browser.fill(Selector.id("n"), "20")
                 _ <- Browser.assertText(Selector.id("v"), "v:20")
-            yield succeed
+            yield ()
         }
     }
 
-    "number placeholder" in run {
+    "number placeholder" in {
         withUI(UI.div(UI.numberInput.placeholder("Enter number").id("n"))) {
-            Browser.assertAttribute(Selector.id("n"), "placeholder", "Enter number").andThen(succeed)
+            Browser.assertAttribute(Selector.id("n"), "placeholder", "Enter number").unit
         }
     }
 
-    "number focus" in run {
+    "number focus" in {
         withUI(UI.div(UI.numberInput.id("n"))) {
             for
                 _ <- Browser.click(Selector.id("n"))
                 _ <- Browser.assertVisible(Selector.id("n"))
-            yield succeed
+            yield ()
         }
     }
 

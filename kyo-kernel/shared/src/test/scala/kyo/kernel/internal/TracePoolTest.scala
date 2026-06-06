@@ -1,10 +1,8 @@
 package kyo.kernel.internal
 
 import kyo.Frame
-import kyo.Tagged.*
-import kyo.Test
 
-class TracePoolTest extends Test:
+class TracePoolTest extends kyo.test.Test[Any]:
 
     class TestLocal extends TracePool.Local
 
@@ -13,7 +11,7 @@ class TracePoolTest extends Test:
         val trace = local.borrow()
         assert(trace != null)
         local.release(trace)
-        succeed
+        ()
     }
 
     "reuse released traces" in {
@@ -29,7 +27,7 @@ class TracePoolTest extends Test:
         val traces = List.fill(TracePool.localCapacity + 1)(local.borrow())
         assert(traces.forall(_ != null))
         traces.foreach(local.release)
-        succeed
+        ()
     }
 
     "clear traces when returning to the pool" in {
@@ -48,7 +46,7 @@ class TracePoolTest extends Test:
             assert(recycledTrace.frames.forall(_ == null))
             assert(recycledTrace.index == 0)
         end for
-        succeed
+        ()
     }
 
     "borrow should never return null" in {
@@ -66,7 +64,7 @@ class TracePoolTest extends Test:
             val borrowed = local.borrow()
             assert(borrowed != null, "borrow returned null after release")
         }
-        succeed
+        ()
     }
 
     "size management should be correct" in {

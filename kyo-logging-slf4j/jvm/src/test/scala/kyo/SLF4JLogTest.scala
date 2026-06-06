@@ -12,7 +12,13 @@ import ch.qos.logback.core.status.Status
 import org.slf4j.LoggerFactory
 import scala.util.control.NoStackTrace
 
-class SLF4JLogTest extends Test:
+class SLF4JLogTest extends kyo.test.Test[Any]:
+
+    // Every leaf reconfigures the SAME global Logback logger named "kyo.logging" (and the "log" leaf also
+    // detaches the ROOT logger's appenders), then reads the level back through the SLF4J wrapper.
+    // ScalaTest's AsyncFreeSpec ran a suite's leaves sequentially; kyo-test runs them in parallel by
+    // default, so concurrent leaves clobber each other's level and appenders. Serialize this suite's leaves.
+    override def config = super.config.sequential
 
     case object ex extends NoStackTrace
 
@@ -46,7 +52,7 @@ class SLF4JLogTest extends Test:
         assert(loggerWithLevel(Level.OFF).level == Log.Level.silent)
     }
 
-    "log" in run {
+    "log" in {
         val buffer = new StringBuilder()
         val out = new java.io.OutputStream:
             def write(b: Int): Unit = buffer.append(b.toChar)

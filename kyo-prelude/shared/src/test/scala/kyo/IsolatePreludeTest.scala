@@ -1,9 +1,9 @@
 package kyo
 
-class IsolatePreludeTest extends Test:
+class IsolatePreludeTest extends kyo.test.Test[Any]:
 
     "run" - {
-        "with Var isolate" in run {
+        "with Var isolate" in {
             val result = Var.runTuple(1) {
                 Var.isolate.update[Int].run {
                     for
@@ -16,7 +16,7 @@ class IsolatePreludeTest extends Test:
             assert(result.eval == (2, (1, 2)))
         }
 
-        "with Memo isolate" in run {
+        "with Memo isolate" in {
             var count = 0
             val f = Memo[Int, Int, Any] { x =>
                 count += 1
@@ -32,7 +32,7 @@ class IsolatePreludeTest extends Test:
             assert(result.eval == (2, 2, 1))
         }
 
-        "with Emit isolate" in run {
+        "with Emit isolate" in {
             val result = Emit.run {
                 Emit.isolate.merge[Int].run {
                     for
@@ -46,7 +46,7 @@ class IsolatePreludeTest extends Test:
     }
 
     "andThen" - {
-        "composing Var and Emit isolates" in run {
+        "composing Var and Emit isolates" in {
             val varIsolate  = Var.isolate.update[Int]
             val emitIsolate = Emit.isolate.merge[Int]
 
@@ -68,7 +68,7 @@ class IsolatePreludeTest extends Test:
             assert(result.eval == (2, (Chunk(1, 2), (1, 2))))
         }
 
-        "composing Memo and Var isolates" in run {
+        "composing Memo and Var isolates" in {
             var count = 0
             val f = Memo[Int, Int, Any] { x =>
                 count += 1
@@ -95,7 +95,7 @@ class IsolatePreludeTest extends Test:
             assert(result.eval == (2, (2, 2, 2, 1)))
         }
 
-        "composing three isolates" in run {
+        "composing three isolates" in {
             val varIsolate  = Var.isolate.update[Int]
             val emitIsolate = Emit.isolate.merge[Int]
             val memoIsolate = Memo.isolate
@@ -130,7 +130,7 @@ class IsolatePreludeTest extends Test:
     }
 
     "enables transactional behavior via Abort interaction" - {
-        "Var isolate rolls back on abort" in run {
+        "Var isolate rolls back on abort" in {
             val result = Var.runTuple(0) {
                 Abort.run {
                     for
@@ -148,7 +148,7 @@ class IsolatePreludeTest extends Test:
             assert(result.eval == (0, Result.fail("Failed")))
         }
 
-        "Emit isolate discards emissions on abort" in run {
+        "Emit isolate discards emissions on abort" in {
             val result = Emit.run {
                 Abort.run {
                     for
@@ -167,7 +167,7 @@ class IsolatePreludeTest extends Test:
             assert(result.eval == (Chunk(1), Result.fail("Failed")))
         }
 
-        "Memo isolate preserves cache isolation on abort" in run {
+        "Memo isolate preserves cache isolation on abort" in {
             var count = 0
             val f = Memo[Int, Int, Any] { x =>
                 count += 1
@@ -192,7 +192,7 @@ class IsolatePreludeTest extends Test:
             assert(count == 2)
         }
 
-        "nested isolates maintain transactional behavior" in run {
+        "nested isolates maintain transactional behavior" in {
             val result = Var.runTuple(0) {
                 Emit.run {
                     Abort.run {
@@ -224,7 +224,7 @@ class IsolatePreludeTest extends Test:
             assert(result.eval == (1, (Chunk("start"), Result.fail("Failed"))))
         }
 
-        "multiple effects maintain consistency on abort" in run {
+        "multiple effects maintain consistency on abort" in {
             var memoCount = 0
             val f = Memo[Int, Int, Any] { x =>
                 memoCount += 1

@@ -3,7 +3,7 @@ package kyo.internal
 import kyo.*
 
 /** Direct unit tests for Ryu algorithm (bypasses JsonWriter/JsonReader) */
-class RyuTest extends Test:
+class RyuTest extends kyo.test.Test[Any]:
 
     // Helper to convert Ryu output to string
     def ryuDouble(value: Double): String =
@@ -19,13 +19,13 @@ class RyuTest extends Test:
     end ryuFloat
 
     // Round-trip assertion helpers
-    def assertDoubleRoundTrip(v: Double): Assertion =
+    def assertDoubleRoundTrip(v: Double)(using kyo.test.AssertScope): Unit =
         val str    = ryuDouble(v)
         val parsed = java.lang.Double.parseDouble(str)
         assert(parsed == v, s"Double round-trip failed: $v -> '$str' -> $parsed")
     end assertDoubleRoundTrip
 
-    def assertFloatRoundTrip(v: Float): Assertion =
+    def assertFloatRoundTrip(v: Float)(using kyo.test.AssertScope): Unit =
         val str    = ryuFloat(v)
         val parsed = java.lang.Float.parseFloat(str)
         assert(parsed == v, s"Float round-trip failed: $v -> '$str' -> $parsed")
@@ -89,7 +89,7 @@ class RyuTest extends Test:
             val parsed = java.lang.Double.parseDouble(str)
             assert(parsed == v, s"$v -> '$str' -> $parsed")
         }
-        succeed
+        ()
     }
 
     // --- RyuFloat basic tests ---
@@ -130,7 +130,7 @@ class RyuTest extends Test:
             val parsed = java.lang.Float.parseFloat(str)
             assert(parsed == v, s"$v -> '$str' -> $parsed")
         }
-        succeed
+        ()
     }
 
     // --- Shared utilities tests ---
@@ -238,7 +238,7 @@ class RyuTest extends Test:
             v *= 2.0
             i += 1
         end while
-        succeed
+        ()
     }
 
     "RyuDouble round-trips negative powers of 2" in {
@@ -249,7 +249,7 @@ class RyuTest extends Test:
             v /= 2.0
             i += 1
         end while
-        succeed
+        ()
     }
 
     "RyuDouble round-trips 1 + epsilon (1.0000000000000002)" in {
@@ -273,7 +273,7 @@ class RyuTest extends Test:
             v *= 2.0f
             i += 1
         end while
-        succeed
+        ()
     }
 
     "RyuFloat round-trips negative powers of 2" in {
@@ -284,7 +284,7 @@ class RyuTest extends Test:
             v /= 2.0f
             i += 1
         end while
-        succeed
+        ()
     }
 
     "RyuFloat round-trips 2^24 (16777216.0f)" in {
@@ -300,7 +300,7 @@ class RyuTest extends Test:
         assertDoubleRoundTrip(math.pow(2.0, 200))
         assertDoubleRoundTrip(math.pow(2.0, 500))
         assertDoubleRoundTrip(math.pow(2.0, 1000))
-        succeed
+        ()
     }
 
     // =========================================================================
@@ -393,7 +393,7 @@ class RyuTest extends Test:
         // A value exactly between two representable doubles
         assertDoubleRoundTrip(6.631236871469758e+018)
         assertDoubleRoundTrip(4.5e+15)
-        succeed
+        ()
     }
 
     "RyuFloat round-trips 3.4028235E38 (Float.MaxValue)" in {

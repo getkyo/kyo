@@ -4,7 +4,7 @@ import kyo.*
 import kyo.doctest.*
 
 /** Tests for ClasspathFingerprint covering hash stability, content-change detection, and ordering invariance. */
-class ClasspathFingerprintTest extends Test:
+class ClasspathFingerprintTest extends kyo.test.Test[Any]:
 
     // Create a temporary file with given contents and return it as a kyo.Path.
     private def makeTempFile(dir: kyo.Path, name: String, content: Array[Byte])(using Frame): kyo.Path < (Sync & Abort[Doctest.Error]) =
@@ -23,7 +23,7 @@ class ClasspathFingerprintTest extends Test:
             res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileFsException](dir.removeAll).unit).flatMap(f)
         yield res
 
-    "compute returns stable hash for unchanged jars" in run {
+    "compute returns stable hash for unchanged jars" in {
         withTempDir { dir =>
             makeTempFile(dir, "a.jar", Array[Byte](1, 2, 3, 4)).flatMap { jar1 =>
                 makeTempFile(dir, "b.jar", Array[Byte](5, 6, 7, 8)).flatMap { jar2 =>
@@ -39,7 +39,7 @@ class ClasspathFingerprintTest extends Test:
         }
     }
 
-    "compute differs after jar content changes" in run {
+    "compute differs after jar content changes" in {
         withTempDir { dir =>
             makeTempFile(dir, "lib.jar", Array[Byte](1, 2, 3, 4)).flatMap { jar =>
                 ClasspathFingerprint.compute(Chunk(jar)).flatMap { hash1 =>
@@ -56,7 +56,7 @@ class ClasspathFingerprintTest extends Test:
         }
     }
 
-    "compute is invariant to jar ordering" in run {
+    "compute is invariant to jar ordering" in {
         withTempDir { dir =>
             makeTempFile(dir, "x.jar", Array[Byte](10, 20, 30)).flatMap { jar1 =>
                 makeTempFile(dir, "y.jar", Array[Byte](40, 50, 60)).flatMap { jar2 =>

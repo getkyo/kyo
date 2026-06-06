@@ -5,12 +5,12 @@ import kyo.UI.Ast.*
 import kyo.internal.HtmlRenderer
 import scala.language.implicitConversions
 
-class IndeterminateTest extends Test:
+class IndeterminateTest extends kyo.test.Test[Any]:
 
     private def renderHtml(ui: UI)(using Frame): String < Sync =
         HtmlRenderer.render(ui, Seq.empty)
 
-    "checkbox.indeterminate(true) adds jsProps and renders data-kyo-prop-indeterminate" in run {
+    "checkbox.indeterminate(true) adds jsProps and renders data-kyo-prop-indeterminate" in {
         val cb   = UI.checkbox.indeterminate(true)
         val html = renderHtml(cb)
         html.map { s =>
@@ -19,7 +19,7 @@ class IndeterminateTest extends Test:
         }
     }
 
-    "checkbox.indeterminate(true).checked(true) renders both checked and data-kyo-prop-indeterminate" in run {
+    "checkbox.indeterminate(true).checked(true) renders both checked and data-kyo-prop-indeterminate" in {
         val html = renderHtml(UI.checkbox.indeterminate(true).checked(true))
         html.map { s =>
             assert(s.contains("checked"))
@@ -27,7 +27,7 @@ class IndeterminateTest extends Test:
         }
     }
 
-    "checkbox.indeterminate(false) removes the jsProp key from attrs" in run {
+    "checkbox.indeterminate(false) removes the jsProp key from attrs" in {
         val cb   = UI.checkbox.indeterminate(true).indeterminate(false)
         val html = renderHtml(cb)
         html.map { s =>
@@ -36,7 +36,7 @@ class IndeterminateTest extends Test:
         }
     }
 
-    "checkbox.indeterminate(signal) at true produces Checkbox with correct jsProps" in run {
+    "checkbox.indeterminate(signal) at true produces Checkbox with correct jsProps" in {
         for
             ref <- Signal.initRef(true)
             reactive = UI.checkbox.indeterminate(ref: Signal[Boolean])
@@ -51,7 +51,7 @@ class IndeterminateTest extends Test:
         yield result
     }
 
-    "toggling indeterminate from true to false drops the jsProp in rendered HTML" in run {
+    "toggling indeterminate from true to false drops the jsProp in rendered HTML" in {
         for
             ref <- Signal.initRef(true)
             reactive = UI.checkbox.indeterminate(ref: Signal[Boolean])

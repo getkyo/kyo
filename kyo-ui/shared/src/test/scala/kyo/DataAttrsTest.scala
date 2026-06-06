@@ -5,12 +5,12 @@ import kyo.UI.Ast.*
 import kyo.internal.HtmlRenderer
 import scala.language.implicitConversions
 
-class DataAttrsTest extends Test:
+class DataAttrsTest extends kyo.test.Test[Any]:
 
     private def renderHtml(ui: UI)(using Frame): String < Sync =
         HtmlRenderer.render(ui, Seq.empty)
 
-    "data(name, value) renders data-user-id and does not collide with data-kyo-path" in run {
+    "data(name, value) renders data-user-id and does not collide with data-kyo-path" in {
         val html = renderHtml(UI.span.data("user-id", "42"))
         html.map { s =>
             assert(s.contains("""data-user-id="42""""))
@@ -18,7 +18,7 @@ class DataAttrsTest extends Test:
         }
     }
 
-    "two data calls merge into one dataAttrs map and render both sorted by name" in run {
+    "two data calls merge into one dataAttrs map and render both sorted by name" in {
         val html = renderHtml(
             UI.div.data("z-index", "10").data("app-id", "abc")
         )

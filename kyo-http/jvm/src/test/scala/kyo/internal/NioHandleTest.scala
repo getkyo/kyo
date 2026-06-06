@@ -8,7 +8,7 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLEngine
 import kyo.*
 
-class NioHandleTest extends kyo.Test:
+class NioHandleTest extends kyo.BaseHttpTest:
 
     import AllowUnsafe.embrace.danger
 
@@ -35,7 +35,6 @@ class NioHandleTest extends kyo.Test:
             assert(handle.channel eq client)
             assert(handle.tls == Absent)
             assert(handle.readBufferSize == 4096)
-            succeed
         finally
             client.close()
             server.close()
@@ -47,7 +46,6 @@ class NioHandleTest extends kyo.Test:
         try
             val handle = NioHandle.init(client, 4096)
             assert(handle.readBuffer.isDirect)
-            succeed
         finally
             client.close()
             server.close()
@@ -59,7 +57,6 @@ class NioHandleTest extends kyo.Test:
         try
             val handle = NioHandle.init(client, 4096)
             assert(handle.readBuffer.capacity() == 4096)
-            succeed
         finally
             client.close()
             server.close()
@@ -68,7 +65,6 @@ class NioHandleTest extends kyo.Test:
 
     "DefaultReadBufferSize is 8192" in {
         assert(NioHandle.DefaultReadBufferSize == 8192)
-        succeed
     }
 
     "initTls creates handle with Present tls state" in {
@@ -81,7 +77,7 @@ class NioHandleTest extends kyo.Test:
             handle.tls match
                 case Present(state) => assert(state.engine eq engine)
                 case Absent         => fail("expected Present tls state")
-            succeed
+            ()
         finally
             client.close()
             server.close()
@@ -104,7 +100,7 @@ class NioHandleTest extends kyo.Test:
                 case Absent =>
                     fail("expected Present tls state")
             end match
-            succeed
+            ()
         finally
             client.close()
             server.close()
@@ -117,7 +113,6 @@ class NioHandleTest extends kyo.Test:
             val handle = NioHandle.init(client, 4096)
             NioHandle.close(handle)
             assert(!client.isOpen)
-            succeed
         finally
             // client already closed by NioHandle.close; close server
             server.close()
@@ -135,7 +130,6 @@ class NioHandleTest extends kyo.Test:
             // After close, engine status should reflect outbound close
             assert(engine.isOutboundDone)
             assert(!client.isOpen)
-            succeed
         finally
             server.close()
         end try
@@ -147,7 +141,7 @@ class NioHandleTest extends kyo.Test:
             val handle = NioHandle.init(client, 4096)
             NioHandle.close(handle)
             NioHandle.close(handle) // Must not throw
-            succeed
+            succeed("runs without error: double-close is idempotent")
         finally
             server.close()
         end try

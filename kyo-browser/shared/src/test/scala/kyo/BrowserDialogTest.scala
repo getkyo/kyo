@@ -6,7 +6,7 @@ class BrowserDialogTest extends BrowserTest:
 
     // ---- withDialogs ----
 
-    "withDialogs.accept returns true for confirm and the empty string for prompt" in run {
+    "withDialogs.accept returns true for confirm and the empty string for prompt" in {
         withBrowser {
             onPage("""<html><body>
             <button id='confirmBtn' onclick="window.__confirmResult = confirm('proceed?');">Confirm</button>
@@ -29,7 +29,7 @@ class BrowserDialogTest extends BrowserTest:
         }
     }
 
-    "withDialogs.prompt suppresses alert and returns expected confirm/prompt values" in run {
+    "withDialogs.prompt suppresses alert and returns expected confirm/prompt values" in {
         withBrowser {
             onPage("""<html><body>
             <button id='alertBtn' onclick="window.__alertCalled = true; alert('hello');">Alert</button>
@@ -58,7 +58,7 @@ class BrowserDialogTest extends BrowserTest:
         }
     }
 
-    "withDialogs.dismiss returns false for confirm and null for prompt" in run {
+    "withDialogs.dismiss returns false for confirm and null for prompt" in {
         withBrowser {
             onPage("""<html><body>
             <button id='confirmBtn' onclick="window.__confirmResult = confirm('proceed?');">Confirm</button>
@@ -81,7 +81,7 @@ class BrowserDialogTest extends BrowserTest:
         }
     }
 
-    "a dialog opening without withDialogs is auto-dismissed and does not hang" in run {
+    "a dialog opening without withDialogs is auto-dismissed and does not hang" in {
         withBrowser {
             onPage("""<html><body>
             <button id='b' onclick="window.__r = confirm('proceed?');">Confirm</button>
@@ -99,7 +99,7 @@ class BrowserDialogTest extends BrowserTest:
         }
     }
 
-    "nested withDialogs restores outer handler on inner exit" in run {
+    "nested withDialogs restores outer handler on inner exit" in {
         withBrowser {
             onPage("""<html><body>
             <button id='b' onclick="window.__r1 = prompt('?'); window.__r2 = prompt('?');">go</button>
@@ -133,7 +133,7 @@ class BrowserDialogTest extends BrowserTest:
 
     // ---- withDialogs.recorded ----
 
-    "withDialogs.recorded captures alert, confirm, prompt in order with the right type and response" in run {
+    "withDialogs.recorded captures alert, confirm, prompt in order with the right type and response" in {
         withBrowser {
             onPage("""<html><body>
             <button id='a' onclick="alert('a-msg');">A</button>

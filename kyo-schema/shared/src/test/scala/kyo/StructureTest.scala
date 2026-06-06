@@ -50,7 +50,7 @@ object SealedNoArgVariants:
     case object Unit3                extends SealedNoArgVariants derives CanEqual
 end SealedNoArgVariants
 
-class StructureTest extends Test:
+class StructureTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any]                       = CanEqual.derived
     given CanEqual[Structure.Type, Structure.Type] = CanEqual.derived
@@ -1078,7 +1078,7 @@ class StructureTest extends Test:
             assert(r.int() == 42)
             assert(!r.hasNextEntry())
             r.mapEnd()
-            succeed
+            ()
         }
 
         "protobuf hasNextEntry" in {
@@ -1162,13 +1162,13 @@ class StructureTest extends Test:
             assert(r.int() == 99)
             assert(!r.hasNextEntry())
             r.mapEnd()
-            succeed
+            ()
         }
 
         "json int parse error throws ParseException" in {
             val r  = JsonReader("3.14")
             val ex = intercept[ParseException](r.int())
-            assert(ex.isInstanceOf[DecodeException])
+            discard(summon[ParseException <:< DecodeException])
             assert(ex.getMessage.contains("Cannot parse"))
         }
 
@@ -1176,62 +1176,63 @@ class StructureTest extends Test:
             val r = JsonReader("\"abc\"")
             // readNumber will fail because "abc" starts with '"', not a digit
             val ex = intercept[ParseException](r.long())
-            assert(ex.isInstanceOf[DecodeException])
+            discard(summon[ParseException <:< DecodeException])
+            assert(ex.getMessage.contains("Cannot parse"))
         }
 
         "json short overflow throws ParseException" in {
             val r  = JsonReader("99999")
             val ex = intercept[ParseException](r.short())
-            assert(ex.isInstanceOf[DecodeException])
+            discard(summon[ParseException <:< DecodeException])
             assert(ex.getMessage.contains("Cannot parse"))
         }
 
         "json byte overflow throws ParseException" in {
             val r  = JsonReader("999")
             val ex = intercept[ParseException](r.byte())
-            assert(ex.isInstanceOf[DecodeException])
+            discard(summon[ParseException <:< DecodeException])
             assert(ex.getMessage.contains("Cannot parse"))
         }
 
         "json invalid base64 throws ParseException" in {
             val r  = JsonReader("\"not-valid-base64!!!\"")
             val ex = intercept[ParseException](r.bytes())
-            assert(ex.isInstanceOf[DecodeException])
+            discard(summon[ParseException <:< DecodeException])
             assert(ex.getMessage.contains("Base64"))
         }
 
         "json invalid bigInt throws ParseException" in {
             val r  = JsonReader("\"not_a_number\"")
             val ex = intercept[ParseException](r.bigInt())
-            assert(ex.isInstanceOf[DecodeException])
+            discard(summon[ParseException <:< DecodeException])
             assert(ex.getMessage.contains("BigInt"))
         }
 
         "json invalid bigDecimal throws ParseException" in {
             val r  = JsonReader("\"not_a_number\"")
             val ex = intercept[ParseException](r.bigDecimal())
-            assert(ex.isInstanceOf[DecodeException])
+            discard(summon[ParseException <:< DecodeException])
             assert(ex.getMessage.contains("BigDecimal"))
         }
 
         "json invalid instant throws ParseException" in {
             val r  = JsonReader("\"not-a-date\"")
             val ex = intercept[ParseException](r.instant())
-            assert(ex.isInstanceOf[DecodeException])
+            discard(summon[ParseException <:< DecodeException])
             assert(ex.getMessage.contains("Instant"))
         }
 
         "json invalid duration throws ParseException" in {
             val r  = JsonReader("\"not-a-duration\"")
             val ex = intercept[ParseException](r.duration())
-            assert(ex.isInstanceOf[DecodeException])
+            discard(summon[ParseException <:< DecodeException])
             assert(ex.getMessage.contains("Duration"))
         }
 
         "json invalid unicode escape throws ParseException" in {
             val r  = JsonReader("\"\\uZZZZ\"")
             val ex = intercept[ParseException](r.string())
-            assert(ex.isInstanceOf[DecodeException])
+            discard(summon[ParseException <:< DecodeException])
             assert(ex.getMessage.contains("unicode"))
         }
 
@@ -1240,7 +1241,7 @@ class StructureTest extends Test:
             val data = Array[Byte](0x80.toByte)
             val r    = new ProtobufReader(data)
             val ex   = intercept[TruncatedInputException](r.field())
-            assert(ex.isInstanceOf[DecodeException])
+            discard(summon[TruncatedInputException <:< DecodeException])
             assert(ex.getMessage.contains("Truncated"))
         }
 
@@ -1250,7 +1251,7 @@ class StructureTest extends Test:
             val r    = new ProtobufReader(data)
             val _    = r.field()
             val ex   = intercept[TruncatedInputException](r.string())
-            assert(ex.isInstanceOf[DecodeException])
+            discard(summon[TruncatedInputException <:< DecodeException])
             assert(ex.getMessage.contains("Truncated") || ex.getMessage.contains("exceeds"))
         }
 
@@ -1260,7 +1261,7 @@ class StructureTest extends Test:
             val r    = new ProtobufReader(data)
             val _    = r.field()
             val ex   = intercept[TruncatedInputException](r.bytes())
-            assert(ex.isInstanceOf[DecodeException])
+            discard(summon[TruncatedInputException <:< DecodeException])
             assert(ex.getMessage.contains("Truncated") || ex.getMessage.contains("exceeds"))
         }
 

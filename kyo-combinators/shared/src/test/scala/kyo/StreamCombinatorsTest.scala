@@ -1,9 +1,9 @@
 package kyo
 
-class StreamCombinatorsTest extends Test:
+class StreamCombinatorsTest extends kyo.test.Test[Any]:
 
     "unwrap" - {
-        "should fuse effect contexts from wrapped stream with Var" in run {
+        "should fuse effect contexts from wrapped stream with Var" in {
 
             val tick = Var.updateDiscard[Int](_ + 1)
 

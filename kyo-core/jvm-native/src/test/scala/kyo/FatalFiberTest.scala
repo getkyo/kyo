@@ -5,7 +5,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kyo.AllowUnsafe.embrace.danger
 
-class FatalFiberTest extends Test:
+class FatalFiberTest extends kyo.test.Test[Any]:
 
     "fatal throwable from a fiber computation" - {
         "LinkageError completes the IOPromise with a Panic before the worker rethrows" in {
@@ -28,7 +28,7 @@ class FatalFiberTest extends Test:
 
             assert(latch.await(2, TimeUnit.SECONDS), "IOTask never recorded the failure on the IOPromise")
             captured.get() match
-                case Result.Panic(thr) if thr eq fatal => succeed
+                case Result.Panic(thr) if thr eq fatal => ()
                 case other                             => fail(s"unexpected outcome: $other")
             end match
         }

@@ -5,7 +5,7 @@ import scala.language.implicitConversions
 
 class BoundTest extends UITest:
 
-    "input value signalRef typing auto updates signal" in run {
+    "input value signalRef typing auto updates signal" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -16,11 +16,11 @@ class BoundTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "hello")
                 _ <- Browser.assertText(Selector.id("v"), "sig:hello")
-            yield succeed
+            yield ()
         }
     }
 
-    "input value signalRef external set updates display" in run {
+    "input value signalRef external set updates display" in {
         val app: UI < Async =
             for ref <- Signal.initRef("initial")
             yield UI.div(
@@ -33,11 +33,11 @@ class BoundTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "sig:initial")
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "sig:external")
-            yield succeed
+            yield ()
         }
     }
 
-    "input value signalRef plus onInput both run" in run {
+    "input value signalRef plus onInput both run" in {
         val app: UI < Async =
             for
                 ref <- Signal.initRef("")
@@ -52,11 +52,11 @@ class BoundTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "test")
                 _ <- Browser.assertText(Selector.id("vs"), "sig:test")
                 _ <- Browser.assertText(Selector.id("vl"), "custom:test")
-            yield succeed
+            yield ()
         }
     }
 
-    "checkbox checked signalRef click auto updates" in run {
+    "checkbox checked signalRef click auto updates" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -69,11 +69,11 @@ class BoundTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "sig:true")
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "sig:false")
-            yield succeed
+            yield ()
         }
     }
 
-    "checkbox checked signalRef external set updates visual" in run {
+    "checkbox checked signalRef external set updates visual" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -86,11 +86,11 @@ class BoundTest extends UITest:
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertChecked(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "sig:true")
-            yield succeed
+            yield ()
         }
     }
 
-    "select value signalRef selecting auto updates" in run {
+    "select value signalRef selecting auto updates" in {
         val app: UI < Async =
             for ref <- Signal.initRef("a")
             yield UI.div(
@@ -102,11 +102,11 @@ class BoundTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "sig:a")
                 _ <- Browser.select(Selector.id("s"), "b")
                 _ <- Browser.assertText(Selector.id("v"), "sig:b")
-            yield succeed
+            yield ()
         }
     }
 
-    "select value signalRef external set changes selection" in run {
+    "select value signalRef external set changes selection" in {
         val app: UI < Async =
             for ref <- Signal.initRef("a")
             yield UI.div(
@@ -118,11 +118,11 @@ class BoundTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "sig:b")
-            yield succeed
+            yield ()
         }
     }
 
-    "textarea value signalRef typing auto updates" in run {
+    "textarea value signalRef typing auto updates" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -133,11 +133,11 @@ class BoundTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("t"), "multiline")
                 _ <- Browser.assertText(Selector.id("v"), "sig:multiline")
-            yield succeed
+            yield ()
         }
     }
 
-    "password value signalRef typing auto updates" in run {
+    "password value signalRef typing auto updates" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -148,11 +148,11 @@ class BoundTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("p"), "secret")
                 _ <- Browser.assertText(Selector.id("v"), "sig:secret")
-            yield succeed
+            yield ()
         }
     }
 
-    "two inputs same signalRef typing in A updates B" in run {
+    "two inputs same signalRef typing in A updates B" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -165,11 +165,11 @@ class BoundTest extends UITest:
                 _ <- Browser.fill(Selector.id("a"), "from-a")
                 _ <- Browser.assertText(Selector.id("v"), "sig:from-a")
                 _ <- Browser.assertAttribute(Selector.id("b"), "value", "from-a")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal set empty clears input" in run {
+    "signal set empty clears input" in {
         val app: UI < Async =
             for ref <- Signal.initRef("initial")
             yield UI.div(
@@ -182,11 +182,11 @@ class BoundTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "sig:[initial]")
                 _ <- Browser.click(Selector.id("clear"))
                 _ <- Browser.assertText(Selector.id("v"), "sig:[]")
-            yield succeed
+            yield ()
         }
     }
 
-    "signalRef binding plus disabled typing blocked" in run {
+    "signalRef binding plus disabled typing blocked" in {
         val app: UI < Async =
             for ref <- Signal.initRef("original")
             yield UI.div(
@@ -197,11 +197,11 @@ class BoundTest extends UITest:
             for
                 _ <- Browser.assertDisabled(Selector.id("i"))
                 _ <- Browser.assertText(Selector.id("v"), "sig:original")
-            yield succeed
+            yield ()
         }
     }
 
-    "rapid typing with signalRef final value correct" in run {
+    "rapid typing with signalRef final value correct" in {
         // Use Browser.fill (CDP Input.insertText, single batched insertion) instead of
         // 20 separate Browser.press calls. The latter re-focuses before each press,
         // resetting cursor to start and reversing char order.
@@ -215,11 +215,11 @@ class BoundTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "abcdefghijklmnopqrst")
                 _ <- Browser.assertText(Selector.id("v"), "sig:abcdefghijklmnopqrst")
-            yield succeed
+            yield ()
         }
     }
 
-    "button sets signalRef input displays new value" in run {
+    "button sets signalRef input displays new value" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -232,11 +232,11 @@ class BoundTest extends UITest:
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "sig:hello")
                 _ <- Browser.assertAttribute(Selector.id("i"), "value", "hello")
-            yield succeed
+            yield ()
         }
     }
 
-    "signalRef binding plus readOnly typing blocked" in run {
+    "signalRef binding plus readOnly typing blocked" in {
         val app: UI < Async =
             for ref <- Signal.initRef("original")
             yield UI.div(
@@ -247,11 +247,11 @@ class BoundTest extends UITest:
             for
                 _ <- Browser.assertAttribute(Selector.id("i"), "readonly", "")
                 _ <- Browser.assertText(Selector.id("v"), "sig:original")
-            yield succeed
+            yield ()
         }
     }
 
-    "number input fill auto updates via two way" in run {
+    "number input fill auto updates via two way" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -262,7 +262,7 @@ class BoundTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("n"), "42")
                 _ <- Browser.assertText(Selector.id("v"), "sig:42")
-            yield succeed
+            yield ()
         }
     }
 

@@ -10,7 +10,7 @@ package kyo
   * JSON vs CLI args, exec stream framing, log demuxing, image parsing, error mapping, …) stay in [[ContainerItTest]] and use `runBackends`
   * for full http × shell × podman × docker coverage.
   */
-class ContainerOrchestrationItTest extends Test:
+class ContainerOrchestrationItTest extends BasePodTest:
 
     val alpine = Container.Config(ContainerImage("alpine", "latest"))
         .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait")
@@ -95,7 +95,7 @@ class ContainerOrchestrationItTest extends Test:
             yield
                 assert(id.value.nonEmpty)
                 r match
-                    case Result.Failure(_: ContainerMissingException) => succeed
+                    case Result.Failure(_: ContainerMissingException) => ()
                     case Result.Success(_)                            => fail("Container should have been cleaned up")
                     case other                                        => fail(s"Expected NotFound, got $other")
                 end match
@@ -111,14 +111,20 @@ class ContainerOrchestrationItTest extends Test:
                     r3 <- Abort.run[ContainerException](c.state)
                 yield
                     r1 match
-                        case Result.Failure(_: ContainerMissingException) => succeed
+                        case Result.Failure(e: ContainerMissingException) =>
+                            assert(e.getMessage.contains("Container not found"))
                         case other => fail(s"expected ContainerMissingException for exec, got: $other")
+                    end match
                     r2 match
-                        case Result.Failure(_: ContainerMissingException) => succeed
+                        case Result.Failure(e: ContainerMissingException) =>
+                            assert(e.getMessage.contains("Container not found"))
                         case other => fail(s"expected ContainerMissingException for inspect, got: $other")
+                    end match
                     r3 match
-                        case Result.Failure(_: ContainerMissingException) => succeed
+                        case Result.Failure(e: ContainerMissingException) =>
+                            assert(e.getMessage.contains("Container not found"))
                         case other => fail(s"expected ContainerMissingException for state, got: $other")
+                    end match
             }
         }
 
@@ -225,8 +231,9 @@ class ContainerOrchestrationItTest extends Test:
                     _  <- f2.get
                     r  <- Abort.run[ContainerException](Container.attach(cid))
                 yield r match
-                    case Result.Failure(_: ContainerMissingException) => succeed // container should be fully gone
-                    case other                                        => fail(s"expected ContainerMissingException, got: $other")
+                    case Result.Failure(e: ContainerMissingException) =>
+                        assert(e.getMessage.contains("Container not found")) // container should be fully gone
+                    case other => fail(s"expected ContainerMissingException, got: $other")
                 end for
             }
         }
@@ -261,8 +268,9 @@ class ContainerOrchestrationItTest extends Test:
                     }
                     r <- Abort.run[ContainerException](c.remove)
                 yield r match
-                    case Result.Failure(_: ContainerMissingException) => succeed
-                    case other                                        => fail(s"expected ContainerMissingException, got: $other")
+                    case Result.Failure(e: ContainerMissingException) =>
+                        assert(e.getMessage.contains("Container not found"))
+                    case other => fail(s"expected ContainerMissingException, got: $other")
                 end for
             }
         }
@@ -295,8 +303,7 @@ class ContainerOrchestrationItTest extends Test:
                 assert(allTyped, s"expected every iteration to produce typed Success or typed Failure, got $results")
                 // Document race-window reachability; non-failing test if window is closed by higher-level guard:
                 if !anySuccess then
-                    info("race window already closed by higher-level guard — only typed Failure observed")
-                succeed
+                    ()
             }
         }
     }
@@ -322,16 +329,17 @@ class ContainerOrchestrationItTest extends Test:
                             s"exec on restored container should succeed, got exit=${result.exitCode}"
                         )
                 }.map {
-                    case Result.Success(_)                                 => succeed
-                    case Result.Failure(_: ContainerNotSupportedException) => succeed // CRIU not available
-                    case Result.Failure(e)                                 =>
+                    case Result.Success(_) => ()
+                    case Result.Failure(_: ContainerNotSupportedException) =>
+                        succeed("CRIU not available on this system; the checkpoint/restore path is a graceful no-op")
+                    case Result.Failure(e) =>
                         // Checkpoint/restore may fail for various reasons (CRIU not installed, etc.)
                         // The important thing is that IF restore succeeds, the ID should work
                         val msg = e.toString
                         if msg.contains("CRIU") || msg.contains("criu") || msg.contains("checkpoint") ||
                             msg.contains("501")
                         then
-                            succeed // Expected on systems without CRIU or checkpoint support
+                            succeed("expected on systems without CRIU or checkpoint support; message identifies the missing capability")
                         else
                             fail(s"Unexpected failure: $e")
                         end if
@@ -346,16 +354,20 @@ class ContainerOrchestrationItTest extends Test:
                     _ <- c.stop
                     r <- Abort.run[ContainerException](c.checkpoint("snap1"))
                 yield r match
-                    case Result.Failure(_: ContainerException) => succeed
-                    case other                                 => fail(s"expected typed Failure, got: $other")
+                    case Result.Failure(_: ContainerException) =>
+                        succeed("checkpoint on a stopped container fails with a typed ContainerException (message is daemon-dependent)")
+                    case other => fail(s"expected typed Failure, got: $other")
             }
         }
 
         "restore from non-existent checkpoint fails with clear error" - runBackend {
             Container.init(alpine).map { c =>
                 Abort.run[ContainerException](c.restore("nonexistent-checkpoint-xyz")).map {
-                    case Result.Failure(_: ContainerException) => succeed
-                    case other                                 => fail(s"expected typed Failure, got: $other")
+                    case Result.Failure(_: ContainerException) =>
+                        succeed(
+                            "restore from a non-existent checkpoint fails with a typed ContainerException (message is daemon-dependent)"
+                        )
+                    case other => fail(s"expected typed Failure, got: $other")
                 }
             }
         }
@@ -408,7 +420,8 @@ class ContainerOrchestrationItTest extends Test:
                 Abort.run[ContainerException] {
                     Container.attach(Container.Id(name)).map(_.inspect)
                 }.map {
-                    case Result.Failure(_: ContainerMissingException) => succeed
+                    case Result.Failure(e: ContainerMissingException) =>
+                        assert(e.getMessage.contains("Container not found"))
                     case other => fail(s"Expected container to be removed after scope cleanup, got: $other")
                 }
             }

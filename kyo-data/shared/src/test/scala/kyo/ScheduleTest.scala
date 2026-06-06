@@ -1,6 +1,6 @@
 package kyo
 
-class ScheduleTest extends Test:
+class ScheduleTest extends kyo.test.Test[Any]:
 
     val now = Instant.fromJava(java.time.Instant.EPOCH)
 
@@ -164,7 +164,7 @@ class ScheduleTest extends Test:
                 assert(nextDuration <= maxDelay)
                 current = nextSchedule
             end for
-            succeed
+            ()
         }
 
         "works with factor less than 1" in {

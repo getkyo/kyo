@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-class WorkflowSchemaTest extends Test:
+class WorkflowSchemaTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -98,7 +98,7 @@ class WorkflowSchemaTest extends Test:
 
     "rebuildRecord preserves child flow fields" - {
 
-        "child output field survives rebuild" in run {
+        "child output field survives rebuild" in {
             val child = Flow.input[Int]("a").output("b")(ctx => ctx.a * 10)
             val flow = Flow.input[Int]("x")
                 .subflow("payment", child)(ctx => "a" ~ ctx.x)
@@ -168,7 +168,7 @@ class WorkflowSchemaTest extends Test:
             go(maxRounds)
         end pump
 
-        "execution stores the structural hash at creation time" in run {
+        "execution stores the structural hash at creation time" in {
             withEngine { (engine, store, tc) =>
                 val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 for
@@ -183,7 +183,7 @@ class WorkflowSchemaTest extends Test:
             }
         }
 
-        "changed workflow definition rejects in-flight execution" in run {
+        "changed workflow definition rejects in-flight execution" in {
             withEngine { (engine, store, tc) =>
                 val flowV1 = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 val flowV2 = Flow.input[Int]("x").output("y")(ctx => ctx.x).output("z")(ctx => 0)
@@ -213,7 +213,7 @@ class WorkflowSchemaTest extends Test:
             }
         }
 
-        "execution with mismatched hash is not processed" in run {
+        "execution with mismatched hash is not processed" in {
             Clock.withTimeControl { tc =>
                 FlowStore.initMemory.map { store =>
                     val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x)
@@ -242,7 +242,7 @@ class WorkflowSchemaTest extends Test:
             }
         }
 
-        "structural hash mismatch marks execution as failed" in runNotNative {
+        "structural hash mismatch marks execution as failed".notNative in {
             withEngine { (engine, store, tc) =>
                 val flowV1 = Flow.input[Int]("x").output("y")(ctx => ctx.x)
                 val flowV2 = Flow.input[Int]("x").output("y")(ctx => ctx.x).output("z")(ctx => 0)

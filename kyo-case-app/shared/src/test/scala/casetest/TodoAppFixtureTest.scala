@@ -4,9 +4,13 @@ import kyo.*
 import kyo.internal.Platform
 import scala.util.Try
 
-class TodoAppFixtureTest extends kyo.Test:
+class TodoAppFixtureTest extends kyo.test.Test[Any]:
 
-    "todo workflow" in runNotJS {
+    // TodoAppFixture keeps a process-global mutable store (reset by `init` per test); kyo-test runs a suite's
+    // leaves in parallel by default, so they would race on it. ScalaTest's AsyncFreeSpec ran them sequentially.
+    override def config = super.config.sequential
+
+    "todo workflow".notJs in {
         for
             app   <- TodoAppFixture.init
             _     <- Sync.defer(TodoAppFixture.entryPoint.main(Array("create", "--title", "Buy milk")))
@@ -21,7 +25,7 @@ class TodoAppFixtureTest extends kyo.Test:
             assert(todos.head.status eq TodoStatus.Completed)
     }
 
-    "list hides completed by default" in runNotJS {
+    "list hides completed by default".notJs in {
         for
             app   <- TodoAppFixture.init
             _     <- Sync.defer(TodoAppFixture.entryPoint.main(Array("create", "A")))
@@ -36,7 +40,7 @@ class TodoAppFixtureTest extends kyo.Test:
             assert(open.head.status eq TodoStatus.Active)
     }
 
-    "list --all shows every todo" in runNotJS {
+    "list --all shows every todo".notJs in {
         for
             app   <- TodoAppFixture.init
             _     <- Sync.defer(TodoAppFixture.entryPoint.main(Array("create", "done")))
@@ -46,7 +50,7 @@ class TodoAppFixtureTest extends kyo.Test:
         yield assert(todos.head.status eq TodoStatus.Completed)
     }
 
-    "create without title fails" in runNotJS {
+    "create without title fails".notJs in {
         for
             _ <- TodoAppFixture.init
         yield
@@ -54,7 +58,7 @@ class TodoAppFixtureTest extends kyo.Test:
             assert(err.isFailure)
     }
 
-    "missing id fails" in runNotJS {
+    "missing id fails".notJs in {
         for
             _ <- TodoAppFixture.init
             _ <- Sync.defer(TodoAppFixture.entryPoint.main(Array("create", "only")))
@@ -63,7 +67,7 @@ class TodoAppFixtureTest extends kyo.Test:
             assert(err.isFailure)
     }
 
-    "each subcommand exposes options in run" in runNotJS {
+    "each subcommand exposes options in run".notJs in {
         for
             app   <- TodoAppFixture.init
             _     <- Sync.defer(TodoAppFixture.entryPoint.main(Array("create", "--title", "from-options")))
@@ -71,17 +75,16 @@ class TodoAppFixtureTest extends kyo.Test:
         yield assert(todos.head.title == "from-options")
     }
 
-    "ordered subcommand runs share one store" in {
+    "ordered subcommand runs share one store".notJs in {
         assume(!Platform.isNative, "repeated main() too slow on Native")
-        runNotJS {
-            for
-                app   <- TodoAppFixture.init
-                _     <- Sync.defer(TodoAppFixture.entryPoint.main(Array("create", "one")))
-                _     <- Sync.defer(TodoAppFixture.entryPoint.main(Array("create", "two")))
-                _     <- Sync.defer(TodoAppFixture.entryPoint.main(Array("create", "three")))
-                todos <- app.store.get
-            yield assert(todos.map(_.title) == Chunk("one", "two", "three"))
-        }
+        for
+            app   <- TodoAppFixture.init
+            _     <- Sync.defer(TodoAppFixture.entryPoint.main(Array("create", "one")))
+            _     <- Sync.defer(TodoAppFixture.entryPoint.main(Array("create", "two")))
+            _     <- Sync.defer(TodoAppFixture.entryPoint.main(Array("create", "three")))
+            todos <- app.store.get
+        yield assert(todos.map(_.title) == Chunk("one", "two", "three"))
+        end for
     }
 
 end TodoAppFixtureTest

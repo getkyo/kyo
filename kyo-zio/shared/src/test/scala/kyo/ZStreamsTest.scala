@@ -1,28 +1,19 @@
 package kyo
 
 import kyo.*
-import org.scalatest.compatible.Assertion
-import scala.concurrent.Future
-import zio.Cause
-import zio.Runtime
 import zio.Task
-import zio.Unsafe
 import zio.ZIO
 import zio.stream.ZStream
 
-class ZStreamsTest extends Test:
+class ZStreamsTest extends kyo.test.Test[Any]:
 
-    def runZIO(v: Task[Assertion]): Future[Assertion] =
-        zio.Unsafe.unsafe(implicit u =>
-            zio.Runtime.default.unsafe.runToFuture(v)
-        )
+    // Run the body THROUGH the ZIO runtime (preserving the kyo<->ZIO interop these tests cover), bridging the
+    // resulting Future back into a kyo computation so it can be a kyo-test leaf body.
+    def runZIO(v: Task[Unit]): Unit < Async =
+        Async.fromFuture(zio.Unsafe.unsafe(implicit u => zio.Runtime.default.unsafe.runToFuture(v)))
 
-    def runKyo(v: => Assertion < (Abort[Throwable] & Async)): Future[Assertion] =
-        zio.Unsafe.unsafe(implicit u =>
-            zio.Runtime.default.unsafe.runToFuture(
-                ZIOs.run(v)
-            )
-        )
+    def runKyo(v: => Unit < (Abort[Throwable] & Async)): Unit < Async =
+        Async.fromFuture(zio.Unsafe.unsafe(implicit u => zio.Runtime.default.unsafe.runToFuture(ZIOs.run(v))))
 
     case object Error extends RuntimeException("error")
 
@@ -49,7 +40,9 @@ class ZStreamsTest extends Test:
         "stack safety" in runKyo {
             val zioStream = ZStream.repeatZIO(ZIO.succeed(0))
             val kyoStream = ZStreams.get(zioStream)
-            kyoStream.take(10_000).discard.andThen(succeed)
+            // This test proves that consuming 10_000 elements does not overflow the stack.
+            // No concrete value to check; absence of a stack overflow IS the assertion.
+            kyoStream.take(10_000).discard.andThen(succeed("consuming 10_000 elements did not overflow the stack"))
         }
         "failing stream" in runKyo {
             val zioStream = ZStream.fromIterable(List.tabulate(5)(identity)) ++
@@ -98,7 +91,9 @@ class ZStreamsTest extends Test:
                         Fiber.init(kyoStream.take(5).run).map { fiber =>
                             started.await.andThen {
                                 Abort.run[Interrupted](fiber.interrupt).map { _ =>
-                                    finalized.await.andThen(succeed)
+                                    // finalized.await releases only when the ZIO stream's ensuring block fires,
+                                    // proving that interruption propagated to the ZIO stream finalizer.
+                                    finalized.await.andThen(succeed("interruption propagated to the ZIO stream finalizer"))
                                 }
                             }
                         }

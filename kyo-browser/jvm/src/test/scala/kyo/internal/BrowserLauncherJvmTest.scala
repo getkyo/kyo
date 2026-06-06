@@ -11,10 +11,10 @@ import kyo.*
   * Lives in the JVM test tree because it drives `BrowserLauncher.createTempDir`'s read-only-parent abort path via the JVM-only
   * `java.nio.file.Files` / `java.nio.file.attribute.PosixFilePermissions` APIs, which have no Scala.js shim.
   */
-class BrowserLauncherJvmTest extends Test:
+class BrowserLauncherJvmTest extends BaseBrowserTest:
 
     // createTempDir failure path: point at a read-only parent directory; assert Abort shape.
-    "createTempDir aborts with BrowserSetupFailedException when the temp parent is not writable" in run {
+    "createTempDir aborts with BrowserSetupFailedException when the temp parent is not writable" in {
         val outerTmp = Paths.get(java.lang.System.getProperty("java.io.tmpdir"))
         val parent   = Files.createTempDirectory(outerTmp, s"kyo-browser-jvm-test-${UUID.randomUUID()}-")
 
@@ -34,7 +34,7 @@ class BrowserLauncherJvmTest extends Test:
             Abort.run[BrowserSetupException] {
                 BrowserLauncher.createTempDir(kyoParent)
             }.map {
-                case Result.Failure(_: BrowserSetupFailedException) => succeed
+                case Result.Failure(ex: BrowserSetupFailedException) => assert(ex.getMessage.contains("temp dir"))
                 case Result.Success(p) =>
                     fail(s"Expected BrowserSetupFailedException but createTempDir returned $p")
                 case Result.Panic(ex) =>

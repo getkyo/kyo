@@ -5,7 +5,7 @@ import kyo.*
 import kyo.internal.codec.*
 import kyo.internal.server.*
 
-class RouteLookupTest extends kyo.Test:
+class RouteLookupTest extends kyo.BaseHttpTest:
 
     import AllowUnsafe.embrace.danger
     import HttpPath./

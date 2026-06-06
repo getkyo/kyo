@@ -1,9 +1,9 @@
 package kyo
 
-class TMapTest extends Test:
+class TMapTest extends kyo.test.Test[Any]:
 
     "Basic operations" - {
-        "init and get" in run {
+        "init and get" in {
             STM.run {
                 for
                     map   <- TMap.init("key" -> 42)
@@ -14,7 +14,7 @@ class TMapTest extends Test:
             }
         }
 
-        "init from Map" in run {
+        "init from Map" in {
             val initial = Map("a" -> 1, "b" -> 2, "c" -> 3)
             STM.run {
                 for
@@ -26,7 +26,7 @@ class TMapTest extends Test:
             }
         }
 
-        "initWith applies function" in run {
+        "initWith applies function" in {
             STM.run {
                 TMap.initWith("a" -> 1, "b" -> 2) { map =>
                     for
@@ -39,7 +39,7 @@ class TMapTest extends Test:
             }
         }
 
-        "add and contains rejects unknown keys" in run {
+        "add and contains rejects unknown keys" in {
             STM.run {
                 for
                     map     <- TMap.init[String, Int]()
@@ -53,7 +53,7 @@ class TMapTest extends Test:
             }
         }
 
-        "size and empty checks" in run {
+        "size and empty checks" in {
             STM.run {
                 for
                     map      <- TMap.init[String, Int]()
@@ -68,7 +68,7 @@ class TMapTest extends Test:
             }
         }
 
-        "remove operations" in run {
+        "remove operations" in {
             STM.run {
                 for
                     map     <- TMap.init("a" -> 1, "b" -> 2)
@@ -82,7 +82,7 @@ class TMapTest extends Test:
             }
         }
 
-        "update operations" in run {
+        "update operations" in {
             STM.run {
                 for
                     map    <- TMap.init("key" -> 10)
@@ -96,7 +96,7 @@ class TMapTest extends Test:
             }
         }
 
-        "clear" in run {
+        "clear" in {
             STM.run {
                 for
                     map   <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
@@ -111,7 +111,7 @@ class TMapTest extends Test:
     }
 
     "Collection operations" - {
-        "keys" in run {
+        "keys" in {
             STM.run {
                 for
                     map  <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
@@ -122,7 +122,7 @@ class TMapTest extends Test:
             }
         }
 
-        "values" in run {
+        "values" in {
             STM.run {
                 for
                     map    <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
@@ -133,7 +133,7 @@ class TMapTest extends Test:
             }
         }
 
-        "entries" in run {
+        "entries" in {
             val initial = Map("a" -> 1, "b" -> 2, "c" -> 3)
             STM.run {
                 for
@@ -145,7 +145,7 @@ class TMapTest extends Test:
             }
         }
 
-        "filter" in run {
+        "filter" in {
             STM.run {
                 for
                     map      <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
@@ -157,7 +157,7 @@ class TMapTest extends Test:
             }
         }
 
-        "fold" in run {
+        "fold" in {
             STM.run {
                 for
                     map    <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
@@ -169,7 +169,7 @@ class TMapTest extends Test:
             }
         }
 
-        "findFirst" in run {
+        "findFirst" in {
             STM.run {
                 for
                     map     <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
@@ -181,7 +181,7 @@ class TMapTest extends Test:
             }
         }
 
-        "snapshot" in run {
+        "snapshot" in {
             val initial = Map("a" -> 1, "b" -> 2, "c" -> 3)
             STM.run {
                 for
@@ -195,7 +195,7 @@ class TMapTest extends Test:
     }
 
     "Error handling" - {
-        "rollback on direct failure" in run {
+        "rollback on direct failure" in {
             for
                 map <- STM.run(TMap.init[String, Int]("initial" -> 42))
                 result <- Abort.run {
@@ -214,7 +214,7 @@ class TMapTest extends Test:
             )
         }
 
-        "rollback on nested transaction failure" in run {
+        "rollback on nested transaction failure" in {
             for
                 map <- STM.run(TMap.init[String, Int]())
                 result <- Abort.run {
@@ -237,7 +237,7 @@ class TMapTest extends Test:
             )
         }
 
-        "partial updates remain atomic" in run {
+        "partial updates remain atomic" in {
             for
                 map <- STM.run(TMap.init[String, Int]())
                 result <- Abort.run {
@@ -257,7 +257,7 @@ class TMapTest extends Test:
             )
         }
 
-        "exception in update function rolls back" in run {
+        "exception in update function rolls back" in {
             for
                 map <- STM.run(TMap.init[String, Int]("test" -> 42))
                 result <- Abort.run {
@@ -275,7 +275,7 @@ class TMapTest extends Test:
             )
         }
 
-        "filter operation rollback" in run {
+        "filter operation rollback" in {
             for
                 map <- STM.run(TMap.init[String, Int]("a" -> 1, "b" -> 2, "c" -> 3))
                 result <- Abort.run {
@@ -295,7 +295,7 @@ class TMapTest extends Test:
             )
         }
 
-        "fold operation rollback" in run {
+        "fold operation rollback" in {
             for
                 map <- STM.run(TMap.init[String, Int]("a" -> 1, "b" -> 2, "c" -> 3))
                 result <- Abort.run {
@@ -313,7 +313,7 @@ class TMapTest extends Test:
             )
         }
 
-        "findFirst operation rollback" in run {
+        "findFirst operation rollback" in {
             for
                 map <- STM.run(TMap.init[String, Int]("a" -> 1, "b" -> 2, "c" -> 3))
                 result <- Abort.run {
@@ -331,7 +331,7 @@ class TMapTest extends Test:
             )
         }
 
-        "multiple operations rollback on failure" in run {
+        "multiple operations rollback on failure" in {
             for
                 map <- STM.run(TMap.init[String, Int]())
                 result <- Abort.run {
@@ -352,7 +352,7 @@ class TMapTest extends Test:
             )
         }
 
-        "nested effects with rollback" in run {
+        "nested effects with rollback" in {
             Var.run(0) {
                 for
                     map <- STM.run(TMap.init[String, Int]("start" -> 0))
@@ -382,7 +382,7 @@ class TMapTest extends Test:
     "Concurrency" - {
         val repeats = 50
 
-        "concurrent modifications" in runNotJS {
+        "concurrent modifications".notJs in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             (for
                 size     <- Choice.eval(1, 10, 100)
@@ -394,10 +394,10 @@ class TMapTest extends Test:
                     snapshot.forall((k, v) => k == v && k >= 1 && k <= size)
             ))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "concurrent reads and writes" in runNotJS {
+        "concurrent reads and writes".notJs in {
             (for
                 size  <- Choice.eval(1, 10, 100)
                 map   <- STM.run(TMap.init[Int, Int]())
@@ -429,10 +429,10 @@ class TMapTest extends Test:
                 assert(reads.forall(maybeVal => maybeVal.isEmpty || maybeVal.exists(_ % 2 == 0)))
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "concurrent updates" in runNotJS {
+        "concurrent updates".notJs in {
             (for
                 size <- Choice.eval(1, 10, 50)
                 map  <- STM.run(TMap.init[Int, Int]())
@@ -452,10 +452,10 @@ class TMapTest extends Test:
                     snapshot.forall((_, v) => v == 11) // Initial 1 + 10 increments
             ))
                 .handle(Choice.run, _.unit, Loop.repeat(50))
-                .andThen(succeed)
+                .unit
         }
 
-        "concurrent removals" in runNotJS {
+        "concurrent removals".notJs in {
             (for
                 size <- Choice.eval(1, 10, 100)
                 map  <- STM.run(TMap.init[Int, Int]())
@@ -468,10 +468,10 @@ class TMapTest extends Test:
                 snapshot <- STM.run(map.snapshot)
             yield assert(snapshot.isEmpty))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "concurrent bulk operations" in runNotJS {
+        "concurrent bulk operations".notJs in {
             val retries = STM.defaultRetrySchedule.forever
             (for
                 size <- Choice.eval(1, 10, 100)
@@ -496,7 +496,7 @@ class TMapTest extends Test:
                 assert(sums.forall(_ == snapshot.values.sum))
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
     }
 
@@ -505,7 +505,7 @@ class TMapTest extends Test:
     // its result is returned. Specs 0004 and 0069 are type-level claims verified via
     // `typeCheck` of the correct (non-TMap) usage.
     "initWith" - {
-        "initWith invokes f and returns its result, not the TMap" in run {
+        "initWith invokes f and returns its result, not the TMap" in {
             val invocations = new java.util.concurrent.atomic.AtomicInteger(0)
             STM.run {
                 TMap.initWith[String, Int]("a" -> 1, "b" -> 2) { (m: TMap[String, Int]) =>
@@ -530,7 +530,7 @@ class TMapTest extends Test:
             )
         }
 
-        "initWith supports an effectful lambda (Abort)" in run {
+        "initWith supports an effectful lambda (Abort)" in {
             val invocations = new java.util.concurrent.atomic.AtomicInteger(0)
             Abort.run {
                 STM.run {
@@ -548,7 +548,7 @@ class TMapTest extends Test:
             }
         }
 
-        "initWith and the first map operation share one transaction" in run {
+        "initWith and the first map operation share one transaction" in {
             val invocations = new java.util.concurrent.atomic.AtomicInteger(0)
             STM.run {
                 TMap.initWith[String, Int]("k" -> 99) { m =>
@@ -565,7 +565,7 @@ class TMapTest extends Test:
             }
         }
 
-        "initWith works inside an existing STM transaction" in run {
+        "initWith works inside an existing STM transaction" in {
             val invocations = new java.util.concurrent.atomic.AtomicInteger(0)
             STM.run {
                 for
@@ -601,7 +601,7 @@ class TMapTest extends Test:
             )
         }
 
-        "initWith with many entries makes every binding observable via get" in run {
+        "initWith with many entries makes every binding observable via get" in {
             val invocations = new java.util.concurrent.atomic.AtomicInteger(0)
             val entries     = (1 to 100).map(i => i.toString -> i)
             STM.run {
@@ -620,7 +620,7 @@ class TMapTest extends Test:
             }
         }
 
-        "initWith with effectful S in the lambda surfaces S at the call site" in run {
+        "initWith with effectful S in the lambda surfaces S at the call site" in {
             Emit.run[Int] {
                 Emit.isolate.merge[Int].use {
                     STM.run {
@@ -637,7 +637,7 @@ class TMapTest extends Test:
             }
         }
 
-        "initWith evaluates each entry expression exactly once per call" in run {
+        "initWith evaluates each entry expression exactly once per call" in {
             val keyCalls = new java.util.concurrent.atomic.AtomicInteger(0)
             val valCalls = new java.util.concurrent.atomic.AtomicInteger(0)
             val fCalls   = new java.util.concurrent.atomic.AtomicInteger(0)
@@ -660,7 +660,7 @@ class TMapTest extends Test:
     }
 
     "init overloads" - {
-        "no-arg init overload constructs an empty TMap" in run {
+        "no-arg init overload constructs an empty TMap" in {
             val construct: TMap[String, Int] < Sync = TMap.init[String, Int]
             STM.run {
                 for
@@ -674,7 +674,7 @@ class TMapTest extends Test:
             }
         }
 
-        "init varargs with duplicate keys keeps the last value" in run {
+        "init varargs with duplicate keys keeps the last value" in {
             STM.run {
                 for
                     map   <- TMap.init("a" -> 1, "a" -> 2, "a" -> 3)
@@ -687,7 +687,7 @@ class TMapTest extends Test:
             }
         }
 
-        "init from Map.empty produces an empty TMap" in run {
+        "init from Map.empty produces an empty TMap" in {
             STM.run {
                 for
                     map   <- TMap.init(Map.empty[String, Int])
@@ -704,7 +704,7 @@ class TMapTest extends Test:
     }
 
     "use" - {
-        "use applies the function to Present(value) and Absent" in run {
+        "use applies the function to Present(value) and Absent" in {
             STM.run {
                 for
                     map     <- TMap.init("a" -> 10)
@@ -717,7 +717,7 @@ class TMapTest extends Test:
             }
         }
 
-        "use composes with an effectful lambda and rolls back on failure" in run {
+        "use composes with an effectful lambda and rolls back on failure" in {
             for
                 map <- STM.run(TMap.init("ok" -> 1))
                 r <- Abort.run {
@@ -734,7 +734,7 @@ class TMapTest extends Test:
                 assert(after == Map("ok" -> 1))
         }
 
-        "use's Maybe wrap distinguishes Present(value) from Absent for non-null V" in run {
+        "use's Maybe wrap distinguishes Present(value) from Absent for non-null V" in {
             STM.run {
                 for
                     map <- TMap.init("a" -> 0)
@@ -748,7 +748,7 @@ class TMapTest extends Test:
             }
         }
 
-        "use invokes f with Maybe.empty when the key is absent" in run {
+        "use invokes f with Maybe.empty when the key is absent" in {
             val invocations = new java.util.concurrent.atomic.AtomicInteger(0)
             val seen        = new java.util.concurrent.atomic.AtomicReference[Maybe[Int]](null)
             STM.run {
@@ -767,7 +767,7 @@ class TMapTest extends Test:
             }
         }
 
-        "use surfaces a panicking lambda and leaves the TMap unchanged" in run {
+        "use surfaces a panicking lambda and leaves the TMap unchanged" in {
             for
                 map <- STM.run(TMap.init("a" -> 1))
                 r <- Abort.run {
@@ -783,7 +783,7 @@ class TMapTest extends Test:
     }
 
     "nonEmpty and clear" - {
-        "nonEmpty returns false for an empty map" in run {
+        "nonEmpty returns false for an empty map" in {
             STM.run {
                 for
                     map <- TMap.init[String, Int]
@@ -794,7 +794,7 @@ class TMapTest extends Test:
             }
         }
 
-        "clear on an already-empty map is a no-op" in run {
+        "clear on an already-empty map is a no-op" in {
             STM.run {
                 for
                     map   <- TMap.init[String, Int]
@@ -810,7 +810,7 @@ class TMapTest extends Test:
             }
         }
 
-        "clear then put on the same key stores the new value" in run {
+        "clear then put on the same key stores the new value" in {
             STM.run {
                 for
                     map <- TMap.init("k" -> 1)
@@ -825,7 +825,7 @@ class TMapTest extends Test:
             }
         }
 
-        "clear leaves the map empty after the call (Frame-aware)" in run {
+        "clear leaves the map empty after the call (Frame-aware)" in {
             STM.run {
                 for
                     map  <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
@@ -841,7 +841,7 @@ class TMapTest extends Test:
     }
 
     "get and getOrElse" - {
-        "get on a never-inserted key returns Maybe.empty" in run {
+        "get on a never-inserted key returns Maybe.empty" in {
             STM.run {
                 for
                     map <- TMap.init("a" -> 1, "b" -> 2)
@@ -852,7 +852,7 @@ class TMapTest extends Test:
             }
         }
 
-        "getOrElse returns the value for a present key" in run {
+        "getOrElse returns the value for a present key" in {
             STM.run {
                 for
                     map <- TMap.init("a" -> 42)
@@ -863,7 +863,7 @@ class TMapTest extends Test:
             }
         }
 
-        "getOrElse returns the default for an absent key" in run {
+        "getOrElse returns the default for an absent key" in {
             STM.run {
                 for
                     map <- TMap.init("a" -> 42)
@@ -874,7 +874,7 @@ class TMapTest extends Test:
             }
         }
 
-        "getOrElse's type parameter A does not affect runtime behavior" in run {
+        "getOrElse's type parameter A does not affect runtime behavior" in {
             STM.run {
                 for
                     map <- TMap.init("a" -> 1)
@@ -886,7 +886,7 @@ class TMapTest extends Test:
             }
         }
 
-        "getOrElse does not evaluate the default when the key is present" in run {
+        "getOrElse does not evaluate the default when the key is present" in {
             val evals = new java.util.concurrent.atomic.AtomicInteger(0)
             def expensive: Int =
                 evals.incrementAndGet(); 99
@@ -901,7 +901,7 @@ class TMapTest extends Test:
             }
         }
 
-        "getOrElse propagates Abort.fail from orElse when the key is absent" in run {
+        "getOrElse propagates Abort.fail from orElse when the key is absent" in {
             for
                 map <- STM.run(TMap.init("a" -> 1))
                 r <- Abort.run {
@@ -915,7 +915,7 @@ class TMapTest extends Test:
                 assert(snap == Map("a" -> 1))
         }
 
-        "getOrElse skips Abort.fail default when the key is present" in run {
+        "getOrElse skips Abort.fail default when the key is present" in {
             Abort.run {
                 STM.run {
                     for
@@ -930,7 +930,7 @@ class TMapTest extends Test:
     }
 
     "put and contains" - {
-        "put a null value stores and retrieves null" in run {
+        "put a null value stores and retrieves null" in {
             val nullStr: String = null
             STM.run {
                 for
@@ -944,7 +944,7 @@ class TMapTest extends Test:
             }
         }
 
-        "contains returns false on an empty map" in run {
+        "contains returns false on an empty map" in {
             STM.run {
                 for
                     map <- TMap.init[String, Int]
@@ -955,7 +955,7 @@ class TMapTest extends Test:
             }
         }
 
-        "contains returns false for an unknown key when other entries exist" in run {
+        "contains returns false for an unknown key when other entries exist" in {
             STM.run {
                 for
                     map     <- TMap.init("a" -> 1)
@@ -967,7 +967,7 @@ class TMapTest extends Test:
             }
         }
 
-        "contains returns false for a key that was removed while others remain" in run {
+        "contains returns false for a key that was removed while others remain" in {
             STM.run {
                 for
                     map  <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
@@ -980,7 +980,7 @@ class TMapTest extends Test:
             }
         }
 
-        "sequential put of N new keys grows the map to size N" in run {
+        "sequential put of N new keys grows the map to size N" in {
             STM.run {
                 for
                     map <- TMap.init[String, Int]
@@ -996,7 +996,7 @@ class TMapTest extends Test:
     }
 
     "updateWith" - {
-        "updateWith inserts when the key is missing and f returns Present(v)" in run {
+        "updateWith inserts when the key is missing and f returns Present(v)" in {
             STM.run {
                 for
                     map <- TMap.init[String, Int]
@@ -1013,7 +1013,7 @@ class TMapTest extends Test:
             }
         }
 
-        "updateWith is a no-op when the key is missing and f returns Absent" in run {
+        "updateWith is a no-op when the key is missing and f returns Absent" in {
             STM.run {
                 for
                     map <- TMap.init("a" -> 1)
@@ -1027,7 +1027,7 @@ class TMapTest extends Test:
             }
         }
 
-        "updateWith propagates Abort.fail and rolls back the transaction" in run {
+        "updateWith propagates Abort.fail and rolls back the transaction" in {
             for
                 map <- STM.run(TMap.init("k" -> 1))
                 r <- Abort.run {
@@ -1041,7 +1041,7 @@ class TMapTest extends Test:
                 assert(snap == Map("k" -> 1))
         }
 
-        "updateWith with a panicking lambda surfaces panic and rolls back" in run {
+        "updateWith with a panicking lambda surfaces panic and rolls back" in {
             for
                 map <- STM.run(TMap.init("a" -> 1))
                 r <- Abort.run {
@@ -1060,7 +1060,7 @@ class TMapTest extends Test:
     }
 
     "removeDiscard and removeAll" - {
-        "removeDiscard is a no-op on a missing key" in run {
+        "removeDiscard is a no-op on a missing key" in {
             STM.run {
                 for
                     map  <- TMap.init("a" -> 1, "b" -> 2)
@@ -1072,7 +1072,7 @@ class TMapTest extends Test:
             }
         }
 
-        "removeDiscard then get returns Maybe.empty" in run {
+        "removeDiscard then get returns Maybe.empty" in {
             STM.run {
                 for
                     map <- TMap.init("a" -> 1)
@@ -1084,7 +1084,7 @@ class TMapTest extends Test:
             }
         }
 
-        "removeAll removes all the specified existing keys" in run {
+        "removeAll removes all the specified existing keys" in {
             STM.run {
                 for
                     map  <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3, "d" -> 4)
@@ -1098,7 +1098,7 @@ class TMapTest extends Test:
             }
         }
 
-        "removeAll with empty Seq leaves the map unchanged" in run {
+        "removeAll with empty Seq leaves the map unchanged" in {
             STM.run {
                 for
                     map  <- TMap.init("a" -> 1, "b" -> 2)
@@ -1110,7 +1110,7 @@ class TMapTest extends Test:
             }
         }
 
-        "removeAll on missing keys is a no-op" in run {
+        "removeAll on missing keys is a no-op" in {
             STM.run {
                 for
                     map  <- TMap.init("a" -> 1, "b" -> 2)
@@ -1122,7 +1122,7 @@ class TMapTest extends Test:
             }
         }
 
-        "removeAll with duplicate keys removes once" in run {
+        "removeAll with duplicate keys removes once" in {
             STM.run {
                 for
                     map  <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
@@ -1134,7 +1134,7 @@ class TMapTest extends Test:
             }
         }
 
-        "removeAll on all keys empties the map" in run {
+        "removeAll on all keys empties the map" in {
             STM.run {
                 for
                     map   <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
@@ -1148,7 +1148,7 @@ class TMapTest extends Test:
             }
         }
 
-        "removeAll with empty Seq does not invalidate existing bindings" in run {
+        "removeAll with empty Seq does not invalidate existing bindings" in {
             STM.run {
                 for
                     map <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
@@ -1168,7 +1168,7 @@ class TMapTest extends Test:
     }
 
     "keys, values, entries" - {
-        "keys on an empty map returns an empty iterable" in run {
+        "keys on an empty map returns an empty iterable" in {
             STM.run {
                 for
                     map  <- TMap.init[String, Int]
@@ -1179,7 +1179,7 @@ class TMapTest extends Test:
             }
         }
 
-        "keys contains exactly the inserted keys, no duplicates, count matches size" in run {
+        "keys contains exactly the inserted keys, no duplicates, count matches size" in {
             STM.run {
                 for
                     map  <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
@@ -1194,7 +1194,7 @@ class TMapTest extends Test:
             }
         }
 
-        "keys returned in one transaction is consistent with that transaction's view" in run {
+        "keys returned in one transaction is consistent with that transaction's view" in {
             for
                 map  <- STM.run(TMap.init("a" -> 1, "b" -> 2))
                 keys <- STM.run(map.keys)
@@ -1203,7 +1203,7 @@ class TMapTest extends Test:
             yield assert(keys.toSeq.toSet == Set("a", "b"))
         }
 
-        "values on an empty map returns an empty iterable" in run {
+        "values on an empty map returns an empty iterable" in {
             STM.run {
                 for
                     map <- TMap.init[String, Int]
@@ -1214,7 +1214,7 @@ class TMapTest extends Test:
             }
         }
 
-        "values preserves duplicate values (no deduplication)" in run {
+        "values preserves duplicate values (no deduplication)" in {
             STM.run {
                 for
                     map <- TMap.init("a" -> 1, "b" -> 1, "c" -> 1)
@@ -1229,7 +1229,7 @@ class TMapTest extends Test:
             }
         }
 
-        "entries returns exactly the inserted (K, V) pairs" in run {
+        "entries returns exactly the inserted (K, V) pairs" in {
             STM.run {
                 for
                     map     <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
@@ -1241,7 +1241,7 @@ class TMapTest extends Test:
             }
         }
 
-        "entries on an empty map returns an empty iterable" in run {
+        "entries on an empty map returns an empty iterable" in {
             STM.run {
                 for
                     map     <- TMap.init[String, Int]
@@ -1252,7 +1252,7 @@ class TMapTest extends Test:
             }
         }
 
-        "entries covers every binding regardless of iteration order" in run {
+        "entries covers every binding regardless of iteration order" in {
             STM.run {
                 for
                     map     <- TMap.init("z" -> 26, "a" -> 1, "m" -> 13)
@@ -1265,7 +1265,7 @@ class TMapTest extends Test:
             }
         }
 
-        "keys and values length each equal size, with no missing/extra" in run {
+        "keys and values length each equal size, with no missing/extra" in {
             STM.run {
                 for
                     map <- TMap.init("a" -> 1, "b" -> 1, "c" -> 2)
@@ -1282,7 +1282,7 @@ class TMapTest extends Test:
             }
         }
 
-        "entries (direct call) returns the inserted (K, V) pairs" in run {
+        "entries (direct call) returns the inserted (K, V) pairs" in {
             STM.run {
                 for
                     map <- TMap.init("a" -> 1, "b" -> 2)
@@ -1296,7 +1296,7 @@ class TMapTest extends Test:
     }
 
     "filter" - {
-        "filter on an empty map leaves the map empty" in run {
+        "filter on an empty map leaves the map empty" in {
             val pCalls = new java.util.concurrent.atomic.AtomicInteger(0)
             STM.run {
                 for
@@ -1312,7 +1312,7 @@ class TMapTest extends Test:
             }
         }
 
-        "filter with always-true predicate retains every entry" in run {
+        "filter with always-true predicate retains every entry" in {
             STM.run {
                 for
                     map  <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
@@ -1324,7 +1324,7 @@ class TMapTest extends Test:
             }
         }
 
-        "filter with always-false predicate empties the map" in run {
+        "filter with always-false predicate empties the map" in {
             STM.run {
                 for
                     map   <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
@@ -1338,7 +1338,7 @@ class TMapTest extends Test:
             }
         }
 
-        "filter propagates Abort.fail from the predicate and rolls back" in run {
+        "filter propagates Abort.fail from the predicate and rolls back" in {
             for
                 map <- STM.run(TMap.init("a" -> 1, "b" -> 2, "c" -> 3))
                 r <- Abort.run {
@@ -1355,7 +1355,7 @@ class TMapTest extends Test:
                 assert(snap == Map("a" -> 1, "b" -> 2, "c" -> 3))
         }
 
-        "filter invokes the predicate exactly once per entry (single attempt, no retry)" in run {
+        "filter invokes the predicate exactly once per entry (single attempt, no retry)" in {
             val calls   = new java.util.concurrent.atomic.AtomicInteger(0)
             val n       = 25
             val entries = (1 to n).map(i => i.toString -> i)
@@ -1371,7 +1371,7 @@ class TMapTest extends Test:
             }
         }
 
-        "filter with a mid-iteration panicking predicate rolls back any removals" in run {
+        "filter with a mid-iteration panicking predicate rolls back any removals" in {
             val entries = (1 to 10).map(i => i.toString -> i)
             for
                 map <- STM.run(TMap.init(entries*))
@@ -1392,7 +1392,7 @@ class TMapTest extends Test:
     }
 
     "fold" - {
-        "fold on an empty map returns the initial accumulator" in run {
+        "fold on an empty map returns the initial accumulator" in {
             val calls = new java.util.concurrent.atomic.AtomicInteger(0)
             STM.run {
                 for
@@ -1407,7 +1407,7 @@ class TMapTest extends Test:
             }
         }
 
-        "fold's type parameter B has no runtime effect" in run {
+        "fold's type parameter B has no runtime effect" in {
             STM.run {
                 for
                     map <- TMap.init("a" -> 1, "b" -> 2)
@@ -1420,7 +1420,7 @@ class TMapTest extends Test:
             }
         }
 
-        "fold computes the correct sum and visits every entry regardless of order" in run {
+        "fold computes the correct sum and visits every entry regardless of order" in {
             STM.run {
                 for
                     map     <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3, "d" -> 4)
@@ -1433,7 +1433,7 @@ class TMapTest extends Test:
             }
         }
 
-        "fold propagates Abort.fail from the combiner" in run {
+        "fold propagates Abort.fail from the combiner" in {
             for
                 map <- STM.run(TMap.init("a" -> 1, "b" -> 2, "c" -> 3))
                 r <- Abort.run {
@@ -1446,7 +1446,7 @@ class TMapTest extends Test:
             yield assert(r.isFailure)
         }
 
-        "fold result is correct without depending on Map iteration order" in run {
+        "fold result is correct without depending on Map iteration order" in {
             STM.run {
                 for
                     map   <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
@@ -1461,7 +1461,7 @@ class TMapTest extends Test:
             }
         }
 
-        "fold result equals snapshot.values.sum at point of fold's commit" in run {
+        "fold result equals snapshot.values.sum at point of fold's commit" in {
             STM.run {
                 for
                     map  <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3, "d" -> 4)
@@ -1474,7 +1474,7 @@ class TMapTest extends Test:
             }
         }
 
-        "fold lambda can read another TRef and the result composes correctly" in run {
+        "fold lambda can read another TRef and the result composes correctly" in {
             STM.run {
                 for
                     bias <- TRef.init(10)
@@ -1488,7 +1488,7 @@ class TMapTest extends Test:
             }
         }
 
-        "fold invokes the combiner exactly once per entry (counter == size)" in run {
+        "fold invokes the combiner exactly once per entry (counter == size)" in {
             val calls   = new java.util.concurrent.atomic.AtomicInteger(0)
             val n       = 13
             val entries = (1 to n).map(i => i.toString -> i)
@@ -1505,7 +1505,7 @@ class TMapTest extends Test:
             }
         }
 
-        "fold with a panicking combiner mid-iteration surfaces panic, no state leaks" in run {
+        "fold with a panicking combiner mid-iteration surfaces panic, no state leaks" in {
             for
                 map <- STM.run(TMap.init("a" -> 1, "b" -> 2, "c" -> 3))
                 r <- Abort.run {
@@ -1527,7 +1527,7 @@ class TMapTest extends Test:
     }
 
     "findFirst" - {
-        "findFirst on an empty map returns Maybe.empty and does not invoke f" in run {
+        "findFirst on an empty map returns Maybe.empty and does not invoke f" in {
             val calls = new java.util.concurrent.atomic.AtomicInteger(0)
             STM.run {
                 for
@@ -1542,7 +1542,7 @@ class TMapTest extends Test:
             }
         }
 
-        "findFirst returns one of the matching entries (order-tolerant)" in run {
+        "findFirst returns one of the matching entries (order-tolerant)" in {
             STM.run {
                 for
                     map <- TMap.init("a" -> 2, "b" -> 4, "c" -> 6)
@@ -1553,7 +1553,7 @@ class TMapTest extends Test:
             }
         }
 
-        "findFirst supports return type A != String" in run {
+        "findFirst supports return type A != String" in {
             STM.run {
                 for
                     map <- TMap.init("a" -> 1, "b" -> 2)
@@ -1564,7 +1564,7 @@ class TMapTest extends Test:
             }
         }
 
-        "findFirst propagates Abort.fail from the predicate" in run {
+        "findFirst propagates Abort.fail from the predicate" in {
             for
                 map <- STM.run(TMap.init("a" -> 1, "b" -> 2))
                 r <- Abort.run {
@@ -1578,7 +1578,7 @@ class TMapTest extends Test:
             yield assert(r.isFailure)
         }
 
-        "findFirst returns the first match when multiple candidates exist (multi-match oracle)" in run {
+        "findFirst returns the first match when multiple candidates exist (multi-match oracle)" in {
             val visited = new java.util.concurrent.atomic.AtomicInteger(0)
             STM.run {
                 for
@@ -1594,7 +1594,7 @@ class TMapTest extends Test:
             }
         }
 
-        "findFirst empty-map contract: f not invoked, returns Absent (counter-confirmed)" in run {
+        "findFirst empty-map contract: f not invoked, returns Absent (counter-confirmed)" in {
             val calls = new java.util.concurrent.atomic.AtomicInteger(0)
             STM.run {
                 for
@@ -1609,7 +1609,7 @@ class TMapTest extends Test:
             }
         }
 
-        "findFirst with a panicking predicate mid-iteration surfaces panic, no state leaks" in run {
+        "findFirst with a panicking predicate mid-iteration surfaces panic, no state leaks" in {
             for
                 map <- STM.run(TMap.init("a" -> 1, "b" -> 2, "c" -> 3))
                 r <- Abort.run {
@@ -1631,7 +1631,7 @@ class TMapTest extends Test:
     }
 
     "snapshot" - {
-        "snapshot is immutable with respect to subsequent TMap mutations" in run {
+        "snapshot is immutable with respect to subsequent TMap mutations" in {
             for
                 map  <- STM.run(TMap.init("a" -> 1, "b" -> 2))
                 snap <- STM.run(map.snapshot)
@@ -1640,7 +1640,7 @@ class TMapTest extends Test:
             yield assert(snap == Map("a" -> 1, "b" -> 2))
         }
 
-        "snapshot of an empty TMap returns Map.empty" in run {
+        "snapshot of an empty TMap returns Map.empty" in {
             STM.run {
                 for
                     map  <- TMap.init[String, Int]
@@ -1652,7 +1652,7 @@ class TMapTest extends Test:
             }
         }
 
-        "snapshot reflects only entries present at the snapshot's transaction commit" in run {
+        "snapshot reflects only entries present at the snapshot's transaction commit" in {
             for
                 map   <- STM.run(TMap.init("a" -> 1, "b" -> 2))
                 snap1 <- STM.run(map.snapshot)
@@ -1667,7 +1667,7 @@ class TMapTest extends Test:
     }
 
     "consistency and generic types" - {
-        "a read returns either Absent or the exact written value (no torn reads)" in run {
+        "a read returns either Absent or the exact written value (no torn reads)" in {
             for
                 map <- STM.run(TMap.init[Int, Int])
                 _   <- STM.run(map.put(1, 100))
@@ -1682,7 +1682,7 @@ class TMapTest extends Test:
                 assert(r3.isEmpty)
         }
 
-        "TMap supports V = case class (round-trip through put/get/values/snapshot)" in run {
+        "TMap supports V = case class (round-trip through put/get/values/snapshot)" in {
             val alice = Person("Alice", 30)
             val bob   = Person("Bob", 25)
             STM.run {
@@ -1702,7 +1702,7 @@ class TMapTest extends Test:
             }
         }
 
-        "TMap supports K = case class (round-trip through put/get/contains/keys)" in run {
+        "TMap supports K = case class (round-trip through put/get/contains/keys)" in {
             val k1 = Id(1L)
             val k2 = Id(2L)
             STM.run {
@@ -1719,7 +1719,7 @@ class TMapTest extends Test:
             }
         }
 
-        "per-value TRefs created in a rolled-back transaction do not leak into a fresh transaction" in run {
+        "per-value TRefs created in a rolled-back transaction do not leak into a fresh transaction" in {
             for
                 map <- STM.run(TMap.init[String, Int])
                 _ <- Abort.run {

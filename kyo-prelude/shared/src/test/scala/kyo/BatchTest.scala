@@ -1,7 +1,7 @@
 import kyo.*
 import scala.collection.mutable.ArrayBuffer
 
-class BatchTest extends Test:
+class BatchTest extends kyo.test.Test[Any]:
 
     val n = 10000
 
@@ -17,7 +17,7 @@ class BatchTest extends Test:
         def calls: Seq[Seq[A]] = callsBuffer.toSeq
     end TestSource
 
-    "one eval, one source" in run {
+    "one eval, one source" in {
         val source = TestSource[Int, Int, Any](seq => seq.map(_ + 1))
         val result =
             for
@@ -31,7 +31,7 @@ class BatchTest extends Test:
         }
     }
 
-    "multiple evals, one source" in run {
+    "multiple evals, one source" in {
         val source = TestSource[Int, String, Any](seq => seq.map(_.toString))
         val result =
             for
@@ -57,7 +57,7 @@ class BatchTest extends Test:
         }
     }
 
-    "one eval, multiple sources" in run {
+    "one eval, multiple sources" in {
         val source1 = TestSource[Int, String, Any](seq => seq.map(_.toString))
         val source2 = TestSource[Int, Int, Any](seq => seq.map(_ * 2))
         val result =
@@ -78,7 +78,7 @@ class BatchTest extends Test:
         }
     }
 
-    "multiple eval, multiple sources" in run {
+    "multiple eval, multiple sources" in {
         val source1 = TestSource[Int, String, Any](seq => seq.map(_.toString))
         val source2 = TestSource[Int, Int, Any](seq => seq.map(_ * 2))
         val result =
@@ -106,7 +106,7 @@ class BatchTest extends Test:
         }
     }
 
-    "complex interleaved" in run {
+    "complex interleaved" in {
         val source1 = TestSource[Int, String, Any](seq => seq.map(_.toString))
         val source2 = TestSource[String, Int, Any](seq => seq.map(_.length))
         val source3 = TestSource[Int, Double, Any](seq => seq.map(_ * 1.5))
@@ -139,7 +139,7 @@ class BatchTest extends Test:
         }
     }
 
-    "empty eval" in run {
+    "empty eval" in {
         val source = TestSource[Int, String, Any](seq => seq.map(_.toString))
         val result =
             for
@@ -153,7 +153,7 @@ class BatchTest extends Test:
         }
     }
 
-    "large batch" in run {
+    "large batch" in {
         val largeSeq = (1 to n).toSeq
         val source   = TestSource[Int, Int, Any](seq => seq.map(_ * 2))
         val result =
@@ -170,7 +170,7 @@ class BatchTest extends Test:
     }
 
     "favors batching" - {
-        "simple case" in run {
+        "simple case" in {
             val complexSource = TestSource[Int, Int, Env[Int]] { seq =>
                 Kyo.foreach(seq)(x => Env.use[Int](_ => x * 2))
             }
@@ -203,7 +203,7 @@ class BatchTest extends Test:
             }
         }
 
-        "multiple complex sources" in run {
+        "multiple complex sources" in {
             val complexSource1 = TestSource[Int, Int, Env[Int]] { seq =>
                 Kyo.foreach(seq)(x => Env.use[Int](env => x * env))
             }
@@ -240,7 +240,7 @@ class BatchTest extends Test:
             }
         }
 
-        "interleaved complex and simple sources" in run {
+        "interleaved complex and simple sources" in {
             val complexSource = TestSource[Int, Int, Env[Int]] { seq =>
                 Kyo.foreach(seq)(x => Env.use[Int](env => x * env))
             }
@@ -276,7 +276,7 @@ class BatchTest extends Test:
         }
     }
 
-    "error handling" in run {
+    "error handling" in {
         val errorSource = TestSource[Int, Int, Any] { seq =>
             if seq.contains(3) then throw new RuntimeException("Error in source")
             else seq.map(_ * 2)
@@ -288,13 +288,13 @@ class BatchTest extends Test:
                 b <- errorSource(a)
             yield (a, b)
 
-        assertThrows[RuntimeException] {
+        interceptThrown[RuntimeException] {
             Batch.run(result).eval
         }
         assert(errorSource.calls == Seq(Seq(1, 2, 3, 4)))
     }
 
-    "interleaved eval and source with dependencies" in run {
+    "interleaved eval and source with dependencies" in {
         val source1 = TestSource[Int, String, Any](seq => seq.map(_.toString))
         val source2 = TestSource[String, Int, Any](seq => seq.map(_.length))
 
@@ -325,7 +325,7 @@ class BatchTest extends Test:
     }
 
     "effects outside sources" - {
-        "simple effect with source" in run {
+        "simple effect with source" in {
             var counter = 0
             val source  = TestSource[Int, String, Any](seq => seq.map(_.toString))
             val result =
@@ -350,7 +350,7 @@ class BatchTest extends Test:
             }
         }
 
-        "effect with Env and source" in run {
+        "effect with Env and source" in {
             val source = TestSource[Int, Int, Any](seq => seq.map(_ * 2))
             val result =
                 for
@@ -375,7 +375,7 @@ class BatchTest extends Test:
             }
         }
 
-        "effect with Var and source" in run {
+        "effect with Var and source" in {
             val source = TestSource[Int, String, Any](seq => seq.map(x => s"value: $x"))
             val result =
                 for
@@ -401,7 +401,7 @@ class BatchTest extends Test:
             }
         }
 
-        "complex effect interleaved with sources" in run {
+        "complex effect interleaved with sources" in {
             var sideEffect = 0
             val source1    = TestSource[Int, Int, Any](seq => seq.map(_ * 2))
             val source2    = TestSource[Int, String, Any](seq => seq.map(x => s"result: $x"))
@@ -438,7 +438,7 @@ class BatchTest extends Test:
     }
 
     "source with distinct output size" - {
-        "fewer items" in run {
+        "fewer items" in {
             val source = TestSource[Int, Int, Any](seq => seq.filter(_ % 2 == 0))
             val result =
                 for
@@ -453,7 +453,7 @@ class BatchTest extends Test:
                 }
         }
 
-        "more items" in run {
+        "more items" in {
             val source = TestSource[Int, Int, Any](seq => seq.flatMap(x => Seq(x, x * 10)))
             val result =
                 for
@@ -468,7 +468,7 @@ class BatchTest extends Test:
                 }
         }
 
-        "empty output" in run {
+        "empty output" in {
             val source = TestSource[Int, Int, Any](_ => Seq.empty)
             val result =
                 for
@@ -485,7 +485,7 @@ class BatchTest extends Test:
     }
 
     "Batch.source" - {
-        "with individual effect suspensions" in run {
+        "with individual effect suspensions" in {
             var counter = 0
             val source = Batch.source[Int, String, Env[Int]] { seq =>
                 val map = seq.map(i =>
@@ -511,7 +511,7 @@ class BatchTest extends Test:
             }
         }
 
-        "with conditional effect suspensions" in run {
+        "with conditional effect suspensions" in {
             var evenCounter = 0
             var oddCounter  = 0
             val source = Batch.source[Int, String, Env[Int] & Var[Int]] { seq =>
@@ -553,7 +553,7 @@ class BatchTest extends Test:
     }
 
     "Batch.sourceMap" - {
-        "basic usage" in run {
+        "basic usage" in {
             val source = Batch.sourceMap[Int, String, Any] { seq =>
                 seq.map(i => i -> i.toString).toMap
             }
@@ -569,7 +569,7 @@ class BatchTest extends Test:
             }
         }
 
-        "with effects" in run {
+        "with effects" in {
             val source = Batch.sourceMap[Int, String, Env[Int] & Var[Int]] { seq =>
                 Env.use[Int] { env =>
                     Var.update[Int](_ + seq.sum).map { _ =>
@@ -595,7 +595,7 @@ class BatchTest extends Test:
             }
         }
 
-        "error handling" in run {
+        "error handling" in {
             val source = Batch.sourceMap[Int, String, Any] { seq =>
                 if seq.contains(3) then throw new RuntimeException("Error in source")
                 else seq.map(i => i -> i.toString).toMap
@@ -607,21 +607,21 @@ class BatchTest extends Test:
                     b <- source(a)
                 yield (a, b)
 
-            assertThrows[RuntimeException] {
+            interceptThrown[RuntimeException] {
                 Batch.run(result).eval
             }
         }
     }
 
     "Batch.foreach" - {
-        "simple usage" in run {
+        "simple usage" in {
             val result = Batch.foreach(Seq(1, 2, 3))(x => x * 2)
             Batch.run(result).map { seq =>
                 assert(seq == Seq(2, 4, 6))
             }
         }
 
-        "with effects" in run {
+        "with effects" in {
             val result = Batch.foreach(Seq(1, 2, 3)) { x =>
                 Env.use[Int](env => x * env)
             }
@@ -632,24 +632,24 @@ class BatchTest extends Test:
             }
         }
 
-        "empty sequence" in run {
+        "empty sequence" in {
             val result = Batch.foreach(Seq.empty[Int])(x => x * 2)
             Batch.run(result).map { seq =>
                 assert(seq.isEmpty)
             }
         }
 
-        "with error handling" in run {
+        "with error handling" in {
             val result = Batch.foreach(Seq(1, 2, 3, 4, 5)) { x =>
                 if x == 3 then throw new RuntimeException("Error at 3")
                 else x * 2
             }
-            assertThrows[RuntimeException] {
+            interceptThrown[RuntimeException] {
                 Batch.run(result).eval
             }
         }
 
-        "with multiple effects" in run {
+        "with multiple effects" in {
             var sideEffect = 0
             val result = Batch.foreach(Seq(1, 2, 3)) { x =>
                 for
@@ -670,7 +670,7 @@ class BatchTest extends Test:
             }
         }
 
-        "interleaved with other Batch operations" in run {
+        "interleaved with other Batch operations" in {
             val source = TestSource[Int, String, Any](seq => seq.map(_.toString))
             val result =
                 for
@@ -697,7 +697,7 @@ class BatchTest extends Test:
     }
 
     "ordering preservation" - {
-        "complex interleaved with ordering dependency" in run {
+        "complex interleaved with ordering dependency" in {
             val source1 = TestSource[Int, Int, Any] { seq =>
                 seq.map(_ * 2)
             }
@@ -733,7 +733,7 @@ class BatchTest extends Test:
             }
         }
 
-        "multiple dependent sources" in run {
+        "multiple dependent sources" in {
             val source1 = TestSource[Int, Int, Any] { seq =>
                 seq.map(_ + 1)
             }
@@ -769,7 +769,7 @@ class BatchTest extends Test:
 
     "source effects handled before Batch.run" - {
 
-        "isolated Var" in run {
+        "isolated Var" in {
             val source = Batch.source[Int, Int, Var[Int]] { seq =>
                 val map = seq.map { i =>
                     i -> Var.update[Int](_ + i)
@@ -792,7 +792,7 @@ class BatchTest extends Test:
             }
         }
 
-        "effect handling with multiple sources" in run {
+        "effect handling with multiple sources" in {
             val source1 = Batch.source[Int, Int, Var[Int]] { seq =>
                 val map = seq.map { i =>
                     i -> Var.update[Int](_ + i)
@@ -823,7 +823,7 @@ class BatchTest extends Test:
             }
         }
 
-        "chained effect handlers with batch eval" in run {
+        "chained effect handlers with batch eval" in {
             val source = Batch.source[Int, Int, Var[Int]] { seq =>
                 val map = seq.map { i =>
                     i -> Var.update[Int](_ + i)

@@ -3,7 +3,7 @@ package kyo.internal
 import kyo.*
 import kyo.internal.server.*
 
-class HttpRouterTest extends kyo.Test:
+class HttpRouterTest extends kyo.BaseHttpTest:
 
     import HttpPath./
 
@@ -20,7 +20,7 @@ class HttpRouterTest extends kyo.Test:
         "returns NotFound for any path" in {
             val router = HttpRouter(Seq.empty, Absent)
             router.find(HttpMethod.GET, "/anything") match
-                case Result.Failure(HttpRouter.FindError.NotFound) => succeed
+                case Result.Failure(HttpRouter.FindError.NotFound) => succeed("expected: empty router returns NotFound")
                 case other                                         => fail(s"expected NotFound, got $other")
         }
     }
@@ -44,7 +44,7 @@ class HttpRouterTest extends kyo.Test:
             val route  = HttpRoute.getRaw("users")
             val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "users") match
-                case Result.Success(_) => succeed
+                case Result.Success(m) => assert(m.pathCaptures.isEmpty) // path matched without leading slash
                 case other             => fail(s"expected match, got $other")
         }
 
@@ -52,7 +52,7 @@ class HttpRouterTest extends kyo.Test:
             val route  = HttpRoute.getRaw("users")
             val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/users/") match
-                case Result.Success(_) => succeed
+                case Result.Success(m) => assert(!m.isStreamingRequest) // path matched with trailing slash
                 case other             => fail(s"expected match, got $other")
         }
 
@@ -60,7 +60,7 @@ class HttpRouterTest extends kyo.Test:
             val route  = HttpRoute.getRaw("users")
             val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "///users///") match
-                case Result.Success(_) => succeed
+                case Result.Success(m) => assert(!m.isStreamingRequest) // path matched with multiple slashes
                 case other             => fail(s"expected match, got $other")
         }
 
@@ -68,7 +68,7 @@ class HttpRouterTest extends kyo.Test:
             val route  = HttpRoute.getRaw("users")
             val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/posts") match
-                case Result.Failure(HttpRouter.FindError.NotFound) => succeed
+                case Result.Failure(HttpRouter.FindError.NotFound) => succeed("expected: wrong path returns NotFound")
                 case other                                         => fail(s"expected NotFound, got $other")
         }
 
@@ -86,7 +86,7 @@ class HttpRouterTest extends kyo.Test:
             val route  = HttpRoute.getRaw("users")
             val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.HEAD, "/users") match
-                case Result.Success(_) => succeed
+                case Result.Success(m) => assert(m.endpoint.route.method == HttpMethod.GET) // HEAD resolves to GET route
                 case other             => fail(s"expected match, got $other")
         }
     }
@@ -98,7 +98,7 @@ class HttpRouterTest extends kyo.Test:
             val route  = HttpRoute.getRaw("api" / HttpPath.Literal("v1") / HttpPath.Literal("users"))
             val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/api/v1/users") match
-                case Result.Success(_) => succeed
+                case Result.Success(m) => assert(m.pathCaptures.isEmpty) // multi-segment path matched
                 case other             => fail(s"expected match, got $other")
         }
 
@@ -106,7 +106,7 @@ class HttpRouterTest extends kyo.Test:
             val route  = HttpRoute.getRaw("api" / HttpPath.Literal("v1") / HttpPath.Literal("users"))
             val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/api/v1") match
-                case Result.Failure(HttpRouter.FindError.NotFound) => succeed
+                case Result.Failure(HttpRouter.FindError.NotFound) => succeed("expected: partial path returns NotFound")
                 case other                                         => fail(s"expected NotFound, got $other")
         }
 
@@ -114,7 +114,7 @@ class HttpRouterTest extends kyo.Test:
             val route  = HttpRoute.getRaw("api")
             val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/api/v1/users") match
-                case Result.Failure(HttpRouter.FindError.NotFound) => succeed
+                case Result.Failure(HttpRouter.FindError.NotFound) => succeed("expected: too-deep path returns NotFound")
                 case other                                         => fail(s"expected NotFound, got $other")
         }
     }
@@ -337,7 +337,7 @@ class HttpRouterTest extends kyo.Test:
             val route  = HttpRoute.getRaw("")
             val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "/") match
-                case Result.Success(_) => succeed
+                case Result.Success(m) => assert(m.pathCaptures.isEmpty) // root path matches "/"
                 case other             => fail(s"expected match, got $other")
         }
 
@@ -345,7 +345,7 @@ class HttpRouterTest extends kyo.Test:
             val route  = HttpRoute.getRaw("")
             val router = HttpRouter(Seq(mkEndpoint(route)), Absent)
             router.find(HttpMethod.GET, "") match
-                case Result.Success(_) => succeed
+                case Result.Success(m) => assert(m.pathCaptures.isEmpty) // root path matches empty string
                 case other             => fail(s"expected match, got $other")
         }
     }
@@ -358,17 +358,17 @@ class HttpRouterTest extends kyo.Test:
             val router = HttpRouter(routes.map(mkEndpoint), Absent)
             // Check first, last, and middle
             router.find(HttpMethod.GET, "/route00") match
-                case Result.Success(_) => succeed
+                case Result.Success(m) => assert(m.pathCaptures.isEmpty) // first route matched by binary search
                 case other             => fail(s"expected match for route00, got $other")
             router.find(HttpMethod.GET, "/route10") match
-                case Result.Success(_) => succeed
+                case Result.Success(m) => assert(m.pathCaptures.isEmpty) // middle route matched by binary search
                 case other             => fail(s"expected match for route10, got $other")
             router.find(HttpMethod.GET, "/route19") match
-                case Result.Success(_) => succeed
+                case Result.Success(m) => assert(m.pathCaptures.isEmpty) // last route matched by binary search
                 case other             => fail(s"expected match for route19, got $other")
             // Non-existent
             router.find(HttpMethod.GET, "/route20") match
-                case Result.Failure(HttpRouter.FindError.NotFound) => succeed
+                case Result.Failure(HttpRouter.FindError.NotFound) => succeed("expected: out-of-range route returns NotFound")
                 case other                                         => fail(s"expected NotFound for route20, got $other")
         }
     }

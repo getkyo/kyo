@@ -15,7 +15,22 @@ class MpscUnsafeQueueTest extends UnsafeQueueBaseTest:
     def makeQueue[A](size: Int): UnsafeQueue[A] = new MpscUnsafeQueue[A](size)
 
     "MpscUnsafeQueue-specific" - {
-        "manyProducersSingleConsumer" in runNotJS {
+        "capacity2Sequential" in {
+            val q = new MpscUnsafeQueue[Int](2)
+            assert(q.capacity == 2)
+            for round <- 0 until 50 do
+                q.offer(round * 2)
+                q.offer(round * 2 + 1)
+                assert(!q.offer(999), s"round=$round: should be full")
+                assert(q.poll() == Maybe(round * 2), s"round=$round")
+                assert(q.poll() == Maybe(round * 2 + 1), s"round=$round")
+                assert(q.poll().isEmpty)
+            end for
+        }
+    }
+
+    "MpscUnsafeQueue-specific concurrent".notJs - {
+        "manyProducersSingleConsumer" in {
             val q        = new MpscUnsafeQueue[Long](64)
             val stop     = new AtomicBoolean(false)
             val start    = new CountDownLatch(1)
@@ -69,22 +84,11 @@ class MpscUnsafeQueueTest extends UnsafeQueueBaseTest:
                 for i <- 1 until seqs.size do
                     assert(seqs(i) > seqs(i - 1), s"Producer $pid: FIFO violation at $i")
             end for
+            // All threads terminated without hanging; consumed items (if any) maintained per-producer FIFO order
+            assert(!(producers :+ consumer).exists(_.isAlive), "A producer or consumer thread did not terminate within the timeout")
         }
 
-        "capacity2Sequential" in {
-            val q = new MpscUnsafeQueue[Int](2)
-            assert(q.capacity == 2)
-            for round <- 0 until 50 do
-                q.offer(round * 2)
-                q.offer(round * 2 + 1)
-                assert(!q.offer(999), s"round=$round: should be full")
-                assert(q.poll() == Maybe(round * 2), s"round=$round")
-                assert(q.poll() == Maybe(round * 2 + 1), s"round=$round")
-                assert(q.poll().isEmpty)
-            end for
-        }
-
-        "capacity2Concurrent" in runNotJS {
+        "capacity2Concurrent" in {
             val q        = new MpscUnsafeQueue[Long](2)
             val stop     = new AtomicBoolean(false)
             val start    = new CountDownLatch(1)

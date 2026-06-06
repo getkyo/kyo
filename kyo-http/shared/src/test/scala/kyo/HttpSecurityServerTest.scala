@@ -3,15 +3,15 @@ package kyo
 import kyo.*
 import kyo.internal.transport.*
 
-class HttpSecurityServerTest extends Test:
+class HttpSecurityServerTest extends BaseHttpTest:
 
     val echoRoute   = HttpRoute.postRaw("echo").response(_.bodyText)
     val echoHandler = echoRoute.handler(_ => HttpResponse.ok("ok"))
 
     /** Start a plain HTTP server and run a test against it. */
     def withEchoServer(
-        test: (String, Int) => Assertion < (Async & Abort[Any] & Scope)
-    )(using Frame): Assertion < (Scope & Async & Abort[Any]) =
+        test: (String, Int) => Unit < (Async & Abort[Any] & Scope)
+    )(using Frame): Unit < (Scope & Async & Abort[Any]) =
         HttpServer.init(0, "localhost")(echoHandler).map { s =>
             test("localhost", s.port)
         }
@@ -54,12 +54,12 @@ class HttpSecurityServerTest extends Test:
         }
 
     /** Check that a response indicates rejection: either 400 status or connection closed. */
-    def assertRejected(response: String, description: String): Assertion =
+    def assertRejected(response: String, description: String)(using kyo.test.AssertScope): Unit =
         if response.isEmpty then
-            // Connection closed — server rejected the request
-            succeed
+            // Connection closed -- server rejected the request
+            succeed("expected: server rejected by closing connection")
         else if response.contains("400") then
-            succeed
+            assert(response.contains("400"), s"$description: server returned 400 Bad Request for malformed input")
         else
             fail(
                 s"$description: Expected 400 Bad Request or connection close, but got:\n${response.take(200)}"
@@ -67,7 +67,7 @@ class HttpSecurityServerTest extends Test:
 
     "request smuggling defenses" - {
 
-        "duplicate Content-Length headers (CVE-2019-20445)" in runNotNative {
+        "duplicate Content-Length headers (CVE-2019-20445)".notNative in {
             withEchoServer { (host, port) =>
                 val raw =
                     ("POST /echo HTTP/1.1\r\n" +
@@ -83,7 +83,7 @@ class HttpSecurityServerTest extends Test:
             }
         }
 
-        "CL+TE conflict (classic CL.TE smuggling)" in runNotNative {
+        "CL+TE conflict (classic CL.TE smuggling)".notNative in {
             withEchoServer { (host, port) =>
                 val raw =
                     ("POST /echo HTTP/1.1\r\n" +
@@ -102,7 +102,7 @@ class HttpSecurityServerTest extends Test:
             }
         }
 
-        "Content-Length integer overflow" in runNotNative {
+        "Content-Length integer overflow".notNative in {
             withEchoServer { (host, port) =>
                 val raw =
                     ("POST /echo HTTP/1.1\r\n" +

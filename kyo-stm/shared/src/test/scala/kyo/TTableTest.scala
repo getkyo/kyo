@@ -1,9 +1,9 @@
 package kyo
 
-class TTableTest extends Test:
+class TTableTest extends kyo.test.Test[Any]:
 
     "basic operations" - {
-        "insert and get" in run {
+        "insert and get" in {
             for
                 table  <- TTable.init["name" ~ String & "age" ~ Int]
                 id     <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -14,7 +14,7 @@ class TTableTest extends Test:
                 assert(record.get.age == 30)
         }
 
-        "update existing record" in run {
+        "update existing record" in {
             for
                 table  <- TTable.init["name" ~ String & "age" ~ Int]
                 id     <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -27,14 +27,14 @@ class TTableTest extends Test:
                 assert(record.get.age == 31)
         }
 
-        "update non-existent record" in run {
+        "update non-existent record" in {
             for
                 table <- TTable.init["name" ~ String & "age" ~ Int]
                 prev  <- STM.run(table.update(table.unsafeId(999), "name" ~ "Alice" & "age" ~ 30))
             yield assert(prev.isEmpty)
         }
 
-        "upsert new record" in run {
+        "upsert new record" in {
             for
                 table  <- TTable.init["name" ~ String & "age" ~ Int]
                 _      <- STM.run(table.upsert(table.unsafeId(1), "name" ~ "Alice" & "age" ~ 30))
@@ -45,7 +45,7 @@ class TTableTest extends Test:
                 assert(record.get.age == 30)
         }
 
-        "upsert existing record" in run {
+        "upsert existing record" in {
             for
                 table  <- TTable.init["name" ~ String & "age" ~ Int]
                 id     <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -56,7 +56,7 @@ class TTableTest extends Test:
                 assert(record.get.age == 31)
         }
 
-        "remove record" in run {
+        "remove record" in {
             for
                 table   <- TTable.init["name" ~ String & "age" ~ Int]
                 id      <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -67,7 +67,7 @@ class TTableTest extends Test:
                 assert(record.isEmpty)
         }
 
-        "remove non-existent record" in run {
+        "remove non-existent record" in {
             for
                 table   <- TTable.init["name" ~ String & "age" ~ Int]
                 removed <- STM.run(table.remove(table.unsafeId(999)))
@@ -76,7 +76,7 @@ class TTableTest extends Test:
     }
 
     "size" - {
-        "empty table" in run {
+        "empty table" in {
             for
                 table <- TTable.init["name" ~ String & "age" ~ Int]
                 size  <- STM.run(table.size)
@@ -86,7 +86,7 @@ class TTableTest extends Test:
                 assert(empty)
         }
 
-        "non-empty table" in run {
+        "non-empty table" in {
             for
                 table <- TTable.init["name" ~ String & "age" ~ Int]
                 _     <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -99,14 +99,14 @@ class TTableTest extends Test:
     }
 
     "snapshot" - {
-        "empty table" in run {
+        "empty table" in {
             for
                 table    <- TTable.init["name" ~ String & "age" ~ Int]
                 snapshot <- STM.run(table.snapshot)
             yield assert(snapshot.isEmpty)
         }
 
-        "non-empty table" in run {
+        "non-empty table" in {
             for
                 table    <- TTable.init["name" ~ String & "age" ~ Int]
                 id1      <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -122,7 +122,7 @@ class TTableTest extends Test:
     "Indexed" - {
         given [A, B]: CanEqual[A, B] = CanEqual.derived
 
-        "query by field" in run {
+        "query by field" in {
             for
                 table   <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String & "age" ~ Int]
                 _       <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -132,7 +132,7 @@ class TTableTest extends Test:
             yield assert(results == Chunk("name" ~ "Alice" & "age" ~ 30, "name" ~ "Alice" & "age" ~ 35))
         }
 
-        "query by multiple fields" in run {
+        "query by multiple fields" in {
             for
                 table   <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String & "age" ~ Int]
                 _       <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -144,7 +144,7 @@ class TTableTest extends Test:
                 assert(results.head.age == 30)
         }
 
-        "query with no matches" in run {
+        "query with no matches" in {
             for
                 table   <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String & "age" ~ Int]
                 _       <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -152,7 +152,7 @@ class TTableTest extends Test:
             yield assert(results.isEmpty)
         }
 
-        "update indexed record" in run {
+        "update indexed record" in {
             for
                 table        <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String & "age" ~ Int]
                 id           <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -165,7 +165,7 @@ class TTableTest extends Test:
                 assert(bobResults.head.name == "Bob")
         }
 
-        "remove indexed record" in run {
+        "remove indexed record" in {
             for
                 table   <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String & "age" ~ Int]
                 id      <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -175,7 +175,7 @@ class TTableTest extends Test:
         }
 
         "query validation" - {
-            "should not compile when querying non-indexed fields" in run {
+            "should not compile when querying non-indexed fields" in {
                 for
                     table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
                 yield typeCheckFailure("""table.query("name" ~ "Alice")""")(
@@ -183,7 +183,7 @@ class TTableTest extends Test:
                 )
             }
 
-            "should not compile when querying partially indexed fields" in run {
+            "should not compile when querying partially indexed fields" in {
                 for table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
                 yield typeCheckFailure("""table.query("name" ~ "Alice" & "age" ~ 30)""")(
                     "Cannot query on fields that are not indexed."
@@ -192,7 +192,7 @@ class TTableTest extends Test:
         }
 
         "Index cleanup" - {
-            "removes index entries after all records are removed" in run {
+            "removes index entries after all records are removed" in {
                 for
                     table               <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
                     id1                 <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -206,7 +206,7 @@ class TTableTest extends Test:
                     assert(emptyQueryResults.isEmpty)
             }
 
-            "keeps old index values after updates" in run {
+            "keeps old index values after updates" in {
                 for
                     table          <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
                     id             <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -220,7 +220,7 @@ class TTableTest extends Test:
                     assert(newAgeResults.size == 1)
             }
 
-            "accumulates index entries through nested transaction rollbacks" in run {
+            "accumulates index entries through nested transaction rollbacks" in {
                 for
                     table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
                     id    <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -246,7 +246,7 @@ class TTableTest extends Test:
         }
 
         "indexing verification" - {
-            "should only create specified indexes" in run {
+            "should only create specified indexes" in {
                 for
                     table <- TTable.Indexed.init["name" ~ String & "age" ~ Int & "email" ~ String, "name" ~ String & "age" ~ Int]
                     indexFields = table.indexFields
@@ -257,7 +257,7 @@ class TTableTest extends Test:
                     assert(!indexFields.exists(_ == "email"))
             }
 
-            "should handle single index field" in run {
+            "should handle single index field" in {
                 for
                     table <- TTable.Indexed.init["name" ~ String & "age" ~ Int & "email" ~ String, "age" ~ Int]
                     indexFields = table.indexFields
@@ -271,7 +271,7 @@ class TTableTest extends Test:
     }
 
     "Complex field manipulation" - {
-        "update should preserve unmodified fields" in run {
+        "update should preserve unmodified fields" in {
             for
                 table  <- TTable.init["name" ~ String & "age" ~ Int & "email" ~ String]
                 id     <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30 & "email" ~ "alice@test.com"))
@@ -284,7 +284,7 @@ class TTableTest extends Test:
                 assert(record.get.name == "Alice")
         }
 
-        "nested updates should maintain consistency" in run {
+        "nested updates should maintain consistency" in {
             for
                 table <- TTable.init["name" ~ String & "age" ~ Int]
                 id <- STM.run {
@@ -307,7 +307,7 @@ class TTableTest extends Test:
     }
 
     "Edge cases" - {
-        "operations on removed records" in run {
+        "operations on removed records" in {
             for
                 table  <- TTable.init["name" ~ String & "age" ~ Int]
                 id     <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -321,7 +321,7 @@ class TTableTest extends Test:
                 assert(remove.isEmpty)
         }
 
-        "multiple removes of same id" in run {
+        "multiple removes of same id" in {
             for
                 table    <- TTable.init["name" ~ String & "age" ~ Int]
                 id       <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -335,7 +335,7 @@ class TTableTest extends Test:
                 assert(result.isDefined)
         }
 
-        "operations with non-existent IDs" in run {
+        "operations with non-existent IDs" in {
             for
                 table  <- TTable.init["name" ~ String & "age" ~ Int]
                 get    <- STM.run(table.get(table.unsafeId(999)))
@@ -349,7 +349,7 @@ class TTableTest extends Test:
     }
 
     "Transaction rollback scenarios" - {
-        "failed nested transaction should not affect outer transaction" in run {
+        "failed nested transaction should not affect outer transaction" in {
             for
                 table <- TTable.init["name" ~ String & "age" ~ Int]
                 id    <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -373,7 +373,7 @@ class TTableTest extends Test:
                 assert(record.get.age == 30)
         }
 
-        "partial updates within transaction should roll back" in run {
+        "partial updates within transaction should roll back" in {
             for
                 table <- TTable.init["name" ~ String & "age" ~ Int & "email" ~ String]
                 id    <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30 & "email" ~ "alice@test.com"))
@@ -394,7 +394,7 @@ class TTableTest extends Test:
     }
 
     "Indexed table specific scenarios" - {
-        "index consistency after failed updates" in run {
+        "index consistency after failed updates" in {
             for
                 table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String]
                 id    <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -414,7 +414,7 @@ class TTableTest extends Test:
                 assert(byOriginalName.head.name == "Alice")
         }
 
-        "multiple index values" in run {
+        "multiple index values" in {
             for
                 table  <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String & "age" ~ Int]
                 _      <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -428,7 +428,7 @@ class TTableTest extends Test:
                 assert(byAge.exists(_.name == "Bob"))
         }
 
-        "index updates with multiple matching records" in run {
+        "index updates with multiple matching records" in {
             for
                 table    <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
                 id1      <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -443,7 +443,7 @@ class TTableTest extends Test:
                 assert(byNewAge.head.name == "Alice")
         }
 
-        "querying with non-existent index values" in run {
+        "querying with non-existent index values" in {
             for
                 table                 <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String & "age" ~ Int]
                 _                     <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -460,7 +460,7 @@ class TTableTest extends Test:
     "TTable" - {
         given [A, B]: CanEqual[A, B] = CanEqual.derived
 
-        "insert assigns sequential auto-incrementing IDs starting at 0" in run {
+        "insert assigns sequential auto-incrementing IDs starting at 0" in {
             for
                 table <- TTable.init["name" ~ String & "age" ~ Int]
                 id1   <- STM.run(table.insert("name" ~ "A" & "age" ~ 1))
@@ -472,7 +472,7 @@ class TTableTest extends Test:
                 assert(id3 == table.unsafeId(2))
         }
 
-        "type Id is an opaque Int subtype yielding type-safe handles via unsafeId" in run {
+        "type Id is an opaque Int subtype yielding type-safe handles via unsafeId" in {
             for
                 table1 <- TTable.init["name" ~ String]
                 table2 <- TTable.init["name" ~ String]
@@ -484,7 +484,7 @@ class TTableTest extends Test:
                 assert((table2.unsafeId(7): Int) == 7)
         }
 
-        "unsafeId is currently externally callable and returns a usable Id handle" in run {
+        "unsafeId is currently externally callable and returns a usable Id handle" in {
             for
                 table <- TTable.init["name" ~ String & "age" ~ Int]
                 handle = table.unsafeId(42)
@@ -492,7 +492,7 @@ class TTableTest extends Test:
             yield assert(result.isEmpty)
         }
 
-        "unsafeId accepts boundary Int values without truncation or wraparound" in run {
+        "unsafeId accepts boundary Int values without truncation or wraparound" in {
             for
                 table <- TTable.init["name" ~ String]
             yield
@@ -506,14 +506,14 @@ class TTableTest extends Test:
                 assert((minV: Int) == Int.MinValue)
         }
 
-        "insert IDs are monotonically increasing across many records" in run {
+        "insert IDs are monotonically increasing across many records" in {
             for
                 table <- TTable.init["name" ~ String]
                 ids   <- Kyo.foreach(0 until 10)(i => STM.run(table.insert("name" ~ s"r$i")))
             yield assert(ids.sliding(2).forall { case Seq(a, b) => (a: Int) < (b: Int) })
         }
 
-        "a failed insert transaction rolls back its record but still consumes an id" in run {
+        "a failed insert transaction rolls back its record but still consumes an id" in {
             for
                 table <- TTable.init["name" ~ String]
                 preId <- STM.run(table.insert("name" ~ "pre"))
@@ -530,7 +530,7 @@ class TTableTest extends Test:
                 assert(!snap.values.exists(_.name == "doomed"), "failed insert must leave no record")
         }
 
-        "re-insert after remove produces a fresh ID not equal to the removed one" in run {
+        "re-insert after remove produces a fresh ID not equal to the removed one" in {
             for
                 table <- TTable.init["name" ~ String]
                 id    <- STM.run(table.insert("name" ~ "Alice"))
@@ -541,7 +541,7 @@ class TTableTest extends Test:
                 assert((reId: Int) > (id: Int))
         }
 
-        "update of non-existent ID leaves size and snapshot unchanged" in run {
+        "update of non-existent ID leaves size and snapshot unchanged" in {
             for
                 table <- TTable.init["name" ~ String]
                 _     <- STM.run(table.insert("name" ~ "Alice"))
@@ -554,7 +554,7 @@ class TTableTest extends Test:
                 assert(!snap.values.exists(_.name == "Bob"))
         }
 
-        "upsert at custom unsafeId then insert produce two distinct records" in run {
+        "upsert at custom unsafeId then insert produce two distinct records" in {
             for
                 table     <- TTable.init["name" ~ String]
                 _         <- STM.run(table.upsert(table.unsafeId(1), "name" ~ "manual"))
@@ -568,7 +568,7 @@ class TTableTest extends Test:
                 assert(size == 2)
         }
 
-        "Indexed.upsert of a new record makes it queryable through the index" in run {
+        "Indexed.upsert of a new record makes it queryable through the index" in {
             for
                 table  <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String & "age" ~ Int]
                 _      <- STM.run(table.upsert(table.unsafeId(5), "name" ~ "Dora" & "age" ~ 40))
@@ -579,7 +579,7 @@ class TTableTest extends Test:
                 assert(byAge.size == 1 && byAge.head.age == 40)
         }
 
-        "Indexed.upsert overwriting an indexed field removes the prior index entry" in run {
+        "Indexed.upsert overwriting an indexed field removes the prior index entry" in {
             for
                 table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String & "age" ~ Int]
                 id = table.unsafeId(1)
@@ -590,7 +590,7 @@ class TTableTest extends Test:
             yield assert(stale.isEmpty && fresh.size == 1 && fresh.head.age == 31)
         }
 
-        "remove in a transaction that aborts leaves the record intact" in run {
+        "remove in a transaction that aborts leaves the record intact" in {
             for
                 table <- TTable.init["name" ~ String]
                 id    <- STM.run(table.insert("name" ~ "Alice"))
@@ -604,7 +604,7 @@ class TTableTest extends Test:
                 assert(size == 1)
         }
 
-        "size reports correct count after 100 inserts on both Base and Indexed" in run {
+        "size reports correct count after 100 inserts on both Base and Indexed" in {
             for
                 base        <- TTable.init["name" ~ String]
                 indexed     <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String]
@@ -617,7 +617,7 @@ class TTableTest extends Test:
                 assert(indexedSize == 100)
         }
 
-        "Indexed.isEmpty is true on init and false after insert" in run {
+        "Indexed.isEmpty is true on init and false after insert" in {
             for
                 table  <- TTable.Indexed.init["name" ~ String, "name" ~ String]
                 empty0 <- STM.run(table.isEmpty)
@@ -628,7 +628,7 @@ class TTableTest extends Test:
                 assert(!empty1)
         }
 
-        "Indexed.snapshot returns the underlying store contents at any size" in run {
+        "Indexed.snapshot returns the underlying store contents at any size" in {
             for
                 table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
                 id1   <- STM.run(table.insert("name" ~ "A" & "age" ~ 10))
@@ -642,7 +642,7 @@ class TTableTest extends Test:
                 assert(snap3.values.map(_.age).toSet == Set(10, 20, 30))
         }
 
-        "Indexed.init accepts Indexes that is a strict superset of F" in run {
+        "Indexed.init accepts Indexes that is a strict superset of F" in {
             for
                 table <- TTable.Indexed.init[
                     "name" ~ String & "age" ~ Int,
@@ -655,7 +655,7 @@ class TTableTest extends Test:
                 assert(table.indexFields == Set("name", "age"))
         }
 
-        "Indexed.Id is identical to its underlying store.Id" in run {
+        "Indexed.Id is identical to its underlying store.Id" in {
             for
                 table      <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String]
                 id         <- STM.run(table.insert("name" ~ "Eve" & "age" ~ 22))
@@ -666,7 +666,7 @@ class TTableTest extends Test:
                 assert(viaIndexed.isDefined)
         }
 
-        "Indexed.get returns the record matching the inserted ID" in run {
+        "Indexed.get returns the record matching the inserted ID" in {
             for
                 table   <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
                 id      <- STM.run(table.insert("name" ~ "Z" & "age" ~ 42))
@@ -677,7 +677,7 @@ class TTableTest extends Test:
                 assert(missing.isEmpty)
         }
 
-        "Indexed.update on a non-existent ID returns Absent and does not touch indexes" in run {
+        "Indexed.update on a non-existent ID returns Absent and does not touch indexes" in {
             for
                 table      <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String]
                 _          <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -692,7 +692,7 @@ class TTableTest extends Test:
                 assert(size == 1)
         }
 
-        "Indexed.remove on a non-existent ID returns Absent and does not touch indexes" in run {
+        "Indexed.remove on a non-existent ID returns Absent and does not touch indexes" in {
             for
                 table      <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String]
                 _          <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -705,7 +705,7 @@ class TTableTest extends Test:
                 assert(size == 1)
         }
 
-        "Indexed.indexFields returns the index keys for a single-field table" in run {
+        "Indexed.indexFields returns the index keys for a single-field table" in {
             for
                 table <- TTable.Indexed.init["x" ~ Int, "x" ~ Int]
                 fields = table.indexFields
@@ -716,7 +716,7 @@ class TTableTest extends Test:
                 assert(q.size == 1)
         }
 
-        "Indexed.indexFields reports all fields when many fields are indexed" in run {
+        "Indexed.indexFields reports all fields when many fields are indexed" in {
             for
                 table <- TTable.Indexed.init[
                     "a" ~ Int & "b" ~ Int & "c" ~ Int & "d" ~ Int & "e" ~ Int &
@@ -728,7 +728,7 @@ class TTableTest extends Test:
             yield assert(fields == Set("a", "b", "c", "d", "e", "f", "g", "h", "i", "j"))
         }
 
-        "non-indexed query failure message names the filter and indexed field types" in run {
+        "non-indexed query failure message names the filter and indexed field types" in {
             for
                 table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
             yield
@@ -736,7 +736,7 @@ class TTableTest extends Test:
                 typeCheckFailure("""table.query("name" ~ "Alice")""")("Indexed fields:")
         }
 
-        "queryIds returns the IDs of matching records sorted ascending" in run {
+        "queryIds returns the IDs of matching records sorted ascending" in {
             for
                 table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String]
                 id1   <- STM.run(table.insert("name" ~ "X" & "age" ~ 1))
@@ -749,7 +749,7 @@ class TTableTest extends Test:
                 assert(ints == ints.sorted)
         }
 
-        "query whose filter matches all records returns the whole table" in run {
+        "query whose filter matches all records returns the whole table" in {
             for
                 table  <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
                 _      <- STM.run(table.insert("name" ~ "A" & "age" ~ 10))
@@ -761,7 +761,7 @@ class TTableTest extends Test:
                 assert(result.map(_.name).toSet == Set("A", "B", "C"))
         }
 
-        "query skips ids whose underlying store entry was deleted" in run {
+        "query skips ids whose underlying store entry was deleted" in {
             for
                 table  <- TTable.Indexed.init["name" ~ String, "name" ~ String]
                 id1    <- STM.run(table.insert("name" ~ "A"))
@@ -774,7 +774,7 @@ class TTableTest extends Test:
                 assert(ids == Chunk(id2))
         }
 
-        "query intersection handles partial removal across two indexes" in run {
+        "query intersection handles partial removal across two indexes" in {
             for
                 table  <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String & "age" ~ Int]
                 id1    <- STM.run(table.insert("name" ~ "T" & "age" ~ 1))
@@ -787,7 +787,7 @@ class TTableTest extends Test:
                 assert(result.map(_.age).toSet == Set(1, 3))
         }
 
-        "insert into Indexed with one indexed field populates the index" in run {
+        "insert into Indexed with one indexed field populates the index" in {
             for
                 table <- TTable.Indexed.init["x" ~ Int & "y" ~ Int, "x" ~ Int]
                 id    <- STM.run(table.insert("x" ~ 7 & "y" ~ 99))
@@ -797,7 +797,7 @@ class TTableTest extends Test:
                 assert(q.head.y == 99)
         }
 
-        "remove after upsert-overwrite cleans index entries for all prior values" in run {
+        "remove after upsert-overwrite cleans index entries for all prior values" in {
             for
                 table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
                 id = table.unsafeId(1)
@@ -812,7 +812,7 @@ class TTableTest extends Test:
                 assert(atAge20.isEmpty)
         }
 
-        "index map drops keys whose value-set becomes empty" in run {
+        "index map drops keys whose value-set becomes empty" in {
             for
                 table  <- TTable.Indexed.init["age" ~ Int, "age" ~ Int]
                 id1    <- STM.run(table.insert("age" ~ 30))
@@ -828,7 +828,7 @@ class TTableTest extends Test:
                 assert(size == 0)
         }
 
-        "update wholesale-replaces all fields and snapshot reflects exactly the passed record" in run {
+        "update wholesale-replaces all fields and snapshot reflects exactly the passed record" in {
             for
                 table <- TTable.init["name" ~ String & "age" ~ Int & "email" ~ String]
                 id    <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30 & "email" ~ "a@x"))
@@ -838,7 +838,7 @@ class TTableTest extends Test:
             yield assert(got.exists(r => r.name == "Alice2" && r.age == 99 && r.email == "b@x"))
         }
 
-        "nested-transaction rollbacks restore original indexed value (not accumulate)" in run {
+        "nested-transaction rollbacks restore original indexed value (not accumulate)" in {
             for
                 table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
                 id    <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -860,7 +860,7 @@ class TTableTest extends Test:
                 assert(a32.isEmpty)
         }
 
-        "each name in indexFields makes a query on that field actually work" in run {
+        "each name in indexFields makes a query on that field actually work" in {
             for
                 table  <- TTable.Indexed.init["name" ~ String & "age" ~ Int & "email" ~ String, "name" ~ String & "age" ~ Int]
                 _      <- STM.run(table.insert("name" ~ "A" & "age" ~ 1 & "email" ~ "a@x"))
@@ -872,7 +872,7 @@ class TTableTest extends Test:
                 assert(table.indexFields == Set("name", "age"))
         }
 
-        "operations-on-removed-records: insert after remove yields a fresh non-colliding ID" in run {
+        "operations-on-removed-records: insert after remove yields a fresh non-colliding ID" in {
             for
                 table  <- TTable.init["name" ~ String & "age" ~ Int]
                 id1    <- STM.run(table.insert("name" ~ "A" & "age" ~ 1))
@@ -886,7 +886,7 @@ class TTableTest extends Test:
                 assert(gotNew.exists(_.name == "B"))
         }
 
-        "multi-table STM.run commits writes to both tables when no abort" in run {
+        "multi-table STM.run commits writes to both tables when no abort" in {
             for
                 table1 <- TTable.init["name" ~ String]
                 table2 <- TTable.init["age" ~ Int]
@@ -903,7 +903,7 @@ class TTableTest extends Test:
                 assert(s2 == 1)
         }
 
-        "snapshot returns a Map keyed by table.Id" in run {
+        "snapshot returns a Map keyed by table.Id" in {
             for
                 table <- TTable.init["name" ~ String]
                 id    <- STM.run(table.insert("name" ~ "x"))
@@ -914,7 +914,7 @@ class TTableTest extends Test:
                 typeCheckFailure("""val m: Map[String, Record["name" ~ String]] = snap""")("Found:")
         }
 
-        "insert and get of a Maybe-typed record field round-trips" in run {
+        "insert and get of a Maybe-typed record field round-trips" in {
             for
                 table <- TTable.init["name" ~ String & "nick" ~ Maybe[String]]
                 id1   <- STM.run(table.insert("name" ~ "A" & "nick" ~ Maybe("X")))
@@ -926,7 +926,7 @@ class TTableTest extends Test:
                 assert(r2.exists(_.nick.isEmpty))
         }
 
-        "Indexed.query against a Boolean indexed field returns correct partition" in run {
+        "Indexed.query against a Boolean indexed field returns correct partition" in {
             for
                 table      <- TTable.Indexed.init["name" ~ String & "active" ~ Boolean, "active" ~ Boolean]
                 _          <- STM.run(table.insert("name" ~ "A" & "active" ~ true))
@@ -939,7 +939,7 @@ class TTableTest extends Test:
                 assert(offResults.size == 1)
         }
 
-        "Indexed constructor is private; external new fails to compile" in run {
+        "Indexed constructor is private; external new fails to compile" in {
             for
                 _ <- Kyo.unit
             yield typeCheckFailure("""
@@ -948,13 +948,13 @@ class TTableTest extends Test:
             """)("private")
         }
 
-        "Base.nextId and Base.store are private; references fail to compile" in run {
+        "Base.nextId and Base.store are private; references fail to compile" in {
             for
                 table <- TTable.init["x" ~ Int]
             yield typeCheckFailure("""table.asInstanceOf[TTable.Base[?]].nextId""")("Base")
         }
 
-        "Indexed.store is publicly accessible and delegates basic CRUD" in run {
+        "Indexed.store is publicly accessible and delegates basic CRUD" in {
             for
                 table          <- TTable.Indexed.init["x" ~ Int, "x" ~ Int]
                 id             <- STM.run(table.insert("x" ~ 5))
@@ -965,7 +965,7 @@ class TTableTest extends Test:
                 assert(gotFromStore.exists(_.x == 5))
         }
 
-        "queryIds inside the same STM.run as an insert observes the newly-inserted record" in run {
+        "queryIds inside the same STM.run as an insert observes the newly-inserted record" in {
             for
                 table <- TTable.Indexed.init["name" ~ String, "name" ~ String]
                 result <- STM.run {
@@ -978,7 +978,7 @@ class TTableTest extends Test:
             yield assert(ids == Chunk(id))
         }
 
-        "query results equal at the Chunk[Record[F]] type level without loose CanEqual" in run {
+        "query results equal at the Chunk[Record[F]] type level without loose CanEqual" in {
             for
                 table   <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String]
                 _       <- STM.run(table.insert("name" ~ "A" & "age" ~ 1))
@@ -989,7 +989,7 @@ class TTableTest extends Test:
                 assert(results.head.age == 1)
         }
 
-        "queryIds with one-field filter does not throw on the single-element reduce" in run {
+        "queryIds with one-field filter does not throw on the single-element reduce" in {
             for
                 table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String & "age" ~ Int]
                 id1   <- STM.run(table.insert("name" ~ "A" & "age" ~ 1))
@@ -998,7 +998,7 @@ class TTableTest extends Test:
             yield assert(ids.toSet == Set(id1, id2))
         }
 
-        "query result ordering is by ID regardless of filter field order" in run {
+        "query result ordering is by ID regardless of filter field order" in {
             for
                 table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String & "age" ~ Int]
                 _     <- STM.run(table.insert("name" ~ "A" & "age" ~ 1))
@@ -1012,7 +1012,7 @@ class TTableTest extends Test:
                 assert(r1.map(_.name) == r2.map(_.name))
         }
 
-        "queryIds is sorted ascending regardless of filter field order" in run {
+        "queryIds is sorted ascending regardless of filter field order" in {
             for
                 table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String & "age" ~ Int]
                 id1   <- STM.run(table.insert("name" ~ "A" & "age" ~ 1))
@@ -1024,7 +1024,7 @@ class TTableTest extends Test:
                 assert(ids1 == Chunk(id1, id2))
         }
 
-        "Indexed.insert in a failed transaction does not leak index entries" in run {
+        "Indexed.insert in a failed transaction does not leak index entries" in {
             for
                 table <- TTable.Indexed.init["name" ~ String, "name" ~ String]
                 _ <- Abort.run(STM.run(
@@ -1037,7 +1037,7 @@ class TTableTest extends Test:
                 assert(size == 0)
         }
 
-        "Indexed.upsert in a failed transaction does not leak index entries" in run {
+        "Indexed.upsert in a failed transaction does not leak index entries" in {
             for
                 table <- TTable.Indexed.init["name" ~ String, "name" ~ String]
                 _ <- Abort.run(STM.run(
@@ -1053,7 +1053,7 @@ class TTableTest extends Test:
                 assert(get.isEmpty)
         }
 
-        "two Indexed.upserts with the same record value leave one entry per index" in run {
+        "two Indexed.upserts with the same record value leave one entry per index" in {
             for
                 table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
                 id = table.unsafeId(1)
@@ -1066,7 +1066,7 @@ class TTableTest extends Test:
                 assert(atAge.size == 1)
         }
 
-        "insert with same value on two indexed fields appears once per index entry" in run {
+        "insert with same value on two indexed fields appears once per index entry" in {
             for
                 table <- TTable.Indexed.init["a" ~ Int & "b" ~ Int, "a" ~ Int & "b" ~ Int]
                 id    <- STM.run(table.insert("a" ~ 5 & "b" ~ 5))
@@ -1079,7 +1079,7 @@ class TTableTest extends Test:
                 assert(rab == Chunk(id))
         }
 
-        "Indexed.update with same record value leaves observable index queries unchanged" in run {
+        "Indexed.update with same record value leaves observable index queries unchanged" in {
             for
                 table  <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
                 id     <- STM.run(table.insert("name" ~ "A" & "age" ~ 7))
@@ -1091,7 +1091,7 @@ class TTableTest extends Test:
                 assert(after.size == 1)
         }
 
-        "get(unsafeId(0)) on an empty table returns Absent" in run {
+        "get(unsafeId(0)) on an empty table returns Absent" in {
             for
                 table <- TTable.init["name" ~ String]
                 r0    <- STM.run(table.get(table.unsafeId(0)))
@@ -1103,7 +1103,7 @@ class TTableTest extends Test:
                 assert(rNeg.isEmpty)
         }
 
-        "Indexed.upsert overwriting with same indexed value: query still returns single record" in run {
+        "Indexed.upsert overwriting with same indexed value: query still returns single record" in {
             for
                 table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String]
                 id = table.unsafeId(1)
@@ -1115,7 +1115,7 @@ class TTableTest extends Test:
                 assert(results.head.age == 31)
         }
 
-        "Indexed.update with a new indexed value evicts the old value from the index map" in run {
+        "Indexed.update with a new indexed value evicts the old value from the index map" in {
             for
                 table    <- TTable.Indexed.init["name" ~ String, "name" ~ String]
                 id       <- STM.run(table.insert("name" ~ "X"))
@@ -1127,7 +1127,7 @@ class TTableTest extends Test:
                 assert(yResults == Chunk(id))
         }
 
-        "Indexed.size mirrors store.size across insert/remove/upsert sequence" in run {
+        "Indexed.size mirrors store.size across insert/remove/upsert sequence" in {
             for
                 table <- TTable.Indexed.init["x" ~ Int, "x" ~ Int]
                 s0    <- STM.run(table.size)
@@ -1144,7 +1144,7 @@ class TTableTest extends Test:
                 assert(s3 == 1)
         }
 
-        "single-field Indexed.init supports insert/get/update/remove without deadlock" in run {
+        "single-field Indexed.init supports insert/get/update/remove without deadlock" in {
             for
                 table    <- TTable.Indexed.init["k" ~ Int, "k" ~ Int]
                 id       <- STM.run(table.insert("k" ~ 1))
@@ -1159,14 +1159,14 @@ class TTableTest extends Test:
                 assert(gotEmpty.isEmpty)
         }
 
-        "Indexed.get on a never-inserted unsafeId returns Absent" in run {
+        "Indexed.get on a never-inserted unsafeId returns Absent" in {
             for
                 table <- TTable.Indexed.init["name" ~ String, "name" ~ String]
                 r     <- STM.run(table.get(table.unsafeId(123)))
             yield assert(r.isEmpty)
         }
 
-        "upsert at unsafeId(nextId) does not cause the next insert to overwrite it" in run {
+        "upsert at unsafeId(nextId) does not cause the next insert to overwrite it" in {
             for
                 table  <- TTable.init["x" ~ Int]
                 _      <- STM.run(table.upsert(table.unsafeId(0), "x" ~ 7))
@@ -1177,14 +1177,14 @@ class TTableTest extends Test:
             yield assert(manual.exists(_.x == 7) && auto.exists(_.x == 99) && size == 2)
         }
 
-        "Indexed.insert IDs increase monotonically" in run {
+        "Indexed.insert IDs increase monotonically" in {
             for
                 table <- TTable.Indexed.init["name" ~ String, "name" ~ String]
                 ids   <- Kyo.foreach(0 until 5)(i => STM.run(table.insert("name" ~ s"n$i")))
             yield assert(ids.sliding(2).forall { case Seq(a, b) => (a: Int) < (b: Int) })
         }
 
-        "Indexed.snapshot matches store.snapshot after CRUD sequence" in run {
+        "Indexed.snapshot matches store.snapshot after CRUD sequence" in {
             for
                 table       <- TTable.Indexed.init["x" ~ Int, "x" ~ Int]
                 id1         <- STM.run(table.insert("x" ~ 1))
@@ -1198,7 +1198,7 @@ class TTableTest extends Test:
                 assert(indexedSnap(id2).x == 2)
         }
 
-        "two inserts with identical record content produce distinct IDs and two snapshot entries" in run {
+        "two inserts with identical record content produce distinct IDs and two snapshot entries" in {
             for
                 table <- TTable.init["name" ~ String & "age" ~ Int]
                 id1   <- STM.run(table.insert("name" ~ "A" & "age" ~ 1))
@@ -1209,7 +1209,7 @@ class TTableTest extends Test:
                 assert(snap.size == 2)
         }
 
-        "two records identical on indexed field both appear in queryIds" in run {
+        "two records identical on indexed field both appear in queryIds" in {
             for
                 table <- TTable.Indexed.init["a" ~ Int, "a" ~ Int]
                 id1   <- STM.run(table.insert("a" ~ 7))
@@ -1218,7 +1218,7 @@ class TTableTest extends Test:
             yield assert(ids.toSet == Set(id1, id2))
         }
 
-        "upsert-then-upsert with changing indexed field: query on prior value returns empty" in run {
+        "upsert-then-upsert with changing indexed field: query on prior value returns empty" in {
             for
                 table <- TTable.Indexed.init["name" ~ String, "name" ~ String]
                 id = table.unsafeId(1)
@@ -1231,7 +1231,7 @@ class TTableTest extends Test:
     }
 
     "Complex transaction scenarios" - {
-        "interleaved operations on same record" in run {
+        "interleaved operations on same record" in {
             for
                 table <- TTable.init["name" ~ String & "age" ~ Int]
                 id    <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
@@ -1252,7 +1252,7 @@ class TTableTest extends Test:
                 assert(afterRemove.isEmpty)
         }
 
-        "transaction isolation with multiple tables" in run {
+        "transaction isolation with multiple tables" in {
             for
                 table1 <- TTable.init["name" ~ String & "age" ~ Int]
                 table2 <- TTable.init["name" ~ String & "age" ~ Int]
