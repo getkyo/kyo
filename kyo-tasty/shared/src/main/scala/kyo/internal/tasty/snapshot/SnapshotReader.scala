@@ -128,20 +128,12 @@ object SnapshotReader:
         if bytes.length < 24 then 0L
         else DigestComputer.bytesToLong(java.util.Arrays.copyOfRange(bytes, 16, 24))
 
-    /** Read the KRFL format version from the snapshot header.
-      *
-      * Returns the version encoded at bytes [4..5] (major, minor). Returns `Tasty.Version(0, 0, 0)` if the array is shorter than 6 bytes.
-      */
-    private[kyo] def readPickleVersion(bytes: Array[Byte]): Tasty.Version =
-        if bytes.length < 6 then Tasty.Version(0, 0, 0)
-        else Tasty.Version(bytes(4) & 0xff, bytes(5) & 0xff, 0)
+    // F-011: `readPickleVersion` deleted per Q-005 (RESOLVED: delete; reversible by git revert).
+    // The only known reference is sbt-plugin-ux/design/05-plan.md (staging document, not a working consumer).
+    // Re-add when the consumer ships.
 
-    /** Read a display UUID from the snapshot.
-      *
-      * The KRFL header does not store a per-file TASTy UUID; bytes [6..15] are reserved padding. Returns an empty string as a placeholder.
-      * The `Pickle.uuid` field is used only for the `show` display, not for correctness.
-      */
-    private[kyo] def readPickleUuid(bytes: Array[Byte]): String = ""
+    // F-010: `readPickleUuid` deleted. The KRFL header does not store a per-file TASTy UUID;
+    // bytes [6..15] are reserved padding. There were no src/main callers.
 
     /** Thrown by readMappedView when the snapshot major version doesn't match. */
     final private[snapshot] class VersionMismatchException(
