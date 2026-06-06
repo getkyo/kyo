@@ -101,8 +101,9 @@ class MembersTest extends Test:
                     case c: Tasty.Symbol.Class if c.simpleName == "Child" => c
                 childOpt match
                     case None =>
-                        // If Child is not in symbols, the synthetic classpath may have reused IDs
-                        succeed
+                        // Child must be present: the fixture always places it at id=3 in the array.
+                        // A missing symbol indicates a fixture construction bug, not a normal test path.
+                        fail("Child class not found in synthetic classpath fixture (Leaf 18)")
                     case Some(child) =>
                         for
                             defaultResult  <- Tasty.members(child)

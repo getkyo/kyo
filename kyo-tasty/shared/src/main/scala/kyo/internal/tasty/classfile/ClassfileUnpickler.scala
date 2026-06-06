@@ -122,7 +122,7 @@ object ClassfileUnpickler:
                         Chunk.empty,
                         Chunk.empty,
                         arena,
-                        Map.empty
+                        mutable.LongMap.empty[Tasty.Type]
                     )
                 else
                     readClassBody(view, pool, arena, path, accessFlags, thisBinaryName, superIdx, idCounter)
@@ -1118,12 +1118,16 @@ object ClassfileUnpickler:
                                                             ).map: methodPairs =>
                                                                 val allPairs   = fieldPairs ++ methodPairs
                                                                 val allSymbols = allPairs.map(_._1)
+                                                                // INV-011: LongMap keyed by sym.id avoids the
+                                                                // fragile mutable-case-class structural equality on
+                                                                // LoadingSymbol.Materialising (var id breaks Map lookups
+                                                                // if id is mutated post-insertion). This is the 4th
+                                                                // AT-RISK site Q-001 missed; fixed in Phase 09.
                                                                 val memberTypes =
-                                                                    allPairs.foldLeft(Map.empty[
-                                                                        LoadingSymbol.Materialising,
-                                                                        Tasty.Type
-                                                                    ]):
-                                                                        case (acc, (sym, tpe)) => acc + (sym -> tpe)
+                                                                    val m = mutable.LongMap.empty[Tasty.Type]
+                                                                    allPairs.foreach { case (sym, tpe) => m(sym.id.toLong) = tpe }
+                                                                    m
+                                                                end memberTypes
                                                                 val javaResult = ClassfileResult(
                                                                     classSym,
                                                                     parents,
