@@ -1189,6 +1189,8 @@ val twoAxis: Svg.Root =
         .toSvg
 ```
 
+The right axis can draw its own gridlines, but when both axes set `.grid`, only the left axis emits gridlines; the left axis wins the tie-break and prevents doubled lines.
+
 ### More one-liners
 
 An `area` mark fills between a y value and the baseline:
@@ -1242,12 +1244,21 @@ val sequential: Svg.Root =
         .toSvg
 ```
 
-`.theme` switches between light and dark and selects a named palette. The palettes live at `UI.Ast.Palette`; `Okabe` is the Okabe-Ito set chosen for color-vision accessibility:
+Both color-scale forms drive fills on grouped-bar, area, point, text, and errorBar marks, not only line and point. The `colorScale` overload that takes a label function maps each category's string key to a color, so custom palettes do not require a typed pair list:
+
+```scala
+val byLabel: Svg.Root =
+    UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.region))
+        .legend(_.colorScale(label => if label == "NA" then Style.Color.blue else Style.Color.green))
+        .toSvg
+```
+
+`.theme` switches between light and dark and selects a named palette. The palettes live at `UI.Ast.Palette`; `Okabe` is the Okabe-Ito set chosen for color-vision accessibility; `Viridis` is an 8-category perceptually-derived set; `Tableau10` is the Tableau 10 categorical palette. Beyond palette and scheme, `.font(family)` sets the font family, `.fontSize(px)` sets the size in pixels, `.background` overrides the plot fill, `.axisColor` overrides axis line and tick colors, and `.gridColor` overrides gridline color. The theme font now reaches Y axis ticks and titles as well as X axis labels, so a single `.font(...)` call covers the whole chart:
 
 ```scala
 val themed: Svg.Root =
     UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.region))
-        .theme(_.dark.palette(UI.Ast.Palette.Okabe))
+        .theme(_.dark.palette(UI.Ast.Palette.Okabe).font("monospace"))
         .toSvg
 ```
 
@@ -1263,7 +1274,7 @@ val labeled: Svg.Root =
     ).toSvg
 ```
 
-An `errorBar` draws a `low`-to-`high` whisker with caps (default `capWidth` near 6 pixels) and a center marker at `y`. It renders plain `Svg.line` and `Svg.circle` with no `<marker>` element:
+An `errorBar` draws a `low`-to-`high` whisker with caps (`capWidth` is 6 pixels by default) and a center marker at `y`. It renders plain `Svg.line` and `Svg.circle` with no `<marker>` element:
 
 ```scala
 val withError: Svg.Root =
@@ -1282,7 +1293,7 @@ val band: Svg.Root =
 
 ### Axis chrome, responsive sizing, and accessibility
 
-Config methods chain on the spec. `.responsive(ratio)` makes the root scale to its container at a fixed aspect ratio; `.margins(_.left(80))` widens one plot margin; scale knobs refine the fitted domain; `rotateTicks`/`pad` adjust tick chrome; `.title`/`.desc`/`.ariaLabel` add accessibility markup (`.title` also implies `role="img"` on the root `<svg>`, so assistive tech announces the chart as one image; `.ariaLabel` sets the `aria-label` attribute directly when you need a short override without a visible `<title>`). All accessibility fields default to absent:
+Config methods chain on the spec. `.responsive(ratio)` makes the root scale to its container at a fixed aspect ratio; `.margins(_.left(80))` widens one plot margin; scale knobs refine the fitted domain; `rotateTicks`/`pad` adjust tick chrome; `.title`/`.desc`/`.ariaLabel` add accessibility markup (`.title` also implies `role="img"` on the root `<svg>`, so assistive tech announces the chart as one image; `.ariaLabel` sets the `aria-label` attribute directly when you need a short override without a visible `<title>`). All accessibility fields default to absent. `rotateTicks`, `anchor`, and the theme font now apply to Y axis ticks and titles as well as the X axis:
 
 ```scala
 val a11yChart: Svg.Root =
@@ -1290,6 +1301,7 @@ val a11yChart: Svg.Root =
         .responsive(16.0 / 9)
         .yScale(_.linear(0.0, 80000.0).withNice(true).withClamp(true).withPad(0.05))
         .xAxis(_.rotateTicks(45).pad(8))
+        .yAxis(_.rotateTicks(30).anchor(UI.TextAnchor.End))
         .title("Revenue by region")
         .desc("Quarterly revenue, EU vs NA")
         .ariaLabel("Revenue by region bar chart")
@@ -1325,7 +1337,7 @@ val livePage: UI < Async =
         UI.div(liveChart)
 ```
 
-`.animate(_.ease(300.millis))` tweens same-structure path morphs but snaps on a structural change, such as a category added or removed; `AnimateConfig.morphSteps` is reserved and not yet consulted.
+`.animate(_.ease(300.millis))` tweens same-structure path morphs on a fixed ease-in-out-cubic curve (only the duration is configurable) and snaps on a structural change, such as a category added or removed; for bars, the height/y tween fires, but a bar carrying a color or stack channel snaps rather than tweens. `AnimateConfig.morphSteps` is reserved and not yet consulted.
 
 ### Interaction
 
@@ -1351,6 +1363,21 @@ val interactivePage: UI < Async =
             hovered.render(s => UI.div(s.map(i => s"${i.month}: ${i.revenue}").getOrElse("hover a bar"))),
             withTooltip
         )
+```
+
+`.interaction(_.highlightSelect)` and `.interaction(_.highlightHover)` are no-ops unless the matching `onSelect` or `onHover` ref is configured; when both fire at once, select highlight wins over hover. The highlight surface now covers all drawable marks (bar, point, line, area, text, errorBar). Custom styles are available via `.hoverStyle(s)` and `.selectStyle(s)` in the same lambda without a separate example. The following example wires a select ref first, then opts into the built-in highlight:
+
+```scala
+val highlightPage: UI < Async =
+    for
+        selected <- Signal.initRef(Maybe.empty[Sale])
+    yield
+        val chart: Svg.Root =
+            UI.chart(sales)(UI.mark.bar(x = _.month, y = _.revenue, color = _.region))
+                .onSelect(selected)
+                .interaction(_.highlightSelect)
+                .toSvg
+        UI.div(chart)
 ```
 
 ## Running a UI
