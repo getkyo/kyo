@@ -1,6 +1,6 @@
 package kyo
 
-/** Tests for case class consistency of Position, ModuleDescriptor, Pickle, Version (Phase 10 Item 16).
+/** Tests for case class consistency of Position, ModuleDescriptor, Pickle, Version .
   *
   * Leaf ids: 17, partial of 16. Pins: Steering rule on case classes for pure data.
   */

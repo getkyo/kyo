@@ -2,9 +2,7 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Plan-mandated tests for Phase 08 (leaves 170-171): JavaMetadata.isJvmPublic/Private/Protected/Static/Final.
-  *
-  * Pins: INV-002.
+/** JavaMetadata.isJvmPublic/Private/Protected/Static/Final.
   */
 class JavaMetadataPredicateTest extends Test:
 

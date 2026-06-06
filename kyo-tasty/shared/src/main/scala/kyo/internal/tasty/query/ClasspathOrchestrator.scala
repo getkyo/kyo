@@ -68,13 +68,13 @@ object ClasspathOrchestrator:
         /** All symbols from this file in TASTy parse order (deterministic depth-first traversal of the AST).
           *
           * Used in mergeOneInto to accumulate allSyms in a stable order across runs, ensuring that symbol IDs
-          * are deterministic for byte-equal snapshot idempotency (F-A4-005). Previously allSyms was populated
+          * are deterministic for byte-equal snapshot idempotency. Previously allSyms was populated
           * from ownerBySymbol.keys which uses identity-hash order and is non-deterministic.
           */
         symbolsInOrder: Chunk[LoadingSymbol.Materialising],
         arena: TypeArena,
         errors: Seq[TastyError],
-        placeholders: Chunk[Nothing], // placeholder field; always empty after Phase 07
+        placeholders: Chunk[Nothing], // placeholder field; always empty (reserved)
         parentsBySymbol: mutable.LongMap[Chunk[Tasty.Type]],
         childrenByOwner: mutable.LongMap[Chunk[LoadingSymbol.Materialising]],
         typeBySymbol: mutable.LongMap[Tasty.Type],
@@ -85,17 +85,17 @@ object ClasspathOrchestrator:
         sectionBytes: Array[Byte],
         sectionOffset: Int,
         fileNames: Array[Tasty.Name],
-        /** Per-file TASTy address -> partial symbol map, used in Phase C to remap Phase-B temporary SymbolIds (PHASE_B_ADDR_OFFSET + addr)
+        /** Per-file TASTy address -> partial symbol map, used in finalizeMerge to remap temporary SymbolIds (PHASE_B_ADDR_OFFSET + addr)
           * to final SymbolIds.
           */
         addrMap: scala.collection.immutable.IntMap[LoadingSymbol.Materialising],
-        /** Cross-file unresolved FQN tracking: maps unique negative SymbolIds to FQNs for Phase C parent type resolution. */
+        /** Cross-file unresolved FQN tracking: maps unique negative SymbolIds to FQNs for finalizeMerge parent type resolution. */
         unresolvedIdToFqn: mutable.HashMap[Int, String],
-        /** F-G-001 fix: per-symbol annotation lists decoded from ANNOTATION modifier blocks. Populated in Phase B by AstUnpickler;
+        /** Per-symbol annotation lists decoded from ANNOTATION modifier blocks. Populated by AstUnpickler;
           * consumed by finalizeMerge to write descs(idx).annotations.
           */
         annotationsBySymbol: mutable.LongMap[mutable.ArrayBuffer[Tasty.Annotation]],
-        /** F-G-002 fix: javaMetadata from the companion .class file, keyed by the loading-symbol id of the partial (pre-finalize) TASTy symbol.
+        /** javaMetadata from the companion .class file, keyed by the loading-symbol id of the partial (pre-finalize) TASTy symbol.
           *
           * Populated during readAndDecodeTastyFile when a same-named .class file exists alongside the .tasty file.
           * Consumed by finalizeMerge to write descs(idx).javaMetadata for TASTy-loaded class symbols.
@@ -106,7 +106,7 @@ object ClasspathOrchestrator:
     /** Tagged union for results flowing through the result channel.
       *
       * `FileResultCase` carries a decoded TASTy file result. `ModuleInfoCase` carries a decoded module-info.class descriptor.
-      * `JavaClassfileCase` carries a decoded standalone JVM .class file (F-A3-001..004 fix).
+      * `JavaClassfileCase` carries a decoded standalone JVM .class file.
       */
     sealed private trait DecodeResult
     final private case class FileResultCase(fr: FileResult)                                 extends DecodeResult
@@ -114,7 +114,7 @@ object ClasspathOrchestrator:
 
     /** Carries a decoded standalone .class file result and its computed binary FQN.
       *
-      * F-A3-001..004 fix: classfiles passed directly as roots (e.g., via `jrt:/` paths) decode here and inject class symbols into the
+      * Classfiles passed directly as roots (e.g., via `jrt:/` paths) decode here and inject class symbols into the
       * global FQN index so `findClass("java.lang.String")` resolves.
       */
     final private case class JavaClassfileCase(
@@ -140,11 +140,11 @@ object ClasspathOrchestrator:
         val fileResults: mutable.ArrayBuffer[FileResult]                       = mutable.ArrayBuffer.empty
         val moduleIndex: mutable.HashMap[String, Tasty.Java.Module.Descriptor] = mutable.HashMap.empty
 
-        /** F-A3-001..004 fix: decoded standalone .class files accumulated for finalizeMerge parent-type wiring. */
+        /** Decoded standalone .class files accumulated for finalizeMerge parent-type wiring. */
         val javaClassfileResults: mutable.ArrayBuffer[(String, kyo.internal.tasty.classfile.ClassfileResult)] =
             mutable.ArrayBuffer.empty
 
-        /** F-A1-008: same-FQN collision tracking.
+        /** Same-FQN collision tracking.
           *
           * Keyed by the indexKey (primary binary FQN) of the collision. Value is an ordered list of ALL symbols that were ever stored under
           * that FQN; the last entry is the current winner (last-write-wins). Populated by `mergeOneInto` when it encounters a new structural
@@ -379,22 +379,22 @@ object ClasspathOrchestrator:
             val unsorted: Chunk[String] =
                 if listed.isEmpty then
                     if root.endsWith(".tasty") || root.endsWith("module-info.class") then Chunk(root)
-                    // F-A3-001..004 fix: a root that IS a standalone .class file (e.g. a jrt:/ path like
+                    // A root that IS a standalone .class file (e.g. a jrt:/ path like
                     // `jrt:///modules/java.base/java/lang/String.class`) is passed directly from
                     // PlatformModuleOps.listJdkClassFiles. list() returns empty because it is a file, not
                     // a directory. Emit it with kind ".class" so decodeOneEntry routes to ClassfileUnpickler.
                     else if root.endsWith(".class") && !root.endsWith("module-info.class") then Chunk(root)
                     else Chunk.empty
                 else listed
-            // F-A4-005 determinism: sort entries so file processing order is stable across filesystem
-            // enumeration orders. Different platforms and JAR implementations enumerate entries in
-            // varying orders; a lexicographic sort gives deterministic symbol IDs, enabling byte-equal
+            // Sort entries so file processing order is stable across filesystem enumeration orders.
+            // Different platforms and JAR implementations enumerate entries in varying orders;
+            // a lexicographic sort gives deterministic symbol IDs, enabling byte-equal
             // snapshot idempotency when concurrency == 1.
             val entries = Chunk.from(unsorted.iterator.toSeq.sorted)
             Kyo.foreach(entries): entry =>
                 val kind =
                     if entry.endsWith("module-info.class") then "module-info.class"
-                    // F-A3-001..004 fix: individual .class entries from direct paths (jrt:/) get kind ".class".
+                    // Individual .class entries from direct paths (jrt:/) get kind ".class".
                     // Note: .class entries from directory listings are not emitted here (list only returns
                     // .tasty and module-info.class); those companion .class files are handled by the
                     // readAndDecodeTastyFile companion-decode path in decodeOneEntry.
@@ -438,7 +438,7 @@ object ClasspathOrchestrator:
                     if mode == Tasty.ErrorMode.FailFast then Abort.fail(err)
                     else FileResultCase(emptyFileResultWithError(entryPath, err))
         else if kind == ".class" then
-            // F-A3-001..004 fix: decode a standalone JVM .class file via ClassfileUnpickler.
+            // Decode a standalone JVM .class file via ClassfileUnpickler.
             // The FQN is computed from the path by stripping the jrt:/ module prefix and
             // converting slash-separated segments to a dotted name. This makes JDK classes
             // (java.lang.String, java.util.HashMap, etc.) reachable via cp.findClass.
@@ -480,11 +480,11 @@ object ClasspathOrchestrator:
             case FileResultCase(fr) =>
                 // Add ALL symbols (including members) to allSyms so that finalizeMerge can look them
                 // up by index when building typeParamIds/declarationIds.
-                // F-A4-005 determinism fix: use symbolsInOrder (TASTy parse order, stable DFS) rather
-                // than ownerBySymbol.keys/values which uses identity-hash iteration order. Identity
-                // hashCodes vary across JVM runs, making symbol IDs non-deterministic and breaking
-                // byte-equal snapshot idempotency. symbolsInOrder preserves the AstUnpickler traversal
-                // order, which is deterministic given the same input bytes.
+                // Use symbolsInOrder (TASTy parse order, stable DFS) rather than ownerBySymbol.keys/values
+                // which uses identity-hash iteration order. Identity hashCodes vary across JVM runs, making
+                // symbol IDs non-deterministic and breaking byte-equal snapshot idempotency.
+                // symbolsInOrder preserves the AstUnpickler traversal order, which is deterministic
+                // given the same input bytes.
                 // LongMap keyed on sym.id (unique per-instance) for dedup within and across files.
                 val seenSymIds = mutable.LongMap.empty[Unit]
                 for sym <- fr.symbolsInOrder do
@@ -507,7 +507,7 @@ object ClasspathOrchestrator:
                                 sym.kind == SymbolKind.Trait || sym.kind == SymbolKind.Object ||
                                 sym.kind == SymbolKind.EnumCase
                             newIsStructural || !prevIsStructural
-                    // F-A1-008: record a collision when a new structural symbol of the SAME KIND overwrites a
+                    // Record a collision when a new structural symbol of the SAME KIND overwrites a
                     // different structural symbol. Both must be structural (Class/Trait/Object/EnumCase), must be
                     // distinct objects (different reference identity), and must share the same SymbolKind to be a
                     // real cross-root collision.
@@ -581,7 +581,7 @@ object ClasspathOrchestrator:
             case ModuleInfoCase(name, md) =>
                 state.moduleIndex(name) = md
             case JavaClassfileCase(fqn, cfResult) =>
-                // F-A3-001..004 fix: register the classfile's primary symbol in the FQN index.
+                // Register the classfile's primary symbol in the FQN index.
                 // The classSymbol carries flags (isEnum, isRecord, isSealed, etc.) decoded by ClassfileUnpickler.
                 // Member symbols (methods, fields) are added to allSyms for finalizeMerge so they receive
                 // final SymbolIds; the classSymbol itself is added as the primary top-level entry.
@@ -781,11 +781,10 @@ object ClasspathOrchestrator:
                                 val newBase = remapType(base, fr)
                                 val newArgs = args.map(remapType(_, fr))
                                 Tasty.Type.Applied(newBase, newArgs)
-                            // F-A-001 fix: recurse into TypeLambda so that cross-file Named refs
-                            // inside the body (result type, param type) get resolved by Phase C.
-                            // F-A2-008 fix: also remap paramIds: each SymbolId in paramIds may be a
-                            // Phase-B temporary id if the TypeParam is declared in a different file.
-                            // OpaqueType underlying types use TypeLambda with cross-file TypeParam refs.
+                            // Recurse into TypeLambda so that cross-file Named refs inside the body
+                            // (result type, param type) get resolved. Also remap paramIds: each SymbolId
+                            // in paramIds may be a temporary id if the TypeParam is declared in a different
+                            // file. OpaqueType underlying types use TypeLambda with cross-file TypeParam refs.
                             case Tasty.Type.TypeLambda(paramIds, body) =>
                                 val newParamIds = paramIds.map: id =>
                                     val v = id.value
@@ -835,7 +834,7 @@ object ClasspathOrchestrator:
                                 Tasty.Type.Skolem(remapType(underlying, fr))
                             case Tasty.Type.TermRef(prefix, name) =>
                                 Tasty.Type.TermRef(remapType(prefix, fr), name)
-                            // F-A-005 fix: remap ThisType using the same PHASE_B_ADDR_OFFSET scheme as Named.
+                            // Remap ThisType using the same PHASE_B_ADDR_OFFSET scheme as Named.
                             case Tasty.Type.ThisType(clsId) =>
                                 val v = clsId.value
                                 if v >= phaseBOffset then
@@ -844,16 +843,16 @@ object ClasspathOrchestrator:
                                     if finalIdx >= 0 then Tasty.Type.ThisType(SymbolId(finalIdx))
                                     else t
                                 else if v < -1 then
-                                    // F-A-005 cross-file: FQN-tracked nested-class ThisType.
+                                    // Cross-file: FQN-tracked nested-class ThisType.
                                     val finalIdx = fr.negIdToFinal.getOrDefault(v, -1)
                                     if finalIdx >= 0 then Tasty.Type.ThisType(SymbolId(finalIdx))
                                     else t
                                 else t
                                 end if
-                            // F-A-009: TypeRef must recurse like TermRef.
+                            // TypeRef must recurse like TermRef.
                             case Tasty.Type.TypeRef(qual, name) =>
                                 Tasty.Type.TypeRef(remapType(qual, fr), name)
-                            // F-A-010: Bounds must recurse into lo and hi.
+                            // Bounds must recurse into lo and hi.
                             case Tasty.Type.Bounds(lo, hi) =>
                                 Tasty.Type.Bounds(remapType(lo, fr), remapType(hi, fr))
                             case _ => t
@@ -892,13 +891,13 @@ object ClasspathOrchestrator:
                         frIdx3 += 1
                     end for
 
-                    // F-A2-008 fix: patch OpaqueType TypeLambda.paramIds that are still SymbolId(-1).
+                    // Patch OpaqueType TypeLambda.paramIds that are still SymbolId(-1).
                     //
                     // TypeUnpickler.readTypeLambdaParams creates placeholder symbols (SymbolId=-1) when
                     // the addrMap lookup for a TypeLambda parameter fails. This happens for OpaqueType
                     // type parameters that were decoded before their owner OpaqueType was registered.
                     // The remapType pass handles Phase-B temporaries (>= phaseBOffset) and negIds (< -1)
-                    // but not the -1 placeholder. Fix: after typeParamIds are set, replace each
+                    // but not the -1 placeholder. After typeParamIds are set, replace each
                     // TypeLambda.paramId=-1 with the corresponding positional entry from typeParamIds.
                     i = 0
                     for sym <- allPartial do
@@ -955,7 +954,7 @@ object ClasspathOrchestrator:
                         end for
                     end for
 
-                    // F-G-001 fix: populate annotations from ANNOTATION modifier blocks decoded in Phase B.
+                    // Populate annotations from ANNOTATION modifier blocks decoded during per-file decode.
                     // Each annotation's tycon may contain Named(negId) cross-file refs; remap through
                     // the same FileRemap used for parent types so symbolsAnnotatedWith FQN matching works.
                     var frIdxAnn = 0
@@ -972,10 +971,10 @@ object ClasspathOrchestrator:
                         frIdxAnn += 1
                     end for
 
-                    // F-G-002 fix: populate javaMetadata from companion .class files decoded during readAndDecodeTastyFile.
-                    // The companion decode runs before finalizeMerge and stores JavaMetadata keyed by partial (Phase B) symbol id.
+                    // Populate javaMetadata from companion .class files decoded during readAndDecodeTastyFile.
+                    // The companion decode runs before finalizeMerge and stores JavaMetadata keyed by partial symbol id.
                     // Here we look up each partial symbol id in symbolIdMap and write into descs(idx).javaMetadata.
-                    // HARD RULE 7: this write happens before materializeSymbols converts descriptors to immutable Symbols.
+                    // This write happens before materializeSymbols converts descriptors to immutable Symbols.
                     for fr <- fileResults do
                         fr.companionJavaMeta.foreach { case (symId, meta) =>
                             val idx = symbolIdMap.getOrElse(symId, -1)
@@ -984,7 +983,7 @@ object ClasspathOrchestrator:
                         }
                     end for
 
-                    // F-A3-001..004 fix: wire parent types and javaMetadata for standalone classfile symbols.
+                    // Wire parent types and javaMetadata for standalone classfile symbols.
                     //
                     // ClassfileUnpickler stores parent binary names in cfResult.parentBinaryNames
                     // (e.g. "java/lang/Object"). Here we convert each to a dotted FQN and look it up
@@ -1065,13 +1064,12 @@ object ClasspathOrchestrator:
                         end if
                     end for
 
-                    // F-I-003 / INV-007 fix: populate permittedSubclassIds by mining @Child annotations.
+                    // Populate permittedSubclassIds by mining @Child annotations.
                     //
                     // Scala 3 TASTy encodes sealed children as @scala.annotation.internal.Child[T]
-                    // annotations on the sealed parent. Phase 07 extends the annotation decoder in
-                    // AstUnpickler.decodeChildAnnotationType to decode the fullAnnotation_Term for
-                    // @Child annotations and produce Type.Applied(TermRef(_, "Child"), Chunk(subT)).
-                    // The first type argument (subT) is the permitted-subclass TypeRef.
+                    // annotations on the sealed parent. AstUnpickler.decodeChildAnnotationType decodes
+                    // the fullAnnotation_Term for @Child annotations and produces
+                    // Type.Applied(TermRef(_, "Child"), Chunk(subT)) where subT is the permitted-subclass TypeRef.
                     //
                     // This loop runs AFTER the annotation-merge loop above so descs(idx).annotations
                     // already contains fully-remapped final SymbolIds. We identify @Child by matching
@@ -1144,7 +1142,7 @@ object ClasspathOrchestrator:
                                 end if
                             case Tasty.Type.TypeRef(Tasty.Type.Named(qualSid), memberName)
                                 if qualSid.value >= 0 =>
-                                // F-A-009: TypeRef may also carry @Child type args after this phase.
+                                // TypeRef may also carry @Child type args.
                                 val qualFqn = qualIdToFqn(qualSid.value)
                                 if qualFqn != null then
                                     val fqn = if qualFqn.nonEmpty then qualFqn + "." + memberName.asString
@@ -1166,7 +1164,7 @@ object ClasspathOrchestrator:
                                 end if
                             case Tasty.Type.TypeRef(Tasty.Type.ThisType(clsSid), memberName)
                                 if clsSid.value >= 0 =>
-                                // F-A-009 parallel: TypeRef(ThisType(...), name) for enum cases.
+                                // TypeRef(ThisType(...), name) for enum cases.
                                 val qualFqn = qualIdToFqn(clsSid.value)
                                 if qualFqn != null then
                                     val fqn = if qualFqn.nonEmpty then qualFqn + "." + memberName.asString
@@ -1192,12 +1190,12 @@ object ClasspathOrchestrator:
                                     anns(ai).annotationType match
                                         case Tasty.Type.Applied(Tasty.Type.TermRef(_, childName), args)
                                             if args.size == 1 && childName.asString == "Child" =>
-                                            // @Child[T] enriched tycon (TermRef form, pre-Phase-13).
+                                            // @Child[T] enriched tycon (TermRef form).
                                             val subId = resolveChildRef(args(0))
                                             if subId >= 0 then buf += subId
                                         case Tasty.Type.Applied(Tasty.Type.TypeRef(_, childName), args)
                                             if args.size == 1 && childName.asString == "Child" =>
-                                            // F-A-009: @Child[T] enriched tycon now arrives as TypeRef after TYPEREF fix.
+                                            // @Child[T] enriched tycon (TypeRef form).
                                             val subId = resolveChildRef(args(0))
                                             if subId >= 0 then buf += subId
                                         case _ => ()
@@ -1236,7 +1234,7 @@ object ClasspathOrchestrator:
                             case Tasty.Type.Named(_) => t
                             case Tasty.Type.Applied(base, args) =>
                                 Tasty.Type.Applied(rewriteCrossFile(base), args.map(rewriteCrossFile))
-                            // F-A2-008 fix: remap TypeLambda.paramIds for cross-file TypeParam refs.
+                            // Remap TypeLambda.paramIds for cross-file TypeParam refs.
                             case Tasty.Type.TypeLambda(paramIds, body) =>
                                 val newParamIds = paramIds.map: id =>
                                     if id.value >= phaseBOffset then
@@ -1451,7 +1449,7 @@ object ClasspathOrchestrator:
                     end for
 
                     // Build fqnIdIdx: for each partial symbol in fqnIndex, resolve its final SymbolId.
-                    // Unresolvable entries (both direct and F-A4-001 canonical fallback fail) are:
+                    // Unresolvable entries (both direct and canonical fallback fail) are:
                     //   - Dropped from the index (no sentinel symbol inserted), AND
                     //   - Accumulated as TastyError.UnresolvedReference in accErrors (SoftFail) or
                     //     trigger ClasspathBuilding (FailFast) via the brokenFqnCount check below.
@@ -1462,8 +1460,8 @@ object ClasspathOrchestrator:
                         if idx >= 0 then
                             fqnIdBuf += fqn -> SymbolId(idx)
                         else
-                            // F-A4-001 fix: binary-alias FQN keys store a partial symbol not in
-                            // symbolIdMap; canonicalize and retry.
+                            // Binary-alias FQN keys may store a partial symbol not in symbolIdMap;
+                            // canonicalize and retry.
                             val canonFqn = kyo.internal.tasty.symbol.FqnNormalizer.canonicalSourceFqn(fqn)
                             val fallbackIdx =
                                 if canonFqn != fqn then
@@ -1496,12 +1494,9 @@ object ClasspathOrchestrator:
                     val symsChunk   = Chunk.from(finalSymbols)
                     val fqnIdIdx    = Dict.from(fqnIdBuf.toMap)
                     val pkgIdIdx    = Dict.from(pkgIdBuf.toMap)
-                    // F-G-006 fix: filter topLevelClassIds to only ClassLike symbols whose owner is a Package.
-                    // The prior approach appended ALL ClassLike symbols to topLevelCls regardless of nesting
-                    // depth, producing a count (3,514) larger than allClassLike (1,508). The correct invariant
-                    // is topLevelClasses.size <= allClassLike.size. We filter finalSymbols directly (post-
-                    // materialization) so the Package kind check uses the final symbol's kind, not a partial
-                    // symbol's kind.
+                    // Filter topLevelClassIds to only ClassLike symbols whose owner is a Package.
+                    // Filter finalSymbols directly (post-materialization) so the Package kind check uses the
+                    // final symbol's kind, not a partial symbol's kind.
                     val topIds: Chunk[SymbolId] = symsChunk.flatMap:
                         case c: Tasty.Symbol.ClassLike =>
                             val ownerIdx = c.ownerId.value
@@ -1517,7 +1512,7 @@ object ClasspathOrchestrator:
                     val subclassIdx  = buildSubclassIndex(symsChunk)
                     val companionIdx = buildCompanionIndex(symsChunk, fqnIdIdx)
 
-                    // F-A1-008: convert per-FQN collision buckets to FqnCollision diagnostics.
+                    // Convert per-FQN collision buckets to FqnCollision diagnostics.
                     // Each bucket holds all symbols seen for that FQN (including winner); ids are resolved
                     // via symbolIdMap so they reflect final SymbolIds.
                     val collisionDiagnostics: Chunk[Tasty.Classpath.Diagnostic] =
@@ -1528,7 +1523,7 @@ object ClasspathOrchestrator:
                             }
                         )
 
-                    // F-A5-001 (ClasspathBuilding): check for partial symbols that could not be resolved.
+                    // Check for partial symbols that could not be resolved.
                     // Under SoftFail these were accumulated as TastyError.UnresolvedReference above and
                     // dropped from fqnIdIdx. Under FailFast we check fqnUnresolvedCount instead of scanning
                     // fqnIdIdx for negative ids (unresolved entries are no longer inserted into the index).
@@ -1676,9 +1671,9 @@ object ClasspathOrchestrator:
 
     /** Read bytes and decode a single TASTy file. Returns FileResult.
       *
-      * F-G-002 fix: after decoding the .tasty file, speculatively decode the companion .class (same base name, .class extension). If the
-      * .class exists and decodes cleanly, extract javaMetadata from the classSymbol and populate fr.companionJavaMeta for every top-level
-      * FQN in the file. The companion decode is always soft-fail; a missing or malformed .class never fails the TASTy decode.
+      * After decoding the .tasty file, speculatively decode the companion .class (same base name, .class extension). If the .class exists
+      * and decodes cleanly, extract javaMetadata from the classSymbol and populate fr.companionJavaMeta for every top-level FQN in the file.
+      * The companion decode is always soft-fail; a missing or malformed .class never fails the TASTy decode.
       */
     private def readAndDecodeTastyFile(
         file: String,
@@ -1695,7 +1690,7 @@ object ClasspathOrchestrator:
                 }
         ).flatMap:
             case Result.Success(fr) =>
-                // F-G-002: attempt companion .class decode in soft-fail mode
+                // Attempt companion .class decode in soft-fail mode
                 val companionPath = file.stripSuffix(".tasty") + ".class"
                 source.exists(companionPath).flatMap: exists =>
                     if !exists then fr
@@ -1722,7 +1717,7 @@ object ClasspathOrchestrator:
                                 fr
                             case _ => fr
             case Result.Failure(err: TastyError) =>
-                // F-A5-006 fix: replace the placeholder path "<byte view>" produced by TastyHeader.read
+                // Replace the placeholder path "<byte view>" produced by TastyHeader.read
                 // with the actual on-disk file path so cp.errors carries the real filename.
                 val patchedErr = err match
                     case TastyError.CorruptedFile("<byte view>", at, reason) =>
@@ -1857,7 +1852,7 @@ object ClasspathOrchestrator:
 
     /** Compute a dotted binary FQN from a `.class` file path.
       *
-      * F-A3-001..004 fix: handles `jrt:/` paths produced by `PlatformModuleOps.listJdkClassFiles`. Examples:
+      * Handles `jrt:/` paths produced by `PlatformModuleOps.listJdkClassFiles`. Examples:
       *   - `jrt:///modules/java.base/java/lang/String.class`      -> `java.lang.String`
       *   - `jrt:///modules/java.base/java/util/Map$Entry.class`   -> `java.util.Map$Entry`
       *   - `/path/to/classes/com/example/Foo.class`               -> `com.example.Foo`

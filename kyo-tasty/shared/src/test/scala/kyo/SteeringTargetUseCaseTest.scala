@@ -2,11 +2,9 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Plan-mandated tests for Phase 08 (leaves 175-178): steering target-use-case end-to-end validation.
+/** steering target-use-case end-to-end validation.
   *
   * Fixture: a synthetic classpath with pkg.A (class with method foo and val x, parent B) and pkg.B (class).
-  *
-  * Pins: INV-001, INV-002, INV-003, INV-004, INV-005, INV-013.
   */
 class SteeringTargetUseCaseTest extends Test:
 

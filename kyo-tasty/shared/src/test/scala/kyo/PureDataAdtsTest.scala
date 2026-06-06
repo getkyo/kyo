@@ -3,13 +3,11 @@ package kyo
 import kyo.Tasty.SymbolId
 // typeCheckErrors is accessed via compiletime.testing.typeCheckErrors inline
 
-/** Phase 03 plan leaves 1-4 and 13.
+/** plan leaves 1-4 and 13.
   *
   * Leaf 1: every public ADT derives Schema (compile-time summon). Leaf 2: every public ADT derives CanEqual (compile-time summon). Leaf 3:
   * removed HEAD Symbol methods are absent (compileErrors). Leaf 4: Symbol.EnumCase is a peer of Symbol.Class (compileErrors cross-cast).
   * Leaf 13: Tag[Symbol.EnumCase] summon succeeds.
-  *
-  * Pins: INV-008 Schema derivation; INV-008 CanEqual uniformity.
   */
 class PureDataAdtsTest extends Test:
 
@@ -32,7 +30,7 @@ class PureDataAdtsTest extends Test:
     val _s13: Schema[Tasty.Symbol.AbstractType] = summon[Schema[Tasty.Symbol.AbstractType]]
     val _s14: Schema[Tasty.Symbol.TypeParam]    = summon[Schema[Tasty.Symbol.TypeParam]]
     val _s15: Schema[Tasty.Symbol.Parameter]    = summon[Schema[Tasty.Symbol.Parameter]]
-    // _s16 was Schema[Symbol.Unresolved] -- removed in Phase 08 (Cat 19)
+    // _s16 was Schema[Symbol.Unresolved] -- removed in (Cat 19)
     val _s16: Schema[Tasty.Symbol.Package]         = summon[Schema[Tasty.Symbol.Package]]
     val _s17: Schema[Tasty.Type]                   = summon[Schema[Tasty.Type]]
     val _s18: Schema[Tasty.Tree]                   = summon[Schema[Tasty.Tree]]

@@ -8,14 +8,12 @@ import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.TastyState
 import scala.collection.mutable
 
-/** Phase 06 plan-mandated tests pinning the Classpath bodyMemo contract.
+/** plan-mandated tests pinning the Classpath bodyMemo contract.
   *
   * Leaves:
   *   2. bodyMemo excluded from equality (INV-004).
   *   3. cp.copy produces fresh empty bodyMemo (INV-004).
   *   4. decodeBody memoizes within a single Classpath (INV-003 + INV-004).
-  *
-  * Pins: INV-003, INV-004.
   */
 class ClasspathBodyMemoTest extends Test:
 
@@ -80,7 +78,6 @@ class ClasspathBodyMemoTest extends Test:
     // (b) cp.hashCode == cp.hashCode (hashCode is stable regardless of bodyMemo state)
     // (c) A cp.copy() that produces an otherwise-identical Classpath (same 11 fields) compares equal.
     //
-    // Pins: INV-004 (bodyMemo excluded from equality and hashCode).
     "Leaf 2: bodyMemo excluded from case-class equality" in run {
         Scope.run:
             Abort.run[TastyError](
@@ -120,7 +117,6 @@ class ClasspathBodyMemoTest extends Test:
     // Given: a Classpath cp inside a withClasspath scope; call Tasty.bodyTree on some symbol.
     // When: a second fresh Binding is created with DecodeContext.fresh().
     // Then: the second DecodeContext's bodyMemo starts at size 0 (independent of the first).
-    // Pins: INV-004 (bodyMemo is per-DecodeContext, not per-Classpath; each withClasspath call
     //   creates a fresh DecodeContext with an empty memo).
     "Leaf 3: each withClasspath invocation produces a fresh empty DecodeContext bodyMemo" in run {
         Scope.run:
@@ -162,7 +158,6 @@ class ClasspathBodyMemoTest extends Test:
     //       TreeUnpickler.decodeSync is invoked only once (verified indirectly: if the second call
     //       returned a fresh decode, it would be a DIFFERENT Tree instance since Symbol instances
     //       with id=-1 use identity equality).
-    // Pins: INV-003 + INV-004 (memoization via bodyMemo).
     "Leaf 4: Tasty.bodyTree memoizes within a single DecodeContext (reference equality)" in run {
         Scope.run:
             Abort.run[TastyError](

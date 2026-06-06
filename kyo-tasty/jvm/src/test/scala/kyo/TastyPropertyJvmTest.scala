@@ -15,7 +15,7 @@ import scala.jdk.CollectionConverters.*
   * Lives in jvm/src/test because classpath discovery is JVM-only (java.class.path system property + filesystem walk). The cross-platform
   * leaves (PROP-001, PROP-002) run in shared/src/test via TastyPropertyTest.
   *
-  * Proposal 5 of Phase 2.04-strict (HARD RULE 13). Leaf 3 of the original TastyPropertyTest.
+  * Proposal 5 of-strict (HARD RULE 13). Leaf 3 of the original TastyPropertyTest.
   */
 class TastyPropertyJvmTest extends Test:
 

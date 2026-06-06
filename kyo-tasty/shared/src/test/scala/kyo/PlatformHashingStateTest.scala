@@ -15,7 +15,7 @@ import kyo.internal.tasty.type_.TypeKey
   * numeric constant is avoided because TypeKey.hash is an Int derived from Scala case-class hashCode mixing, which is deterministic but not
   * trivially hand-computable. Two-call equality is the appropriate golden check for this API.
   *
-  * Phase 21h, T2 coverage.
+  * T2 coverage.
   */
 class PlatformHashingStateTest extends Test:
 

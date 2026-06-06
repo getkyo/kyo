@@ -35,7 +35,7 @@ class TypeUnpicklerTest extends Test:
 
     private def makeArena(): TypeArena = TypeArena.canonical()
 
-    // Phase 08: makePlaceholder removed; create LoadingSymbol.Materialising
+    // makePlaceholder removed; create LoadingSymbol.Materialising
     private def makeSym(name: String, kind: SymbolKind = SymbolKind.Class): LoadingSymbol.Materialising =
         LoadingSymbol.Materialising(id = name.hashCode.abs % 1000, kind = kind, flags = Tasty.Flags.empty, name = Tasty.Name(name))
 
@@ -97,7 +97,7 @@ class TypeUnpicklerTest extends Test:
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
             case Result.Success(t) =>
                 t match
-                    // Phase 07: TYPEREFsymbol encodes addr as SymbolId(PHASE_B_ADDR_OFFSET + addr).
+                    // TYPEREFsymbol encodes addr as SymbolId(PHASE_B_ADDR_OFFSET + addr).
                     case Tasty.Type.Named(id) => assert(id.value >= 0, s"Expected addr-encoded positive id, got ${id.value}")
                     case other                => fail(s"Expected Named but got $other")
             case Result.Failure(e) => fail(s"Expected success but got $e")
@@ -241,7 +241,7 @@ class TypeUnpicklerTest extends Test:
     }
 
     // Test 18: decoding ANNOTATEDtype eagerly decodes the annotation term into arguments: Chunk[Tree].
-    // Phase 08 (INV-006): arguments is now a plain Chunk[Tree] field populated eagerly during Pass B.
+    // (INV-006): arguments is now a plain Chunk[Tree] field populated eagerly during Pass B.
     // The annotation term TYPEREFpkg(0) decodes to a TermRefPkg tree; arguments holds a single-element Chunk.
     "decoding ANNOTATEDtype eagerly populates Annotation.arguments as Chunk[Tree]" in run {
         val sym        = makeSym("Int")
@@ -271,7 +271,7 @@ class TypeUnpicklerTest extends Test:
     }
 
     // Test 18b: Annotation.arguments for a UNITconst term is Chunk(Literal(UnitConst)) after eager decode.
-    // Phase 08 (INV-006): arguments is a plain Chunk[Tree] field; no Abort.run needed to access it.
+    // (INV-006): arguments is a plain Chunk[Tree] field; no Abort.run needed to access it.
     "ANNOTATEDtype with UNITconst term: Annotation.arguments == Chunk(Literal(UnitConst))" in run {
         val sym        = makeSym("Int")
         val symAddr    = 3
@@ -296,7 +296,7 @@ class TypeUnpicklerTest extends Test:
     }
 
     // Test 18c: Annotation constructed directly with Chunk.empty has no arguments (synthetic annotation).
-    // Phase 08 (INV-006): pure case class, no decode context needed.
+    // (INV-006): pure case class, no decode context needed.
     "Annotation(type, Chunk.empty).arguments is empty without any effect" in run {
         val ann = Tasty.Annotation(Tasty.Type.Named(Tasty.SymbolId(makeSym("Foo").id)), Chunk.empty)
         assert(ann.arguments.isEmpty, s"Expected empty arguments but got ${ann.arguments}")
@@ -372,7 +372,7 @@ class TypeUnpicklerTest extends Test:
                         // Plan line 310: assert scrutinee is the named type parameter X.
                         scrutinee match
                             case Tasty.Type.Named(id) =>
-                                // Phase 07: addr-encoded ID; original sym.id=-1, now SymbolId(PHASE_B_ADDR_OFFSET+addr).
+                                // addr-encoded ID; original sym.id=-1, now SymbolId(PHASE_B_ADDR_OFFSET+addr).
                                 assert(
                                     id.value >= 0,
                                     s"scrutinee id should be addr-encoded positive but was ${id.value}"
@@ -461,8 +461,8 @@ class TypeUnpicklerTest extends Test:
         assert(canonValues.exists(_ == recThis), s"Canonical arena must contain the interned RecThis; values size=${canonValues.size}")
     }
 
-    // Test 24 (redesigned for Phase 07): TYPEREFin with unknown FQN creates a Named(unresolved).
-    // Phase 07 deleted UnresolvedRef; cross-file references now resolve to synthetic unresolved symbols directly.
+    // Test 24 (redesigned for): TYPEREFin with unknown FQN creates a Named(unresolved).
+    // deleted UnresolvedRef; cross-file references now resolve to synthetic unresolved symbols directly.
     "decoding TYPEREFin with unknown FQN returns Named(unresolved) type" in run {
         val names = Array(Tasty.Name("scala"), Tasty.Name("SomeCrossFileType"))
         // TYPEREFin (175) = cat5: [NameRef] [qual_Type] [namespace_Type]
@@ -475,7 +475,7 @@ class TypeUnpicklerTest extends Test:
         val bytes   = cat5(TastyFormat.TYPEREFin, payload)
         Abort.run[TastyError](decodeType(bytes, IntMap.empty, names)).map {
             case Result.Success(t) =>
-                // Phase 07: TYPEREFin now returns Named(unresolved) directly rather than creating an UnresolvedRef.
+                // TYPEREFin now returns Named(unresolved) directly rather than creating an UnresolvedRef.
                 t match
                     case Tasty.Type.Named(_) => succeed // Named with unresolved SymbolId
                     case other               => fail(s"Expected Named(unresolved) but got $other")
@@ -484,9 +484,9 @@ class TypeUnpicklerTest extends Test:
         }
     }
 
-    // Test M7-1: unknown category-5 tag (250) produces TastyError.UnknownTagInPosition (Phase 2.04-strict).
+    // Test M7-1: unknown category-5 tag (250) produces TastyError.UnknownTagInPosition.
     // The old behavior was to warn + return Named(-1); the new behavior is to fail loudly with a structured error.
-    // Pins INV-004, M7; updated for HARD RULE 13.
+    // Pins, M7; updated for HARD RULE 13.
     "unknown category-5 TASTy type tag produces TastyError.UnknownTagInPosition" in {
         // cat5 encoding: tag byte + length Nat + payload. Length = 0 -> Nat(0) = (0 | 0x80).toByte = 0x80.
         val bytes = Array(250.toByte, 0x80.toByte)
@@ -504,12 +504,12 @@ class TypeUnpicklerTest extends Test:
         end match
     }
 
-    // Phase 08 W-1/W-2 followup: DecodeSession.annotationDecodeErrors accumulates errors from corrupt
+    // W-1/W-2 followup: DecodeSession.annotationDecodeErrors accumulates errors from corrupt
     // ANNOTATEDtype argument bytes when sectionBytes is available. This test constructs a real
     // DecodeSession, crafts an ANNOTATEDtype with a non-empty but syntactically invalid arg byte
     // slice, and calls readTypeIntoSessionWithBytes (the test-only variant that provides sectionBytes).
     // Asserts session.annotationDecodeErrors.nonEmpty after the decode.
-    // Phase 08 W-1/W-2 followup: session.annotationDecodeErrors accumulates errors from truncated
+    // W-1/W-2 followup: session.annotationDecodeErrors accumulates errors from truncated
     // annotation arg bytes. ANNOTATEDtype with a 1-byte payload (only UNITconst; no annotation term)
     // produces an empty pickle for the term slice. TreeUnpickler.readTree on an empty ByteView throws
     // AIOOBE, which is caught and converted to a MalformedSection error accumulated in the session.
@@ -535,7 +535,7 @@ class TypeUnpicklerTest extends Test:
     }
 
     // Test M7-2: a known category-1 tag (UNITconst) does NOT fire any log output.
-    // Pins INV-004 negative path.
+    // Pins negative path.
     "known TASTy type tag does not emit a warn-level log" in {
         // UNITconst = category 1: single tag byte, no payload.
         val bytes  = Array(TastyFormat.UNITconst.toByte)

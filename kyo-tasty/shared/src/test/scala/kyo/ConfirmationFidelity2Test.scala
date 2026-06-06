@@ -5,26 +5,26 @@ import kyo.internal.TestClasspaths
 import kyo.internal.TestClasspaths2
 import kyo.internal.tasty.query.TastyState
 
-/** Confirmation pin tests for decoder-fidelity-2 campaign Phase 2.09.
+/** Confirmation pin tests for decoder-fidelity-2 campaign.
   *
   * Pins the baseline behavior of findings addressed in earlier phases plus several cross-phase confirmation leaves:
-  *   - F-A1-001: empty classpath (0 symbols, 0 errors)
-  *   - F-A2-004: givens enumeration baseline (478 givens from probe-001.log)
-  *   - F-A4-003: concurrent writers to same snapshot cacheDir (one .krfl, both warm-loads equivalent)
-  *   - F-A4-004: truncated snapshot falls back to fresh cold-init
-  *   - F-A5-003: cp.errors pattern-matches to sealed TastyError variant
-  *   - F-A5-004: error path does not leak partial symbols past malformed offset
-  *   - F-A1-009: large classpath perf guard (cold-init < 5,000 ms median on 3 runs)
-  *   - F-A3-005: JPMS module count == 69 (confirmation from Phase 2.03)
+  *   -  : empty classpath (0 symbols, 0 errors)
+  *   -  : givens enumeration baseline (478 givens from probe-001.log)
+  *   -  : concurrent writers to same snapshot cacheDir (one .krfl, both warm-loads equivalent)
+  *   -  : truncated snapshot falls back to fresh cold-init
+  *   -  : cp.errors pattern-matches to sealed TastyError variant
+  *   -  : error path does not leak partial symbols past malformed offset
+  *   -  : large classpath perf guard (cold-init < 5,000 ms median on 3 runs)
+  *   -  : JPMS module count == 69 (confirmation from)
   *   - java-only-jar: Java classfile-only directory loads correctly
   *
   * Invariants consumed: all prior campaign invariants.
   *
-  * Phase 2.12: relocated from jvm/src/test to shared/src/test. All 9 original leaves are gated jvmOnly because they use java.nio.file,
+  * relocated from jvm/src/test to shared/src/test. All 9 original leaves are gated jvmOnly because they use java.nio.file,
   * TestClasspaths2 JVM-only methods (standardRoots, standardWithPlatformModules, bitFlippedMagicTastyPath, corruptedMidStreamTastyPath,
   * multiVersionStdlibRoots, v3FormatKrflBytes), or the real stdlib classpath (givens baseline ~478, Java symbols assertion).
   *
-  * Phase 2 post-audit: adds 3 cross-platform in-memory companions for F-A4-004, F-A5-003, F-A5-004 using MemoryFileSource and
+  * adds 3 cross-platform in-memory companions for  ,  ,   using MemoryFileSource and
   * ClasspathOrchestrator.init directly. These do not require the JVM filesystem.
   */
 class ConfirmationFidelity2Test extends Fidelity2TestBase:
@@ -34,53 +34,50 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // Allow extra time: large-classpath perf leaf runs 3 cold-inits
     override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(10))
 
-    // Leaf 1: empty-classpath-zero-symbols-zero-errors (F-A1-001)
+    // Leaf 1: empty-classpath-zero-symbols-zero-errors
     // Given: Tasty.Classpath.init(Seq.empty)
     // When: checking symbols and errors
     // Then: 0 symbols, 0 errors
-    // Pins: F-A1-001
     // Cross-platform: Tasty.Classpath.init(Seq.empty) works on all platforms (no filesystem needed).
-    "F-A1-001 leaf 1 (Phase 2.09): empty classpath init returns 0 symbols, 0 errors" in run {
+    "empty classpath init returns 0 symbols, 0 errors" in run {
         Tasty.withClasspath(Seq.empty)(Tasty.classpath).map: cp =>
             assert(cp.symbols.size == 0, s"Expected 0 symbols on empty classpath; got ${cp.symbols.size}")
             assert(cp.errors.size == 0, s"Expected 0 errors on empty classpath; got ${cp.errors.size}")
             succeed
     }
 
-    // Leaf 2: givens-enumeration-baseline (F-A2-004)
+    // Leaf 2: givens-enumeration-baseline
     // Given: the real classpath loaded via TestClasspaths.withClasspath
     // When: counting allSymbols.count(isGiven)
-    // Then: count is within +/-15 of the 570 baseline (re-measured 2026-06-05 after Phase 04 Cat 18
+    // Then: count is within +/-15 of the 570 baseline (re-measured 2026-06-05 after Cat 18
     //       fill-in; Cat 18 added derives Schema to RecordComponent, ParamGroup, EnclosingMethod, and
     //       all four Module sub-records (Requires, Exports, Opens, Provides), plus two explicit
     //       canEqual givens for Annotation and Annotation.Value; these 21 new given symbols raised the
-    //       count from 549 to 570. The 549 baseline was set after Phase 03; the 549-based assertion
-    //       is superseded by this Phase 04 measurement. Prior 493 baseline was measured on broken code
+    //       count from 549 to 570. The 549 baseline was set after; the 549-based assertion
+    //       is superseded by this measurement. Prior 493 baseline was measured on broken code
     //       that under-counted due to placeholder symbol deduplication in IdentityHashMap migration).
-    // Pins: F-A2-004
     // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): the assertion pins the
     //   scala-library given count. Scala-library cannot be loaded as a TASTy classpath on JS/Native;
     //   the embedded fixture set contains no `given` instances, so the count would always be 0 there.
-    "F-A2-004 leaf 2 (Phase 2.09): allSymbols.count(isGiven) ~= 493 baseline on standard classpath" in runJVM {
+    "allSymbols.count(isGiven) ~= 493 baseline on standard classpath" in runJVM {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val count = cp.symbols.count(_.isGiven)
             assert(
                 count >= 555 && count <= 585,
-                s"Expected ~570 given instances on standard classpath (re-measured 2026-06-05 after Phase 04 Cat 18 fill-in); found $count"
+                s"Expected ~570 given instances on standard classpath (re-measured 2026-06-05); found $count"
             )
             succeed
     }
 
-    // Leaf 3: concurrent-writers-single-krfl (F-A4-003)
+    // Leaf 3: concurrent-writers-single-krfl
     // Given: two concurrent Tasty.Classpath.initCached calls to same cacheDir
     // When: awaiting both
     // Then: at most one .krfl file exists; both warm-loaded classpaths have the same symbol count
-    // Pins: F-A4-003
     // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): Tasty.Classpath.initCached
     //   takes a real filesystem cacheDir and uses java.nio.file atomic-rename for one-writer-wins. MemoryFileSource
     //   has no atomic-rename or concurrent-write semantics, so it cannot exercise the JVM rename-collision path
     //   that this leaf pins.
-    "F-A4-003 leaf 3 (Phase 2.09): two concurrent cold-init writers to same cacheDir produce one .krfl file" in runJVM {
+    "two concurrent cold-init writers to same cacheDir produce one .krfl file" in runJVM {
         val cacheDir = TestClasspaths2.createTempDir("kyo-df2-concurrent-writers")
         val roots    = TestClasspaths2.standardRoots
         Async.zip(
@@ -103,12 +100,12 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 4 (Phase 2.09, migrated Phase 2 post-audit): truncated-snapshot-rejected-via-MemoryFileSource
+    // truncated-snapshot-rejected-via-MemoryFileSource
     // Given: a truncated KRFL byte array written to a MemoryFileSource
     // When: calling SnapshotReader.read on the truncated path
     // Then: result is a TastyError failure (truncated file rejected)
     // Cross-platform: uses MemoryFileSource; no filesystem needed.
-    "F-A4-004 leaf 4 (Phase 2.09): truncated .krfl snapshot fails with TastyError via in-memory reader" in run {
+    "truncated .krfl snapshot fails with TastyError via in-memory reader" in run {
         import kyo.internal.MemoryFileSource
         import kyo.internal.tasty.snapshot.SnapshotReader
         Sync.defer:
@@ -128,12 +125,12 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
                         throw t
     }
 
-    // Leaf 5 (Phase 2.09, migrated Phase 2 post-audit): bit-flipped-magic-produces-structured-error
+    // bit-flipped-magic-produces-structured-error
     // Given: a .tasty file with bit-flipped magic byte constructed in memory
     // When: loading via Tasty.Classpath.init with the MemoryFileSource root
     // Then: cp.errors.head pattern-matches as a sealed TastyError variant
     // Cross-platform: uses MemoryFileSource; no filesystem needed.
-    "F-A5-003 leaf 5 (Phase 2.09): cp.errors entries pattern-match as sealed TastyError variants via in-memory source" in run {
+    "cp.errors entries pattern-match as sealed TastyError variants via in-memory source" in run {
         import kyo.internal.MemoryFileSource
         import kyo.internal.tasty.query.ClasspathOrchestrator
         Sync.defer:
@@ -163,12 +160,12 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
                 succeed
     }
 
-    // Leaf 6 (Phase 2.09, migrated Phase 2 post-audit): mid-stream-truncated-produces-0-symbols
+    // mid-stream-truncated-produces-0-symbols
     // Given: a .tasty file truncated mid-stream (valid magic + version header, then truncated) in memory
     // When: loading via ClasspathOrchestrator.init with SoftFail
     // Then: cp.errors.nonEmpty and cp.symbols.size == 0 (file-level isolation, no partial symbols)
     // Cross-platform: uses MemoryFileSource; no filesystem needed.
-    "F-A5-004 leaf 6 (Phase 2.09): SoftFail mid-stream malformed section produces 0 symbols via in-memory source" in run {
+    "SoftFail mid-stream malformed section produces 0 symbols via in-memory source" in run {
         import kyo.internal.MemoryFileSource
         import kyo.internal.tasty.query.ClasspathOrchestrator
         Sync.defer:
@@ -191,15 +188,14 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
                 succeed
     }
 
-    // Leaf 7: very-large-classpath-perf (F-A1-009)
+    // Leaf 7: very-large-classpath-perf
     // Given: the standard 79,567-symbol classpath
     // When: running 3 cold-init loads and computing the median time
     // Then: median < 5,000 ms
-    // Pins: F-A1-009
     // JVM-only (exception condition 3: test asserts JVM-specific behavior): the assertion pins cold-init wall-time
     //   on a 79,567-symbol stdlib classpath, a perf characteristic of the JVM real-classpath loader. The embedded
     //   fixture set holds ~150 symbols; a <5000ms bound there is vacuous (typical load is <500ms).
-    "F-A1-009 leaf 7 (Phase 2.09): standard 81,569-symbol classpath cold-init median < 5,000 ms" in runJVM {
+    "standard 81,569-symbol classpath cold-init median < 5,000 ms" in runJVM {
         val roots = TestClasspaths2.standardRoots
         def timedLoad: Long < (Async & Abort[TastyError]) =
             val start = java.lang.System.nanoTime()
@@ -220,14 +216,13 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
                     succeed
     }
 
-    // Leaf 8: jpms-modules-count-69 (F-A3-005 confirmation)
+    // Leaf 8: jpms-modules-count-69
     // Given: the platform-modules classpath (jrt:/)
     // When: counting cp.indices.modulesIndex.size
     // Then: count == 69 (probe-001.log baseline)
-    // Pins: F-A3-005
     // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): jrt:/ JPMS module filesystem
     //   is a JVM-only loader scheme; JS/Native have no equivalent module system to enumerate.
-    "F-A3-005 leaf 8 (Phase 2.09): JPMS module count == 69 on platform-modules classpath" in runJVM {
+    "JPMS module count == 69 on platform-modules classpath" in runJVM {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
             val count = cp.indices.modulesIndex.size
             assert(
@@ -241,8 +236,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // Given: the standard classpath loaded via TestClasspaths.withClasspath (includes EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
     // When: counting cp.symbols.count(_.isJava)
     // Then: count > 0 (Java symbols from JavaSimpleFixture.class embedded cross-platform)
-    // Pins: F-A1-OPEN (Java interop guard); closed by Phase 08 embedding EmbeddedJavaFixtures.
-    "F-A1-OPEN leaf 9 (Phase 2.09): Java-defined symbols present in standard classpath (java interop guard)" in run {
+    "F-A1-OPEN leaf 9 : Java-defined symbols present in standard classpath (java interop guard)" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val javaCount = cp.symbols.count(_.isJava)
             assert(
@@ -252,12 +246,11 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 10 (Phase 08): round-trip findClass on embedded Java fixture via MemoryFileSource
+    // Leaf 10: round-trip findClass on embedded Java fixture via MemoryFileSource
     // Given: a MemoryFileSource with JavaSimpleFixture.class registered as a standalone root
     // When: Tasty.findClass("kyo.fixtures.JavaSimpleFixture")
     // Then: Maybe.Present(c) where c.isJava == true
-    // Pins: item 3 leaf 5 / F-A1-OPEN round-trip loadability; cross-platform (uses MemoryFileSource)
-    "Phase 08 leaf 5: findClass(kyo.fixtures.JavaSimpleFixture) returns Present with isJava via MemoryFileSource" in run {
+    "findClass(kyo.fixtures.JavaSimpleFixture) returns Present with isJava via MemoryFileSource" in run {
         import kyo.internal.MemoryFileSource
         import kyo.internal.tasty.query.Binding
         import kyo.internal.tasty.query.ClasspathOrchestrator

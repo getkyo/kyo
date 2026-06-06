@@ -7,12 +7,10 @@ import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.TastyState
 import scala.collection.mutable
 
-/** Phase 04 plan-mandated tests pinning the effect-row contract for Symbol.
+/** plan-mandated tests pinning the effect-row contract for Symbol.
   *
   * Leaves:
   *   6. Symbol.body delegates to cp.decodeBody (structural equality).
-  *
-  * Pins: INV-005 (Symbol.body is the only public method returning a kyo effect), INV-004 (bodyMemo memoization).
   */
 class TastyEffectRowTest extends Test:
 
@@ -68,11 +66,10 @@ class TastyEffectRowTest extends Test:
     // When: sym.body(using cp, frame) and cp.bodyTree(sym) are both evaluated.
     // Then: both calls return the SAME Tree instance (reference-equal via bodyMemo memoization).
     //
-    // Phase 06 restores the reference-equality assertion deferred in Phase 04 D-02. The bodyMemo
+    // restores the reference-equality assertion deferred in D-02. The bodyMemo
     // ConcurrentHashMap guarantees that the first decode result is stored and returned on all
     // subsequent calls, producing the same object reference.
     //
-    // Pins: INV-005 (body delegates to Classpath.decodeBody) + INV-004 (bodyMemo memoization).
     "Leaf 6: Symbol.body and Tasty.bodyTree return the same Tree instance via bodyMemo" in run {
         Scope.run:
             Abort.run[TastyError](

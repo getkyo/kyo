@@ -4,9 +4,7 @@ import AllowUnsafe.embrace.danger
 import kyo.Tasty.SymbolId
 import scala.collection.mutable.ArrayBuffer
 
-/** Plan-mandated tests for Phase 08 (leaves 155-160): Type.symbol, Type.children, Type.foreach.
-  *
-  * Pins: INV-002.
+/** Type.symbol, Type.children, Type.foreach.
   */
 class TypePolishTest extends Test:
 

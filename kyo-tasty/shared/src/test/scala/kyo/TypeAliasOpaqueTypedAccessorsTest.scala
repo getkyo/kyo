@@ -2,12 +2,10 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Plan-mandated tests for Phase 05 (leaves 91-95): TypeAlias.body/typeParams and OpaqueType.body/bounds/typeParams accessors.
+/** TypeAlias.body/typeParams and OpaqueType.body/bounds/typeParams accessors.
   *
   * Leaf 91 pins INV-008: the body field on TypeAlias is named `body`, not `rhs` or `rhsType`. Leaves 92-95 exercise the typed resolution
   * methods on TypeAlias and OpaqueType.
-  *
-  * Pins: INV-005, INV-008, INV-009.
   */
 class TypeAliasOpaqueTypedAccessorsTest extends Test:
 
@@ -68,7 +66,6 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
     // Given: type Foo = Int  (TypeAlias body = Type.Named pointing to Int)
     // When: t.body
     // Then: Type whose Named symbolId target resolves to a symbol with name Int
-    // Pins: INV-008
     "Leaf 91: typealias-body-Type: TypeAlias.body field holds the alias body as a Type" in run {
         val intId = SymbolId(0)
         val intSymbol = Tasty.Symbol.Class(
@@ -110,7 +107,6 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
     // Given: type Foo[A,B] = (A,B)  (TypeAlias with 2 type param ids)
     // When: t.typeParams
     // Then: Chunk[TypeParam] size 2
-    // Pins: INV-005, INV-008
     "Leaf 92: typealias-typeParams: TypeAlias.typeParams returns Chunk[TypeParam] size 2" in run {
         // Indices: tpA=0, tpB=1, typeAlias=2
         val tpA       = makeTypeParam(0, "A", ownerId = 2)
@@ -130,7 +126,6 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
     // Given: opaque type Money = Long  (OpaqueType body = Type.Named pointing to Long)
     // When: o.body
     // Then: Type.Named whose target resolves to symbol named Long
-    // Pins: INV-008
     "Leaf 93: opaque-body-Type: OpaqueType.body holds the underlying Type" in run {
         val longId = SymbolId(0)
         val longSymbol = Tasty.Symbol.Class(
@@ -173,7 +168,6 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
     // Given: opaque type N <: Int = Int  (OpaqueType with bounds upper=Int)
     // When: o.bounds
     // Then: TypeBounds whose upper is a Type.Named resolving to Int
-    // Pins: INV-009
     "Leaf 94: opaque-bounds: OpaqueType.bounds field exposes TypeBounds with correct upper type" in run {
         val intId = SymbolId(0)
         val intSymbol = Tasty.Symbol.Class(
@@ -216,7 +210,6 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
     // Given: opaque type Box[A] = A  (OpaqueType with 1 type param)
     // When: o.typeParams
     // Then: Chunk[TypeParam] size 1 name A
-    // Pins: INV-005
     "Leaf 95: opaque-typeParams: OpaqueType.typeParams returns Chunk[TypeParam] size 1 name A" in run {
         // Indices: tpA=0, opaqueType=1
         val tpA        = makeTypeParam(0, "A", ownerId = 1)
@@ -231,14 +224,13 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
             succeed
     }
 
-    // ── Phase 10 leaves: Maybe[Type] fields and error accumulation ──────────────
+    // ── leaves: Maybe[Type] fields and error accumulation ──────────────
 
-    // Phase 10 leaf 2: typeAliasBodyIsMaybe
+    // typeAliasBodyIsMaybe
     // Given: a fixture Symbol.TypeAlias with a real body
     // When: the test reads ta.body
     // Then: Maybe.Present(t) for a resolvable body; Maybe.Absent under SoftFail with no resolution
-    // Pins: Cat 14
-    "Phase 10 leaf 2: TypeAlias.body is Maybe[Type] -- Present for real body, Absent for SoftFail missing" in {
+    "TypeAlias.body is Maybe[Type] -- Present for real body, Absent for SoftFail missing" in {
         val bodyType = Tasty.Type.Named(Tasty.SymbolId(0))
         val ta       = makeTypeAlias(0, "Foo", Maybe.Present(bodyType))
         assert(ta.body == Maybe.Present(bodyType), s"Expected Maybe.Present but got ${ta.body}")
@@ -247,12 +239,11 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
         succeed
     }
 
-    // Phase 10 leaf 3: opaqueTypeBodyIsMaybe
+    // opaqueTypeBodyIsMaybe
     // Given: a fixture Symbol.OpaqueType with a real body
     // When: the test reads ot.body
     // Then: Maybe.Present(t); bounds unchanged (TypeBounds(Type.Nothing, Type.Any) by default)
-    // Pins: Cat 14; PRESERVE-M
-    "Phase 10 leaf 3: OpaqueType.body is Maybe[Type] -- Present for real body; bounds default Nothing/Any" in {
+    "OpaqueType.body is Maybe[Type] -- Present for real body; bounds default Nothing/Any" in {
         val bodyType = Tasty.Type.Named(Tasty.SymbolId(0))
         val bounds   = Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any)
         val ot       = makeOpaqueType(0, "Money", Maybe.Present(bodyType), bounds)
@@ -262,12 +253,11 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
         succeed
     }
 
-    // Phase 10 leaf 4: parameterDeclaredTypeIsMaybe
+    // parameterDeclaredTypeIsMaybe
     // Given: a fixture Symbol.Parameter
     // When: the test reads p.declaredType
     // Then: Maybe.Present(t) for resolvable; Maybe.Absent for unresolved under SoftFail
-    // Pins: Cat 14
-    "Phase 10 leaf 4: Parameter.declaredType is Maybe[Type] -- Present for real type, Absent for missing" in {
+    "Parameter.declaredType is Maybe[Type] -- Present for real type, Absent for missing" in {
         val dt = Tasty.Type.Named(Tasty.SymbolId(0))
         val p1 = Tasty.Symbol.Parameter(
             Tasty.SymbolId(0),
@@ -294,12 +284,11 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
         succeed
     }
 
-    // Phase 10 leaf 5: failFastRaisesMissingDeclaredType
+    // failFastRaisesMissingDeclaredType
     // Given: a SymbolDescriptor with kind=Parameter, declaredType=Maybe.Absent
     // When: TypedSymbolFactory.from called with FailFast mode and a Maybe.Present accErrors buffer
     // Then: SymbolMaterializationError is thrown carrying TastyError.MissingDeclaredType
-    // Pins: Cat 14; INV-TASTYERROR-WIRE consumer
-    "Phase 10 leaf 5: TypedSymbolFactory.from throws SymbolMaterializationError under FailFast with absent declaredType" in {
+    "TypedSymbolFactory.from throws SymbolMaterializationError under FailFast with absent declaredType" in {
         import kyo.internal.tasty.symbol.SymbolDescriptor
         import kyo.internal.tasty.symbol.SymbolKind
         import kyo.internal.tasty.symbol.SymbolMaterializationError
@@ -338,12 +327,11 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
         succeed
     }
 
-    // Phase 10 leaf 6: softFailAccumulatesUnknownType
+    // softFailAccumulatesUnknownType
     // Given: the same SymbolDescriptor with kind=Parameter, declaredType=Maybe.Absent
     // When: TypedSymbolFactory.from called with SoftFail mode and a real accErrors buffer
     // Then: accErrors contains exactly one TastyError.UnknownType; returned symbol has declaredType==Maybe.Absent
-    // Pins: Cat 14
-    "Phase 10 leaf 6: TypedSymbolFactory.from accumulates UnknownType under SoftFail with absent declaredType" in {
+    "TypedSymbolFactory.from accumulates UnknownType under SoftFail with absent declaredType" in {
         import kyo.internal.tasty.symbol.SymbolDescriptor
         import kyo.internal.tasty.symbol.SymbolKind
         import kyo.internal.tasty.symbol.TypedSymbolFactory
@@ -388,7 +376,6 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
     //       (this is exactly the call the fixed materializeSymbols now makes)
     // Then: each absent-body descriptor accumulates one TastyError.UnknownType;
     //       Maybe.Absent suppresses accumulation (no error for absent accumulator)
-    // Pins: F-1 carry fix (orchestrator producer wire), F-3 carry fix (Maybe not null)
     "Carry A2 leaf 8: TypedSymbolFactory.from accumulates UnknownType via Maybe.Present for TypeAlias and OpaqueType" in {
         import kyo.internal.tasty.symbol.SymbolDescriptor
         import kyo.internal.tasty.symbol.SymbolKind

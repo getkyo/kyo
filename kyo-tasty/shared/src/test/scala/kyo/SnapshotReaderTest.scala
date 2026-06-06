@@ -6,8 +6,8 @@ import scala.collection.mutable
 
 /** Tests for SnapshotReader version handling with old (minor=2) snapshots.
   *
-  * Phase 12 breaking change: minor=4 is a breaking bump (PERMITS2/ANNOTS_/JAVAMETA sections added).
-  * Phase 2.13 breaking change: minor=6 is a breaking bump (FQNMAP__ section added).
+  * breaking change: minor=4 is a breaking bump (PERMITS2/ANNOTS_/JAVAMETA sections added).
+  * breaking change: minor=6 is a breaking bump (FQNMAP__ section added).
   * Snapshots with minor < 6 are rejected with SnapshotVersionMismatch to force cold re-decode.
   */
 class SnapshotReaderTest extends Test:
@@ -47,8 +47,8 @@ class SnapshotReaderTest extends Test:
             Abort.fail(TastyError.FileNotFound(path))
     end MemoryFileSource
 
-    // Test 3 (Phase 12 version rejection): a snapshot with minorVersion=2 (below Phase 12 minimum of 5)
-    // must be rejected with SnapshotVersionMismatch to force cold re-decode. Before Phase 12 this
+    // Test 3: a snapshot with minorVersion=2 (below minimum of 5)
+    // must be rejected with SnapshotVersionMismatch to force cold re-decode. Before this
     // snapshot loaded successfully; the bump to minor=4 is a breaking change.
     "minor=2 snapshot (no PARENTS/MEMBERS/TPARAMS_ sections) is rejected with SnapshotVersionMismatch" in run {
         // Build a minimal valid KRFL snapshot at minorVersion=2 (same majorVersion=1 as current).
@@ -117,7 +117,7 @@ class SnapshotReaderTest extends Test:
             SnapshotReader.read("cache/minor2.krfl", src)
         .map:
             case Result.Failure(e: TastyError.SnapshotVersionMismatch) =>
-                // Phase 2.13: minor < 6 snapshots are rejected to force cold re-decode.
+                // minor < 6 snapshots are rejected to force cold re-decode.
                 assert(e.found.minor == 2, s"Expected found.minor == 2, got ${e.found.minor}")
                 assert(
                     e.supported.minor == SnapshotFormat.minorVersion,

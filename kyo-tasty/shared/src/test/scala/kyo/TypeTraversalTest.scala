@@ -12,7 +12,6 @@ class TypeTraversalTest extends Test:
     // Given: a fixture Type tree with two ByName sub-types nested inside Applied
     // When: the test calls t.collect { case bn: Type.ByName => bn }
     // Then: the Chunk[Type.ByName] has length 2 in pre-order
-    // Pins: Cat 15; PRESERVE-L
     "collect gathers ByName types from Applied args in pre-order" in {
         val bn1: Tasty.Type.ByName = Tasty.Type.ByName(Tasty.Type.Any)
         val bn2: Tasty.Type.ByName = Tasty.Type.ByName(Tasty.Type.Nothing)
@@ -28,7 +27,6 @@ class TypeTraversalTest extends Test:
     // Given: a fixture Type tree with a Repeated nested inside an OrType
     // When: the test calls t.find(_.isInstanceOf[Type.Repeated])
     // Then: the result is Maybe.Present(repeated)
-    // Pins: Cat 15
     "find returns first Repeated in OrType in pre-order" in {
         val rep    = Tasty.Type.Repeated(Tasty.Type.Any)
         val t      = Tasty.Type.OrType(Tasty.Type.Any, rep)
@@ -42,7 +40,6 @@ class TypeTraversalTest extends Test:
     // Given: a fixture Type tree with no ByName
     // When: the test calls t.find(_.isInstanceOf[Type.ByName])
     // Then: the result is Maybe.Absent
-    // Pins: Cat 15
     "find returns Absent when no matching node exists" in {
         val t      = Tasty.Type.OrType(Tasty.Type.Any, Tasty.Type.Nothing)
         val result = t.find(_.isInstanceOf[Tasty.Type.ByName])
@@ -54,7 +51,6 @@ class TypeTraversalTest extends Test:
     // Given: a 3-node fixture: Applied(Any, Chunk(Nothing))
     // When: the test calls t.foldLeft(0)((acc, _) => acc + 1)
     // Then: the result is 3
-    // Pins: Cat 15
     // Note: prep C2 flags a plan counting error; using corrected 3-node fixture (Applied + Any + Nothing).
     "foldLeft counts all nodes in pre-order" in {
         val t      = Tasty.Type.Applied(Tasty.Type.Any, Chunk(Tasty.Type.Nothing))
@@ -67,7 +63,6 @@ class TypeTraversalTest extends Test:
     // Given: a fixture tree with one ByName and a sibling tree with none
     // When: the test calls t.exists(_.isInstanceOf[Type.ByName]) on both
     // Then: true on the first; false on the second
-    // Pins: Cat 15
     "exists detects ByName presence and absence" in {
         val withBn    = Tasty.Type.ByName(Tasty.Type.Any)
         val withoutBn = Tasty.Type.Any
@@ -80,7 +75,6 @@ class TypeTraversalTest extends Test:
     // Given: a probe that calls Type.Any.visit from outside package kyo
     // When: the probe is evaluated at compile time via compiletime.testing.typeCheckErrors
     // Then: the returned list is non-empty (visit is private[kyo])
-    // Pins: Cat 15; PRESERVE-L
     "visit is not accessible from outside package kyo" in {
         val errs = compiletime.testing.typeCheckErrors(
             "(kyo.Tasty.Type.Any: kyo.Tasty.Type).visit(_ => ())"

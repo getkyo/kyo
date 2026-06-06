@@ -5,7 +5,7 @@ import kyo.*
 /** Scala Native implementation: JPMS module resolution is not available on this platform.
   *
   * The `jrt:/` virtual filesystem does not exist in the Native runtime. `readJdkModuleDescriptors` fails with
-  * `TastyError.UnsupportedPlatform` per Q-006 / F-D-001. `listJdkClassFiles` returns Chunk.empty so
+  * `TastyError.UnsupportedPlatform`. `listJdkClassFiles` returns Chunk.empty so
   * `initWithPlatformModules` degrades gracefully on Native without JDK class entries.
   */
 private[kyo] object PlatformModuleOps:

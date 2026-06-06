@@ -7,12 +7,10 @@ import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import scala.collection.mutable
 
-/** Plan-mandated tests for Phase 08 (leaf 173): full snapshot round-trip on a multi-file fixture.
+/** full snapshot round-trip on a multi-file fixture.
   *
-  * Uses all available embedded fixture TASTy files to produce a larger classpath than the Phase 02 single-file test. Verifies that typed
+  * Uses all available embedded fixture TASTy files to produce a larger classpath than the single-file test. Verifies that typed
   * subtype tags, ids, names, and flags all survive a write-then-read snapshot cycle.
-  *
-  * Pins: INV-011, INV-012, INV-013.
   */
 class SnapshotTypedRoundTripFullTest extends Test:
 
@@ -55,7 +53,6 @@ class SnapshotTypedRoundTripFullTest extends Test:
     // Given: multiple embedded fixture TASTy files loaded into a Classpath
     // When: write snapshot; reload; compare typed subtype, id, name, flags
     // Then: every pair matches; cp.symbols.size == reloaded.symbols.size
-    // Pins: INV-011, INV-012, INV-013
     "Leaf 173: full snapshot round-trip preserves typed subtypes on multi-file fixture" in run {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x7e)

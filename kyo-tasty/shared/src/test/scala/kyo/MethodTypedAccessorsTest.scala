@@ -8,12 +8,10 @@ import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.TastyState
 import scala.collection.mutable
 
-/** Plan-mandated tests for Phase 04 (leaves 70-78, 81, 84): Method typed resolution accessors.
+/** Plan-mandated tests for (leaves 70-78, 81, 84): Method typed resolution accessors.
   *
   * Leaves 70-76 use fromPicklesWithSymbols for synthetic fixtures. Leaves 77-78 use a real cold-classpath via ClasspathOrchestrator (same
   * pattern as ClasspathBodyMemoTest leaf 4). Leaf 81 verifies the effect-row static type. Leaf 84 verifies flag predicates still work.
-  *
-  * Pins: INV-002, INV-005, INV-007, INV-010, INV-003.
   */
 class MethodTypedAccessorsTest extends Test:
 
@@ -107,7 +105,6 @@ class MethodTypedAccessorsTest extends Test:
     // Given: def foo(x: Int)(y: String): Int  (2 param lists, 1 param each)
     // When: m.paramLists
     // Then: Chunk[Chunk[Parameter]] size 2x1 with names x,y
-    // Pins: INV-002, INV-005
     "Leaf 70: paramLists-typed: returns Chunk[Chunk[Parameter]] 2x1 names x,y" in run {
         import Tasty.Name.asString
         // cp.symbol(id) uses SymbolId as array index; paramX at index 0, paramY at index 1, method at index 2
@@ -135,7 +132,6 @@ class MethodTypedAccessorsTest extends Test:
     // Given: def bar[A,B]  (2 type params)
     // When: m.typeParams
     // Then: Chunk[TypeParam] size 2 names A,B
-    // Pins: INV-005
     "Leaf 71: typeParams-typed: returns Chunk[TypeParam] size 2 names A,B" in run {
         import Tasty.Name.asString
         // cp.symbol(id) uses SymbolId as array index; tpA at 0, tpB at 1, method at 2
@@ -160,7 +156,6 @@ class MethodTypedAccessorsTest extends Test:
     // Given: declaredType = Type.Function(params, result)
     // When: m.returnType
     // Then: Maybe.Present(result type)
-    // Pins: INV-002
     "Leaf 72: returnType-Function-result: extracts result from Type.Function" in run {
         val resultType = Tasty.Type.Named(SymbolId(99))
         val funcType   = Tasty.Type.Function(Chunk(Tasty.Type.Nothing), resultType)
@@ -177,7 +172,6 @@ class MethodTypedAccessorsTest extends Test:
     // Given: declaredType = Type.Named(_)
     // When: m.returnType
     // Then: Maybe.Present(declaredType unchanged)
-    // Pins: INV-002
     "Leaf 73: returnType-non-function: returns declaredType as-is when not a Function type" in run {
         val namedType = Tasty.Type.Named(SymbolId(42))
         val method    = makeMethod(id = 1, name = "get", ownerId = 0, declaredType = Maybe(namedType))
@@ -193,7 +187,6 @@ class MethodTypedAccessorsTest extends Test:
     // Given: declaredType = Maybe.Absent
     // When: m.returnType
     // Then: Maybe.Absent
-    // Pins: INV-002
     "Leaf 74: returnType-absent: returns Absent when declaredType is Absent" in run {
         val method = makeMethod(id = 1, name = "noType", ownerId = 0, declaredType = Maybe.Absent)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(method)).map: cp =>
@@ -209,7 +202,6 @@ class MethodTypedAccessorsTest extends Test:
     // Given: name = "<init>"
     // When: m.isConstructor
     // Then: true
-    // Pins: INV-002
     "Leaf 75: isConstructor-init: returns true for name == <init>" in run {
         val method = makeMethod(id = 1, name = "<init>", ownerId = 0)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(method)).map: cp =>
@@ -221,7 +213,6 @@ class MethodTypedAccessorsTest extends Test:
     // Given: name = "apply"
     // When: m.isConstructor
     // Then: false
-    // Pins: INV-002
     "Leaf 76: isConstructor-not-init: returns false for name != <init>" in run {
         val method = makeMethod(id = 1, name = "apply", ownerId = 0)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(method)).map: cp =>
@@ -233,7 +224,6 @@ class MethodTypedAccessorsTest extends Test:
     // Given: a loaded SomeObject classpath that has a Method with a body
     // When: Sync.run(Abort.run(Tasty.bodyTree(m)))
     // Then: result is a Success; static type is Maybe[Tree] < (Sync & Abort[TastyError])
-    // Pins: INV-007, INV-010
     "Leaf 77: bodyTree-effect-row: Tasty.bodyTree(Method) runs successfully with (Sync & Abort) effect row" in run {
         Scope.run:
             Abort.run[TastyError](
@@ -268,7 +258,6 @@ class MethodTypedAccessorsTest extends Test:
     // Given: Method body=Maybe.Absent; binding with a fresh DecodeContext installed
     // When: run Tasty.bodyTree(m) inside bindingLocal.let(Present(Binding(cp, Present(ctx))))
     // Then: Success(Maybe.Absent) -- bodyTree exits early because body field is Absent
-    // Pins: INV-007
     "Leaf 78: bodyTree-absent-when-no-body: returns Absent for Method with no body" in run {
         val method = makeMethod(id = 1, name = "abstract", ownerId = 0)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(method)).flatMap: cp =>
@@ -291,7 +280,6 @@ class MethodTypedAccessorsTest extends Test:
     // Given: val e: Maybe[Tree] < (Sync & Abort[TastyError]) = Tasty.bodyTree(m)
     // When: compile inside bindingLocal.let(Present(Binding(cp, Present(ctx))))
     // Then: compiles; no other effect in the row; runtime result is Success
-    // Pins: INV-010
     "Leaf 81: bodyTree effect row is exactly (Sync & Abort[TastyError]) -- compile check" in run {
         val method = makeMethod(id = 1, name = "m", ownerId = 0)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(method)).flatMap: cp =>
@@ -311,7 +299,6 @@ class MethodTypedAccessorsTest extends Test:
     // Given: Symbol.Method with flags Inline + Given
     // When: invoke isInline, isGiven
     // Then: both return true
-    // Pins: INV-003
     "Leaf 84: flag predicates still work on typed Method (isInline, isGiven)" in run {
         val flags  = Tasty.Flags(Tasty.Flag.Inline, Tasty.Flag.Given)
         val method = makeMethod(id = 1, name = "given_inline", ownerId = 0, flags = flags)

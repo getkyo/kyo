@@ -10408,7 +10408,7 @@ object Embedded:
         -45.toByte
     )
 
-    /** Contents of `BaseClass.tasty` (506 bytes). Compiled from kyo-tasty-fixtures BaseClass.scala (package kyo.fixtures). Used by Phase 2
+    /** Contents of `BaseClass.tasty` (506 bytes). Compiled from kyo-tasty-fixtures BaseClass.scala (package kyo.fixtures). Used by
       * UnresolvedRef resolution tests: when opened alone, no placeholders are produced. When opened together with childClassTasty, the
       * ChildClass placeholder resolves to kyo.fixtures.BaseClass.
       */
@@ -11710,7 +11710,7 @@ object Embedded:
         -105.toByte
     )
 
-    /** Contents of `kyo/fixtures/Shape.tasty` (4918 bytes). Compiled from ParamEnum.scala; class-form enum with parametric cases (Circle/Square/Rectangle). Used by Phase 15 to verify Symbol.EnumCase on JS and Native. */
+    /** Contents of `kyo/fixtures/Shape.tasty` (4918 bytes). Compiled from ParamEnum.scala; class-form enum with parametric cases (Circle/Square/Rectangle). Used by to verify Symbol.EnumCase on JS and Native. */
     def shapeTasty: Array[Byte] = Array(
         92.toByte,
         -95.toByte,
@@ -16632,7 +16632,7 @@ object Embedded:
         -99.toByte
     )
 
-    /** Contents of `kyo/fixtures/VarargFixture.tasty` (1183 bytes). Compiled from VarargFixture.scala; a class with a String* varargs parameter. Used by Phase 2.10 to verify Type.Repeated decoding on JS and Native (F-A2-013). */
+    /** Contents of `kyo/fixtures/VarargFixture.tasty` (1183 bytes). Compiled from VarargFixture.scala; a class with a String* varargs parameter. Used by to verify Type.Repeated decoding on JS and Native . */
     def varargFixtureTasty: Array[Byte] = Array(
         92.toByte,
         -95.toByte,
@@ -17819,7 +17819,7 @@ object Embedded:
         -90.toByte
     )
 
-    /** Contents of `kyo/fixtures/TypeAdtFixture$$package.tasty` (1149 bytes). Compiled from TypeAdtFixture.scala; contains intersection type (SomeTrait & AnotherTrait as ANDtype), union type (PlainClass | SomeCaseClass as ORtype), and match type (InnerOf[C] as MATCHtype). Used by Phase 2.10 to verify AndType/OrType/MatchType decoding on JS and Native. */
+    /** Contents of `kyo/fixtures/TypeAdtFixture$$package.tasty` (1149 bytes). Compiled from TypeAdtFixture.scala; contains intersection type (SomeTrait & AnotherTrait as ANDtype), union type (PlainClass | SomeCaseClass as ORtype), and match type (InnerOf[C] as MATCHtype). Used by to verify AndType/OrType/MatchType decoding on JS and Native. */
     def typeAdtFixtureTasty: Array[Byte] = Array(
         92.toByte,
         -95.toByte,

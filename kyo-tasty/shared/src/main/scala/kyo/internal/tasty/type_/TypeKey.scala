@@ -6,7 +6,7 @@ import scala.collection.mutable
 /** Structural key for Tasty.Type values used by TypeArena's hash-cons map.
   *
   * Hash is computed once at construction from the type's structure using prime mixing. Equality is structural (not reference equality),
-  * except for Named(sym) where sym identity is used because symbols are canonical after Phase 3.
+  * except for Named(sym) where sym identity is used because symbols are canonical after finalizeMerge.
   *
   * Cycle safety: a thread-local in-progress set prevents infinite hash recursion on Rec/RecThis cycles. If a type is encountered again
   * during its own hash computation, 0 is returned for that sub-term.

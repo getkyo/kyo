@@ -9,15 +9,15 @@ import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 import scala.collection.mutable
 
-/** Decoder-fidelity-5 Phase 5.03: TastyError completeness -- 5 findings.
+/** Decoder-fidelity-5 TastyError completeness -- 5 findings.
   *
-  * Findings closed in this phase: F-W2-9 (UnsupportedVersion + UnknownTagInPosition tests), F-W2-10 (UnknownTagInPosition scaladoc),
-  * F-W2-11 (ClasspathClosed + ClasspathBuilding context fields), F-W2-12 (exception class name in catch arms), F-W2-28 (extractParenContent
-  * dead code removed; obviated by Phase 5.01b typed format).
+  * Findings closed in this phase:   (UnsupportedVersion + UnknownTagInPosition tests),   (UnknownTagInPosition scaladoc),
+  *   (ClasspathClosed + ClasspathBuilding context fields),   (exception class name in catch arms),   (extractParenContent
+  * dead code removed; obviated byb typed format).
   *
-  * F-W2-9 tests (P03.1, P03.2, P03.3) directly trigger both variants rather than asserting "variants exist therefore covered".
-  * F-W2-11 tests (P03.4, P03.5) verify context is non-empty in the respective error variants.
-  * F-W2-12 test (P03.6) verifies the exception class name appears in SnapshotFormatError messages.
+  * tests (P03.1, P03.2, P03.3) directly trigger both variants rather than asserting "variants exist therefore covered".
+  *   tests (P03.4, P03.5) verify context is non-empty in the respective error variants.
+  *   test (P03.6) verifies the exception class name appears in SnapshotFormatError messages.
   */
 class DecoderFidelity5Phase03Test extends Test:
 
@@ -72,13 +72,12 @@ class DecoderFidelity5Phase03Test extends Test:
         magic ++ encodeNat(major) ++ encodeNat(minor) ++ encodeNat(experimental) ++ encodeNat(0) ++ uuid
     end syntheticTasty
 
-    // P03.1: F-W2-9 -- UnsupportedVersion via TastyHeader.read (low-level direct trigger)
+    // P03.1:   -- UnsupportedVersion via TastyHeader.read (low-level direct trigger)
     //
     // Given: a synthetic TASTy byte stream with major=99 (far beyond supported range).
     // When:  TastyHeader.read is called directly via Abort.run.
     // Then:  Result.Failure(TastyError.UnsupportedVersion(found, supported)) where found.major == 99.
-    // Pins:  F-W2-9; UnsupportedVersion is reachable and carries correct fields.
-    "P03.1 F-W2-9: TastyHeader.read with major=99 produces UnsupportedVersion with correct found.major" in run {
+    "P03.1 TastyHeader.read with major=99 produces UnsupportedVersion with correct found.major" in run {
         val bytes = syntheticTasty(99, 0, 0)
         val view  = ByteView(bytes)
         Abort.run[TastyError](TastyHeader.read(view)).map: result =>
@@ -91,14 +90,13 @@ class DecoderFidelity5Phase03Test extends Test:
                     fail(s"Expected UnsupportedVersion but got: $other")
     }
 
-    // P03.2: F-W2-9 -- UnsupportedVersion flows into cp.errors via ClasspathOrchestrator SoftFail
+    // P03.2:   -- UnsupportedVersion flows into cp.errors via ClasspathOrchestrator SoftFail
     //
     // Given: a MemSrc with a single .tasty file whose major version is 99 (unsupported).
     // When:  ClasspathOrchestrator.init is called with SoftFail.
     // Then:  cp.errors contains at least one UnsupportedVersion (or CorruptedFile on path-patching)
     //        entry; no panic escapes.
-    // Pins:  F-W2-9; UnsupportedVersion accumulates in cp.errors under SoftFail.
-    "P03.2 F-W2-9: UnsupportedVersion (major=99 .tasty) accumulates in cp.errors under SoftFail" in run {
+    "P03.2 UnsupportedVersion (major=99 .tasty) accumulates in cp.errors under SoftFail" in run {
         Scope.run:
             Abort.run[TastyError]:
                 val src = MemSrc()
@@ -118,13 +116,12 @@ class DecoderFidelity5Phase03Test extends Test:
                 case Result.Panic(t)   => throw t
     }
 
-    // P03.3: F-W2-9 -- UnknownTagInPosition fires from TypeUnpickler.readType with unknown tag byte
+    // P03.3:   -- UnknownTagInPosition fires from TypeUnpickler.readType with unknown tag byte
     //
     // Given: a ByteView containing a single byte 0xFF (255), which is not a valid type-position tag.
     // When:  TypeUnpickler.readType is called with that view; the byte is read as the type tag.
     // Then:  Abort.fail(TastyError.UnknownTagInPosition(255, "type")) is returned.
-    // Pins:  F-W2-9; UnknownTagInPosition is directly triggered end-to-end and carries correct fields.
-    "P03.3 F-W2-9: TypeUnpickler.readType with tag=0xFF produces Abort.fail(UnknownTagInPosition(255, type))" in run {
+    "P03.3 TypeUnpickler.readType with tag=0xFF produces Abort.fail(UnknownTagInPosition(255, type))" in run {
         val bytes: Array[Byte] = Array(0xff.toByte)
         val view               = ByteView(bytes)
         val arena              = TypeArena.canonical()
@@ -144,13 +141,12 @@ class DecoderFidelity5Phase03Test extends Test:
                     throw t
     }
 
-    // P03.4: F-W2-11 -- ClasspathClosed carries non-empty context field
+    // P03.4:   -- ClasspathClosed carries non-empty context field
     //
     // Given: TastyError.ClasspathClosed is constructed with a context string.
     // When:  the context field is read via pattern match.
     // Then:  context is non-empty and contains "decodeBody".
-    // Pins:  F-W2-11; ClasspathClosed context field is present and populated by Tasty.scala call site.
-    "P03.4 F-W2-11: ClasspathClosed carries non-empty context field" in run {
+    "P03.4 ClasspathClosed carries non-empty context field" in run {
         val err: TastyError = TastyError.ClasspathClosed("decodeBody(sym.id=7)")
         err match
             case TastyError.ClasspathClosed(ctx) =>
@@ -162,13 +158,12 @@ class DecoderFidelity5Phase03Test extends Test:
         end match
     }
 
-    // P03.5: F-W2-11 -- ClasspathBuilding carries non-empty context field
+    // P03.5:   -- ClasspathBuilding carries non-empty context field
     //
     // Given: TastyError.ClasspathBuilding is constructed with a context string.
     // When:  the context field is read via pattern match.
     // Then:  context is non-empty and contains "finalizeMerge".
-    // Pins:  F-W2-11; ClasspathBuilding context field is present and populated by ClasspathOrchestrator call site.
-    "P03.5 F-W2-11: ClasspathBuilding carries non-empty context field" in run {
+    "P03.5 ClasspathBuilding carries non-empty context field" in run {
         val err: TastyError = TastyError.ClasspathBuilding("finalizeMerge: brokenFqnCount=1")
         err match
             case TastyError.ClasspathBuilding(ctx) =>
@@ -180,13 +175,12 @@ class DecoderFidelity5Phase03Test extends Test:
         end match
     }
 
-    // P03.6: F-W2-11 -- ClasspathBuilding.context populated by orchestrator trigger (end-to-end)
+    // P03.6:   -- ClasspathBuilding.context populated by orchestrator trigger (end-to-end)
     //
     // Given: ClasspathOrchestrator.triggerClasspathBuildingForTest produces a ClasspathBuilding abort.
     // When:  the error is caught and inspected.
     // Then:  context is non-empty and mentions "brokenFqnCount".
-    // Pins:  F-W2-11; orchestrator call site populates context correctly.
-    "P03.6 F-W2-11: ClasspathOrchestrator.triggerClasspathBuildingForTest produces ClasspathBuilding with non-empty context" in run {
+    "P03.6 ClasspathOrchestrator.triggerClasspathBuildingForTest produces ClasspathBuilding with non-empty context" in run {
         Abort.run[TastyError](ClasspathOrchestrator.triggerClasspathBuildingForTest()).map: result =>
             result match
                 case Result.Failure(TastyError.ClasspathBuilding(ctx)) =>

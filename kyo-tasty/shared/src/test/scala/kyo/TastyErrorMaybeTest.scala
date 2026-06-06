@@ -13,7 +13,7 @@ import scala.collection.mutable
 
 /** Tests pinning INV-007: TastyError.NotImplemented is reserved for genuinely-deferred features only.
   *
-  * INV-007 (produced by Phase 03, consumed by Phases 04, 06, 10): TastyError.NotImplemented is returned only when a TASTy feature is not
+  * TastyError.NotImplemented is returned only when a TASTy feature is not
   * yet implemented in this version of kyo-tasty. It is never returned for "this attribute does not apply to this symbol kind" (use
   * Maybe.Absent) and never returned for an unrecognized TASTy tag during tree decode (use Tree.Unknown for graceful degradation).
   */
@@ -120,7 +120,7 @@ class TastyErrorMaybeTest extends Test:
             writeLong(u.getMostSignificantBits)
             writeLong(u.getLeastSignificantBits)
 
-        // Standard LEB128 varint encoder (Phase 11 string-tag format).
+        // Standard LEB128 varint encoder (ERRORS wire format).
         def writeVarint(value: Int): Unit =
             var v = value
             while
@@ -162,11 +162,11 @@ class TastyErrorMaybeTest extends Test:
                 case TastyError.UnknownTagInPosition(t, p)     => writeInt(t); writeStr(p)
                 case TastyError.InvalidFqn(fqn, reason)        => writeStr(fqn); writeStr(reason)
                 case TastyError.DigestMismatch(exp, act)       => writeStr(exp); writeStr(act)
-                // Phase 11 wire-format note: UnhandledSubtypingCase is not yet serializable; write no fields.
+                // UnhandledSubtypingCase is not yet serializable; write no fields.
                 case TastyError.UnhandledSubtypingCase(_, _, _, _) => ()
-                // Phase 08: UnresolvedReference is a loading-phase error; not serializable in Phase 11 yet; write no fields.
+                // UnresolvedReference is a loading-phase error; not serializable ; write no fields.
                 case TastyError.UnresolvedReference(_, _) => ()
-                // Phase 10: UnknownType and MissingDeclaredType will be serialized in Phase 11; write no fields.
+                // UnknownType and MissingDeclaredType are serialized; write no fields.
                 case TastyError.UnknownType(_, _, _)      => ()
                 case TastyError.MissingDeclaredType(_, _) => ()
             end match
@@ -177,7 +177,7 @@ class TastyErrorMaybeTest extends Test:
     /** Encode a raw ERRORS section payload containing a single entry with an unknown tag string and no fields.
       *
       * Used to test forward-compat: a snapshot written by a future kyo-tasty version may contain error tags not known to this reader. The
-      * reader maps unknown string tags to TastyError.NotImplemented (Phase 11 string-tag format).
+      * reader maps unknown string tags to TastyError.NotImplemented (ERRORS wire format).
       */
     private def makeUnknownTagErrorsPayload(unknownTag: String): Array[Byte] =
         val tagBytes = unknownTag.getBytes(java.nio.charset.StandardCharsets.UTF_8)
@@ -215,7 +215,7 @@ class TastyErrorMaybeTest extends Test:
 
     // ── Leaf 1: NotImplemented usage audit ─────────────────────────────────
     //
-    // INV-007 states that NotImplemented is only used in forward-compat deserialisation.
+    // states that NotImplemented is only used in forward-compat deserialisation.
     // This test pins the contract by verifying that:
     // (a) A recognized error string prefix ("FileNotFound(...)") round-trips to the
     //     correct TastyError variant and NOT to NotImplemented.
@@ -223,9 +223,9 @@ class TastyErrorMaybeTest extends Test:
     // This distinguishes the two call sites in SnapshotReader.parseErrorString from
     // any hypothetical misuse.
 
-    "INV-007 leaf-1: recognized error prefix round-trips without NotImplemented; unrecognized yields NotImplemented" in run {
+    "leaf-1: recognized error prefix round-trips without NotImplemented; unrecognized yields NotImplemented" in run {
         val recognized = TastyError.FileNotFound("/some/path.tasty")
-        // Forward-compat (Phase 11 string-tag format): an unknown tag string maps to NotImplemented.
+        // Forward-compat (string-tag format): an unknown tag string maps to NotImplemented.
         val unknownTag = "FutureError"
 
         // Build ERRORS payload: first entry is the recognized FileNotFound (string-tag format),
@@ -284,7 +284,7 @@ class TastyErrorMaybeTest extends Test:
     // decodeSymBody -> readTree -> decodeTreeTag -> "Unknown category 2-4" arm -> Tree.Unknown(77, 0).
     // The Unresolved kind is used so decodeSymBody falls into the generic readTree path.
 
-    "INV-007 leaf-2: TreeUnpickler unknown category-2 tag produces Tree.Unknown not TastyError.NotImplemented" in run {
+    "leaf-2: TreeUnpickler unknown category-2 tag produces Tree.Unknown not TastyError.NotImplemented" in run {
         // Tag 77 is in the category-2 range (60-89) and is not assigned in TastyFormat.
         // Category-2 tag body is: [tag][Nat]. Nat 0x80 encodes value 0 in TASTy Nat encoding.
         val unknownCat2Tag: Byte      = 77.toByte
@@ -293,7 +293,7 @@ class TastyErrorMaybeTest extends Test:
 
         // TypeParam kind falls into the generic `case _` arm in decodeSymBody, invoking readTree directly.
         // Package was previously used (wrong: Package has special dispatch to PackageDef).
-        // Unresolved was used originally but was deleted in Phase 08; TypeParam is the correct replacement.
+        // Unresolved was used originally but was removed; TypeParam is the correct replacement.
         val sym = Tasty.Symbol.TypeParam(
             Tasty.SymbolId(-1),
             Tasty.Name("testSym"),
@@ -340,8 +340,8 @@ class TastyErrorMaybeTest extends Test:
     // TastyError variants not known to this reader. The SnapshotReader.parseErrorString fallback
     // returns NotImplemented so that callers can inspect accumulated errors without losing them.
 
-    "INV-007 leaf-3: ERRORS section with unrecognized error string produces TastyError.NotImplemented" in run {
-        // Forward-compat scenario (Phase 11 string-tag format): a future kyo-tasty version adds a new
+    "leaf-3: ERRORS section with unrecognized error string produces TastyError.NotImplemented" in run {
+        // Forward-compat scenario (string-tag format): a future kyo-tasty version adds a new
         // TastyError variant with an unknown tag string. The current reader maps it to NotImplemented.
         val futureTag     = "QuantumEntanglementError"
         val errorsPayload = makeUnknownTagErrorsPayload(futureTag)
@@ -380,7 +380,7 @@ class TastyErrorMaybeTest extends Test:
     // FQN produces exactly one UnresolvedReference in cp.errors, whose name matches the ghost FQN.
     // Replaces the prior vacuous field-roundtrip probe per B-5 carry fix.
 
-    "INV-008 leaf-4: TastyError.UnresolvedReference is emitted by finalizeMerge for unresolvable FQN entries" in run {
+    "leaf-4: TastyError.UnresolvedReference is emitted by finalizeMerge for unresolvable FQN entries" in run {
         Abort.run[TastyError](
             kyo.internal.tasty.query.ClasspathOrchestrator.triggerUnresolvedReferenceForTest()
         ).map: result =>
@@ -406,14 +406,13 @@ class TastyErrorMaybeTest extends Test:
                     fail(s"Unexpected panic: ${t.getMessage}")
     }
 
-    // Phase 10 leaf 7: unknownTypeAndMissingDeclaredTypeExhaustiveMatch
+    // unknownTypeAndMissingDeclaredTypeExhaustiveMatch
     // Given: TastyError enum with UnknownType and MissingDeclaredType variants
     // When: matching on both variants by pattern
     // Then: patterns compile correctly; values are reachable TastyError instances
     // Note: Scala 3 sealed enum non-exhaustive warnings are not errors by default,
     //   so we verify reachability via construction and pattern-match rather than typeCheckErrors.
-    // Pins: INV-TASTYERROR-WIRE
-    "Phase 10 leaf 7: TastyError.UnknownType and MissingDeclaredType are reachable closed-enum variants" in {
+    "TastyError.UnknownType and MissingDeclaredType are reachable closed-enum variants" in {
         // Verify UnknownType is constructable and matches as TastyError
         val ut: TastyError = TastyError.UnknownType("f.tasty", 0L, "reason")
         val utResult = ut match

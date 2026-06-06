@@ -19,8 +19,6 @@ import scala.collection.mutable
   * Leaf 11: probe is idempotent (same bytes returned on two calls).
   *
   * Cross-platform leaves (8, 9) live in BundledSnapshotProbeTest.scala (shared/src/test).
-  *
-  * Pins: INV-004, INV-005, INV-007.
   */
 class BundledSnapshotProbeJvmTest extends Test:
 
@@ -143,7 +141,6 @@ class BundledSnapshotProbeJvmTest extends Test:
     // Given: fixture jar containing only .class entries (no snapshot entry)
     // When: BundledSnapshotProbe.probe(jarPath)
     // Then: returns Maybe.Absent
-    // Pins: INV-004 probe-absent
     "Leaf 1: jar with no snapshot entry returns Maybe.Absent" in run {
         val noSnapBytes = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val root        = "no-snap.jar"
@@ -155,7 +152,6 @@ class BundledSnapshotProbeJvmTest extends Test:
 
     // Leaf 2: jar with valid snapshot returns Present
     // Given: real jar on disk with KRFL snapshot; embedded digest matches JVM CEN walk digest.
-    // Pins: INV-004 probe-present
     "Leaf 2: jar with valid snapshot and matching digest returns Maybe.Present" in run {
         val baseBytes     = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val basePath      = writeTempJarBytes(baseBytes)
@@ -176,7 +172,6 @@ class BundledSnapshotProbeJvmTest extends Test:
 
     // Leaf 3: digest mismatch raises DigestMismatch
     // Given: real jar on disk; snapshot embeds a wrong digest (0xdeadbeef).
-    // Pins: INV-007 verify-then-fallback
     "Leaf 3: digest mismatch raises TastyError.DigestMismatch" in run {
         val baseBytes     = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val basePath      = writeTempJarBytes(baseBytes)
@@ -201,7 +196,6 @@ class BundledSnapshotProbeJvmTest extends Test:
 
     // Leaf 11: probe is idempotent
     // Given: same jar probed twice.
-    // Pins: INV-004 idempotence
     "Leaf 11: probe is idempotent; same bytes returned on two calls" in run {
         val baseBytes      = buildZipBytes("Bar.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val basePath       = writeTempJarBytes(baseBytes)

@@ -8,8 +8,6 @@ package kyo
   *
   * Leaf 1 (arrayFieldRejectedOnProbe): Array[Int] field causes a compile error.
   * Leaf 2 (chunkFieldAcceptedOnProbe): Chunk[Int] field compiles successfully.
-  *
-  * Pins: INV-IMMUTABLE-ADT; constraint G (produced-ADT immutability).
   */
 class InvImmutableAdtTest extends Test:
 

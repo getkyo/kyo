@@ -63,9 +63,9 @@ class NameTest extends Test:
 
     "cross-platform placement verified by shared/ directory" in {
         // This leaf is satisfied by the test file living in shared/src/test/scala/kyo/
-        // per the cross-platform placement invariant INV-006. All leaves above run on
+        // per the cross-platform placement invariant. All leaves above run on
         // JVM, JS, and Native via the crossProject configuration.
-        // flow-allow: placement-proof leaf per Phase 02 Decision 13; the substantive
+        // the substantive
         // assertion is the file's existence under shared/src/test plus the JS/Native
         // compile gates passing, not a runtime value.
         assert(true)

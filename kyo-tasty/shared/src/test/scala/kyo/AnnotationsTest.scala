@@ -3,13 +3,11 @@ package kyo
 import kyo.Tasty.Name.asString
 import kyo.Tasty.SymbolId
 
-/** Phase 03 plan leaves 20-21: Tasty.hasAnnotation, findAnnotation, symbolsAnnotatedWith.
+/** plan leaves 20-21: Tasty.hasAnnotation, findAnnotation, symbolsAnnotatedWith.
   *
   * Uses synthetic classpath with owner chain for FQN resolution (same pattern as ClasspathAnnotatedTest).
   * sym[0] = Package "scala", sym[1] = Class "deprecated" (owner=scala), so FQN = "scala.deprecated".
   * sym[2] = Method "m1" annotated with @deprecated, sym[3] = Method "m2" not annotated.
-  *
-  * Pins: item 29 hasAnnotation/findAnnotation migration.
   */
 class AnnotationsTest extends Test:
 

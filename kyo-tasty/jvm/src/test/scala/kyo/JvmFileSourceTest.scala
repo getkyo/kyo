@@ -306,7 +306,7 @@ class JvmFileSourceTest extends Test:
         )
     }
 
-    // Phase 05a - B14: withReadBatch pool registration is atomic via Scope.acquireRelease.
+    // - B14: withReadBatch pool registration is atomic via Scope.acquireRelease.
     //
     // Scenario 1 (normal exit): withReadBatch installs pool, body succeeds, Scope.run
     // completes, release fires, activePool returns to null.
@@ -363,7 +363,7 @@ class JvmFileSourceTest extends Test:
                     fail(s"Expected Failure(TastyError.FileNotFound) but got: $other")
     }
 
-    // Phase 04a - INV-012 Test 3: 64-bit LFH offset guard rejects lfhOffset > Int.MaxValue.
+    // - Test 3: 64-bit LFH offset guard rejects lfhOffset > Int.MaxValue.
     //
     // We construct a synthetic JarEntry with lfhOffset = Int.MaxValue.toLong + 1L and then
     // ask JarMappedReader to read it. The bounds check at the start of readEntry must detect
@@ -409,7 +409,7 @@ class JvmFileSourceTest extends Test:
         )
     }
 
-    // Phase 05b - B15: JarMappedReader channel close window.
+    // - B15: JarMappedReader channel close window.
     //
     // Scenario 1: empty file triggers IOException("empty file") before channel.map() is called.
     // The channel.close() in the finally block must execute before the exception propagates.
@@ -442,7 +442,7 @@ class JvmFileSourceTest extends Test:
         )
     }
 
-    // Phase 05b - B15 scenario 2: malformed JAR content reaches parseAllEntries, which throws.
+    // - B15 scenario 2: malformed JAR content reaches parseAllEntries, which throws.
     // The channel.close() in the finally block fires before that exception leaves init().
     // The thrown exception must be a plain IOException, not a ClosedChannelException, which
     // would indicate the channel was still open when the error was constructed.
@@ -474,14 +474,13 @@ class JvmFileSourceTest extends Test:
         )
     }
 
-    // Phase 24b - T8 Test 1: JAR pool exhaustion under 50-fiber concurrent load.
+    // - T8 Test 1: JAR pool exhaustion under 50-fiber concurrent load.
     //
     // Opens a withReadBatch scope (installing a JarMappedReaderPool), then launches 50 concurrent
     // fibers via Async.foreach. Every fiber reads the same JAR entry. The pool serves all 50 reads
     // from a single JarMappedReader (one per jar path, cached in ConcurrentHashMap). After the
     // Scope exits the pool is cleared and activePool returns to null.
     //
-    // Pins: T8 (resource lifecycle - pool survives under concurrent load, releases cleanly).
     "P24b-T1: 50 concurrent fibers reading the same JAR entry all succeed and pool is cleared on scope exit" taggedAs jvmOnly in run {
         val dir       = makeTempDir()
         val jarPath   = s"$dir/pool-exhaustion.jar"
@@ -523,14 +522,13 @@ class JvmFileSourceTest extends Test:
             end match
     }
 
-    // Phase 24b - T8 Test 3: mmap arena close during Symbol.body access.
+    // - T8 Test 3: mmap arena close during Symbol.body access.
     //
-    // Phase 07: Tasty.Classpath is a pure case class with no Closed state. The old "ClasspathClosed
+    // Tasty.Classpath is a pure case class with no Closed state. The old "ClasspathClosed
     // after scope exit" test is no longer applicable. This replacement test verifies that a classpath
     // opened inside a Scope remains accessible (as an immutable case class) after the Scope exits,
     // and that Scope.ensure cleanup runs without error.
     //
-    // Pins: Phase 07 deletion of state machine (no Closed state on Tasty.Classpath).
     "P24b-T3: Tasty.Classpath remains accessible after scope exits (no Closed state)" taggedAs jvmOnly in run {
         import kyo.internal.tasty.query.ClasspathOrchestrator
         import kyo.internal.tasty.query.FileSource

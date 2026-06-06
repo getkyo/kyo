@@ -26,7 +26,7 @@ final case class ClassfileResult(
     typeParams: Chunk[LoadingSymbol.Materialising],
     arena: TypeArena,
     memberTypes: Map[LoadingSymbol.Materialising, Tasty.Type],
-    /** F-A3-001..004 fix: raw binary class names of parent types (e.g. "java/lang/Object", "java/io/Serializable").
+    /** Raw binary class names of parent types (e.g. "java/lang/Object", "java/io/Serializable").
       *
       * Parallel to `parents`: `parentBinaryNames(i)` is the binary name for `parents(i)`. Empty string entries indicate
       * non-class parent slots (should not occur for JDK classes but preserved for safety). Populated by buildResult for

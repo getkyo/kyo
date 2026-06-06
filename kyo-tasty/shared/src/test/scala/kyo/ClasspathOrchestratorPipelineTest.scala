@@ -4,12 +4,12 @@ import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.symbol.SymbolKind
 import scala.collection.mutable
 
-/** Tests for Phase 3: streaming pipeline via Channels.
+/** Tests for streaming pipeline via Channels.
   *
-  * T1-T8 as specified in execution-plan-perf.md Phase 3 test contract. Uses an in-memory FileSource for cross-platform compatibility.
+  * T1-T8 as specified in execution-plan-perf.md test contract. Uses an in-memory FileSource for cross-platform compatibility.
   *
   * T6 and T8 assert successful completion within a wall-clock budget rather than observing exact queue depth or decoder-thread count. Exact
-  * observation is deferred to Phase 8 re-profiling per the plan's "simpler path" guidance.
+  * observation is deferred to a future work item.
   */
 class ClasspathOrchestratorPipelineTest extends Test:
 
@@ -156,7 +156,7 @@ class ClasspathOrchestratorPipelineTest extends Test:
     }
 
     // T6: channel backpressure - large input (100+ entries) with concurrency=2 completes successfully.
-    // Simpler path: assert successful completion. Exact queue-depth observation deferred to Phase 8 re-profiling.
+    // Simpler path: assert successful completion. Exact queue-depth observation deferred to re-profiling.
     "T6: pipeline completes successfully with 100+ entries at concurrency=2" in run {
         val src   = MemFileSource()
         val bytes = kyo.fixtures.Embedded.plainClassTasty
@@ -198,7 +198,7 @@ class ClasspathOrchestratorPipelineTest extends Test:
 
     // T8: decoder concurrency respected - with concurrency=2 and 100+ entries, pipeline completes.
     // Simpler path: assert successful completion within a reasonable budget. Exact thread-count observation
-    // deferred to Phase 8 re-profiling per plan's guidance.
+    // deferred to re-profiling per plan's guidance.
     "T8: pipeline with concurrency=2 and 100+ entries completes successfully" in run {
         val src   = MemFileSource()
         val bytes = kyo.fixtures.Embedded.plainClassTasty
@@ -215,12 +215,12 @@ class ClasspathOrchestratorPipelineTest extends Test:
                     throw t
     }
 
-    // Phase 24b - T8 Test 2: classpath close during pending body decode.
-    // Resolved 2026-06-02 (verdict C: already-covered). Phase 07 deleted the Closed state from
+    // - T8 Test 2: classpath close during pending body decode.
+    // Resolved 2026-06-02 (verdict C: already-covered). deleted the Closed state from
     // Tasty.Classpath (now a pure immutable case class with no close() method, see
     // JvmFileSourceTest.scala:530 "P24b-T3"). ClasspathClosed now fires only via the mmap arena
     // IllegalStateException path after Scope exit (jvm-only), exercised by
-    // DecoderFidelity5Phase02JvmTest "P02.6 F-W2-27". The original "explicit close" precondition
+    // DecoderFidelity5Phase02JvmTest "P02.6". The original "explicit close" precondition
     // no longer exists in the API.
 
 end ClasspathOrchestratorPipelineTest

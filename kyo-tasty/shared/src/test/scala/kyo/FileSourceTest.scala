@@ -5,7 +5,7 @@ import scala.collection.mutable
 
 /** Tests for FileSource.list(dir, suffixes: Chunk[String]) multi-suffix API.
   *
-  * Tests F1-F4 per execution-plan-perf.md Phase 1.
+  * Tests F1-F4 per execution-plan-perf.md.
   *
   * Uses an in-memory FileSource to remain cross-platform. The multi-suffix variant is tested for correctness and consistency with the
   * single-suffix delegate.

@@ -7,16 +7,16 @@ import kyo.internal.tasty.snapshot.SnapshotReader
 
 /** Fidelity tests for snapshot round-trip integrity.
   *
-  * Pins findings F-C-001, F-C-002, F-C-003, and F-G-002. Phase 12 un-pends all five existing leaves and adds one new v3-rejection leaf by
+  * Pins findings  ,  ,  , and   un-pends all five existing leaves and adds one new v3-rejection leaf by
   * fixing `SnapshotWriter` (serialize permittedSubclassIds, annotations, javaMetadata, full fqnIndex), `SnapshotReader` (read new fields,
   * reject minor < 5, reconstruct dual-FQN index from FQNIDX__ section), and bumping FORMAT_VERSION to 5.
   *
-  * Phase 2.12: relocated from jvm/src/test to shared/src/test.
+  * relocated from jvm/src/test to shared/src/test.
   *
-  * Phase 2.13: adds FQNMAP__ section for unresolvedFqnByNegId persistence (Target 3), bumps FORMAT_VERSION to 6, and adds in-memory
+  * adds FQNMAP__ section for unresolvedFqnByNegId persistence (Target 3), bumps FORMAT_VERSION to 6, and adds in-memory
   * snapshot round-trip leaves via TestClasspaths2.withSnapshotInMemory.
   *
-  * Phase 2 post-audit: migrates the 4 previously-jvmOnly leaves (INV-010, F-C-002, F-C-003, F-G-002) from withRoundTrip (real JVM
+  * migrates the 4 previously-jvmOnly leaves (INV-010,  ,  ,  ) from withRoundTrip (real JVM
   * filesystem + real stdlib classpath) to withSnapshotInMemory (embedded fixtures). The stdlib-scale lower bounds (>= 5 deprecated symbols,
   * scala.Option.permittedSubclassIds >= 2) are removed; the shape assertions (round-trip preserves count equality) are preserved. All leaves
   * now run on JVM, JS, and Native.
@@ -25,14 +25,13 @@ class SnapshotFidelityTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    // INV-010 (Phase 12, migrated Phase 2 post-audit): roundtrip-fidelity via in-memory snapshot
+    // roundtrip-fidelity via in-memory snapshot
     // Given: a cold + warm classpath from embedded fixtures via withSnapshotInMemory
     // When: comparing symbolsAnnotatedWith("scala.deprecated").size and permittedSubclassIds
     // Then: warm count >= cold count; permittedSubclassIds sizes match for any sealed class
-    // Pins: INV-010; F-C-002 round-trip invariant
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly via withRoundTrip (real stdlib); now uses embedded fixtures.
-    "INV-010 (Phase 12): snapshot warm-load preserves annotations and permittedSubclassIds" in run {
+    "snapshot warm-load preserves annotations and permittedSubclassIds" in run {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
             for
                 coldAnnot <- coldCp.symbolsAnnotatedWith("scala.deprecated")
@@ -70,14 +69,13 @@ class SnapshotFidelityTest extends Test:
             yield succeed
     }
 
-    // F-C-002 (Phase 12, migrated Phase 2 post-audit): permits-roundtrip via in-memory snapshot
+    //   permits-roundtrip via in-memory snapshot
     // Given: a cold + warm classpath from embedded fixtures via withSnapshotInMemory
     // When: comparing permittedSubclassIds for any sealed class found in both
     // Then: sizes match for any class that has permittedSubclassIds in cold
-    // Pins: F-C-002
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly via withRoundTrip; now uses embedded fixtures.
-    "F-C-002 (Phase 12): permittedSubclassIds survives in-memory snapshot round-trip" in run {
+    "permittedSubclassIds survives in-memory snapshot round-trip" in run {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
             Kyo.foreachDiscard(coldCp.allClassLike):
                 case cold: Tasty.Symbol.Class =>
@@ -103,14 +101,13 @@ class SnapshotFidelityTest extends Test:
             .map(_ => succeed)
     }
 
-    // F-C-003 (Phase 12, migrated Phase 2 post-audit): annotations-roundtrip via in-memory snapshot
+    //   annotations-roundtrip via in-memory snapshot
     // Given: a cold + warm classpath from embedded fixtures via withSnapshotInMemory
     // When: comparing symbolsAnnotatedWith("scala.deprecated").size between cold and warm
     // Then: warm count >= cold count (annotations survive in-memory snapshot round-trip)
-    // Pins: F-C-003
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly with `>= 5` lower bound on real stdlib; now uses embedded fixtures (bound removed).
-    "F-C-003 (Phase 12): symbolsAnnotatedWith count survives in-memory snapshot round-trip" in run {
+    "symbolsAnnotatedWith count survives in-memory snapshot round-trip" in run {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
             for
                 coldA <- coldCp.symbolsAnnotatedWith("scala.deprecated")
@@ -125,14 +122,13 @@ class SnapshotFidelityTest extends Test:
                 succeed
     }
 
-    // F-G-002 (Phase 12, migrated Phase 2 post-audit): javametadata-roundtrip via in-memory snapshot
+    //   javametadata-roundtrip via in-memory snapshot
     // Given: a cold + warm classpath from embedded fixtures via withSnapshotInMemory
     // When: finding any ClassLike with javaMetadata in cold; checking warm for same symbol
     // Then: javaMetadata Present in warm (if any javaMetadata symbol exists in fixtures); fields match
-    // Pins: F-G-002 snapshot mirror
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly (required real stdlib .class files); embedded fixtures suffice for shape assertion.
-    "F-G-002 (Phase 12): javaMetadata survives in-memory snapshot round-trip" in run {
+    "javaMetadata survives in-memory snapshot round-trip" in run {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
             coldCp.allClassLike.flatMap:
                 case c: Tasty.Symbol.ClassLike if c.javaMetadata.isDefined => Chunk(c)
@@ -166,26 +162,25 @@ class SnapshotFidelityTest extends Test:
             end match
     }
 
-    // Wire-format leaf 5 (Phase 12, updated Phase 2.13, updated Phase 11): format-version-bumped
-    // Given: a snapshot file written with the Phase 11 code
+    // Wire-format leaf 5: format-version-bumped
+    // Given: a snapshot file written with the code
     // When: reading the format version constant
-    // Then: version is 11 (Phase 11 bumped to 11 for four new TastyError variants)
-    // History: Phase 2.13 set 6, Phase 5.01b set 7, Phase 5.02 set 8, Phase 5.03 set 9, prior Phase 11 set 10, this Phase 11 set 11.
+    // Then: version is 11 (bumped for four new TastyError variants)
+    // History: set 6,b set 7, set 8, set 9, prior set 10, this set 11.
     // Cross-platform: SnapshotFormat.minorVersion is a compile-time constant, no filesystem needed.
-    "Phase 2.13: SnapshotFormat.FORMAT_VERSION reflects current minor version after all phase bumps" in {
+    "SnapshotFormat.FORMAT_VERSION reflects current minor version" in {
         assert(
             SnapshotFormat.minorVersion == 11,
             s"Expected SnapshotFormat.minorVersion == 11 but got ${SnapshotFormat.minorVersion}"
         )
     }
 
-    // New leaf (Phase 2.13): in-memory-roundtrip-preserves-symbols
+    // New leaf: in-memory-roundtrip-preserves-symbols
     // Given: a cold classpath from embedded fixtures and a warm in-memory snapshot round-trip
     // When: comparing symbols.size between cold and warm
     // Then: symbol count is preserved end-to-end via MemoryFileSource (no disk needed)
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; works on JVM, JS, Native.
-    // Pins: Target 1 (in-memory snapshot writer) Phase 2.13
-    "Phase 2.13: in-memory snapshot round-trip preserves symbols count" in run {
+    "in-memory snapshot round-trip preserves symbols count" in run {
         TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
             assert(
                 cold.symbols.size == warm.symbols.size,
@@ -194,12 +189,11 @@ class SnapshotFidelityTest extends Test:
             succeed
     }
 
-    // New leaf (Phase 12, migrated Phase 2.13): old-snapshot-triggers-cold-decode
+    // old-snapshot-triggers-cold-decode
     // Given: a synthetic snapshot byte stream with magic KRFL, major=1, minor=3 (old format)
     // When: writing it to a MemoryFileSource and calling SnapshotReader.read
     // Then: result is Failure(TastyError.SnapshotVersionMismatch) where found.minor == 3 and supported.minor == current
-    // Pins: minor-version rejection decision (Option A from Phase 12 prep)
-    // Cross-platform (Phase 2.13): migrated from jvmOnly to use MemoryFileSource.
+    // Cross-platform: migrated from jvmOnly to use MemoryFileSource.
     "old-snapshot-triggers-cold-decode" in run {
         Sync.defer:
             val fakeOld = new Array[Byte](36)

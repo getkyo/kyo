@@ -30,7 +30,7 @@ object JavaAnnotationUnpickler:
       * consumed).
       *
       * Note: classfile annotations resolve class references via CONSTANT_Class pool entries, not by TASTy addresses. Unresolved symbols for
-      * annotation class references are created directly (Phase 07: ClasspathRef deleted).
+      * annotation class references are created directly (ClasspathRef removed in an earlier iteration).
       */
     def readAnnotations(
         view: ByteView,

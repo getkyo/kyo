@@ -2,13 +2,11 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Plan-mandated tests for Phase 04 (leaves 82-83): Field JVM accessor predicates.
+/** Field JVM accessor predicates.
   *
   * Field is Java-classfile-level (no Scala body). The isJvmPublic / isJvmPrivate / isJvmProtected / isJvmStatic / isJvmFinal predicates
   * read the JVM access flags from JavaMetadata.accessFlags. Leaf 82 tests isJvmPublic with a real javaMetadata value. Leaf 83 tests
   * isJvmStatic returning false when javaMetadata is Absent.
-  *
-  * Pins: INV-002.
   */
 class FieldJvmAccessTest extends Test:
 
@@ -60,7 +58,6 @@ class FieldJvmAccessTest extends Test:
     // Given: Field with javaMetadata.accessFlags = ACC_PUBLIC (0x0001)
     // When: f.isJvmPublic
     // Then: true
-    // Pins: INV-002
     "Leaf 82: isJvmPublic: returns true when ACC_PUBLIC bit is set in accessFlags" in run {
         val field = makeFieldWithAccess(id = 1, name = "F", accessFlags = 0x0001)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>
@@ -91,7 +88,6 @@ class FieldJvmAccessTest extends Test:
     // Given: Field with javaMetadata=Maybe.Absent
     // When: f.isJvmStatic
     // Then: false
-    // Pins: INV-002
     "Leaf 83: isJvmStatic-absent-javaMetadata: returns false when javaMetadata is Absent" in run {
         val field = makeFieldNoMeta(id = 1, name = "G")
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>

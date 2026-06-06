@@ -7,12 +7,10 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.TastyState
 
-/** Phase 03 plan leaves 22-23: Tasty.bodyTree.
+/** plan leaves 22-23: Tasty.bodyTree.
   *
   * Leaf 22: Tasty.bodyTree returns Present under withClasspath(roots) (decode context attached).
   * Leaf 23: Tasty.bodyTree returns Absent under withClasspath(cp) (no decode context).
-  *
-  * Pins: item 29 bodyTree migration; INV-009 site-3.
   */
 class BodyTreeTest extends Test:
 
@@ -95,25 +93,23 @@ class BodyTreeTest extends Test:
                 throw t
     }
 
-    // Phase 09 Leaf 3: noBodyFieldOnAnyClassLike
+    // Leaf 3: noBodyFieldOnAnyClassLike
     // Given: a probe accessing .body on Symbol.Class
     // When: compileErrors is invoked
-    // Then: non-empty string (body is not a member of Symbol.Class after Phase 09)
-    // Pins: Cat 17 Option A
-    "Phase 09 Leaf 3: accessing .body on ClassLike is a compile error" in {
+    // Then: non-empty string (body is not a member of Symbol.Class after)
+    "accessing .body on ClassLike is a compile error" in {
         assert(
             compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Class).body").nonEmpty,
-            "Expected compile error for Symbol.Class.body after Phase 09"
+            "Expected compile error for Symbol.Class.body (body field removed)"
         )
         succeed
     }
 
-    // Phase 09 Leaf 4: noBodyFieldOnMethodValVar
+    // Leaf 4: noBodyFieldOnMethodValVar
     // Given: probes accessing .body on Symbol.Method, Symbol.Val, Symbol.Var
     // When: compileErrors is invoked for each
     // Then: every probe returns a non-empty string
-    // Pins: Cat 17 Option A
-    "Phase 09 Leaf 4: accessing .body on Method/Val/Var is a compile error" in {
+    "accessing .body on Method/Val/Var is a compile error" in {
         assert(
             compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Method).body").nonEmpty,
             "Expected compile error for Symbol.Method.body"
@@ -129,12 +125,11 @@ class BodyTreeTest extends Test:
         succeed
     }
 
-    // Phase 09 Leaf 5: schemaRoundTripFaithfulPostBodyRemoval
+    // Leaf 5: schemaRoundTripFaithfulPostBodyRemoval
     // Given: a classpath cp built via coldLoadBinding; encoded via Json/Schema; decoded back
     // When: the test reads fields of the round-tripped cp
     // Then: every field equals the original; .body is not callable (compile check)
-    // Pins: Cat 17 faithful round-trip replaces lossy schemaSymbolBody
-    "Phase 09 Leaf 5: Schema round-trip is faithful after body field removal" in run {
+    "Schema round-trip is faithful after body field removal" in run {
         val src = MemoryFileSource()
         src.add("root/SomeObject.tasty", kyo.fixtures.Embedded.someObjectTasty)
         Scope.run:

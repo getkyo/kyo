@@ -7,7 +7,7 @@ import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import scala.collection.mutable
 
-/** Tests for Phase 11: TastyError wire format minor 9 to 10.
+/** Tests for TastyError wire format minor 9 to 10.
   *
   * Covers all 8 plan-driven test leaves:
   *   1. Round-trip every TastyError variant through the new string-tag wire format.
@@ -133,7 +133,6 @@ class TastyErrorWireFormatTest extends Test:
     // Given: every TastyError variant (19 cases) with representative field values.
     // When: written via SnapshotWriter (serializeToBytes), read via SnapshotReader.
     // Then: decoded variant equals original case-by-case.
-    // Pins: INV-002 round-trip integrity.
     "round-trip every TastyError variant through the new string-tag wire format" in run {
         val allErrors: Chunk[TastyError] = Chunk(
             TastyError.FileNotFound("test/path/Foo.tasty"),
@@ -188,7 +187,6 @@ class TastyErrorWireFormatTest extends Test:
     // Given: TastyError.DigestMismatch("x", "y").
     // When: serialize and peek tag bytes in the ERRORS section.
     // Then: on-disk tag string equals "DigestMismatch".
-    // Pins: Q-007 / BIND-006.
     "wire tag equals TastyError.productPrefix" in run {
         val err           = TastyError.DigestMismatch("x", "y")
         val snapshotBytes = snapshotBytesWithErrors(Chunk(err))
@@ -210,12 +208,11 @@ class TastyErrorWireFormatTest extends Test:
         )
     }
 
-    // Leaf 3: minor version bumped (originally to 10 for string-tag format; now 11 after Phase 11 variant addition).
+    // Leaf 3: minor version bumped (originally to 10 for string-tag format; now 11).
     // Given: a freshly written snapshot.
     // When: read the format header bytes.
-    // Then: minorVersion == 11 (Phase 11 bumped from 10 to 11 for four new TastyError variants).
-    // Pins: INV-002 minor-version bump.
-    "minor version is 11 in freshly written snapshot after Phase 11 variant addition" in run {
+    // Then: minorVersion == 11 (bumped for four new TastyError variants).
+    "minor version is 11 in freshly written snapshot" in run {
         val snapshotBytes = snapshotBytesWithErrors(Chunk.empty)
         val minor         = snapshotBytes(5) & 0xff
         assert(
@@ -232,7 +229,6 @@ class TastyErrorWireFormatTest extends Test:
     // Given: synthetic snapshot bytes with tag "FutureVariant" injected into the ERRORS section.
     // When: read via SnapshotReader.
     // Then: TastyError.NotImplemented(s) where s contains "FutureVariant".
-    // Pins: INV-002 forward-compat.
     "unknown wire tag falls back to TastyError.NotImplemented" in run {
         // Build a snapshot with one known error to get valid headers.
         // Use FileNotFound("base"): ERRORS section has a known byte count.
@@ -284,7 +280,6 @@ class TastyErrorWireFormatTest extends Test:
     // Given: tag bytes for "FileNotFound" (12 bytes).
     // When: read length prefix from the ERRORS section.
     // Then: equals 12 (single-byte varint: 12 < 128).
-    // Pins: Q-007 wire format.
     "short tag names encode as a single-byte varint prefix" in run {
         val err           = TastyError.FileNotFound("test/path/Foo.tasty")
         val snapshotBytes = snapshotBytesWithErrors(Chunk(err))
@@ -307,7 +302,6 @@ class TastyErrorWireFormatTest extends Test:
     // When: read the length prefix varint from the raw bytes.
     // Then: first byte is 0xC8, second byte is 0x01 (LEB128 encoding of 200).
     //       200 = 72 + 1*128; byte0 = 72 | 0x80 = 0xC8 (continuation), byte1 = 1 (no continuation).
-    // Pins: Q-007 edge case.
     "tag of length 200 uses two-byte LEB128 varint prefix (0xC8 0x01)" in run {
         val longTag = "x" * 200
         val tagUtf8 = longTag.getBytes(java.nio.charset.StandardCharsets.UTF_8)
@@ -338,7 +332,6 @@ class TastyErrorWireFormatTest extends Test:
     // Given: a snapshot byte array whose header byte at offset 5 is patched to 9.
     // When: loaded via SnapshotReader.read.
     // Then: raises TastyError.SnapshotVersionMismatch with found=(1,9,0), supported=(1,11,0).
-    // Pins: INV-002 breaking-add-only-loads.
     "snapshot with minorVersion=9 is rejected with SnapshotVersionMismatch" in run {
         val freshBytes   = snapshotBytesWithErrors(Chunk.empty)
         val patchedBytes = freshBytes.clone()
@@ -373,9 +366,8 @@ class TastyErrorWireFormatTest extends Test:
     // Given: all 19 TastyError variants serialized to bytes and read back on the current platform.
     // When: executed.
     // Then: every variant round-trips correctly.
-    // Pins: INV-006 cross-platform; INV-002 portability.
     "cross-platform round-trip: all 19 TastyError variants serialize and deserialize identically" in run {
-        // This test is placed in shared/src/test/scala (cross-platform by default per INV-006).
+        // This test is placed in shared/src/test/scala (cross-platform by default per).
         // ByteArrayOutputStream and java.nio.charset.StandardCharsets.UTF_8 are available on JVM,
         // Scala.js (emulated), and Scala Native; the wire format uses only byte arrays and integers.
         val errors: Chunk[TastyError] = Chunk(

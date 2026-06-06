@@ -2,7 +2,7 @@ package kyo
 
 import org.scalatest.Tag
 
-/** Phase 17 plan leaves 1-9: real-world classpath alphabetical iteration.
+/** plan leaves 1-9: real-world classpath alphabetical iteration.
   *
   * Leaf 1: Akka actor classpath loads without error (BIND-018, Akka).
   * Leaf 2: Cats Effect classpath loads without error (BIND-018, Cats Effect).
@@ -17,7 +17,6 @@ import org.scalatest.Tag
   * All leaves are JVM-only (java.class.path discovery requires JVM) and tagged `slow` so they
   * are excluded from the default test run but can be included with `-- -n slow`.
   *
-  * Pins: BIND-018 real-world classpath fidelity; INV-001, INV-002, INV-003, INV-004, INV-005,
   * INV-006, INV-007, INV-008, INV-009.
   */
 class RealWorldClasspathTest extends Test:
@@ -44,7 +43,6 @@ class RealWorldClasspathTest extends Test:
     // When: Tasty.withClasspath(Seq(akkaJar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
     // JVM-only: java.class.path discovery requires JVM; jar path extraction uses java.io.File.
-    // Pins: BIND-018 (Akka)
     "Akka classpath loads without error" taggedAs slow in runJVM {
         val jar = findJar("akka-actor_3")
         Abort.run[TastyError](
@@ -65,7 +63,6 @@ class RealWorldClasspathTest extends Test:
     // Given: cats-effect_3-3.7.0.jar on java.class.path via build.sbt % Test intransitive dep
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
-    // Pins: BIND-018 (Cats Effect)
     "Cats Effect classpath loads without error" taggedAs slow in runJVM {
         val jar = findJar("cats-effect_3")
         Abort.run[TastyError](
@@ -88,7 +85,6 @@ class RealWorldClasspathTest extends Test:
     // Loading it produces cp.symbols.isEmpty && cp.errors.isEmpty (no TASTy decoding occurs).
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
-    // Pins: BIND-018 (Doobie)
     "Doobie classpath loads without error" taggedAs slow in runJVM {
         val jar = findJar("doobie-core_2.13")
         Abort.run[TastyError](
@@ -109,7 +105,6 @@ class RealWorldClasspathTest extends Test:
     // Given: http4s-core_3-0.23.28.jar on java.class.path via build.sbt % Test intransitive dep
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
-    // Pins: BIND-018 (Http4s)
     "Http4s classpath loads without error" taggedAs slow in runJVM {
         val jar = findJar("http4s-core_3")
         Abort.run[TastyError](
@@ -130,7 +125,6 @@ class RealWorldClasspathTest extends Test:
     // Given: pekko-actor_3-1.1.3.jar on java.class.path via build.sbt % Test intransitive dep
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
-    // Pins: BIND-018 (Pekko)
     "Pekko classpath loads without error" taggedAs slow in runJVM {
         val jar = findJar("pekko-actor_3")
         Abort.run[TastyError](
@@ -152,7 +146,6 @@ class RealWorldClasspathTest extends Test:
     // Note: Play 3.x moved to org.playframework groupId.
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
-    // Pins: BIND-018 (Play)
     "Play classpath loads without error" taggedAs slow in runJVM {
         val jar = findJar("play_3")
         Abort.run[TastyError](
@@ -175,7 +168,6 @@ class RealWorldClasspathTest extends Test:
     // Loading it produces cp.symbols.isEmpty && cp.errors.isEmpty (no TASTy decoding occurs).
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
-    // Pins: BIND-018 (Spark)
     "Spark classpath loads without error" taggedAs slow in runJVM {
         val jar = findJar("spark-core_2.13")
         Abort.run[TastyError](
@@ -196,7 +188,6 @@ class RealWorldClasspathTest extends Test:
     // Given: spire_3-0.18.0.jar on java.class.path via build.sbt % Test intransitive dep
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
-    // Pins: BIND-018 (Spire)
     "Spire classpath loads without error" taggedAs slow in runJVM {
         val jar = findJar("spire_3")
         Abort.run[TastyError](
@@ -217,7 +208,6 @@ class RealWorldClasspathTest extends Test:
     // Given: zio_3-2.0.15.jar on java.class.path via build.sbt % Test intransitive dep
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
-    // Pins: BIND-018 (ZIO)
     "ZIO classpath loads without error" taggedAs slow in runJVM {
         val jar = findJar("zio_3")
         Abort.run[TastyError](

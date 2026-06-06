@@ -170,9 +170,8 @@ class VarintTest extends Test:
         assert(Varint.readLongNat(view) == Long.MaxValue)
     }
 
-    // Test (Phase 08): readNat delegates to readLongNat; limit inherited from readLongNat (10 bytes)
+    // Test: readNat delegates to readLongNat; limit inherited from readLongNat (10 bytes)
     // Per actual dotty TastyReader.readNat = readLongNat().toInt: no separate per-byte cap in readNat.
-    // Pins: Q-002 expansion (old 5-byte cap removed; readNat now accepts 6-10 byte encodings).
     "readNat rejects continuation past 10 bytes (inherited readLongNat cap)" in run {
         // §839 case 3; direct Varint error-path test, single-threaded, no suspension.
         // 11 bytes with 0x80 CLEAR: readLongNat fires bytes >= 10 after reading the 10th byte.
@@ -190,9 +189,8 @@ class VarintTest extends Test:
         end try
     }
 
-    // Test (Phase 08 leaf 2): large-section-offsets-decode
+    // large-section-offsets-decode
     // A 6-byte non-minimal encoding of 0 previously threw "5 bytes"; now decodes to 0.
-    // Pins: F-I-005 root cause (large section offsets use 6-9 byte Nat encodings).
     "readNat decodes 6-byte non-minimal encoding (large-section-offset fix)" in run {
         // §839 case 3; direct Varint test, single-threaded, no suspension.
         // Non-minimal encoding of 0 in 6 bytes:
@@ -204,9 +202,8 @@ class VarintTest extends Test:
         assert(Varint.readNat(view) == 0)
     }
 
-    // Test (Phase 08 leaf 3): readNat truncates values > Int.MaxValue matching dotty behavior
+    // readNat truncates values > Int.MaxValue matching dotty behavior
     // Per actual dotty TastyReader.readNat = readLongNat().toInt: silently truncates to Int.
-    // Pins: Q-002 parity with dotty's actual readNat implementation.
     "readNat truncates 9-byte Long.MaxValue encoding to Int (dotty parity)" in run {
         // §839 case 3; direct Varint truncation test, single-threaded, no suspension.
         // Long.MaxValue in 9 bytes: 0x7F * 8 continuation + 0xFF terminating.
@@ -227,10 +224,9 @@ class VarintTest extends Test:
         assert(Varint.readNat(view) == Long.MaxValue.toInt)
     }
 
-    // Test (Phase 08 leaf 4): varint-cross-platform-parity
+    // varint-cross-platform-parity
     // The same synthetic 6-byte stream decoded on JVM, JS, and Native returns the same value.
     // This test lives in shared/src/test so it runs on all three platforms per HARD RULE 3.
-    // Pins: cross-platform parity for the varint path (HARD RULE 3).
     "readNat 6-byte non-minimal decoding is consistent across platforms" in run {
         // §839 case 3; cross-platform parity test, single-threaded, no suspension.
         // 6-byte non-minimal encoding of value 1:
@@ -240,7 +236,6 @@ class VarintTest extends Test:
         assert(Varint.readNat(view) == 1)
     }
 
-    // Test (Phase 03a B4): readLongNat rejects continuation past 10 bytes
     "readLongNat rejects continuation past 10 bytes (Long overflow guard)" in run {
         // §839 case 3; direct Varint error-path test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
@@ -258,7 +253,6 @@ class VarintTest extends Test:
         end try
     }
 
-    // Test (Phase 03a B4 boundary): readLongNat accepts exactly 10 bytes
     "readLongNat accepts exactly 10-byte encoding without throwing" in run {
         // §839 case 3; direct Varint boundary test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
@@ -280,7 +274,7 @@ class VarintTest extends Test:
         assert(view.position == 10)
     }
 
-    // Test (Phase 21a T2-1): writeNat then readNat round-trip
+    // writeNat then readNat round-trip
     "writeNat then readNat round-trips 1234" in run {
         // §839 case 3; direct Varint write+read round-trip test, single-threaded.
         import AllowUnsafe.embrace.danger
@@ -290,7 +284,7 @@ class VarintTest extends Test:
         assert(Varint.readNat(view) == 1234)
     }
 
-    // Test (Phase 21a T2-2): writeLongNat then readLongNat round-trip
+    // writeLongNat then readLongNat round-trip
     "writeLongNat then readLongNat round-trips 9_999_999_999L" in run {
         // §839 case 3; direct Varint write+read round-trip test, single-threaded.
         import AllowUnsafe.embrace.danger
@@ -300,7 +294,7 @@ class VarintTest extends Test:
         assert(Varint.readLongNat(view) == 9_999_999_999L)
     }
 
-    // Test (Phase 25b T6-1): seeded generative round-trip for writeLongNat / readLongNat.
+    // seeded generative round-trip for writeLongNat / readLongNat.
     // 100 non-negative Long values drawn from scala.util.Random(seed=0L).
     // Negative values are masked to non-negative via >>> 1 (arithmetic unsigned shift).
     "writeLongNat then readLongNat round-trips 100 seeded random non-negative Longs" in run {

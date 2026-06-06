@@ -2,15 +2,13 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Plan-mandated tests for Phase 06 (leaves 101-109): typed Classpath find* lookups.
+/** typed Classpath find* lookups.
   *
   * Fixture layout (index == id.value): 0 -> Class "A" in pkg "pkg.A" 1 -> Trait "T" in pkg "pkg.T" 2 -> Object "O" in pkg "pkg.O" 3 ->
   * Package "sub" in pkg "pkg.sub" 4 -> Package "pkg" 5 -> Class "A" in pkg "pkg.sub.A" (same simple name, different package)
   *
   * fqnIndex: "pkg.A" -> 0, "pkg.T" -> 1, "pkg.O" -> 2 packageIndex: "pkg" -> 4, "pkg.sub" -> 3 subclassIndex: empty (these tests do not
   * exercise subclass queries)
-  *
-  * Pins: INV-005.
   */
 class ClasspathTypedFindTest extends Test:
 
@@ -99,7 +97,6 @@ class ClasspathTypedFindTest extends Test:
     // Given: fixture cp with "pkg.A" (a Class).
     // When: cp.findClass("pkg.A")
     // Then: Maybe.Present(c) where c.isInstanceOf[Symbol.Class]
-    // Pins: INV-005
     "Leaf 101: findClass returns Present[Class] for a class FQN" in run {
         buildFixture.map: cp =>
             cp.findClass("pkg.A") match
@@ -113,7 +110,6 @@ class ClasspathTypedFindTest extends Test:
     // Given: fixture with "pkg.T" (a Trait).
     // When: cp.findClass("pkg.T")
     // Then: Maybe.Absent (trait does not satisfy the Class filter)
-    // Pins: INV-005
     "Leaf 102: findClass returns Absent for a trait FQN" in run {
         buildFixture.map: cp =>
             val result = cp.findClass("pkg.T")
@@ -124,7 +120,6 @@ class ClasspathTypedFindTest extends Test:
     // Given: fixture with "pkg.T" (a Trait).
     // When: cp.findTrait("pkg.T")
     // Then: Present[Trait]
-    // Pins: INV-005
     "Leaf 103: findTrait returns Present[Trait] for a trait FQN" in run {
         buildFixture.map: cp =>
             cp.findTrait("pkg.T") match
@@ -138,7 +133,6 @@ class ClasspathTypedFindTest extends Test:
     // Given: fixture with "pkg.O" (an Object).
     // When: cp.findObject("pkg.O")
     // Then: Present[Object]
-    // Pins: INV-005
     "Leaf 104: findObject returns Present[Object] for an object FQN" in run {
         buildFixture.map: cp =>
             cp.findObject("pkg.O") match
@@ -152,7 +146,6 @@ class ClasspathTypedFindTest extends Test:
     // Given: fixture pkg.A (Class), pkg.T (Trait), pkg.O (Object).
     // When: findClassLike on each FQN
     // Then: each returns Present with matching subtype
-    // Pins: INV-005
     "Leaf 105: findClassLike returns Present[ClassLike] for class, trait, and object FQNs" in run {
         buildFixture.map: cp =>
             cp.findClassLike("pkg.A") match
@@ -179,7 +172,6 @@ class ClasspathTypedFindTest extends Test:
     // Given: fixture with "pkg" package.
     // When: cp.findPackage("pkg")
     // Then: Present[Package]
-    // Pins: INV-005
     "Leaf 106: findPackage returns Present[Package] for a package FQN" in run {
         buildFixture.map: cp =>
             cp.findPackage("pkg") match
@@ -193,7 +185,6 @@ class ClasspathTypedFindTest extends Test:
     // Given: fixture with "pkg.A" (id 0) and "pkg.sub.A" (id 5), both named "A".
     // When: cp.findClassesByName("A")
     // Then: Chunk[Symbol.Class] of size 2
-    // Pins: INV-005
     "Leaf 107: findClassesByName returns all Class instances with the given simple name" in run {
         buildFixture.map: cp =>
             val result = cp.findClassesByName("A")
@@ -208,7 +199,6 @@ class ClasspathTypedFindTest extends Test:
     // Given: fixture with "pkg.A" in fqnIndex.
     // When: cp.findClassByBinary("pkg/A")
     // Then: Present[Class]
-    // Pins: INV-005
     "Leaf 108: findClassByBinary returns Present[Class] for a binary name" in run {
         buildFixture.map: cp =>
             cp.findClassByBinary("pkg/A") match
@@ -222,7 +212,6 @@ class ClasspathTypedFindTest extends Test:
     // Given: fixture with no "does.not.exist" symbol.
     // When: cp.findClass("does.not.exist")
     // Then: Maybe.Absent
-    // Pins: INV-004
     "Leaf 109: findClass returns Absent for a missing FQN" in run {
         buildFixture.map: cp =>
             val result = cp.findClass("does.not.exist")

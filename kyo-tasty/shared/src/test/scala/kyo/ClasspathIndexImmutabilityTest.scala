@@ -4,9 +4,7 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
 import scala.collection.mutable
 
-/** Tests for Phase 07: Classpath index maps are immutable after Pass C construction.
-  *
-  * Pins: INV-008 (Classpath index maps immutable after Pass C).
+/** Tests for Classpath index maps are immutable after Pass C construction.
   */
 class ClasspathIndexImmutabilityTest extends Test:
 
@@ -57,7 +55,6 @@ class ClasspathIndexImmutabilityTest extends Test:
     // Given: a Classpath cp from Classpath.init.
     // When: cp.indices.byFqn is captured before and after an arbitrary read operation.
     // Then: both captures are the same Map reference.
-    // Pins: INV-008.
     "Leaf 1: fqnIndex is built once and never mutated (val semantics)" in run {
         Scope.run:
             Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
@@ -82,11 +79,11 @@ class ClasspathIndexImmutabilityTest extends Test:
     }
 
     // Leaf 2: subclassIndex is a non-null immutable Map constructed during Pass C.
-    // Phase 07 builds subclassIndex by inverting parentTypes. Parent types derived from same-file
+    // builds subclassIndex by inverting parentTypes. Parent types derived from same-file
     // TYPEREFdirect/TYPEREFsymbol ARE indexed. Cross-file parents (encoded as APPLY(NEW(type),...) in
-    // TASTy) resolve to Named(SymbolId(-1)) in Phase 07; full cross-file parent indexing requires
-    // the TASTy APPLY-tree descent added in Phase 09.
-    // This test pins INV-008: subclassIndex is constructed as an immutable Map after Pass C.
+    // TASTy) resolve to Named(SymbolId(-1)) in; full cross-file parent indexing requires
+    // the TASTy APPLY-tree descent added in.
+    // This test pins: subclassIndex is constructed as an immutable Map after Pass C.
     "Leaf 2: subclassIndex is a non-null immutable Map after Pass C (INV-008)" in run {
         Scope.run:
             Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
@@ -110,7 +107,6 @@ class ClasspathIndexImmutabilityTest extends Test:
 
     // Leaves 3-5: grep-based deletion checks are in ClasspathIndexGrepTest (JVM-only, kyo-tasty/jvm/src/test).
     // They verify that SingleAssign, ClasspathRef, UnresolvedRef do not appear in production sources.
-    // Pins: INV-012.
     "Leaf 3: SingleAssign deletion check delegates to ClasspathIndexGrepTest (JVM)" in {
         succeed // JVM-only grep in ClasspathIndexGrepTest
     }

@@ -2,11 +2,9 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Plan-mandated tests for Phase 07 (leaves 151-154): Symbol.show(format: ShowFormat).
+/** Symbol.show(format: ShowFormat).
   *
   * Covers: ShowFormat.FullyQualified, ShowFormat.Simple, ShowFormat.Code for class and method.
-  *
-  * Pins: INV-009.
   */
 class SymbolShowFormatTest extends Test:
 
@@ -127,7 +125,6 @@ class SymbolShowFormatTest extends Test:
     // Given: Symbol.Class List in scala.collection.
     // When: c.show(ShowFormat.FullyQualified).
     // Then: returns "scala.collection.List".
-    // Pins: INV-009
     "Leaf 151: show(FullyQualified) returns dotted FQN" in run {
         buildFixture.flatMap: cp =>
             val c = cp.findClass("scala.collection.List").get
@@ -141,7 +138,6 @@ class SymbolShowFormatTest extends Test:
     // Given: same symbol.
     // When: c.show(ShowFormat.Simple).
     // Then: returns "List".
-    // Pins: INV-009
     "Leaf 152: show(Simple) returns simple name" in run {
         buildFixture.flatMap: cp =>
             val c = cp.findClass("scala.collection.List").get
@@ -155,7 +151,6 @@ class SymbolShowFormatTest extends Test:
     // Given: Symbol.Method "foo"(x: ...) from def foo(x: List): String.
     // When: m.show(ShowFormat.Code).
     // Then: returns a string starting with "def foo" and containing "(x: ".
-    // Pins: INV-009
     "Leaf 153: show(Code) for method starts with def name and has params" in run {
         buildFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(4)).asInstanceOf[Tasty.Symbol.Method]
@@ -170,7 +165,6 @@ class SymbolShowFormatTest extends Test:
     // Given: Symbol.Class "List"[A] extends D.
     // When: c.show(ShowFormat.Code).
     // Then: returns string containing "class List", "[A]", and "extends D".
-    // Pins: INV-009
     "Leaf 154: show(Code) for class contains kind, name, type params, and extends clause" in run {
         buildFixture.flatMap: cp =>
             val c = cp.findClass("scala.collection.List").get

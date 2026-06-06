@@ -6,8 +6,6 @@ import kyo.internal.tasty.symbol.SymbolSignature
 /** Tests for SymbolSignature.compute across all symbol subtypes.
   *
   * Verifies that the signature string is non-empty and follows the documented pattern for each subtype.
-  *
-  * Pins: INV-002.
   */
 class SymbolSignatureTest extends Test:
 

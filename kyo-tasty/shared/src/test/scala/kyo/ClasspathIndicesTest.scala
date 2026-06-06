@@ -12,8 +12,6 @@ import kyo.Tasty.SymbolId
   *
   * Leaf 3 (dictRoundTripOverSchema): Dict[String, SymbolId] fields round-trip through Schema.
   * Leaf 4 (dictAggregationsBuilderPreservesIds): bySimpleName aggregation is correct.
-  *
-  * Pins: Cat 2 Dict round-trip via Schema; PRESERVE-H; Cat 2 semantic equivalence.
   */
 class ClasspathIndicesTest extends Test:
 

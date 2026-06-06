@@ -3,12 +3,10 @@ package kyo
 import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.query.ClasspathOrchestrator
 
-/** Phase 03 plan leaves 5-8: Tasty.findClass, findClassLike, findObject, findSymbol, findPackage,
+/** plan leaves 5-8: Tasty.findClass, findClassLike, findObject, findSymbol, findPackage,
   * requireClass, requireClassLike, requireObject, requireSymbol, requirePackage, requireMethod.
   *
   * Uses embedded PlainClass/SomeObject/SomeTrait fixtures for cross-platform coverage.
-  *
-  * Pins: item 29 find-family contract.
   */
 class QueryFindTest extends Test:
 
@@ -53,7 +51,7 @@ class QueryFindTest extends Test:
                 case Result.Panic(t)   => throw t
     }
 
-    // Leaf 9 (partial): Tasty.allClassLike returns a non-empty Chunk for fixture classpath
+    // Tasty.allClassLike returns a non-empty Chunk for fixture classpath
     "Leaf 9 (partial): Tasty.allClassLike returns non-empty Chunk for fixture classpath" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>

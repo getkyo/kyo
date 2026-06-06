@@ -6,7 +6,7 @@ import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicBoolean
 import kyo.internal.tasty.binary.MappedByteView
 
-/** Tests for MappedByteView Long-typed cursor APIs (Phase 04b, B6, INV-018).
+/** Tests for MappedByteView Long-typed cursor APIs.
   *
   * MappedByteView.position and related cursor methods return Long after the 64-bit widening. These tests pin that contract and verify the
   * overflow guard in readByte.
@@ -39,7 +39,6 @@ class MappedByteViewTest extends Test:
         // Given: MappedByteView with logical end=5_000_000_000L, cursor positioned at 3_000_000_000L via goto.
         // When: view.position is read.
         // Then: equals 3_000_000_000L (Long return type preserved with no truncation).
-        // Pins: INV-018, B6.
         val (view, cleanup) = makeView(5_000_000_000L, 3_000_000_000L)
         try
             assert(view.position == 3_000_000_000L)
@@ -52,7 +51,6 @@ class MappedByteViewTest extends Test:
         // Given: MappedByteView with cursor at Int.MaxValue + 1L.
         // When: readByte() is called.
         // Then: IllegalStateException is thrown with message containing "mmap segment overflow".
-        // Pins: INV-018, B6.
         val (view, cleanup) = makeView(Int.MaxValue.toLong + 2L, Int.MaxValue.toLong + 1L)
         try
             val ex = intercept[IllegalStateException](view.readByte())

@@ -11,8 +11,6 @@ import kyo.Tasty.SymbolId
   *
   * Leaf 5 (showRendersSimpleNameWithoutSyncDefer): show with ShowFormat.Simple still works.
   * Leaf 6 (typeShowReturnsAbsentWithoutSyncDefer): bodyTree for a symbol with no body returns Absent.
-  *
-  * Pins: Cat 21; L; PRESERVE-L.
   */
 class TastySyncDeferRemovalTest extends Test:
 

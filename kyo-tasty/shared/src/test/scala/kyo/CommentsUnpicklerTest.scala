@@ -11,7 +11,7 @@ import scala.collection.immutable.IntMap
 
 /** Tests for CommentsUnpickler.read and Tasty.Symbol.scaladoc.
   *
-  * Plan Phase 6 G3 tests 1-6.
+  * Plan G3 tests 1-6.
   *
   * The Comments section format (from dotty CommentUnpickler.scala):
   * {{{
@@ -62,7 +62,7 @@ class CommentsUnpicklerTest extends Test:
 
     // ── Test 1: documented class produces entry containing the scaladoc text ─
 
-    // Phase 6 Test 1: a TASTy Comments section with a documented class produces a result with an
+    // Test 1: a TASTy Comments section with a documented class produces a result with an
     // entry for that symbol containing the documented text.
     "CommentsUnpickler: documented class entry produces result with comment text" in run {
         val sym     = makeTestSymbol("Foo")
@@ -83,7 +83,7 @@ class CommentsUnpicklerTest extends Test:
 
     // ── Test 2: no Comments section payload returns empty map ────────────────
 
-    // Phase 6 Test 2: an empty Comments section (zero-length payload) returns an empty map without
+    // Test 2: an empty Comments section (zero-length payload) returns an empty map without
     // error.
     "CommentsUnpickler: empty payload returns empty map without error" in run {
         val view = ByteView(Array.empty[Byte])
@@ -98,7 +98,7 @@ class CommentsUnpicklerTest extends Test:
 
     // ── Test 3: malformed section (truncated mid-entry) fails with MalformedSection ─
 
-    // Phase 6 Test 3: a Comments section truncated mid-entry produces
+    // Test 3: a Comments section truncated mid-entry produces
     // Abort.fail(TastyError.MalformedSection("Comments", ...)).
     "CommentsUnpickler: truncated section produces MalformedSection error" in run {
         // Write addr Nat(5) = 0x85, then start a Utf8: Nat(20) = 0x94, then only 3 bytes of a
@@ -127,7 +127,7 @@ class CommentsUnpicklerTest extends Test:
 
     // ── Test 4: symbol with no comment has no map entry; with comment has an entry ─
 
-    // Phase 6 Test 4 (plan: phase-02 update): CommentsUnpickler returns a Map[Symbol, String].
+    // Test 4 (plan: phase-02 update): CommentsUnpickler returns a Map[Symbol, String].
     // A symbol at an addr that has a comment entry appears in the map; one without does not.
     "CommentsUnpickler: symbol with comment appears in returned map; symbol without does not" in run {
         val symWithDoc    = makeTestSymbol("WithDoc")
@@ -158,7 +158,7 @@ class CommentsUnpicklerTest extends Test:
 
     // ── Test 5: two sibling definitions are independently accessible ─────────
 
-    // Phase 6 Test 5: comments from two sibling definitions in the same file are independently
+    // Test 5: comments from two sibling definitions in the same file are independently
     // accessible with no cross-contamination between addresses.
     "CommentsUnpickler: two sibling definitions have independent scaladoc entries" in run {
         val symAlpha = makeTestSymbol("Alpha")
@@ -196,7 +196,7 @@ class CommentsUnpicklerTest extends Test:
 
     // ── Test 6: Java classfile symbol always has scaladoc == Absent ──────────
 
-    // Phase 6 Test 6: a Java-sourced classfile symbol always has scaladoc == Absent because
+    // Test 6: a Java-sourced classfile symbol always has scaladoc == Absent because
     // classfiles have no Comments section; ClassfileUnpickler sets _scaladoc to Absent for all
     // classfile symbols.
     "CommentsUnpickler: Java classfile symbol always has scaladoc == Absent" in run {

@@ -2,13 +2,11 @@ package kyo
 
 import AllowUnsafe.embrace.danger
 
-/** Plan-mandated test for Phase 08 (leaf 174): grep audit confirming no flat `final case class Symbol ` declaration survives in
+/** Plan-mandated test for (leaf 174): grep audit confirming no flat `final case class Symbol ` declaration survives in
   * `kyo-tasty/shared/src/main`.
   *
   * The file-system scan is implemented in the JVM-specific module (FlatSymbolGrepAuditJvmTest); this stub ensures the leaf is represented
   * in the shared test suite and passes on all platforms.
-  *
-  * Pins: INV-001.
   */
 class FlatSymbolGrepAuditTest extends Test:
 

@@ -2,7 +2,7 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Phase 01 plan-mandated tests confirming the 5 supporting ADTs (Variance, TypeBounds, Visibility, OpenLevel, ShowFormat) derive CanEqual
+/** plan-mandated tests confirming the 5 supporting ADTs (Variance, TypeBounds, Visibility, OpenLevel, ShowFormat) derive CanEqual
   * and have exhaustive matches.
   *
   * Leaves 20-23 per plan 05-plan.yaml id:1. Pins: INV-009.
@@ -14,7 +14,6 @@ class SmallAdtCoexistenceTest extends Test:
     // Given: a 3-branch match over Variance (Invariant, Covariant, Contravariant).
     // When: compile under -Xfatal-warnings; invoke for each enum case.
     // Then: compiles cleanly; returns the matching label.
-    // Pins: INV-009.
     "Leaf 20: Variance exhaustive match compiles and returns correct labels" in {
         def label(v: Tasty.Variance): String = v match
             case Tasty.Variance.Invariant     => "Inv"
@@ -36,7 +35,6 @@ class SmallAdtCoexistenceTest extends Test:
     // When: compare with ==; attempt to assign a TypeBounds to a val t: Tree.TypeBounds.
     // Then: == returns true; the second is a negative assertion (TypeBounds is distinct from
     //   Tree.TypeBounds as verified by the distinct field names: lower/upper vs lo/hi).
-    // Pins: INV-009.
     "Leaf 21: TypeBounds structural equality works; distinct from Tree.TypeBounds" in {
         val a = Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any)
         val b = Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any)
@@ -53,7 +51,6 @@ class SmallAdtCoexistenceTest extends Test:
     // Given: a 5-branch match over Visibility.
     // When: compile under -Xfatal-warnings.
     // Then: compiles cleanly; each case returns a distinct label.
-    // Pins: INV-009.
     "Leaf 22: Visibility exhaustive 5-case match compiles and returns distinct labels" in {
         def label(vis: Tasty.Visibility): String = vis match
             case Tasty.Visibility.Private         => "priv"
@@ -75,7 +72,6 @@ class SmallAdtCoexistenceTest extends Test:
     // Given: a 4-branch match over OpenLevel and a 3-branch match over ShowFormat.
     // When: compile under -Xfatal-warnings; invoke each.
     // Then: compiles cleanly; each branch returns a distinct label.
-    // Pins: INV-009.
     "Leaf 23: OpenLevel 4-case and ShowFormat 3-case exhaustive matches compile cleanly" in {
         def olLabel(ol: Tasty.OpenLevel): String = ol match
             case Tasty.OpenLevel.Open    => "open"

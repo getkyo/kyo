@@ -12,7 +12,7 @@ import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import scala.collection.mutable
 
-/** Tests for Phase 7: KRFL snapshot round-trip, digest determinism, and openCached behavior.
+/** Tests for KRFL snapshot round-trip, digest determinism, and openCached behavior.
   *
   * Plan tests 22-30.
   */
@@ -356,7 +356,7 @@ class SnapshotRoundTripTest extends Test:
                 throw t
     }
 
-    // Test G15 (Phase 14): written snapshot header inputDigest field (bytes 16-23) equals the digest passed to write
+    // Test G15: written snapshot header inputDigest field (bytes 16-23) equals the digest passed to write
     "snapshot header inputDigest field equals digest passed to write (not zeros)" in run {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](1, 2, 3, 4, 5, 6, 7, 8)
@@ -383,10 +383,10 @@ class SnapshotRoundTripTest extends Test:
                     throw t
     }
 
-    // Test G14a (Phase 09): after snapshot round-trip, bodyTree returns Absent (bodies not serialized).
+    // Test G14a: after snapshot round-trip, bodyTree returns Absent (bodies not serialized).
     // Bodies are stored in DecodeContext.bodyStore which is not persisted in snapshots.
     // Use withClasspath(roots) to re-populate the body store from TASTy files.
-    "BODY_BYTES round-trip: bodyTree returns Absent on snapshot-loaded symbol (Phase 09 contract)" in run {
+    "BODY_BYTES round-trip: bodyTree returns Absent on snapshot-loaded symbol (snapshot contract)" in run {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37)
         Scope.run:
@@ -409,7 +409,7 @@ class SnapshotRoundTripTest extends Test:
                 case Result.Panic(t)   => throw t
     }
 
-    // Test G14b (Phase 15): snapshot written from classfile-only classpath has empty BODY_BYTES section
+    // Test G14b: snapshot written from classfile-only classpath has empty BODY_BYTES section
     "snapshot from classfile-only classpath has empty BODY_BYTES section (length 0)" in run {
         // Use an empty classpath (no TASTy files) to produce a snapshot with no body bytes.
         val cacheSrc = MemoryFileSource()
@@ -456,7 +456,7 @@ class SnapshotRoundTripTest extends Test:
                     throw t
     }
 
-    // Test INV-015: parents, typeParams, and declarations are preserved across a snapshot write+read round-trip.
+    // Test: parents, typeParams, and declarations are preserved across a snapshot write+read round-trip.
     "snapshot round-trip: parents, typeParams, and declarations preserved after write+read" in run {
         // Use SomeTrait fixture which has parents (java.lang.Object) and member declarations (compute method).
         val tastySource = MemoryFileSource()
@@ -524,7 +524,7 @@ class SnapshotRoundTripTest extends Test:
                     throw t
     }
 
-    // Test P1 (Phase 19b WARN): snapshot round-trip preserves a local Named parent.
+    // Test P1: snapshot round-trip preserves a local Named parent.
     //
     // Given: a synthetic classpath with two symbols: test.Bar (Class, no parents) and test.Foo
     //        (Class, parents=[Named(barSym)]). Both symbols are local so the SnapshotWriter assigns
@@ -532,7 +532,6 @@ class SnapshotRoundTripTest extends Test:
     // When: snapshot write + read.
     // Then: the warm-loaded test.Foo symbol's parents is non-empty and contains a Named type whose
     //       fullName equals "test.Bar".
-    // Pins: T2 (Phase 19b local-parent coverage).
     "snapshot round-trip: local Named parent is preserved in Foo.parents" in run {
         val cacheSrc = MemoryFileSource()
         val digest =
@@ -609,7 +608,7 @@ class SnapshotRoundTripTest extends Test:
             case Result.Success(parents) =>
                 assert(parents.nonEmpty, "Foo.parents must be non-empty after snapshot round-trip with local Named parent")
                 // plan: phase-05; Named(id) carries SymbolId(2) for Bar (id assigned during fixture construction).
-                // Name check deferred to Phase 09; verify that a Named parent with the Bar id is present.
+                // Name check deferred to; verify that a Named parent with the Bar id is present.
                 val hasBar = parents.toSeq.exists:
                     case Tasty.Type.Named(_) => true
                     case _                   => false
@@ -620,7 +619,7 @@ class SnapshotRoundTripTest extends Test:
                 throw t
     }
 
-    // Leaf 1 (Phase 11, INV-011): full Classpath data is preserved after write+read.
+    // full Classpath data is preserved after write+read.
     // Checks symbols count, fqnIndex keys, topLevelClassIds, packageIds, and errors.
     // Does NOT use cp == cp2: subclassIndex / companionIndex / moduleIndex are not serialized
     // (they are Map.empty in the reader) so strict equality would fail on a correct round-trip.
@@ -663,7 +662,7 @@ class SnapshotRoundTripTest extends Test:
                     throw t
     }
 
-    // Leaf 2 (Phase 11, INV-011): a synthetic pre-campaign snapshot (written inline with minimal
+    // a synthetic pre-campaign snapshot (written inline with minimal
     // Classpath.make fields) is readable by the current SnapshotReader without error.
     // This replaces the missing committed binary fixture: the synthetic Classpath exercises the
     // same wire-format contract as a pre-campaign snapshot.
@@ -730,7 +729,7 @@ class SnapshotRoundTripTest extends Test:
                 throw t
     }
 
-    // Leaf 3 (Phase 11, INV-011): section-index byte-level walk.
+    // section-index byte-level walk.
     // Parses the raw bytes of a new-writer snapshot; asserts all 15 expected section names are
     // present (10 pre-Phase-12 + 3 Phase-12 additions: PERMITS2, ANNOTS_, JAVAMETA + 1 dual-FQN: FQNIDX__ +
     // 1 Phase-2.13 addition: FQNMAP__ for unresolvedFqnByNegId persistence) and that section offsets are
@@ -748,7 +747,7 @@ class SnapshotRoundTripTest extends Test:
             ).map:
                 case Result.Success(Some(bytes)) =>
                     val sectionCount = SnapshotFormat.readInt32LE(bytes, 32)
-                    // Phase 5.02 added SUBCIDX_ and COMPIDX_, raising section count from 15 to 17.
+                    // added SUBCIDX_ and COMPIDX_, raising section count from 15 to 17.
                     assert(sectionCount == 17, s"Expected 17 sections in new-writer snapshot, got $sectionCount")
 
                     val expectedNames = Set(
@@ -800,7 +799,7 @@ class SnapshotRoundTripTest extends Test:
                     throw t
     }
 
-    // Leaf 4 (Phase 09 updated): after snapshot round-trip, bodyTree returns Absent for all symbols.
+    // after snapshot round-trip, bodyTree returns Absent for all symbols.
     // Bodies are not serialized in snapshots; DecodeContext.bodyStore is empty after snapshot load.
     // bodyMemo stays at size 0 because bodyTree returns Absent before any decode attempt.
     "snapshot body: bodyTree returns Absent for snapshot-loaded symbol (bodyStore is empty)" in run {
@@ -922,7 +921,7 @@ class SnapshotRoundTripTest extends Test:
     // Resolved 2026-06-02 (verdict C: already-covered). The mmap-arena-close pathway is JVM-only by
     // construction (JS/Native have no mmap), so this leaf cannot be cross-platform as written. The exact
     // contract (post-Scope decodeBody on mmap-loaded snapshot returns MalformedSection("body bytes not
-    // available") or ClasspathClosed) is covered by DecoderFidelity5Phase02JvmTest "P02.6 F-W2-27" at
+    // available") or ClasspathClosed) is covered by DecoderFidelity5Phase02JvmTest "P02.6" at
     // kyo-tasty/jvm/src/test/scala/kyo/DecoderFidelity5Phase02JvmTest.scala:122.
 
 end SnapshotRoundTripTest

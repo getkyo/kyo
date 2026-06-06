@@ -185,7 +185,7 @@ class NameUnpicklerTest extends Test:
         }
     }
 
-    // Test (Phase 03a B1): QUALIFIED entry with out-of-range prefix yields MalformedSection
+    // QUALIFIED entry with out-of-range prefix yields MalformedSection
     "QUALIFIED entry with out-of-range prefix yields MalformedSection" in run {
         // Build a name table with:
         //   1 UTF8 entry: "hello" (5 bytes, tag=1)

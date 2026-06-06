@@ -114,7 +114,7 @@ object Subtyping:
                                         if baseVerdict == Indeterminate then Indeterminate else NotSub
                                     else if subArgs.length != supArgs.length then NotSub
                                     else
-                                        // Resolve base symbol for variance lookup; available since Phase 09.
+                                        // Resolve base symbol for variance lookup.
                                         val baseSymOpt: Maybe[Tasty.Symbol] = subBase match
                                             case Tasty.Type.Named(id) => cp.symbol(id)
                                             case _                    => Maybe.Absent

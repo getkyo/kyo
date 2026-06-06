@@ -8,18 +8,17 @@ import kyo.Tasty.SymbolId as InternalSymbolId
   * All tests use synthetic Classpath values constructed with Tasty.Classpath.make (private[kyo]). The tests verify the helper's correctness
   * against edge cases before SnapshotFidelity2Test uses it with a real classpath pair.
   *
-  * Covers plan Phase 2.02 leaves 1-3 (SnapshotEquivalenceTest group).
+  * Covers plan leaves 1-3 (SnapshotEquivalenceTest group).
   */
 class SnapshotEquivalenceTest extends kyo.Test:
 
     import AllowUnsafe.embrace.danger
 
-    // Leaf 1 (Phase 2.02): size-divergence-reports-fqnIndex-axis
+    // Leaf 1: size-divergence-reports-fqnIndex-axis
     // Given: two synthetic Classpath values where cold.fqnIndex.size=110 and warm.fqnIndex.size=73
     //        with identical symbols (empty)
     // When: invoking SnapshotEquivalence.warmColdEquivalent(cold, warm)
     // Then: returns EquivResult.Diverged("fqnIndex.size", "110", "73") with isEqual == false
-    // Pins: INV-101-DF2 helper-correctness
     "size-divergence-reports-fqnIndex-axis" in run {
         Sync.defer:
             val coldFqn = Dict.from((1 to 110).map(i => s"a.B$i" -> InternalSymbolId(-1)).toMap)
@@ -42,12 +41,11 @@ class SnapshotEquivalenceTest extends kyo.Test:
             succeed
     }
 
-    // Leaf 2 (Phase 2.02): unresolved-divergence-reports-axis
+    // Leaf 2: unresolved-divergence-reports-axis
     // Given: cold has 635 reachable Named(-1) entries (via 635 symbols with parentTypes containing Named(-1))
     //        warm has 0, all other axes equal
     // When: invoking SnapshotEquivalence.warmColdEquivalent(cold, warm)
     // Then: returns Diverged("unresolvedRefs.size", "635", "0")
-    // Pins: F-A4-002 helper coverage
     "unresolved-divergence-reports-axis" in run {
         Sync.defer:
             // Build 635 synthetic class symbols each with parentTypes = Chunk(Named(SymbolId(-1)))
@@ -84,11 +82,10 @@ class SnapshotEquivalenceTest extends kyo.Test:
                 case other                                                                   => fail(s"Unexpected result $other")
     }
 
-    // Leaf 3 (Phase 2.02): equal-classpaths-return-equal
+    // Leaf 3: equal-classpaths-return-equal
     // Given: two identical synthetic Classpath values (empty symbols, empty fqnIndex)
     // When: invoking SnapshotEquivalence.warmColdEquivalent(cold, warm)
     // Then: returns EquivResult.Equal with isEqual == true
-    // Pins: INV-101-DF2 helper
     "equal-classpaths-return-equal" in run {
         Sync.defer:
             val cp     = makeSyntheticCp()

@@ -1,8 +1,6 @@
 package kyo
 
-/** Tests for ErrorMode enum (Phase 10 Item 2).
-  *
-  * Pins: steering rule on enum over Boolean sentinel.
+/** Tests for ErrorMode enum .
   *
   * Leaves: enum identity and CanEqual derivation.
   */

@@ -6,7 +6,7 @@ import kyo.internal.tasty.scala2.Scala2PickleResult
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 
-/** Tests for Phase 10: Scala 2 pickle reader.
+/** Tests for Scala 2 pickle reader.
   *
   * All tests are cross-platform. Tests 1-4 and 6-10 use hand-crafted synthetic pickle bytes. Test 5 uses
   * Embedded.throwsFixtureClass to verify that a non-Scala2 classfile is not tagged with Flag.Scala2.
@@ -140,7 +140,7 @@ class Scala2PickleTest extends Test:
             val method = methods.head
             assert(method.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2")
             // plan: phase-02 inline; declaredType is now Maybe[Type]; Scala2PickleReader sets it to Absent.
-            // declaredType for Method symbols was Type.Function(...) in old code; in Phase 02 it's Absent.
+            // declaredType for Method symbols was Type.Function(...) in old code; in it's Absent.
             (method match
                 case m: Tasty.Symbol.Method => m.declaredType;
                 case _                      => kyo.Maybe.Absent
@@ -169,7 +169,7 @@ class Scala2PickleTest extends Test:
             val alias = aliases.head
             assert(alias.kind == SymbolKind.TypeAlias, s"Expected TypeAlias, got ${alias.kind}")
             assert(alias.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2")
-            // plan: phase-05; Named(id) no longer carries a Symbol name directly; name check deferred to Phase 09.
+            // plan: phase-05; Named(id) no longer carries a Symbol name directly; name check deferred to.
             (alias match
                 case ta: Tasty.Symbol.TypeAlias => kyo.Maybe(ta.body);
                 case _                          => kyo.Maybe.Absent
@@ -187,7 +187,7 @@ class Scala2PickleTest extends Test:
     // Test 5: classfile without ScalaSig -> no Flag.Scala2
     // -------------------------------------------------------------------------
 
-    // Cross-platform (Phase 2 post-audit): uses Embedded.throwsFixtureClass instead of JDK Object.class.
+    // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK Object.class.
     // Any Java classfile without ScalaSig works; the shape assertion (no Scala2 flag) is fixture-independent.
     "Test 5: Java-only classfile (no ScalaSig attribute) -> Flag.Scala2 is absent" in run {
         val result = ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena)
@@ -233,7 +233,7 @@ class Scala2PickleTest extends Test:
             val parents = result.parents
             assert(parents.nonEmpty, "Expected at least one parent type for a Scala 2 class")
             // plan: phase-05; Named(id) no longer carries name directly; verify that a Named parent exists.
-            // Name check (AnyRef) deferred to Phase 09 once cp.symbol(id).name is resolvable.
+            // Name check (AnyRef) deferred to once cp.symbol(id).name is resolvable.
             val hasNamedParent = parents.exists:
                 case Tasty.Type.Named(_) => true
                 case _                   => false

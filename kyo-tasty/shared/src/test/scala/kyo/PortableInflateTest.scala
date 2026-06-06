@@ -133,7 +133,7 @@ class PortableInflateTest extends Test:
         )
     }
 
-    // Phase 20d-debt: copyBack rejects out-of-range LZ77 distance.
+    // -debt: copyBack rejects out-of-range LZ77 distance.
     // A corrupt deflate stream that emits a backreference with dist > out.length
     // must raise InflateException, not a raw IndexOutOfBoundsException.
     "copyBack rejects LZ77 distance beyond output buffer length" in run {
@@ -209,7 +209,7 @@ class PortableInflateTest extends Test:
     // Fixture capture: produced via Java's java.util.zip.Deflater(DEFAULT_COMPRESSION) on the input
     // "aaabbbcccdddeeefffggghhh" repeated 50 times (1200 bytes). This highly repetitive ASCII input
     // causes the JVM deflater to emit a dynamic Huffman block (BTYPE=10), covering the
-    // decodeDynamicHuffmanBlock + decodeCodeLengths paths that were deferred from Phase 20d.
+    // decodeDynamicHuffmanBlock + decodeCodeLengths paths that were deferred from.
     //
     // Capture command used (Java):
     //   byte[] input = "aaabbbcccdddeeefffggghhh".repeat(50).getBytes("UTF-8");

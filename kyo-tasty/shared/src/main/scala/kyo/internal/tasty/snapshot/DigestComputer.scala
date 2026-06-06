@@ -83,7 +83,7 @@ object DigestComputer:
       * Dispatches to the platform-specific PlatformDigest.digestForJarRoot for jar roots (JVM: CEN walk; JS/Native: path-hash fallback).
       * For non-jar roots this method returns 0L; callers that need non-jar digests should use compute(roots, source) instead.
       *
-      * Called by Phase 13 BundledSnapshotProbe to verify the embedded per-jar snapshot digest (INV-003).
+      * Called by BundledSnapshotProbe to verify the embedded per-jar snapshot digest (INV-003).
       */
     def digestForRoot(root: String): Long =
         if root.toLowerCase.endsWith(".jar") then

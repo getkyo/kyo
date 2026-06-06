@@ -7,7 +7,7 @@ import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import scala.collection.mutable
 
-/** Tests for Phase 11: round-trip encoding of TastyError variants added in Phase 11.
+/** Tests for round-trip encoding of TastyError variants added in.
   *
   * Covers 4 plan-driven test leaves:
   *   1. Round-trip TastyError.UnhandledSubtypingCase with Type.Any and Type.Nothing.
@@ -77,11 +77,10 @@ class TastyErrorRoundTripTest extends Test:
                     case None        => Abort.fail(TastyError.FileNotFound(path))
     end MemoryFileSource
 
-    // Leaf 3 (plan leaf 1 of this file): round-trip TastyError.UnhandledSubtypingCase.
+    // round-trip TastyError.UnhandledSubtypingCase.
     // Given: an instance with shape="Applied-TermRef-_", lhs=Type.Any, rhs=Type.Nothing, file="X.tasty".
     // When: written via SnapshotWriter and read back via SnapshotReader.
     // Then: decoded value equals original.
-    // Pins: INV-TASTYERROR-WIRE.
     "round-trip TastyError.UnhandledSubtypingCase with Type.Any and Type.Nothing" in run {
         val err    = TastyError.UnhandledSubtypingCase("Applied-TermRef-_", Tasty.Type.Any, Tasty.Type.Nothing, "X.tasty")
         val errors = Chunk[TastyError](err)
@@ -105,11 +104,10 @@ class TastyErrorRoundTripTest extends Test:
             case Result.Panic(t)   => throw t
     }
 
-    // Leaf 4 (plan leaf 2 of this file): round-trip UnresolvedReference, UnknownType, MissingDeclaredType.
+    // round-trip UnresolvedReference, UnknownType, MissingDeclaredType.
     // Given: instances of UnresolvedReference("x.Y", 7), UnknownType("X.tasty", 42L, "fail"), MissingDeclaredType(SymbolId(3), "X.tasty").
     // When: each is written and read back.
     // Then: every decoded value equals its original.
-    // Pins: INV-TASTYERROR-WIRE.
     "round-trip UnresolvedReference, UnknownType, and MissingDeclaredType" in run {
         val e1     = TastyError.UnresolvedReference("x.Y", 7)
         val e2     = TastyError.UnknownType("X.tasty", 42L, "fail")
@@ -137,11 +135,10 @@ class TastyErrorRoundTripTest extends Test:
             case Result.Panic(t)   => throw t
     }
 
-    // Leaf 1 (plan leaf 1 of SnapshotDigestTest): minor version bumped to 11.
+    // minor version bumped to 11.
     // Given: a freshly written snapshot.
     // When: the minor version byte at offset 5 is read.
     // Then: value is 11; SnapshotFormat.minorVersion is 11.
-    // Pins: INV-TASTYERROR-WIRE.
     "minor version is 11 in freshly written snapshot" in run {
         val snapshotBytes = snapshotBytesWithErrors(Chunk.empty)
         val minor         = snapshotBytes(5) & 0xff
@@ -152,11 +149,10 @@ class TastyErrorRoundTripTest extends Test:
         )
     }
 
-    // Leaf 2 (plan leaf 2): old minor=10 snapshot is rejected with SnapshotVersionMismatch.
+    // old minor=10 snapshot is rejected with SnapshotVersionMismatch.
     // Given: a valid minor=11 snapshot with byte at offset 5 patched to 10.
     // When: loaded via SnapshotReader.read.
     // Then: raises TastyError.SnapshotVersionMismatch with found=(1,10,0) and supported=(1,11,0).
-    // Pins: INV-TASTYERROR-WIRE.
     "snapshot with minorVersion=10 is rejected with SnapshotVersionMismatch" in run {
         val freshBytes   = snapshotBytesWithErrors(Chunk.empty)
         val patchedBytes = freshBytes.clone()
@@ -187,7 +183,7 @@ class TastyErrorRoundTripTest extends Test:
             case Result.Panic(t) => throw t
     }
 
-    // Phase 12 W2 carry: tag-255 round-trip path in writeType/readType.
+    // W2 carry: tag-255 round-trip path in writeType/readType.
     // The tag-255 catch-all in SnapshotWriter.writeType serializes complex types (Refinement,
     // Rec, Skolem, etc.) as an opaque show string. The reader falls back to Type.Nothing on
     // any unknown tag including 255. This is a known semantic limitation documented in the
@@ -199,7 +195,6 @@ class TastyErrorRoundTripTest extends Test:
     // When: written via SnapshotWriter and read back via SnapshotReader.
     // Then: (a) no exception is raised during read; (b) the error round-trips with rhs == Type.Any;
     //   (c) lhs decodes to Type.Nothing (the documented opaque-tag fallback, not data corruption).
-    // Pins: Phase 11 audit W2; INV-TASTYERROR-WIRE.
     "W2 carry: tag-255 opaque catch-all round-trips cleanly; lhs falls back to Type.Nothing" in run {
         val refinementType: Tasty.Type = Tasty.Type.Refinement(
             Tasty.Type.Named(Tasty.SymbolId(0)),

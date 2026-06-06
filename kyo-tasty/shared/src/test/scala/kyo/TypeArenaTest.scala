@@ -126,7 +126,7 @@ class TypeArenaTest extends Test:
     // Test 6 (B8/INV-019): deeply nested Applied chain at MaxDepth+1 throws DepthExceededException OR StackOverflowError during merge.
     // plan: phase-05; hashOf also recurses without a depth guard; at MaxDepth+1 levels of nesting either the depth check
     // fires (DepthExceededException) or hashOf stack-overflows first (StackOverflowError). Both indicate the depth limit
-    // has been exceeded. Phase 09 adds a hash depth guard to fully fix this.
+    // has been exceeded. adds a hash depth guard to fully fix this.
     // JVM-only (exception condition 3: test asserts JVM-specific behavior): the test constructs 1025 levels of nested
     //   Applied types so that the JVM call stack (configured to -Xss10M in CI) can reach the depth-guard check at
     //   TypeArena.MaxDepth (1024). The JS engine call stack and Scala Native default stack overflow well before depth

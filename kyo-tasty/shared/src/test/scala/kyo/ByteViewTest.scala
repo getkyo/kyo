@@ -83,7 +83,6 @@ class ByteViewTest extends Test:
         assert(view.remaining == 2)
     }
 
-    // Test (Phase 03a B7): subView rejects negative from
     "subView rejects negative from" in run {
         val bytes = Array.fill(10)(0.toByte)
         val view  = ByteView(bytes)
@@ -96,7 +95,6 @@ class ByteViewTest extends Test:
         end try
     }
 
-    // Test (Phase 03a B7): subView rejects until > length
     "subView rejects until greater than length" in run {
         val bytes = Array.fill(10)(0.toByte)
         val view  = ByteView(bytes)

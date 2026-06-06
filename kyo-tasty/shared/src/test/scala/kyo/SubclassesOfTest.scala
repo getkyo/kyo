@@ -2,7 +2,7 @@ package kyo
 
 import scala.concurrent.Future
 
-/** Tests for subclassesOf, implementationsOf, directSubclassesOf (Phase 10 Items 6, 7, 13).
+/** Tests for subclassesOf, implementationsOf, directSubclassesOf.
   *
   * Leaf ids: 9, 10, 16. Pins: INV-008.
   */

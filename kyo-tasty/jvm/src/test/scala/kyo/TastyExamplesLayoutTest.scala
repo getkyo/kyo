@@ -5,7 +5,7 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import scala.jdk.CollectionConverters.*
 
-/** JVM-only source-layout tests for INV-022 (Phase 26: kyo-tasty-examples extraction).
+/** JVM-only source-layout tests for INV-022 (kyo-tasty-examples extraction).
   *
   * Uses java.nio.file to walk the worktree source tree; not available on Scala.js or Scala Native at link time, so these tests live in
   * jvm/src/test rather than shared/src/test.
@@ -13,7 +13,7 @@ import scala.jdk.CollectionConverters.*
 class TastyExamplesLayoutTest extends Test:
 
     "examples no longer ship in kyo-tasty source tree" in {
-        // INV-022: kyo-tasty/shared/src/main/scala/kyo/tasty/examples must not exist after Phase 26.
+        // : kyo-tasty/shared/src/main/scala/kyo/tasty/examples must not exist after.
         // This is a source-level check (not a JAR check); the directory was deleted as part of the
         // move to kyo-tasty-examples. A JAR-level check would require sbt compilation to have run
         // first and is deferred.
@@ -25,7 +25,7 @@ class TastyExamplesLayoutTest extends Test:
                 .toList
             assert(
                 scalaFiles.isEmpty,
-                s"INV-022 violated: kyo-tasty/shared/src/main/scala/kyo/tasty/examples/ still contains .scala files: ${scalaFiles.map(_.getFileName).mkString(", ")}"
+                s"violated: kyo-tasty/shared/src/main/scala/kyo/tasty/examples/ still contains .scala files: ${scalaFiles.map(_.getFileName).mkString(", ")}"
             )
         else
             succeed
@@ -33,7 +33,7 @@ class TastyExamplesLayoutTest extends Test:
     }
 
     "kyo-tasty-examples sources at expected path with correct package" in {
-        // INV-022: kyo-tasty-examples/shared/src/main/scala/examples/ must contain exactly the 4
+        // : kyo-tasty-examples/shared/src/main/scala/examples/ must contain exactly the 4
         // moved example files, each declaring `package examples` at the first non-blank line.
         val expectedNames = Set(
             "CodegenExample.scala",
@@ -45,7 +45,7 @@ class TastyExamplesLayoutTest extends Test:
         val examplesDir  = worktreeRoot.resolve("kyo-tasty-examples/shared/src/main/scala/examples")
         assert(
             Files.isDirectory(examplesDir),
-            s"INV-022: expected directory $examplesDir to exist"
+            s"expected directory $examplesDir to exist"
         )
         val scalaFiles = Files.list(examplesDir).iterator.asScala
             .filter(p => p.getFileName.toString.endsWith(".scala"))
@@ -53,7 +53,7 @@ class TastyExamplesLayoutTest extends Test:
         val foundNames = scalaFiles.map(_.getFileName.toString).toSet
         assert(
             foundNames == expectedNames,
-            s"INV-022: expected files $expectedNames, found $foundNames"
+            s"expected files $expectedNames, found $foundNames"
         )
         val packageErrors = scalaFiles.flatMap { path =>
             val firstLine = Files.readAllLines(path).iterator.asScala
@@ -64,7 +64,7 @@ class TastyExamplesLayoutTest extends Test:
         }
         assert(
             packageErrors.isEmpty,
-            s"INV-022: package declaration errors: ${packageErrors.mkString("; ")}"
+            s"package declaration errors: ${packageErrors.mkString("; ")}"
         )
     }
 

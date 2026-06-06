@@ -4,7 +4,7 @@ import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.DigestComputer.JarDigestEntry
 
-/** Tests for DigestComputer xxh3 content-addressed digest (Phase 12, item 25).
+/** Tests for DigestComputer xxh3 content-addressed digest.
   *
   * Cross-platform leaves (3, 4, 5, 6, 8, 9) run on JVM, JS, and Native. JVM-only leaves (1, 2, 7) are
   * in DigestComputerJvmTest.scala (jvm/src/test), as they require real JARs on disk and
@@ -15,7 +15,6 @@ import kyo.internal.tasty.snapshot.DigestComputer.JarDigestEntry
 class DigestComputerTest extends Test:
 
     // Leaf 3: digestForJar is stable for identical entries in any insertion order.
-    // Pins: Q-009 sort-by-name determinism; leaf 3; cross-platform
     "Leaf 3: digestForJar is stable for same-name same-crc entries in any order" in run {
         val e1 = JarDigestEntry("META-INF/INDEX.LIST", 0xdeadbeefL)
         val e2 = JarDigestEntry("META-INF/INDEX.LIST", 0xdeadbeefL)
@@ -27,7 +26,6 @@ class DigestComputerTest extends Test:
     // Leaf 4: digestForJar distinguishes entries with distinct crc32 values.
     // Two identical-name entries with different crc32 produce a different digest than the same two
     // entries with the same crc32, confirming that crc32 is mixed into the hash.
-    // Pins: INV-003 producer-site; leaf 4; cross-platform
     "Leaf 4: digestForJar includes crc32 in the hash (different crc32 changes digest)" in run {
         val e1a = JarDigestEntry("foo.class", 0x11111111L)
         val e1b = JarDigestEntry("foo.class", 0x22222222L)
@@ -38,14 +36,12 @@ class DigestComputerTest extends Test:
 
     // Leaf 5: digestForJar(Chunk.empty) returns 0L.
     // With acc = 0L and zero mixing steps, xxh3Avalanche(0L) = 0L.
-    // Pins: Q-009 xxh3 correctness; leaf 5; cross-platform
     "Leaf 5: digestForJar(Chunk.empty) equals 0L (empty-input vector)" in run {
         val result = DigestComputer.digestForJar(Chunk.empty)
         assert(result == 0L, s"digestForJar(Chunk.empty) expected 0L but got $result")
     }
 
     // Leaf 6: directory root compute is deterministic and mtime-sensitive.
-    // Pins: Q-009 directory-path preservation; leaf 6; cross-platform
     "Leaf 6: directory root compute is deterministic and mtime-sensitive" in run {
         val src = MemoryFileSource()
         src.add("root/Foo.tasty", Array[Byte](1, 2, 3, 4))
@@ -64,7 +60,6 @@ class DigestComputerTest extends Test:
     }
 
     // Leaf 8: digestForJar with JarDigestEntry is deterministic across platforms.
-    // Pins: INV-006 cross-platform; leaf 8
     "Leaf 8: digestForJar with JarDigestEntry is deterministic across platforms" in run {
         val entries = Chunk(
             JarDigestEntry("a/B.class", 0xdeadL),
@@ -76,7 +71,6 @@ class DigestComputerTest extends Test:
     }
 
     // Leaf 9: longToBytes and bytesToLong round-trip on digest output.
-    // Pins: INV-003 wire encoding; leaf 9; cross-platform
     "Leaf 9: longToBytes/bytesToLong round-trip is lossless (8 bytes, little-endian)" in run {
         val entries   = Chunk(JarDigestEntry("foo/Bar.class", 0x12345678L))
         val digest    = DigestComputer.digestForJar(entries)

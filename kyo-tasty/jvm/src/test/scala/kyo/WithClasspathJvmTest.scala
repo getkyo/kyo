@@ -6,7 +6,6 @@ package kyo
   * and java.io.File, which are not available in Scala.js or Scala Native. This leaf is kept here
   * rather than in shared/src/test so that fastLinkJS does not fail with unresolved symbol errors.
   *
-  * Pins: item 31 cacheDir argument; cross-platform-by-default exception: createTempDirectory has
   * no JS/Native equivalent (concrete blocker).
   */
 class WithClasspathJvmTest extends Test:

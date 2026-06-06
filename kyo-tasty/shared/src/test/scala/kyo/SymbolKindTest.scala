@@ -4,20 +4,19 @@ import kyo.internal.tasty.symbol.SymbolKind
 
 /** Tests for SymbolKind enum case set.
   *
-  * SymbolKind moved from Tasty.SymbolKind to kyo.internal.tasty.symbol.SymbolKind in Phase 02.
+  * SymbolKind moved from Tasty.SymbolKind to kyo.internal.tasty.symbol.SymbolKind in.
   * All path references updated accordingly. The enum is private[kyo], so test code in package kyo
   * can still access it directly.
   *
   * Actual SymbolKind cases: Package, Class, Trait, Object, Method, Field, Val, Var, TypeAlias, OpaqueType, AbstractType, TypeParam,
-  * Parameter, EnumCase. Total: 14 cases (Unresolved removed in Phase 08).
+  * Parameter, EnumCase. Total: 14 cases (Unresolved removed in).
   */
 class SymbolKindTest extends Test:
 
     // Test 8 (T2, SymbolKind): enum contains every documented case and has the expected count.
     // Given: SymbolKind.values array.
     // When: converted to a Set.
-    // Then: the set contains all 14 documented cases (Phase 08 removed Unresolved); values.length == 14.
-    // Pins: T2, F-E-007 (Phase 07), Phase 08.
+    // Then: the set contains all 14 documented cases; values.length == 14.
     "SymbolKind.values contains all 14 documented cases" in {
         val values = SymbolKind.values
         assert(

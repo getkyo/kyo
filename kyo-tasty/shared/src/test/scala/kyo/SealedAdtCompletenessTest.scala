@@ -149,7 +149,7 @@ class SealedAdtCompletenessTest extends Test:
         val variantNames = enumVariantNames[Tasty.Type]
         assert(
             variantNames.size == EXPECTED_TYPE_COUNT,
-            s"Expected $EXPECTED_TYPE_COUNT Tasty.Type variants, got ${variantNames.size}: $variantNames (Note: Unknown was removed in Phase 10)"
+            s"Expected $EXPECTED_TYPE_COUNT Tasty.Type variants, got ${variantNames.size}: $variantNames"
         )
         val missing = variantNames.filterNot(typeCoveredByTest.contains)
         assert(

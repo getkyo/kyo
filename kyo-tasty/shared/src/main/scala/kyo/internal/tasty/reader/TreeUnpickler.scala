@@ -660,7 +660,7 @@ object TreeUnpickler:
                 Tasty.Tree.SelectOuter(qual, nm, levels, tpe)
 
             case TastyFormat.REPEATED =>
-                // F-B-005: REPEATED encodes a varargs sequence; emit Tree.SeqLiteral.
+                // REPEATED encodes a varargs sequence; emit Tree.SeqLiteral.
                 val end   = view.readEnd()
                 val trees = readTreesUntil(view, end, ctx)
                 view.goto(end)
@@ -810,7 +810,7 @@ object TreeUnpickler:
             // Cat-5 handlers for type-form tags that appear in term position.
 
             case TastyFormat.TERMREFin =>
-                // F-B-004: TERMREFin (174) is a term-position path-dependent reference.
+                // TERMREFin (174) is a term-position path-dependent reference.
                 // Wire format: tag + Length + NameRef + qual_Type + owner_Type.
                 val end     = view.readEnd()
                 val nameRef = view.readNat()
@@ -1064,7 +1064,7 @@ object TreeUnpickler:
 
     /** Read optional guard + mandatory body from a CASEDEF payload (after pattern has been read).
       *
-      * F-B-008: uses explicit GUARD-tag (135) peek instead of a heuristic. The GUARD tag is a
+      * Uses explicit GUARD-tag (135) peek instead of a heuristic. The GUARD tag is a
       * category-5 (length-prefixed) node. When present, consume its tag byte, read the length prefix,
       * decode the guard tree, then read the body. When absent, the next node is the body directly.
       */
@@ -1385,7 +1385,7 @@ object TreeUnpickler:
       * TPT tags are wire-level tree nodes that exist at type-syntactic positions in DEFDEF, VALDEF, and type parameters. The caller (e.g.
       * AstUnpickler.decodeOneTypeIfPresent or TypeUnpickler.readTypeNode) is interested in the wrapped Type, not the Tree wrapper.
       *
-      * F-I-004 fix: this is the entry point AstUnpickler.decodeOneTypeIfPresent dispatches to for tags classified by isTreeTptTag. It is
+      * This is the entry point AstUnpickler.decodeOneTypeIfPresent dispatches to for tags classified by isTreeTptTag. It is
       * also called from TypeUnpickler.readTypeNode for nested TPT tags (e.g. APPLIEDtpt args that are themselves APPLIEDtpt).
       *
       * @param view
@@ -1446,7 +1446,7 @@ object TreeUnpickler:
 
             case TastyFormat.APPLIEDtpt =>
                 // APPLIEDtpt (162): cat-5 (tag + Length + tycon_Tree + arg_Tree*).
-                // F-A-004 fix: use TypeOps.applied to normalize FunctionN/ContextFunctionN/TupleN/Array,
+                // Use TypeOps.applied to normalize FunctionN/ContextFunctionN/TupleN/Array,
                 // same as the APPLIEDtype handler in TypeUnpickler.decodeTag.
                 val payloadEnd = view.readEnd()
                 val tycon      = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
@@ -1463,7 +1463,7 @@ object TreeUnpickler:
 
             case TastyFormat.TYPEBOUNDStpt =>
                 // TYPEBOUNDStpt (164): cat-5 (tag + Length + lo_Tree + hi_Tree).
-                // F-A-010: explicit declared bounds use Type.Bounds, not Type.Wildcard.
+                // Explicit declared bounds use Type.Bounds, not Type.Wildcard.
                 val payloadEnd = view.readEnd()
                 val lo         = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 val hi =
@@ -1474,7 +1474,7 @@ object TreeUnpickler:
 
             case TastyFormat.ANNOTATEDtpt =>
                 // ANNOTATEDtpt (154): cat-5 (tag + Length + tpe_Tree + annot_Tree).
-                // F-A2-013: if the annotation is @scala.annotation.internal.Repeated, the
+                // If the annotation is @scala.annotation.internal.Repeated, the
                 // parameter is a varargs parameter and the type should be wrapped in Type.Repeated.
                 // The annotation term decodes via APPLY(NEW(Repeated_class), ...) which TypeUnpickler
                 // unwraps to the Repeated class's type as Named(negId) with FQN in unresolvedIdToFqn.
@@ -1524,7 +1524,7 @@ object TreeUnpickler:
 
             case TastyFormat.REFINEDtpt =>
                 // REFINEDtpt (160): cat-5 (tag + Length + parent_Tree + decl_Tree*).
-                // Phase 03 extracts parent type only; refinement decls are deferred to Phase 05.
+                // Extract parent type only; refinement decls are decoded later.
                 val payloadEnd = view.readEnd()
                 val parent     = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 view.goto(payloadEnd)
@@ -1567,7 +1567,7 @@ object TreeUnpickler:
 
             case TastyFormat.MATCHCASEtype =>
                 // MATCHCASEtype (192): cat-5 (tag + Length + pat_Tree + rhs_Tree).
-                // F-A-006: Type.MatchCase is a first-class ADT case added in Phase 05.
+                // Type.MatchCase is a first-class ADT case.
                 val payloadEnd = view.readEnd()
                 val pat        = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 val rhs        = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
@@ -1584,7 +1584,7 @@ object TreeUnpickler:
 
     /** Decode a TERM tag node and return the underlying Type it conveys at TYPE position.
       *
-      * Companion of decodeTptAsType for the term-in-type-position tag set (F-A2-001). The 8 specific tags surface in ANNOTATEDtype payloads
+      * Companion of decodeTptAsType for the term-in-type-position tag set. The 8 specific tags surface in ANNOTATEDtype payloads
       * (NEW, APPLY, SELECT), TEMPLATE parent expressions (TYPEAPPLY, SELECT, NEW), CASEDEF inside MATCHCASEtype rhs, and INLINED-as-type
       * body slots. Each handler consumes its byte payload precisely so the outer view advances correctly.
       *

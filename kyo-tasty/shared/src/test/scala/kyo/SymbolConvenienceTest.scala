@@ -2,11 +2,9 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Plan-mandated tests for Phase 07 (leaves 131-136): Symbol convenience accessors.
+/** Symbol convenience accessors.
   *
   * Covers: fullNameString, simpleName, ownersChain, owner.
-  *
-  * Pins: INV-002.
   */
 class SymbolConvenienceTest extends Test:
 
@@ -56,7 +54,6 @@ class SymbolConvenienceTest extends Test:
     // Given: Symbol.Class named "List" owned by package "scala.collection".
     // When: c.fullNameString.
     // Then: returns "scala.collection.List".
-    // Pins: INV-002
     "Leaf 131: fullNameString returns dotted FQN" in run {
         Sync.defer {
             val pkg = makePackage(0, "scala.collection", ownerId = -1, Chunk(SymbolId(1)))
@@ -83,7 +80,6 @@ class SymbolConvenienceTest extends Test:
     // Given: any Symbol whose name.asString == "Foo".
     // When: s.simpleName.
     // Then: returns "Foo".
-    // Pins: INV-002
     "Leaf 132: simpleName returns the symbol's simple name" in {
         val sym = makeClass(0, "Foo", ownerId = -1)
         assert(sym.simpleName == "Foo")
@@ -94,7 +90,6 @@ class SymbolConvenienceTest extends Test:
     // Given: a 5-deep nested fixture pkg.A.B.C.D.
     // When: d.ownersChain.map(_.simpleName).
     // Then: returns Chunk("D", "C", "B", "A", "pkg").
-    // Pins: INV-002
     "Leaf 133: ownersChain returns self-first chain" in run {
         val pkg  = makePackage(0, "pkg", ownerId = -1, Chunk(SymbolId(1)))
         val clsA = makeClass(1, "A", ownerId = 0, Chunk(SymbolId(2)))
@@ -123,7 +118,6 @@ class SymbolConvenienceTest extends Test:
     // Given: a synthetic fixture where ownerId == id (self-loop).
     // When: s.ownersChain.size.
     // Then: returns 1 (the cycle guard stops the walk).
-    // Pins: INV-002
     "Leaf 134: ownersChain stops on self-loop" in run {
         val pkg = makePackage(5, "root", ownerId = 5, Chunk.empty)
         val cp = Tasty.Classpath.make(
@@ -148,7 +142,6 @@ class SymbolConvenienceTest extends Test:
     // Given: Symbol.Method declared in Symbol.Class A.
     // When: Tasty.owner(m).
     // Then: returns Maybe.Present(a) where a.simpleName == "A".
-    // Pins: INV-002
     "Leaf 135: owner returns Present for method with owner" in run {
         Sync.defer {
             val cls = makeClass(0, "A", ownerId = -1)
@@ -179,7 +172,6 @@ class SymbolConvenienceTest extends Test:
     // Given: a symbol with ownerId == SymbolId(-1).
     // When: Tasty.owner(s).
     // Then: returns Maybe.Absent.
-    // Pins: INV-002
     "Leaf 136: owner returns Absent for root symbol" in {
         val sym = makeClass(0, "Root", ownerId = -1)
         import AllowUnsafe.embrace.danger

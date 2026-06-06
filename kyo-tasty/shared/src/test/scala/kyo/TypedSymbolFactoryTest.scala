@@ -41,7 +41,6 @@ class TypedSymbolFactoryTest extends Test:
     // Given: SymbolDescriptor d.kind=Class
     // When: TypedSymbolFactory.from(d)
     // Then: Symbol.Class id=1
-    // Pins: INV-004
     "dispatch-on-kind-class: from(d) with kind=Class returns Symbol.Class with id=1" in {
         val d   = makeDesc(id = 1, kind = SymbolKind.Class, name = "Foo")
         val sym = TypedSymbolFactory.from(d)
@@ -58,7 +57,6 @@ class TypedSymbolFactoryTest extends Test:
     // Given: SymbolDescriptor d.kind=Method d.paramListIds Chunk x1x2
     // When: from(d) read paramListIds
     // Then: Symbol.Method; paramListIds==Chunk(Chunk(SymbolId(10), SymbolId(11)))
-    // Pins: INV-004, INV-002
     "dispatch-on-kind-method-paramlists: paramListIds propagated correctly" in {
         val d = makeDesc(id = 5, kind = SymbolKind.Method, name = "foo")
         d.paramListIds = Chunk(Chunk(10, 11))
@@ -77,7 +75,6 @@ class TypedSymbolFactoryTest extends Test:
     // Given: SymbolDescriptor d.kind=TypeParam d.flags=CoVariant
     // When: from(d) read variance
     // Then: Symbol.TypeParam; variance==Covariant
-    // Pins: INV-009
     "dispatch-on-kind-typeparam-variance: Covariant flag produces Variance.Covariant" in {
         val coFlags = Tasty.Flags(Tasty.Flag.CoVariant)
         val d       = makeDesc(id = 7, kind = SymbolKind.TypeParam, flags = coFlags, name = "A")
@@ -93,7 +90,6 @@ class TypedSymbolFactoryTest extends Test:
     // Given: SymbolDescriptor d.kind=Package d.declarationIds Seq(1,2,3)
     // When: from(d) read memberIds
     // Then: Symbol.Package; memberIds==Chunk(SymbolId(1), SymbolId(2), SymbolId(3))
-    // Pins: INV-002
     "dispatch-on-kind-package: declarationIds become memberIds" in {
         val d = makeDesc(id = 0, kind = SymbolKind.Package, name = "p")
         d.declarationIds = Chunk(1, 2, 3)
@@ -109,7 +105,6 @@ class TypedSymbolFactoryTest extends Test:
     // Given: SymbolDescriptor d.kind=Unresolved d.id=-1
     // When: from(d)
     // Then: Symbol.Unresolved id=SymbolId(-1)
-    // Pins: INV-004
     "dispatch-on-kind-unresolved-id-minus-one: Symbol.Unresolved id=SymbolId(-1)" in {
         val d   = makeDesc(id = -1, kind = SymbolKind.Package, name = "<unresolved>")
         val sym = TypedSymbolFactory.from(d)

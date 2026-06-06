@@ -2,14 +2,12 @@ package kyo
 
 import kyo.internal.MemoryFileSource
 
-/** Phase 05 plan leaves 9-10: Tasty.evictOlderThan.
+/** plan leaves 9-10: Tasty.evictOlderThan.
   *
   * Leaf 9: evictOlderThan deletes files older than cutoff, keeps recent files.
   * Leaf 10: evictOlderThan on a non-existent path aborts with SnapshotIoError or returns cleanly.
   *
   * Uses MemoryFileSource with controlled mtimes so the test is deterministic and cross-platform.
-  *
-  * Pins: item 31 evict semantics, evict error path; INV-009 site-4.
   */
 class EvictOlderThanTest extends Test:
 
@@ -17,7 +15,6 @@ class EvictOlderThanTest extends Test:
     // Given: cacheDir with 3 .krfl files: two mtime 30 days ago, one mtime 1 hour ago
     // When: Tasty.evictOlderThan(cacheDir, Duration.ofDays(7))
     // Then: the two old files are deleted; the recent file remains; returns Success(())
-    // Pins: item 31 evict semantics; INV-009 site-4
     "Leaf 9: evictOlderThan deletes old .krfl files and keeps recent ones" in run {
         val src    = MemoryFileSource()
         val now    = java.lang.System.currentTimeMillis()
@@ -90,7 +87,6 @@ class EvictOlderThanTest extends Test:
     // When: Tasty.Snapshot.evictOlderThanWithSource(nonExistent, maxAgeMs, src)
     // Then: returns Result.Success(()) -- listing an empty/absent directory returns Chunk.empty
     //       and there are no files to delete, so the operation is a no-op
-    // Pins: item 31 evict error path
     "Leaf 10: evictOlderThan on non-existent directory is a no-op (Success)" in run {
         val src         = MemoryFileSource()
         val nonExistent = "no-such-dir"

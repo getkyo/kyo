@@ -4,7 +4,7 @@ import kyo.internal.tasty.symbol.FqnCanonicalizer
 
 /** Tests for FqnCanonicalizer binary-name canonicalization.
   *
-  * Phase 21g (T2). Covers toFullName with an inner-class table entry that maps '$' nesting to dotted form.
+  * (T2). Covers toFullName with an inner-class table entry that maps '$' nesting to dotted form.
   */
 class FqnCanonicalizerTest extends Test:
 
@@ -13,7 +13,6 @@ class FqnCanonicalizerTest extends Test:
     //        "com/example/Foo$Inner" -> ("com/example/Foo", "Inner").
     // When: FqnCanonicalizer.toFullName(binaryName, innerClassTable).
     // Then: returns "com.example.Foo.Inner".
-    // Pins: T2.
     "FqnCanonicalizer.toFullName resolves named inner class to dotted form" in {
         val innerClassTable: Map[String, (String, String)] = Map(
             "com/example/Foo$Inner" -> ("com/example/Foo", "Inner")

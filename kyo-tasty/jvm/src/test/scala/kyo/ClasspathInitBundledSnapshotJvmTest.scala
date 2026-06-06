@@ -20,8 +20,6 @@ import scala.collection.mutable
   * Leaf 7: digest mismatch under FailFast raises DigestMismatch.
   *
   * Cross-platform leaf (10) lives in ClasspathInitBundledSnapshotTest.scala (shared/src/test).
-  *
-  * Pins: INV-004, INV-005, INV-007.
   */
 class ClasspathInitBundledSnapshotJvmTest extends Test:
 
@@ -135,7 +133,6 @@ class ClasspathInitBundledSnapshotJvmTest extends Test:
     end ZipMemoryFileSource
 
     // Leaf 4: end-to-end transparent bundled load (probe HIT)
-    // Pins: INV-004 end-to-end probe-HIT path
     "Leaf 4: end-to-end bundled load produces exact symbol count (probe HIT)" in run {
         val baseBytes     = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val baseFile      = writeTempJar(baseBytes)
@@ -166,7 +163,6 @@ class ClasspathInitBundledSnapshotJvmTest extends Test:
     }
 
     // Leaf 5: mixed-root merge (bundled HIT + cold jar)
-    // Pins: INV-004 + INV-005 merge correctness
     "Leaf 5: mixed-root merge: bundled root contributes exact symbol count from snapshot" in run {
         val bundledBase     = buildZipBytes("A.class" -> Array[Byte](0xca.toByte))
         val bundledBaseFile = writeTempJar(bundledBase)
@@ -200,7 +196,6 @@ class ClasspathInitBundledSnapshotJvmTest extends Test:
     }
 
     // Leaf 6: SoftFail falls back on digest mismatch
-    // Pins: INV-007 SoftFail
     "Leaf 6: SoftFail on digest mismatch falls back to cold load without raising Abort" in run {
         val staleJar = writeTempJar(buildZipBytes(
             "B.class"                              -> Array[Byte](0xca.toByte),
@@ -212,7 +207,6 @@ class ClasspathInitBundledSnapshotJvmTest extends Test:
     }
 
     // Leaf 7: probe raises DigestMismatch on stale snapshot
-    // Pins: INV-007 FailFast
     "Leaf 7: probe raises DigestMismatch when embedded digest does not match recomputed digest" in run {
         val baseBytes      = buildZipBytes("C.class" -> Array[Byte](0xca.toByte))
         val rootFile       = writeTempJar(baseBytes)

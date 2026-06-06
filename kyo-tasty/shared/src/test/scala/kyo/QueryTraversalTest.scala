@@ -5,9 +5,7 @@ import kyo.Tasty.SymbolId
 import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.query.ClasspathOrchestrator
 
-/** Phase 03 plan leaves 11-14: Tasty.owner(Tasty), fullName, show, signature, parents; Tag[Symbol.X].
-  *
-  * Pins: item 29 parents migration; item 29 / Q-014 Tag-based subtype discrimination.
+/** plan leaves 11-14: Tasty.owner(Tasty), fullName, show, signature, parents; Tag[Symbol.X].
   */
 class QueryTraversalTest extends Test:
 

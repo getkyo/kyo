@@ -3,9 +3,7 @@ package kyo
 import AllowUnsafe.embrace.danger
 import kyo.Tasty.SymbolId
 
-/** Plan-mandated tests for Phase 08 (leaves 165-169): Position.show, Pickle.show, Flag.show, Flags.isEmpty, Name.isEmpty.
-  *
-  * Pins: INV-002.
+/** Position.show, Pickle.show, Flag.show, Flags.isEmpty, Name.isEmpty.
   */
 class SmallTypeShowTest extends Test:
 

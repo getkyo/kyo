@@ -2,15 +2,13 @@ package kyo
 
 import kyo.internal.tasty.query.BundledSnapshotProbe
 
-/** Phase 13 cross-platform leaves for BundledSnapshotProbe.
+/** cross-platform leaves for BundledSnapshotProbe.
   *
   * Leaf 8: remap-at-merge preserves identity (symbol id + offset == merged id).
   * Leaf 9: cross-classpath isolation -- two partials with overlapping ids produce disjoint ids after merge.
   *
   * JVM-only leaves (1, 2, 3, 11) that require real zip construction (java.util.zip, java.io.File)
   * live in BundledSnapshotProbeJvmTest.scala (jvm/src/test).
-  *
-  * Pins: INV-004, INV-005.
   */
 class BundledSnapshotProbeTest extends Test:
 
@@ -18,7 +16,6 @@ class BundledSnapshotProbeTest extends Test:
     // Given: bundled partial with SymbolId space {0, 1, 2}; merged with offset 100.
     // When: mergePartialInto(existing100, partial3) and lookup by name.
     // Then: symbol with local id=1 in partial has id=101 in merged.
-    // Pins: INV-005 remap-at-merge
     "Leaf 8: remap-at-merge shifts partial ids by existing classpath size" in run {
         val existingSyms: Chunk[Tasty.Symbol] = Chunk.from(
             (0 until 100).map: i =>
@@ -93,7 +90,6 @@ class BundledSnapshotProbeTest extends Test:
     // Given: two bundled partials with overlapping ids {0, 1, 2}.
     // When: merged sequentially.
     // Then: post-merge ids for A and B symbols are disjoint.
-    // Pins: INV-005 isolation
     "Leaf 9: two partials with overlapping ids produce disjoint ids after merge" in run {
         def makePartial(prefix: String, n: Int): Tasty.Classpath =
             val syms: Chunk[Tasty.Symbol] = Chunk.from(

@@ -5,16 +5,15 @@ import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.query.ClasspathOrchestrator
 
 /** Fidelity tests for TastyError channel fidelity: SoftFail/FailFast FileNotFound, MalformedSection, CorruptedFile, requireSymbol, and
-  * ClasspathBuilding (F-A5-001, F-A5-002, F-A5-005, F-A5-006, F-A1-006, F-A1-007, F-A5-004).
   *
-  * Before Phase 2.08:
+  * Before:
   *   - `Tasty.Classpath.init(Seq("/tmp/missing"))` with SoftFail aborted via `Abort.fail(TastyError.FileNotFound)` instead of accumulating
-  *     the error (F-A5-002 bug).
-  *   - `TastyError.SymbolNotFound` was never raised anywhere (dead variant -- F-A5-001 gap).
-  *   - `TastyError.ClasspathBuilding` was never raised (dead variant -- F-A5-001 gap).
+  *     the error.
+  *   - `TastyError.SymbolNotFound` was never raised anywhere (dead variant --   gap).
+  *   - `TastyError.ClasspathBuilding` was never raised (dead variant --   gap).
   *   - `TastyError.MalformedSection` reason was the raw JVM message "Array index out of range: 254" instead of "name table index 254 out of
-  *     range" (F-A5-005 gap).
-  *   - `TastyError.CorruptedFile.path` was "<byte view>" instead of the actual file path (F-A5-006 gap).
+  *     range" ..
+  *   - `TastyError.CorruptedFile.path` was "<byte view>" instead of the actual file path ..
   *
   * Cross-platform: uses MemoryFileSource and ClasspathOrchestrator.init with synthetic corrupt bytes. No JVM filesystem required.
   *
@@ -68,12 +67,11 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
         ClasspathOrchestrator.init(Seq("root"), mode, src, 1)
     end loadFromMemory
 
-    // Leaf 1 (F-A5-002, INV-104-DF2): softfail-accumulates-filenotfound
+    // softfail-accumulates-filenotfound
     // Given: init with a MemoryFileSource containing no files for root "missing", ErrorMode.SoftFail
     // When: awaiting init result
     // Then: returns Classpath with cp.errors.head == TastyError.FileNotFound and cp.symbols.size == 0
-    // Pins: INV-104-DF2; F-A5-002 (OQ-002 fix)
-    "F-A5-002 leaf 1 (Phase 2.08): SoftFail missing root accumulates FileNotFound in cp.errors" in run {
+    "SoftFail missing root accumulates FileNotFound in cp.errors" in run {
         val src = MemoryFileSource()
         // "missing" root exists in neither key: exists("missing") returns false, triggering FileNotFound
         ClasspathOrchestrator.init(Seq("missing"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
@@ -88,7 +86,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
             assert(
                 hasFileNotFound,
                 s"Expected cp.errors to contain TastyError.FileNotFound; got ${cp.errors}. " +
-                    "F-A5-002: missing root must accumulate FileNotFound under SoftFail."
+                    "missing root must accumulate FileNotFound under SoftFail."
             )
             assert(
                 cp.symbols.isEmpty,
@@ -97,12 +95,11 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 2 (INV-104-DF2 FailFast): failfast-aborts-on-filenotfound
+    // failfast-aborts-on-filenotfound
     // Given: same missing root with ErrorMode.FailFast
     // When: awaiting init result
     // Then: aborts with Abort.fail(TastyError.FileNotFound(...))
-    // Pins: INV-104-DF2 FailFast preservation (current behavior preserved)
-    "INV-104-DF2 leaf 2 (Phase 2.08): FailFast missing root still raises FileNotFound" in run {
+    "FailFast missing root still raises FileNotFound" in run {
         val src = MemoryFileSource()
         Abort.run[TastyError](ClasspathOrchestrator.init(Seq("missing"), Tasty.ErrorMode.FailFast, src, 1)).map: result =>
             result match
@@ -116,12 +113,11 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
                     fail(s"Unexpected panic: ${t.getMessage}")
     }
 
-    // Leaf 3 (F-A5-005, INV-107-DF2): softfail-accumulates-malformedsection
+    // softfail-accumulates-malformedsection
     // Given: truncated .tasty bytes loaded with SoftFail via MemoryFileSource
     // When: inspecting cp.errors
     // Then: cp.errors contains at least one MalformedSection
-    // Pins: INV-107-DF2; F-A5-005 (typed reason string); F-A1-006
-    "F-A5-005 leaf 3 (Phase 2.08): SoftFail truncated .tasty produces MalformedSection" in run {
+    "SoftFail truncated .tasty produces MalformedSection" in run {
         loadFromMemory("Truncated.tasty", truncatedTastyBytes, Tasty.ErrorMode.SoftFail).map: cp =>
             assert(
                 cp.errors.nonEmpty,
@@ -136,12 +132,11 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 4 (F-A5-006, INV-107-DF2): softfail-accumulates-corruptedfile
+    // softfail-accumulates-corruptedfile
     // Given: bit-flipped magic .tasty bytes loaded with SoftFail via MemoryFileSource
     // When: inspecting cp.errors
     // Then: cp.errors contains at least one CorruptedFile or MalformedSection
-    // Pins: INV-107-DF2; F-A5-006 (CorruptedFile raised for bad magic); F-A1-007
-    "F-A5-006 leaf 4 (Phase 2.08): SoftFail bit-flipped magic produces CorruptedFile or MalformedSection" in run {
+    "SoftFail bit-flipped magic produces CorruptedFile or MalformedSection" in run {
         loadFromMemory("BitFlipped.tasty", bitFlippedMagicBytes, Tasty.ErrorMode.SoftFail).map: cp =>
             assert(
                 cp.errors.nonEmpty,
@@ -158,12 +153,11 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 5 (F-A5-001 NotFound): requiresymbol-raises-on-absent
+    // requiresymbol-raises-on-absent
     // Given: requireSymbol('non.existent.fqn') against embedded classpath
     // When: awaiting result
     // Then: aborts with TastyError.NotFound('non.existent.fqn')
-    // Pins: INV-103-DF2; F-A5-001 (NotFound wired via requireSymbol; unified with kind-specific requireX)
-    "F-A5-001 leaf 5 (Phase 2.08): requireSymbol raises NotFound for absent FQN" in run {
+    "requireSymbol raises NotFound for absent FQN" in run {
         kyo.internal.TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             given Tasty.Classpath = cp
             Abort.run[TastyError](cp.requireSymbol("non.existent.fqn.abc.xyz")).map: result =>
@@ -182,12 +176,11 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
                         fail(s"Unexpected panic: ${t.getMessage}")
     }
 
-    // Leaf 6 (requireSymbol happy path): requiresymbol-returns-present-symbol
+    // requiresymbol-returns-present-symbol
     // Given: requireSymbol('PlainClass') against embedded classpath
     // When: awaiting
     // Then: returns the corresponding Symbol (no abort)
-    // Pins: requireSymbol happy path
-    "Phase 2.08 leaf 6 (requireSymbol happy path): requireSymbol returns symbol for present FQN" in run {
+    "(requireSymbol happy path): requireSymbol returns symbol for present FQN" in run {
         kyo.internal.TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             given Tasty.Classpath = cp
             // Find any real FQN from the loaded classpath
@@ -204,12 +197,11 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
                 )
     }
 
-    // Leaf 7 (F-A5-001 ClasspathBuilding): classpath-building-fires-from-orchestrator
+    // classpath-building-fires-from-orchestrator
     // Given: synthetic degenerate MergeState + FailFast
     // When: awaiting finalizeMerge result
     // Then: aborts with TastyError.ClasspathBuilding
-    // Pins: INV-103-DF2; F-A5-001 (ClasspathBuilding wired in finalizeMerge)
-    "F-A5-001 leaf 7 (Phase 2.08): ClasspathBuilding fires from orchestrator on invariant violation" in run {
+    "ClasspathBuilding fires from orchestrator on invariant violation" in run {
         Abort.run[TastyError](kyo.internal.tasty.query.ClasspathOrchestrator.triggerClasspathBuildingForTest()).map: result =>
             result match
                 case Result.Failure(TastyError.ClasspathBuilding(_)) =>
@@ -225,12 +217,11 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
                     fail(s"Unexpected panic: ${t.getMessage}")
     }
 
-    // Leaf 8 (F-A5-004, INV-107-DF2): softfail-accumulates-corruptedfile-midstream
+    // softfail-accumulates-corruptedfile-midstream
     // Given: mid-stream corrupted bytes loaded via MemoryFileSource
     // When: inspecting cp.errors
     // Then: cp.errors contains exactly one structured error
-    // Pins: F-A5-004; INV-107-DF2
-    "F-A5-004 leaf 8 (Phase 2.08): SoftFail mid-stream corruption produces structured error" in run {
+    "SoftFail mid-stream corruption produces structured error" in run {
         loadFromMemory("MidStream.tasty", corruptedMidStreamBytes, Tasty.ErrorMode.SoftFail).map: cp =>
             assert(
                 cp.errors.nonEmpty,
@@ -243,7 +234,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
             assert(
                 errWithStructure.isDefined,
                 s"Expected at least one structured error (MalformedSection or CorruptedFile) in cp.errors; got: ${cp.errors}. " +
-                    "F-A5-004: partial-file corruption must produce a structured TastyError, not a raw string."
+                    "partial-file corruption must produce a structured TastyError, not a raw string."
             )
             succeed
     }

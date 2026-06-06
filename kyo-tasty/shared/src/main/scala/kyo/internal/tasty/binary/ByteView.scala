@@ -6,7 +6,7 @@ import kyo.AllowUnsafe
   *
   * ByteView is a sealed abstract class with two concrete cases:
   *   - Heap: backed by an in-memory Array[Byte] with start/end bounds and a mutable cursor.
-  *   - Mapped: stub for memory-mapped file support (Phase 7).
+  *   - Mapped: stub for memory-mapped file support.
   *
   * All cursor-advancing operations are performed on the concrete Heap instance; there is no effect wrapper here because ByteView is a
   * low-level building block used inside Sync.defer blocks at the call site.

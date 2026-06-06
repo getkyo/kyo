@@ -9,7 +9,7 @@ import scala.collection.immutable.IntMap
 
 /** Tests for PositionsUnpickler.read and Tasty.Symbol.position.
   *
-  * Plan Phase 7 G2 tests 1-5.
+  * Plan G2 tests 1-5.
   *
   * The Positions section format (from dotty TastyFormat.scala, verbatim):
   * {{{
@@ -49,7 +49,7 @@ class PositionsUnpicklerTest extends Test:
         ((n & 0x3f) | 0x80).toByte
     end encNegInt
 
-    /** Create a minimal LoadingSymbol.Materialising for testing (Phase 08: replaces makePlaceholder). */
+    /** Create a minimal LoadingSymbol.Materialising for testing (replaces makePlaceholder). */
     private def makeTestSymbol(nameStr: String): LoadingSymbol.Materialising =
         LoadingSymbol.Materialising(
             id = nameStr.hashCode.abs % 1000,
@@ -61,7 +61,7 @@ class PositionsUnpicklerTest extends Test:
 
     // ── Test 1: fixture TASTy position: class Foo at line 3, column 1 ─────────
 
-    // Phase 7 Test 1: a synthetic Positions section encoding a single class definition at line 3, column 1.
+    // Test 1: a synthetic Positions section encoding a single class definition at line 3, column 1.
     // LineSizes = [10, 5, 20] means:
     //   line 1: chars 0-10 (11 chars incl. '\n'), lineStarts[0]=0
     //   line 2: chars 11-16 (6 chars incl. '\n'), lineStarts[1]=11
@@ -98,7 +98,7 @@ class PositionsUnpicklerTest extends Test:
 
     // ── Test 2: no Positions section returns empty map without error ──────────
 
-    // Phase 7 Test 2: an empty Positions section (zero-length payload) returns an empty map without error.
+    // Test 2: an empty Positions section (zero-length payload) returns an empty map without error.
     "PositionsUnpickler: empty payload returns empty map without error" in run {
         val view = ByteView(Array.empty[Byte])
         Abort.run[TastyError](PositionsUnpickler.read(view, IntMap.empty, Absent)).map:
@@ -112,7 +112,7 @@ class PositionsUnpicklerTest extends Test:
 
     // ── Test 3: malformed Positions section fails with MalformedSection ───────
 
-    // Phase 7 Test 3: a Positions section truncated mid-entry produces
+    // Test 3: a Positions section truncated mid-entry produces
     // Abort.fail(TastyError.MalformedSection("Positions", ...)).
     // Payload: numLines=2, line sizes [10, 10], then a header byte indicating hasStart=true but
     // no start_delta follows (truncated). ArrayIndexOutOfBoundsException triggers MalformedSection.
@@ -141,7 +141,7 @@ class PositionsUnpicklerTest extends Test:
 
     // ── Test 4: Java classfile symbol has position == Absent ─────────────────
 
-    // Phase 7 Test 4: a Java-sourced classfile symbol always has position == Absent because
+    // Test 4: a Java-sourced classfile symbol always has position == Absent because
     // classfiles have no TASTy Positions section; ClassfileUnpickler sets _position to Absent.
     "PositionsUnpickler: Java classfile symbol always has position == Absent" in run {
         val classBytes = kyo.fixtures.Embedded.arrayRecordClass
@@ -168,7 +168,7 @@ class PositionsUnpicklerTest extends Test:
 
     // ── Test 5: two siblings have distinct line/column values ─────────────────
 
-    // Phase 7 Test 5: two sibling definitions in the same file have distinct line/column values.
+    // Test 5: two sibling definitions in the same file have distinct line/column values.
     // LineSizes = [10, 10]: line 1 chars 0-10, line 2 chars 11-21.
     // Sym1 at addrIndex=3, offset=2 => line 1, col 3.
     // Sym2 at addrIndex=7, offset_delta=+11 => cumulative offset=13 => line 2, col 3.
@@ -220,7 +220,7 @@ class PositionsUnpicklerTest extends Test:
 
     // T-P5-1: PositionsUnpickler.readSync with an IntMap addrMap of 10,000 entries returns
     // correct position mappings for all 10,000 entries. Behavioral correctness at scale.
-    // Integer-allocation-elimination assertion is deferred to Phase 8 re-profiling per plan.
+    // Integer-allocation-elimination assertion is deferred to re-profiling per plan.
     //
     // Payload construction:
     //   - numLines = 10001 (enough lines for offset 10000)

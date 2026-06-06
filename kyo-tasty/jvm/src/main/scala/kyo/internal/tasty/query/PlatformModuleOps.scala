@@ -13,7 +13,7 @@ import scala.jdk.CollectionConverters.*
   * The `jrt:/` filesystem is mounted automatically by the JVM (no explicit `FileSystem.newFileSystem` call needed on JDK 11+). Module
   * descriptors live at `/modules/<module-name>/module-info.class` within that filesystem.
   *
-  * Q-006 / F-D-001: platform split so JS/Native return UnsupportedPlatform without carrying JVM-specific imports.
+  * Platform split so JS/Native return UnsupportedPlatform without carrying JVM-specific imports.
   */
 private[kyo] object PlatformModuleOps:
 
@@ -47,8 +47,8 @@ private[kyo] object PlatformModuleOps:
       * `module-info.class`, which is decoded separately as a module descriptor by `readJdkModuleDescriptors`). Paths are formatted as
       * `jrt://modules/<m>/<path/to/cls>.class` for consumption by `Tasty.Classpath.initWithPlatformModules`.
       *
-      * F-A3-001..004 fix: prior to this method, only `module-info.class` was decoded; JDK class symbols (`java.lang.String`,
-      * `java.util.HashMap`, etc.) were unreachable. The classfile unpickler is already complete; the only gap was the walker enumerating
+      * Prior to this method, only `module-info.class` was decoded; JDK class symbols (`java.lang.String`,
+      * `java.util.HashMap`, etc.) were unreachable. The classfile unpickler is complete; the only gap was the walker enumerating
       * only module-info.
       *
       * When `moduleFilter` is non-empty, only the named modules are walked. An empty set walks ALL modules, which is the

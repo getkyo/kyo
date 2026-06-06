@@ -6,14 +6,12 @@ import kyo.Tasty.Classpath
 import kyo.Tasty.SymbolId
 import kyo.internal.tasty.query.Binding
 
-/** Phase 04 plan leaves 1-6.
+/** plan leaves 1-6.
   *
   * Leaf 1: Classpath.empty round-trips through Schema. Leaf 2: non-empty Classpath round-trips.
   * Leaf 3: Classpath.Indices derives Schema. Leaf 4: Classpath has no decodeCtx/canonical/mmapArena
   * field (compileErrors). Leaf 5: Binding.empty wraps Classpath.empty. Leaf 6: cross-platform
   * (leaves 1-5 are in shared/src/test, which runs on JVM, JS, and Native).
-  *
-  * Pins: item 30 pure-data Schema derivation; INV-008.
   */
 class ClasspathPureDataTest extends Test:
 

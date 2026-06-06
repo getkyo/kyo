@@ -5,12 +5,12 @@ import kyo.internal.tasty.reader.TastyFormat
 
 /** TASTy modifier tag to Flags conversions, and JVM access flag conversions.
   *
-  * The full ~42-flag set is defined here. Phase 0 seeded bits 0-15; Phase 3 adds bits 16+.
+  * The full ~42-flag set is defined here.
   *
-  * Flag bit assignments: Bits 0-15: Phase 0 flags (Inline, Private, Protected, Public, Final, Sealed, Abstract, Given, Implicit, Opaque,
-  * Case, Module, Synthetic, JavaDefined, Enum, JavaRecord) Bits 16+: Phase 3 additions (Open, ParamAccessor, Lazy, Override, Mutable,
+  * Flag bit assignments: Bits 0-15: core flags (Inline, Private, Protected, Public, Final, Sealed, Abstract, Given, Implicit, Opaque,
+  * Case, Module, Synthetic, JavaDefined, Enum, JavaRecord). Bits 16+: extended flags (Open, ParamAccessor, Lazy, Override, Mutable,
   * Erased, Tracked, Tailrec, Infix, Transparent, Trait, CaseAccessor, FieldAccessor, Macro, InlineProxy, Extension, Exported, CoVariant,
-  * ContraVariant, HasDefault, Stable, Local, Artifact, Invisible, Into, PARAMsetter, PARAMalias)
+  * ContraVariant, HasDefault, Stable, Local, Artifact, Invisible, Into, PARAMsetter, PARAMalias).
   */
 object Flags:
 

@@ -18,7 +18,7 @@ final private[kyo] class SymbolMaterializationError(val error: TastyError)
 /** Canonical factory that converts a fully-populated SymbolDescriptor into the matching typed Symbol subtype.
   *
   * Called by ClasspathOrchestrator.materializeSymbols (Pass C), SnapshotReader (all 4 construction sites), ClassfileUnpickler (2 sites),
-  * and Scala2PickleReader (1 site). Replaces the Phase 01 bridge chain fromDescriptor -> fromFlat -> _SymbolFlat.
+  * and Scala2PickleReader (1 site). Replaces the bridge chain fromDescriptor -> fromFlat -> _SymbolFlat.
   *
   * All 14 SymbolKind cases are handled. The `d.id` and `d.ownerId` fields are int-typed in SymbolDescriptor; they are wrapped as SymbolId
   * values here. Collection fields (`typeParamIds`, `declarationIds`, `paramListIds`) undergo a similar int-to-SymbolId lift.
@@ -263,7 +263,7 @@ private[kyo] object TypedSymbolFactory:
                     memberIds = Chunk.from(d.declarationIds.toSeq.map(SymbolId(_)))
                 )
             case SymbolKind.EnumCase =>
-                // F-E-007 (Phase 13): emit Symbol.EnumCase as a proper subtype of Symbol.Class.
+                // Emit Symbol.EnumCase as a proper subtype of Symbol.Class.
                 // Symbol.Class is no longer final; Symbol.EnumCase extends it so callers matching
                 // Symbol.Class still work, but callers can now discriminate via Symbol.EnumCase.
                 Tasty.Symbol.EnumCase(
@@ -281,7 +281,7 @@ private[kyo] object TypedSymbolFactory:
                     annotations = d.annotations,
                     javaAnnotations = d.javaAnnotations
                 )
-            // SymbolKind.Unresolved was removed in Phase 08; this case is retained for backward compatibility
+            // SymbolKind.Unresolved was removed in an earlier iteration; this case is retained for backward compatibility
             // with SnapshotReader (ordinal 14 -> Package fallback). Treat as Package.
             case _ =>
                 Tasty.Symbol.Package(sid, d.name, d.flags, ownerSid, Chunk.empty)

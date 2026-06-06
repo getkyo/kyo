@@ -12,21 +12,21 @@ import scala.collection.mutable
 
 /** Decodes TASTy type nodes into Tasty.Type values.
   *
-  * Entry point: TypeUnpickler.readAllTypes is called by AstUnpickler (Phase 4 wiring) after pass 1 has produced addrMap. readType is the
+  * Entry point: TypeUnpickler.readTypeIntoSession is called by AstUnpickler after pass 1 has produced addrMap. readType is the
   * internal recursive descent function.
   *
   * Key state per decode session (all mutable, file-scoped):
   *   - addrCache: Addr->Type, used for SHAREDtype back-references.
   *   - inProgressRec: Addr->Rec placeholder, used to break RECtype/RECthis cycles.
   *   - binderAddrMap: Addr->Chunk[Symbol], maps lambda start addr to param symbol list.
-  *   - cross-file references: produce Named(SymbolId(-1)) entries directly (UnresolvedRef deleted in Phase 07).
+  *   - cross-file references: produce Named(SymbolId(-1)) entries directly.
   *
   * Cross-platform: no JVM-only APIs; all bit-pattern conversions use java.lang.Float/Double which are available on Scala.js and Scala
   * Native.
   */
 /** Exception wrapper that carries a `TastyError` through synchronous decode paths.
   *
-  * Thrown by `decodeTag` when an unrecognised tag is encountered (Phase 2.04-strict). The `readType` catch block re-lifts this
+  * Thrown by `decodeTag` when an unrecognised tag is encountered. The `readType` catch block re-lifts this
   * into `Abort.fail(error)` so that `TastyError.UnknownTagInPosition` is preserved as the actual error variant rather than being
   * wrapped in the generic `MalformedSection` fallback that catches plain `Exception`.
   *
@@ -41,9 +41,9 @@ object TypeUnpickler:
 
     /** Phase-B temporary SymbolId offset.
       *
-      * During Phase B decode, `TERMREFdirect` and `TYPEREFdirect` type nodes reference local symbols by TASTy byte address. Instead of
+      * During per-file decode, `TERMREFdirect` and `TYPEREFdirect` type nodes reference local symbols by TASTy byte address. Instead of
       * using `SymbolId(-1)` (which loses the address information), we encode the address as `SymbolId(PHASE_B_ADDR_OFFSET + addr)`. This
-      * preserves the address so that Phase C `finalizeMerge` can remap these to correct final SymbolIds using the file's addrMap.
+      * preserves the address so that `finalizeMerge` can remap these to correct final SymbolIds using the file's addrMap.
       *
       * The offset (2^28 = 268_435_456) is chosen so that it is far above any realistic classpath symbol count and distinguishable from both
       * negative sentinel (-1) and final SymbolIds (0 to N-1).
@@ -53,7 +53,7 @@ object TypeUnpickler:
     /** Sentinel SymbolId for unresolved-type fallbacks.
       *
       * Used in places where `session` is null (body decode path) and a unique tracked id is not available. The value -1 is the canonical
-      * unresolved sentinel. Phase C remapType leaves ids == -1 unchanged.
+      * unresolved sentinel. The finalizeMerge remapType pass leaves ids == -1 unchanged.
       */
     private[kyo] val sentinelId: kyo.Tasty.SymbolId = kyo.Tasty.SymbolId(-1)
 
@@ -68,7 +68,7 @@ object TypeUnpickler:
       * @param arena
       *   Per-file TypeArena for hash-consing decoded types.
       * @param home
-      *   (formerly ClasspathRef; deleted in Phase 07)
+      *   (unused; removed in an earlier iteration)
       * @return
       *   The decoded Tasty.Type, interned in `arena`.
       */
@@ -101,7 +101,7 @@ object TypeUnpickler:
                 Right(t)
             catch
                 case ex: TastyErrorException =>
-                    // Phase 2.04-strict: preserve the specific TastyError (e.g. UnknownTagInPosition)
+                    // Preserve the specific TastyError (e.g. UnknownTagInPosition)
                     // rather than wrapping it in the generic MalformedSection fallback.
                     Left(ex.error)
                 case ex: ArrayIndexOutOfBoundsException =>
@@ -207,7 +207,7 @@ object TypeUnpickler:
         sectionOffset: Int = 0
     )(using frame: Frame)(using AllowUnsafe): Tasty.Type =
         // Pass session.liveAddrMap directly -- no per-call IntMap snapshot.
-        // Pass session reference for cross-file FQN tracking so Phase C can remap parent types.
+        // Pass session reference for cross-file FQN tracking so the merge pass can remap parent types.
         val ctx = DecodeCtx(
             session.names,
             session.liveAddrMap,
@@ -225,8 +225,8 @@ object TypeUnpickler:
 
     /** Variant of readTypeIntoSession that also provides sectionBytes, enabling eager annotation arg decode.
       *
-      * Used in tests (Phase 09 followup for Phase 08 W-1/W-2) to verify that corrupt annotation arg bytes accumulate errors in
-      * `session.annotationDecodeErrors` rather than propagating exceptions.
+      * Used to verify that corrupt annotation arg bytes accumulate errors in `session.annotationDecodeErrors` rather than
+      * propagating exceptions.
       *
       * Private to kyo; not part of the public API.
       */
@@ -257,7 +257,7 @@ object TypeUnpickler:
       * find locally-defined symbols as the walk progresses.
       *
       * `unresolvedIdToFqn` accumulates mappings from the unique negative SymbolIds assigned to cross-file unresolved symbols to their FQNs.
-      * Phase C uses this map to look up the FQN and resolve to the correct final SymbolId via `fqnIndex`.
+      * The merge pass uses this map to look up the FQN and resolve to the correct final SymbolId via `fqnIndex`.
       */
     final private[kyo] class DecodeSession(
         val names: Array[Tasty.Name],
@@ -274,13 +274,13 @@ object TypeUnpickler:
         // Counter for unique negative IDs: starts at -2 (to distinguish from SymbolId(-1) which is the sentinel).
         private var _unresolvedIdCounter: Int = -2
 
-        // F-A-005 fix: owner stack maintained by AstUnpickler as it enters/exits DEFDEF and TYPEDEF nodes.
+        // Owner stack maintained by AstUnpickler as it enters/exits DEFDEF and TYPEDEF nodes.
         // The THIS-type branch reads this to resolve THIS to the enclosing class/trait/object symbol.
         val ownerStack: mutable.ArrayDeque[LoadingSymbol.Materialising] = new mutable.ArrayDeque()
 
         // Parallel stack with the ABSOLUTE node address (from addrMap) of each owner symbol.
         // This allows the THIS-type branch to emit ThisType(PHASE_B_ADDR_OFFSET + addr) for
-        // proper Phase C remapping via addrToFinal.
+        // proper finalizeMerge remapping via addrToFinal.
         val ownerAddrStack: mutable.ArrayDeque[Int] = new mutable.ArrayDeque()
 
         def nextUnresolvedId(): Int =
@@ -322,8 +322,8 @@ object TypeUnpickler:
 
     /** Make a unique negative SymbolId for a cross-file FQN reference and record it in `fqns`.
       *
-      * The caller must provide a unique negative `id` (obtained via `session.nextUnresolvedId()`). Records `id -> fqn` in `fqns` so Phase C
-      * can resolve `Named(SymbolId(id))` to the correct final SymbolId via fqnIndex lookup.
+      * The caller must provide a unique negative `id` (obtained via `session.nextUnresolvedId()`). Records `id -> fqn` in `fqns` so
+      * finalizeMerge can resolve `Named(SymbolId(id))` to the correct final SymbolId via fqnIndex lookup.
       */
     private def makeTrackedUnresolvedSym(
         fqn: String,
@@ -360,7 +360,7 @@ object TypeUnpickler:
 
             case TastyFormat.SHAREDtype =>
                 // astRef is a section-relative offset; absRef is the absolute position in file/sectionBytes.
-                // F-A-001 fix: always add sectionOffset to convert section-relative to absolute, since
+                // Always add sectionOffset to convert section-relative to absolute, since
                 // addrCache keys are absolute (view.positionInt = sectionOffset + sectionRelativeAddr).
                 val astRef = view.readNat()
                 val absRef = ctx.sectionOffset + astRef
@@ -391,8 +391,8 @@ object TypeUnpickler:
                         else
                             // Pass 1 context: sectionBytes is null. A SHAREDtype cache miss means
                             // the referenced type was in a position not decoded during Pass 1.
-                            // F-A2-002 fix: use a unique tracked negative ID (< -1) so the result
-                            // does not collide with the Named(-1) sentinel checked by INV-005.
+                            // Use a unique tracked negative ID (< -1) so the result
+                            // does not collide with the Named(-1) sentinel.
                             ctx.session match
                                 case s: DecodeSession =>
                                     Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
@@ -405,13 +405,13 @@ object TypeUnpickler:
             case TastyFormat.TERMREFdirect =>
                 val astRef = view.readNat()
                 // TASTy ASTRef values are section-relative. addrMap keys are absolute (sectionOffset + sectionRelativeAddr).
-                // F-A-001 fix: add sectionOffset to convert to absolute before lookup and storage.
+                // Add sectionOffset to convert to absolute before lookup and storage.
                 val absRef = ctx.sectionOffset + astRef
                 if ctx.addrMap.contains(absRef) then Tasty.Type.Named(kyo.Tasty.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
                 else
-                    // F-A2-002 fix: cross-file TERMREFdirect miss. Assign a unique tracked negative ID
+                    // Cross-file TERMREFdirect miss: assign a unique tracked negative ID
                     // so the result is Named(SymbolId(uniqueNeg)) with uniqueNeg < -1, not the Named(-1) sentinel.
-                    // Phase C's remapType will attempt FQN lookup via negIdToFinal; if it fails the type
+                    // finalizeMerge's remapType will attempt FQN lookup via negIdToFinal; if it fails the type
                     // remains as a unique unresolved ref (value < -1) rather than colliding with the -1 sentinel.
                     ctx.session match
                         case s: DecodeSession => Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
@@ -421,14 +421,13 @@ object TypeUnpickler:
             case TastyFormat.TYPEREFdirect =>
                 val astRef = view.readNat()
                 // TASTy ASTRef values are section-relative. addrMap keys are absolute (sectionOffset + sectionRelativeAddr).
-                // F-A-001 fix: add sectionOffset to convert to absolute before lookup and storage.
+                // Add sectionOffset to convert to absolute before lookup and storage.
                 val absRef = ctx.sectionOffset + astRef
                 if ctx.addrMap.contains(absRef) then Tasty.Type.Named(kyo.Tasty.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
                 else
-                    // F-A2-002 fix: cross-file TYPEREFdirect miss (same rationale as TERMREFdirect above).
-                    // Assign a unique tracked negative ID so the result is Named(SymbolId(uniqueNeg)) with
-                    // uniqueNeg < -1, eliminating the Named(-1) sentinel from declaredType traversals.
-                    // This is the root cause of the scala.Tuple.splitAt Named(-1) in probe-001.log line 39872.
+                    // Cross-file TYPEREFdirect miss: assign a unique tracked negative ID so the result is
+                    // Named(SymbolId(uniqueNeg)) with uniqueNeg < -1, eliminating the Named(-1) sentinel
+                    // from declaredType traversals.
                     ctx.session match
                         case s: DecodeSession => Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
                         case null             => Tasty.Type.Named(sentinelId)
@@ -441,7 +440,7 @@ object TypeUnpickler:
                     case s: DecodeSession =>
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
                     case null =>
-                        // F-G-007 pass B: no session context -- use interned sentinel instead of per-fqn name
+                        // No session context: use interned sentinel instead of per-fqn name.
                         Tasty.Type.Named(sentinelId)
                 end match
 
@@ -452,7 +451,7 @@ object TypeUnpickler:
                     case s: DecodeSession =>
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
                     case null =>
-                        // F-G-007 pass B: no session context -- use interned sentinel instead of per-fqn name
+                        // No session context: use interned sentinel instead of per-fqn name.
                         Tasty.Type.Named(sentinelId)
                 end match
 
@@ -465,10 +464,9 @@ object TypeUnpickler:
                         ctx.addrCache.get(recAddr) match
                             case Some(recNode) => Tasty.Type.RecThis(recNode)
                             case None          =>
-                                // F-A-007 fix: the Rec node hasn't been decoded yet. Assign a unique
-                                // tracked ID (< -1) so the result is Named(SymbolId(uniqueNeg)) not Named(-1).
-                                // No per-address fabricated names leak into cp.symbols; the unique ID is
-                                // unresolvable but does not collide with the INV-005 Named(-1) sentinel check.
+                                // The Rec node hasn't been decoded yet. Assign a unique tracked ID (< -1)
+                                // so the result is Named(SymbolId(uniqueNeg)) not Named(-1). The unique ID is
+                                // unresolvable but does not collide with the Named(-1) sentinel check.
                                 val placeholderId = ctx.session match
                                     case s: DecodeSession => kyo.Tasty.SymbolId(s.nextUnresolvedId())
                                     case null             => sentinelId
@@ -502,11 +500,11 @@ object TypeUnpickler:
                     case Tasty.Type.Named(id) =>
                         Tasty.Type.ThisType(id)
                     case _ =>
-                        // F-A-005 fix: resolve THIS through the active scope's enclosing class.
+                        // Resolve THIS through the active scope's enclosing class.
                         // The owner stack is maintained by AstUnpickler around every CLASSDEF / DEFDEF;
                         // the topmost class-kind owner is the canonical "this" referent.
-                        // We use ownerAddrStack to obtain the Phase-B address-encoded id so that
-                        // Phase C remapType can look it up in addrToFinal and return the real class id.
+                        // ownerAddrStack provides the Phase-B address-encoded id so that
+                        // finalizeMerge's remapType can look it up in addrToFinal and return the real class id.
                         ctx.session match
                             case s: DecodeSession =>
                                 val enclosingPair = s.ownerStack.reverseIterator
@@ -539,9 +537,9 @@ object TypeUnpickler:
                 // Cycle-break: allocate a typed placeholder Rec before decoding parent.
                 // inProgressRec is keyed by the RECtype node's start addr so RECthis nodes
                 // encountered during parent decoding can find the placeholder.
-                // F-G-007 pass B: use sentinel id for the RECtype cycle-breaker placeholder.
-                // This is safe because the placeholder is installed in inProgressRec keyed by startAddr and is
-                // removed via inProgressRec.remove BEFORE the result is returned. No per-address identity needed.
+                // Use sentinel id for the RECtype cycle-breaker placeholder.
+                // The placeholder is installed in inProgressRec keyed by startAddr and removed
+                // via inProgressRec.remove BEFORE the result is returned; no per-address identity needed.
                 val placeholder: Tasty.Type.Rec = Tasty.Type.Rec(Tasty.Type.Named(sentinelId))
                 ctx.inProgressRec(startAddr) = placeholder
                 val parent = readTypeNode(view, ctx)
@@ -556,15 +554,15 @@ object TypeUnpickler:
             case TastyFormat.TERMREFsymbol =>
                 val astRef = view.readNat()
                 val qual   = readTypeNode(view, ctx)
-                // F-A-001 fix: convert section-relative ASTRef to absolute for addrMap lookup.
+                // Convert section-relative ASTRef to absolute for addrMap lookup.
                 val absRefTerm = ctx.sectionOffset + astRef
                 ctx.addrMap.get(absRefTerm) match
                     case Some(sym) => Tasty.Type.TermRef(qual, sym.name)
                     case None      =>
-                        // F-I-003 fix: for forward references (same file, not yet in addrMap),
-                        // emit Named(PHASE_B_ADDR_OFFSET + absRef). Phase C remaps to the final
+                        // For forward references (same file, not yet in addrMap),
+                        // emit Named(PHASE_B_ADDR_OFFSET + absRef). finalizeMerge remaps to the final
                         // SymbolId via addrToFinal, allowing resolveChildRef to extract it.
-                        // If truly unresolvable (different file), Phase C returns Named(-1).
+                        // If truly unresolvable (different file), finalizeMerge returns Named(-1).
                         Tasty.Type.Named(kyo.Tasty.SymbolId(PHASE_B_ADDR_OFFSET + absRefTerm))
                 end match
 
@@ -577,19 +575,17 @@ object TypeUnpickler:
                 val astRef = view.readNat()
                 // qual is present but for Named resolution we only need the sym.
                 discard(readTypeNode(view, ctx)) // consume qual
-                // F-A-001 fix: convert section-relative ASTRef to absolute for addrMap lookup.
-                // Use PHASE_B_ADDR_OFFSET + absRef so Phase C can remap via addrMap.
-                // F-I-003 fix: always emit PHASE_B_ADDR_OFFSET + absRef regardless of whether
-                // addrMap contains absRef yet. For @Child annotation forward references, the
-                // referenced symbol may not yet be in addrMap (decoded later in the same file).
-                // Phase C's addrToFinal map is built from the COMPLETE addrMap and resolves these.
-                // If absRef is truly from a different file, addrToFinal will not contain it and
-                // Phase C leaves it as Named(-1) (same behavior as before this fix).
+                // Convert section-relative ASTRef to absolute for addrMap lookup.
+                // Always emit PHASE_B_ADDR_OFFSET + absRef regardless of whether addrMap contains absRef yet.
+                // For @Child annotation forward references, the referenced symbol may not yet be in addrMap
+                // (decoded later in the same file). finalizeMerge's addrToFinal map is built from the COMPLETE
+                // addrMap and resolves these. If absRef is from a different file, addrToFinal will not contain
+                // it and finalizeMerge leaves it as Named(-1).
                 val absRef = ctx.sectionOffset + astRef
                 Tasty.Type.Named(kyo.Tasty.SymbolId(PHASE_B_ADDR_OFFSET + absRef))
 
             case TastyFormat.TYPEREF =>
-                // F-A-009: TYPEREF (117) is a type-position reference, distinct from TermRef.
+                // TYPEREF (117) is a type-position reference, distinct from TermRef.
                 val nameRef = view.readNat()
                 val qual    = readTypeNode(view, ctx)
                 Tasty.Type.TypeRef(qual, nameAt(ctx.names, nameRef))
@@ -619,7 +615,7 @@ object TypeUnpickler:
                 val termStart = view.positionInt
                 val endInt    = Math.toIntExact(end)
                 skipToEnd(view, end)
-                // F-G-007 pass B: use interned sentinelUnresolved for the annotation-tycon placeholder position
+                // Use interned sentinelUnresolved for the annotation-tycon placeholder position
                 val annotationType = Tasty.Type.Named(sentinelId)
                 val annotation =
                     if ctx.sectionBytes == null then
@@ -744,13 +740,13 @@ object TypeUnpickler:
                 val binderAddr = view.readNat()
                 val paramNum   = view.readNat()
                 view.goto(end)
-                // F-A-001 fix: PARAMtype binderAddr is section-relative; binderAddrMap keys are absolute.
+                // PARAMtype binderAddr is section-relative; binderAddrMap keys are absolute.
                 // Add sectionOffset to convert to the absolute key registered by the enclosing lambda handler.
                 val absBinderAddr = ctx.sectionOffset + binderAddr
                 ctx.binderAddrMap.get(absBinderAddr) match
                     case Some(params) if paramNum < params.length => Tasty.Type.ParamRef(kyo.Tasty.SymbolId(params(paramNum).id), paramNum)
-                    // F-A2-002 fix: binder addr miss -- assign unique tracked ID so the result is Named(SymbolId(uniqueNeg))
-                    // with uniqueNeg < -1, not the Named(-1) sentinel that would fail INV-005.
+                    // Binder addr miss: assign unique tracked ID so the result is Named(SymbolId(uniqueNeg))
+                    // with uniqueNeg < -1, not the Named(-1) sentinel.
                     case _ =>
                         ctx.session match
                             case s: DecodeSession => Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
@@ -766,7 +762,7 @@ object TypeUnpickler:
                 view.goto(end)
                 // Reconstruct full FQN: qual_fqn + "." + simpleName.
                 // qual is typically TYPEREFpkg(package_fqn) -> Named(trackedId) where trackedId maps to package_fqn.
-                // For Phase C lookup, use qual_fqn + "." + simpleName.
+                // For finalizeMerge lookup, use qual_fqn + "." + simpleName.
                 ctx.session match
                     case s: DecodeSession =>
                         val qualFqn = qual match
@@ -778,7 +774,7 @@ object TypeUnpickler:
                         val fullFqn = if qualFqn.nonEmpty then qualFqn + "." + simpleName else simpleName
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fullFqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
                     case null =>
-                        // F-G-007 pass B: no session context -- use interned sentinel
+                        // No session context: use interned sentinel.
                         Tasty.Type.Named(sentinelId)
                 end match
 
@@ -810,7 +806,7 @@ object TypeUnpickler:
                         val hi = readTypeNode(view, ctx)
                         // Skip variance tags.
                         view.goto(end)
-                        // F-A-010: TYPEBOUNDS with explicit hi is a declared bounds, not a wildcard.
+                        // TYPEBOUNDS with explicit hi is a declared bounds, not a wildcard.
                         Tasty.Type.Bounds(lo, hi)
                     end if
                 end if
@@ -828,7 +824,7 @@ object TypeUnpickler:
             // type positions within TypeUnpickler. The top-level routing from
             // AstUnpickler.decodeOneTypeIfPresent goes to TreeUnpickler.decodeTptAsType;
             // this second set of handlers handles nested TPT tags reached via readTypeNode.
-            // F-I-004 fix (nested TPT): decodeTag now handles all 9 TPT tags directly.
+            // Nested TPT tags are handled directly here; top-level dispatch in AstUnpickler routes to TreeUnpickler.decodeTptAsType.
 
             case TastyFormat.IDENTtpt =>
                 // IDENTtpt (111): cat-4 (tag + Nat + AST). Nat is a name-ref; AST is the resolved Type.
@@ -866,7 +862,7 @@ object TypeUnpickler:
 
             case TastyFormat.TYPEBOUNDStpt =>
                 // TYPEBOUNDStpt (164): cat-5 (tag + Length + lo_Tree + hi_Tree).
-                // F-A-010: explicit bounds use Type.Bounds, not Type.Wildcard.
+                // Explicit bounds use Type.Bounds, not Type.Wildcard.
                 val end = view.readEnd()
                 val lo  = readTypeNode(view, ctx)
                 val hi  = if view.position < end then readTypeNode(view, ctx) else lo
@@ -887,9 +883,9 @@ object TypeUnpickler:
                 val nameRef = view.readNat()
                 val nm      = nameAt(ctx.names, nameRef).asString
                 val qual    = readTypeNode(view, ctx)
-                discard(readTypeNode(view, ctx)) // owner (namespace); used by Phase C for FQN resolution
+                discard(readTypeNode(view, ctx)) // owner (namespace); used by finalizeMerge for FQN resolution
                 view.goto(end)
-                // Build tracked qualified FQN for Phase C lookup.
+                // Build tracked qualified FQN for finalizeMerge lookup.
                 val qualFqn: String = qual match
                     case Tasty.Type.Named(sid) if sid.value < -1 =>
                         ctx.session match
@@ -901,7 +897,7 @@ object TypeUnpickler:
                     case s: DecodeSession =>
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fullFqn, s.unresolvedIdToFqn, s.nextUnresolvedId()))
                     case null =>
-                        // F-G-007 pass B: no session context -- use interned sentinel
+                        // No session context: use interned sentinel.
                         Tasty.Type.Named(sentinelId)
                 end match
 
@@ -945,7 +941,7 @@ object TypeUnpickler:
 
             case TastyFormat.MATCHCASEtype =>
                 // MATCHCASEtype (192): cat-5 (tag + Length + pat_Tree + rhs_Tree).
-                // F-A-006 fix (Phase 05): Type.MatchCase is now a first-class ADT case.
+                // Type.MatchCase is a first-class ADT case.
                 // This handler is reached for nested decodes (e.g. cases inside MATCHtpt).
                 val end = view.readEnd()
                 val pat = readTypeNode(view, ctx)
@@ -953,8 +949,8 @@ object TypeUnpickler:
                 view.goto(end)
                 Tasty.Type.MatchCase(pat, rhs)
 
-            // ── F-A2-001 term-tag-in-type-position handlers ───────────────────────
-            // These 8 TERM tags can appear inside nested type positions (e.g. inside APPLIEDtype
+            // ── Term-tag-in-type-position handlers ────────────────────────────────
+            // These TERM tags can appear inside nested type positions (e.g. inside APPLIEDtype
             // args, ANNOTATEDtype payloads, or REFINEDtype bodies) when TypeUnpickler.readTypeNode
             // recurses into them. The tag byte has already been consumed by readTypeNode. The logic
             // mirrors TreeUnpickler.decodeTermTagInTypePosition but without re-consuming the tag.
@@ -1047,17 +1043,15 @@ object TypeUnpickler:
                     case s: DecodeSession => Tasty.Type.Named(kyo.Tasty.SymbolId(s.nextUnresolvedId()))
                     case null             => Tasty.Type.Named(sentinelId)
 
-            // ── Unknown tag: fail loudly (HARD RULE 13 / Phase 2.04-strict) ─────────
+            // ── Unknown tag: fail loudly ──────────────────────────────────────────
 
             case other if other >= TastyFormat.firstLengthTreeTag =>
-                // Phase 2.04-strict: any cat-5 tag not handled above is a genuinely unrecognised
-                // TASTy format extension. TagKind.TypePositionTag.throwFor propagates
-                // TastyErrorException(UnknownTagInPosition) to cp.errors rather than producing
-                // a silent sentinel Named(-1) symbol.
+                // Any cat-5 tag not handled above is a genuinely unrecognised TASTy format extension.
+                // TagKind.TypePositionTag.throwFor propagates TastyErrorException(UnknownTagInPosition)
+                // to cp.errors rather than producing a silent sentinel Named(-1) symbol.
                 TagKind.TypePositionTag.throwFor(other)
 
             case other =>
-                // Phase 2.04-strict: same rationale as the cat-5 branch above.
                 // Any cat-1..4 tag not handled above is genuinely unrecognised.
                 TagKind.TypePositionTag.throwFor(other)
 
@@ -1078,7 +1072,7 @@ object TypeUnpickler:
       * Actually per the grammar: POLYtype = result_Type TypesNames, where result comes first. PARAMtype uses the binder's start addr. We
       * pre-register an empty binding, decode result (PARAMtype will return placeholder), then return params.
       *
-      * Simpler correct approach: for Phase 4, we use a two-pass for lambda bodies:
+      * Simpler correct approach: use a two-pass for lambda bodies:
       *   1. Skip result type (but we cannot skip because it may contain type refs we need)
       *   2. After result, read TypesNames to get param symbols
       *   3. Register binderAddrMap, return params
@@ -1100,7 +1094,7 @@ object TypeUnpickler:
         // Skip result type to find TypesNames start.
         skipOneType(view)
         // Collect TypesNames = (typeOrBounds_ASTRef paramName_NameRef)*
-        // F-A-001 fix: typeRef from TypesNames is section-relative; addrMap keys are absolute.
+        // typeRef from TypesNames is section-relative; addrMap keys are absolute.
         // Add ctx.sectionOffset to convert before lookup.
         val paramSyms = new mutable.ArrayBuffer[LoadingSymbol.Materialising]()
         while view.position < end do
@@ -1138,7 +1132,7 @@ object TypeUnpickler:
         // Skip result type.
         skipOneType(view)
         // Collect TypesNames until we hit modifiers or end.
-        // F-A-001 fix: typeRef from TypesNames is section-relative; addrMap keys are absolute.
+        // typeRef from TypesNames is section-relative; addrMap keys are absolute.
         // Add ctx.sectionOffset to convert before lookup.
         val paramSyms = new mutable.ArrayBuffer[LoadingSymbol.Materialising]()
         while view.position < end do
@@ -1217,9 +1211,8 @@ object TypeUnpickler:
 
     /** Decode a METHODtype lambda, consuming the tag byte.
       *
-      * F-A-001 fix: AstUnpickler.readDefDefReturnType calls this directly when it detects a METHODtype tag, so that the full param/result
-      * lambda is decoded and stored as Type.TypeLambda(paramIds, resultType) in typeBySymbol. Prior to this, only the result leaf was
-      * decoded by the scalar readTypeIntoSession call.
+      * AstUnpickler.readDefDefReturnType calls this directly when it detects a METHODtype tag, so that the full param/result lambda is
+      * decoded and stored as Type.TypeLambda(paramIds, resultType) in typeBySymbol.
       *
       * Wire format (TASTy spec): METHODtype Length result_Type (typeRef_Nat paramName_Nat)* Modifier*
       *
@@ -1252,7 +1245,7 @@ object TypeUnpickler:
 
     /** Decode a POLYtype lambda, consuming the tag byte.
       *
-      * F-A-001 fix: AstUnpickler.readDefDefReturnType calls this directly when it detects a POLYtype tag (generic methods), so that the
+      * AstUnpickler.readDefDefReturnType calls this directly when it detects a POLYtype tag (generic methods), so that the
       * type-parameter/result structure is properly captured as Type.TypeLambda(tparamIds, inner).
       *
       * Wire format (TASTy spec): POLYtype Length result_Type (typeRef_Nat paramName_Nat)* Modifier*

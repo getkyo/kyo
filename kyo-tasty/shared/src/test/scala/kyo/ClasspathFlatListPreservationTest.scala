@@ -5,9 +5,7 @@ import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.symbol.SymbolKind
 import scala.collection.mutable
 
-/** Plan-mandated tests for Phase 02 (leaves 41-42): verify that cp.symbols still returns all symbols as Chunk[Symbol].
-  *
-  * Pins: INV-013.
+/** verify that cp.symbols still returns all symbols as Chunk[Symbol].
   */
 class ClasspathFlatListPreservationTest extends Test:
 
@@ -41,7 +39,6 @@ class ClasspathFlatListPreservationTest extends Test:
 
     // Leaf 41: symbols-size-equals-sum-of-per-kind
     // Given: fixture loaded cp; When: cp.symbols.size and sum over 14 kinds; Then: equal
-    // Pins: INV-013
     "symbols-size-equals-sum-of-per-kind: flat list size equals sum of per-kind counts" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureCp.flatMap: cp =>
@@ -58,7 +55,6 @@ class ClasspathFlatListPreservationTest extends Test:
 
     // Leaf 42: symbols-still-returns-Chunk-Symbol
     // Given: fixture loaded cp; When: val xs: Chunk[Tasty.Symbol] = cp.symbols; Then: compiles; size matches
-    // Pins: INV-013
     "symbols-still-returns-Chunk-Symbol: cp.symbols has type Chunk[Tasty.Symbol]" in run {
         Scope.run:
             Abort.run[TastyError](openFixtureCp.flatMap: cp =>

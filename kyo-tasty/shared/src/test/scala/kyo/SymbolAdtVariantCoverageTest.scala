@@ -2,9 +2,7 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Tests for Phase 06 Leaf 4: every Symbol subtype carries sourcePosition as a Maybe[Position].
-  *
-  * Pins: INV-012; PRESERVE-M.
+/** Tests for Leaf 4: every Symbol subtype carries sourcePosition as a Maybe[Position].
   *
   * Leaf 4: everySymbolSubtypeCarriesSourcePosition.
   * Given: one instance of each Symbol subtype.
@@ -30,7 +28,6 @@ class SymbolAdtVariantCoverageTest extends Test:
     // Given: one instance of each of the 15 Symbol subtypes.
     // When: the test reads sym.sourcePosition.
     // Then: all values are Maybe[Position]; Present and Absent arms exhaustively cover the type.
-    // Pins: INV-012; PRESERVE-M.
     "Leaf 4: every Symbol subtype carries sourcePosition as Maybe[Position]" in {
         val present: Maybe[Tasty.Position] = Maybe.Present(pos)
         val absent: Maybe[Tasty.Position]  = Maybe.Absent
@@ -235,62 +232,58 @@ class SymbolAdtVariantCoverageTest extends Test:
         succeed
     }
 
-    // ── Phase 09: body field removed from all Symbol subtypes ────────────────
+    // ── body field removed from all Symbol subtypes ────────────────
 
     // Confirms that ClassLike subtypes no longer carry a body field (Cat 17 Option A).
-    // Pins: Cat 17 Option A; INV-LOADING-SYMBOL; PRESERVE-M.
-    "Phase 09: Symbol.Class has no body field (ClassLike.body accessor removed)" in {
+    "Symbol.Class has no body field (ClassLike.body accessor removed)" in {
         assert(
             compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Class).body").nonEmpty,
-            "Symbol.Class must not have a body field after Phase 09"
+            "Symbol.Class must not have a body field"
         )
         assert(
             compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.ClassLike).body").nonEmpty,
-            "Symbol.ClassLike must not have a body accessor after Phase 09"
+            "Symbol.ClassLike must not have a body accessor"
         )
         succeed
     }
 
     // Confirms that Method, Val, Var no longer carry a body field (Cat 17 Option A).
-    // Pins: Cat 17 Option A.
-    "Phase 09: Symbol.Method, Val, Var have no body field" in {
+    "Symbol.Method, Val, Var have no body field" in {
         assert(
             compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Method).body").nonEmpty,
-            "Symbol.Method must not have a body field after Phase 09"
+            "Symbol.Method must not have a body field"
         )
         assert(
             compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Val).body").nonEmpty,
-            "Symbol.Val must not have a body field after Phase 09"
+            "Symbol.Val must not have a body field"
         )
         assert(
             compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Var).body").nonEmpty,
-            "Symbol.Var must not have a body field after Phase 09"
+            "Symbol.Var must not have a body field"
         )
         succeed
     }
 
-    // ── Phase 08 leaf 4: unresolvedCaseDeleted ───────────────────────────────
+    // ── unresolvedCaseDeleted ───────────────────────────────
 
     // Confirms that Symbol.Unresolved is not a valid symbol subtype (Cat 19 deletion).
-    // Pins: Cat 19; INV-005-CLEAN; PRESERVE-M.
-    "Phase 08 leaf 4: unresolvedCaseDeleted: Symbol.Unresolved is not part of the ADT" in {
-        // Symbol.Unresolved was deleted in Phase 08. A compileErrors probe must return non-empty.
+    "unresolvedCaseDeleted: Symbol.Unresolved is not part of the ADT" in {
+        // Symbol.Unresolved was deleted in. A compileErrors probe must return non-empty.
         assert(
             compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Unresolved)").nonEmpty,
-            "Symbol.Unresolved must not exist after Phase 08 Cat 19"
+            "Symbol.Unresolved must not exist after "
         )
         succeed
     }
 
-    // ── Phase 08 leaf 5: makePlaceholderDeleted ───────────────────────────────
+    // ── makePlaceholderDeleted ───────────────────────────────
 
     // Confirms that Symbol.makePlaceholder is not a valid method (Cat 19 deletion).
-    // Pins: Cat 19.
-    "Phase 08 leaf 5: makePlaceholderDeleted: Symbol.makePlaceholder is not available" in {
-        // Symbol.makePlaceholder was deleted in Phase 08. A compileErrors probe must return non-empty.
+    "makePlaceholderDeleted: Symbol.makePlaceholder is not available" in {
+        // Symbol.makePlaceholder was deleted in. A compileErrors probe must return non-empty.
         assert(
             compiletime.testing.typeCheckErrors("kyo.Tasty.Symbol.makePlaceholder(???, ???, ???)").nonEmpty,
-            "Symbol.makePlaceholder must not exist after Phase 08 Cat 19"
+            "Symbol.makePlaceholder must not exist after "
         )
         succeed
     }

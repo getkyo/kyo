@@ -5,7 +5,7 @@ import kyo.*
 /** Platform-specific ZLIB inflation hook for Scala 2 "Scala" attribute decoding.
   *
   * On JVM and Native, delegates to java.util.zip.InflaterInputStream (available in scala-native javalib). On JS, delegates to
-  * PortableInflate, the pure-Scala RFC 1950 inflate (Phase 20f). All three platforms are now functional.
+  * PortableInflate, the pure-Scala RFC 1950 inflate. All three platforms are now functional.
   *
   * Cross-platform structure: this abstract base lives in shared/; each platform provides a concrete
   * `object InflateHook extends InflateHookImpl`.

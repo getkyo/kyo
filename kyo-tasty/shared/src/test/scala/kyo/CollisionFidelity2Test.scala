@@ -6,14 +6,14 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 
-/** Fidelity tests for same-FQN collision detection and FqnCollision diagnostics (F-A1-008, OQ-001, OQ-006).
+/** Fidelity tests for same-FQN collision detection and FqnCollision diagnostics .
   *
-  * Before Phase 2.08, loading two roots that both define the same FQN produced 0 collision diagnostics. `cp.collisionReport` returned
+  * Previously, loading two roots that both define the same FQN produced 0 collision diagnostics. `cp.collisionReport` returned
   * `Chunk.empty` regardless of how many duplicate symbols existed. Under `ErrorMode.FailFast`, the init succeeded silently instead of raising
   * `TastyError.InconsistentClasspath`.
   *
   * Fixes:
-  *   - F-A1-008: `mergeOneInto` records each FQN where a new structural symbol overwrites a different structural symbol; the bucket is
+  *   -  : `mergeOneInto` records each FQN where a new structural symbol overwrites a different structural symbol; the bucket is
   *     converted to `FqnCollision` diagnostics in `finalizeMerge`.
   *   - OQ-001 (InconsistentClasspath wiring): under `ErrorMode.FailFast`, the first collision raises
   *     `TastyError.InconsistentClasspath(fqn, zeroUUID, zeroUUID)`.
@@ -85,12 +85,11 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end withCleanClasspath
 
-    // Leaf 1 (F-A1-008, OQ-006): same-fqn-collision-emits-diagnostic
+    // Leaf 1 : same-fqn-collision-emits-diagnostic
     // Given: embedded fixtures loaded under two roots (same-FQN collision scenario)
     // When: inspecting cp.collisionReport
     // Then: returns non-empty Chunk of FqnCollision entries; each has ids.size >= 2
-    // Pins: INV-106-DF2; F-A1-008
-    "F-A1-008 leaf 1 (Phase 2.08): same-FQN collision produces non-empty collisionReport" in run {
+    "same-FQN collision produces non-empty collisionReport" in run {
         withCollisionClasspath.map: cp =>
             val report = cp.collisionReport
             assert(
@@ -107,12 +106,11 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 2 (F-A1-008): findsymbol-collision-deterministic
+    // Leaf 2 : findsymbol-collision-deterministic
     // Given: same collision setup
     // When: invoking cp.findSymbol for a colliding FQN
     // Then: returns a deterministic Present(_) -- last-write-wins per HARD RULE 4
-    // Pins: INV-106-DF2; F-A1-008 (HARD RULE 4 layered compat)
-    "F-A1-008 leaf 2 (Phase 2.08): findSymbol returns deterministic Present on collision FQN" in run {
+    "findSymbol returns deterministic Present on collision FQN" in run {
         withCollisionClasspath.map: cp =>
             val report = cp.collisionReport
             assume(report.nonEmpty, "Collision fixture produced no collisions; skip leaf.")
@@ -131,12 +129,11 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 3 (OQ-001, F-A5-001 FqnCollisionError): failfast-raises-fqn-collision-error
+    // failfast-raises-fqn-collision-error
     // Given: same collision setup but ErrorMode.FailFast
     // When: Classpath.init(collisionRoots, FailFast)
     // Then: aborts with TastyError.FqnCollisionError(fqn)
-    // Pins: INV-103-DF2; INV-106-DF2; F-A5-001 (FqnCollisionError wired to collision)
-    "F-A5-001 leaf 3 (Phase 2.08): FailFast collision raises TastyError.FqnCollisionError" in run {
+    "FailFast collision raises TastyError.FqnCollisionError" in run {
         Abort.run[TastyError](withCollisionClasspathFailFast).map: result =>
             result match
                 case Result.Failure(TastyError.FqnCollisionError(fqn)) =>
@@ -156,12 +153,11 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
                     fail(s"Unexpected panic: ${t.getMessage}")
     }
 
-    // Leaf 4 (INV-106-DF2 regression guard): collisionreport-empty-on-clean-classpath
+    // collisionreport-empty-on-clean-classpath
     // Given: standard classpath (no duplicates)
     // When: cp.collisionReport
     // Then: returns Chunk.empty
-    // Pins: INV-106-DF2 regression guard (clean classpath must not spuriously report collisions)
-    "INV-106-DF2 leaf 4 (Phase 2.08): collisionReport is empty on a clean standard classpath" in run {
+    "collisionReport is empty on a clean standard classpath" in run {
         withCleanClasspath.map: cp =>
             assert(
                 cp.collisionReport.isEmpty,
@@ -171,12 +167,11 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 5 (F-A1-008 multi-version proxy): multi-version-stdlib-collision-with-different-decode
+    // multi-version-stdlib-collision-with-different-decode
     // Given: same-content-twice fixture (proxy for multi-version collision scenario)
     // When: counting FqnCollisions with ids.size >= 2
     // Then: count > 0
-    // Pins: F-A1-008 (multiple symbol IDs per colliding FQN)
-    "F-A1-008 leaf 5 (Phase 2.08): collisionReport contains entries with ids.size >= 2" in run {
+    "collisionReport contains entries with ids.size >= 2" in run {
         withCollisionClasspath.map: cp =>
             val multiIdCount = cp.collisionReport.count(_.ids.size >= 2)
             assert(
@@ -187,12 +182,11 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 6 (OQ-006, INV-104-DF2 + INV-106-DF2): softfail-accumulates-fqncollision-via-errors-field-bridge
+    // softfail-accumulates-fqncollision-via-errors-field-bridge
     // Given: collision setup with SoftFail
     // When: counting cp.indices.diagnostics.collect{case _:FqnCollision => 1}.size
     // Then: >= 1; cp.errors does NOT contain a stringified collision message
-    // Pins: INV-104-DF2 + INV-106-DF2 (diagnostics channel separate from errors channel)
-    "INV-106-DF2 leaf 6 (Phase 2.08): SoftFail collisions appear in cp.indices.diagnostics not cp.errors" in run {
+    "SoftFail collisions appear in cp.indices.diagnostics not cp.errors" in run {
         withCollisionClasspath.map: cp =>
             val collisionDiagCount = cp.indices.diagnostics.collect:
                 case c: Tasty.Classpath.FqnCollision => c
@@ -218,8 +212,7 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
     // Given: clean classpath (SoftFail)
     // When: round-trip via in-memory snapshot
     // Then: warm has empty collisionReport (collisions are build-time; not serialized to KRFL)
-    // Pins: INV-101-DF2 (warm KRFL has no collision info; cold has it)
-    "INV-101-DF2 leaf 7 (Phase 2.08): warm classpath has empty collisionReport (not serialized)" in run {
+    "warm classpath has empty collisionReport (not serialized)" in run {
         withCleanClasspath.flatMap: coldCp =>
             Sync.defer:
                 val digest       = Array[Byte](0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47)
@@ -246,8 +239,7 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
     // Given: clean standard classpath
     // When: checking diagnostics type
     // Then: diagnostics is Chunk[Tasty.Classpath.Diagnostic] and collisionReport is Chunk[Tasty.Classpath.FqnCollision]
-    // Pins: public API shape correctness
-    "Phase 2.08 leaf 8: diagnostics and collisionReport types are correct on clean classpath" in run {
+    "diagnostics and collisionReport types are correct on clean classpath" in run {
         withCleanClasspath.map: cp =>
             val diags: Chunk[Tasty.Classpath.Diagnostic]  = cp.indices.diagnostics
             val cols: Chunk[Tasty.Classpath.FqnCollision] = cp.collisionReport

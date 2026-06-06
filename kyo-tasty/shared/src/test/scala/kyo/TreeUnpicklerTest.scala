@@ -15,7 +15,7 @@ import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
-/** Tests for TreeUnpickler body decode (Phase 8 plan tests 1-8).
+/** Tests for TreeUnpickler body decode.
   *
   * Tests 1-5 and 8: decode bodies directly from pass-1 TastyOrigin values using decodeSync (no full classpath needed). Test 6: verifies
   * Java symbol error path. Test 7: verifies ClasspathClosed error path via scope exit.
@@ -92,7 +92,7 @@ class TreeUnpicklerTest extends Test:
             body = Maybe.Absent
         ))
 
-    /** Dummy symbolLookup for Phase 02 tree decode (addrMap is empty; this is never called). */
+    /** Dummy symbolLookup for tree decode (addrMap is empty; this is never called). */
     private val dummyLookup: Int => Tasty.Symbol =
         _ => Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name("unresolved"), Tasty.Flags.empty, Tasty.SymbolId(-1), Chunk.empty)
 
@@ -310,7 +310,7 @@ class TreeUnpicklerTest extends Test:
     }
 
     // ── Test 6: Java symbol body ───────────────────────────
-    // Resolved 2026-06-02 (verdict D: dead-invariant). The Phase 04 contract changed: Java symbols have
+    // Resolved 2026-06-02 (verdict D: dead-invariant). The contract changed: Java symbols have
     // body = Maybe.Absent (no TASTy body bytes; nothing to decode), and bodyTree therefore returns
     // Maybe.Absent rather than Abort.fail(NotImplemented). Java symbols only originate from JVM .class
     // companion files (jvm-only path), so the Absent-vs-NotImplemented distinction is exercised in
@@ -319,10 +319,10 @@ class TreeUnpicklerTest extends Test:
     // case in JpmsFidelity2Test.
 
     // ── Test 7: body called after classpath close ─────
-    // Resolved 2026-06-02 (verdict C: already-covered). Phase 07 removed the Closed state from
+    // Resolved 2026-06-02 (verdict C: already-covered). removed the Closed state from
     // Tasty.Classpath (case class, no close()). ClasspathClosed now fires only via mmap arena
     // IllegalStateException after Scope exit, which is JVM-only behavior. The exact post-Scope
-    // mmap-decodeBody path is exercised by DecoderFidelity5Phase02JvmTest "P02.6 F-W2-27"
+    // mmap-decodeBody path is exercised by DecoderFidelity5Phase02JvmTest "P02.6"
     // (kyo-tasty/jvm/src/test/scala/kyo/DecoderFidelity5Phase02JvmTest.scala), which accepts either
     // MalformedSection or ClasspathClosed as the documented post-close contract.
 
@@ -372,7 +372,7 @@ class TreeUnpicklerTest extends Test:
                             case Present(body) =>
                                 val tree1 = TreeUnpickler.decodeSync(body, toFinalSym(sym), dummyLookup)
                                 val tree2 = TreeUnpickler.decodeSync(body, toFinalSym(sym), dummyLookup)
-                                // In Phase 02, trees are freshly decoded each call (no memoization yet).
+                                // In trees are freshly decoded each call (no memoization yet).
                                 // We just verify both decode without crash.
                                 assert(tree1 != null && tree2 != null, "Both tree decodes must be non-null")
                             case Absent => succeed
@@ -386,10 +386,10 @@ class TreeUnpicklerTest extends Test:
 
     // ── Test 10: regression: sym.body after Scope close ──
     // Resolved 2026-06-02 (verdict C: already-covered). Same post-Scope mmap-close pathway as Test 7;
-    // exercised by DecoderFidelity5Phase02JvmTest "P02.6 F-W2-27" on JVM. Cross-platform JS/Native
+    // exercised by DecoderFidelity5Phase02JvmTest "P02.6" on JVM. Cross-platform JS/Native
     // builds do not use mmap and therefore cannot reproduce the ClasspathClosed branch.
 
-    // ── Phase 17 Tests (INV-006, M2): Phase 08 -- direct decodeAnnotationTerm calls ─────────────────
+    // ── Tests (INV-006, M2): -- direct decodeAnnotationTerm calls ─────────────────
 
     /** Decode an annotation pickle directly via TreeUnpickler. Returns Result to mirror old test shape. */
     private def decodeAnnPickle(
@@ -405,7 +405,7 @@ class TreeUnpicklerTest extends Test:
                 Result.Failure(TastyError.MalformedSection("ASTs", "annotation args truncated", 0L))
 
     // Test A (INV-006, M2): UNITconst pickle decodes to Literal(UnitConst).
-    // Phase 08: decodeAnnotationTerm takes raw bytes; no DecodeContext needed.
+    // decodeAnnotationTerm takes raw bytes; no DecodeContext needed.
     "Phase17-A: UNITconst pickle decodes to Literal(UnitConst)" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
@@ -422,7 +422,7 @@ class TreeUnpicklerTest extends Test:
     }
 
     // Test B (INV-006): Annotation with an empty arguments chunk (empty pickle case) holds Chunk.empty.
-    // Phase 08: empty annotation pickle path produces an empty chunk directly in ANNOTATEDtype.
+    // empty annotation pickle path produces an empty chunk directly in ANNOTATEDtype.
     "Phase17-B: Annotation with an empty arguments chunk holds Chunk.empty" in {
         val sym = LoadingSymbol.Materialising(id = 2, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("Foo"))
         val ann = Tasty.Annotation(Tasty.Type.Named(Tasty.SymbolId(sym.id)), Chunk.empty)
@@ -430,7 +430,7 @@ class TreeUnpicklerTest extends Test:
         succeed
     }
 
-    // ── Phase 18a Tests (M1, category-1 modifiers) ────────────────────────────
+    // ── Tests (M1, category-1 modifiers) ────────────────────────────
 
     // Test 18a-1 (M1 category 1): PRIVATE tag decodes to Modifier(Private).
     "Phase18a-1: PRIVATE byte decodes to Tree.Modifier(Flag.Private)" in run {
@@ -463,7 +463,7 @@ class TreeUnpicklerTest extends Test:
         end match
     }
 
-    // Test 18a-debt-1 through 18a-debt-3 (M1 category 1, BLOCKER from Phase 18a audit).
+    // Test 18a-debt-1 through 18a-debt-3 (M1 category 1, BLOCKER from audit).
 
     "Phase18a-debt-1: OBJECT byte decodes to Tree.Modifier(Flag.Module)" in run {
         import kyo.internal.tasty.reader.TastyFormat
@@ -492,7 +492,7 @@ class TreeUnpicklerTest extends Test:
             case other                                                                => fail(s"Expected Modifier(Enum), got: $other")
     }
 
-    // ── Phase 18b Tests (M1, category-2 tags) ────────────────────────────────
+    // ── Tests (M1, category-2 tags) ────────────────────────────────
 
     // Test 18b-1 (M1 category 2): SHAREDtype byte + nat(42) decodes to Tree.Shared(42).
     "Phase18b-1: SHAREDtype + nat(42) decodes to Tree.Shared(42)" in run {
@@ -526,7 +526,7 @@ class TreeUnpicklerTest extends Test:
         end match
     }
 
-    // ── Phase 18c Tests (M1, category-5 type-form tags) ──────────────────────
+    // ── Tests (M1, category-5 type-form tags) ──────────────────────
     //
     // Byte-sequence construction note:
     //   TASTy nat encoding: big-endian base-128 with continuation bit 0x80 CLEAR and stop bit 0x80 SET on the last byte.
@@ -602,7 +602,7 @@ class TreeUnpicklerTest extends Test:
         end match
     }
 
-    // ── Phase 18d Tests (M1, category-4 type-position tags) ──────────────────
+    // ── Tests (M1, category-4 type-position tags) ──────────────────
 
     // Test 18d-1 (M1 category 4): TERMREFpkg + nameRef decodes to Tree.TermRefPkg(Name("scala")).
     "Phase18d-1: TERMREFpkg + nameRef decodes to Tree.TermRefPkg(Name(scala))" in run {
@@ -661,7 +661,7 @@ class TreeUnpicklerTest extends Test:
         end match
     }
 
-    // ── Phase 18e Tests (category-5 complete coverage) ────────────────────────
+    // ── Tests (category-5 complete coverage) ────────────────────────
 
     // Test 18e-1: VALDEF body from a real fixture decodes to Tree.ValDef with non-null sym/tpt/rhs fields.
     // Given: the 'value' Val symbol from SomeObject.tasty has a body slice.
@@ -698,7 +698,7 @@ class TreeUnpicklerTest extends Test:
     }
 
     // Test 18e-2: APPLY with fun + 2 args hand-crafted pickle decodes to Tree.Apply with correct structure.
-    // Phase 08: uses decodeAnnPickle helper directly instead of Annotation internal factory.
+    // uses decodeAnnPickle helper directly instead of Annotation internal factory.
     "Phase18e-2: APPLY with fun + 2 args decodes to Tree.Apply with fun and 2-element args chunk" in run {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
@@ -742,12 +742,12 @@ class TreeUnpicklerTest extends Test:
         end match
     }
 
-    // Test 18e-3: INV-005 zero-Unknown sweep: all symbol bodies decoded from someObjectTasty and
+    // Test 18e-3: zero-Unknown sweep: all symbol bodies decoded from someObjectTasty and
     // plainClassTasty contain zero Tree.Unknown nodes with tag >= 128 (category-5 unhandled nodes).
     // Given: embedded fixture bytes for SomeObject.tasty and PlainClass.tasty.
     // When: all symbol bodies are decoded via AstUnpickler.readPass1 + TreeUnpickler.decodeSync
     //       and the resulting trees are walked recursively.
-    // Then: countCat5Unknown across all decoded trees == 0, demonstrating INV-005.
+    // Then: countCat5Unknown across all decoded trees == 0, demonstrating.
     "Phase18e-3: INV-005 zero-Unknown sweep: no category-5 Unknown nodes in someObjectTasty or plainClassTasty bodies" in run {
         def countCat5Unknown(tree: Tasty.Tree): Int =
             tree match
@@ -840,11 +840,11 @@ class TreeUnpicklerTest extends Test:
                 case Result.Panic(t)   => throw t
             assert(
                 soUnknown == 0,
-                s"INV-005 violation: someObjectTasty has $soUnknown category-5 Unknown nodes"
+                s"violation: someObjectTasty has $soUnknown category-5 Unknown nodes"
             )
             assert(
                 pcUnknown == 0,
-                s"INV-005 violation: plainClassTasty has $pcUnknown category-5 Unknown nodes"
+                s"violation: plainClassTasty has $pcUnknown category-5 Unknown nodes"
             )
         end for
     }

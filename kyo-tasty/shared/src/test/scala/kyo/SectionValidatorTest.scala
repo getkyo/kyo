@@ -10,7 +10,7 @@ import scala.collection.mutable
   * `SnapshotReader.read` interface. Each test constructs a synthetic KRFL snapshot with a specific structural violation and verifies that
   * `SnapshotReader.read` converts it to a structured `TastyError` rather than a JVM exception.
   *
-  * Covered: F-W2-1 (validateRange before arraycopy), F-W2-29 (sectionCount bound).
+  * Covered:   (validateRange before arraycopy),   (sectionCount bound).
   */
 class SectionValidatorTest extends Test:
 
@@ -89,7 +89,7 @@ class SectionValidatorTest extends Test:
         buf
     end minimalSnapshot
 
-    // ── validateRange path (F-W2-1) ──────────────────────────────────────────
+    // ── validateRange path ──────────────────────────────────────────
 
     "validateRange: OOB section-index entry produces structured TastyError, not AIOOBE" in run {
         val mem  = new MemFileSource()
@@ -129,7 +129,7 @@ class SectionValidatorTest extends Test:
             case _               => succeed
     }
 
-    // ── sectionCount bound (F-W2-29) ─────────────────────────────────────────
+    // ── sectionCount bound ─────────────────────────────────────────
 
     "sectionCount bound: Int.MaxValue sectionCount produces SnapshotFormatError, not OOM" in run {
         val mem  = new MemFileSource()

@@ -7,11 +7,10 @@ class TestClasspathsTest extends kyo.Test:
 
     import AllowUnsafe.embrace.danger
 
-    // Test 1 (Phase 01): scala-library-jar-discoverable
+    // Test 1: scala-library-jar-discoverable
     // Given: a JVM with java.class.path populated by sbt's test runner
     // When: TestClasspaths.scala3LibraryJar resolves the jar
     // Then: the path exists, ends in .jar, and the filename matches scala-library-3 or scala-library_3
-    // Pins: HARD RULE 1 (deterministic real-classpath fixture)
     "scala-library jar is discoverable from java.class.path" in run {
         val jar = TestClasspaths.scala3LibraryJar
         assert(jar.nonEmpty, "scala3LibraryJar was empty")
@@ -25,13 +24,12 @@ class TestClasspathsTest extends kyo.Test:
         succeed
     }
 
-    // Test 2 (Phase 01): soft-fail-mode-records-errors
+    // Test 2: soft-fail-mode-records-errors
     // Given: TestClasspaths.withClasspath invoked with a non-existent jar path in roots
     // When: load is attempted via ErrorMode.SoftFail
     // Then: the error surface is visible (either via cp.errors or via Abort[TastyError]);
     //       the error message refers to the missing path;
     //       before fix: no helper existed to make this observable in tests
-    // Pins: HARD RULE 1 graceful soft-fail
     "soft-fail mode surfaces a diagnostic error for non-existent paths" in run {
         val nonExistent = Seq("/no/such/path/does-not-exist.jar")
         Abort.run[TastyError](TestClasspaths.withClasspath(nonExistent)(Tasty.classpath)).map:
@@ -51,13 +49,12 @@ class TestClasspathsTest extends kyo.Test:
                 fail(s"Unexpected panic: ${t.getMessage}")
     }
 
-    // Test 3 (Phase 01): warm-load-faster-than-cold
+    // Test 3: warm-load-faster-than-cold
     // Given: a freshly-built kyo-tasty classes dir plus the scala-library jar from java.class.path
     // When: invoking TestClasspaths.withClasspath twice on the same roots
     // Then: first-call elapsed > 0; both calls succeed without error
     // Note: wall-clock ordering (second < first) is not asserted due to JVM JIT variability; the
     // important invariant is that both loads succeed and produce a usable Classpath.
-    // Pins: F-C-001 test-infra requirement
     "withClasspath loads successfully on two consecutive invocations" in run {
         val roots = TestClasspaths.standard
         val t0    = java.lang.System.currentTimeMillis()

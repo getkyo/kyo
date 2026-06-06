@@ -27,7 +27,7 @@ package kyo.internal.tasty.snapshot
   * All multi-byte integers are little-endian. Byte order flag in `flags` is always 0 (LE) for all platforms.
   *
   * Symbol field coverage: every field in all 14 `Symbol` case classes is serialized. There is no `home` field on any Symbol subtype
-  * (F-W2-26: a historical comment in an earlier design draft claimed that a `home` field was NOT serialized; that field was never added to
+  * (A historical comment in an earlier design draft claimed that a `home` field was NOT serialized; that field was never added to
   * any Symbol case class; the comment has been removed to prevent future audit confusion).
   *
   * Section IDs:
@@ -77,9 +77,9 @@ object SnapshotFormat:
     /** Current format version. Major bumps invalidate old snapshots. */
     val majorVersion: Int = 1
     val minorVersion: Int =
-        11 // bumped from 10 by Phase 11 (four new TastyError variants: UnhandledSubtypingCase, UnresolvedReference, UnknownType, MissingDeclaredType)
+        11 // bumped from 10 (four new TastyError variants: UnhandledSubtypingCase, UnresolvedReference, UnknownType, MissingDeclaredType)
 
-    /** Maximum number of sections allowed in a snapshot header (F-W2-29 guard).
+    /** Maximum number of sections allowed in a snapshot header.
       *
       * A snapshot with more than this many sections is treated as corrupt. The value (256) is well above the current 15 defined sections and
       * leaves room for future additions without risking OOM from a maliciously large `sectionCount` field.
@@ -94,10 +94,10 @@ object SnapshotFormat:
 
     /** Section IDs (exactly 8 ASCII bytes, zero-padded).
       *
-      * Constraint (F-W2-18): every name must be at most 8 bytes and must not contain any NUL byte (0x00). The 8-byte zero-pad encoding
-      * reads a section name by stopping at the first NUL byte; a NUL embedded inside a name would silently truncate the name at that
-      * position, causing a lookup miss. All names in this array satisfy these constraints; the `requireValidSectionNames` check below
-      * provides a compile-time-equivalent guard.
+      * Constraint: every name must be at most 8 bytes and must not contain any NUL byte (0x00). The 8-byte zero-pad encoding reads a
+      * section name by stopping at the first NUL byte; a NUL embedded inside a name would silently truncate the name at that position,
+      * causing a lookup miss. All names in this array satisfy these constraints; the `requireValidSectionNames` check below provides a
+      * compile-time-equivalent guard.
       */
     val sectionNames: Array[String] =
         Array(
@@ -122,7 +122,7 @@ object SnapshotFormat:
 
     /** Validate that every entry in `sectionNames` is at most 8 bytes and contains no NUL character.
       *
-      * F-W2-18: section names are encoded as 8-byte zero-padded ASCII fields. If a name contains a NUL byte at position k, then
+      * Section names are encoded as 8-byte zero-padded ASCII fields. If a name contains a NUL byte at position k, then
       * `readSectionName` will return only the first k characters, silently truncating the name. This method is called from the
       * `SnapshotFormat` companion object initializer so that an assertion fires at class-load time if a future code change introduces
       * an invalid section name.
@@ -139,7 +139,7 @@ object SnapshotFormat:
             )
     end requireValidSectionNames
 
-    // Eagerly validate all section names at class-load time (F-W2-18 guard).
+    // Eagerly validate all section names at class-load time.
     requireValidSectionNames()
 
     val sectionNAMES: String     = "NAMES"
@@ -153,32 +153,29 @@ object SnapshotFormat:
     val sectionBODYBYTES: String = "BODYBYTE"
     val sectionERRORS: String    = "ERRORS"
 
-    /** Phase 12 sections: permittedSubclassIds, annotations, javaMetadata. */
+    /** Sections added in minor=4: permittedSubclassIds, annotations, javaMetadata. */
     val sectionPERMITS2: String = "PERMITS2"
     val sectionANNOTS: String   = "ANNOTS_"
     val sectionJAVAMETA: String = "JAVAMETA"
 
-    /** Phase 12 dual-FQN section: full fqnIndex serialization.
+    /** Full fqnIndex section (added in minor=5).
       *
       * Stores every key in the classpath fqnIndex (including dual-index source-FQN aliases for Object companions and opaque types) so that
       * warm-load lookups via source FQN work identically to cold-load.
-      *
-      * Added in minor=5 (non-breaking add; absent in minor=4 snapshots, which are rejected anyway).
       */
     val sectionFQNIDX: String = "FQNIDX__"
 
-    /** Phase 2.13 unresolved-FQN section: unresolvedFqnByNegId map serialization.
+    /** Unresolved-FQN map section (added in minor=6).
       *
       * Stores the negId -> FQN string map accumulated during cold decoding. On warm load this map is reconstructed so that
       * `typeFqnString` can fall back to FQN strings for annotation types (e.g. `scala.deprecated`) that reference external libraries not on
       * the classpath. Without this section the warm-loaded classpath loses annotation FQN resolution for embedded-fixture loads on JS/Native.
       *
       * Layout: [4-byte count LE] then count entries each [4-byte negId LE][4-byte namePoolId LE].
-      * Added in minor=6 (non-breaking add; absent in minor=5 snapshots, which fall back to an empty map).
       */
     val sectionFQNMAP: String = "FQNMAP__"
 
-    /** Phase 5.02 subclass index section: subclassIndex map (parent SymbolId -> Chunk of child SymbolIds).
+    /** Subclass index section (added in minor=8, breaking bump).
       *
       * Stores the inverted parent-types graph so that warm-loaded classpaths can answer
       * `cp.directSubclassesOf`, `cp.subclassesOf`, and `cp.implementationsOf` without rebuilding
@@ -187,11 +184,10 @@ object SnapshotFormat:
       * Layout: [4-byte count LE] then count entries each
       *   [4-byte parentSymIdx LE][4-byte childCount LE][childCount x 4-byte childSymIdx LE].
       * All indices are positions in the symbols array (snapshot order).
-      * Added in minor=8 (breaking bump: old snapshots lack this section; reject to force cold re-decode).
       */
     val sectionSUBCIDX: String = "SUBCIDX_"
 
-    /** Phase 5.02 companion index section: companionIndex map (SymbolId -> SymbolId).
+    /** Companion index section (added in minor=8, same breaking bump as SUBCIDX_).
       *
       * Stores the Class<->Object companion pairing built by ClasspathOrchestrator.buildCompanionIndex so
       * that warm-loaded classpaths can answer `cp.companion(sym)` without an fqnIndex rescan.
@@ -199,7 +195,6 @@ object SnapshotFormat:
       * Layout: [4-byte count LE] then count entries each
       *   [4-byte symIdx LE][4-byte companionSymIdx LE].
       * All indices are positions in the symbols array (snapshot order).
-      * Added in minor=8 (same breaking bump as SUBCIDX_).
       */
     val sectionCOMPIDX: String = "COMPIDX_"
 

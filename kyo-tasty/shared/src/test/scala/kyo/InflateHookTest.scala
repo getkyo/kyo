@@ -3,9 +3,9 @@ package kyo
 import kyo.internal.tasty.scala2.InflateHook
 import kyo.internal.tasty.scala2.PortableInflate
 
-/** Tests for Phase 20a/20f: InflateHook real implementation on all platforms.
+/** Tests for/20f: InflateHook real implementation on all platforms.
   *
-  * Phase 20a wired JVM and Native. Phase 20f wired JS via PortableInflate. All three platforms now run the full test suite (jvmOnly tag
+  * wired JVM and Native. wired JS via PortableInflate. All three platforms now run the full test suite (jvmOnly tag
   * removed).
   *
   * ZLIB envelope for "hello kyo" (9 bytes), pre-computed with java.util.zip.DeflaterOutputStream: 0x78 0x9c (ZLIB header, default
@@ -96,7 +96,7 @@ class InflateHookTest extends Test:
     }
 
     // T5 JS delegation: JS InflateHook delegates to PortableInflate. Output must be byte-equal
-    // to a direct PortableInflate.inflate call on the same input. Pins T5, INV-024.
+    // to a direct PortableInflate.inflate call on the same input. Pins T5,.
     "T5 JS delegation: JS InflateHook output is byte-equal to direct PortableInflate.inflate" taggedAs jsOnly in run {
         // §839 case 3; direct PortableInflate.inflate call for JS delegation test, single-threaded.
         import AllowUnsafe.embrace.danger

@@ -86,7 +86,7 @@ class DecoderFidelity5Wave2Test extends Test:
             val c = cp.symbol(SymbolId(Int.MinValue))
             val d = cp.symbol(SymbolId(cp.symbols.length))
             val e = cp.symbol(SymbolId(cp.symbols.length - 1))
-            // Phase 08: cp.symbol now returns Maybe[Symbol]; out-of-range/negative ids return Maybe.Absent
+            // cp.symbol now returns Maybe[Symbol]; out-of-range/negative ids return Maybe.Absent
             assert(a == Maybe.Absent, "id=-1 should return Absent")
             assert(b == Maybe.Absent, "id=MAX_INT should return Absent")
             assert(c == Maybe.Absent, "id=MIN_INT should return Absent")
@@ -597,11 +597,11 @@ class DecoderFidelity5Wave2Test extends Test:
     }
 
     // =========================================================================
-    // Phase 5.01b REGRESSION: F-W2-1 bounds-check before arraycopy (SnapshotReader level)
+    // b REGRESSION:   bounds-check before arraycopy (SnapshotReader level)
     // =========================================================================
 
-    // R-F-W2-1a: section-index entry with offset+length > snapshot length produces MalformedSection.
-    "R-F-W2-1a: OOB section-index entry produces MalformedSection, not an unstructured panic" in run {
+    // section-index entry with offset+length > snapshot length produces MalformedSection.
+    "section-index OOB entry: OOB section-index entry produces MalformedSection, not an unstructured panic" in run {
         buildSnapshot().map: (full, _) =>
             val mem          = MemoryFileSource()
             val path         = "mem/r-fw2-1a.krfl"
@@ -629,8 +629,8 @@ class DecoderFidelity5Wave2Test extends Test:
                 case other => succeed
     }
 
-    // R-F-W2-1b: section-index entry with negative offset produces structured error, no panic.
-    "R-F-W2-1b: negative section offset produces structured error, not a panic" in run {
+    // section-index entry with negative offset produces structured error, no panic.
+    "section-index negative-offset: negative section offset produces structured error, not a panic" in run {
         buildSnapshot().map: (full, _) =>
             val mem  = MemoryFileSource()
             val path = "mem/r-fw2-1b.krfl"
@@ -644,8 +644,8 @@ class DecoderFidelity5Wave2Test extends Test:
                 case Result.Success(_) => succeed
     }
 
-    // R-F-W2-1c: a well-formed snapshot round-trips without triggering any OOB guard.
-    "R-F-W2-1c: valid snapshot with no OOB entries loads cleanly" in run {
+    // a well-formed snapshot round-trips without triggering any OOB guard.
+    "section-index valid-snapshot: valid snapshot with no OOB entries loads cleanly" in run {
         buildSnapshot().map: (full, _) =>
             val mem  = MemoryFileSource()
             val path = "mem/r-fw2-1c.krfl"
@@ -656,11 +656,11 @@ class DecoderFidelity5Wave2Test extends Test:
     }
 
     // =========================================================================
-    // Phase 5.01b REGRESSION: F-W2-2 IllegalStateException -> ClasspathClosed
+    // b REGRESSION:   IllegalStateException -> ClasspathClosed
     // =========================================================================
 
-    // R-F-W2-2: decodeBody on a symbol whose blob.read throws IllegalStateException produces ClasspathClosed.
-    "R-F-W2-2: decodeBody produces ClasspathClosed when body read throws IllegalStateException" in run {
+    // decodeBody on a symbol whose blob.read throws IllegalStateException produces ClasspathClosed.
+    "decode-body: decodeBody produces ClasspathClosed when body read throws IllegalStateException" in run {
         TestClasspaths.withClasspath():
             Tasty.classpath.flatMap: cp =>
                 given Tasty.Classpath = cp
@@ -681,11 +681,11 @@ class DecoderFidelity5Wave2Test extends Test:
     }
 
     // =========================================================================
-    // Phase 5.01b REGRESSION: F-W2-3 fromPickles actually decodes input pickles
+    // b REGRESSION:   fromPickles actually decodes input pickles
     // =========================================================================
 
-    // R-F-W2-3a: fromPickles(Seq.empty) returns an empty classpath.
-    "R-F-W2-3a: withPickles(Chunk.empty) returns empty classpath" in run {
+    // fromPickles(Seq.empty) returns an empty classpath.
+    "withPickles-empty: withPickles(Chunk.empty) returns empty classpath" in run {
         Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
             assert(cp.symbols.length == 0, s"expected empty symbols, got ${cp.symbols.length}")
             assert(cp.errors.length == 0, s"expected no errors, got ${cp.errors.length}")
@@ -693,8 +693,8 @@ class DecoderFidelity5Wave2Test extends Test:
             succeed
     }
 
-    // R-F-W2-3b: withPickles with a real TASTy pickle returns a non-empty classpath.
-    "R-F-W2-3b: withPickles with real TASTy bytes decodes at least 1 symbol" in run {
+    // withPickles with a real TASTy pickle returns a non-empty classpath.
+    "withPickles-real-bytes: withPickles with real TASTy bytes decodes at least 1 symbol" in run {
         val pickle =
             Tasty.Pickle(uuid = "test-uuid-plain-class", version = Tasty.Version(28, 3, 0), bytes = Span.from(plainClassTasty))
         import Tasty.Name.asString
@@ -717,11 +717,11 @@ class DecoderFidelity5Wave2Test extends Test:
     }
 
     // =========================================================================
-    // Phase 5.01b REGRESSION: F-W2-5 ERRORS round-trip (typed format)
+    // b REGRESSION:   ERRORS round-trip (typed format)
     // =========================================================================
 
-    // R-F-W2-5: every TastyError variant round-trips losslessly through write/read.
-    "R-F-W2-5: all TastyError variants round-trip through snapshot ERRORS section" in run {
+    // every TastyError variant round-trips losslessly through write/read.
+    "error-roundtrip: all TastyError variants round-trip through snapshot ERRORS section" in run {
         val zeroUUID = new java.util.UUID(0L, 0L)
         val v1       = Tasty.Version(1, 2, 0)
         val v2       = Tasty.Version(3, 4, 0)
@@ -771,11 +771,11 @@ class DecoderFidelity5Wave2Test extends Test:
     }
 
     // =========================================================================
-    // Phase 5.01b REGRESSION: F-W2-29 sectionCount bound
+    // b REGRESSION:   sectionCount bound
     // =========================================================================
 
-    // R-F-W2-29a: snapshot with sectionCount=Int.MaxValue produces SnapshotFormatError, not OOM or panic.
-    "R-F-W2-29a: sectionCount=Int.MaxValue produces SnapshotFormatError, not OOM or panic" in run {
+    // snapshot with sectionCount=Int.MaxValue produces SnapshotFormatError, not OOM or panic.
+    "corrupt-sectionCount-maxval: sectionCount=Int.MaxValue produces SnapshotFormatError, not OOM or panic" in run {
         buildSnapshot().map: (full, _) =>
             val mem  = MemoryFileSource()
             val path = "mem/maxsections.krfl"
@@ -790,8 +790,8 @@ class DecoderFidelity5Wave2Test extends Test:
                 case Result.Success(_) => fail("expected failure for corrupt sectionCount")
     }
 
-    // R-F-W2-29b: snapshot with sectionCount=256 (at cap) does not panic.
-    "R-F-W2-29b: sectionCount exactly at cap (256) does not panic" in run {
+    // snapshot with sectionCount=256 (at cap) does not panic.
+    "corrupt-sectionCount-at-cap: sectionCount exactly at cap (256) does not panic" in run {
         buildSnapshot().map: (full, _) =>
             val mem  = MemoryFileSource()
             val path = "mem/maxsections-cap.krfl"
@@ -804,8 +804,8 @@ class DecoderFidelity5Wave2Test extends Test:
                 case _ => succeed
     }
 
-    // R-F-W2-29c: snapshot with sectionCount=0 (at floor) loads cleanly.
-    "R-F-W2-29c: sectionCount=0 produces an empty classpath, not a panic" in run {
+    // snapshot with sectionCount=0 (at floor) loads cleanly.
+    "sectionCount-zero: sectionCount=0 produces an empty classpath, not a panic" in run {
         buildSnapshot().map: (full, _) =>
             val mem  = MemoryFileSource()
             val path = "mem/zerosections.krfl"

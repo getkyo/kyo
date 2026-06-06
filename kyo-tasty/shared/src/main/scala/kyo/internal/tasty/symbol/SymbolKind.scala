@@ -9,8 +9,8 @@ import kyo.internal.tasty.reader.TastyFormat
   * decoded by SnapshotReader.kindFromOrd. The ordinal-to-case mapping must never change:
   * Package=0, Class=1, Trait=2, Object=3, Method=4, Field=5, Val=6, Var=7,
   * TypeAlias=8, OpaqueType=9, AbstractType=10, TypeParam=11, Parameter=12, EnumCase=13.
-  * Ordinal 14 was Unresolved (removed in Phase 08); SnapshotReader maps it to Package for backward
-  * compatibility until Phase 11 bumps the snapshot wire format.
+  * Ordinal 14 was Unresolved (removed in an earlier iteration); SnapshotReader maps it to Package for backward
+  * compatibility with old snapshots.
   *
   * User code should pattern-match on Symbol subtypes rather than on SymbolKind directly.
   */
@@ -40,7 +40,7 @@ object SymbolKind:
         if (flags & Tasty.Flag.bits(Tasty.Flag.Trait)) != 0L then SymbolKind.Trait
         else if (flags & Tasty.Flag.bits(Tasty.Flag.Module)) != 0L then SymbolKind.Object
         else if (flags & Tasty.Flag.bits(Tasty.Flag.Enum)) != 0L && (flags & Tasty.Flag.bits(Tasty.Flag.Case)) != 0L then
-            // F-E-007: enum-case classes carry both the Enum and Case flags.
+            // Enum-case classes carry both the Enum and Case flags.
             // Enum-case OBJECTS additionally carry Module; the Module branch above handles those,
             // ensuring only class-form enum cases (no Module flag) reach this branch.
             SymbolKind.EnumCase

@@ -4,9 +4,8 @@ import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileFormat
 import kyo.internal.tasty.classfile.ConstantPool
 
-/** Tests for ConstantPool constant pool entry validation (Phase 05c C3, Phase 09 B5).
+/** Tests for ConstantPool constant pool entry validation.
   *
-  * Pins: C3 - Utf8Lazy eagerly copies bytes from Mapped ByteView; no IllegalStateException. B5 - Typed accessors validate cross-entry
   * reference kinds; malformed pool produces structured errors.
   */
 class ConstantPoolTest extends Test:
@@ -121,7 +120,6 @@ class ConstantPoolTest extends Test:
         // Given: a Mapped ByteView wrapping pool bytes with a single UTF-8 entry "foo".
         // When: ConstantPool.read is called with the Mapped view.
         // Then: utf8(1) returns "foo" without throwing IllegalStateException.
-        // Pins: C3.
         val bytes = buildUtf8PoolBytes("foo")
         val view  = new HeapMappedStub(bytes)
         Abort.run(ConstantPool.read(view, "<test>")).map: result =>
@@ -144,7 +142,6 @@ class ConstantPoolTest extends Test:
         // Given: Mapped ByteView with cursor initially at 0; pool bytes for "bar".
         // When: ConstantPool.read is called.
         // Then: the view cursor is positioned at the end of the pool (no cursor corruption).
-        // Pins: C3.
         val bytes = buildUtf8PoolBytes("bar")
         val view  = new HeapMappedStub(bytes)
         Abort.run(ConstantPool.read(view, "<test>")).map: result =>
@@ -162,7 +159,7 @@ class ConstantPoolTest extends Test:
     }
 
     // -------------------------------------------------------------------------
-    // Phase 09 tests (B5): typed accessor validates entry kind; structured errors on mismatch.
+    // tests (B5): typed accessor validates entry kind; structured errors on mismatch.
     // -------------------------------------------------------------------------
 
     // Test B5-1: utf8(idx) rejects a ClassRef entry; error message names the found kind.
@@ -170,7 +167,6 @@ class ConstantPoolTest extends Test:
         // Given: pool with entry[1]=ClassRef(nameIdx=2), entry[2]=Utf8("scala/Int").
         // When: utf8(1) is called.
         // Then: Abort[TastyError] with message containing "expected Utf8" and "ClassRef".
-        // Pins: B5.
         val bytes = buildClassRefThenUtf8Bytes("scala/Int")
         val view  = ByteView(bytes)
         Abort.run(ConstantPool.read(view, "<test>")).map:
@@ -194,7 +190,6 @@ class ConstantPoolTest extends Test:
         // Given: pool with entry[1]=ClassRef(nameIdx=2), entry[2]=Utf8("scala/Int").
         // When: classRef(1) is called.
         // Then: returns "scala/Int".
-        // Pins: B5.
         val bytes = buildClassRefThenUtf8Bytes("scala/Int")
         val view  = ByteView(bytes)
         Abort.run(ConstantPool.read(view, "<test>")).map:
@@ -213,7 +208,6 @@ class ConstantPoolTest extends Test:
         // Given: pool with entry[1]=ClassRef(nameIdx=2), entry[2]=Utf8("scala/Int").
         // When: classRef(2) is called (slot 2 is Utf8, not ClassRef).
         // Then: Abort[TastyError] with message containing "ClassRef" and "Utf8".
-        // Pins: B5.
         val bytes = buildClassRefThenUtf8Bytes("scala/Int")
         val view  = ByteView(bytes)
         Abort.run(ConstantPool.read(view, "<test>")).map:
@@ -237,7 +231,6 @@ class ConstantPoolTest extends Test:
         // Given: a pool with 4 real entries (count=5); entry[1]=Utf8("a"), [2]=Utf8("b"), [3]=Utf8("c"), [4]=Utf8("d").
         // When: utf8(99) is called (index 99 is far out of range).
         // Then: Abort[TastyError.ClassfileFormatError] with message containing "99" and "out of bounds" (case-insensitive).
-        // Pins: T2 out-of-range coverage.
         val entries = Array("a", "b", "c", "d")
         // Build: u2 count=5, then 4x (u1 tag=1, u2 len, u1* bytes)
         val bufs      = entries.map(_.getBytes("UTF-8"))
@@ -280,7 +273,6 @@ class ConstantPoolTest extends Test:
         // Given: pool with 6 entries: slots 1..4 = Utf8 padding, slot 5 = ClassRef(nameIdx=6), slot 6 = Utf8("scala/Int").
         // When: classRef(5) is called.
         // Then: returns "scala/Int".
-        // Pins: T2 ClassRef resolution.
         val padding = Array("x", "y", "z", "w")
         val target  = "scala/Int"
         val padBufs = padding.map(_.getBytes("UTF-8"))
@@ -332,7 +324,6 @@ class ConstantPoolTest extends Test:
         // Given: pool with entry[1]=Long(42L); slot 2 is the Hole.
         // When: utf8(2) is called (slot 2 is a Hole).
         // Then: Abort[TastyError] mentioning "hole" (case-insensitive).
-        // Pins: B5.
         val bytes = buildLongPoolBytes(42L)
         val view  = ByteView(bytes)
         Abort.run(ConstantPool.read(view, "<test>")).map:

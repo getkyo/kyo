@@ -22,7 +22,7 @@ object SnapshotReader:
 
     /** Read a snapshot from `path` and return a fully-constructed `Tasty.Classpath`.
       *
-      * Digest verification (F-W2-21 fix): when `expectedDigest` is provided, the 8-byte xxh64-custom hash embedded at bytes 16-23 of
+      * Digest verification: when `expectedDigest` is provided, the 8-byte xxh64-custom hash embedded at bytes 16-23 of
       * the snapshot header is compared against the expected value. A mismatch raises `TastyError.DigestMismatch`. Pass `None` (the
       * default) to skip this check (e.g., for trusted pre-warmed caches). `Tasty.withClasspath(roots, Present(cacheDir))` already
       * provides digest-based selection via the filename, so it does not need to pass an `expectedDigest` here.
@@ -168,7 +168,7 @@ object SnapshotReader:
                     // minor=6 is a breaking bump: FQNMAP__ added for unresolvedFqnByNegId persistence.
                     // minor=7 is a breaking bump: ERRORS section re-encoded as typed tagged format.
                     // minor=8 is a breaking bump: SUBCIDX_ / COMPIDX_ added for subclassIndex and
-                    // companionIndex persistence. Old snapshots return empty indexes (F-W2-30/31 regression).
+                    // companionIndex persistence. Old snapshots return empty indexes.
                     // minor=9 is a breaking bump: ClasspathClosed and ClasspathBuilding gained a context
                     // string field. Old snapshots encode these as tag-only; reading them with the new
                     // deserializer would consume the next error's tag as the context string.
@@ -228,7 +228,7 @@ object SnapshotReader:
         import AllowUnsafe.embrace.danger
         // Parse section index (starts at offset 32)
         val sectionCount = SnapshotFormat.readInt32LE(bytes, 32)
-        // F-W2-29: cap sectionCount before allocating / iterating to prevent OOM from a corrupt header.
+        // Cap sectionCount before allocating / iterating to prevent OOM from a corrupt header.
         if sectionCount < 0 || sectionCount > SnapshotFormat.maxSectionCount then
             throw new java.io.IOException(
                 s"corrupt section count: $sectionCount (max=${SnapshotFormat.maxSectionCount})"
@@ -241,7 +241,7 @@ object SnapshotReader:
             val name   = SnapshotFormat.readSectionName(bytes, idxPos)
             val offset = SnapshotFormat.readInt64LE(bytes, idxPos + 8).toInt
             val length = SnapshotFormat.readInt64LE(bytes, idxPos + 16).toInt
-            // F-W2-1: bounds-check the section range before any copy.
+            // Bounds-check the section range before any copy.
             SectionValidator.validateRange(name, offset, length, bytes.length)
             sectionMap(name) = (offset, length)
             idxPos += SnapshotFormat.sectionIndexEntrySize
@@ -354,7 +354,7 @@ object SnapshotReader:
             case _ => ()
         end match
 
-        // Collect permittedSubclassIds per symbol index (PERMITS2 section, Phase 12).
+        // Collect permittedSubclassIds per symbol index (PERMITS2 section).
         val permittedByIdx = new Array[kyo.Maybe[Chunk[Int]]](symCount)
         java.util.Arrays.fill(permittedByIdx.asInstanceOf[Array[Object]], kyo.Maybe.Absent)
         sectionMap.get(SnapshotFormat.sectionPERMITS2) match
@@ -372,7 +372,7 @@ object SnapshotReader:
             case _ => ()
         end match
 
-        // Collect annotation tycon FQN name-pool IDs per symbol index (ANNOTS_ section, Phase 12).
+        // Collect annotation tycon FQN name-pool IDs per symbol index (ANNOTS_ section).
         val annotationsByIdx = new Array[Chunk[Tasty.Annotation]](symCount)
         java.util.Arrays.fill(annotationsByIdx.asInstanceOf[Array[Object]], Chunk.empty)
         sectionMap.get(SnapshotFormat.sectionANNOTS) match
@@ -381,7 +381,7 @@ object SnapshotReader:
             case _ => ()
         end match
 
-        // Collect javaMetadata accessFlags per symbol index (JAVAMETA section, Phase 12).
+        // Collect javaMetadata accessFlags per symbol index (JAVAMETA section).
         // Only accessFlags is stored; other JavaMetadata fields are reconstructed as empty.
         val javaMetaByIdx = new Array[kyo.Maybe[Int]](symCount)
         java.util.Arrays.fill(javaMetaByIdx.asInstanceOf[Array[Object]], kyo.Maybe.Absent)
@@ -467,7 +467,7 @@ object SnapshotReader:
             if idx >= 0 then finalSymbols(idx) else v
         }
 
-        // FQNIDX__ section (Phase 12 dual-FQN fix): if present, reconstruct the full fqnIndex
+        // FQNIDX__ section : if present, reconstruct the full fqnIndex
         // verbatim (all keys including dual-index source-FQN aliases). Overrides the per-symbol
         // single-FQN fqnIndex built by readSymbols. If absent, fall back to the per-symbol index.
         val fullFqnIdIdx: Dict[String, SymbolId] = sectionMap.get(SnapshotFormat.sectionFQNIDX) match
@@ -476,7 +476,7 @@ object SnapshotReader:
             case _ =>
                 Dict.from(finalFqnIndex.map { case (k, v) => k -> v.id }.toMap)
 
-        // FQNMAP__ section (Phase 2.13 unresolvedFqnByNegId persistence): if present, reconstruct the
+        // FQNMAP__ section : if present, reconstruct the
         // negId -> FQN string map so warm-loaded classpaths resolve annotation FQNs on JS/Native.
         val unresolvedFqnByNegId: Dict[SymbolId, String] = sectionMap.get(SnapshotFormat.sectionFQNMAP) match
             case Some((off, len)) if len > 0 =>
@@ -484,7 +484,7 @@ object SnapshotReader:
             case _ =>
                 Dict.empty[SymbolId, String]
 
-        // SUBCIDX_ section (Phase 5.02 F-W2-30): subclassIndex for warm-load parity.
+        // SUBCIDX_ section : subclassIndex for warm-load parity.
         val warmSubclassIndex: Dict[SymbolId, Chunk[SymbolId]] =
             sectionMap.get(SnapshotFormat.sectionSUBCIDX) match
                 case Some((off, len)) if len > 0 =>
@@ -492,7 +492,7 @@ object SnapshotReader:
                 case _ =>
                     Dict.empty[SymbolId, Chunk[SymbolId]]
 
-        // COMPIDX_ section (Phase 5.02 F-W2-31): companionIndex for warm-load parity.
+        // COMPIDX_ section : companionIndex for warm-load parity.
         val warmCompanionIndex: Dict[SymbolId, SymbolId] =
             sectionMap.get(SnapshotFormat.sectionCOMPIDX) match
                 case Some((off, len)) if len > 0 =>
@@ -555,7 +555,7 @@ object SnapshotReader:
         end while
     end deserializeRefListsByIdx
 
-    /** Deserialize annotation tycon FQN name-pool IDs into per-symbol Annotation chunks (Phase 12).
+    /** Deserialize annotation tycon FQN name-pool IDs into per-symbol Annotation chunks .
       *
       * Layout: [4-byte count] then entries [4-byte symIdx][4-byte annCount][annCount x 4-byte tyconFqnNameId].
       * For each annotation, reconstruct `Annotation(Type.Named(SymbolId(-1)), Maybe.Absent)` where the FQN
@@ -621,10 +621,9 @@ object SnapshotReader:
                 while k < annCount do
                     val fqn = fqns(k)
                     // Encode the FQN as a TermRef so typeFqnString can extract it.
-                    // Phase 12 decision: TermRef(prefix=Tuple(empty), name=Name(fqn)) survives the
-                    // round-trip for symbolsAnnotatedWith count equality. Tuple(empty) is not a
-                    // Named/TermRef/Applied type so typeFqnString returns "" for it, leaving the
-                    // result as just name.asString == fqn.
+                    // TermRef(prefix=Tuple(empty), name=Name(fqn)) survives the round-trip for
+                    // symbolsAnnotatedWith count equality. Tuple(empty) is not a Named/TermRef/Applied type
+                    // so typeFqnString returns "" for it, leaving the result as just name.asString == fqn.
                     anns(k) = Tasty.Annotation(
                         annotationType = Tasty.Type.TermRef(
                             Tasty.Type.Tuple(Chunk.empty),
@@ -640,7 +639,7 @@ object SnapshotReader:
         end while
     end deserializeAnnotationsByIdx
 
-    /** Deserialize javaMetadata accessFlags per symbol (JAVAMETA section, Phase 12).
+    /** Deserialize javaMetadata accessFlags per symbol (JAVAMETA section).
       *
       * Layout: [4-byte count] then entries [4-byte symIdx][4-byte accessFlags].
       */
@@ -681,13 +680,13 @@ object SnapshotReader:
         // Read section count from offset 32, then copy all index entries.
         val sectionCountOffset = 32
         val sectionCount       = readInt32LEFromView(view, sectionCountOffset)
-        // F-W2-29: cap sectionCount before iterating to prevent OOM from a corrupt header.
+        // Cap sectionCount before iterating to prevent OOM from a corrupt header.
         if sectionCount < 0 || sectionCount > SnapshotFormat.maxSectionCount then
             throw new java.io.IOException(
                 s"corrupt section count: $sectionCount (max=${SnapshotFormat.maxSectionCount})"
             )
         end if
-        // Total mapped file size; used for F-W2-1 range validation below.
+        // Total mapped file size; used for range validation below.
         val totalLen = (view.position + view.remaining).toInt
         val indexEnd = 36 + sectionCount * SnapshotFormat.sectionIndexEntrySize
         // Copy the section index to a small heap array for parsing with existing SnapshotFormat helpers.
@@ -700,7 +699,7 @@ object SnapshotReader:
             val name   = SnapshotFormat.readSectionName(indexBytes, idxPos)
             val offset = SnapshotFormat.readInt64LE(indexBytes, idxPos + 8).toInt
             val length = SnapshotFormat.readInt64LE(indexBytes, idxPos + 16).toInt
-            // F-W2-1: bounds-check the section range before any copy.
+            // Bounds-check the section range before any copy.
             SectionValidator.validateRange(name, offset, length, totalLen)
             sectionMap(name) = (offset, length)
             idxPos += SnapshotFormat.sectionIndexEntrySize
@@ -801,7 +800,7 @@ object SnapshotReader:
             case _ => ()
         end match
 
-        // PERMITS2 section (Phase 12).
+        // PERMITS2 section .
         val permittedByIdxM = new Array[kyo.Maybe[Chunk[Int]]](symCount)
         java.util.Arrays.fill(permittedByIdxM.asInstanceOf[Array[Object]], kyo.Maybe.Absent)
         sectionMap.get(SnapshotFormat.sectionPERMITS2) match
@@ -819,7 +818,7 @@ object SnapshotReader:
             case _ => ()
         end match
 
-        // ANNOTS_ section (Phase 12).
+        // ANNOTS_ section .
         val annotationsByIdxM = new Array[Chunk[Tasty.Annotation]](symCount)
         java.util.Arrays.fill(annotationsByIdxM.asInstanceOf[Array[Object]], Chunk.empty)
         sectionMap.get(SnapshotFormat.sectionANNOTS) match
@@ -829,7 +828,7 @@ object SnapshotReader:
             case _ => ()
         end match
 
-        // JAVAMETA section (Phase 12).
+        // JAVAMETA section .
         val javaMetaByIdxM = new Array[kyo.Maybe[Int]](symCount)
         java.util.Arrays.fill(javaMetaByIdxM.asInstanceOf[Array[Object]], kyo.Maybe.Absent)
         sectionMap.get(SnapshotFormat.sectionJAVAMETA) match
@@ -909,7 +908,7 @@ object SnapshotReader:
             val idx = symsArray.indexWhere(_ eq v); if idx >= 0 then finalSymbols(idx) else v
         }
 
-        // FQNIDX__ section (Phase 12 dual-FQN fix): reconstruct the full fqnIndex verbatim.
+        // FQNIDX__ section : reconstruct the full fqnIndex verbatim.
         val fullFqnIdIdx2: Dict[String, SymbolId] = sectionMap.get(SnapshotFormat.sectionFQNIDX) match
             case Some((off, len)) if len > 0 =>
                 val secBytes = copyViewRange(view, off, off + len)
@@ -917,7 +916,7 @@ object SnapshotReader:
             case _ =>
                 Dict.from(newFqnIndex.map { case (k, v) => k -> v.id }.toMap)
 
-        // FQNMAP__ section (Phase 2.13): reconstruct unresolvedFqnByNegId for warm loads.
+        // FQNMAP__ section: reconstruct unresolvedFqnByNegId for warm loads.
         val unresolvedFqnByNegId2: Dict[SymbolId, String] = sectionMap.get(SnapshotFormat.sectionFQNMAP) match
             case Some((off, len)) if len > 0 =>
                 val secBytes = copyViewRange(view, off, off + len)
@@ -925,7 +924,7 @@ object SnapshotReader:
             case _ =>
                 Dict.empty[SymbolId, String]
 
-        // SUBCIDX_ section (Phase 5.02 F-W2-30): subclassIndex for warm-load parity.
+        // SUBCIDX_ section : subclassIndex for warm-load parity.
         val warmSubclassIndex2: Dict[SymbolId, Chunk[SymbolId]] =
             sectionMap.get(SnapshotFormat.sectionSUBCIDX) match
                 case Some((off, len)) if len > 0 =>
@@ -934,7 +933,7 @@ object SnapshotReader:
                 case _ =>
                     Dict.empty[SymbolId, Chunk[SymbolId]]
 
-        // COMPIDX_ section (Phase 5.02 F-W2-31): companionIndex for warm-load parity.
+        // COMPIDX_ section : companionIndex for warm-load parity.
         val warmCompanionIndex2: Dict[SymbolId, SymbolId] =
             sectionMap.get(SnapshotFormat.sectionCOMPIDX) match
                 case Some((off, len)) if len > 0 =>
@@ -1053,7 +1052,7 @@ object SnapshotReader:
                 else Tasty.Name("")
             val ownerIdInt = raw.ownerId
             val ownerIdVal = if ownerIdInt >= 0 && ownerIdInt < count then ownerIdInt else idx
-            // Body bytes are no longer propagated through SymbolDescriptor.body after Phase 09.
+            // Body bytes are not propagated through SymbolDescriptor.body in snapshot loads.
             // The BODY_BYTES section is read above for backward compatibility (old snapshots may
             // have non-empty BODY_BYTES) but the data is discarded here. bodyTree returns Absent
             // after a snapshot load until withClasspath(roots) re-populates DecodeContext.bodyStore.
@@ -1179,7 +1178,7 @@ object SnapshotReader:
         builder.result()
     end deserializeFqnMap
 
-    /** Deserialize subclassIndex from the SUBCIDX_ section (Phase 5.02 F-W2-30).
+    /** Deserialize subclassIndex from the SUBCIDX_ section .
       *
       * Layout: [4-byte count LE] then count entries each
       *   [4-byte parentSymIdx LE][4-byte childCount LE][childCount x 4-byte childSymIdx LE].
@@ -1218,7 +1217,7 @@ object SnapshotReader:
         builder.result()
     end deserializeSubclassIndex
 
-    /** Deserialize companionIndex from the COMPIDX_ section (Phase 5.02 F-W2-31).
+    /** Deserialize companionIndex from the COMPIDX_ section .
       *
       * Layout: [4-byte count LE] then count entries each
       *   [4-byte symIdx LE][4-byte companionSymIdx LE].
@@ -1356,7 +1355,7 @@ object SnapshotReader:
             val ownerIdInt = raw.ownerId
             // ownerId: use index directly; -1 means self-referential (root sentinel).
             val ownerIdVal = if ownerIdInt >= 0 && ownerIdInt < count then ownerIdInt else idx
-            // Body bytes are no longer propagated through SymbolDescriptor.body after Phase 09.
+            // Body bytes are not propagated through SymbolDescriptor.body in snapshot loads.
             // The BODY_BYTES section is read above for backward compatibility with old snapshots.
             // bodyTree returns Absent after a snapshot load until withClasspath(roots) is used.
             val desc2 = new SymbolDescriptor(
@@ -1648,8 +1647,8 @@ object SnapshotReader:
             case 11 => TypeParam
             case 12 => Parameter
             case 13 => EnumCase
-            // ordinal 14 was Unresolved (removed in Phase 08); map to Package for backward compatibility
-            // until Phase 11 bumps the snapshot wire format minor version.
+            // ordinal 14 was Unresolved (removed in an earlier iteration); map to Package for backward
+            // compatibility with old snapshots.
             case _ => Package
         end match
     end kindFromOrd

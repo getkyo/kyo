@@ -2,7 +2,7 @@ package kyo
 
 import scala.compiletime.testing.typeCheckErrors
 
-/** Phase 12 leaf 1 + 2: README surface verification.
+/** leaf 1 + 2: README surface verification.
   *
   * Leaf 1 (doctestPasses): compile-time checks via typeCheckErrors verify that every key
   * method referenced in README code blocks actually exists on the post-fix public surface.
@@ -23,7 +23,6 @@ class KyoTastyDoctestVerify extends Test:
     // Given: the post-fix public surface of object Tasty.
     // When: typeCheckErrors is called for each key README entry-point reference.
     // Then: every "ok" check produces empty errors (method exists); every "bad" check produces non-empty.
-    // Pins: Cat 6; INV-011.
 
     "Leaf 1a: Tasty.findClass exists with correct return type" in {
         val ok = typeCheckErrors(
@@ -146,15 +145,15 @@ class KyoTastyDoctestVerify extends Test:
         succeed
     }
 
-    "Leaf 1o: Type.Unknown does NOT exist (deleted in Phase 10)" in {
+    "Leaf 1o: Type.Unknown does NOT exist (removed from API)" in {
         val bad = typeCheckErrors("val _: kyo.Tasty.Type = kyo.Tasty.Type.Unknown")
-        assert(bad.nonEmpty, "Type.Unknown must not exist (deleted in Phase 10)")
+        assert(bad.nonEmpty, "Type.Unknown must not exist removed from API")
         succeed
     }
 
-    "Leaf 1p: Symbol.Unresolved does NOT exist (deleted in Phase 8)" in {
+    "Leaf 1p: Symbol.Unresolved does NOT exist (removed from API)" in {
         val bad = typeCheckErrors("val _: Any = (null: kyo.Tasty.Symbol.Unresolved)")
-        assert(bad.nonEmpty, "Symbol.Unresolved must not exist (deleted in Phase 8)")
+        assert(bad.nonEmpty, "Symbol.Unresolved must not exist (removed from API)")
         succeed
     }
 
@@ -170,7 +169,6 @@ class KyoTastyDoctestVerify extends Test:
     // Given: the regenerated kyo-tasty/README.md (served via classloader resource).
     // When: the test loads the resource and applies a regex sweep for phantom names.
     // Then: zero matches for any phantom name.
-    // Pins: Cat 6.
     // JVM only (tagged jvmOnly): uses TestResourceLoader (JVM classloader).
 
     "Leaf 2: README contains no phantom names" taggedAs jvmOnly in {
@@ -180,9 +178,9 @@ class KyoTastyDoctestVerify extends Test:
         val phantoms: Seq[(scala.util.matching.Regex, String)] = Seq(
             ("\\bTypeLike\\b".r, "TypeLike (never existed)"),
             ("\\bTermLike\\b".r, "TermLike (never existed)"),
-            ("\\bSymbol\\.Unresolved\\b".r, "Symbol.Unresolved (deleted Phase 8)"),
+            ("\\bSymbol\\.Unresolved\\b".r, "Symbol.Unresolved (removed)"),
             ("\\bresultTypeId\\b".r, "Method.resultTypeId (phantom field)"),
-            ("\\bType\\.Unknown\\b".r, "Type.Unknown (deleted Phase 10)"),
+            ("\\bType\\.Unknown\\b".r, "Type.Unknown (removed)"),
             ("\\bSubtypeVerdict\\.Unknown\\b".r, "SubtypeVerdict.Unknown (renamed Indeterminate)"),
             ("\\bTasty\\.current\\b".r, "Tasty.current (relocated to TastyState.global)"),
             ("\\bJavaAnnotation\\b".r, "JavaAnnotation (renamed Tasty.Java.Annotation)"),
@@ -193,7 +191,7 @@ class KyoTastyDoctestVerify extends Test:
             ("\\bModuleOpens\\b".r, "ModuleOpens (renamed Tasty.Java.Module.Opens)"),
             ("\\bModuleProvides\\b".r, "ModuleProvides (renamed Tasty.Java.Module.Provides)"),
             ("\\ballUnresolved\\b".r, "allUnresolved (deleted with Symbol.Unresolved)"),
-            ("\\bSymbolBody\\b".r, "SymbolBody (moved to internal, Phase 9)"),
+            ("\\bSymbolBody\\b".r, "SymbolBody (moved to internal)"),
             ("(?<!Tasty)\\.isSubtypeOf\\b".r, "tpe.isSubtypeOf (not a method on Type; use Tasty.isSubtypeOf)"),
             ("\\bTasty\\.requireTrait\\b".r, "Tasty.requireTrait (does not exist on object Tasty)"),
             ("\\bTasty\\.implementationsOf\\b".r, "Tasty.implementationsOf (exists only on Classpath)"),

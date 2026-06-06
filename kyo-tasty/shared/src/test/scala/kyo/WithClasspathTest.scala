@@ -4,7 +4,7 @@ import kyo.internal.MemoryFileSource
 import kyo.internal.TestClasspaths
 import kyo.internal.tasty.query.ClasspathOrchestrator
 
-/** Phase 05 plan leaves 1-8: Tasty.withClasspath and Tasty.withPickles entry points.
+/** plan leaves 1-8: Tasty.withClasspath and Tasty.withPickles entry points.
   *
   * Leaf 1: withClasspath(roots) cold-loads and binds; symbols.size > 0 (JVM, real classpath).
   * Leaf 2: withClasspath(cp) binds pure-data without decode context.
@@ -18,7 +18,6 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
   * Leaf 7: withClasspath(roots, Absent) does not touch any cache.
   * Leaf 8: SnapshotRunner port -- Classpath.initCached not on surface confirms runner migration.
   *
-  * Pins: item 31 roots-form, pure-cp form, pickles form, cacheDir argument, absent-cache semantics,
   * runner port; item 27 surface deletion.
   */
 class WithClasspathTest extends Test:
@@ -27,7 +26,6 @@ class WithClasspathTest extends Test:
     // Given: fixture classpath with SomeObject.tasty loaded via TestClasspaths.withClasspath
     // When: Tasty.classpath.map(_.symbols.size) inside the withClasspath callback
     // Then: returns n > 0 (non-empty classpath loaded and bound by withClasspath(roots))
-    // Pins: item 31 roots-form happy path
     // JVM only: TestClasspaths.standard uses java.class.path discovery (JVM-only).
     "Leaf 1: withClasspath(roots) cold-loads classpath and binds; symbols.size > 0" in runJVM {
         TestClasspaths.withClasspath():
@@ -41,7 +39,6 @@ class WithClasspathTest extends Test:
     // Given: a manually constructed cp: Classpath with 2 symbols
     // When: Tasty.withClasspath(cp) { Tasty.classpath.map(_.symbols.size) }
     // Then: returns 2; no Scope overhead; no Async beyond the inner Sync
-    // Pins: item 31 pure-cp form
     "Leaf 2: withClasspath(cp) binds pure-data classpath; returns correct symbol count" in run {
         val cp = Tasty.Classpath(
             symbols = Chunk(
@@ -76,7 +73,6 @@ class WithClasspathTest extends Test:
     // Given: a Tasty.Pickle wrapping PlainClass.tasty bytes
     // When: Tasty.withPickles(Chunk(pickle)) { Tasty.classpath.map(_.symbols.size) }
     // Then: returns n > 0; PlainClass symbol is discoverable by FQN
-    // Pins: item 31 pickles form
     "Leaf 3: withPickles(pickles) binds classpath from pickles; PlainClass discoverable" in run {
         val pickle = Tasty.Pickle(
             uuid = "leaf3-plain-class",
@@ -94,8 +90,7 @@ class WithClasspathTest extends Test:
     // ── Leaf 4: SOURCE BREAK -- Classpath.init not on surface ────────────────
     // Given: compiletime.testing.typeCheckErrors("kyo.Tasty.Classpath.init(...)")
     // When: invoked
-    // Then: non-empty error; init factory is deleted per Phase 05
-    // Pins: item 31 surface deletion
+    // Then: non-empty error; init factory is deleted per
     "Leaf 4: Classpath.init is not on the public surface" in {
         val err = compiletime.testing.typeCheckErrors("kyo.Tasty.Classpath.init(Seq(\"x\"))")
         assert(err.nonEmpty, "Classpath.init must not be on the surface; expected a compile error")
@@ -105,8 +100,7 @@ class WithClasspathTest extends Test:
     // ── Leaf 5: SOURCE BREAK -- Classpath.initCached not on surface ──────────
     // Given: compiletime.testing.typeCheckErrors("kyo.Tasty.Classpath.initCached(...)")
     // When: invoked
-    // Then: non-empty error; initCached factory is deleted per Phase 05
-    // Pins: item 27 subsumed by item 31
+    // Then: non-empty error; initCached factory is deleted per
     "Leaf 5: Classpath.initCached is not on the public surface" in {
         val err = compiletime.testing.typeCheckErrors("kyo.Tasty.Classpath.initCached(Seq(\"x\"), \"/tmp\")")
         assert(err.nonEmpty, "Classpath.initCached must not be on the surface; expected a compile error")
@@ -117,7 +111,6 @@ class WithClasspathTest extends Test:
     // Given: embedded fixture loaded via ClasspathOrchestrator.init + manual binding install
     // When: withClasspath(cp) (no cacheDir); Tasty.classpath returns bound cp
     // Then: no extra files; symbol count matches the loaded classpath
-    // Pins: item 31 absent-cache semantics
     "Leaf 7: withClasspath(roots, Absent) does not touch any cache" in run {
         // Use embedded fixture + ClasspathOrchestrator.init to get a cross-platform
         // equivalent of withClasspath(roots, Absent): cold-load with no cache writes.
@@ -140,16 +133,15 @@ class WithClasspathTest extends Test:
     }
 
     // ── Leaf 8: SnapshotRunner port ───────────────────────────────────────────
-    // Given: the public Tasty surface after Phase 05
+    // Given: the public Tasty surface after
     // When: compiletime.testing.typeCheckErrors("kyo.Tasty.Classpath.initCached(...)") checked
     // Then: non-empty error confirms runner migration is complete (initCached deleted)
-    // Pins: item 31 runner port
     "Leaf 8: SnapshotRunner port -- Classpath.initCached absent confirms runner migrated" in {
         // The SnapshotRunner.scala source uses Tasty.withClasspath(roots, Maybe.Present(snapshotDir)).
         // This compile check confirms the old initCached entry point is gone, so the runner
         // cannot accidentally revert to the old pattern.
         val err = compiletime.testing.typeCheckErrors("kyo.Tasty.Classpath.initCached(Seq(\"x\"), \"/tmp\")")
-        assert(err.nonEmpty, "Classpath.initCached must be absent after Phase 05 runner port; expected a compile error")
+        assert(err.nonEmpty, "Classpath.initCached must be absent; expected a compile error")
         succeed
     }
 

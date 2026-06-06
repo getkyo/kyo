@@ -5,7 +5,7 @@ import kyo.internal.tasty.classfile.ClassfileFormat
 import kyo.internal.tasty.classfile.ConstantPool
 import kyo.internal.tasty.classfile.JavaAnnotationUnpickler
 
-/** Tests for JavaAnnotationUnpickler (Phase 21b T2 coverage).
+/** Tests for JavaAnnotationUnpickler.
   *
   * All tests are in shared/ (cross-platform). JavaAnnotationUnpickler is pure byte arithmetic with no JVM I/O.
   */

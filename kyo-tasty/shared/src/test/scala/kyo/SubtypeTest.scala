@@ -3,9 +3,9 @@ import kyo.internal.tasty.symbol.SymbolKind
 
 // plan: phase-05; migrated from Symbol references to SymbolId in Named/TypeLambda.
 
-/** Tests for Phase 9: Subtype checking and type comparison.
+/** Tests for Subtype checking and type comparison.
   *
-  * Plan tests 1-9 (original) + tests 10-13 (Phase 15: SubtypeVerdict).
+  * Plan tests 1-9 (original) + tests 10-13 (SubtypeVerdict).
   *
   * All tests use synthetic Symbol instances with distinct SymbolId values so that Named(id) equality matches correctly in Subtyping. Each
   * test uses makeTestClasspath to register symbols at their id.value indices so cp.symbol(id) resolves correctly.
@@ -216,7 +216,7 @@ class SubtypeTest extends Test:
                     succeed
     }
 
-    // ── Phase 15 tests (SubtypeVerdict) ──────────────────────────────────────
+    // ── tests (SubtypeVerdict) ──────────────────────────────────────
 
     // Test 10: Int <: Any returns Sub
     "Int <: Any returns Sub" in run {
@@ -255,7 +255,7 @@ class SubtypeTest extends Test:
             succeed
     }
 
-    // Test 14 (Phase 15 steering note): real deeply-nested Rec type exhausts default budget.
+    // Test 14: real deeply-nested Rec type exhausts default budget.
     "real 66-deep Rec chain exhausts default budget=64 and returns Indeterminate" in run {
         nextId = 0
         val leafSym          = makeSym("RecBudgetLeaf")

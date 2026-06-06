@@ -2,7 +2,7 @@ package kyo
 import kyo.Tasty.SymbolId
 import kyo.internal.tasty.symbol.SymbolKind
 
-/** Phase 02 plan-mandated tests for the Symbol pure case class skeleton.
+/** plan-mandated tests for the Symbol pure case class skeleton.
   *
   * Leaves:
   *   1. Symbol case-class construction populates all 14 fields.
@@ -10,8 +10,6 @@ import kyo.internal.tasty.symbol.SymbolKind
   *   3. Symbol copy produces independent instance.
   *   4. private[kyo] constructor accessible from package kyo only.
   *   5. no SingleAssign or OnceCell field survives on Symbol.
-  *
-  * Pins: INV-001 (single-shot construction; all fields set in one apply call).
   */
 class SymbolCaseClassTest extends Test:
 
@@ -49,7 +47,6 @@ class SymbolCaseClassTest extends Test:
     // Given: a fully-specified 14-field Symbol.Class.
     // When: each field is read.
     // Then: every field equals the value provided at construction; no field is at a wrong default.
-    // Pins: INV-001 (single-shot construction; all fields set in one apply call).
     "Leaf 1: Symbol case-class construction populates all 14 fields" in {
         val sym = makeTestSymbol(
             id = 7,
@@ -71,7 +68,7 @@ class SymbolCaseClassTest extends Test:
         assert(sym.typeParamIds.isEmpty, s"typeParamIds: ${sym.typeParamIds}")
         assert(sym.declarationIds.isEmpty, s"declarationIds: ${sym.declarationIds}")
         assert(sym.permittedSubclassIds.isEmpty, s"permittedSubclassIds: ${sym.permittedSubclassIds}")
-        // body field removed in Phase 09 (Cat 17 Option A)
+        // body field removed in (Cat 17 Option A)
         succeed
     }
 
@@ -80,7 +77,6 @@ class SymbolCaseClassTest extends Test:
     // Given: two Symbol.Class instances built with identical constructor arguments.
     // When: compared via == and hashCode.
     // Then: equal; hashCode matches.
-    // Pins: INV-001 (case-class auto-generated equals over constructor params).
     "Leaf 2: Symbol equality is structural over 14 constructor params" in {
         val sym1 = makeTestSymbol(id = 5, name = "MyClass")
         val sym2 = makeTestSymbol(id = 5, name = "MyClass")
@@ -94,7 +90,6 @@ class SymbolCaseClassTest extends Test:
     // Given: a Symbol.Class s1 with scaladoc = Present("a").
     // When: s1.copy(scaladoc = Present("b")).
     // Then: the new instance has scaladoc = Present("b") and is not eq to s1; other fields equal.
-    // Pins: INV-001 (copy operates on constructor params only).
     "Leaf 3: Symbol copy produces independent instance" in {
         val s1 = makeTestSymbol(id = 10, name = "CopyMe", scaladoc = Maybe("a"))
         val s2 = s1.copy(scaladoc = Maybe("b"))
@@ -111,7 +106,6 @@ class SymbolCaseClassTest extends Test:
     // Given: code in package kyo constructing Tasty.Symbol.Class directly.
     // When: compiled.
     // Then: compiles cleanly (private[kyo] allows this package).
-    // Pins: INV-001 (no public Symbol construction path; but kyo tests can use typed constructors).
     "Leaf 4: private[kyo] constructor accessible from package kyo" in {
         val sym = makeTestSymbol(id = 99, name = "AccessTest")
         assert(sym.id == SymbolId(99), "Symbol was constructed via internal factory")
@@ -123,7 +117,6 @@ class SymbolCaseClassTest extends Test:
     // Given: the Symbol.Class case class definition.
     // When: its 14 constructor parameter types are statically examined.
     // Then: all fields have pure-data types; no SingleAssign or OnceCell is accessible.
-    // Pins: INV-001 + INV-012 (pure data shape).
     "Leaf 5: no SingleAssign or OnceCell field survives on Symbol" in {
         val sym = makeTestSymbol(id = 1, name = "Leaf5Test")
 
@@ -141,13 +134,13 @@ class SymbolCaseClassTest extends Test:
         val _declarationIds       = sym.declarationIds
         val _permittedSubclassIds = sym.permittedSubclassIds
         val _annotations          = sym.annotations
-        // body field removed in Phase 09
+        // body field removed in
 
         assert(_id.getClass.getSimpleName != "SingleAssign", "id field must not be SingleAssign")
         assert(_kind.getClass.getSimpleName != "OnceCell", "kind field must not be OnceCell")
         assert(_flags.getClass.getSimpleName != "SingleAssign", "flags field must not be SingleAssign")
 
-        // Symbol.Class has 13 constructor fields after Phase 09 body removal.
+        // Symbol.Class has 13 constructor fields after body removal.
         assert(sym.productArity == 13, s"Expected 13 product elements (Symbol.Class params) but got ${sym.productArity}")
 
         succeed

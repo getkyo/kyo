@@ -3,14 +3,12 @@ package kyo
 import kyo.Tasty.SymbolId
 import kyo.internal.tasty.symbol.SymbolKind
 
-/** Phase 04 plan-mandated tests for the pure-data Symbol flag and kind predicates.
+/** plan-mandated tests for the pure-data Symbol flag and kind predicates.
   *
   * Leaves:
   *   1. Every flag predicate reflects flags.contains for the corresponding Flag value.
   *   2. Single-kind discriminator equality: isTrait / isClass / isClassLike composites.
   *   3. Composite kind predicates compose correctly (isCaseClass = isClass && isCase).
-  *
-  * Pins: INV-005 (Symbol predicates are pure boolean reads with no effect row).
   */
 class SymbolPredicateTest extends Test:
 
@@ -22,7 +20,7 @@ class SymbolPredicateTest extends Test:
         kind: SymbolKind = SymbolKind.Class,
         flags: Tasty.Flags = Tasty.Flags.empty
     ): Tasty.Symbol =
-        // Phase 08: use TypedSymbolFactory.from to create the correctly-typed Symbol
+        // use TypedSymbolFactory.from to create the correctly-typed Symbol
         kyo.internal.tasty.symbol.TypedSymbolFactory.from(new kyo.internal.tasty.symbol.SymbolDescriptor(
             id = 1,
             kind = kind,
@@ -48,7 +46,6 @@ class SymbolPredicateTest extends Test:
     // Given: a Symbol with Flag.Final set.
     // When: isFinal is called.
     // Then: returns true; isAbstract returns false; every predicate matches the underlying bit.
-    // Pins: INV-005 (flag predicates are pure boolean reads).
     "Leaf 1: every flag predicate reflects flags.contains" in {
         val finalSym = makeSymbol(flags = flagsOf(Tasty.Flag.Final))
         assert(finalSym.isFinal, "isFinal must be true when Flag.Final is set")
@@ -115,12 +112,12 @@ class SymbolPredicateTest extends Test:
         assert(sym.isInfix, "isInfix")
         assert(sym.isOpen, "isOpen")
         assert(sym.isTransparent, "isTransparent")
-        // isMacro requires Symbol.Method && !Flag.Synthetic (F-E-006 fix); test with a Method that has Flag.Macro but not Synthetic.
+        // isMacro requires Symbol.Method && !Flag.Synthetic ; test with a Method that has Flag.Macro but not Synthetic.
         val macroMethodSym = makeSymbol(kind = SymbolKind.Method, flags = flagsOf(Tasty.Flag.Macro))
         assert(macroMethodSym.isMacro, "isMacro: Method + Flag.Macro without Synthetic must return true")
         assert(!sym.isMacro, "isMacro: non-Method symbol with Flag.Macro must return false (kind check)")
         val syntheticMacroSym = makeSymbol(kind = SymbolKind.Method, flags = flagsOf(Tasty.Flag.Macro, Tasty.Flag.Synthetic))
-        assert(!syntheticMacroSym.isMacro, "isMacro: Method + Flag.Macro + Flag.Synthetic must return false (F-E-006)")
+        assert(!syntheticMacroSym.isMacro, "isMacro: Method + Flag.Macro + Flag.Synthetic must return false ")
         assert(sym.isSynthetic, "isSynthetic")
         assert(sym.isArtifact, "isArtifact")
         assert(sym.isCovariant, "isCovariant")
@@ -162,7 +159,6 @@ class SymbolPredicateTest extends Test:
     // Given: a Symbol with kind = SymbolKind.Trait.
     // When: isTrait and isClass are called.
     // Then: isTrait = true, isClass = false, isClassLike = true (composite includes trait).
-    // Pins: INV-005.
     "Leaf 2: single-kind discriminator equality" in {
         val traitSym = makeSymbol(kind = SymbolKind.Trait)
         assert(traitSym.isInstanceOf[Tasty.Symbol.Trait], "isTrait must be true for SymbolKind.Trait")
@@ -203,7 +199,6 @@ class SymbolPredicateTest extends Test:
     // Given: a Symbol with kind = SymbolKind.Class and Flag.Case set.
     // When: isCaseClass is called.
     // Then: returns true.
-    // Pins: INV-005 (composite predicate semantics).
     "Leaf 3: composite kind predicates compose correctly" in {
         val caseSym = makeSymbol(kind = SymbolKind.Class, flags = flagsOf(Tasty.Flag.Case))
         assert(

@@ -28,9 +28,8 @@ import scala.collection.mutable
   *   - qualified-modifier sub-tree skip (CRITICAL): PRIVATEqualified (98) and PROTECTEDqualified (99) are category 3 (tag + sub-AST). The
   *     modifier loop skips their sub-AST via skipTree(). Failing to do this corrupts the cursor.
   *
-  * Phase 4 note: TypeUnpickler resolves cross-file type references by creating synthetic unresolved symbols directly. The UnresolvedRef
-  * mechanism was deleted in Phase 07; cross-file references now become Named(SymbolId(-1)) entries resolved at Phase C finalizeMerge via
-  * fqnIndex lookup.
+  * TypeUnpickler resolves cross-file type references by creating synthetic unresolved symbols directly. Cross-file references become
+  * Named(SymbolId(-1)) entries resolved at Phase C finalizeMerge via fqnIndex lookup.
   */
 object AstUnpickler:
 
@@ -41,7 +40,7 @@ object AstUnpickler:
       * @param addrMap
       *   Map from TASTy byte address to symbol, for cross-symbol type references.
       * @param placeholders
-      *   (deleted in Phase 07; UnresolvedRef mechanism removed)
+      *   (unused; always Chunk.empty)
       * @param rootSymbol
       *   The synthetic root Package sentinel (empty name, no owner). Used as the top-level owner for package-level definitions.
       * @param parentsBySymbol
@@ -67,7 +66,8 @@ object AstUnpickler:
       * channel put/take provides a happens-before edge. No concurrent access occurs.
       *
       * LongMap replaces the earlier IdentityHashMap approach (which was required when all placeholders had id=-1 and would collide
-      * under field-based equality). Phase 08 assigns unique ids, making LongMap safe and cross-platform.
+      * under field-based equality). Each Materialising instance has a unique id assigned at construction, making LongMap safe and
+      * cross-platform.
       */
     final case class Pass1Result(
         symbols: Chunk[LoadingSymbol.Materialising],
@@ -81,14 +81,14 @@ object AstUnpickler:
         sectionBytes: Array[Byte],
         sectionOffset: Int,
         names: Array[Tasty.Name],
-        /** Cross-file FQN -> unique negative SymbolId mappings accumulated by TypeUnpickler during Phase B. Phase C uses this to resolve
-          * Named(SymbolId(negId)) parent types to final SymbolIds via fqnIndex.
+        /** Cross-file FQN -> unique negative SymbolId mappings accumulated by TypeUnpickler during the per-file decode pass. The single-threaded
+          * merge pass uses this to resolve Named(SymbolId(negId)) parent types to final SymbolIds via fqnIndex.
           */
         unresolvedIdToFqn: mutable.HashMap[Int, String],
         /** Errors from eager annotation arg decodes in ANNOTATEDtype. Flows into FileResult.errors via ClasspathOrchestrator. */
         annotationDecodeErrors: Chunk[TastyError],
         /** Per-symbol annotation list decoded from ANNOTATION modifier blocks. Populated by readModifiers and scanForwardAndCollectFlags.
-          * F-G-001 fix: flows through FileResult into ClasspathOrchestrator.finalizeMerge where descs(idx).annotations is set.
+          * Flows through FileResult into ClasspathOrchestrator.finalizeMerge where descs(idx).annotations is set.
           */
         annotationsBySymbol: mutable.LongMap[mutable.ArrayBuffer[Tasty.Annotation]]
     )
@@ -141,7 +141,7 @@ object AstUnpickler:
         val allSymbols = new mutable.ArrayBuffer[LoadingSymbol.Materialising]()
         val ownerStack = new mutable.ArrayDeque[LoadingSymbol.Materialising]()
         // LongMap keyed on LoadingSymbol.Materialising.id (unique per-instance integer).
-        // Replaces the earlier IdentityHashMap approach: Phase 08 assigns unique ids so LongMap is safe
+        // Replaces the earlier IdentityHashMap approach; unique ids per instance make LongMap safe
         // and cross-platform (no java.util.IdentityHashMap).
         val parentsBySymbol = mutable.LongMap.empty[Chunk[Tasty.Type]]
         val typeBySymbol    = mutable.LongMap.empty[Tasty.Type]
@@ -149,7 +149,7 @@ object AstUnpickler:
         // ownerId and body fields on the final immutable Symbols.
         val ownerBySymbol  = mutable.LongMap.empty[LoadingSymbol.Materialising]
         val bodyDataByAddr = mutable.LongMap.empty[(Int, Int)]
-        // F-G-001: annotation accumulator threaded through walkStats.
+        // Annotation accumulator threaded through walkStats.
         val annotationsBySymbol = mutable.LongMap.empty[mutable.ArrayBuffer[Tasty.Annotation]]
         // Id provider: use the external global counter when provided (ClasspathOrchestrator passes
         // an AtomicInt.Unsafe.getAndIncrement to ensure globally unique ids across concurrent decode
@@ -173,7 +173,7 @@ object AstUnpickler:
         val sectionOffset = view.positionInt
         val sectionEnd    = view.position + view.remaining
         val sectionBytes  = view.allBytes
-        // Phase 1: collect symbols. The typeSession holds the live addrMap so type decode can find
+        // Collect symbols. The typeSession holds the live addrMap so type decode can find
         // locally-defined symbols as the walk progresses.
         val typeSession = new TypeUnpickler.DecodeSession(names, addrMap, arena)
         walkStats(
@@ -347,7 +347,7 @@ object AstUnpickler:
                     // Use a forked sub-view of the payload body.
                     val innerView = view.subView(payloadBody, payloadEnd)
                     ownerStack.append(sym)
-                    // F-A-005 fix: sync ownerStack and ownerAddrStack into typeSession so the THIS-type
+                    // Sync ownerStack and ownerAddrStack into typeSession so the THIS-type
                     // decode branch can find the enclosing class/trait/object when decoding the DEFDEF
                     // return type. ownerAddrStack stores the Phase-B addr-encoded id for Phase C remap.
                     typeSession.ownerStack.append(sym)
@@ -433,7 +433,7 @@ object AstUnpickler:
                         // Walk template body to discover members (type params, constructor params, member defs).
                         val templateFork = view.subView(templateBodyStart, templatePayloadEnd)
                         ownerStack.append(sym)
-                        // F-A-005 fix: sync class sym into typeSession.ownerStack and ownerAddrStack
+                        // Sync class sym into typeSession.ownerStack and ownerAddrStack
                         // so THIS-type decode inside member DEFDEFs can find the enclosing class symbol
                         // and its Phase-B address for Phase C remapping.
                         typeSession.ownerStack.append(sym)
@@ -555,9 +555,8 @@ object AstUnpickler:
       *
       * Returns the decoded type if present and successful, Absent otherwise.
       *
-      * F-I-004 fix: TPT tags (IDENTtpt, APPLIEDtpt, TYPEBOUNDStpt, ANNOTATEDtpt, SELECTin, REFINEDtpt, LAMBDAtpt, MATCHtpt,
-      * MATCHCASEtype) are wire-level tree nodes that carry a Type. Routing them to TypeUnpickler caused 47,996 unknown-tag warnings per load
-      * because TypeUnpickler has no handlers for these tags. They must go to TreeUnpickler.decodeTptAsType.
+      * TPT tags (IDENTtpt, APPLIEDtpt, TYPEBOUNDStpt, ANNOTATEDtpt, SELECTin, REFINEDtpt, LAMBDAtpt, MATCHtpt,
+      * MATCHCASEtype) are wire-level tree nodes that carry a Type. They must go to TreeUnpickler.decodeTptAsType, not TypeUnpickler.
       */
     private def decodeOneTypeIfPresent(
         view: ByteView,
@@ -572,18 +571,18 @@ object AstUnpickler:
             val nextTag = view.peekByte(view.position) & 0xff
             if isModifierTag(nextTag) then Absent
             else if isTreeTptTag(nextTag) then
-                // F-I-004 fix: TPT tags route to TreeUnpickler.decodeTptAsType.
+                // TPT tags route to TreeUnpickler.decodeTptAsType.
                 try Present(TreeUnpickler.decodeTptAsType(view, typeSession, nextTag, sectionOffset))
                 catch
                     case _: Exception =>
                         view.goto(end)
                         Absent
             else if isTermTagInTypePosition(nextTag) then
-                // F-A2-001 fix: TERM tags (NEW=95, SELECT=112, SHAREDterm=60, TYPEAPPLY=137,
+                // TERM tags (NEW=95, SELECT=112, SHAREDterm=60, TYPEAPPLY=137,
                 // APPLY=136, CASEDEF=155, SINGLETONtpt=101, BYNAMEtpt=94) can appear in TYPE
                 // position inside ANNOTATEDtype payloads, TEMPLATE parent expressions, and
                 // INLINED-as-type contexts. Route to decodeTermTagInTypePosition instead of
-                // TypeUnpickler.decodeTag which would throw TastyError.UnknownTagInPosition (Phase 2.04-strict).
+                // TypeUnpickler.decodeTag which would throw TastyError.UnknownTagInPosition.
                 try Present(TreeUnpickler.decodeTermTagInTypePosition(view, typeSession, nextTag, sectionOffset))
                 catch
                     case _: Exception =>
@@ -618,13 +617,11 @@ object AstUnpickler:
     end isTreeTptTag
 
     /** TASTy TERM tags that may legitimately appear in TYPE position inside ANNOTATEDtype, TEMPLATE parent expressions, and INLINED-as-type
-      * contexts. Surfaced by F-A2-001 (probe-001.log) plus additional tags discovered during Phase 2.01 test runs: NEW=95, SELECT=112,
-      * SHAREDterm=60, TYPEAPPLY=137, APPLY=136, CASEDEF=155, SINGLETONtpt=101, BYNAMEtpt=94, QUALTHIS=91, INLINED=147.
-      * Routes to TreeUnpickler.decodeTermTagInTypePosition.
+      * contexts: NEW=95, SELECT=112, SHAREDterm=60, TYPEAPPLY=137, APPLY=136, CASEDEF=155, SINGLETONtpt=101, BYNAMEtpt=94, QUALTHIS=91,
+      * INLINED=147. Routes to TreeUnpickler.decodeTermTagInTypePosition.
       *
-      * SINGLETONtpt and BYNAMEtpt are TPT-flavored tags but were not included in isTreeTptTag from decoder-fidelity-1 Phase 03; they are
-      * grouped here with the term-position tags for consistency with the F-A2-001 fix path. QUALTHIS and INLINED were discovered during
-      * Phase 2.01 test runs (kyo-tasty classes contained them in type positions).
+      * SINGLETONtpt and BYNAMEtpt are TPT-flavored tags; they are grouped here with the term-position tags because they appear in type
+      * positions via the same dispatch path.
       */
     private[reader] def isTermTagInTypePosition(tag: Int): Boolean =
         tag == TastyFormat.NEW ||
@@ -643,12 +640,10 @@ object AstUnpickler:
       *
       * DEFDEF layout (inside the payload): TYPEPARAM* PARAM* returnType RHS? modifier*
       *
-      * F-A-001 fix: the DEFDEF return-type slot may contain a METHODtype or POLYtype lambda (for methods with params) or a plain type node
-      * (for nullary methods). The existing decodeOneTypeIfPresent call correctly routes to TypeUnpickler.readTypeIntoSession for all tags,
-      * including METHODtype and POLYtype. The METHODtype/POLYtype inline handlers in TypeUnpickler.decodeTag already produce
-      * Type.TypeLambda(paramIds, resultType). Phase C's remapType previously did not recurse into TypeLambda, so inner Named(trackedNegId)
-      * references were not resolved to final SymbolIds. The real fix is in ClasspathOrchestrator.remapType (now recurses into TypeLambda
-      * and all other composite types), not in this function.
+      * The DEFDEF return-type slot may contain a METHODtype or POLYtype lambda (for methods with params) or a plain type node
+      * (for nullary methods). decodeOneTypeIfPresent routes to TypeUnpickler.readTypeIntoSession for all tags, including METHODtype and
+      * POLYtype. The METHODtype/POLYtype handlers in TypeUnpickler.decodeTag produce Type.TypeLambda(paramIds, resultType).
+      * ClasspathOrchestrator.remapType recurses into TypeLambda so inner Named(trackedNegId) references are resolved to final SymbolIds.
       *
       * Uses a fresh sub-view (returnTypeScanView) that is independent of the outer view, so the outer walk is not affected.
       *
@@ -680,8 +675,8 @@ object AstUnpickler:
             end while
             // Read the return type node (the first non-param node). METHODtype / POLYtype are routed
             // through TypeUnpickler.readTypeIntoSession -> decodeTag which already handles both tags
-            // and produces Type.TypeLambda(paramIds, resultType). Phase C remapType now recurses into
-            // TypeLambda (F-A-001 fix) so inner Named(trackedNegId) refs are resolved properly.
+            // and produces Type.TypeLambda(paramIds, resultType). Phase C remapType recurses into
+            // TypeLambda so inner Named(trackedNegId) refs are resolved properly.
             // sectionOffset is passed so that TYPEREFsymbol / PARAMtype binder lookups can convert
             // section-relative ASTRef values to the absolute addrMap / binderAddrMap keys.
             decodeOneTypeIfPresent(returnTypeScanView, end, typeSession, sectionOffset)
@@ -700,7 +695,7 @@ object AstUnpickler:
       * beginning.
       *
       * Returns the decoded parent types as a buffer. The caller records them into `parentsBySymbol` keyed by the class symbol. Parent types
-      * may contain Named(SymbolId(-1)) for cross-file parents; these are resolved during Phase C finalizeMerge via fqnIndex lookup.
+      * may contain Named(SymbolId(-1)) for cross-file parents; these are resolved during finalizeMerge via fqnIndex lookup.
       */
     private def decodeTemplateParents(
         parentScanView: ByteView,
@@ -709,7 +704,7 @@ object AstUnpickler:
         typeSession: TypeUnpickler.DecodeSession
     )(using Frame, AllowUnsafe): mutable.ArrayBuffer[Tasty.Type] =
         val collected = new mutable.ArrayBuffer[Tasty.Type]()
-        // Phase 1: skip leading TYPEPARAM and PARAM nodes (class own type/term params).
+        // Step 1: skip leading TYPEPARAM and PARAM nodes (class own type/term params).
         var skipParams = true
         while skipParams && parentScanView.position < end do
             val tag = parentScanView.peekByte(parentScanView.position) & 0xff
@@ -721,7 +716,7 @@ object AstUnpickler:
                 skipParams = false
             end if
         end while
-        // Phase 2: decode parent_Type* entries.
+        // Step 2: decode parent_Type* entries.
         // Stop at SELFDEF (118), any definition tag (VALDEF=129, DEFDEF=130, TYPEDEF=131),
         // or any modifier tag (1-59, 98, 99, 173) which would indicate we overran.
         // Cross-file parents arrive as APPLY(SELECT(NEW(type_ref), <init>), args) term trees with
@@ -740,7 +735,7 @@ object AstUnpickler:
             else if tag == TastyFormat.APPLY && tag >= TastyFormat.firstLengthTreeTag then
                 // APPLY-headed parent: consume tag + length, then decode the first sub-node
                 // (the constructor call target) as a type reference.
-                // F-A2-001 fix: the first child is typically SELECT(NEW(type_ref), <init>).
+                // The first child is typically SELECT(NEW(type_ref), <init>).
                 // SELECT=112 is a term tag; route through decodeTermTagInTypePosition instead
                 // of TypeUnpickler.readTypeIntoSession which has no handler for SELECT.
                 try
@@ -763,7 +758,7 @@ object AstUnpickler:
                         scanParents = false
                 end try
             else
-                // F-A2-001 fix: also guard direct (non-APPLY-headed) parent expressions.
+                // Also guard direct (non-APPLY-headed) parent expressions.
                 // A parent like `extends SomeTrait` may have a NEW or SELECT tag at the head.
                 try
                     val parentTag = parentScanView.peekByte(parentScanView.position) & 0xff
@@ -791,7 +786,7 @@ object AstUnpickler:
       * Skips all non-modifier trees (type trees, rhs body, params). Modifiers are: category-1 tags 1-59, PRIVATEqualified (98),
       * PROTECTEDqualified (99), ANNOTATION (173). Everything else is a sub-tree to skip.
       *
-      * F-G-001 fix: ANNOTATION blocks are now decoded (tycon type + args bytes captured) rather than skipped.
+      * ANNOTATION blocks are decoded (tycon type + args bytes captured) rather than skipped.
       * The decoded annotations are returned alongside the flag bits for the caller to attribute to the owning symbol.
       *
       * STEERING CRITICAL: PRIVATEqualified (98) and PROTECTEDqualified (99) must skip their sub-AST.
@@ -837,7 +832,7 @@ object AstUnpickler:
       *
       * Assumes cursor is already past any non-modifier sub-trees (TYPEDEF/TYPEPARAM arms call this after advancing past the TEMPLATE body).
       *
-      * F-G-001 fix: ANNOTATION blocks are decoded (tycon + args) rather than skipped.
+      * ANNOTATION blocks are decoded (tycon + args) rather than skipped.
       *
       * STEERING CRITICAL: PRIVATEqualified (98) and PROTECTEDqualified (99) are category 3 (tag + sub-AST). Must skip their sub-AST.
       */
@@ -879,8 +874,6 @@ object AstUnpickler:
       * Wire format after tag+Length: tycon_Type fullAnnotation_Term.
       * Decodes the tycon via TypeUnpickler; captures the remaining bytes as argsPickle for lazy Tree decode.
       * Returns the Annotation on success; Absent on decode failure (cursor advanced to annEnd regardless).
-      *
-      * F-G-001 fix (per Q-007 resolution).
       */
     /** Decode one ANNOTATION modifier block (tag already consumed, annEnd already read).
       *
@@ -888,8 +881,6 @@ object AstUnpickler:
       * TPT-tag dispatch as decodeOneTypeIfPresent (TPT tags route to TreeUnpickler.decodeTptAsType;
       * regular type tags route to TypeUnpickler.readTypeIntoSession). Skips the remaining term bytes.
       * Returns the Annotation on success; Absent on decode failure or when cursor overruns annEnd.
-      *
-      * F-G-001 fix (per Q-007 resolution).
       */
     private def decodeAnnotationBlock(
         view: ByteView,
@@ -906,7 +897,7 @@ object AstUnpickler:
                     // Annotation tycon emitted as a TPT tag (e.g. IDENTtpt, APPLIEDtpt).
                     Present(TreeUnpickler.decodeTptAsType(view, typeSession, nextTag, sectionOffset))
                 else if isTermTagInTypePosition(nextTag) then
-                    // F-A2-001 fix: annotation tycons can arrive as term tags in INLINED-as-type contexts.
+                    // Annotation tycons can arrive as term tags in INLINED-as-type contexts.
                     Present(TreeUnpickler.decodeTermTagInTypePosition(view, typeSession, nextTag, sectionOffset))
                 else if !isModifierTag(nextTag) then
                     Present(TypeUnpickler.readTypeIntoSession(view, typeSession, sectionOffset))
@@ -920,9 +911,9 @@ object AstUnpickler:
         tyconResult match
             case Absent         => Absent
             case Present(tycon) =>
-                // F-I-003 fix: for @scala.annotation.internal.Child[T] annotations, decode the
+                // For @scala.annotation.internal.Child[T] annotations, decode the
                 // fullAnnotation_Term to extract the permitted-subclass TypeRef T. This is needed
-                // by the permit-extraction loop in ClasspathOrchestrator.finalizeMerge (Phase 07).
+                // by the permit-extraction loop in ClasspathOrchestrator.finalizeMerge.
                 //
                 // @Child[T] annotations have tycon = Type.TermRef(<pkg>, Name("Child")).
                 // The fullAnnotation_Term is: APPLY Length NEW APPLIEDtpt Length <Child_tpt> <T_typeref>.
@@ -944,7 +935,7 @@ object AstUnpickler:
                             end if
                         case Tasty.Type.TypeRef(_, name)
                             if { import Tasty.Name.asString; name.asString == "Child" } =>
-                            // F-A-009: TYPEREF now emits TypeRef; handle @Child from TypeRef tycons too.
+                            // TYPEREF emits TypeRef; handle @Child from TypeRef tycons too.
                             if view.position < annEnd then
                                 decodeChildAnnotationType(
                                     view,
@@ -965,11 +956,11 @@ object AstUnpickler:
 
     /** Extract the type argument from a @Child[T] annotation fullAnnotation_Term.
       *
-      * F-I-003: @Child[T] encodes the permitted-subclass TypeRef T inside:
+      * @Child[T] encodes the permitted-subclass TypeRef T inside:
       *   APPLY Length ( TYPEAPPLY Length ( constructor_ref  T_typeref ) )
       * This helper navigates the APPLY > TYPEAPPLY wrapper, skips the constructor_ref (the Child
       * constructor reference), and decodes the T_typeref. On success returns
-      * `Type.Applied(tycon, Chunk(T))` which Phase 07's finalizeMerge can pattern-match.
+      * `Type.Applied(tycon, Chunk(T))` which finalizeMerge can pattern-match.
       * On any failure returns the original tycon (graceful degradation, no sentinel injection).
       */
     private def decodeChildAnnotationType(
@@ -1005,7 +996,7 @@ object AstUnpickler:
                 if isTreeTptTag(typeArgTag) then
                     TreeUnpickler.decodeTptAsType(view, typeSession, typeArgTag, sectionOffset)
                 else if isTermTagInTypePosition(typeArgTag) then
-                    // F-A2-001 fix: term tags in type-argument position of @Child annotations.
+                    // Term tags in type-argument position of @Child annotations.
                     TreeUnpickler.decodeTermTagInTypePosition(view, typeSession, typeArgTag, sectionOffset)
                 else
                     TypeUnpickler.readTypeIntoSessionWithBytes(view, typeSession, sectionBytes, sectionOffset)

@@ -2,7 +2,7 @@ package kyo
 
 import AllowUnsafe.embrace.danger
 
-/** Tests for Tree traversal members (Phase 10 Item 9).
+/** Tests for Tree traversal members .
   *
   * Leaf id:12. Pins: INV-005 (Tree traversal returns plain data).
   */

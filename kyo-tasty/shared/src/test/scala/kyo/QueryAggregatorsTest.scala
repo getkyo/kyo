@@ -3,10 +3,8 @@ package kyo
 import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.query.ClasspathOrchestrator
 
-/** Phase 03 plan leaves 9-10: Tasty.allClassLike, allClasses, allObjects, allTraits, allMethods,
+/** plan leaves 9-10: Tasty.allClassLike, allClasses, allObjects, allTraits, allMethods,
   * allVals, allVars, allFields, allTypes, allPackages.
-  *
-  * Pins: item 29 ClassLike aggregator; item 29 totality.
   */
 class QueryAggregatorsTest extends Test:
 

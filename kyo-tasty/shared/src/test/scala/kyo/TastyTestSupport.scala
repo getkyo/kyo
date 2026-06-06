@@ -2,10 +2,10 @@ package kyo
 
 /** Shared test helpers for kyo-tasty test files.
   *
-  * Phase 21g cleanup: extracts the makeNamed helper that was duplicated verbatim in TastyAnnotationTest and TastyTypeTest. Both files now
+  * cleanup: extracts the makeNamed helper that was duplicated verbatim in TastyAnnotationTest and TastyTypeTest. Both files now
   * extend this trait.
   *
-  * Phase 08 update: makePlaceholder is deleted; makeNamed now returns Type.Named(SymbolId(-1)) directly.
+  * update: makePlaceholder is deleted; makeNamed now returns Type.Named(SymbolId(-1)) directly.
   */
 trait TastyTestSupport:
 

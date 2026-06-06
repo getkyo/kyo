@@ -11,9 +11,9 @@ import kyo.internal.tasty.reader.TastyHeader
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 
-/** Phase 5b tests for the unified Java symbol surface.
+/** tests for the unified Java symbol surface.
   *
-  * Tests 1-10 as specified in execution-plan.md Phase 5b and PHASE-5b-PREP.md §7.3.
+  * Tests 1-10 as specified in execution-plan.md and PHASE-5b-PREP.md §7.3.
   *
   * Test 9 (java.lang.Deprecated) loads a real JDK classfile from EmbeddedClassfiles, so the assertion runs on
   * JS/Native as well. Tests 4, 5, 6, 7, 8, 10 use Embedded fixture classfiles (throwsFixtureClass,
@@ -118,7 +118,7 @@ class JavaSymbolTest extends Test:
     end firstClassSymbolFromTasty
 
     // -------------------------------------------------------------------------
-    // Test 1: fullName for inner class - Phase 09 restores sym.fullName.
+    // Test 1: fullName for inner class - restores sym.fullName.
     // ArrayRecord is a JVM-only class fixture in kyo-tasty fixtures.
     // -------------------------------------------------------------------------
     "sym.fullName for ArrayRecord returns a non-empty string" in run {
@@ -138,7 +138,7 @@ class JavaSymbolTest extends Test:
     }
 
     // -------------------------------------------------------------------------
-    // Test 2: binaryName - Phase 09 restores kyo.internal.tasty.symbol.BinaryName.compute(sym, cp).
+    // Test 2: binaryName - restores kyo.internal.tasty.symbol.BinaryName.compute(sym, cp).
     // -------------------------------------------------------------------------
     "kyo.internal.tasty.symbol.BinaryName.compute(sym, cp) for ArrayRecord returns a non-empty string" in run {
         import kyo.Tasty.SymbolId
@@ -158,7 +158,7 @@ class JavaSymbolTest extends Test:
 
     // -------------------------------------------------------------------------
     // Test 3: top-level class with literal '$' in binary name has fullName preserving '$'
-    // plan: phase-02 deferred; sym.fullName is Phase 09
+    // plan: phase-02 deferred; sym.fullName is
     // This test is cross-platform (uses no classloader, synthesizes minimal classfile bytes).
     // Binary name: "com/example/Foo$Bar" with NO InnerClasses entry.
     // Expected fullName: "com.example.Foo$Bar" (dollar sign preserved literally).

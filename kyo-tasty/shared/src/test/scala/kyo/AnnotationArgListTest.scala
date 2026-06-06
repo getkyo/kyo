@@ -3,9 +3,7 @@ package kyo
 import AllowUnsafe.embrace.danger
 import kyo.Tasty.SymbolId
 
-/** Plan-mandated tests for Phase 08 (leaf 164): Annotation.arguments.
-  *
-  * Pins: INV-010.
+/** Annotation.arguments.
   */
 class AnnotationArgListTest extends Test:
 

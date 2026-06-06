@@ -12,7 +12,7 @@ import kyo.internal.tasty.reader.TastyHeader
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.mutable
 
-/** Tests for Phase 7: Symbol resolution, deduplication, and cross-classpath equality.
+/** Tests for Symbol resolution, deduplication, and cross-classpath equality.
   *
   * Plan tests 19, 21, 35.
   */
@@ -176,7 +176,7 @@ class SymbolResolutionTest extends Test:
         end for
     end decodeBytes
 
-    // Phase 2 Test 1 (redesigned for Phase 07): cross-file type references are resolved via fqnIndex
+    // Test 1 (redesigned for): cross-file type references are resolved via fqnIndex
     // at Phase C finalizeMerge. The UnresolvedRef mechanism is deleted.
     // Verify that PlainClass.tasty opens successfully and parentTypes are populated.
     "Phase C: cross-file type references resolved (PlainClass has parentTypes)" in run {
@@ -195,7 +195,7 @@ class SymbolResolutionTest extends Test:
                 case Result.Panic(t)   => throw t
     }
 
-    // Phase 2 Test 2: missing-class placeholder resolves to Unresolved sentinel when base file is absent.
+    // Test 2: missing-class placeholder resolves to Unresolved sentinel when base file is absent.
     //
     // Design note: childClassTasty has no TYPEREFpkg/TYPEREFin for BaseClass (same compilation unit).
     // Parts a-c are redesigned to use PlainClass.tasty which has real cross-file UnresolvedRef
@@ -208,7 +208,7 @@ class SymbolResolutionTest extends Test:
     //   c) Verify replaceSlot.get() returns Named(sym) with sym.kind == Unresolved and same FQN.
     //   d) Init a full classpath with ONLY childClassTasty (no base) via initInto and verify
     //      it opens without panic (no unset SingleAssign).
-    // Phase 2 Test 2 (redesigned for Phase 07): unresolved cross-file references become Unresolved
+    // Test 2 (redesigned for): unresolved cross-file references become Unresolved
     // symbols in the classpath. Verify that ChildClass.tasty opens without panic when base file is absent.
     "Phase C: classpath opens without panic when cross-file parent is absent (unresolved symbols)" in run {
         val src = MemoryFileSource()
@@ -226,7 +226,7 @@ class SymbolResolutionTest extends Test:
                     throw t
     }
 
-    // ── Phase 09: Plan-mandated tests (Leaves 1-6) ──────────────────────────
+    // ── Plan-mandated tests (Leaves 1-6) ──────────────────────────
 
     import kyo.Tasty.SymbolId
 
@@ -294,8 +294,7 @@ class SymbolResolutionTest extends Test:
         )
     end makeVarSym9
 
-    // Phase 09 Leaf 1: owner resolves to the correct Symbol.
-    // Pins: INV-005 + INV-001
+    // Leaf 1: owner resolves to the correct Symbol.
     "Phase09: owner resolves to the correct Symbol" in run {
         val pkgSym = makePkgSym9(id = 0, name = "p")
         val fooSym = makeClassSym9(id = 1, name = "Foo", ownerId = 0)
@@ -310,8 +309,7 @@ class SymbolResolutionTest extends Test:
                     succeed
     }
 
-    // Phase 09 Leaf 2: parents extracts only Type.Named entries.
-    // Pins: INV-002 + INV-005
+    // Leaf 2: parents extracts only Type.Named entries.
     "Phase09: parents extracts only Type.Named entries from parentTypes" in run {
         val symA = makeClassSym9(id = 0, name = "A", ownerId = 0)
         val symB = makeClassSym9(id = 1, name = "B", ownerId = 0)
@@ -336,8 +334,7 @@ class SymbolResolutionTest extends Test:
             )
     }
 
-    // Phase 09 Leaf 3: methods returns only method-kind declarations.
-    // Pins: INV-005
+    // Leaf 3: methods returns only method-kind declarations.
     "Phase09: methods returns only method-kind declarations" in run {
         val classSym  = makeClassSym9(id = 0, name = "Foo", ownerId = 0)
         val method1   = makeMethodSym9(id = 1, name = "foo", ownerId = 0)
@@ -352,8 +349,7 @@ class SymbolResolutionTest extends Test:
             assert(methodNames == Set("foo", "bar"), s"Expected {foo, bar} but got $methodNames")
     }
 
-    // Phase 09 Leaf 4: findDeclaredMember by string name returns Maybe.Absent when missing.
-    // Pins: INV-007
+    // Leaf 4: findDeclaredMember by string name returns Maybe.Absent when missing.
     "Phase09: findDeclaredMember by string name returns Maybe.Absent when missing" in run {
         val classSym  = makeClassSym9(id = 0, name = "Foo", ownerId = 0)
         val memberSym = makeMethodSym9(id = 1, name = "existingMethod", ownerId = 0)
@@ -366,8 +362,7 @@ class SymbolResolutionTest extends Test:
             assert(present.isDefined, s"Expected Present for 'existingMethod' but got $present")
     }
 
-    // Phase 09 Leaf 5: sym.parents, Tasty.owner(sym), sym.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method]) are direct member calls.
-    // Pins: API discipline rule
+    // Leaf 5: sym.parents, Tasty.owner(sym), sym.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method]) are direct member calls.
     "Phase09: sym.parents, Tasty.owner(sym), sym.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method]) compile as direct member calls" in run {
         val pkgSym = makePkgSym9(id = 0, name = "pkg")
         val fooSym = makeClassSym9(id = 1, name = "Foo", ownerId = 0)
@@ -384,13 +379,12 @@ class SymbolResolutionTest extends Test:
                     succeed
     }
 
-    // Phase 09 Leaf 6: no AllowUnsafe on resolution accessors.
-    // Pins: INV-010
+    // Leaf 6: no AllowUnsafe on resolution accessors.
     "Phase09: resolution accessors require only Classpath, no AllowUnsafe" in run {
         val sym = makeClassSym9(id = 0, name = "X", ownerId = 0)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).flatMap: cp =>
             Tasty.withClasspath(cp):
-                // All resolution accessors via Tasty.* free functions (Phase 06 API)
+                // All resolution accessors via Tasty.* free functions
                 val _typeParams: Chunk[Tasty.Symbol] = sym.typeParamIds.flatMap(id => cp.symbol(id).toChunk)
                 val _decls: Chunk[Tasty.Symbol]      = sym.declarationIds.flatMap(id => cp.symbol(id).toChunk)
                 val _methods: Chunk[Tasty.Symbol] =

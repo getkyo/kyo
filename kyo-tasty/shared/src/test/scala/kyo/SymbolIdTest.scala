@@ -4,7 +4,7 @@ import kyo.Tasty.SymbolId
 
 /** Tests for the SymbolId opaque type.
   *
-  * Phase 01. Covers identity equality, inequality, and pattern-binding (leaves 1-3). The private[kyo] construction constraint (leaf 4)
+  * . Covers identity equality, inequality, and pattern-binding (leaves 1-3). The private[kyo] construction constraint (leaf 4)
   * lives in external.SymbolIdVisibilityTest, which is in package external so that assertDoesNotCompile evaluates the snippet outside the
   * kyo package scope. typeCheckErrors from within package kyo would not reject private[kyo] members because the test file itself is inside
   * the kyo package.
@@ -15,7 +15,6 @@ class SymbolIdTest extends Test:
     // Given: two SymbolId.apply(7) calls.
     // When: compared via == and via underlying value extension.
     // Then: both return true; underlying Int is 7.
-    // Pins: INV-001 (identity-stable construction).
     "SymbolId identity equality: two apply(7) calls are equal" in {
         val a = SymbolId(7)
         val b = SymbolId(7)
@@ -28,7 +27,6 @@ class SymbolIdTest extends Test:
     // Given: SymbolId.apply(7) and SymbolId.apply(8).
     // When: compared via ==.
     // Then: returns false.
-    // Pins: INV-001 (distinct ids do not collide).
     "SymbolId inequality: apply(7) != apply(8)" in {
         val a = SymbolId(7)
         val b = SymbolId(8)
@@ -39,7 +37,6 @@ class SymbolIdTest extends Test:
     // Given: a SymbolId produced from value 42.
     // When: pattern-matched and the underlying Int extracted via value extension.
     // Then: the extracted Int equals 42.
-    // Pins: INV-001 (round-trip through value extension).
     "SymbolId pattern-binding: extract underlying Int via match" in {
         val s: SymbolId = SymbolId(42)
         val extracted = s match

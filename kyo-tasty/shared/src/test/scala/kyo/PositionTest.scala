@@ -6,9 +6,7 @@ import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.SymbolKind
 import scala.collection.immutable.IntMap
 
-/** Tests for the Phase 06 Position redesign (Cat 8).
-  *
-  * Pins: INV-012; Cat 8; principle 2 Correct; PRESERVE-M.
+/** Tests for the Position redesign (Cat 8).
   *
   * Leaves:
   *   1. positionSourceFileRejectsAbsent: Position constructor requires a String sourceFile; Maybe.Absent does not compile.
@@ -25,7 +23,6 @@ class PositionTest extends Test:
     // Given: a probe compileErrors("Position(Maybe.Absent, 10, 20)")
     // When: the test asserts
     // Then: the returned string is non-empty (sourceFile: String, cannot accept Maybe.Absent)
-    // Pins: INV-012; Cat 8; principle 2 Correct
     "Leaf 1: Position(Maybe.Absent, ...) does not compile -- sourceFile is now String not Maybe[String]" in {
         val errs = compiletime.testing.typeCheckErrors(
             "kyo.Tasty.Position(kyo.Maybe.Absent, 10, 20)"
@@ -41,7 +38,6 @@ class PositionTest extends Test:
     // Then: the result map is empty, no error is emitted. Pre-Scala-3.3 TASTy files and files compiled
     //       without the Attributes SOURCEFILE attribute have their source path only in SOURCE entries inside
     //       the Positions stream; kyo-tasty does not resolve those. Symbols stay with sourcePosition == Absent.
-    // Pins: INV-012; Cat 8.
     "Leaf 2: Positions section with absent SOURCEFILE silently skips positions -- no error emitted" in run {
         // Minimal non-empty Positions payload: numLines=1, line sizes=[10], one Assoc entry.
         // header = (1<<3)|4 = 12, start_delta = 0.
@@ -77,7 +73,6 @@ class PositionTest extends Test:
     // Given: a PositionsUnpickler.read call with a non-empty Positions payload and sourceFile = Present("Foo.scala").
     // When: the read succeeds.
     // Then: the result map contains the symbol with sourceFile == "Foo.scala".
-    // Pins: INV-012; Cat 8.
     "Leaf 3: present SOURCEFILE produces Position with the correct sourceFile string" in run {
         // Payload: numLines=1, line sizes=[10], one entry at addrDelta=1, start_delta=0 => line 1, col 1.
         val payload = Array[Byte](

@@ -34,7 +34,6 @@ class PureDataInvariantTest extends Test:
     // Given: a classpath loaded from the embedded fixtures
     // When: calling each accessor on a sample of symbols twice in succession
     // Then: both calls return structurally equal results (no hidden mutation, no cache artifact)
-    // Pins: HARD RULE 7
     "HARD RULE 7: Symbol accessors are idempotent (same value on second call)" in run {
         openFixtureClasspath.map: cp =>
             given Tasty.Classpath = cp
@@ -60,7 +59,6 @@ class PureDataInvariantTest extends Test:
     // Given: ClassLike symbols accessed twice
     // When: comparing parentTypes and annotations Chunk references
     // Then: both references compare equal structurally
-    // Pins: HARD RULE 7 (structural fields)
     "HARD RULE 7: ClassLike parentTypes and annotations are stable across aliasing reads" in run {
         openFixtureClasspath.map: cp =>
             given Tasty.Classpath = cp
@@ -83,7 +81,6 @@ class PureDataInvariantTest extends Test:
     // Given: the same Symbol instance retrieved twice
     // When: comparing with ==
     // Then: equal; hashCode also matches
-    // Pins: HARD RULE 7 (case-class structural equality)
     "HARD RULE 7: Symbol equality is structural (same instance equals itself)" in run {
         openFixtureClasspath.map: cp =>
             val sample = cp.symbols.take(20)

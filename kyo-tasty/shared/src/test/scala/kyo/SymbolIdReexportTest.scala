@@ -2,9 +2,7 @@ package kyo
 
 import kyo.Tasty.SymbolId as InternalSymbolId
 
-/** Plan-mandated tests for Phase 08 (leaf 172): Tasty.SymbolId type re-export.
-  *
-  * Pins: INV-002.
+/** Tasty.SymbolId type re-export.
   */
 class SymbolIdReexportTest extends Test:
 

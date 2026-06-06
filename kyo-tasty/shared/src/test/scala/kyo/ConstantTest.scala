@@ -52,7 +52,6 @@ class ConstantTest extends Test:
     // Given: bytes [STRINGconst tag, Nat(2)] with names(2) = Name("hello").
     // When: Constant.fromTastyTag(STRINGconst, view, session).
     // Then: returns Constant.StringConst("hello").
-    // Pins: T2.
     "Constant STRINGconst decodes name table entry to StringConst" in run {
         val names = Array(
             Tasty.Name("dummy0"),
@@ -79,7 +78,6 @@ class ConstantTest extends Test:
     // Given: zero bytes after tag (NULLconst is category 1: tag only, already consumed by caller).
     // When: Constant.fromTastyTag(NULLconst, emptyView, session).
     // Then: returns Constant.NullConst.
-    // Pins: T2.
     "Constant NULLconst returns NullConst with empty view" in run {
         val session = makeSession(Array.empty)
         val bytes   = Array.empty[Byte]

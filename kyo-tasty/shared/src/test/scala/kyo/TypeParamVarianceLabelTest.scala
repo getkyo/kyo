@@ -3,12 +3,10 @@ package kyo
 import AllowUnsafe.embrace.danger
 import kyo.Tasty.SymbolId
 
-/** Phase 08 followup for W-05-02: exercises `TypeParam.varianceLabel`.
+/** followup for W-05-02: exercises `TypeParam.varianceLabel`.
   *
-  * W-05-02 noted that `varianceLabel` was listed in the top-level public-API delta for Phase 05 but was never implemented or tested. This
-  * test validates the Phase 08 addition.
-  *
-  * Pins: INV-002, INV-009.
+  * W-05-02 noted that `varianceLabel` was listed in the top-level public-API delta for but was never implemented or tested. This
+  * test validates the addition.
   */
 class TypeParamVarianceLabelTest extends Test:
 

@@ -3,9 +3,9 @@ package kyo
 import kyo.internal.Fidelity2TestBase
 import kyo.internal.TestClasspaths2
 
-/** Phase 2.03 fidelity tests for JPMS jrt:/ classfile decoding.
+/** fidelity tests for JPMS jrt:/ classfile decoding.
   *
-  * Owns all 8 plan leaves for F-A3-001..005, F-A1-005, and F-A1-009. Un-pends the corresponding stubs in RealClasspathFidelity2Test and
+  * Owns all 8 plan leaves for  ,  , and   Un-pends the corresponding stubs in RealClasspathFidelity2Test and
   * covers the full set of JDK class shapes reachable after initWithPlatformModules walks jrt:/ classfiles.
   *
   * JDK version requirement: JDK 11+ for jrt:/ filesystem; JDK 14+ for java.lang.Runtime.Version records; JDK 17+ for sealed classes
@@ -21,15 +21,14 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
     import AllowUnsafe.embrace.danger
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Phase 2.03 ACTIVE leaves
+    // ACTIVE leaves
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Leaf 1 (Phase 2.03): F-A3-001 -- java.lang.String resolves
+    // Leaf 1:   -- java.lang.String resolves
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules (initWithPlatformModules)
     // When: calling cp.findClass("java.lang.String")
     // Then: returns Present (jrt:/ walker enumerates String.class and ClassfileUnpickler decodes it)
-    // Pins: F-A3-001
-    "F-A3-001 (Phase 2.03): findClass('java.lang.String') returns Present after jrt:/ walk" in run {
+    "findClass('java.lang.String') returns Present after jrt:/ walk" in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
             cp.findClass("java.lang.String") match
                 case Present(sym) =>
@@ -42,12 +41,11 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
                     )
     }
 
-    // Leaf 2 (Phase 2.03): java.util.HashMap resolves
+    // Leaf 2: java.util.HashMap resolves
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules
     // When: calling cp.findClass("java.util.HashMap")
     // Then: returns Present; HashMap.class is in java.base under jrt:/modules/java.base/java/util/HashMap.class
-    // Pins: F-A3-001 (extended to java.util)
-    "F-A3-001b (Phase 2.03): findClass('java.util.HashMap') returns Present after jrt:/ walk" in run {
+    "b : findClass('java.util.HashMap') returns Present after jrt:/ walk" in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
             cp.findClass("java.util.HashMap") match
                 case Present(sym) =>
@@ -60,12 +58,11 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
                     )
     }
 
-    // Leaf 3 (Phase 2.03): java.util.concurrent.ConcurrentHashMap resolves
+    // Leaf 3: java.util.concurrent.ConcurrentHashMap resolves
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules
     // When: calling cp.findClass("java.util.concurrent.ConcurrentHashMap")
     // Then: returns Present; java.util.concurrent is in java.base
-    // Pins: F-A3-001 (extended to java.util.concurrent)
-    "F-A3-001c (Phase 2.03): findClass('java.util.concurrent.ConcurrentHashMap') returns Present after jrt:/ walk" in run {
+    "c : findClass('java.util.concurrent.ConcurrentHashMap') returns Present after jrt:/ walk" in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
             cp.findClass("java.util.concurrent.ConcurrentHashMap") match
                 case Present(sym) =>
@@ -78,12 +75,11 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
                     )
     }
 
-    // Leaf 4 (Phase 2.03): F-A3-005 -- cp.modules contains "java.base"
+    // Leaf 4: cp.modules contains "java.base"
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules
     // When: calling cp.findModule("java.base")
     // Then: returns Present with at least one export starting with "java.lang"
-    // Pins: F-A3-005
-    "F-A3-005 (Phase 2.03): cp.modules contains 'java.base' after jrt:/ walker addition" in run {
+    "cp.modules contains 'java.base' after jrt:/ walker addition" in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
             cp.findModule("java.base") match
                 case Present(m) =>
@@ -105,12 +101,11 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
                     )
     }
 
-    // Leaf 5 (Phase 2.03): JDK class parentTypes includes java.lang.Object
+    // Leaf 5: JDK class parentTypes includes java.lang.Object
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules; java.util.HashMap found
     // When: examining cp.findClass("java.util.HashMap").parentTypes
     // Then: at least one parent resolves to a non-sentinel symbol id (java.lang.AbstractMap or java.util.Map)
-    // Pins: F-A3-001 parent wiring in finalizeMerge
-    "F-A3-001d (Phase 2.03): JDK class parentTypes wired (HashMap parents include AbstractMap or Object)" in run {
+    "d : JDK class parentTypes wired (HashMap parents include AbstractMap or Object)" in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
             cp.findClass("java.util.HashMap") match
                 case Absent =>
@@ -133,12 +128,11 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
             end match
     }
 
-    // Leaf 6 (Phase 2.03): F-A3-002 -- Java enum isEnum
+    // Leaf 6:   -- Java enum isEnum
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules
     // When: calling cp.findClass("java.lang.annotation.RetentionPolicy")
     // Then: Present(sym) with sym.isEnum == true; RetentionPolicy is a JDK enum
-    // Pins: F-A3-002
-    "F-A3-002 (Phase 2.03): findClass('java.lang.annotation.RetentionPolicy').isEnum is true" in run {
+    "findClass('java.lang.annotation.RetentionPolicy').isEnum is true" in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
             cp.findClass("java.lang.annotation.RetentionPolicy") match
                 case Absent =>
@@ -154,14 +148,13 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
                     succeed
     }
 
-    // Leaf 7 (Phase 2.03): Java sealed class permittedSubclasses populated (JDK 17+)
+    // Leaf 7: Java sealed class permittedSubclasses populated (JDK 17+)
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules; JDK >= 17 for PermittedSubclasses attribute
     // When: calling cp.findClassLike("java.lang.constant.ConstantDesc")
     // Then: Present(sym) with sym.isSealed == true and sym.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty) returns Present with >= 1 entry
     // JDK version: ConstantDesc is sealed since JDK 12. Note: java.lang.constant.Constable was sealed in
     // JDK 17-21 but became non-sealed in JDK 22+; ConstantDesc remains sealed through JDK 25.
-    // Pins: F-A3-003 (Java sealed)
-    "F-A3-003 (Phase 2.03): java.lang.constant.ConstantDesc permittedSubclasses populated (JDK 12+)" in run {
+    "java.lang.constant.ConstantDesc permittedSubclasses populated (JDK 12+)" in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
             val jdkVersion = java.lang.Runtime.version().feature()
             cp.findClassLike("java.lang.constant.ConstantDesc") match
@@ -194,13 +187,12 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
             end match
     }
 
-    // Leaf 8 (Phase 2.03): Java interface default methods detectable
+    // Leaf 8: Java interface default methods detectable
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules; java.util.Iterator found
     // When: enumerating java.util.Iterator.declarationIds.map(cp.symbol) and filtering for non-abstract methods
     // Then: at least one non-abstract method exists (the default method forEachRemaining added in Java 8)
     // Java interface default methods are NOT marked Abstract (ACC_ABSTRACT is clear); abstract interface methods ARE Abstract.
-    // Pins: F-A3-004 (Java interface default methods)
-    "F-A3-004 (Phase 2.03): java.util.Iterator has non-abstract method declarations (default methods)" in run {
+    "java.util.Iterator has non-abstract method declarations (default methods)" in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
             cp.findClassLike("java.util.Iterator") match
                 case Absent =>
@@ -228,12 +220,11 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
             end match
     }
 
-    // Leaf 9 (Phase 2.03): F-A1-005 -- initWithPlatformModules includes JDK class symbols
+    // Leaf 9:   -- initWithPlatformModules includes JDK class symbols
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules (kyo-tasty roots + JDK)
     // When: verifying both kyo.Tasty and java.lang.String are findable
     // Then: both return Present; demonstrates user roots and JDK roots are merged
-    // Pins: F-A1-005
-    "F-A1-005 (Phase 2.03): initWithPlatformModules includes both user TASTy and JDK class symbols" in run {
+    "initWithPlatformModules includes both user TASTy and JDK class symbols" in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
             val kyoTasty   = cp.findClassLike("kyo.Tasty")
             val javaString = cp.findClass("java.lang.String")
@@ -248,15 +239,14 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 10 (Phase 2.03): F-A1-009 -- unresolvedTypeReferenceCount with java.base JDK
+    // Leaf 10:   -- unresolvedTypeReferenceCount with java.base JDK
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules (java.base only)
     // When: calling cp.unresolvedTypeReferenceCount
-    // Then: the count is non-negative (Phase 08: counts FQN-tracked cross-classpath gaps; types from
+    // Then: the count is non-negative (counts FQN-tracked cross-classpath gaps; types from
     // JDK modules outside java.base may be unresolved if only java.base is loaded, but no crash occurs)
-    // Note: Before Phase 08 this checked == 0 (sentinel-id refs only). After Phase 08, the count is the
+    // Note: Before this checked == 0 (sentinel-id refs only). After the count is the
     // number of FQN-tracked parent-type refs whose defining package was absent from the loaded classpath.
-    // Pins: F-A1-009
-    "F-A1-009 (Phase 2.03): cp.unresolvedTypeReferenceCount >= 0 on full classpath including JDK" in run {
+    "cp.unresolvedTypeReferenceCount >= 0 on full classpath including JDK" in run {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
             val unresolved = cp.unresolvedTypeReferenceCount
             assert(

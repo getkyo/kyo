@@ -225,7 +225,7 @@ class TastyPropertyBasedTest extends Test:
     // RuntimeException whose message encodes TastyError.UnknownTagInPosition, not a silent
     // sentinel or unexpected exception class. Tag value 0 is not a valid tag in any position
     // so it exercises the unknown-tag path. Pins the invariant that corrupt/future-format
-    // bytes produce clean errors (Phase 2.04-strict, HARD RULE 13).
+    // bytes produce clean errors.
     "PROP-PB-005: TagKind throwFor produces TastyError.UnknownTagInPosition for unknown tag 0" in {
         import kyo.internal.tasty.reader.TagKind
         val invalidTag = 0

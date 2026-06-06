@@ -14,12 +14,12 @@ import kyo.Tasty
   *   - scala.ContextFunctionN[A1..AN, R] => ContextFunction(Chunk(A1..AN), R)
   *   - scala.TupleN[T1..TN] => Tuple(Chunk(T1..TN))
   *   - scala.Array[T] => Array(T)
-  *   - scala.<repeated>[T] (APPLIEDtype base) => Repeated(T) (F-A2-013 fallback)
+  *   - scala.<repeated>[T] (APPLIEDtype base) => Repeated(T) (fallback)
   *   - AndType(scala.Singleton, X) => X
   *   - AndType(X, scala.Singleton) => X
   *   - anything else => Applied(base, args)
   *
-  * Varargs detection (F-A2-013): the primary mechanism is in TreeUnpickler.decodeTptAsType at the
+  * Varargs detection: the primary mechanism is in TreeUnpickler.decodeTptAsType at the
   * ANNOTATEDtpt case. Scala 3 TASTy encodes `xs: A*` as ANNOTATEDtpt(@scala.annotation.internal.Repeated,
   * underlying_elem_type). When the annotation is @Repeated the tpe_Tree is wrapped in Type.Repeated.
   */
@@ -30,13 +30,13 @@ object TypeOps:
     private val TuplePrefix           = "scala.Tuple"
     private val ArrayFqn              = "scala.Array"
     private val SingletonFqn          = "scala.Singleton"
-    // F-A2-006 / F-A2-009: scala.& and scala.| are the internal FQNs for intersection and union type
+    // scala.& and scala.| are the internal FQNs for intersection and union type
     // constructors in Scala 3 TASTy. APPLIEDtype(scala.&, [A, B]) collapses to AndType(A, B) and
     // APPLIEDtype(scala.|, [A, B]) collapses to OrType(A, B). With args.size != 2 the Applied form is
     // preserved unchanged.
     val AndFqn = "scala.&"
     val OrFqn  = "scala.|"
-    // F-A2-013: varargs parameters in Scala 3 TASTy are encoded as ANNOTATEDtpt wrapping the element
+    // varargs parameters in Scala 3 TASTy are encoded as ANNOTATEDtpt wrapping the element
     // type with annotation @scala.annotation.internal.Repeated. TreeUnpickler.decodeTptAsType detects
     // this annotation by checking the FQN against RepeatedAnnotationFqn and returns Type.Repeated(elem).
     // The APPLIEDtype route via RepeatedFqn and RepeatedSimple is kept for cases where <repeated> appears
@@ -71,7 +71,7 @@ object TypeOps:
                 if args.nonEmpty then Tasty.Type.Function(args.dropRight(1), args.last)
                 else Tasty.Type.Applied(base, args)
             else if fqn.startsWith(ContextFunctionPrefix) && isDigitSuffix(fqn, ContextFunctionPrefix.length) then
-                // F-A2-005: ContextFunctionN decodes to ContextFunction, not Function.
+                // ContextFunctionN decodes to ContextFunction, not Function.
                 // This keeps context-function and plain-function types structurally distinct so callers
                 // can pattern-match on the dedicated case, per OQ-005 resolution.
                 if args.nonEmpty then Tasty.Type.ContextFunction(args.dropRight(1), args.last)
@@ -81,15 +81,15 @@ object TypeOps:
             else if fqn == ArrayFqn && args.size == 1 then
                 Tasty.Type.Array(args.head)
             else if fqn == RepeatedFqn && args.size == 1 then
-                // F-A2-013: scala.<repeated>[T] is the internal type of varargs parameters.
+                // scala.<repeated>[T] is the internal type of varargs parameters.
                 // Collapse APPLIEDtype(Named(negId: scala.<repeated>), [T]) to Type.Repeated(T).
                 Tasty.Type.Repeated(args.head)
             else if fqn == AndFqn && args.size == 2 then
-                // F-A2-006: scala.&[A, B] is the APPLIEDtype form of intersection types.
+                // scala.&[A, B] is the APPLIEDtype form of intersection types.
                 // Collapse to AndType(A, B) for structural parity with the ANDtype tag path.
                 Tasty.Type.AndType(args(0), args(1))
             else if fqn == OrFqn && args.size == 2 then
-                // F-A2-009: scala.|[A, B] is the APPLIEDtype form of union types.
+                // scala.|[A, B] is the APPLIEDtype form of union types.
                 // Collapse to OrType(A, B) for structural parity with the ORtype tag path.
                 Tasty.Type.OrType(args(0), args(1))
             else
@@ -101,7 +101,7 @@ object TypeOps:
             // TypeRef's name is the simple class name. The fqnHint mechanism only fires for
             // Named(trackedNegId) bases; TypeRef bases are encountered in TEMPLATE parents
             // (decoded via parentTypes path) where no unresolvedIdToFqn entry exists.
-            // F-A2-005: recognise the TypeRef simple-name pattern so ContextFunctionN parent
+            // Recognise the TypeRef simple-name pattern so ContextFunctionN parent
             // types also decode to ContextFunction rather than remaining as raw Applied.
             base match
                 case Tasty.Type.TypeRef(_, nm) =>
@@ -118,7 +118,7 @@ object TypeOps:
                     else if simpleName == ArraySimple && args.size == 1 then
                         Tasty.Type.Array(args.head)
                     else if simpleName == RepeatedSimple && args.size == 1 then
-                        // F-A2-013: same-file TypeRef(pkg, "<repeated>") path for varargs types.
+                        // Same-file TypeRef(pkg, "<repeated>") path for varargs types.
                         // Collapse APPLIEDtype(TypeRef(scalaPkg, "<repeated>"), [T]) to Type.Repeated(T).
                         Tasty.Type.Repeated(args.head)
                     else

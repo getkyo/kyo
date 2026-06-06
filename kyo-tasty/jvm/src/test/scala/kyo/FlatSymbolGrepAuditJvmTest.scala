@@ -4,8 +4,6 @@ package kyo
   * `final case class Symbol ` declaration survives in `kyo-tasty/shared/src/main`.
   *
   * This test is JVM-only because `java.io.File` and `scala.io.Source.fromFile` are not available on Scala.js.
-  *
-  * Pins: INV-001.
   */
 class FlatSymbolGrepAuditJvmTest extends Test:
 

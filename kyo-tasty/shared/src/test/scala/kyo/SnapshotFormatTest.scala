@@ -5,23 +5,23 @@ import kyo.internal.tasty.snapshot.SnapshotFormat
 
 /** Tests for SnapshotFormat version and section-name constants.
   *
-  * INV-023: minorVersion == 7 after the Phase 5.01b ERRORS typed-format bump (F-W2-5).
-  * INV-023-prev: Phase 2.13 set minorVersion to 6 for FQNMAP__ section addition.
+  * INV-023: minorVersion == 7 after theb ERRORS typed-format bump.
+  * INV-023-prev: set minorVersion to 6 for FQNMAP__ section addition.
   * INV-003: sectionNames is add-only (TPARAMS_ present, existing names preserved).
   */
 class SnapshotFormatTest extends Test:
 
-    // Test 1 (INV-023, updated Phase 11): minorVersion reflects the Phase 11 four-new-variants bump.
-    // Phase 5.01b set minorVersion to 7 for ERRORS typed-format; Phase 5.02 set it to 8 for index sections;
-    // Phase 5.03 sets it to 9 for ClasspathClosed/ClasspathBuilding context field (F-W2-11).
-    // Phase 11 (prior campaign) set it to 10 for ERRORS string-tag format (stable productPrefix wire encoding, item 14).
-    // Phase 11 (this campaign) sets it to 11 for UnhandledSubtypingCase / UnresolvedReference / UnknownType / MissingDeclaredType.
-    "SnapshotFormat.minorVersion is 11 after Phase 11 four-new-TastyError-variants bump" in run {
+    // Test 1 (INV-023, updated): minorVersion reflects the four-new-variants bump.
+    // b set minorVersion to 7 for ERRORS typed-format; set it to 8 for index sections;
+    // sets it to 9 for ClasspathClosed/ClasspathBuilding context field.
+    // (prior campaign) set it to 10 for ERRORS string-tag format (stable productPrefix wire encoding, item 14).
+    // (this campaign) sets it to 11 for UnhandledSubtypingCase / UnresolvedReference / UnknownType / MissingDeclaredType.
+    "SnapshotFormat.minorVersion is 11 (added UnhandledSubtypingCase, UnresolvedReference, UnknownType, MissingDeclaredType)" in run {
         assert(SnapshotFormat.minorVersion == 11)
         succeed
     }
 
-    // Test 2 (INV-023, INV-003 add-only): TPARAMS_ is present in sectionNames.
+    // Test 2 (INV-023, add-only): TPARAMS_ is present in sectionNames.
     "SnapshotFormat.sectionNames contains TPARAMS_" in run {
         assert(SnapshotFormat.sectionNames.contains("TPARAMS_"))
         succeed
@@ -47,7 +47,6 @@ class SnapshotFormatTest extends Test:
     // Given: SnapshotFormat.magic (4-byte Array).
     // When: new String(magic, StandardCharsets.US_ASCII).
     // Then: equals "KRFL".
-    // Pins: T2.
     "SnapshotFormat.magic bytes decoded as US-ASCII equal KRFL" in run {
         val decoded = new String(SnapshotFormat.magic, StandardCharsets.US_ASCII)
         assert(decoded == "KRFL", s"Expected magic to decode to KRFL but got: $decoded")

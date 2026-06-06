@@ -8,7 +8,7 @@ package kyo
   *
   * Cross-platform: uses the embedded fixture set via TestClasspaths.withClasspath(). No JVM filesystem required.
   *
-  * Proposal 5 of Phase 2.04-strict (HARD RULE 13).
+  * Proposal 5 of-strict (HARD RULE 13).
   */
 class TastyPropertyTest extends Test:
 

@@ -5,7 +5,7 @@ import kyo.internal.tasty.classfile.ConstantPool
 import kyo.internal.tasty.reader.SectionIndex
 
 /** Tests verifying INV-006: every TastyError.MalformedSection, ClassfileFormatError, and SnapshotFormatError carries a byteOffset field
-  * (Phase 14a).
+  * .
   */
 class TastyErrorTest extends Test:
 
@@ -28,7 +28,6 @@ class TastyErrorTest extends Test:
     //        view.position == 1. The MalformedSection is raised with byteOffset = 1.
     // When:  SectionIndex.read runs via Abort.run.
     // Then:  Result.Failure(TastyError.MalformedSection(_, _, off)) where off != 0L.
-    // Pins:  INV-006, L5.
     "MalformedSection carries non-zero byte offset when cursor has advanced" in run {
         val names = Array(makeName("a"), makeName("b"), makeName("c"))
         val bytes = encodeNat(99) ++ encodeNat(0)
@@ -53,7 +52,6 @@ class TastyErrorTest extends Test:
     // When:  ConstantPool.read runs via Abort.run.
     // Then:  Result.Failure(TastyError.ClassfileFormatError(_, _, 3L)).
     //        Exact offset 3L documented in phase-14a-decisions.md.
-    // Pins:  INV-006.
     "ClassfileFormatError captures constant-pool decode position" in run {
         val bytes: Array[Byte] = Array(
             0x00.toByte,
@@ -76,11 +74,10 @@ class TastyErrorTest extends Test:
     // Given: SnapshotFormatError is constructed with byteOffset = 0L. The "wrong magic"
     //        detection path in SnapshotReader has no stream cursor available (it checks
     //        array bytes before any cursor-based read), so byteOffset = 0L is the sentinel.
-    //        The test verifies the byteOffset field EXISTS and is readable, satisfying INV-006.
+    //        The test verifies the byteOffset field EXISTS and is readable, satisfying.
     //        See phase-14a-decisions.md for rationale on why 0L is correct here.
     // When:  A SnapshotFormatError is constructed and destructured.
     // Then:  The byteOffset field is present and equals 0L.
-    // Pins:  INV-006.
     "SnapshotFormatError carries byteOffset field (0L sentinel for no-cursor path)" in run {
         val err: TastyError = TastyError.SnapshotFormatError("<test>", "wrong magic, expected KRFL", 0L)
         err match
@@ -103,7 +100,6 @@ class TastyErrorTest extends Test:
     //        (b) lookupClass("missing.X") is called on the empty classpath.
     // Then:  (a) fqn == "missing.X".
     //        (b) Result.Success(Maybe.Absent) -- missing symbol is a soft-fail, not SymbolNotFound.
-    // Pins:  T3.
     "SymbolNotFound carries fqn field and empty classpath lookup returns Absent" in run {
         val err: TastyError.SymbolNotFound = TastyError.SymbolNotFound("missing.X")
         assert(err.fqn == "missing.X", s"Expected fqn 'missing.X' but got: ${err.fqn}")
@@ -123,7 +119,6 @@ class TastyErrorTest extends Test:
     // When:  requireClass("") is called.
     // Then:  Result.Failure(TastyError.InvalidFqn("", "fqn must be non-empty")).
     //        This distinguishes a caller programming error (empty input) from a genuine not-found result.
-    // Pins:  F-W2-17.
     "requireClass empty string raises InvalidFqn not NotFound" in run {
         Tasty.withPickles(Chunk.empty)(Tasty.classpath).flatMap: cp =>
             Abort.run[TastyError](cp.requireClass("")).map: result =>

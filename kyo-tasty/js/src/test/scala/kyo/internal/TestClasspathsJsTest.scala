@@ -2,9 +2,8 @@ package kyo.internal
 
 import kyo.*
 
-/** Phase 14 test leaves: JS cross-platform fixture helper verification. Updated in Phase 15 to include Shape fixture.
+/** test leaves: JS cross-platform fixture helper verification. Updated in to include Shape fixture.
   *
-  * Pins: F-F-001 (JS parity). All leaves use the embedded TASTy fixture helper and do not require a real JVM classpath. The `run {}` harness
   * (BaseKyoCoreTest) handles `Abort[Any] & Async & Scope`, so test bodies call `TestClasspaths.withClasspath().map(cp => ...)` directly.
   *
   * Leaves:
@@ -12,7 +11,7 @@ import kyo.*
   *   2. js-symbols-non-empty: cp.symbols.size > 0 (includes methods and vals).
   *   3. js-fidelity-suite-compiles: compile+run parity leaf (running proves compilation succeeded).
   *   4. js-no-classpath-errors: cp.errors.isEmpty on well-formed embedded fixtures.
-  *   5. js-enum-case-symbol-kind: at least one Symbol.EnumCase from shapeTasty (pins Phase 13 + 15 on JS).
+  *   5. js-enum-case-symbol-kind: at least one Symbol.EnumCase from shapeTasty (pins + 15 on JS).
   *   6. js-cross-file-resolution: BaseClass and ChildClass both findable by FQN (pins cross-file work on JS).
   */
 class TestClasspathsJsTest extends Test:
@@ -21,7 +20,6 @@ class TestClasspathsJsTest extends Test:
     // Given: the embedded TASTy fixtures compiled into the JS test bundle.
     // When: calling TestClasspaths.withClasspath on JS.
     // Then: the resulting Classpath has at least one class-like symbol.
-    // Pins: F-F-001 (JS parity).
     "js-embedded-fixture-loads: allClassLike non-empty from embedded fixtures" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             // The fixture set adds 70+ TASTy files (see TestClasspaths.withClasspath). The exact total
@@ -41,11 +39,10 @@ class TestClasspathsJsTest extends Test:
     // Given: the embedded TASTy fixtures.
     // When: calling cp.symbols.
     // Then: size == 1010 (exact count for the full embedded fixture set including Java fixture).
-    // Pins: F-F-001 (JS parity, broader symbol check); Q-025 RI-008 measured 2026-06-04.
     "js-symbols-non-empty: cp.symbols non-empty from embedded fixtures" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             // Exact count: the embedded fixture set (all kyo.fixtures.Embedded.* files including
-            // JavaSimpleFixture added in Phase 08) produces exactly 1010 symbols. This is
+            // JavaSimpleFixture added in) produces exactly 1010 symbols. This is
             // deterministic because MemoryFileSource loads fixed compiled bytes. Q-025 RI-008 measured 2026-06-04.
             assert(
                 cp.symbols.size == 1010,
@@ -58,7 +55,6 @@ class TestClasspathsJsTest extends Test:
     // Given: the JS test source for fixture leaves.
     // When: scalac runs in JS mode.
     // Then: the suite compiles and runs without "compile error: class not found".
-    // Pins: F-F-001 (compile-level parity). Running this test proves the JS bundle compiled.
     "js-fidelity-suite-compiles: test suite compiles and runs on JS" in run {
         // The fact that this test body executes proves compilation succeeded.
         // The isJS assertion verifies the runtime engine is JS (not JVM or Native).
@@ -70,7 +66,6 @@ class TestClasspathsJsTest extends Test:
     // Given: the embedded TASTy fixtures (all well-formed, compiled from real Scala source).
     // When: loading via TestClasspaths.withClasspath with ErrorMode.SoftFail.
     // Then: cp.errors is empty (no parse errors on valid fixture bytes).
-    // Pins: F-F-001 (correctness check beyond existence).
     "js-no-classpath-errors: no errors loading well-formed embedded fixtures" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             assert(
@@ -85,8 +80,7 @@ class TestClasspathsJsTest extends Test:
     // When: loading via TestClasspaths.withClasspath.
     // Then: at least one symbol is an instance of Symbol.EnumCase (class-form enum case from Shape).
     // Note: class-form enum cases like `case Circle(radius: Double)` produce Symbol.EnumCase, not Symbol.Val.
-    //   This leaf pins that Symbol.EnumCase is decoded and round-trips correctly on JS (Phase 13 + 15).
-    // Pins: F-E-007 on JS (Symbol.EnumCase class-form from Phase 13, tightened in Phase 15 with Shape fixture).
+    //   Symbol.EnumCase is decoded and round-trips correctly on JS.
     "js-enum-case-symbol-kind: shapeTasty produces Symbol.EnumCase instances" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val enumCaseSymbols = cp.symbols.filter(_.isInstanceOf[Tasty.Symbol.EnumCase])
@@ -101,7 +95,6 @@ class TestClasspathsJsTest extends Test:
     // Given: both BaseClass.tasty and ChildClass.tasty embedded in the fixture set.
     // When: loading via TestClasspaths.withClasspath (both files loaded together).
     // Then: both kyo.fixtures.BaseClass and kyo.fixtures.ChildClass are findable by FQN.
-    // Pins: cross-file TYPEREFpkg resolution from Phase 13, verified on JS.
     "js-cross-file-resolution: BaseClass and ChildClass both resolve by FQN" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val baseResult  = cp.findClassLike("kyo.fixtures.BaseClass")

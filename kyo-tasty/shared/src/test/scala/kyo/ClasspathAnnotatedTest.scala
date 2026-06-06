@@ -2,7 +2,7 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Plan-mandated tests for Phase 06 (leaf 128): Classpath.symbolsAnnotatedWith.
+/** Classpath.symbolsAnnotatedWith.
   *
   * Anti-reward-hacking: fixture includes BOTH annotated and non-annotated symbols. The test asserts that ONLY the annotated ones are
   * returned; a vacuous "if nonEmpty succeed" pattern would not verify correctness.
@@ -14,8 +14,6 @@ import kyo.Tasty.SymbolId
   * fqnIndex: "scala.deprecated" -> SymbolId(0)
   *
   * After calling symbolsAnnotatedWith("scala.deprecated"), only symbols at id 1 and 2 must be returned.
-  *
-  * Pins: INV-005.
   */
 class ClasspathAnnotatedTest extends Test:
 
@@ -145,7 +143,6 @@ class ClasspathAnnotatedTest extends Test:
     // Given: fixture with @deprecated def m1 and @deprecated val v1, plus unannotated PlainA and m2.
     // When: cp.symbolsAnnotatedWith("scala.deprecated")
     // Then: Chunk[Symbol] of size 2; contains m1 and v1; excludes PlainA, deprecatedClass, and m2.
-    // Pins: INV-005
     "Leaf 128: symbolsAnnotatedWith returns only symbols bearing the given annotation" in run {
         buildFixture.flatMap: cp =>
             cp.symbolsAnnotatedWith("scala.deprecated").map: annotated =>

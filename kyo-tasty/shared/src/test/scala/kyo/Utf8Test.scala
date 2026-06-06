@@ -101,7 +101,7 @@ class Utf8Test extends Test:
         assert(result.length == 11)
     }
 
-    // Test (Phase 25b T6-2): seeded generative round-trip for UTF-8 encode/decode.
+    // seeded generative round-trip for UTF-8 encode/decode.
     // Utf8 exposes only decode; encode is s.getBytes(StandardCharsets.UTF_8), which is the same
     // underlying platform UTF-8 codec used by each Utf8 platform implementation. Round-tripping
     // through getBytes + Utf8.decode therefore exercises the decode path against well-formed input.

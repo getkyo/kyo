@@ -16,11 +16,11 @@ import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 
-/** Phase 5b tests for the unified Java/Scala model: SymbolKind matrix and type normalization.
+/** tests for the unified Java/Scala model: SymbolKind matrix and type normalization.
   *
-  * Tests 11-18 as specified in execution-plan.md Phase 5b and PHASE-5b-PREP.md §7.3.
+  * Tests 11-18 as specified in execution-plan.md and PHASE-5b-PREP.md §7.3.
   *
-  * Phase 2 post-audit: tests 12, 13, 14, 15, 18 migrated from jvmOnly to cross-platform by replacing JDK classfile
+  * tests 12, 13, 14, 15, 18 migrated from jvmOnly to cross-platform by replacing JDK classfile
   * loads (Object.class, Runnable.class, System.class, String.class, AbstractStringBuilder.class) with Embedded fixture
   * classfiles (throwsFixtureClass, pointRecordClass) and inline synthetic classfile bytes (interface, static-field class,
   * mutable-field class). The shape assertions (SymbolKind mapping) are equivalent.
@@ -115,7 +115,7 @@ class UnifiedModelTest extends Test:
     // -------------------------------------------------------------------------
     // Test 12: SymbolKind.Class for Java class and Scala class
     // -------------------------------------------------------------------------
-    // Cross-platform (Phase 2 post-audit): uses Embedded.throwsFixtureClass instead of JDK Object.class.
+    // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK Object.class.
     "SymbolKind.Class appears for Java class and Scala class" in run {
         readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map: javaResult =>
             assert(
@@ -133,7 +133,7 @@ class UnifiedModelTest extends Test:
     // -------------------------------------------------------------------------
     // Test 13: SymbolKind.Trait for Java interface and Scala trait
     // -------------------------------------------------------------------------
-    // Cross-platform (Phase 2 post-audit): uses inline synthetic interface bytes instead of JDK Runnable.class.
+    // Cross-platform: uses inline synthetic interface bytes instead of JDK Runnable.class.
     "SymbolKind.Trait appears for Java interface and Scala trait" in run {
         val clsName = "kyo/fixtures/SyntheticRunnable".getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val supName = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
@@ -168,7 +168,7 @@ class UnifiedModelTest extends Test:
     // -------------------------------------------------------------------------
     // Test 14: SymbolKind.Object appears ONLY for Scala object; no Java symbol has Object kind
     // -------------------------------------------------------------------------
-    // Cross-platform (Phase 2 post-audit): uses embedded fixtures instead of JDK Object.class + System.class.
+    // Cross-platform: uses embedded fixtures instead of JDK Object.class + System.class.
     "SymbolKind.Object appears only for Scala object; no Java symbol has Object kind" in run {
         readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map: javaObjectResult =>
             assert(
@@ -193,7 +193,7 @@ class UnifiedModelTest extends Test:
     // -------------------------------------------------------------------------
     // Test 15: TypeAlias, OpaqueType, AbstractType appear only for TASTy-sourced symbols
     // -------------------------------------------------------------------------
-    // Cross-platform (Phase 2 post-audit): uses Embedded.throwsFixtureClass instead of JDK Object.class.
+    // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK Object.class.
     "TypeAlias, OpaqueType, AbstractType appear only in TASTy-sourced symbols" in run {
         readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map: javaResult =>
             val allJavaSyms    = javaResult.classSymbol :: javaResult.symbols.toList
@@ -271,7 +271,7 @@ class UnifiedModelTest extends Test:
     // -------------------------------------------------------------------------
     // Test 18: Full SymbolKind matrix coverage (all 13 non-Unresolved kinds present)
     // -------------------------------------------------------------------------
-    // Cross-platform (Phase 2 post-audit): uses Embedded fixture classfiles + inline synthetic bytes
+    // Cross-platform: uses Embedded fixture classfiles + inline synthetic bytes
     // instead of 5 JDK classfiles (Object, Runnable, System, String, AbstractStringBuilder).
     // Coverage:
     //   Class, Method: throwsFixtureClass
@@ -398,7 +398,7 @@ class UnifiedModelTest extends Test:
     private def cat2(tag: Int, n: Int): Array[Byte]           = tag.toByte +: encodeNat(n)
     private def cat3(tag: Int, sub: Array[Byte]): Array[Byte] = tag.toByte +: sub
 
-    // ── INV-013 / M10: CLASSconst decoding via TypeUnpickler ─────────────────
+    // ── / M10: CLASSconst decoding via TypeUnpickler ─────────────────
 
     // Test 19: CLASSconst with a known TYPEREFdirect decodes to ConstantType(ClassConst(Named(sym))).
     "CLASSconst with TYPEREFdirect decodes to ConstantType(ClassConst(Named(stringSym)))" in run {
@@ -418,7 +418,7 @@ class UnifiedModelTest extends Test:
             case Result.Success(tpe) =>
                 tpe match
                     case Tasty.Type.ConstantType(Tasty.Constant.ClassConst(Tasty.Type.Named(id))) =>
-                        // Phase 07: TYPEREFdirect encodes addr as SymbolId(PHASE_B_ADDR_OFFSET + addr).
+                        // TYPEREFdirect encodes addr as SymbolId(PHASE_B_ADDR_OFFSET + addr).
                         assert(id.value >= 0, s"Expected addr-encoded positive id, got ${id.value}")
                     case other =>
                         fail(s"Expected ConstantType(ClassConst(Named(stringSym))), got $other")

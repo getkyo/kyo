@@ -1038,7 +1038,7 @@ object ClassfileUnpickler:
         val baseFlags   = FlagsHelper.fromJvmAccessFlags(accessFlags)
         val javaDefined = Tasty.Flags(Tasty.Flag.JavaDefined)
         val recordFlag  = if isRecord then Tasty.Flags(Tasty.Flag.JavaRecord) else Tasty.Flags.empty
-        // F-A3-003 fix: set Sealed flag when the class has a PermittedSubclasses attribute (Java 17+ sealed
+        // Set Sealed flag when the class has a PermittedSubclasses attribute (Java 17+ sealed
         // classes). The JVM access flags do not include a SEALED bit; the sealed status is encoded only by
         // the presence of the PermittedSubclasses classfile attribute (JVMS 4.7.31).
         val sealedFlag = if classAttrs.permittedSubclassIdxs.nonEmpty then Tasty.Flags(Tasty.Flag.Sealed)
@@ -1132,7 +1132,7 @@ object ClassfileUnpickler:
                                                                     classTypeParams,
                                                                     arena,
                                                                     memberTypes,
-                                                                    // F-A3-001..004 fix: carry raw binary names of
+                                                                    // Carry raw binary names of
                                                                     // parent classes/interfaces so finalizeMerge
                                                                     // can resolve them via the fqnIndex.
                                                                     parentBinaryNames,

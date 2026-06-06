@@ -3,7 +3,7 @@ package kyo
 import kyo.internal.tasty.symbol.SymbolKind
 import scala.compiletime.testing.typeCheckErrors
 
-/** Tests for Phase 07: SubtypeVerdict.Unknown renamed to Indeterminate, and
+/** Tests for SubtypeVerdict.Unknown renamed to Indeterminate, and
   * TastyError.UnhandledSubtypingCase new variant.
   *
   * Leaves:

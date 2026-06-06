@@ -1,6 +1,6 @@
 package kyo
 
-/** Phase 12 leaves 3 + 4: kyo-tasty/CONTRIBUTING.md content verification.
+/** leaves 3 + 4: kyo-tasty/CONTRIBUTING.md content verification.
   *
   * Leaf 3 (gapClosureSubstance): asserts the file exists and contains every
   * substantive section required by the plan and design/00-guides.md.
@@ -23,7 +23,6 @@ class KyoTastyContributingMd extends Test:
     // Then: AllowUnsafe four-site list, closed TastyError ADT, wire-format-minor-bump rule,
     //   Tasty.Java.* namespace, LoadingSymbol producer/consumer split, DecodeContext
     //   consumer, JVM cross-platform stance, INV-IMMUTABLE-ADT; content >= 120 lines.
-    // Pins: gap closure; PRESERVE-G..N coverage.
 
     "Leaf 3: CONTRIBUTING.md resource is loadable with >= 120 lines" taggedAs jvmOnly in {
         val content = loadText("CONTRIBUTING.md")
@@ -81,7 +80,6 @@ class KyoTastyContributingMd extends Test:
     // Given: the new kyo-tasty/CONTRIBUTING.md.
     // When: the test asserts the 8-35 line scaladoc bar is cited.
     // Then: a citation referencing CONTRIBUTING.md Documentation lines 434-455 is present.
-    // Pins: INV-011.
 
     "Leaf 4: scaladoc bar citation (8-35 lines / CONTRIBUTING.md 434-455) is present" taggedAs jvmOnly in {
         val content    = loadText("CONTRIBUTING.md")

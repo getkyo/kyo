@@ -6,7 +6,7 @@ import kyo.internal.tasty.snapshot.SnapshotWriter
 
 /** Cross-platform `DigestComputer.compute` tests covering jar-root and directory-root branches.
   *
-  * Phase 12 post-audit carry: T-J1, T-J3, T-J4, T-J5 migrated to `runJVM` with real temp jars after BLOCKER-1 fix. JVM jar roots now use
+  * post-audit carry: T-J1, T-J3, T-J4, T-J5 migrated to `runJVM` with real temp jars after BLOCKER-1 fix. JVM jar roots now use
   * CEN-walk (RandomAccessFile) which requires real files on disk; MemoryFileSource jar paths are not accessible via RandomAccessFile and
   * would produce TastyError.MalformedSection (missing-jar is loud, not silent 0L). See decisions.md entry 10 for rationale.
   *
@@ -37,8 +37,8 @@ class SnapshotDigestTest extends Test:
                 throw t
     }
 
-    // T-J3: INV-003 -- bumping jar mtime must NOT change the digest (content-addressed; JVM CEN-walk).
-    // After Phase 12 the jar digest is based on CEN CRC32 entries, not mtime. A mtime-only
+    // T-J3: -- bumping jar mtime must NOT change the digest (content-addressed; JVM CEN-walk).
+    // After the jar digest is based on CEN CRC32 entries, not mtime. A mtime-only
     // change must produce the same digest (JVM: CEN walk; path-hash fallback is also mtime-invariant).
     "DigestComputer.compute jar mtime change does NOT change digest (INV-003 content-addressed)" in runJVM {
         import java.nio.file.Files
@@ -116,12 +116,11 @@ class SnapshotDigestTest extends Test:
                 throw t
     }
 
-    // Leaf 5 (Phase 11): INV007-digestStabilityPostBump.
-    // Given: a fixture classpath with Phase 11 errors serialized twice.
+    // Leaf 5: INV007-digestStabilityPostBump.
+    // Given: a fixture classpath with errors serialized twice.
     // When: digests of both serializations are compared.
     // Then: digests are equal; flipping byte 16 produces a differing digest string.
-    // Pins: INV-007 (digest determinism); PRESERVE-N (minor=11 bump).
-    "Phase 11 snapshot serialization is digest-stable across two calls" in run {
+    "snapshot serialization is digest-stable across two calls" in run {
         import kyo.Tasty.SymbolId
         val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val errors = Chunk[TastyError](

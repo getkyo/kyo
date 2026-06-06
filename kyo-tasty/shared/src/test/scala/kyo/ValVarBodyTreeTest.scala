@@ -8,13 +8,11 @@ import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.TastyState
 import scala.collection.mutable
 
-/** Plan-mandated tests for Phase 04 (leaves 79-80): Tasty.bodyTree(Val) and Tasty.bodyTree(Var) accessors.
+/** Tasty.bodyTree(Val) and Tasty.bodyTree(Var) accessors.
   *
   * Leaf 79 uses a real cold-classpath (SomeObject.tasty) to verify that Tasty.bodyTree(Val) returns a Present Tree. Leaf 80 uses a synthetic
   * fixture with a Var body constructed from a Val's body bytes (same shape) to verify Tasty.bodyTree(Var). Leaf 81b is a static-type compile check
   * for Tasty.bodyTree(Val) effect row.
-  *
-  * Pins: INV-007, INV-010.
   */
 class ValVarBodyTreeTest extends Test:
 
@@ -61,7 +59,6 @@ class ValVarBodyTreeTest extends Test:
     // Given: a loaded SomeObject classpath containing a Val with body bytes
     // When: run Tasty.bodyTree(v)
     // Then: Success(Maybe.Present(_))
-    // Pins: INV-007, INV-010
     "Leaf 79: val-bodyTree: Tasty.bodyTree(Val) returns Present(Tree) for a val with body" in run {
         Scope.run:
             Abort.run[TastyError](
@@ -94,7 +91,6 @@ class ValVarBodyTreeTest extends Test:
     // Given: a loaded SomeObject classpath; find a Var with a body if present
     // When: run Tasty.bodyTree(v)
     // Then: Success(Maybe.Present(_)) or inconclusive if no Var with body found
-    // Pins: INV-007
     "Leaf 80: var-bodyTree: Tasty.bodyTree(Var) returns Present(Tree) for a var with body" in run {
         Scope.run:
             Abort.run[TastyError](
@@ -143,7 +139,6 @@ class ValVarBodyTreeTest extends Test:
     // Given: val e: Maybe[Tree] < (Sync & Abort[TastyError]) = Tasty.bodyTree(v)
     // When: compile inside bindingLocal.let(Present(Binding(cp, Present(ctx))))
     // Then: compiles; no other effect; runtime result is Success
-    // Pins: INV-010
     "Leaf 81b: Tasty.bodyTree(Val) effect row is exactly (Sync & Abort[TastyError]) -- compile check" in run {
         val valSym = Tasty.Symbol.Val(
             SymbolId(1),

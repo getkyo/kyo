@@ -171,7 +171,7 @@ enum TastyError derives CanEqual:
       * values; `file` is the TASTy file the symbol was loaded from.
       *
       * This variant is produced at runtime during `isSubtypeOf` calls, not during classpath loading.
-      * Wire-format support was added in Phase 11 (snapshot minor bumped from 10 to 11); see
+      * Wire-format support was added in snapshot minor version 11; see
       * `SnapshotWriter` tag 20 and `SnapshotReader` tag 20.
       *
       * Warning: after a KRFL snapshot round-trip, `lhs` and `rhs` decode to `Type.Nothing` when the

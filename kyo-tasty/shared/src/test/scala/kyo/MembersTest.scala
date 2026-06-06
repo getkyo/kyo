@@ -3,9 +3,7 @@ package kyo
 import kyo.Tasty.Name.asString
 import kyo.Tasty.SymbolId
 
-/** Phase 03 plan leaves 15-19: Tasty.members(sym, scope) and findMember.
-  *
-  * Pins: item 16 / Q-008 consolidate-and-delete; INV-008 zero-methods invariant.
+/** plan leaves 15-19: Tasty.members(sym, scope) and findMember.
   */
 class MembersTest extends Test:
 
@@ -122,7 +120,7 @@ class MembersTest extends Test:
             compiletime.testing.typeCheckErrors(
                 "(null: kyo.Tasty.Symbol).findDeclaredMember(\"a\")"
             ).nonEmpty,
-            "findDeclaredMember must be absent from Symbol (it was moved/deleted in Phase 03)"
+            "findDeclaredMember must be absent from Symbol (it was removed from the public API)"
         )
     }
 

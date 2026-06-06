@@ -4,12 +4,10 @@ import kyo.*
 
 /** Tests for `LoadingSymbol` ADT: the internal loading-phase symbol representation.
   *
-  * Covers Phase 08 plan leaves 1, 2, 3 (Cat 19 LoadingSymbol architectural backbone):
+  * Covers plan leaves 1, 2, 3 (Cat 19 LoadingSymbol architectural backbone):
   *   - placeholderInaccessibleFromUserCode: LoadingSymbol is private[kyo]; user code cannot access it.
   *   - placeholderShapeIsCorrect: Placeholder fields match constructor arguments; no id field.
   *   - materialisingHoldsId: Materialising.id holds the assigned value; structural equality on id.
-  *
-  * Pins: INV-LOADING-SYMBOL.
   */
 class LoadingSymbolTest extends kyo.Test:
 
@@ -19,7 +17,6 @@ class LoadingSymbolTest extends kyo.Test:
     // When: the test asserts.
     // Then: the type does not appear on the public Tasty surface; LoadingSymbol is an
     //       internal type (private[kyo]) not re-exported from object Tasty.
-    // Pins: INV-LOADING-SYMBOL.
     "placeholderInaccessibleFromUserCode: LoadingSymbol is not accessible through the public Tasty API" in {
         // kyo.Tasty does not expose LoadingSymbol: accessing it via Tasty.LoadingSymbol fails.
         val notOnTastySurface = compiletime.testing.typeCheckErrors(
@@ -41,7 +38,6 @@ class LoadingSymbolTest extends kyo.Test:
     // Given: a `LoadingSymbol.Placeholder(SymbolKind.Class, Flags.empty, Name("X"))` instance.
     // When: the test pattern-matches and reads fields.
     // Then: every field matches the constructor arguments; the Placeholder has no `id` field.
-    // Pins: INV-LOADING-SYMBOL.
     "placeholderShapeIsCorrect: Placeholder fields match constructor arguments and has no id field" in {
         val ph = LoadingSymbol.Placeholder(
             kind = SymbolKind.Class,
@@ -66,7 +62,6 @@ class LoadingSymbolTest extends kyo.Test:
     // Given: a `LoadingSymbol.Materialising(id = 42, kind = SymbolKind.Class, flags = Flags.empty, name = Name("X"))`.
     // When: the test reads `m.id`.
     // Then: the value is 42; structural equality on two Materialising values with the same id holds.
-    // Pins: INV-LOADING-SYMBOL.
     "materialisingHoldsId: Materialising.id holds the assigned value" in {
         import AllowUnsafe.embrace.danger
         val m1 = LoadingSymbol.Materialising(

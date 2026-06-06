@@ -7,7 +7,7 @@ import kyo.TastyError
   * Called by SnapshotReader at every section read to assert structural invariants before decoding proceeds. Throws
   * `SectionValidationException` (carrying a `TastyError.MalformedSection`) on violations rather than silently trusting the bytes.
   *
-  * This eliminates the F-A4-001 bug class (NAMES-vs-FQNIDX ordering, name IDs past pool length, record alignment) by making corruption loud
+  * This eliminates the class of bugs (NAMES-vs-FQNIDX ordering, name IDs past pool length, record alignment) by making corruption loud
   * at read time. The caller (SnapshotReader.deserialize) catches `SectionValidationException` and converts it to `Abort.fail`.
   */
 private[snapshot] object SectionValidator:
@@ -114,7 +114,7 @@ private[snapshot] object SectionValidator:
 
     /** Expected number of TastyError ADT variants in the closed enum.
       *
-      * Updated in Phase 11 to 23 (added UnhandledSubtypingCase, UnresolvedReference, UnknownType,
+      * Updated to 23 (added UnhandledSubtypingCase, UnresolvedReference, UnknownType,
       * MissingDeclaredType). Used as a documentation-and-runtime invariant: any future variant addition
       * must bump the snapshot minor version and update this constant.
       */

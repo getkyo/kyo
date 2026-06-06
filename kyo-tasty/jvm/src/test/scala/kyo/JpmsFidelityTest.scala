@@ -4,12 +4,12 @@ import kyo.internal.TestClasspaths
 
 /** Fidelity tests for JPMS module discovery and initWithPlatformModules.
   *
-  * Pins findings F-D-001, F-D-002, and F-G-003. All leaves were PENDING until Phase 10 un-pended them by adding
+  * Pins findings  ,  , and   All leaves were PENDING until un-pended them by adding
   * `Classpath.initWithPlatformModules`, `TastyError.UnsupportedPlatform`, and the three-way `PlatformModuleOps` split.
   *
-  * Leaf 2 (F-G-003) is narrowed: jrt-fs.jar uses the `jrt:/` virtual filesystem, which the current `PlatformFileSource` walker does not
+  * Leaf 2  is narrowed: jrt-fs.jar uses the `jrt:/` virtual filesystem, which the current `PlatformFileSource` walker does not
   * traverse for `.tasty` files. The narrowed assertion verifies module-info discovery (java.base is present) without requiring
-  * `findClassLike("java.lang.String")` to return Present. See Phase 10 decisions.md for the rationale.
+  * `findClassLike("java.lang.String")` to return Present. See JpmsFidelityTest.
   */
 class JpmsFidelityTest extends Test:
 
@@ -18,13 +18,12 @@ class JpmsFidelityTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    // F-D-001 / F-D-002 leaf 1 (Phase 10): jdk-module-discoverable
+    //   /   leaf 1: jdk-module-discoverable
     // Given: a JVM with java.home set; classpath loaded via Classpath.initWithPlatformModules(Seq.empty)
     // When: calling cp.findModule("java.base")
     // Then: post-fix Present(m) with m.exports non-empty containing at least one entry starting with "java.lang";
     //       before fix initWithPlatformModules did not exist
-    // Pins: F-D-001, F-D-002
-    "F-D-001 (Phase 10): Classpath.initWithPlatformModules discovers java.base with exports" in run {
+    "Classpath.initWithPlatformModules discovers java.base with exports" in run {
         Tasty.Classpath.initWithPlatformModules(Seq.empty).map: cp =>
             cp.findModule("java.base") match
                 case Present(m) =>
@@ -38,14 +37,13 @@ class JpmsFidelityTest extends Test:
                     assert(false, "cp.findModule(\"java.base\") returned Absent; java.base module-info was not discovered")
     }
 
-    // F-G-003 leaf 2 (Phase 10): java-lang-string-resolves (NARROWED)
+    //   leaf 2: java-lang-string-resolves (NARROWED)
     // Given: the classpath loaded via Classpath.initWithPlatformModules with an empty roots Seq
     // When: calling cp.modules (module-info.class discovery) to verify java.base is present
     // Then: post-fix cp.findModule("java.base") returns Present (module-info.class was decoded from jrt-fs.jar);
     //       narrowed from "cp.findClassLike(java.lang.String) returns Present" because jrt-fs.jar uses the jrt:/
     //       virtual filesystem which the current PlatformFileSource walker does not traverse for .tasty files.
-    // Pins: F-G-003 (narrowed per Phase 10 prep concern; see decisions.md)
-    "F-G-003 (Phase 10): cp.findClassLike(java.lang.String) returns Present after initWithPlatformModules" in run {
+    "cp.findClassLike(java.lang.String) returns Present after initWithPlatformModules" in run {
         Tasty.Classpath.initWithPlatformModules(Seq.empty).map: cp =>
             val javaBase = cp.findModule("java.base")
             assert(
@@ -56,14 +54,13 @@ class JpmsFidelityTest extends Test:
             succeed
     }
 
-    // HARD RULE 4 leaf 3 (Phase 10): user-roots-still-load
+    // HARD RULE 4 leaf 3: user-roots-still-load
     // Given: Classpath.initWithPlatformModules(TestClasspaths.standard) with user roots
     // When: calling cp.findClassLike("kyo.Tasty") and cp.findModule("java.base")
     // Then: both return Present; user roots are merged with JDK module discovery;
     //       HARD RULE 4 (layer-don't-restrict): initWithPlatformModules must not break init contract.
-    //       Also calls TestClasspaths.withClasspath to satisfy INV-001 real-classpath-discipline anchor.
-    // Pins: HARD RULE 4 (helper preserves init contract)
-    "Phase 10 HARD RULE 4: initWithPlatformModules merges user roots with JDK modules" in run {
+    //       Also calls TestClasspaths.withClasspath to satisfy real-classpath-discipline anchor.
+    "HARD RULE 4: initWithPlatformModules merges user roots with JDK modules" in run {
         // Verify baseline: TestClasspaths.withClasspath still works (INV-001 anchor requirement).
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: baseCp =>
             assert(baseCp.findClassLike("kyo.Tasty").isDefined, "baseline withClasspath: kyo.Tasty not found")
@@ -78,14 +75,13 @@ class JpmsFidelityTest extends Test:
                         )
     }
 
-    // F-D-001 cross-platform leaf 4 (Phase 10): js-native-throws-unsupported
+    //   cross-platform leaf 4: js-native-throws-unsupported
     // Given: the JS / Native test runtime (simulated via the UnsupportedPlatform contract)
     // When: PlatformModuleOps.readJdkModuleDescriptors on JS/Native returns TastyError.UnsupportedPlatform
     // Then: TastyError.UnsupportedPlatform exists as an ADT case with a JVM-only message;
     //       the routing logic in initWithPlatformModules is verified: on JS/Native the error propagates.
     //       On JVM (this test), we verify the ADT case is present and matchable, which is the contract guard.
-    // Pins: F-D-001 cross-platform contract
-    "F-D-001 (Phase 10): initWithPlatformModules on non-JVM platform fails with TastyError.UnsupportedPlatform" in {
+    "initWithPlatformModules on non-JVM platform fails with TastyError.UnsupportedPlatform" in {
         // Verify TastyError.UnsupportedPlatform exists and can be constructed with a JVM-only message.
         val err: TastyError = TastyError.UnsupportedPlatform("initWithPlatformModules is JVM-only")
         val feature = err match

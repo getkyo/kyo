@@ -1,6 +1,6 @@
 package kyo
 
-/** Tests for show methods on Symbol, Type, Tree, and Constant (Phase 10 Items 4 and 14).
+/** Tests for show methods on Symbol, Type, Tree, and Constant.
   *
   * Leaf id:7. Pins: INV-005.
   */

@@ -7,9 +7,9 @@ import kyo.internal.TestClasspaths
   * This file owns the cross-cutting invariant leaves (INV-001, INV-003, INV-009, INV-012) that span multiple phases. It also hosts the TDD
   * discipline pin that verifies every `*FidelityTest.scala` references `TestClasspaths.withClasspath` (HARD RULE 1).
   *
-  * Leaves owned by Phase 01 are ACTIVE below. Leaves owned by later phases are PENDING until the producing phase un-pends them.
+  * Leaves owned by are ACTIVE below. Leaves owned by later phases are PENDING until the producing phase un-pends them.
   *
-  * Phase 2.12: relocated from jvm/src/test to shared/src/test. Leaves using filesystem walks or the real stdlib classpath are gated jvmOnly.
+  * relocated from jvm/src/test to shared/src/test. Leaves using filesystem walks or the real stdlib classpath are gated jvmOnly.
   * All java.nio.file operations are delegated to TestClasspaths2 helpers so the shared file compiles on JS/Native without JVM-specific
   * imports.
   */
@@ -17,13 +17,12 @@ class RealClasspathFidelityTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    // INV-003 anchor (Phase 03): no-unknown-tags-anchor
+    // anchor: no-unknown-tags-anchor
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: loading the classpath and checking for "unknown TASTy type tag" error strings
-    // Then: post-fix (Phase 03) zero warnings matching "unknown TASTy type tag"; classpath has > 0 symbols
-    // Pins: INV-003
+    // Then: post-fix zero warnings matching "unknown TASTy type tag"; classpath has > 0 symbols
     // Cross-platform: the no-unknown-tag guard holds for any classpath; passes on embedded fixtures.
-    "INV-003 (Phase 03): zero unknown-TASTy-tag warnings on a clean real-classpath load" in run {
+    "zero unknown-TASTy-tag warnings on a clean real-classpath load" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val errorMsgs        = classpath.errors.map(_.toString)
             val unknownTagErrors = errorMsgs.filter(_.contains("unknown TASTy type tag"))
@@ -43,13 +42,12 @@ class RealClasspathFidelityTest extends Test:
             succeed
     }
 
-    // F-I-004 (Phase 03): tpt-tags-dispatched-to-tree-decoder
+    //  : tpt-tags-dispatched-to-tree-decoder
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: the load completes successfully
     // Then: the classpath contains Type.Applied instances confirming TPT tags routed correctly
-    // Pins: F-I-004 (dispatch correctness)
     // Cross-platform: embedded GenericBox fixture produces Type.Applied; invariant holds for any classpath.
-    "F-I-004 (Phase 03): TPT tags dispatch to tree-decoder producing real Type values" in run {
+    "TPT tags dispatch to tree-decoder producing real Type values" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val allTypes = classpath.symbols.flatMap: sym =>
                 sym match
@@ -68,13 +66,12 @@ class RealClasspathFidelityTest extends Test:
             succeed
     }
 
-    // HARD RULE 2 (Phase 03): unknown-tag-now-throws
+    // HARD RULE 2: unknown-tag-now-throws
     // Given: TypeUnpickler.decodeTag called with an unrecognised tag
     // When: the unknown tag is dispatched
     // Then: post-fix throws IllegalStateException whose message contains "unhandled"
-    // Pins: HARD RULE 2 enforcement (no silent unknown-tag fallback)
     // Cross-platform: "no TypeUnpickler errors" is universal for any valid classpath.
-    "HARD RULE 2 (Phase 03): TypeUnpickler throws on unhandled tag instead of silently continuing" in run {
+    "HARD RULE 2 : TypeUnpickler throws on unhandled tag instead of silently continuing" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val typeUnpicklerErrors = classpath.errors.filter(_.toString.contains("TypeUnpickler"))
             assert(
@@ -84,7 +81,7 @@ class RealClasspathFidelityTest extends Test:
             succeed
     }
 
-    // INV-009 anchor (Phase 08, refined carry A2): no-file-errors-anchor
+    // no-file-errors-anchor
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: asserting cp.errors for file-level decode failures
     // Then: no CorruptedFile, MalformedSection, or FileNotFound errors; UnknownType errors for symbols
@@ -92,9 +89,8 @@ class RealClasspathFidelityTest extends Test:
     //       cross-file type references that the decoder could not resolve at Phase B, which is a legitimate
     //       TASTy structure. The original "size == 0" assertion was a side effect of the null-sentinel that
     //       silently suppressed these errors; carry A2 correctly wires Cat 14 producers.
-    // Pins: INV-009 (refined)
     // Cross-platform: the no-file-error invariant holds for any valid classpath.
-    "INV-009 (Phase 08): no file-level errors on real-classpath load" in run {
+    "no file-level errors on real-classpath load" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val fileErrors = classpath.errors.filter:
                 case _: TastyError.CorruptedFile    => true
@@ -109,21 +105,20 @@ class RealClasspathFidelityTest extends Test:
             succeed
     }
 
-    // INV-012 anchor (Phase 11): sentinel-bounded-anchor
+    // anchor: sentinel-bounded-anchor
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: computing cp.symbols.filter(_.id.value == -1).map(_.name.asString).toSet.size
-    // Then: post-fix (Phase 11) size <= 3; holds for any correctly-decoded classpath
-    // Pins: INV-012
+    // Then: post-fix size <= 3; holds for any correctly-decoded classpath
     // Cross-platform: sentinel count is 0 on embedded fixtures; < 3 on real stdlib. Both satisfy <= 3.
-    "INV-012 (Phase 11): SymbolId(-1) sentinel name set size <= 3 on real classpath" in run {
+    "SymbolId(-1) sentinel name set size <= 3 on real classpath" in run {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString
             val sentinelNames = classpath.symbols.filter(_.id.value == -1).map(_.name.asString).toSet
             assert(
                 sentinelNames.size <= 3,
-                s"Expected <= 3 distinct SymbolId(-1) sentinel names after Phase 11 consolidation, " +
+                s"Expected <= 3 distinct SymbolId(-1) sentinel names   " +
                     s"but found ${sentinelNames.size}: ${sentinelNames.mkString(", ")}. " +
-                    "Phase 11 consolidates all fabricated placeholder names to 3 interned sentinels: " +
+                    "consolidation interned all fabricated placeholder names to 3 interned sentinels: " +
                     "<unresolved>, <rec-placeholder>, <unknown-type-tag>."
             )
             succeed

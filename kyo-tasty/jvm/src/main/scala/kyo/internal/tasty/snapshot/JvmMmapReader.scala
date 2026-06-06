@@ -15,7 +15,7 @@ import kyo.internal.tasty.query.FileSource
   *
   * Note: The JVM does not guarantee immediate physical un-mapping; the AtomicBoolean provides the logical close semantics.
   *
-  * FD exhaustion gate (F-W2-20): a process-wide Semaphore limits concurrent open mmap file descriptors to
+  * FD exhaustion gate: a process-wide Semaphore limits concurrent open mmap file descriptors to
   * `JvmMmapReader.maxOpenFds` (default 128, overridable via system property `kyo.tasty.mmap.maxOpenFds`). When the semaphore is
   * exhausted, additional callers block until a permit is released on close.
   */

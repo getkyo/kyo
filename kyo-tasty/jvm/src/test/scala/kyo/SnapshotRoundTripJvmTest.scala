@@ -10,9 +10,9 @@ import scala.collection.mutable
 
 /** JVM-only tests for SnapshotRoundTrip that require `FileChannel.map` (mmap).
   *
-  * Per Phase 2 post-audit (cross-platform parity), the four digest leaves (T-J1, T-J3, T-J4, T-J5) were migrated to
+  * Per post-audit (cross-platform parity), the four digest leaves (T-J1, T-J3, T-J4, T-J5) were migrated to
   * `shared/src/test/scala/kyo/SnapshotDigestTest.scala` using `MemoryFileSource`. G16b (post-close sym.body) was migrated to
-  * `shared/src/test/scala/kyo/SnapshotRoundTripTest.scala` since sym.body will be cross-platform when Phase 04 implements it.
+  * `shared/src/test/scala/kyo/SnapshotRoundTripTest.scala` since sym.body will be cross-platform when implements it.
   *
   * Remaining leaf:
   *   - G16a: writes a snapshot to a real temp file and reads it back via mmap (`PlatformMmapReader.readMapped`). Tests the mmap path itself,
@@ -79,7 +79,7 @@ class SnapshotRoundTripJvmTest extends Test:
     private def openClasspath(src: FileSource)(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
 
-    // Test G16a (Phase 16): mmap-loaded snapshot has same FQN set as cold-loaded classpath (jvmOnly).
+    // Test G16a: mmap-loaded snapshot has same FQN set as cold-loaded classpath (jvmOnly).
     // Uses PlatformFileSource (real filesystem) to write the snapshot to a temp file, then
     // loads it via readMapped. Verifies that the mmap path loads successfully and the FQN set matches
     // the cold-loaded classpath, confirming no TASTy re-decode happened.

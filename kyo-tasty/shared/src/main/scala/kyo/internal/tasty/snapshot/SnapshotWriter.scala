@@ -80,7 +80,7 @@ object SnapshotWriter:
         // entries (e.g. both "scala.Predef$" and "scala.Predef"), so we apply canonicalSourceFqn before
         // storing. Multiple binary FQNs that canonicalize to the same source form produce the same put,
         // which is deterministic and correct (the canonical source FQN is the user-facing name).
-        // F-A4-005 determinism: sort fqnIndex before building fqnBySymbol so that when a symbol
+        // Sort fqnIndex before building fqnBySymbol so that when a symbol
         // has multiple FQN aliases (e.g. "scala.Predef$" and "scala.Predef"), the LAST overwrite
         // in alphabetical order wins deterministically across JVM invocations. Without sorting,
         // HashMap.foreach iteration order may differ between invocations, causing different canonical
@@ -114,9 +114,9 @@ object SnapshotWriter:
             )
 
         // Intern symbol names and FQNs
-        // Note: the symbolId HashMap (Symbol -> Int) was removed in Phase 03 because it was never
+        // Note: the symbolId HashMap was removed because it was never used in isolation.
         // used for lookups (all serialization functions iterate symbolList.zipWithIndex directly),
-        // and building it with field-based Symbol equality (Phase 03) was O(n * |body|) due to
+        //
         // hashing SymbolBody.sectionBytes on every insertion, causing a 60s timeout.
         val symNames = Chunk.from(symbolList.map: sym =>
             internName(nameToStr(sym.name)))
@@ -158,8 +158,8 @@ object SnapshotWriter:
         // PARENTS section: for each symbol, store the list of symbol IDs of Named parent types.
         // Non-Named parents (complex types) are encoded as -1 and skipped on read.
         // Named(symbolId) carries SymbolId.value as the serialized index.
-        // F-A4-002 defensive filter: drop Named(SymbolId(-1)) sentinel entries before encoding.
-        // After the F-A4-001 finalizeMerge fix Named(-1) should not appear in parentTypes, but this
+        // Defensive filter: drop Named(SymbolId(-1)) sentinel entries before encoding.
+        // Named(-1) should not appear in parentTypes, but this
         // filter provides defense-in-depth so a future regression does not silently corrupt warm loads
         // by encoding -1 in a slot that is indistinguishable from the non-Named sentinel.
         val parentsBytes = serializeSymbolRelLists(
@@ -234,7 +234,7 @@ object SnapshotWriter:
         // ANNOTS_ section: annotation tycon FQN name-pool IDs per symbol.
         // Layout: [4-byte count] then entries [4-byte symIdx][4-byte annCount][annCount x 4-byte tyconFqnNameId].
         // Non-Named annotation tycons are omitted (skipped during collection).
-        // Phase 2.13: pass unresolvedFqnByNegId so that annotations with negative SymbolIds (unresolved
+        // Pass unresolvedFqnByNegId so that annotations with negative SymbolIds (unresolved
         // external annotation types like scala.deprecated on JS/Native) are serialized by FQN string.
         val annotsBytes = serializeAnnotations(symbolList, internName, symbolById, fqnBySymbol, cp.indices.unresolvedFqnByNegId)
 
@@ -254,13 +254,13 @@ object SnapshotWriter:
         val fqnIdxBytes = serializeFqnIndex(cp.indices.byFqn, symbolList, internName)
 
         // FQNMAP__ section: unresolvedFqnByNegId map (negId -> FQN string for external annotation types).
-        // Per Phase 2.13: name pool must be populated (internName calls for FQN strings) BEFORE
+        // Name pool must be populated (internName calls for FQN strings) BEFORE
         // serializeNamePool is called, so fqnMapBytes must call internName here, and namesBytes is
         // built after this call.
         val fqnMapBytes = serializeFqnMap(cp.indices.unresolvedFqnByNegId, internName)
 
         // SUBCIDX_ section: subclassIndex map (parent SymbolId -> Chunk of child SymbolIds).
-        // F-W2-30: serialize so warm loads can answer directSubclassesOf/subclassesOf/implementationsOf.
+        // Serialize so warm loads can answer directSubclassesOf/subclassesOf/implementationsOf.
         // Build symIdToIdx: SymbolId.value -> snapshot position (needed to convert SymbolId to index).
         val symIdToIdxForIdx = new scala.collection.mutable.HashMap[Int, Int]()
         for (sym, idx) <- symbolList.zipWithIndex do
@@ -269,7 +269,7 @@ object SnapshotWriter:
         val subcIdxBytes = serializeSubclassIndex(cp.indices.subclassIndex, symIdToIdxForIdx)
 
         // COMPIDX_ section: companionIndex map (SymbolId -> companion SymbolId).
-        // F-W2-31: serialize so warm loads can answer cp.companion(sym) without fqnIndex rescan.
+        // Serialize so warm loads can answer cp.companion(sym) without fqnIndex rescan.
         val compIdxBytes = serializeCompanionIndex(cp.indices.companionIndex, symIdToIdxForIdx)
 
         // NAMES section: length-prefixed UTF-8 strings.
@@ -659,9 +659,9 @@ object SnapshotWriter:
                 case p: Tasty.Symbol.Parameter     => p.annotations
                 case _                             => Chunk.empty[Tasty.Annotation]
             // Extract the tycon FQN name-pool ID for Named and TermRef types.
-            // F-G-001: @deprecated and most Scala annotations arrive as TermRef tycons; Named is
+            // @deprecated and most Scala annotations arrive as TermRef tycons; Named is
             // less common but handled for completeness. Applied tycons are unwrapped to their base.
-            // Phase 2.13: for annotations with negative SymbolIds (unresolved external annotation
+            // For annotations with negative SymbolIds (unresolved external annotation
             // types like scala.deprecated on JS/Native), fall back to unresolvedFqnByNegId.
             // Unknown tycon forms produce an empty FQN and are omitted.
             val tyconIds: Chunk[Int] = annotations.flatMap: ann =>
@@ -746,12 +746,12 @@ object SnapshotWriter:
             symIdToIdx(sym.id.value) = idx
         end for
         // Collect valid entries: (namePoolId, snapshotIdx).
-        // F-A4-001 secondary fix: when symIdToIdx.get(id.value) misses (i.e. id.value == -1 due to a
+        // Secondary fix: when symIdToIdx.get(id.value) misses (i.e. id.value == -1 due to a
         // ghost entry from finalizeMerge that the Path-1 fix may not have reached), fall back to a
         // FQN-string lookup. canonicalSourceFqn maps the binary-alias form back to source form; if the
         // canonical form is present in fqnIndex with a valid SymbolId, use that snapshot index.
         // This ensures EVERY entry in fqnIndex is serialized, eliminating the cold/warm size gap.
-        // F-A4-005 determinism: sort by fqn before building entries so FQNIDX__ byte layout is stable
+        // Sort by fqn before building entries so FQNIDX__ byte layout is stable
         // regardless of Dict iteration order.
         val entries = fqnIndex.toMap.toSeq.sortBy(_._1).flatMap: (fqn, id) =>
             symIdToIdx.get(id.value) match
@@ -782,7 +782,7 @@ object SnapshotWriter:
       *
       * Layout: [4-byte count LE] then count entries each [4-byte negId LE][4-byte namePoolId LE].
       * The FQN strings are interned into the shared name pool via `internName` (same instance as other sections).
-      * Entries are sorted by negId for determinism (F-A4-005 pattern).
+      * Entries are sorted by negId for determinism
       */
     private def serializeFqnMap(
         unresolvedFqnByNegId: Dict[kyo.Tasty.SymbolId, String],
@@ -912,7 +912,7 @@ object SnapshotWriter:
                 val q = tyconFqn(qual, symbolById, fqnBySymbol, unresolvedFqnByNegId)
                 if q.nonEmpty then q + "." + name.asString else name.asString
             case Tasty.Type.TypeRef(qual, name) =>
-                // F-A-009: TYPEREF now emits TypeRef; serialize the same way as TermRef.
+                // TYPEREF emits TypeRef; serialize the same way as TermRef.
                 val q = tyconFqn(qual, symbolById, fqnBySymbol, unresolvedFqnByNegId)
                 if q.nonEmpty then q + "." + name.asString else name.asString
             case Tasty.Type.Applied(base, _) =>

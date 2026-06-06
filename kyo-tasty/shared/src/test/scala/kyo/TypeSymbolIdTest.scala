@@ -3,7 +3,7 @@ package kyo
 import kyo.Tasty.SymbolId
 import kyo.internal.tasty.symbol.SymbolKind
 
-/** Phase 05 plan tests for Type ADT SymbolId migration.
+/** plan tests for Type ADT SymbolId migration.
   *
   * Tests 1, 3, 4, 5 from design/05-plan.yaml phase id 5. Test 2 (TypeArena canonicalization) lives in TypeArenaTest.
   *

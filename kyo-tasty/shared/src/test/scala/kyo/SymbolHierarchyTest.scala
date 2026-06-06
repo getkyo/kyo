@@ -3,7 +3,7 @@ package kyo
 import AllowUnsafe.embrace.danger
 import kyo.Tasty.SymbolId
 
-/** Phase 01 plan-mandated tests for the sealed-trait Symbol hierarchy.
+/** plan-mandated tests for the sealed-trait Symbol hierarchy.
   *
   * Leaves 1-12 per plan 05-plan.yaml id:1. Pins: INV-001, INV-002, INV-003, INV-006, INV-007, INV-008, INV-009.
   */
@@ -18,7 +18,6 @@ class SymbolHierarchyTest extends Test:
     // When: read id, name, flags, isClass, isClassLike, isTrait.
     // Then: id==SymbolId(7); name.asString=="Foo"; flags==Flags.empty; isClass==true;
     //   isClassLike==true; isTrait==false.
-    // Pins: INV-001, INV-003.
     "Leaf 1: Symbol.Class constructs correctly and isClass/isClassLike are true" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Class(
             id = SymbolId(7),
@@ -50,7 +49,6 @@ class SymbolHierarchyTest extends Test:
     // Given: a Symbol.Trait literal with flags=Flags(Flag.Sealed).
     // When: read isSealed and openLevel.
     // Then: isSealed==true; openLevel==OpenLevel.Sealed; isTrait==true; isClassLike==true.
-    // Pins: INV-001, INV-003, INV-009.
     "Leaf 2: Symbol.Trait with Sealed flag: isSealed and openLevel correct" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Trait(
             id = SymbolId(1),
@@ -81,7 +79,6 @@ class SymbolHierarchyTest extends Test:
     // When: read isMethod, isTerm, isClassLike, paramListIds.size, paramListIds(0).size.
     // Then: isMethod==true; isTerm==true; isClassLike==false; paramListIds.size==1;
     //   paramListIds(0).size==2.
-    // Pins: INV-001, INV-002.
     "Leaf 3: Symbol.Method constructs correctly with paramListIds" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Method(
             id = SymbolId(2),
@@ -112,7 +109,6 @@ class SymbolHierarchyTest extends Test:
     // Given: a Symbol.Val literal with flags=Flags(Flag.Lazy), declaredType=Maybe.Absent.
     // When: read isVal, isLazy, isTerm, isMethod.
     // Then: isVal==true; isLazy==true; isTerm==true; isMethod==false.
-    // Pins: INV-001, INV-003.
     "Leaf 4: Symbol.Val with Lazy flag: isVal/isLazy/isTerm true; isMethod false" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Val(
             id = SymbolId(3),
@@ -138,7 +134,6 @@ class SymbolHierarchyTest extends Test:
     // Given: a Symbol.TypeAlias literal with body=Type.Named(SymbolId(50)), typeParamIds=Chunk.empty.
     // When: read body, isTypeAlias, isTypeLike.
     // Then: body==Type.Named(SymbolId(50)); isTypeAlias==true; isTypeLike==true.
-    // Pins: INV-008.
     "Leaf 5: Symbol.TypeAlias body is a Type value; isTypeAlias and isTypeLike are true" in {
         val sym: Tasty.Symbol = Tasty.Symbol.TypeAlias(
             id = SymbolId(4),
@@ -167,7 +162,6 @@ class SymbolHierarchyTest extends Test:
     // When: read body, bounds.lower, bounds.upper, isOpaqueType.
     // Then: body==Type.Named(SymbolId(60)); bounds.lower==Type.Nothing;
     //   bounds.upper==Type.Any; isOpaqueType==true.
-    // Pins: INV-008, INV-009.
     "Leaf 6: Symbol.OpaqueType has correct body and bounds sentinels" in {
         val sym: Tasty.Symbol = Tasty.Symbol.OpaqueType(
             id = SymbolId(5),
@@ -195,7 +189,6 @@ class SymbolHierarchyTest extends Test:
     //   Variance.Invariant.
     // When: read each .variance.
     // Then: returns the matching Variance enum case.
-    // Pins: INV-009, INV-002.
     "Leaf 7: Symbol.TypeParam variance is preserved for Co/Contra/Invariant" in {
         val co = Tasty.Symbol.TypeParam(
             id = SymbolId(10),
@@ -237,7 +230,6 @@ class SymbolHierarchyTest extends Test:
     // When: read declaredType, defaultArgId, isParameter, isTerm.
     // Then: declaredType==Type.Named(SymbolId(70)); defaultArgId==Maybe.Present(SymbolId(71));
     //   isParameter==true; isTerm==true.
-    // Pins: INV-001, INV-002.
     "Leaf 8: Symbol.Parameter declaredType and defaultArgId are preserved" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Parameter(
             id = SymbolId(13),
@@ -266,7 +258,6 @@ class SymbolHierarchyTest extends Test:
     // When: read memberIds.size, isPackage, scaladoc, sourcePosition.
     // Then: memberIds.size==2; isPackage==true; scaladoc==Maybe.Absent;
     //   sourcePosition==Maybe.Absent.
-    // Pins: INV-001, INV-002.
     "Leaf 9: Symbol.Package memberIds and constant abstract fields are correct" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Package(
             id = SymbolId(14),
@@ -290,7 +281,6 @@ class SymbolHierarchyTest extends Test:
     // When: read flags, scaladoc, sourcePosition, isUnresolved.
     // Then: flags==Flags.empty; scaladoc==Maybe.Absent; sourcePosition==Maybe.Absent;
     //   isUnresolved==true.
-    // Pins: INV-001.
     "Leaf 10: Symbol.Unresolved has empty flags and Absent accessors" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Package(
             id = SymbolId(-1),
@@ -311,7 +301,6 @@ class SymbolHierarchyTest extends Test:
     // Given: two Symbol.Class literals with the same id=SymbolId(5) but different names "A"/"B".
     // When: compare with ==.
     // Then: returns true (id-based equality preserved).
-    // Pins: INV-002.
     "Leaf 11: two Symbol.Class with same non-negative id compare equal (id-based equality)" in {
         val a: Tasty.Symbol = Tasty.Symbol.Class(
             id = SymbolId(5),
@@ -343,9 +332,9 @@ class SymbolHierarchyTest extends Test:
             annotations = Chunk.empty,
             javaAnnotations = Chunk.empty
         )
-        // Phase 03 change: Symbol equality is now field-based (case class default, Decision 15).
+        // Symbol equality is now field-based (case class default).
         // Two symbols with the same id but different names are NOT equal.
-        assert(a != b, "Two Symbol.Class with different names are not equal (field-based equality, Phase 03 Decision 15)")
+        assert(a != b, "Two Symbol.Class with different names are not equal (field-based equality)")
         succeed
     }
 
@@ -353,12 +342,11 @@ class SymbolHierarchyTest extends Test:
 
     // Given: two Symbol.Unresolved instances with identical fields (including id=-1).
     // When: compare with ==.
-    // Then: returns true (field-based equality; id=-1 is not special in Phase 03).
-    // Pins: INV-002; Phase 03 Decision 15.
+    // Then: returns true (field-based equality; id=-1 is not special in).
     "Leaf 12: two Symbol.Unresolved with same fields are equal (field-based equality)" in {
         val x: Tasty.Symbol = Tasty.Symbol.Package(SymbolId(-1), Tasty.Name("u"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
         val y: Tasty.Symbol = Tasty.Symbol.Package(SymbolId(-1), Tasty.Name("u"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
-        assert(x == y, "Two Unresolved symbols with identical fields must be equal (field-based equality, Phase 03 Decision 15)")
+        assert(x == y, "Two Unresolved symbols with identical fields must be equal (field-based equality)")
         succeed
     }
 

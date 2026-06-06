@@ -9,14 +9,13 @@ import kyo.Tasty.SymbolId
   */
 class TypeAdtVariantCoverageTest extends Test:
 
-    // Phase 10 leaf 1: unknownDeleted
+    // unknownDeleted
     // Given: a probe compiletime.testing.typeCheckErrors("kyo.Tasty.Type.Unknown")
     // When: the test asserts
     // Then: the returned list is non-empty (Type.Unknown was removed in Cat 14)
-    // Pins: Cat 14; INV-005-CLEAN; principle 2
     "Type.Unknown no longer exists after Cat 14 elimination" in {
         val errs = compiletime.testing.typeCheckErrors("kyo.Tasty.Type.Unknown")
-        assert(errs.nonEmpty, "Expected compile error for Type.Unknown, but got none; Unknown was removed in Phase 10")
+        assert(errs.nonEmpty, "Expected compile error for Type.Unknown, but got none")
         succeed
     }
 
@@ -24,7 +23,6 @@ class TypeAdtVariantCoverageTest extends Test:
     // Given: a probe compileErrors('Type.Function(Chunk.empty, Type.Any, true)')
     // When: the test asserts
     // Then: the returned list is non-empty
-    // Pins: Cat 10; PRESERVE-J
     "Type.Function no longer accepts a third isContext argument" in {
         val errs = compiletime.testing.typeCheckErrors(
             "kyo.Tasty.Type.Function(kyo.Chunk.empty, kyo.Tasty.Type.Any, true)"
@@ -37,7 +35,6 @@ class TypeAdtVariantCoverageTest extends Test:
     // Given: a fixture Type.ContextFunction(Chunk(Type.Any), Type.Nothing)
     // When: the test pattern-matches against Type.ContextFunction(_, _)
     // Then: the match arm fires; value reconstructable from its fields
-    // Pins: Cat 10
     "Type.ContextFunction is the dedicated arm for context functions" in {
         val cf = Tasty.Type.ContextFunction(Chunk(Tasty.Type.Any), Tasty.Type.Nothing)
         cf match
@@ -54,7 +51,6 @@ class TypeAdtVariantCoverageTest extends Test:
     // Given: a fixture list with one instance of every post-Cat-10 Type case
     // When: the test encodes via Json.encode (Schema-driven) and reads back via Json.decode
     // Then: every decoded value equals its original (CanEqual)
-    // Pins: Cat 16; INV-IMMUTABLE-ADT consumer
     "Schema round-trips every Type case" in {
         val n   = Tasty.Type.Named(SymbolId(0))
         val id0 = SymbolId(0)

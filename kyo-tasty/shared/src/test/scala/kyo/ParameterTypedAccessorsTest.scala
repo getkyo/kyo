@@ -2,13 +2,11 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Plan-mandated tests for Phase 05 (leaves 96-100): Parameter typed accessors.
+/** Parameter typed accessors.
   *
   * Leaf 96: defaultArg resolves to Present when defaultArgId is Present. Leaf 97: defaultArg returns Absent when defaultArgId is Absent.
   * Leaf 98: isImplicit returns true for a Given-flagged Parameter. Leaf 99: isByName returns true for a Parameter with a Type.ByName
   * declared type. Leaf 100: isRepeated returns true for a Parameter with a Type.Repeated declared type.
-  *
-  * Pins: INV-002, INV-003.
   */
 class ParameterTypedAccessorsTest extends Test:
 
@@ -53,7 +51,6 @@ class ParameterTypedAccessorsTest extends Test:
     // Given: def f(x: Int = 0) -- parameter with defaultArgId pointing to a default-arg method
     // When: p.defaultArg
     // Then: Maybe.Present(_)
-    // Pins: INV-002
     "Leaf 96: defaultArg-present: Parameter.defaultArg returns Present when defaultArgId is Present" in run {
         // defaultArgMethod at index 0, parameter at index 1
         val defaultArgMethod = makeDefaultArgSymbol(0)
@@ -69,7 +66,6 @@ class ParameterTypedAccessorsTest extends Test:
     // Given: def f(x: Int) -- parameter with no default argument
     // When: p.defaultArg
     // Then: Maybe.Absent
-    // Pins: INV-002
     "Leaf 97: defaultArg-absent: Parameter.defaultArg returns Absent when defaultArgId is Absent" in run {
         val param = makeParameter(0, "x", Maybe.Absent, defaultArgId = Maybe.Absent)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(param)).map: cp =>
@@ -83,7 +79,6 @@ class ParameterTypedAccessorsTest extends Test:
     // Given: def f(using x: Int) -- parameter with Flag.Given
     // When: p.isImplicit
     // Then: true
-    // Pins: INV-003
     "Leaf 98: isImplicit-given: Parameter.isImplicit returns true for a Given-flagged parameter" in run {
         val givenFlags = Tasty.Flags(Tasty.Flag.Given)
         val param      = makeParameter(0, "x", Maybe.Absent, flags = givenFlags)
@@ -96,7 +91,6 @@ class ParameterTypedAccessorsTest extends Test:
     // Given: Parameter declaredType = Type.ByName(underlying)
     // When: p.isByName
     // Then: true
-    // Pins: INV-002
     "Leaf 99: isByName-typed: Parameter.isByName returns true when declaredType is Type.ByName" in run {
         val byNameType = Tasty.Type.ByName(Tasty.Type.Nothing)
         val param      = makeParameter(0, "x", Maybe.Present(byNameType))
@@ -116,7 +110,6 @@ class ParameterTypedAccessorsTest extends Test:
     // Given: Parameter declaredType = Type.Repeated(elem)
     // When: p.isRepeated
     // Then: true
-    // Pins: INV-002
     "Leaf 100: isRepeated-typed: Parameter.isRepeated returns true when declaredType is Type.Repeated" in run {
         val repeatedType = Tasty.Type.Repeated(Tasty.Type.Nothing)
         val param        = makeParameter(0, "xs", Maybe.Present(repeatedType))

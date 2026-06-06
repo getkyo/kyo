@@ -2,7 +2,7 @@ package kyo
 
 import scala.concurrent.Future
 
-/** Tests for Classpath find methods (Phase 10 Item 3).
+/** Tests for Classpath find methods .
   *
   * Leaf ids: 3, 4, 5, 6. Pins: INV-007.
   */

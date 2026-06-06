@@ -12,15 +12,15 @@ import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import scala.collection.mutable
 
-/** JVM-only tests for Decoder-fidelity-5 Phase 5.02.
+/** JVM-only tests for Decoder-fidelity-5.
   *
-  * Covers F-W2-27: post-Scope decodeBody behavior on mmap-loaded classpaths. The mmap path sets
+  * Covers  : post-Scope decodeBody behavior on mmap-loaded classpaths. The mmap path sets
   * sectionBytes = Array.empty for body-bearing symbols; decodeBody detects this and returns
   * TastyError.MalformedSection("body bytes not available") rather than ClasspathClosed. This is
   * the pinned contract: an IllegalStateException from the arena would only fire if the view-backed
   * bytes were accessed after close, but they are not accessed at all when sectionBytes is empty.
   *
-  * Also covers F-W2-30/31 via a real mmap warm load using a synthetic classpath.
+  * Also covers  /31 via a real mmap warm load using a synthetic classpath.
   */
 class DecoderFidelity5Phase02JvmTest extends Test:
 
@@ -111,14 +111,13 @@ class DecoderFidelity5Phase02JvmTest extends Test:
             )
     end syntheticCp
 
-    // P02.6 (JVM-only): F-W2-27 -- post-Scope decodeBody behavior on mmap-loaded snapshot.
+    // P02.6 (JVM-only):   -- post-Scope decodeBody behavior on mmap-loaded snapshot.
     // Given: a snapshot loaded via readMapped inside a Scope; the Scope exits (arena closes)
     // When: decodeBody is called on a symbol that had body bytes stored via mmap
     // Then: returns TastyError.MalformedSection("body bytes not available") because the mmap path
     //       sets sectionBytes = Array.empty intentionally; ClasspathClosed would only fire if
     //       the view-backed arena bytes were directly accessed after close.
-    // Pins: F-W2-27
-    "P02.6 F-W2-27: post-Scope decodeBody on mmap-loaded snapshot returns MalformedSection (body bytes not available)" in run {
+    "P02.6 post-Scope decodeBody on mmap-loaded snapshot returns MalformedSection (body bytes not available)" in run {
         val fixtureSrc = MemSrc()
         fixtureSrc.add("root/Animal.tasty", kyo.fixtures.Embedded.animalTasty)
         fixtureSrc.add("root/Dog.tasty", kyo.fixtures.Embedded.dogTasty)
@@ -141,7 +140,7 @@ class DecoderFidelity5Phase02JvmTest extends Test:
             val hex      = DigestComputer.toHexString(digest)
             val snapPath = s"$tmpDir/$hex.krfl"
             // Step 2: load via mmap INSIDE a Scope.run; extract any symbol; let Scope exit.
-            // Phase 09: snapshot-loaded symbols no longer carry body bytes; bodyTree returns Absent.
+            // snapshot-loaded symbols no longer carry body bytes; bodyTree returns Absent.
             val symAndCp =
                 Scope.run:
                     Abort.run[TastyError]:
@@ -155,7 +154,7 @@ class DecoderFidelity5Phase02JvmTest extends Test:
                         case Result.Failure(e)    => throw new RuntimeException(s"mmap load failed: $e")
                         case Result.Panic(t)      => throw t
             // Step 3: Scope has exited. Call Tasty.bodyTree via a fresh binding with a fresh DecodeContext.
-            // After Phase 09, bodyStore is empty after snapshot load; bodyTree returns Absent.
+            // After bodyStore is empty after snapshot load; bodyTree returns Absent.
             symAndCp.flatMap: (sym, warmCp) =>
                 val postScopeBinding = Binding(warmCp, Maybe.Present(DecodeContext.fresh()))
                 TastyState.bindingLocal.let(Maybe.Present(postScopeBinding)):
@@ -182,12 +181,11 @@ class DecoderFidelity5Phase02JvmTest extends Test:
                                 fail(s"Unexpected panic from post-Scope decodeBody: ${t.getMessage}")
     }
 
-    // P02.7 (JVM-only): F-W2-30/31 via mmap -- subclassIndex and companionIndex populated on mmap warm load
+    // P02.7 (JVM-only):  /31 via mmap -- subclassIndex and companionIndex populated on mmap warm load
     // Given: synthetic cp with explicit subclassIndex and companionIndex; snapshot written to real filesystem
     // When: loaded via readMapped (mmap path)
     // Then: warm subclassIndex.size == cold subclassIndex.size AND warm companionIndex.size == cold companionIndex.size
-    // Pins: F-W2-30, F-W2-31
-    "P02.7 F-W2-30/31 (mmap): subclassIndex and companionIndex populated on mmap warm load" in run {
+    "P02.7 (mmap): subclassIndex and companionIndex populated on mmap warm load" in run {
         val digest  = Array[Byte](0x02, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
         val tmpDir  = java.io.File.createTempFile("kyo-df5-p02-mmap", "").getAbsolutePath
         val _       = new java.io.File(tmpDir).delete()
@@ -211,11 +209,11 @@ class DecoderFidelity5Phase02JvmTest extends Test:
                 case Result.Success((coldSub, coldComp, warmSub, warmComp)) =>
                     assert(
                         warmSub == coldSub,
-                        s"mmap warm subclassIndex size mismatch: cold=$coldSub warm=$warmSub; F-W2-30 not fixed"
+                        s"mmap warm subclassIndex size mismatch: cold=$coldSub warm=$warmSub;"
                     )
                     assert(
                         warmComp == coldComp,
-                        s"mmap warm companionIndex size mismatch: cold=$coldComp warm=$warmComp; F-W2-31 not fixed"
+                        s"mmap warm companionIndex size mismatch: cold=$coldComp warm=$warmComp;"
                     )
                     succeed
                 case Result.Failure(e) => fail(s"Unexpected TastyError: $e")

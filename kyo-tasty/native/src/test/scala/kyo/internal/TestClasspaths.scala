@@ -18,8 +18,8 @@ import kyo.internal.tasty.query.TastyState
   *   - Concurrency is fixed at 1 (Native single-threaded model; higher values have no effect and would be misleading).
   *   - All 13 embedded TASTy fixtures are included (PlainClass, SomeObject, SomeTrait, GenericBox, Outer, SomeCaseClass, Color,
   *     FixtureClasses$package, BaseClass, ChildClass, Shape, VarargFixture, TypeAdtFixture$package). Shape carries class-form enum cases
-  *     (Phase 15 addition). VarargFixture carries a String* varargs parameter (Phase 2.10 addition).
-  *     TypeAdtFixture$package carries intersection/union/match types (Phase 2.10 addition).
+  *     (fixture additions for extended coverage).
+  *     
   *   - The `roots` parameter mirrors the JVM surface but is ignored; embedded fixtures are always loaded.
   *   - HARD RULE 7: the MemoryFileSource is internal to the loading call; it is not exposed to callers.
   *
@@ -36,7 +36,7 @@ private[kyo] object TestClasspaths:
     def withClasspath[A, S](roots: Seq[String] = Seq.empty)(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
         val src = MemoryFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
-        // Companion .class alongside .tasty so cp.findClass populates javaMetadata cross-platform (F-G-002).
+        // Companion .class alongside .tasty so cp.findClass populates javaMetadata cross-platform .
         src.add("root/PlainClass.class", kyo.fixtures.Embedded.plainClassClassfile)
         src.add("root/SomeObject.tasty", kyo.fixtures.Embedded.someObjectTasty)
         src.add("root/SomeTrait.tasty", kyo.fixtures.Embedded.someTraitTasty)

@@ -80,7 +80,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 1: Java class decodes with kind=Class and JavaDefined flag
     // -------------------------------------------------------------------------
-    // Cross-platform (Phase 2 post-audit): uses Embedded.throwsFixtureClass instead of JDK Object.class.
+    // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK Object.class.
     // The shape assertion (kind=Class, JavaDefined) holds for any Java class.
     "reading a Java classfile produces kind=Class and flags.contains(JavaDefined)" in run {
         ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena).map: result =>
@@ -93,7 +93,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 2: Java class contains Method symbols
     // -------------------------------------------------------------------------
-    // Cross-platform (Phase 2 post-audit): uses Embedded.throwsFixtureClass instead of JDK String.class.
+    // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK String.class.
     // ThrowsFixture declares throwsMethod and normalMethod; the shape assertion (method symbols present) is equivalent.
     "reading a Java classfile: declarations contain Method symbols" in run {
         ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena).map: result =>
@@ -109,7 +109,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 3: Java class has at least one Named parent (inherits from Object)
     // -------------------------------------------------------------------------
-    // Cross-platform (Phase 2 post-audit): uses Embedded.throwsFixtureClass instead of JDK String.class.
+    // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK String.class.
     // ThrowsFixture extends java.lang.Object, which is encoded as a Type.Named parent.
     "reading a Java classfile: parents contains a Type.Named (superclass reference)" in run {
         ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena).map: result =>
@@ -142,7 +142,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 5: interface classfile produces kind=Trait
     // -------------------------------------------------------------------------
-    // Cross-platform (Phase 2 post-audit): uses a minimal synthetic interface classfile constructed inline.
+    // Cross-platform: uses a minimal synthetic interface classfile constructed inline.
     // ACC_INTERFACE (0x0200) is all that's needed to verify the Trait mapping.
     "reading an interface classfile produces kind=Trait" in run {
         // Minimal classfile for interface "kyo/fixtures/MinimalIface":
@@ -181,7 +181,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 6: enum classfile produces Flag.Enum
     // -------------------------------------------------------------------------
-    // Cross-platform (Phase 2 post-audit): uses a minimal synthetic enum classfile with ACC_ENUM + ACC_ABSTRACT.
+    // Cross-platform: uses a minimal synthetic enum classfile with ACC_ENUM + ACC_ABSTRACT.
     // java.lang.Enum<E> is the super for Java enums; we use java/lang/Object for simplicity (the Enum flag is the key).
     "reading an enum classfile produces flags.contains(Flag.Enum)" in run {
         val clsName = "kyo/fixtures/MinimalEnum".getBytes(java.nio.charset.StandardCharsets.UTF_8)
@@ -210,7 +210,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 7: static field produces kind=Field and flags.contains(JavaDefined)
     // -------------------------------------------------------------------------
-    // Cross-platform (Phase 2 post-audit): uses a minimal synthetic classfile with a static int field.
+    // Cross-platform: uses a minimal synthetic classfile with a static int field.
     // ACC_STATIC (0x0008) on a field triggers the Field kind path in ClassfileUnpickler.
     "a static field produces kind=Field and flags.contains(JavaDefined)" in run {
         // Minimal classfile for class "kyo/fixtures/StaticFieldHolder" with one static int field "VALUE":
@@ -261,7 +261,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 8: final non-static field produces kind=Val
     // -------------------------------------------------------------------------
-    // Cross-platform (Phase 2 post-audit): uses Embedded.pointRecordClass.
+    // Cross-platform: uses Embedded.pointRecordClass.
     // Java record component fields are private final, which decodes as Val.
     "a final non-static field produces kind=Val" in run {
         ClassfileUnpickler.read(kyo.fixtures.Embedded.pointRecordClass, new TypeArena).map: result =>
@@ -275,7 +275,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 9: mutable non-final field produces kind=Var
     // -------------------------------------------------------------------------
-    // Cross-platform (Phase 2 post-audit): uses a minimal synthetic classfile with a non-final int field.
+    // Cross-platform: uses a minimal synthetic classfile with a non-final int field.
     // A field without ACC_FINAL decodes as Var.
     "a mutable non-final field produces kind=Var" in run {
         // Minimal classfile for "kyo/fixtures/MutableFieldHolder" with one non-final int field "count":
@@ -341,7 +341,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 11: javaMetadata is Present for a Java symbol, Absent for a TASTy symbol
     // -------------------------------------------------------------------------
-    // Cross-platform (Phase 2 post-audit): uses Embedded.throwsFixtureClass instead of JDK Object.class.
+    // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK Object.class.
     // The shape assertion (javaMetadata Present for Java, Absent for TASTy) is fixture-independent.
     "classfile symbol has javaMetadata Present; TASTy symbol has javaMetadata Absent" in run {
         ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena).map: javaResult =>
@@ -465,7 +465,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 18 (M8/INV-008): RuntimeTypeAnnotations attribute is parsed and exposed
     // -------------------------------------------------------------------------
-    // Test 18: cross-platform (migrated from jvmOnly in decoder-fidelity-3 Phase 3.04).
+    // Test 18: cross-platform (migrated from jvmOnly in decoder-fidelity-3).
     // The synthetic classfile is constructed via ByteArrayOutputStream (cross-platform)
     // without requiring DataOutputStream (JVM-specific), using inline big-endian helpers.
     "M8: RuntimeVisibleTypeAnnotations attribute is decoded into metadata.runtimeTypeAnnotations" in run {

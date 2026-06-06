@@ -2,11 +2,9 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Plan-mandated tests for Phase 07 (leaves 137-144): Symbol annotation queries.
+/** Symbol annotation queries.
   *
   * Covers: hasAnnotation, findAnnotation across symbol subtypes.
-  *
-  * Pins: INV-003.
   */
 class SymbolAnnotationQueryTest extends Test:
 
@@ -172,7 +170,6 @@ class SymbolAnnotationQueryTest extends Test:
     // Given: Symbol.Method carrying @deprecated in its annotations.
     // When: m.hasAnnotation("scala.deprecated").
     // Then: returns true.
-    // Pins: INV-003
     "Leaf 137: hasAnnotation returns true for Scala annotation on method" in run {
         buildFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(5)).asInstanceOf[Tasty.Symbol.Method]
@@ -186,7 +183,6 @@ class SymbolAnnotationQueryTest extends Test:
     // Given: Symbol.Class carrying @deprecated in its annotations.
     // When: c.hasAnnotation("scala.deprecated").
     // Then: returns true.
-    // Pins: INV-003
     "Leaf 138: hasAnnotation returns true for Scala annotation on class" in run {
         buildFixture.flatMap: cp =>
             val c = cp.symbol(SymbolId(6)).asInstanceOf[Tasty.Symbol.Class]
@@ -200,7 +196,6 @@ class SymbolAnnotationQueryTest extends Test:
     // Given: Symbol.Field with @java.lang.Deprecated in javaAnnotations.
     // When: f.hasAnnotation("java.lang.Deprecated").
     // Then: returns true.
-    // Pins: INV-003
     "Leaf 139: hasAnnotation returns true for Java annotation on field" in run {
         buildFixture.flatMap: cp =>
             val f = cp.symbol(SymbolId(7)).asInstanceOf[Tasty.Symbol.Field]
@@ -214,7 +209,6 @@ class SymbolAnnotationQueryTest extends Test:
     // Given: a Symbol.Package (which carries no annotation fields).
     // When: p.hasAnnotation("anything").
     // Then: returns false.
-    // Pins: INV-003
     "Leaf 140: hasAnnotation returns false for Package" in run {
         buildFixture.flatMap: cp =>
             val p = cp.symbol(SymbolId(8)).asInstanceOf[Tasty.Symbol.Package]
@@ -227,7 +221,6 @@ class SymbolAnnotationQueryTest extends Test:
     // Given: a Symbol.TypeParam.
     // When: t.hasAnnotation("scala.deprecated").
     // Then: returns false.
-    // Pins: INV-003
     "Leaf 141: hasAnnotation returns false for TypeParam" in run {
         buildFixture.flatMap: cp =>
             val t = cp.symbol(SymbolId(9)).asInstanceOf[Tasty.Symbol.TypeParam]
@@ -240,7 +233,6 @@ class SymbolAnnotationQueryTest extends Test:
     // Given: Symbol.Method with one @scala.inline annotation.
     // When: m.findAnnotation("scala.inline").
     // Then: returns Maybe.Present(a) where a.isInstanceOf[Tasty.Annotation].
-    // Pins: INV-003
     "Leaf 142: findAnnotation returns Present Annotation for matching Scala annotation" in run {
         buildFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(10)).asInstanceOf[Tasty.Symbol.Method]
@@ -261,7 +253,6 @@ class SymbolAnnotationQueryTest extends Test:
     // Given: Symbol.Field with one @java.lang.Deprecated.
     // When: f.findAnnotation("java.lang.Deprecated").
     // Then: returns Maybe.Present(a) where a.isInstanceOf[Tasty.Java.Annotation].
-    // Pins: INV-003
     "Leaf 143: findAnnotation returns Present JavaAnnotation for matching Java annotation" in run {
         buildFixture.flatMap: cp =>
             val f = cp.symbol(SymbolId(7)).asInstanceOf[Tasty.Symbol.Field]
@@ -282,7 +273,6 @@ class SymbolAnnotationQueryTest extends Test:
     // Given: any symbol with no matching annotation.
     // When: s.findAnnotation("missing.Anno").
     // Then: returns Maybe.Absent.
-    // Pins: INV-003
     "Leaf 144: findAnnotation returns Absent when annotation not present" in run {
         buildFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(5)).asInstanceOf[Tasty.Symbol.Method]

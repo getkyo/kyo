@@ -2,7 +2,7 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Phase 08 followup for W-06-02: exercises the Java-annotation path (`javaAnnotations`) of `Classpath.symbolsAnnotatedWith`.
+/** followup for W-06-02: exercises the Java-annotation path (`javaAnnotations`) of `Classpath.symbolsAnnotatedWith`.
   *
   * The existing `ClasspathAnnotatedTest` (leaf 128) only covers the Scala-annotation path. This test covers the Java annotation branch of
   * `symbolsAnnotatedWith` at Tasty.scala:annotationFqnMatches is not exercised for Java; the Java path is tested here.
@@ -11,8 +11,6 @@ import kyo.Tasty.SymbolId
   * Symbol.Class "A" with a JavaAnnotation pointing to symbol 0 2 -> Symbol.Class "B" with no JavaAnnotation
   *
   * After calling symbolsAnnotatedWith("java.lang.Deprecated"), only symbol 1 ("A") must be returned.
-  *
-  * Pins: INV-005.
   */
 class ClasspathAnnotatedJavaTest extends Test:
 

@@ -8,7 +8,7 @@ import kyo.internal.tasty.classfile.JavaSignatures
   * These tests are cross-platform (JVM, JS, Native) because they exercise pure string parsing.
   *
   * plan: phase-05; Named(id) no longer carries a Symbol directly. Tests verify structural shape (Applied/Named/Wildcard/Array) without
-  * accessing symbol names or kinds. Phase 09 restores name-verification once cp.symbol(id).name is available in resolution methods.
+  * accessing symbol names or kinds. restores name-verification once cp.symbol(id).name is available in resolution methods.
   */
 class JavaSignaturesTest extends Test:
 
@@ -21,7 +21,7 @@ class JavaSignaturesTest extends Test:
         JavaSignatures.parseFieldSignature("Ljava/util/List<Ljava/lang/String;>;").map: tpe =>
             tpe match
                 case Tasty.Type.Applied(Tasty.Type.Named(_), args) =>
-                    // plan: phase-05; name check deferred to Phase 09.
+                    // plan: phase-05; name check deferred to.
                     assert(args.length == 1, s"Expected 1 arg, got ${args.length}")
                     args(0) match
                         case Tasty.Type.Named(innerId) =>
@@ -111,7 +111,7 @@ class JavaSignaturesTest extends Test:
             "<T:Ljava/lang/Object;>(Ljava/util/List<TT;>;)TT;"
         ).map: fnTpe =>
             // Result is Function. Check there is one param of type Applied(List, Chunk(Named(typeParam))).
-            // plan: phase-05; name and kind checks deferred to Phase 09 (Named carries SymbolId, not Symbol).
+            // plan: phase-05; name and kind checks deferred to (Named carries SymbolId, not Symbol).
             assert(fnTpe.params.length == 1, s"Expected 1 param, got ${fnTpe.params.length}")
             fnTpe.params(0) match
                 case Tasty.Type.Applied(Tasty.Type.Named(_), args) if args.length == 1 =>

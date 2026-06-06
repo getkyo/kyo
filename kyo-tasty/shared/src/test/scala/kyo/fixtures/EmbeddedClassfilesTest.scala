@@ -1,12 +1,10 @@
 package kyo.fixtures
 
-/** Phase 07 plan leaves 1-5: EmbeddedClassfiles Base64 refactor behavioral tests.
+/** plan leaves 1-5: EmbeddedClassfiles Base64 refactor behavioral tests.
   *
   * Verifies that the refactored EmbeddedClassfiles produces byte-identical output
   * to the HEAD literal-byte form, that lazy decoding is single-init, that dispatch
   * parity holds, and that every accessor is cross-platform.
-  *
-  * Pins: item 4 / Q-019 / RI-004 Base64 refactor.
   */
 class EmbeddedClassfilesTest extends kyo.Test:
 
@@ -81,7 +79,7 @@ class EmbeddedClassfilesTest extends kyo.Test:
     // Leaf 4: lazy decode runs at most once per JVM lifetime per entry
     // The lazy val is initialized at most once (Scala lazy val semantics); reference equality
     // proves the same backing array is returned on every call without re-decoding.
-    // This is the same approach used in Phase 06 Decision 4 (ref-equality for lazy-val proof).
+    // Same approach: ref-equality for lazy-val proof.
     "lazy decode runs at most once: accessor returns same array instance on repeated access" in run {
         val first  = EmbeddedClassfiles.javaUtilArrayListClass
         val second = EmbeddedClassfiles.javaUtilArrayListClass

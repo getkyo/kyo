@@ -1187,7 +1187,7 @@ object Tasty:
         /** Type-position reference by name and qualifier (TYPEREF tag). */
         case TypeRefTree(qual: Tree, name: Name)
 
-        /** Term-position path-dependent reference (F-B-004). Wire tag TERMREFin (174).
+        /** Term-position path-dependent reference. Wire tag TERMREFin (174).
           *
           * prefix is the qualifier tree (encoded as Tree.Ident(name, qualType)). name identifies the
           * referenced member.
@@ -1581,7 +1581,7 @@ object Tasty:
 
         /** Symbol marked as a macro method.
           *
-          * F-E-006 fix: dotty emits Flag.Macro on enum-case synthetic methods (ordinal, productElement, etc.). These are NOT
+          * Dotty emits Flag.Macro on enum-case synthetic methods (ordinal, productElement, etc.). These are NOT
           * user-defined macros. Excluding symbols that also carry Flag.Synthetic avoids false positives. Real macro methods
           * (defined with the `macro` keyword or `inline`) are not synthetic. The `isInstanceOf[Symbol.Method]` gate
           * prevents non-method symbols from matching even if they somehow carry Flag.Macro.
@@ -1717,7 +1717,7 @@ object Tasty:
             javaAnnotations: Chunk[Java.Annotation]
         ) extends ClassLike derives Schema, CanEqual
 
-        /** A single case of a Scala 3 enum (F-E-007).
+        /** A single case of a Scala 3 enum.
           *
           * `EnumCase` is now a peer of `Symbol.Class` under `Symbol.ClassLike`, not a subtype of `Class`.
           * Pattern-match on `Symbol.EnumCase` directly; it will NOT match a `Symbol.Class` arm.
@@ -2829,7 +2829,7 @@ object Tasty:
         /** Reconstruct a dotted FQN string from a Type.Named or Type.TermRef tycon, or empty string when unavailable.
           *
           * Used by annotation FQN matching to support both Type.Named(id) and Type.TermRef(qual, name) tycon forms.
-          * F-G-001 fix: annotation tycons decoded from TYPEREF wire tag arrive as Type.TermRef.
+          * Annotation tycons decoded from TYPEREF wire tag arrive as Type.TermRef.
           */
         private[Tasty] def typeFqnString(t: Type)(using Frame): String < Sync =
             Sync.Unsafe.defer:
@@ -2854,11 +2854,11 @@ object Tasty:
                     val q = typeFqnStringUnsafe(qual)
                     if q.nonEmpty then q + "." + name.asString else name.asString
                 case Type.TypeRef(qual, name) =>
-                    // F-A-009: TYPEREF now emits TypeRef; annotation FQN matching must handle both forms.
+                    // TYPEREF emits TypeRef; annotation FQN matching must handle both forms.
                     val q = typeFqnStringUnsafe(qual)
                     if q.nonEmpty then q + "." + name.asString else name.asString
                 case Type.Applied(base, _) =>
-                    // F-I-003 fix: @Child[T] enrichment wraps the TermRef tycon in Applied(tycon, Chunk(T)).
+                    // @Child[T] enrichment wraps the TermRef tycon in Applied(tycon, Chunk(T)).
                     // For FQN matching, use the unapplied base type.
                     typeFqnStringUnsafe(base)
                 case _ => ""
@@ -3105,10 +3105,10 @@ object Tasty:
             roots: Seq[String],
             moduleFilter: Set[String]
         )(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
-            // F-A3-001..004 fix: prepend every `.class` path under `jrt:/modules/<m>/...` to the user's
-            // roots so JDK class symbols decode alongside user TASTy. The shape of `roots` is preserved
-            // (a Seq[String] of file-system paths); the new entries use the `jrt:/` URI scheme that
-            // JvmFileSource already handles. PlatformModuleOps.listJdkClassFiles is JVM-only; JS/Native
+            // Prepend every `.class` path under `jrt:/modules/<m>/...` to the user's roots so JDK class
+            // symbols decode alongside user TASTy. The shape of `roots` is preserved (a Seq[String] of
+            // file-system paths); the new entries use the `jrt:/` URI scheme that JvmFileSource already
+            // handles. PlatformModuleOps.listJdkClassFiles is JVM-only; JS/Native
             // return Chunk.empty so this method degrades to the module-descriptor-only path.
             // Sync.Unsafe.defer supplies AllowUnsafe to just the listJdkClassFiles call, so the rest of
             // the for-comprehension cannot pick up the proof implicitly.
@@ -3263,8 +3263,8 @@ object Tasty:
 
     /** Schema[Classpath] placed after object Classpath closes so Classpath.Indices and its Schema are in scope.
       *
-      * Mirrors the schemaSymbol placement pattern (Decision 18 in Phase 03) that resolved the forward-reference
-      * issue when derives Schema is placed inline on the class.
+      * Placed after object Classpath closes so Classpath.Indices and its Schema are in scope, avoiding the forward-reference
+      * issue that arises when derives Schema is placed inline on the class.
       */
     given schemaClasspath: Schema[Classpath] = Schema.derived
 
@@ -3704,7 +3704,7 @@ object Tasty:
                                     case _: ArrayIndexOutOfBoundsException =>
                                         Result.Failure(TastyError.MalformedSection("ASTs", "truncated body", 0L))
                                     case _: IllegalStateException =>
-                                        // F-W2-2: mmap arena closed before bodyTree ran; documented contract is ClasspathClosed.
+                                        // mmap arena closed before bodyTree ran; documented contract is ClasspathClosed.
                                         Result.Failure(TastyError.ClasspathClosed(s"bodyTree(sym.id=${sym.id.value})"))
                             ctx.bodyMemo.put(sym.id, result)
                             result match

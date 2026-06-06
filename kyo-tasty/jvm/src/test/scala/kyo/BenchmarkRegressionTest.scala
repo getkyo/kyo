@@ -4,7 +4,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 
-/** JVM-only benchmark regression infrastructure tests (Phase 27, INV-027).
+/** JVM-only benchmark regression infrastructure tests.
   *
   * These tests do not run JMH. They verify that: (1) The post-campaign baseline file exists and contains valid (non-negative or sentinel)
   * numbers. (2) The pre-campaign baseline gap is documented.
@@ -48,7 +48,7 @@ class BenchmarkRegressionTest extends Test:
 
         assert(
             Files.isRegularFile(postCampaignFile),
-            s"INV-027: kyo-tasty/bench-baselines/post-campaign.json must exist at $postCampaignFile"
+            s"kyo-tasty/bench-baselines/post-campaign.json must exist at $postCampaignFile"
         )
 
         val json       = new String(Files.readAllBytes(postCampaignFile), "UTF-8")
@@ -56,13 +56,13 @@ class BenchmarkRegressionTest extends Test:
 
         assert(
             coldLoadMs.isDefined,
-            s"INV-027: post-campaign.json must contain a 'cold_load_ms' field; got: $json"
+            s"post-campaign.json must contain a 'cold_load_ms' field; got: $json"
         )
 
         val coldVal = coldLoadMs.get
         assert(
             coldVal == -1.0 || coldVal >= 0.0,
-            s"INV-027: cold_load_ms must be -1 (sentinel) or non-negative; got $coldVal"
+            s"cold_load_ms must be -1 (sentinel) or non-negative; got $coldVal"
         )
 
         // Document the pre-campaign gap. This is a non-failing observation.
@@ -89,7 +89,7 @@ class BenchmarkRegressionTest extends Test:
 
         assert(
             Files.isRegularFile(postCampaignFile),
-            s"INV-027: kyo-tasty/bench-baselines/post-campaign.json must exist at $postCampaignFile"
+            s"kyo-tasty/bench-baselines/post-campaign.json must exist at $postCampaignFile"
         )
 
         val json        = new String(Files.readAllBytes(postCampaignFile), "UTF-8")
@@ -97,13 +97,13 @@ class BenchmarkRegressionTest extends Test:
 
         assert(
             warmCacheMs.isDefined,
-            s"INV-027: post-campaign.json must contain a 'warm_cache_ms' field; got: $json"
+            s"post-campaign.json must contain a 'warm_cache_ms' field; got: $json"
         )
 
         val warmVal = warmCacheMs.get
         assert(
             warmVal == -1.0 || warmVal >= 0.0,
-            s"INV-027: warm_cache_ms must be -1 (sentinel) or non-negative; got $warmVal"
+            s"warm_cache_ms must be -1 (sentinel) or non-negative; got $warmVal"
         )
 
         // Document the pre-campaign gap. This is a non-failing observation.
