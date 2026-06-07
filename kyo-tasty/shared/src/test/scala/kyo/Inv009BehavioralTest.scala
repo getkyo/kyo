@@ -48,7 +48,7 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
         rootSymbolId = Tasty.SymbolId(0)
     )
 
-    // Recording FileSource for leaf 13: logs calls, returns empty/success results.
+    // Recording FileSource: logs calls, returns empty/success results.
     // filesToList: paths returned by the list method; allows testing the delete path.
     // mtime: mtime returned by stat; 0L means infinitely old relative to any positive maxAge.
     final private class RecordingFileSource(

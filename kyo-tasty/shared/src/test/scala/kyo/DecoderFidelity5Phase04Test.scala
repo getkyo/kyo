@@ -436,7 +436,7 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
                         bodies1.zip(bodies2).foreach: (sb1, sb2) =>
                             assert(
                                 sb1.equals(sb2),
-                                s"SymbolBody equality failed (Span migration regression): $sb1 $sb2"
+                                s"SymbolBody equality failed: $sb1 $sb2"
                             )
                             assert(
                                 sb1.hashCode == sb2.hashCode,

@@ -71,7 +71,6 @@ class VarargsFidelity2Test extends Fidelity2TestBase:
             assert(
                 repeatedCount > 0,
                 s"Expected > 0 repeated parameters in cold classpath; got $repeatedCount. " +
-                    s"Before fix: exactly 0 (probe-001.log line 39897). " +
                     s"Check TreeUnpickler.decodeTptAsType ANNOTATEDtpt @Repeated detection."
             )
             succeed

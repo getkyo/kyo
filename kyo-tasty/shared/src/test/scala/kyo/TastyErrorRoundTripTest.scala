@@ -171,7 +171,7 @@ class TastyErrorRoundTripTest extends kyo.test.Test[Any]:
             case Result.Panic(t) => throw t
     }
 
-    // W2 carry: tag-255 round-trip path in writeType/readType.
+    // tag-255 round-trip path in writeType/readType.
     // The tag-255 catch-all in SnapshotWriter.writeType serializes complex types (Refinement,
     // Rec, Skolem, etc.) as an opaque show string. The reader falls back to Type.Nothing on
     // any unknown tag including 255. This is a known semantic limitation documented in the

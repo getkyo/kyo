@@ -15,16 +15,14 @@ import scala.collection.mutable
   *   2. A no-arg method round-trips with paramListIds == Chunk(Chunk.empty).
   *   3. A minor=11 snapshot header is rejected with TastyError.SnapshotVersionMismatch.
   *   4. The raw bytes of a written snapshot contain the "PLISTS__" tag.
-  *   5. Multi-parameter-list round-trip (marked ignore: no multi-list fixture exists; see decisions.md).
+  *   5. Multi-parameter-list round-trip (marked ignore: no multi-list fixture exists yet).
   *
   * Cross-platform: all leaves target shared/src/test (JVM, JS, Native).
   */
 class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
 
-    // Leaf 1 (roundtrip_meters_extension_methods_preserve_paramListIds) cold-loads the standard
-    // classpath (kyo-tasty + kyo-data + scala-library) then writes and reads a snapshot.
+    // Cold-loads the standard classpath (kyo-tasty + kyo-data + scala-library) then writes and reads a snapshot.
     // A single cold-load takes 20-30s on a loaded machine; the full leaf exceeds the 60s default.
-    // Matches the identical override in SnapshotFidelity2Test which loads the same classpath pair.
     override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(3))
 
     import AllowUnsafe.embrace.danger
@@ -275,14 +273,11 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
 
     // No multi-parameter-list method exists in the current fixture set.
     // The fixture (FixtureClasses.scala) only defines single-list and no-arg methods.
-    // This leaf is .ignore per plan instruction: document the gap and skip rather than silently drop.
-    // To activate: add a fixture method such as `def curried(a: Int)(b: Int): Int = a + b`
-    // to kyo-tasty-fixtures/shared/src/main/scala/kyo/fixtures/FixtureClasses.scala,
-    // re-embed the TASTy bytes, and remove the .ignore annotation.
+    // To activate: add a fixture method with multiple parameter lists, re-embed the TASTy bytes,
+    // and remove the .ignore annotation.
     "multi_list_method_roundtrip".ignore(
         "No multi-parameter-list method in embedded fixture set. See decisions.md Leaf 5 for activation steps."
     ) in {
-        // Not active: no multi-parameter-list method in embedded fixture set (see decisions.md Leaf 5).
         fail("Not yet active; see decisions.md Leaf 5")
     }
 

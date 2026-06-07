@@ -101,14 +101,12 @@ class QueryApiTest extends kyo.test.Test[Any]:
         ClasspathOrchestrator.init(Seq("root"), mode, src, 1)
     end openFixtureClasspath
 
-    // Test 1: fromPickles(Seq.empty) succeeds; findClass("anything") returns Absent
     "withPickles(Chunk.empty) succeeds and findClass returns Absent" in {
         Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
             val result = cp.findClass("some.Class")
             assert(result == Maybe.Absent)
     }
 
-    // Test 2: cp.findClass on fixture classpath returns Present(sym) with kind == Class
     "findClass on fixture TASTy returns Present(sym) with kind Class" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -123,7 +121,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 3: findClass for nonexistent FQN returns Absent
     "findClass for nonexistent FQN returns Absent" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -138,7 +135,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 4: findPackage on fixture classpath returns Present(pkg) with kind == Package
     "findPackage returns Present(pkg) with kind Package" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -154,7 +150,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 5: topLevelClasses returns a non-empty Chunk for fixture classpath
     "topLevelClasses returns non-empty Chunk for fixture classpath" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -167,7 +162,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 6: packages returns at least one package symbol (or empty if unpickler doesn't emit package nodes)
     "packages does not fail for fixture classpath" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -180,7 +174,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 7: errors returns Chunk.empty for a clean classpath
     "errors returns Chunk.empty for clean classpath" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -193,7 +186,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 8: errors returns at least one TastyError for a classpath with a corrupt TASTy file
     "errors returns non-empty for classpath with corrupt TASTy" in {
         val src = MemoryFileSource()
         src.add("root/Corrupt.tasty", Array[Byte](0, 1, 2, 3, 4, 5)) // corrupt magic
@@ -208,7 +200,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 9: direct iteration over all symbols returns non-empty result
     "direct symbol iteration returns symbols from fixture classpath" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -221,7 +212,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 10: direct filter to Method kind returns only method symbols
     "direct filter to Method kind returns only method symbols" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -237,7 +227,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 11: direct filter by Inline flag returns only symbols with Inline flag
     "direct filter by Inline flag returns only inline symbols" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -253,7 +242,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 12: direct filter by name returns symbols named PlainClass
     "direct filter by name finds symbols named PlainClass" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -269,7 +257,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 13: direct map over symbols produces names
     "direct map over symbols produces names" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -290,7 +277,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 14: counting symbols via allSymbols is consistent across two calls
     "direct allSymbols count is consistent across two calls" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -306,7 +292,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 15: Tasty.Classpath is a pure case class with no Closed state.
     // The old "ClasspathClosed after outer Scope.run exits" test is replaced with a test that verifies
     // the Classpath case class remains accessible after the Scope exits.
     "Tasty.Classpath remains accessible after Scope exits (no Closed state)" in {
@@ -325,7 +310,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Test 16: findClass works after open.
     "findClass returns Present after open" in {
         Abort.run[TastyError]:
             Scope.run:
@@ -338,7 +322,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
             case Result.Panic(t)            => throw t
     }
 
-    // Test 17: strict mode fails with any TastyError for a corrupt TASTy file
     "strict mode fails with TastyError for corrupt TASTy" in {
         val src = MemoryFileSource()
         src.add("root/Corrupt.tasty", Array[Byte](0, 1, 2, 3, 4, 5))
@@ -352,7 +335,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 18: soft-fail mode succeeds with errors accumulated; other symbols resolve
     "soft-fail mode accumulates errors; other symbols still resolve" in {
         val src = MemoryFileSource()
         src.add("root/Corrupt.tasty", Array[Byte](0, 1, 2, 3, 4, 5))
@@ -371,9 +353,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 24b: missing root under SoftFail accumulates FileNotFound in cp.errors.
-    // Before fix: raised Abort.fail(TastyError.FileNotFound) regardless of ErrorMode.
-    // After fix: SoftFail accumulates; FailFast still raises.
+    // SoftFail accumulates FileNotFound; FailFast raises immediately.
     "missing root produces FileNotFound immediately" in {
         Scope.run:
             // SoftFail: expect Success with cp.errors containing FileNotFound
@@ -385,7 +365,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     case other                      => fail(s"Expected FileNotFound; got: $other")
     }
 
-    // Test 31: 3 TASTy files with concurrency=3; all symbols present after open
     "Phase A/B/C orchestration with 3 files: all symbols present" in {
         val src = MemoryFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
@@ -404,7 +383,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 32: 1 corrupt file among valid files; topLevelClasses from valid file present; errors.size == 1
     "Phase B interruption: valid files decoded; 1 error accumulated for corrupt file" in {
         val src = MemoryFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
@@ -415,7 +393,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     (cp.topLevelClasses, cp.errors)
             ).map:
                 case Result.Success((classes, errs)) =>
-                    // Exact: exactly 1 corrupt file was loaded; exactly 1 error must be accumulated. Measured 2026-06-04.
+                    // Exactly 1 corrupt file was loaded; exactly 1 error must be accumulated.
                     assert(errs.size == 1, s"Expected exactly 1 error for the 1 corrupt file, got: ${errs.size}")
                     assert(classes.nonEmpty, s"Expected valid classes to be present, got empty")
                 case Result.Failure(e) =>
@@ -424,7 +402,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 33: findClassByBinary returns same Symbol as findClass after canonicalization
     "findClassByBinary canonicalizes binary name to dotted FQN" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -442,7 +419,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 34: findClassByBinary for nonexistent class returns Absent
     "findClassByBinary for nonexistent returns Absent" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -457,7 +433,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 36: file-handle release counter under Phase B (all reads complete before check)
     "file-handle counter reaches 0 after Phase B completes" in {
         import AllowUnsafe.embrace.danger
         val counter = AtomicInt.Unsafe.init(0)
@@ -497,7 +472,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                 assert(finalCount == 0, s"Expected counter to be 0 after all reads complete, but got: $finalCount")
     }
 
-    // Test 3: classpath opened from two fixture TASTy files (one extending the other) reports no errors
     // and no panic. Verifies end-to-end Phase C placeholder resolution.
     "two-file classpath (ChildClass extends BaseClass) opens with no errors and no panic" in {
         val src = MemoryFileSource()
@@ -559,7 +533,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 3: sym.declarationIds for PlainClass is non-empty.
     // Note: `class PlainClass(val x: Int)` in Scala 3.8 TASTy encodes x as a Parameter symbol (sym[3]),
     // which is NOT in class declarationIds. The declarationIds only contains the constructor `<init>`.
     // This is the actual TASTy structure; the test verifies the constructor is accessible.
@@ -588,7 +561,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 4: sym.parents after classpath close returns the pre-populated Chunk.
     // Parents are stored as plain Chunk fields in the case class, so they remain valid after close.
     "sym.parents after classpath close returns the pre-populated parentTypes Chunk (no failure)" in {
         // Capture the symbol from inside the scope, then check parents after scope exits.
@@ -652,7 +624,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
         src
     end someCaseClassSource
 
-    // Test 1: case class companion object.
     // SomeCaseClass.tasty contains both the case class and its companion object.
     // The class symbol's companion should return Present(objectSym) where kind == Object.
     "SomeCaseClass.companion returns Present(objectSym) with kind Object" in {
@@ -677,7 +648,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 2: companion object reverse lookup -- the object symbol's companion is the class.
     "SomeCaseClass companion object's companion returns Present(classSym) with kind Class" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(someCaseClassSource()).flatMap: cp =>
@@ -706,7 +676,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 3: plain class with no companion returns Absent.
     "PlainClass.companion returns Absent (no companion object)" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -725,7 +694,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 4: companion is pure; returns Absent after scope close for a plain class.
     // sym.companion uses cp.indices.companionIndex which is empty in fromPickles.
     "sym.companion after classpath close returns Absent (pure, no failure)" in {
         val captureResult: Result[TastyError, Tasty.Symbol] < Async =
@@ -744,7 +712,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     assert(companion == Maybe.Absent, s"Expected Absent companion on empty classpath but got $companion")
     }
 
-    // Test 1: sym.declaredType for val x: Int in PlainClass returns a type.
     // After Phase C placeholder resolution the type encodes scala.Int. The TASTy encoding for Int
     // may be Type.Named or Type.TermRef depending on how the constant type is referenced; we assert
     // that a type is returned and does not fail.
@@ -822,7 +789,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 4: sym.declaredType for a Java record field returns the
     // expected type. ArrayRecord.class has a single int[] component 'values'; its member symbol's
     // declaredType should be Type.Array(Type.Named(intSym)).
     "Java classfile field declaredType returns Array type for int[] values" in {

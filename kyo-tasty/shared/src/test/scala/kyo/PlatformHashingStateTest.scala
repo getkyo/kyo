@@ -19,7 +19,6 @@ import kyo.internal.tasty.type_.TypeKey
   */
 class PlatformHashingStateTest extends kyo.test.Test[Any]:
 
-    // Test 1: hashing produces stable output across platforms.
     // TypeKey.of is called twice on the same structural type; PlatformHashingState is exercised on both calls.
     // The two returned hash integers must be equal, confirming platform-stable output.
     "TypeKey hash of a ConstantType is stable across repeated calls" in {
@@ -29,7 +28,6 @@ class PlatformHashingStateTest extends kyo.test.Test[Any]:
         assert(h1 == h2, s"hash unstable: first=$h1 second=$h2")
     }
 
-    // Test 2: cross-platform discrimination.
     // Two structurally different ConstantType values must hash to different integers,
     // confirming the type-key discriminator is not degenerate.
     "TypeKey hashes of two distinct ConstantTypes differ" in {

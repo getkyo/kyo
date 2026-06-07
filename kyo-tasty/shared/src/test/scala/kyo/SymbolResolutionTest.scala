@@ -65,7 +65,6 @@ class SymbolResolutionTest extends kyo.test.Test[Any]:
     private def openClasspath(src: FileSource)(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
 
-    // Test 19: two concurrent findClass calls for the same FQN return reference-equal Symbol instances.
     // The fqnIndex is an immutable HashMap populated once during Phase C. Both calls read the same
     // HashMap entry and return the same object reference (reference equality via HashMap identity).
     "two concurrent findClass calls for the same FQN return reference-equal symbols" in {
@@ -88,7 +87,6 @@ class SymbolResolutionTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 21 (renumbered from prior Test 20): two concurrent findClass calls for different FQNs both resolve independently
     "two concurrent findClass calls for different FQNs both resolve independently" in {
         // Use the same file twice with different paths so we get two distinct FQNs
         // Since we only have PlainClass, we open a classpath with it twice (once in each root path slot)
@@ -112,7 +110,6 @@ class SymbolResolutionTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 21: Unresolved sentinel: findClass for a missing FQN returns Absent (soft-fail mode)
     "findClass for missing FQN returns Absent in soft-fail mode" in {
         Scope.run:
             Abort.run[TastyError](openClasspath(fixtureSource()).flatMap: cp =>
@@ -127,7 +124,6 @@ class SymbolResolutionTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 35: cross-classpath structural equality by FQN
     // Two separate Classpath instances over the same roots yield different Symbol object references
     // (not reference-equal) but the same full names (structural equality by FQN).
     "cross-classpath FQN structural equality: different instances but same FQN" in {
@@ -174,8 +170,6 @@ class SymbolResolutionTest extends kyo.test.Test[Any]:
         end for
     end decodeBytes
 
-    // Test 1 (redesigned for): cross-file type references are resolved via fqnIndex
-    // at Phase C finalizeMerge. The UnresolvedRef mechanism is deleted.
     // Verify that PlainClass.tasty opens successfully and parentTypes are populated.
     "Phase C: cross-file type references resolved (PlainClass has parentTypes)" in {
         val src = MemoryFileSource()
@@ -193,19 +187,7 @@ class SymbolResolutionTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // Test 2: missing-class placeholder resolves to Unresolved sentinel when base file is absent.
-    // Design note: childClassTasty has no TYPEREFpkg/TYPEREFin for BaseClass (same compilation unit).
-    // Parts a-c are redesigned to use PlainClass.tasty which has real cross-file UnresolvedRef
-    // entries, then simulate Phase C with the FQN absent from fqnIndex.
-    // Part d still uses childClassTasty + openClasspath to confirm no panic from unset slots.
-    // Steps:
-    //   a) Decode PlainClass.tasty to get real UnresolvedRef placeholders.
-    //   b) Take the first placeholder; simulate Phase C with fqnIndex MISS: synthesize Unresolved sentinel.
-    //   c) Verify replaceSlot.get returns Named(sym) with sym.kind == Unresolved and same FQN.
-    //   d) Init a full classpath with ONLY childClassTasty (no base) via initInto and verify
-    //      it opens without panic (no unset SingleAssign).
-    // Test 2 (redesigned for): unresolved cross-file references become Unresolved
-    // symbols in the classpath. Verify that ChildClass.tasty opens without panic when base file is absent.
+    // Opens a classpath with ONLY childClassTasty (no base file) and verifies it opens without panic.
     "Phase C: classpath opens without panic when cross-file parent is absent (unresolved symbols)" in {
         val src = MemoryFileSource()
         src.add("root/ChildClass.tasty", kyo.fixtures.Embedded.childClassTasty)

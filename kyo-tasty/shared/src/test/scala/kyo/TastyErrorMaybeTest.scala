@@ -21,8 +21,6 @@ class TastyErrorMaybeTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // ── Snapshot building helper ────────────────────────────────────────────
-
     /** Build a minimal valid KRFL snapshot byte array containing the given ERRORS section payload.
       *
       * The snapshot has only a NAMES section (0 names), a SYMBOLS section (0 symbols), and an ERRORS section with the provided payload
@@ -192,8 +190,6 @@ class TastyErrorMaybeTest extends kyo.test.Test[Any]:
         baos.toByteArray
     end makeUnknownTagErrorsPayload
 
-    // ── In-memory FileSource (minimal) ──────────────────────────────────────
-
     final class MemoryFileSource extends kyo.internal.tasty.query.FileSource:
         private val files                               = mutable.HashMap.empty[String, Array[Byte]]
         def add(path: String, bytes: Array[Byte]): Unit = files(path) = bytes
@@ -273,8 +269,7 @@ class TastyErrorMaybeTest extends kyo.test.Test[Any]:
         val sectionBytes: Array[Byte] = Array(unknownCat2Tag, natZero)
 
         // TypeParam kind falls into the generic `case _` arm in decodeSymBody, invoking readTree directly.
-        // Package was previously used (wrong: Package has special dispatch to PackageDef).
-        // Unresolved was used originally but was removed; TypeParam is the correct replacement.
+        // Package has special dispatch to PackageDef; TypeParam is correct here.
         val sym = Tasty.Symbol.TypeParam(
             Tasty.SymbolId(-1),
             Tasty.Name("testSym"),

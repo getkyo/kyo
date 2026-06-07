@@ -202,8 +202,7 @@ class TastyErrorWireFormatTest extends kyo.test.Test[Any]:
         )
     }
 
-    // minor version bumped (originally to 10 for string-tag format; 11 for new TastyError variants;
-    // now 12 for PLISTS__ section).
+    // minor version is 12 (PLISTS__ section).
     "minor version is 12 in freshly written snapshot" in {
         val snapshotBytes = snapshotBytesWithErrors(Chunk.empty)
         val minor         = snapshotBytes(5) & 0xff

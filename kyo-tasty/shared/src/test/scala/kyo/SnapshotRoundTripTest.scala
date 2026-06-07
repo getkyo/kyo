@@ -92,7 +92,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                 s"cache/$hex.krfl"
     end writeSnapshot
 
-    // Test 22: write snapshot to memory, read it back, compare topLevelClasses by FQN
     "snapshot round-trip: topLevelClasses by FQN match after write+read" in {
         val cacheSrc = MemoryFileSource()
         Scope.run:
@@ -117,7 +116,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 23: reading a snapshot with wrong magic produces SnapshotFormatError
     "reading a snapshot with wrong magic produces SnapshotFormatError" in {
         val cacheSrc = MemoryFileSource()
         cacheSrc.add("cache/bad.krfl", Array[Byte]('X', 'Y', 'Z', 'W', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
@@ -134,7 +132,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Test 24: reading a snapshot with different major version produces SnapshotVersionMismatch
     "reading a snapshot with different major version produces SnapshotVersionMismatch" in {
         val badVersionBytes = Array.fill[Byte](64)(0)
         badVersionBytes(0) = 'K'
@@ -162,7 +159,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Test 24a: attempting to write a snapshot when the underlying FileSource always fails produces SnapshotIoError
     "writing snapshot when FileSource write fails produces SnapshotIoError" in {
         val failSrc = new FileSource:
             def read(path: String)(using Frame): Array[Byte] < (Sync & Abort[TastyError]) =
@@ -194,7 +190,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 25: two concurrent snapshot writers for the same input produce one valid snapshot file
     "two concurrent snapshot writers produce one valid snapshot file (atomic rename)" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11)
@@ -234,7 +229,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 26: openCached on warm cache hit returns same symbol graph as cold open (structural equality by FQN)
     "openCached warm cache hit returns same symbol graph as cold open" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19)
@@ -266,7 +260,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 27: openCached on a cold miss writes a snapshot file to the cache dir
     "cold miss writes snapshot file to cache dir" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27)
@@ -297,7 +290,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 28: evictOlderThanWithSource removes all snapshot files older than maxAgeMs
     "evictOlderThan removes all snapshot files older than maxAgeMs" in {
         // stat returns mtime=0, so all files are older than 0 ms (now - 0 > 0 is always true)
         val evictSrc = MemoryFileSource()
@@ -322,7 +314,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Test 29: DigestComputer.compute for the same roots returns the same digest (deterministic)
     "DigestComputer.compute for the same roots is deterministic" in {
         val src = fixtureSource()
         Abort.run[TastyError]:
@@ -339,7 +330,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Test 30: DigestComputer.compute for two different file sets returns different digests
     "DigestComputer.compute for different file sets returns different digests" in {
         val src1 = MemoryFileSource()
         src1.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)

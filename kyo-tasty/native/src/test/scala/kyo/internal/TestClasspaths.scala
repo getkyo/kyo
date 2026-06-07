@@ -9,9 +9,9 @@ import kyo.internal.tasty.query.TastyState
 
 /** Native-side cross-platform fixture helper.
   *
-  * Mirrors the surface of the JVM `TestClasspaths` object so shared test code can call `TestClasspaths.withClasspath` on all three
-  * platforms. On Native there is no JVM classpath discovery; the helper constructs a `MemoryFileSource` pre-loaded from
-  * `kyo.fixtures.Embedded` and calls `ClasspathOrchestrator.init` directly, bypassing `NativeFileSource` entirely.
+  * Provides the same `TestClasspaths.withClasspath` surface as the JVM version so shared test code can call it on all three platforms. On
+  * Native there is no JVM classpath discovery; the helper constructs a `MemoryFileSource` pre-loaded from `kyo.fixtures.Embedded` and calls
+  * `ClasspathOrchestrator.init` directly, bypassing `NativeFileSource` entirely.
   *
   * Design notes:
   *   `withClasspath` takes no `roots` parameter (no JVM classpath on Native).
@@ -20,7 +20,7 @@ import kyo.internal.tasty.query.TastyState
   *     FixtureClasses$package, BaseClass, ChildClass, Shape, VarargFixture, TypeAdtFixture$package). Shape carries class-form enum cases
   *     (fixture additions for extended coverage).
   *
-  *   The `roots` parameter mirrors the JVM surface but is ignored; embedded fixtures are always loaded.
+  *   The `roots` parameter is ignored; embedded fixtures are always loaded.
   *   The MemoryFileSource is internal to the loading call; it is not exposed to callers.
   */
 private[kyo] object TestClasspaths:

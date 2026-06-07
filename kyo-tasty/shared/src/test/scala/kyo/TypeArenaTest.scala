@@ -37,7 +37,6 @@ class TypeArenaTest extends kyo.test.Test[Any]:
         )
     end makeSym
 
-    // Test 1: intern called twice with structurally identical Type.Named(id) returns the same reference.
     "intern called twice with the same Named(id) returns the same reference" in {
         nextId = 0
         val arena = TypeArena.canonical()
@@ -49,7 +48,6 @@ class TypeArenaTest extends kyo.test.Test[Any]:
         assert(r1 eq r2)
     }
 
-    // Test 2: intern on Applied with different arg lists returns different references.
     "intern on Applied with different args returns different references" in {
         nextId = 0
         val arena = TypeArena.canonical()
@@ -63,7 +61,6 @@ class TypeArenaTest extends kyo.test.Test[Any]:
         assert(!(r1 eq r2))
     }
 
-    // Test 3: merge of two arenas containing the same structural type produces canonical arena with one entry.
     "merge of two arenas with structurally equal types produces one canonical entry" in {
         nextId = 0
         val sym = makeSym("X")
@@ -83,7 +80,6 @@ class TypeArenaTest extends kyo.test.Test[Any]:
         assert(c1 eq c2, "After merge, structurally-equal types must be reference-equal in canonical arena")
     }
 
-    // Test 4: merge correctly handles a Type.Rec(parent) containing Type.RecThis(rec) back-reference.
     "merge of Rec/RecThis cycle completes without stack overflow" in {
         nextId = 0
         val sym      = makeSym("RecSentinel")
@@ -97,13 +93,12 @@ class TypeArenaTest extends kyo.test.Test[Any]:
         arena.merge(canon)
         // After merging the Rec(RecThis(rec)) cycle, the canonical arena must contain exactly 2 distinct
         // interned types: the outer Rec and the inner Named sentinel (RecThis is a back-reference sharing
-        // the outer Rec slot; it does not produce an additional canonical node). Measured 2026-06-04.
+        // the outer Rec slot; it does not produce an additional canonical node).
         assert(canon.values.size == 2, s"Expected exactly 2 interned nodes after Rec/RecThis merge but got ${canon.values.size}")
         val interned = canon.intern(recFull)
         assert(interned == recFull, "Re-interning recFull must yield a structurally equal type")
     }
 
-    // Test 5: after merge, structurally-equal types from two arenas are reference-equal.
     "after merge, structurally-equal types from two arenas are reference-equal" in {
         nextId = 0
         val sym = makeSym("Shared")
@@ -137,7 +132,6 @@ class TypeArenaTest extends kyo.test.Test[Any]:
         assert(first eq second, "repeated intern of the same cyclic Rec type must return the same canonical reference")
     }
 
-    // Test 10 (T7): 8-fiber concurrent interning with separate per-fiber arenas preserves canonicality.
     "8-fiber concurrent interning with per-fiber arenas all return eq canonical reference" in {
         nextId = 0
         val sym        = makeSym("ConcurrentCanon")

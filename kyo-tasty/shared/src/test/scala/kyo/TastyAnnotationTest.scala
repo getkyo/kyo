@@ -12,7 +12,6 @@ class TastyAnnotationTest extends kyo.test.Test[Any] with TastyTestSupport:
 
     import AllowUnsafe.embrace.danger
 
-    // Test 6 (INV: T1, Annotation): synthetic factory produces correct field values.
     // Type.Named(id).show resolves cp.symbol(id).map(_.name.asString).getOrElse("<unresolved>"); the symbol must
     // be registered in the classpath at index id.value.
     "Annotation case class: annotationType.show returns leaf name 'deprecated', arguments is empty" in {
@@ -48,7 +47,6 @@ class TastyAnnotationTest extends kyo.test.Test[Any] with TastyTestSupport:
                     succeed
     }
 
-    // Test 2: case-class unapply matches (annotationType, arguments).
     "Annotation case class unapply matches (annotationType, arguments)" in {
         Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
@@ -67,7 +65,6 @@ class TastyAnnotationTest extends kyo.test.Test[Any] with TastyTestSupport:
             end match
     }
 
-    // Test 3: Annotation with non-empty arguments field holds the trees directly.
     // arguments is a plain Chunk[Tree] field; no effect row needed.
     "Annotation with a non-empty arguments chunk holds the trees as a plain field" in {
         import AllowUnsafe.embrace.danger

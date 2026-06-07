@@ -6,8 +6,8 @@ import kyo.TastyError
 /** Exhaustive per-position tag enumerations for TASTy decode positions.
   *
   * Each enum enumerates exactly the tags that are valid in its decode position. The companion `from(raw)` factory throws
-  * `TastyError.UnknownTagInPosition` on an unrecognised byte, replacing the silent `case other => warn(...); Named(-1)` fallback
-  * pattern that previously allowed corrupt or future-format bytes to produce silent sentinel symbols.
+  * `TastyError.UnknownTagInPosition` on an unrecognised byte rather than silently producing sentinel symbols from corrupt or
+  * future-format bytes.
   *
   * Five enums cover the five decode positions where TypeUnpickler and AstUnpickler dispatch on tag bytes:
   *   - `TypePositionTag`: type nodes (handled by `TypeUnpickler.decodeTag`)

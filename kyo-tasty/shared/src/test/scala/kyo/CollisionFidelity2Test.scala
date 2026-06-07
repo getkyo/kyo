@@ -77,8 +77,7 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
             val report = cp.collisionReport
             assert(
                 report.nonEmpty,
-                "Expected at least one FqnCollision in cp.collisionReport when same content is loaded twice. " +
-                    "Before fix: collisionReport was always empty."
+                "Expected at least one FqnCollision in cp.collisionReport when same content is loaded twice."
             )
             val firstCollision = report(0)
             assert(
@@ -121,7 +120,7 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
                 case Result.Success(_) =>
                     fail(
                         "Expected FailFast collision init to abort with TastyError.FqnCollisionError; " +
-                            "init succeeded silently. Before fix: collision not detected."
+                            "init succeeded silently."
                     )
                 case Result.Failure(other) =>
                     fail(s"Expected TastyError.FqnCollisionError but got: $other")
@@ -158,7 +157,7 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
             assert(
                 collisionDiagCount > 0,
                 s"Expected cp.indices.diagnostics to contain FqnCollision entries under SoftFail collision; got 0. " +
-                    "cp.indices.diagnostics must accumulate FqnCollision items (OQ-006)."
+                    "cp.indices.diagnostics must accumulate FqnCollision items."
             )
             val errorsContainCollisionString = cp.errors.exists:
                 case TastyError.MalformedSection(_, reason, _) =>

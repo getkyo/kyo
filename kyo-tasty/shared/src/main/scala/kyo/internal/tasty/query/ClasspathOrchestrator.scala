@@ -68,8 +68,8 @@ object ClasspathOrchestrator:
         /** All symbols from this file in TASTy parse order (deterministic depth-first traversal of the AST).
           *
           * Used in mergeOneInto to accumulate allSyms in a stable order across runs, ensuring that symbol IDs
-          * are deterministic for byte-equal snapshot idempotency. Previously allSyms was populated
-          * from ownerBySymbol.keys which uses identity-hash order and is non-deterministic.
+          * are deterministic for byte-equal snapshot idempotency. Identity-hash iteration order from map keys
+          * is non-deterministic and must not be used here.
           */
         symbolsInOrder: Chunk[LoadingSymbol.Materialising],
         arena: TypeArena,

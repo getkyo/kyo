@@ -28,7 +28,6 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
     import AllowUnsafe.embrace.danger
 
     // fqnindex-size-cold-equals-warm
-    // Migration: was jvmOnly with standardWithSnapshot + >= 110,000 stdlib lower bound (removed).
     "cold.indices.byFqn.size == warm.indices.byFqn.size after in-memory round-trip" in {
         TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
             val coldSize = cold.indices.byFqn.size
@@ -130,11 +129,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
                 succeed
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Fidelity2TestBase.coldWarmEquiv assertions
     // coldWarmEquiv uses TestClasspaths2.withSnapshotInMemory (cross-platform).
-    // ─────────────────────────────────────────────────────────────────────────
-
     coldWarmEquiv("-cw : fqnIndex.size is equal on cold and warm after in-memory round-trip")(_.indices.byFqn.size)
 
     // in-memory-snapshot-symbols-size-equal

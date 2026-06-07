@@ -26,9 +26,7 @@ package kyo.internal.tasty.snapshot
   *
   * All multi-byte integers are little-endian. Byte order flag in `flags` is always 0 (LE) for all platforms.
   *
-  * Symbol field coverage: every field in all 14 `Symbol` case classes is serialized. There is no `home` field on any Symbol subtype
-  * (A historical comment in an earlier design draft claimed that a `home` field was NOT serialized; that field was never added to
-  * any Symbol case class; the comment has been removed to prevent future audit confusion).
+  * Symbol field coverage: every field in all 14 `Symbol` case classes is serialized. There is no `home` field on any Symbol subtype.
   *
   * Section IDs:
   *   - `NAMES`: Packed name bytes + (offset: Int, length: Int) table indexed by NameId.
@@ -80,7 +78,7 @@ object SnapshotFormat:
     /** Current format version. Major bumps invalidate old snapshots. */
     val majorVersion: Int = 1
     val minorVersion: Int =
-        12 // bumped from 11 (handoff-fixes campaign: PLISTS__ section persists Symbol.Method.paramListIds)
+        12 // bumped from 11: PLISTS__ section added to persist Symbol.Method.paramListIds
 
     /** Maximum number of sections allowed in a snapshot header.
       *
@@ -202,7 +200,7 @@ object SnapshotFormat:
       */
     val sectionCOMPIDX: String = "COMPIDX_"
 
-    /** Method parameter-list partition section (added in minor=12, handoff-fixes campaign).
+    /** Method parameter-list partition section (added in minor=12).
       *
       * Persists `Symbol.Method.paramListIds: Chunk[Chunk[SymbolId]]` so warm-loaded classpaths
       * return the per-list-group grouping without re-decoding TASTy. Sparse keying by symbol

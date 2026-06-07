@@ -628,21 +628,9 @@ object SnapshotReader:
                 j += 1
             end while
             if symIdx >= 0 && symIdx < symCount then
-                // Build Annotation instances with Named(SymbolId(-1)) placeholder;
-                // the FQN is embedded in the placeholder name so symbolsAnnotatedWith
-                // can match via typeFqnString. Use a sentinel approach: we create a
-                // Symbol.Unresolved whose name IS the FQN, so typeFqnString falls back
-                // to the name string. Since typeFqnString calls fullName(symbol(id))
-                // and SymbolId(-1) returns the unresolved sentinel, we embed the FQN
-                // in the Type.Named using the fqnIndex lookup after final symbols are built.
-                // For now: store the FQN strings in the annotation chunk via a custom wrapper.
-                // The simplest correct approach is to postpone to the caller who has fqnIndex.
-                // Store raw FQN strings in a parallel structure; we set out(symIdx) to an empty
-                // chunk here and let the while-loop fix up using rawAnnotFqnsByIdx.
-                // This requires passing raw data up. Simplest: store as Chunk of Annotations
-                // with Type.Named(SymbolId(-1)) and the FQN embedded via TermRef workaround.
-                // ACTUAL APPROACH: Store FQN in the Annotation as Type.TermRef(Tree.Empty, Name(fqn)).
-                // typeFqnString handles TermRef by extracting the name asString.
+                // Build Annotation instances encoding the FQN as Type.TermRef(Tuple(empty), Name(fqn)).
+                // typeFqnString handles TermRef by extracting the name asString, so symbolsAnnotatedWith
+                // can match via FQN string comparison without requiring a resolved SymbolId.
                 val anns = new Array[Tasty.Annotation](annCount)
                 var k    = 0
                 while k < annCount do

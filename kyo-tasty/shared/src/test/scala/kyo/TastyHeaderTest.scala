@@ -59,7 +59,6 @@ class TastyHeaderTest extends kyo.test.Test[Any]:
     private val validMagic = Array(0x5c.toByte, 0xa1.toByte, 0xab.toByte, 0x1f.toByte)
     private val wrongMagic = Array(0xde.toByte, 0xad.toByte, 0xbe.toByte, 0xef.toByte)
 
-    // Test 19: valid header 28.8.0 succeeds
     "reading correct magic + Version(28,8,0) succeeds and returns Data with those values" in {
         // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
@@ -80,7 +79,6 @@ class TastyHeaderTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 20: wrong magic produces CorruptedFile
     "reading wrong magic 0xDEADBEEF produces CorruptedFile error" in {
         // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
@@ -97,7 +95,6 @@ class TastyHeaderTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 21: major=99 produces UnsupportedVersion
     "reading major=99 produces UnsupportedVersion error" in {
         // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
@@ -115,7 +112,6 @@ class TastyHeaderTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 22: major=28, minor=7, experimental=0 succeeds (backward compatible: 7 < 8, exp==0)
     "reading minor=7 experimental=0 succeeds (stable backward compatible)" in {
         // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
@@ -136,7 +132,6 @@ class TastyHeaderTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 23: major=28, minor=9, experimental=0 produces UnsupportedVersion
     // (minor=9 > supportedMinor=8, so forward-incompatible per dotty rule)
     "reading minor=9 experimental=0 produces UnsupportedVersion (forward incompatible)" in {
         // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
@@ -154,7 +149,6 @@ class TastyHeaderTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 24: experimental=1 with supportedExperimental=0 produces UnsupportedVersion
     "reading experimental=1 when supportedExperimental=0 produces UnsupportedVersion" in {
         // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger

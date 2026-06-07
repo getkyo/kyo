@@ -47,7 +47,6 @@ class SnapshotReaderTest extends kyo.test.Test[Any]:
             Abort.fail(TastyError.FileNotFound(path))
     end MemoryFileSource
 
-    // Test 3: a snapshot with minorVersion=2 (below minimum of 5)
     // must be rejected with SnapshotVersionMismatch to force cold re-decode. Before this
     // snapshot loaded successfully; the bump to minor=4 is a breaking change.
     "minor=2 snapshot (no PARENTS/MEMBERS/TPARAMS_ sections) is rejected with SnapshotVersionMismatch" in {

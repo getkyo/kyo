@@ -461,7 +461,7 @@ class JvmFileSourceTest extends kyo.test.Test[Any]:
                     val allMatch = bytesChunk.forall(bytes => java.util.Arrays.equals(bytes, knownBytes1))
                     assert(allMatch, "At least one fiber read returned wrong bytes")
                 case Result.Failure(e) =>
-                    fail(s"P24b-T1: unexpected failure: $e")
+                    fail(s"unexpected failure: $e")
                 case Result.Panic(t) =>
                     throw t
             end match

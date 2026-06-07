@@ -70,10 +70,10 @@ class SnapshotTypedRoundTripFullTest extends kyo.test.Test[Any]:
                     )
                     // Exact count: openMultiFileCp loads exactly 7 fixture TASTy files
                     // (PlainClass, SomeObject, SomeTrait, GenericBox, Outer, SomeCaseClass, Color).
-                    // The resulting symbol count is deterministic. Measured 2026-06-03.
+                    // The resulting symbol count is deterministic.
                     assert(
                         cold.length == 101,
-                        s"Round-trip symbol count mismatch (expected 101, measured 2026-06-03): got ${cold.length}"
+                        s"Round-trip symbol count mismatch (expected 101): got ${cold.length}"
                     )
                     var i = 0
                     while i < cold.length do

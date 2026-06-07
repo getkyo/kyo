@@ -5,7 +5,6 @@ import kyo.internal.tasty.binary.Utf8
 
 class Utf8Test extends kyo.test.Test[Any]:
 
-    // Test 15: ASCII decode
     "decode ASCII-only bytes produces correct String" in {
         // "hello" = [0x68 0x65 0x6C 0x6C 0x6F]
         val bytes  = Array[Byte](0x68, 0x65, 0x6c, 0x6c, 0x6f)
@@ -13,7 +12,7 @@ class Utf8Test extends kyo.test.Test[Any]:
         assert(result == "hello")
     }
 
-    // Test 16: 2-byte UTF-8 sequence (U+00E9 e-acute)
+    // 2-byte UTF-8 sequence (U+00E9 e-acute)
     "decode 2-byte UTF-8 sequence produces correct character" in {
         // U+00E9 e-acute: encoded as [0xC3, 0xA9]
         val bytes  = Array[Byte](0xc3.toByte, 0xa9.toByte)
@@ -22,7 +21,7 @@ class Utf8Test extends kyo.test.Test[Any]:
         assert(result.length == 1)
     }
 
-    // Test 17: 4-byte UTF-8 sequence (U+1F600 grinning face emoji)
+    // 4-byte UTF-8 sequence (U+1F600 grinning face emoji)
     "decode 4-byte UTF-8 sequence produces correct character content" in {
         // U+1F600 GRINNING FACE: encoded as [0xF0, 0x9F, 0x98, 0x80]
         val bytes  = Array[Byte](0xf0.toByte, 0x9f.toByte, 0x98.toByte, 0x80.toByte)
@@ -33,7 +32,7 @@ class Utf8Test extends kyo.test.Test[Any]:
         assert(result.codePointAt(0) == 0x1f600)
     }
 
-    // Test 19 (T4): 4-byte supplementary character U+1F600 produces a surrogate pair
+    // 4-byte supplementary character U+1F600 produces a surrogate pair.
     // kyo-tasty targets pure UTF-8 via StandardCharsets.UTF_8 on JVM/Native and TextDecoder
     // on JS. All three runtimes represent U+1F600 as a two-code-unit UTF-16 sequence
     // internally, so String.length == 2 on every platform.
@@ -44,7 +43,7 @@ class Utf8Test extends kyo.test.Test[Any]:
         assert(result.codePointAt(0) == 0x1f600)
     }
 
-    // Test 20 (T4): modified-UTF-8 overlong null [0xC0, 0x80] is invalid pure UTF-8.
+    // Modified-UTF-8 overlong null [0xC0, 0x80] is invalid pure UTF-8.
     // kyo-tasty uses StandardCharsets.UTF_8 (pure UTF-8), which does not accept
     // overlong-encoded null as U+0000. Both JVM and Scala Native replace each invalid
     // continuation byte with U+FFFD. TextDecoder on JS behaves identically. The result
@@ -61,7 +60,7 @@ class Utf8Test extends kyo.test.Test[Any]:
         assert(result.charAt(1) == '�')
     }
 
-    // Test 21 (T4): 4-byte sequence for U+10FFFF (highest valid Unicode code point)
+    // 4-byte sequence for U+10FFFF (highest valid Unicode code point)
     // [0xF4, 0x8F, 0xBF, 0xBF] is the canonical pure UTF-8 encoding of U+10FFFF.
     // All platforms encode it internally as a UTF-16 surrogate pair, so String.length == 2.
     "decode 4-byte U+10FFFF highest valid code point returns surrogate pair" in {
@@ -71,7 +70,6 @@ class Utf8Test extends kyo.test.Test[Any]:
         assert(result.codePointAt(0) == 0x10ffff)
     }
 
-    // Test 18: decode with offset and length only decodes the sub-range
     "decode with offset and length only decodes the sub-range" in {
         // Array: [0xFF, 0xE4, 0xB8, 0xAD, 0xFF], offset=1, length=3 -> "中" (U+4E2D)
         // U+4E2D encodes as [0xE4, 0xB8, 0xAD] (3-byte UTF-8)
@@ -81,8 +79,7 @@ class Utf8Test extends kyo.test.Test[Any]:
         assert(result.length == 1)
     }
 
-    // T5 JS parity: JS Utf8.decode path (TextDecoder) produces the same result as the JVM
-    // reference for a plain ASCII string. Pins T5.
+    // JS Utf8.decode path (TextDecoder) produces the same result as the JVM reference for a plain ASCII string.
     "decode 'hello world' bytes returns 'hello world' on JS".onlyJs in {
         // "hello world" ASCII bytes
         val bytes  = "hello world".getBytes(java.nio.charset.StandardCharsets.UTF_8)
@@ -91,8 +88,7 @@ class Utf8Test extends kyo.test.Test[Any]:
         assert(result.length == 11)
     }
 
-    // T5 Native parity: Native Utf8.decode path (String constructor via StandardCharsets.UTF_8)
-    // produces the same result as the JVM reference for a plain ASCII string. Pins T5.
+    // Native Utf8.decode path (String constructor via StandardCharsets.UTF_8) produces the same result as the JVM reference for a plain ASCII string.
     "decode 'hello world' bytes returns 'hello world' on Native".onlyNative in {
         // "hello world" ASCII bytes
         val bytes  = "hello world".getBytes(java.nio.charset.StandardCharsets.UTF_8)

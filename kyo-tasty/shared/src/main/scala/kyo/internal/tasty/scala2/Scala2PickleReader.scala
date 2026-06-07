@@ -306,8 +306,7 @@ object Scala2PickleReader:
       * Simplification: for method symbols (METH_FLAG set), the infoRef points to a NullaryMethodType or MethodType in the type table. Full
       * parsing of the Scala 2 type table is out of scope (see decodeAliasSym for rationale). Instead, a synthetic
       * `Type.Function(Chunk.empty, Named(sym))` placeholder is stored as `declaredType`, representing a zero-argument method
-      * returning an unknown type. This limitation is documented in PHASE-10-IMPL-NOTES.md and in PROGRESS.md under "Plan deviations during
-      * execution".
+      * returning an unknown type.
       */
     private def decodeValSym(
         data: Array[Byte],
@@ -339,7 +338,6 @@ object Scala2PickleReader:
       * from the symbol table). This is out of scope because no Scala 2 compiler is available for fixture generation, and the primary use
       * case of kyo-tasty is TASTy-based (Scala 3) introspection. Instead, a synthetic `Named("String")` placeholder is stored as
       * `declaredType`. This means `sym.declaredType` for a Scala 2 type alias will return a placeholder rather than the real aliased type.
-      * This limitation is documented in PHASE-10-IMPL-NOTES.md and in PROGRESS.md under "Plan deviations during execution".
       */
     private def decodeAliasSym(
         data: Array[Byte],

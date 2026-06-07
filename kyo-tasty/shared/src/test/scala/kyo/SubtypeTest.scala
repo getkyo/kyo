@@ -3,8 +3,6 @@ import kyo.internal.tasty.symbol.SymbolKind
 
 /** Tests for Subtype checking and type comparison.
   *
-  * Plan tests 1-9 (original) + tests 10-13 (SubtypeVerdict).
-  *
   * All tests use synthetic Symbol instances with distinct SymbolId values so that Named(id) equality matches correctly in Subtyping. Each
   * test uses makeTestClasspath to register symbols at their id.value indices so cp.symbol(id) resolves correctly.
   */
@@ -84,7 +82,6 @@ class SubtypeTest extends kyo.test.Test[Any]:
         Tasty.Classpath.fromPicklesWithSymbols(Chunk.from(arr))
     end makeTestClasspath
 
-    // Test 1: Named(A).isSubtypeOf(Named(A)) -- reflexivity via same SymbolId
     "Named(A).isSubtypeOf(Named(A)) returns Sub (reflexivity)" in {
         nextId = 0
         val intSym  = makeSym("scala.Int")
@@ -94,7 +91,6 @@ class SubtypeTest extends kyo.test.Test[Any]:
                 Tasty.isSubtypeOf(intType, intType).map(v => assert(v == Tasty.SubtypeVerdict.Sub))
     }
 
-    // Test 2: Named(String).isSubtypeOf(Named(Object)) returns Sub via parent chain
     "Named(String).isSubtypeOf(Named(Object)) returns Sub via parent chain" in {
         nextId = 0
         val objectSym  = makeSym("java.lang.Object")
@@ -106,7 +102,6 @@ class SubtypeTest extends kyo.test.Test[Any]:
                 Tasty.isSubtypeOf(stringType, objectType).map(v => assert(v == Tasty.SubtypeVerdict.Sub))
     }
 
-    // Test 3: Named(String).isSubtypeOf(Named(Int)) returns NotSub
     "Named(String).isSubtypeOf(Named(Int)) returns NotSub" in {
         nextId = 0
         val intSym     = makeSym("scala.Int")
@@ -118,7 +113,6 @@ class SubtypeTest extends kyo.test.Test[Any]:
                 Tasty.isSubtypeOf(stringType, intType).map(v => assert(v == Tasty.SubtypeVerdict.NotSub))
     }
 
-    // Test 4: AndType(A, B).isSubtypeOf(A) returns Sub
     "AndType(A, B).isSubtypeOf(A) returns Sub" in {
         nextId = 0
         val symA    = makeSym("test.A")
@@ -131,7 +125,6 @@ class SubtypeTest extends kyo.test.Test[Any]:
                 Tasty.isSubtypeOf(andType, typeA).map(v => assert(v == Tasty.SubtypeVerdict.Sub))
     }
 
-    // Test 5: A.isSubtypeOf(OrType(A, B)) returns Sub
     "A.isSubtypeOf(OrType(A, B)) returns Sub" in {
         nextId = 0
         val symA   = makeSym("test.A")
@@ -144,7 +137,6 @@ class SubtypeTest extends kyo.test.Test[Any]:
                 Tasty.isSubtypeOf(typeA, orType).map(v => assert(v == Tasty.SubtypeVerdict.Sub))
     }
 
-    // Test 6: Applied(List[String]).isSubtypeOf(Applied(List[AnyRef])) Sub when List is covariant
     "Applied(List[String]).isSubtypeOf(Applied(List[AnyRef])) Sub when List is covariant" in {
         nextId = 0
         val anyRefSym  = makeSym("java.lang.Object")
@@ -162,7 +154,6 @@ class SubtypeTest extends kyo.test.Test[Any]:
                 Tasty.isSubtypeOf(listString, listAnyRef).map(v => assert(v == Tasty.SubtypeVerdict.Sub))
     }
 
-    // Test 7: Named(Nothing).isSubtypeOf(anyType) returns Sub (Nothing is subtype of all)
     "Named(Nothing).isSubtypeOf(any type) returns Sub (bottom)" in {
         nextId = 0
         val nothingSym  = makeSym("scala.Nothing")
@@ -174,7 +165,6 @@ class SubtypeTest extends kyo.test.Test[Any]:
                 Tasty.isSubtypeOf(nothingType, anyType).map(v => assert(v == Tasty.SubtypeVerdict.Sub))
     }
 
-    // Test 8: TypeLambda([T], C[T]) isSubtypeOf TypeLambda([U], C[U]) Sub (alpha-equivalence)
     "TypeLambda([T], C[T]).isSubtypeOf(TypeLambda([U], C[U])) Sub (alpha-equiv)" in {
         nextId = 0
         val cSym  = makeSym("test.C")
@@ -196,7 +186,6 @@ class SubtypeTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // Test 9: Rec type with RecThis back-reference does not cause infinite recursion
     "Rec type with RecThis back-reference terminates (budget exhaustion safety)" in {
         nextId = 0
         val cSym    = makeSym("test.C")
@@ -214,9 +203,6 @@ class SubtypeTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // ── tests (SubtypeVerdict) ──────────────────────────────────────
-
-    // Test 10: Int <: Any returns Sub
     "Int <: Any returns Sub" in {
         nextId = 0
         val intSym  = makeSym("scala.Int")
@@ -228,7 +214,6 @@ class SubtypeTest extends kyo.test.Test[Any]:
                 Tasty.isSubtypeOf(intType, anyType).map(v => assert(v == Tasty.SubtypeVerdict.Sub))
     }
 
-    // Test 11: String <: Int returns NotSub
     "String <: Int returns NotSub" in {
         nextId = 0
         val stringSym  = makeSym("java.lang.String")
@@ -240,7 +225,6 @@ class SubtypeTest extends kyo.test.Test[Any]:
                 Tasty.isSubtypeOf(stringType, intType).map(v => assert(v == Tasty.SubtypeVerdict.NotSub))
     }
 
-    // Test 12: budget=0 forces Indeterminate (simulates deep Rec exhaustion without building 66 unfoldings)
     "budget exhaustion returns Indeterminate" in {
         nextId = 0
         val stringSym  = makeSym("java.lang.String")
@@ -253,7 +237,6 @@ class SubtypeTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Test 14: real deeply-nested Rec type exhausts default budget.
     "real 66-deep Rec chain exhausts default budget=64 and returns Indeterminate" in {
         nextId = 0
         val leafSym          = makeSym("RecBudgetLeaf")
@@ -274,7 +257,6 @@ class SubtypeTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // Test 13: missing parent chain returns NotSub
     "empty parent chain returns NotSub" in {
         nextId = 0
         val fooSym  = makeSym("test.Foo")

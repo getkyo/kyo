@@ -20,7 +20,6 @@ class TastyErrorTest extends kyo.test.Test[Any]:
         else Array(((n >> 7) & 0x7f).toByte, ((n & 0x7f) | 0x80).toByte)
     end encodeNat
 
-    // Test 1: MalformedSection carries byte offset
     //        The nameRef Nat encodes as one byte at position 0. After reading it,
     //        view.position == 1. The MalformedSection is raised with byteOffset = 1.
     "MalformedSection carries non-zero byte offset when cursor has advanced" in {
@@ -36,7 +35,6 @@ class TastyErrorTest extends kyo.test.Test[Any]:
                     fail(s"Expected MalformedSection with byteOffset but got: $other")
     }
 
-    // Test 2: ClassfileFormatError captures decode position
     //        cp_count field (not at the classfile header). We feed:
     //          cp_count = 2 (2 bytes: 0x00 0x02)
     //          idx=1 tag = 0xFF (1 byte: unknown tag)
@@ -59,7 +57,6 @@ class TastyErrorTest extends kyo.test.Test[Any]:
                     fail(s"Expected ClassfileFormatError but got: $other")
     }
 
-    // Test 3: SnapshotFormatError carries byte position field
     //        detection path in SnapshotReader has no stream cursor available (it checks
     //        array bytes before any cursor-based read), so byteOffset = 0L is the sentinel.
     "SnapshotFormatError carries byteOffset field (0L sentinel for no-cursor path)" in {
@@ -88,7 +85,6 @@ class TastyErrorTest extends kyo.test.Test[Any]:
             end match
     }
 
-    // Test 5: requireClass("") raises InvalidFqn, not NotFound
     //        This distinguishes a caller programming error (empty input) from a genuine not-found result.
     "requireClass empty string raises InvalidFqn not NotFound" in {
         Tasty.withPickles(Chunk.empty)(Tasty.classpath).flatMap: cp =>

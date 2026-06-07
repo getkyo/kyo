@@ -92,8 +92,7 @@ trait FileSource:
       * The returned `ZipHandle` is Scope-bound; its backing resources are released when the enclosing Scope exits.
       *
       * The default implementation returns `Maybe.Absent`. Platform-specific overrides (JVM) open the jar bytes and serve entries from an
-      * in-memory map. JS and Native implementations return `Maybe.Absent`; transparent zip parsing may be added in a later
-      * phase.
+      * in-memory map. JS and Native implementations return `Maybe.Absent`.
       */
     def openZip(root: String)(using Frame): Maybe[ZipHandle] < (Sync & Scope & Abort[TastyError]) =
         Maybe.Absent

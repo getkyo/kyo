@@ -58,7 +58,6 @@ class SnapshotWriterTest extends kyo.test.Test[Any]:
                     case None        => Abort.fail(TastyError.FileNotFound(path))
     end MemoryFileSource
 
-    // Test 1 (writer side): PARENTS, MEMBERS, and TPARAMS_ sections have length > 0
     // after writing a snapshot from a real TASTy classpath that has class declarations and parents.
     "snapshot PARENTS, MEMBERS, and TPARAMS_ sections have length > 0 after writing a real classpath" in {
         val src = MemoryFileSource()

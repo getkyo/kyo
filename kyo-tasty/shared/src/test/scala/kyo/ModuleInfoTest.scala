@@ -250,7 +250,6 @@ class ModuleInfoTest extends kyo.test.Test[Any]:
     end buildModuleInfoClass
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Test 1: synthetic module-info.class with requires java.base decodes correctly
     // ─────────────────────────────────────────────────────────────────────────
     "synthetic module-info.class for 'foo.bar requires java.base' decodes to correct name and requires" in {
         val bytes = buildModuleInfoClass(
@@ -279,7 +278,6 @@ class ModuleInfoTest extends kyo.test.Test[Any]:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Test 2: module with exports: exports list correct
     // ─────────────────────────────────────────────────────────────────────────
     "module-info.class with exports foo/bar to baz.qux: exports list decodes correctly" in {
         val bytes = buildModuleInfoClass(
@@ -312,7 +310,6 @@ class ModuleInfoTest extends kyo.test.Test[Any]:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Test 3: module with uses: uses list decodes correctly
     // ─────────────────────────────────────────────────────────────────────────
     "module-info.class with 'uses com/example/Service' decodes uses list correctly" in {
         val bytes = buildModuleInfoClass(
@@ -337,7 +334,6 @@ class ModuleInfoTest extends kyo.test.Test[Any]:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Test 4: module with provides: provides list decodes correctly
     // ─────────────────────────────────────────────────────────────────────────
     "module-info.class with 'provides com/example/Service with com/example/Impl' decodes provides correctly" in {
         val bytes = buildModuleInfoClass(
@@ -370,7 +366,6 @@ class ModuleInfoTest extends kyo.test.Test[Any]:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Test 5: wrong magic returns ClassfileFormatError
     // ─────────────────────────────────────────────────────────────────────────
     "module-info.class with wrong magic returns Abort.fail(ClassfileFormatError)" in {
         // Build a byte array with wrong magic (0xDEADBEEF)

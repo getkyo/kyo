@@ -4,7 +4,6 @@ import kyo.internal.tasty.scala2.PortableInflate
 
 class PortableInflateTest extends kyo.test.Test[Any]:
 
-    // Test 1: BitStream reads single bits LSB-first
     // byte 0xB4 = 0b10110100; LSB-first: [0, 0, 1, 0, 1, 1, 0, 1]
     "BitStream reads single bits LSB-first" in {
         // §839 case 3; direct BitStream test, single-threaded, no suspension.
@@ -15,7 +14,6 @@ class PortableInflateTest extends kyo.test.Test[Any]:
         assert(bits.toSeq == Seq(0, 0, 1, 0, 1, 1, 0, 1), s"Expected [0,0,1,0,1,1,0,1] but got ${bits.toSeq}")
     }
 
-    // Test 2: BitStream.readBits(n) packs LSB-first
     // byte 0xD6 = 0b11010110; readBits(4) => 0b0110 = 6, readBits(4) => 0b1101 = 13
     "BitStream.readBits(n) packs LSB-first" in {
         // §839 case 3; direct BitStream test, single-threaded, no suspension.
@@ -28,7 +26,6 @@ class PortableInflateTest extends kyo.test.Test[Any]:
         assert(hi == 13, s"Expected hi=13 (0b1101) but got $hi")
     }
 
-    // Test 3: HuffmanTree.fromCodeLengths + decodeOne - RFC 1951 §3.2.2 example
     // Symbols A-H (indices 0-7) with lengths [3,3,3,3,3,2,4,4].
     // Canonical codes (MSB-first representation):
     //   sym 5 (F), len 2: 00
@@ -55,7 +52,6 @@ class PortableInflateTest extends kyo.test.Test[Any]:
         assert(symA == 0, s"Expected symbol index 0 (A) but got $symA")
     }
 
-    // Test 4: HuffmanTree.decodeOne throws InflateException for invalid code
     // Tree with lengths [2, 2]: sym 0 -> code 00, sym 1 -> code 01 (maxBits=2).
     // Stream bits 1,1 (byte 0x03 = 0b00000011): produces code=3 at len=2 which exceeds table, throws.
     "HuffmanTree decodeOne throws InflateException for invalid Huffman code" in {
@@ -74,7 +70,6 @@ class PortableInflateTest extends kyo.test.Test[Any]:
         end try
     }
 
-    // Test 5: decodeStoredBlock copies raw bytes and validates LEN ^ NLEN
     // Buffer layout: byte0 = header (BFINAL=1 BTYPE=00 = 0x01, alignment padding auto-skipped),
     // bytes 1-2 = LEN=3 LE, bytes 3-4 = NLEN=~3&0xFFFF=0xFFFC LE, bytes 5-7 = 'A','B','C'
     // The test reads BFINAL+BTYPE (3 bits) first to simulate the block-loop entry, then calls
@@ -104,7 +99,6 @@ class PortableInflateTest extends kyo.test.Test[Any]:
         )
     }
 
-    // Test 6: decodeFixedHuffmanBlock decodes "AAA"
     // Fixed Huffman literal code for 65 ('A'):
     //   RFC 1951 §3.2.6: literals 0-143 use 8-bit codes starting at canonical 48 (0b00110000).
     //   Code for 65 = 48 + 65 = 113 = 0b01110001 (MSB-first).
@@ -133,7 +127,6 @@ class PortableInflateTest extends kyo.test.Test[Any]:
         )
     }
 
-    // debt: copyBack rejects out-of-range LZ77 distance.
     // A corrupt deflate stream that emits a backreference with dist > out.length
     // must raise InflateException, not a raw IndexOutOfBoundsException.
     "copyBack rejects LZ77 distance beyond output buffer length" in {
@@ -147,7 +140,6 @@ class PortableInflateTest extends kyo.test.Test[Any]:
         end try
     }
 
-    // Test 7: ZLIB input shorter than 6 bytes is rejected.
     // Minimum valid ZLIB stream is 2 bytes (CMF+FLG) + at least 1 deflate byte + 4 Adler bytes = 7 bytes,
     // but the guard is set at 6 to catch obviously truncated inputs early.
     "inflate rejects ZLIB input shorter than 6 bytes" in {
@@ -166,7 +158,6 @@ class PortableInflateTest extends kyo.test.Test[Any]:
         end try
     }
 
-    // Test 8: ZLIB stored-block envelope with a corrupted Adler-32 trailer is rejected.
     // Byte construction:
     //   byte[0]=0x78 (CMF): CM=8 (deflate), CINFO=7 (window=32k)
     //   byte[1]=0x9C (FLG): FCHECK: (0x78*256+0x9C)=30876, 30876%31=0, checksum valid; FDICT bit clear
@@ -203,11 +194,10 @@ class PortableInflateTest extends kyo.test.Test[Any]:
         end try
     }
 
-    // Test 9 (deferred dynamic Huffman, now landing): Full ZLIB round-trip with dynamic Huffman block.
     // Fixture capture: produced via Java's java.util.zip.Deflater(DEFAULT_COMPRESSION) on the input
     // "aaabbbcccdddeeefffggghhh" repeated 50 times (1200 bytes). This highly repetitive ASCII input
     // causes the JVM deflater to emit a dynamic Huffman block (BTYPE=10), covering the
-    // decodeDynamicHuffmanBlock + decodeCodeLengths paths that were deferred from.
+    // decodeDynamicHuffmanBlock + decodeCodeLengths paths.
     // Capture command used (Java):
     //   byte[] input = "aaabbbcccdddeeefffggghhh".repeat(50).getBytes("UTF-8");
     //   DeflaterOutputStream dos = new DeflaterOutputStream(baos, new Deflater(DEFAULT_COMPRESSION));

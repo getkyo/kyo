@@ -73,7 +73,6 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     }
 
     // snapshot-version-downgrade-falls-back
-    // Migration: was jvmOnly via TestClasspaths2.v3FormatKrflBytes + createTempDir + JvmFileSource.
     "old-version .krfl snapshot causes SnapshotVersionMismatch" in {
         import kyo.internal.MemoryFileSource
         import kyo.internal.tasty.snapshot.SnapshotReader

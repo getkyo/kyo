@@ -8,7 +8,6 @@ class VarintTest extends kyo.test.Test[Any]:
 
     private def viewOf(bytes: Array[Byte]): ByteView = ByteView(bytes)
 
-    // Test 7: readNat decodes 0
     "readNat decodes 0 (single terminating byte 0x80)" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
@@ -17,7 +16,6 @@ class VarintTest extends kyo.test.Test[Any]:
         assert(Varint.readNat(view) == 0)
     }
 
-    // Test 8: readNat decodes 127
     "readNat decodes 127 (single byte 0xFF)" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
@@ -26,7 +24,6 @@ class VarintTest extends kyo.test.Test[Any]:
         assert(Varint.readNat(view) == 127)
     }
 
-    // Test 9: readNat decodes 128 (two bytes)
     "readNat decodes 128 (two-byte encoding)" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
@@ -37,7 +34,6 @@ class VarintTest extends kyo.test.Test[Any]:
         assert(Varint.readNat(view) == 128)
     }
 
-    // Test 10: readNat decodes 16383 (two-byte maximum)
     "readNat decodes 16383 (max two-byte value)" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
@@ -48,7 +44,6 @@ class VarintTest extends kyo.test.Test[Any]:
         assert(Varint.readNat(view) == 16383)
     }
 
-    // Test 11: readNat decodes Int.MaxValue (5 bytes)
     "readNat decodes Int.MaxValue (5-byte encoding)" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
@@ -60,7 +55,6 @@ class VarintTest extends kyo.test.Test[Any]:
         assert(Varint.readNat(view) == Int.MaxValue)
     }
 
-    // Test 12: readInt decodes -1 (dotty 2's complement, NOT zigzag)
     "readInt decodes -1 using dotty sign-extension semantics" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
@@ -72,7 +66,6 @@ class VarintTest extends kyo.test.Test[Any]:
         assert(Varint.readInt(view) == -1)
     }
 
-    // Test 13: readInt decodes Int.MinValue
     "readInt decodes Int.MinValue using dotty sign-extension semantics" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
@@ -115,7 +108,6 @@ class VarintTest extends kyo.test.Test[Any]:
         assert(Varint.readInt(view) == Int.MinValue)
     }
 
-    // Test 14: readLongNat decodes Long.MaxValue
     "readLongNat decodes Long.MaxValue" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
@@ -187,7 +179,7 @@ class VarintTest extends kyo.test.Test[Any]:
     }
 
     // large-section-offsets-decode
-    // A 6-byte non-minimal encoding of 0 previously threw "5 bytes"; now decodes to 0.
+    // A 6-byte non-minimal encoding of 0 decodes to 0 (non-minimal encodings are accepted).
     "readNat decodes 6-byte non-minimal encoding (large-section-offset fix)" in {
         // §839 case 3; direct Varint test, single-threaded, no suspension.
         // Non-minimal encoding of 0 in 6 bytes:

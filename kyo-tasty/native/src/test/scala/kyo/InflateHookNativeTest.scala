@@ -2,10 +2,7 @@ package kyo
 
 import kyo.internal.tasty.scala2.InflateHook
 
-/** Native-specific test for InflateHook.inflate.
-  *
-  * Mirrors the shared InflateHookTest logic (which is tagged jvmOnly) to verify the Native implementation. Both use the same hardcoded ZLIB
-  * envelope for "hello kyo".
+/** Native-specific test for InflateHook.inflate. Verifies the Native implementation using the same hardcoded ZLIB envelope for "hello kyo".
   */
 class InflateHookNativeTest extends kyo.test.Test[Any]:
 

@@ -13,7 +13,6 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     import AllowUnsafe.embrace.danger
 
     // TASTy bytes with valid magic but a name table that references index 254 (out of range for the truncated table).
-    // Mirrors TestClasspaths2Jvm.truncatedTastyPath byte construction.
     private def truncatedTastyBytes: Array[Byte] =
         val magic        = Array[Byte](0x5c.toByte, 0xa1.toByte, 0xab.toByte, 0x1f.toByte)
         val version      = Array[Byte](0x9c.toByte, 0x88.toByte, 0x80.toByte)
@@ -25,7 +24,6 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     end truncatedTastyBytes
 
     // TASTy bytes with a bit-flipped magic byte (first byte XOR 0x01).
-    // Mirrors TestClasspaths2Jvm.bitFlippedMagicTastyPath byte construction.
     private def bitFlippedMagicBytes: Array[Byte] =
         val magic   = Array[Byte](0x5c.toByte, 0xa1.toByte, 0xab.toByte, 0x1f.toByte)
         val corrupt = Array[Byte]((magic(0) ^ 0x01).toByte) ++ magic.drop(1)
@@ -35,7 +33,6 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     end bitFlippedMagicBytes
 
     // TASTy bytes with valid magic but a mid-stream truncated name table.
-    // Mirrors TestClasspaths2Jvm.corruptedMidStreamTastyPath byte construction.
     private def corruptedMidStreamBytes: Array[Byte] =
         val magic        = Array[Byte](0x5c.toByte, 0xa1.toByte, 0xab.toByte, 0x1f.toByte)
         val version      = Array[Byte](0x9c.toByte, 0x88.toByte, 0x80.toByte)

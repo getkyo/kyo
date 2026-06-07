@@ -14,8 +14,6 @@ class TastySymbolTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // ── Fixture infrastructure (mirrors QueryApiTest pattern) ─────────────────
-
     final class MemoryFileSource(files: mutable.HashMap[String, Array[Byte]] = mutable.HashMap.empty) extends FileSource:
 
         def add(path: String, bytes: Array[Byte]): Unit = files(path) = bytes
@@ -76,9 +74,6 @@ class TastySymbolTest extends kyo.test.Test[Any]:
         src
     end someCaseClassSource
 
-    // ── Tests ───────────────────────────────────────────────────────
-
-    // Test 3 (, Symbol.fullName): fullName.asString returns the dotted FQN.
     "Symbol.fullName.asString returns the dotted FQN for a fixture class" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
@@ -153,7 +148,6 @@ class TastySymbolTest extends kyo.test.Test[Any]:
     private def makeModule(name: String, owner: Tasty.Symbol): Tasty.Symbol =
         Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name(name), Tasty.Flags(Tasty.Flag.Module), Tasty.SymbolId(-1), Chunk.empty)
 
-    // Test 1 (INV: T1, kyo.internal.tasty.symbol.BinaryName.compute(Symbol, cp)): nested Scala class produces JVM binary name with '$' separator.
     "kyo.internal.tasty.symbol.BinaryName.compute(Symbol, cp) nested class returns com/example/Outer$Inner" in {
         import kyo.Tasty.SymbolId
         val comSym     = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("com"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
@@ -273,11 +267,7 @@ class TastySymbolTest extends kyo.test.Test[Any]:
         )
     }
 
-    // T1 gap: declarations returns empty Chunk for a fresh synthetic symbol (no classpath).
-    // _declarations.get directly (no isSet guard), so accessing an unset slot throws ISE.
-    // This test documents the behavior: unset slot throws ISE, which is the correct protocol --
-    // production callers only read declarations after classpath open assigns the slot.
-    // We verify via the fixture classpath instead so we get a real (empty) value.
+    // Production callers only read declarations after classpath open assigns the slot.
     "Symbol.declarationIds returns Chunk for fixture class" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
@@ -292,7 +282,6 @@ class TastySymbolTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // T1 gap: typeParams returns Chunk for fixture class.
     "Symbol.typeParams returns Chunk for fixture class" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
@@ -310,7 +299,6 @@ class TastySymbolTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // T1 gap: scaladoc returns Absent for a synthetic symbol (no Comments section).
     "Symbol.scaladoc returns Absent for synthetic symbol" in {
         val root = makeRoot()
         val sym  = makeClass("SyntheticFoo", root)
@@ -321,7 +309,6 @@ class TastySymbolTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // T1 gap: position returns Absent for a synthetic symbol (no Positions section).
     "Symbol.sourcePosition returns Absent for synthetic symbol" in {
         val sym = makeClass("SyntheticFoo", makeRoot())
         sym.sourcePosition match
@@ -329,7 +316,6 @@ class TastySymbolTest extends kyo.test.Test[Any]:
             case Present(p) => fail(s"Expected Absent for synthetic symbol sourcePosition but got Present($p)")
     }
 
-    // T1 gap: flags.contains tests.
     "Symbol.flags.contains returns true for set flag and false for unset flag" in {
         val root = makeRoot()
         val sym  = makeModule("Foo", root)
@@ -343,7 +329,6 @@ class TastySymbolTest extends kyo.test.Test[Any]:
         )
     }
 
-    // Test (T4, root-owned FQN): root sentinel Symbol where ownerId == id returns just its own name.
     "root sentinel Symbol fullName returns its own name" in {
         import kyo.Tasty.SymbolId
         val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
@@ -414,7 +399,6 @@ class TastySymbolTest extends kyo.test.Test[Any]:
                 assert(fqn.contains("MyClass"), s"Expected fullName to contain 'MyClass' but got '$fqn'")
     }
 
-    // T1 gap: kind accessor on each major SymbolKind.
     "Symbol.kind returns the kind passed to Symbol.make" in {
         // Symbol.makePlaceholder deleted. Verify kind by constructing typed symbols directly.
         import kyo.Tasty.SymbolId

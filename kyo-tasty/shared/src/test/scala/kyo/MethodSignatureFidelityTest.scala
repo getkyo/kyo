@@ -29,8 +29,7 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
             assert(
                 sentinelFraction < 0.5,
                 s"Expected fewer than 50% of Scala-sourced methods to have Named(SymbolId(-1)) declaredType, " +
-                    s"but found ${sentinelMethods.size} / $total (${(sentinelFraction * 100).toInt}%). " +
-                    s"Pre-fix ALL methods had Named(-1). Post-fix most should resolve to real types."
+                    s"but found ${sentinelMethods.size} / $total (${(sentinelFraction * 100).toInt}%)."
             )
             succeed
         }
@@ -101,8 +100,7 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
             assert(
                 badFraction <= 0.5,
                 s"Expected at most 50% of ThisType instances to resolve to non-class symbols. " +
-                    s"Found $badThisCount out of $totalThisCount (${(badFraction * 100).toInt}%) resolving to non-class. " +
-                    s"Before fix ALL ($totalThisCount) had id == -1 (sentinel 'this-unknown')."
+                    s"Found $badThisCount out of $totalThisCount (${(badFraction * 100).toInt}%) resolving to non-class."
             )
             succeed
         }
@@ -116,8 +114,7 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
             assert(
                 recAtSymbols.isEmpty,
                 s"Expected zero symbols with name starting 'rec@', but found ${recAtSymbols.size}. " +
-                    s"First few: ${recAtSymbols.take(5).map(_.name.asString).mkString(", ")}. " +
-                    s"Before fix TypeUnpickler.RECthis emitted a fresh makeUnresolvedSym per rec-addr."
+                    s"First few: ${recAtSymbols.take(5).map(_.name.asString).mkString(", ")}."
             )
             succeed
         }
@@ -132,9 +129,8 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
             val phase01Baseline = 11
             assert(
                 sentinelNames.size < phase01Baseline,
-                s"Expected sentinel name-set size < $phase01Baseline vs prior baseline, but got ${sentinelNames.size}. " +
-                    s"Names: ${sentinelNames.mkString(", ")}. " +
-                    s"Before fix each new rec@/this-unknown/etc call produced a fresh SymbolId(-1) symbol."
+                s"Expected sentinel name-set size < $phase01Baseline, but got ${sentinelNames.size}. " +
+                    s"Names: ${sentinelNames.mkString(", ")}."
             )
             succeed
         }

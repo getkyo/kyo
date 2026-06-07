@@ -82,7 +82,6 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         TypeUnpickler.readType(view, names, addrMap, arena, bytes, 0)
     end decodeType
 
-    // Test 12: decoding a TYPEREFsymbol node for a known symbol returns Named(sym).
     "decoding TYPEREFsymbol returns Named(intSymbol)" in {
         val sym     = makeSym("Int")
         val symAddr = 42
@@ -103,7 +102,6 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 13: decoding a BYNAMEtype wrapping a symbol returns ByName(Named(sym)).
     "decoding BYNAMEtype wrapping a TYPEREFsymbol returns ByName(Named(sym))" in {
         val sym        = makeSym("Int")
         val symAddr    = 10
@@ -124,7 +122,6 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 14: decoding a REPEATED node returns Repeated(elem).
     "decoding REPEATED returns Repeated(elem)" in {
         val sym       = makeSym("String")
         val symAddr   = 5
@@ -145,7 +142,6 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 15: decoding APPLIEDtype for List[String] returns Applied(Named(listSym), Chunk(Named(stringSym))).
     "decoding APPLIEDtype for List[String] returns Applied(Named(list), Chunk(Named(string)))" in {
         val listSym    = makeSym("List")
         val stringSym  = makeSym("String")
@@ -174,7 +170,6 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 16: decoding a SHAREDtype reference returns the same reference as the originally-decoded type.
     // Uses a real SHAREDtype byte stream: first type decoded at addr 0, second is SHAREDtype(0).
     // Both are decoded in a single shared DecodeSession so addrCache is shared.
     // Asserts that the SHAREDtype result is eq-identical to the first-decoded type (same reference,
@@ -210,7 +205,6 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         )
     }
 
-    // Test 17: decoding TYPELAMBDAtype returns TypeLambda(params, body) with params.size == 1.
     "decoding TYPELAMBDAtype with one param returns TypeLambda with params.size == 1" in {
         val paramSym   = makeSym("A", SymbolKind.TypeParam)
         val resultSym  = makeSym("Int")
@@ -238,7 +232,6 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 18: decoding ANNOTATEDtype eagerly decodes the annotation term into arguments: Chunk[Tree].
     // arguments is now a plain Chunk[Tree] field populated eagerly during Pass B.
     // The annotation term TYPEREFpkg(0) decodes to a TermRefPkg tree; arguments holds a single-element Chunk.
     "decoding ANNOTATEDtype eagerly populates Annotation.arguments as Chunk[Tree]" in {
@@ -268,7 +261,6 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 18b: Annotation.arguments for a UNITconst term is Chunk(Literal(UnitConst)) after eager decode.
     // arguments is a plain Chunk[Tree] field; no Abort.run needed to access it.
     "ANNOTATEDtype with UNITconst term: Annotation.arguments == Chunk(Literal(UnitConst))" in {
         val sym        = makeSym("Int")
@@ -293,7 +285,6 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 18c: Annotation constructed directly with Chunk.empty has no arguments (synthetic annotation).
     // pure case class, no decode context needed.
     "Annotation(type, Chunk.empty).arguments is empty without any effect" in {
         val ann = Tasty.Annotation(Tasty.Type.Named(Tasty.SymbolId(makeSym("Foo").id)), Chunk.empty)
@@ -301,7 +292,6 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Test 19: decoding ORtype returns OrType(left, right).
     "decoding ORtype returns OrType(left, right)" in {
         val symA    = makeSym("A")
         val symB    = makeSym("B")
@@ -322,7 +312,6 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 20: decoding ANDtype returns AndType(left, right) (or normalized form via TypeOps).
     "decoding ANDtype returns AndType(left, right) or normalized form" in {
         val symA    = makeSym("A")
         val symB    = makeSym("B")
@@ -345,7 +334,6 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 21: decoding MATCHtype returns MatchType(bound, scrutinee, cases) with cases.size == 2.
     "decoding MATCHtype with 2 cases returns MatchType with cases.size == 2" in {
         val symBound = makeSym("Any")
         val symScrut = makeSym("X")
@@ -385,7 +373,6 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 22: decoding CONSTANTtype wrapping integer 42 returns ConstantType(IntConst(42)).
     "decoding INTconst 42 returns ConstantType(IntConst(42))" in {
         // INTconst (70) is category 2: tag + signed Int (dotty readInt).
         // In dotty TASTy, the LAST byte has 0x80 set. For value 42: (42 | 0x80) = 0xAA = 170.
@@ -401,7 +388,6 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 23: decoding RECtype with RECthis produces cycle-safe result (no stack overflow).
     // Actually calls TypeUnpickler.readTypeIntoSession on the RECtype/RECthis byte stream inside a
     // stack-limited thread (64KB), verifying that the decoder terminates without overflow and returns
     // a Tasty.Type.Rec whose parent is Tasty.Type.RecThis.
@@ -457,8 +443,7 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         assert(canonValues.exists(_ == recThis), s"Canonical arena must contain the interned RecThis; values size=${canonValues.size}")
     }
 
-    // Test 24 (redesigned for): TYPEREFin with unknown FQN creates a Named(unresolved).
-    // deleted UnresolvedRef; cross-file references now resolve to synthetic unresolved symbols directly.
+    // TYPEREFin with unknown FQN: cross-file references resolve to synthetic unresolved symbols directly.
     "decoding TYPEREFin with unknown FQN returns Named(unresolved) type" in {
         val names = Array(Tasty.Name("scala"), Tasty.Name("SomeCrossFileType"))
         // TYPEREFin (175) = cat5: [NameRef] [qual_Type] [namespace_Type]

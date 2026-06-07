@@ -17,18 +17,18 @@ import tastyquery.Symbols.PackageSymbol
   * "declared type" API that is directly comparable to kyo-tasty Symbol.Method.declaredType,
   * so we focus on FQN enumeration which is the most reliable structural invariant.
   *
-  * Timeout: 5 minutes per leaf. Under scoverage bytecode instrumentation the blocking
+  * Timeout: 5 minutes. Under scoverage bytecode instrumentation the blocking
   * ClasspathLoaders.read calls are measurably slower than in a plain run. Caching the
   * two distinct loads (fixtureRoots and standard) in DifferentialTastyTest.Cache ensures
-  * each root set is read at most once across all leaves.
+  * each root set is read at most once.
   */
 class DifferentialTastyTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // 5 minutes per leaf: covers scoverage overhead on the blocking ClasspathLoaders.read calls.
+    // 5 minutes: covers scoverage overhead on the blocking ClasspathLoaders.read calls.
     // Under plain sbt the test finishes in ~25s; under coverage the instrumentation overhead
-    // can push a single leaf close to 3 minutes, so 5 minutes gives a safe margin.
+    // can push a single test close to 3 minutes, so 5 minutes gives a safe margin.
     override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(5))
 
     /** Collect all top-level ClassSymbol FQNs from a tasty-query Context by walking the package tree. */
@@ -164,7 +164,7 @@ class DifferentialTastyTest extends kyo.test.Test[Any]:
             TestClasspaths.withClasspath(fixtureRoots)(Tasty.classpath).map: kyoCp =>
                 val kyoCount = kyoCp.topLevelClasses.size
 
-                // Reuse the cached Context (same root set as the FQN-parity leaf) to avoid a third blocking NIO scan.
+                // Reuse the cached Context to avoid a third blocking NIO scan.
                 val tqCount = tqTopLevelFqns(DifferentialTastyTest.fixturesContext).size
 
                 assert(kyoCount > 0, s"DIFF-003: kyo-tasty decoded 0 top-level classes from fixtures")

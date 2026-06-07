@@ -10,7 +10,6 @@ import kyo.stats.Attributes
   */
 class TastyStatTest extends kyo.test.Test[Any]:
 
-    // Test 1 (T2): TastyStat.scope.traceSpan invokes the supplied block exactly once.
     "TastyStat.scope.traceSpan invokes the block exactly once" in {
         val counter = new AtomicInteger(0)
         TastyStat.scope.traceSpan("test", Attributes.empty) {

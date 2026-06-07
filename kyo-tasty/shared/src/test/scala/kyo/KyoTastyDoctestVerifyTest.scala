@@ -149,12 +149,6 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 19: paramLists_signature_probe (INV-H3) ──────────────────────────
-    // Given: the public surface of object Tasty.
-    // When: typeCheckErrors is called for Tasty.paramLists with the locked signature.
-    // Then: the positive probe compiles cleanly with inferred Chunk[Chunk[Symbol.Parameter]] < Sync;
-    //       the negative probe (accessing .parentTypes on the inner element) fails to compile.
-    // Pins: INV-H3 (helper signature locked; result element type is Symbol.Parameter).
     "Tasty.paramLists exists with correct return type Chunk[Chunk[Symbol.Parameter]] < Sync (INV-H3)" in {
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Chunk[kyo.Chunk[kyo.Tasty.Symbol.Parameter]] < kyo.Sync = kyo.Tasty.paramLists(null: kyo.Tasty.Symbol.Method)"

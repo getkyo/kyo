@@ -22,7 +22,6 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
     import AllowUnsafe.embrace.danger
 
     // roundtrip-fidelity via in-memory snapshot
-    // Migration: was jvmOnly via withRoundTrip (real stdlib); now uses embedded fixtures.
     "snapshot warm-load preserves annotations and permittedSubclassIds" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
             for
@@ -62,7 +61,6 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
     }
 
     //   permits-roundtrip via in-memory snapshot
-    // Migration: was jvmOnly via withRoundTrip; now uses embedded fixtures.
     "permittedSubclassIds survives in-memory snapshot round-trip" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
             Kyo.foreachDiscard(coldCp.allClassLike):
@@ -90,7 +88,6 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
     }
 
     //   annotations-roundtrip via in-memory snapshot
-    // Migration: was jvmOnly with `>= 5` lower bound on real stdlib; now uses embedded fixtures (bound removed).
     "symbolsAnnotatedWith count survives in-memory snapshot round-trip" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
             for
@@ -107,7 +104,6 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
     }
 
     //   javametadata-roundtrip via in-memory snapshot
-    // Migration: was jvmOnly (required real stdlib.class files); embedded fixtures suffice for shape assertion.
     "javaMetadata survives in-memory snapshot round-trip" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
             coldCp.allClassLike.flatMap:

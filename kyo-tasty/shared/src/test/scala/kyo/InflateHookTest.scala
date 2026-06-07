@@ -92,10 +92,9 @@ class InflateHookTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // T5 JS delegation: JS InflateHook delegates to PortableInflate. Output must be byte-equal
-    // to a direct PortableInflate.inflate call on the same input. Pins T5.
+    // JS InflateHook delegates to PortableInflate. Output must be byte-equal
+    // to a direct PortableInflate.inflate call on the same input.
     "JS InflateHook output is byte-equal to direct PortableInflate.inflate".onlyJs in {
-        // §839 case 3; direct PortableInflate.inflate call for JS delegation test, single-threaded.
         import AllowUnsafe.embrace.danger
         val directResult =
             try PortableInflate.inflate(zlibCompressed)

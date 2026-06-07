@@ -3,21 +3,17 @@ package kyo
 import kyo.Tasty.SymbolId
 import kyo.internal.tasty.symbol.SymbolKind
 
-/**   *
-  * Tests 1, 3, 4, 5 from phase id 5. Test 2 (TypeArena canonicalization) lives in TypeArenaTest.
+/** Tests for SymbolId in the Type ADT.
   *
-  * Produces : SymbolId in Type ADT eliminates case-class cycles.
+  * Verifies that Type.Named carries SymbolId rather than a direct Symbol reference, eliminating
+  * case-class cycles in the type ADT. TypeArena canonicalization tests live in TypeArenaTest.
   */
 class TypeSymbolIdTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
     import kyo.Tasty.SymbolId
 
-    // ── Test 1: Type.Named carries SymbolId not Symbol ──────────────────────
-
-    /** Given: a Type.Named instance constructed with a known SymbolId. When: the symbolId field is accessed. Then: the field type is
-      * SymbolId and the integer value matches what was passed in. Pins: (no direct Symbol references in Type ADT).
-      */
+    /** Type.Named carries a SymbolId; the integer value matches what was passed in. */
     "Type.Named carries SymbolId not Symbol" in {
         val id    = SymbolId(42)
         val named = Tasty.Type.Named(id)
@@ -30,12 +26,7 @@ class TypeSymbolIdTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // ── Test 3: Type.Named(unresolved) creates a synthetic Unresolved entry ─
-
-    /** Given: a Classpath with a symbol at index 0 having kind=Unresolved. When: Pass C completes and the resulting Classpath is queried
-      * via cp.symbol(id). Then: cp.symbols contains a symbol with kind=Unresolved at the SymbolId index; no NullPointerException, no
-      * AIOOBE. Pins: (every Type.Named id resolves to a valid symbol).
-      */
+    /** Every Type.Named id resolves to a valid symbol in the classpath. */
     "Type.Named(unresolved) references a valid symbol in classpath" in {
         val unresolvedSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("does.not.Exist"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(unresolvedSym)).map: cp =>
@@ -52,12 +43,7 @@ class TypeSymbolIdTest extends kyo.test.Test[Any]:
             end match
     }
 
-    // ── Test 4: Type pattern equality does not recurse through Symbol ────────
-
-    /** Given: two distinct Symbols a and b with structurally identical parentTypes containing Named(SymbolId(7)). When: the parentTypes
-      * chunks are compared via ==. Then: comparison returns true and terminates in bounded time (no infinite recursion). Pins:
-      * (case-class equals on Type values never recurses through Symbol or Classpath).
-      */
+    /** Case-class equals on Type values never recurses through Symbol or Classpath. */
     "Type pattern equality does not recurse through Symbol" in {
         val sharedId  = SymbolId(7)
         val namedType = Tasty.Type.Named(sharedId)
@@ -71,11 +57,6 @@ class TypeSymbolIdTest extends kyo.test.Test[Any]:
         assert(equal, "Structurally identical parentTypes chunks must be equal")
     }
 
-    // ── Test 5: isSubtypeOf and show are member methods, not extensions ──────
-
-    /** Given: a Type t. When: Tasty.isSubtypeOf(t, other) and Tasty.typeShow(t) are called from user code without importing any extension namespace. Then:
-      * both calls compile and resolve to the enum member. Pins: (member methods on owned types).
-      */
     "isSubtypeOf and show are member methods, not extensions" in {
         Tasty.withPickles(Chunk.empty):
             val t: Tasty.Type     = Tasty.Type.Named(SymbolId(0))

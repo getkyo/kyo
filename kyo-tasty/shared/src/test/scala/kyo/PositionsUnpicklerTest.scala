@@ -68,9 +68,6 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
         )
     end makeTestSymbol
 
-    // ── Test 1: fixture TASTy position: class Foo at line 3, column 1 ─────────
-
-    // Test 1: a synthetic Positions section encoding a single class definition at line 3, column 1.
     // LineSizes = [10, 5, 20] means:
     //   line 1: chars 0-10 (11 chars incl. '\n'), lineStarts[0]=0
     //   line 2: chars 11-16 (6 chars incl. '\n'), lineStarts[1]=11
@@ -106,9 +103,6 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // ── Test 2: no Positions section returns empty map without error ──────────
-
-    // Test 2: an empty Positions section (zero-length payload) returns an empty map without error.
     "PositionsUnpickler: empty payload returns empty map without error" in {
         val view = ByteView(Array.empty[Byte])
         Abort.run[TastyError](PositionsUnpickler.read(view, IntMap.empty, Absent)).map:
@@ -120,9 +114,6 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // ── Test 3: malformed Positions section fails with MalformedSection ───────
-
-    // Test 3: a Positions section truncated mid-entry produces
     // Abort.fail(TastyError.MalformedSection("Positions".)).
     // Payload: numLines=2, line sizes [10, 10], then a header byte indicating hasStart=true but
     // no start_delta follows (truncated). ArrayIndexOutOfBoundsException triggers MalformedSection.
@@ -149,9 +140,6 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // ── Test 4: Java classfile symbol has position == Absent ─────────────────
-
-    // Test 4: a Java-sourced classfile symbol always has position == Absent because
     // classfiles have no TASTy Positions section; ClassfileUnpickler sets _position to Absent.
     "PositionsUnpickler: Java classfile symbol always has position == Absent" in {
         val classBytes = kyo.fixtures.Embedded.arrayRecordClass
@@ -176,9 +164,6 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // ── Test 5: two siblings have distinct line/column values ─────────────────
-
-    // Test 5: two sibling definitions in the same file have distinct line/column values.
     // LineSizes = [10, 10]: line 1 chars 0-10, line 2 chars 11-21.
     // Sym1 at addrIndex=3, offset=2 => line 1, col 3.
     // Sym2 at addrIndex=7, offset_delta=+11 => cumulative offset=13 => line 2, col 3.

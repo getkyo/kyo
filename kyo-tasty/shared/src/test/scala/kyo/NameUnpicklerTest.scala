@@ -31,7 +31,6 @@ class NameUnpicklerTest extends kyo.test.Test[Any]:
     private def skipHeader(view: ByteView)(using Frame): Unit < Abort[TastyError] =
         TastyHeader.read(view).unit
 
-    // Test 7: loading the fixture TASTy file: the Names section is present and non-empty.
     "loading PlainClass.tasty produces a non-empty name array" in {
         val bytes = loadFixture()
         val view  = ByteView(bytes)
@@ -53,7 +52,6 @@ class NameUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 8: the name "PlainClass" is in the decoded name array (fixture top-level class name).
     "PlainClass fixture: name 'PlainClass' appears in the decoded name array" in {
         val bytes = loadFixture()
         val view  = ByteView(bytes)
@@ -72,7 +70,6 @@ class NameUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 9: a QUALIFIED name entry (two simple-name parts joined by ".") decodes to a dotted string.
     "PlainClass fixture: a QUALIFIED name entry decodes to a dotted string" in {
         val bytes = loadFixture()
         val view  = ByteView(bytes)
@@ -98,7 +95,6 @@ class NameUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 10: a corrupt section (truncated mid-name) produces Abort.fail(TastyError.MalformedSection("Names".)).
     "corrupt name table (truncated mid-entry) produces MalformedSection" in {
         // Build a fake name table: name-table-byte-count Nat says 10 bytes are coming, but we only provide 3.
         // Name table length = 10 (as Nat: single byte 0x8a because 10 | 0x80 = 0x8a)
@@ -122,7 +118,6 @@ class NameUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 11: all decoded names are interned: same bytes interned twice give reference-equal underlying entries.
     "interning the same byte sequence twice gives reference-equal underlying entries" in {
         val bytes = loadFixture()
         val view  = ByteView(bytes)
@@ -148,7 +143,6 @@ class NameUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 12 (P2-W5 STEERING directive): trailing padding bytes must NOT be interpreted as an extra entry.
     // The byte-count-delimited loop must stop at nameTableEnd even if more bytes follow.
     "name table loop stops at nameTableByteCount boundary, ignoring trailing bytes" in {
         // Construct a name table with:

@@ -13,7 +13,6 @@ import kyo.internal.tasty.symbol.SymbolKind
   */
 class SymbolKindTest extends kyo.test.Test[Any]:
 
-    // Test 8 (T2, SymbolKind): enum contains every documented case and has the expected count.
     "SymbolKind.values contains all 14 documented cases" in {
         val values = SymbolKind.values
         assert(

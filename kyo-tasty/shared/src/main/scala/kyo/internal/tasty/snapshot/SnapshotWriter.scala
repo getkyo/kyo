@@ -249,8 +249,7 @@ object SnapshotWriter:
         // NOTE: serializeFqnIndex calls internName for every fqnIndex key. This MUST execute before
         // serializeNamePool so all FQN strings are present in the name pool that the reader uses to
         // decode FQNIDX__ name IDs. Moving serializeFqnIndex after serializeNamePool causes the reader
-        // to skip entries whose name IDs exceed the stored pool length (the root cause of the cold/warm
-        // fqnIndex.size gap fixed by this phase).
+        // to skip entries whose name IDs exceed the stored pool length.
         val fqnIdxBytes = serializeFqnIndex(cp.indices.byFqn, symbolList, internName)
 
         // FQNMAP__ section: unresolvedFqnByNegId map (negId -> FQN string for external annotation types).

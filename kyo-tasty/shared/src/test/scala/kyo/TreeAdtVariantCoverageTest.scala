@@ -13,7 +13,7 @@ import kyo.internal.tasty.symbol.SymbolBody
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 
-/** Verifies that the 28 previously-uncovered Tree ADT variants are reachable via TASTy decode.
+/** Verifies that 28 Tree ADT variants are reachable via TASTy decode.
   *
   * Two complementary approaches are used:
   *
@@ -94,9 +94,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
             body = Maybe.Absent
         ))
 
-    // ── Byte-pickle decode helper ─────────────────────────────────────────────
-
-    /** Decode a hand-crafted byte pickle via decodeAnnotationTerm (mirrors TreeUnpicklerTest.decodeAnnPickle). */
+    /** Decode a hand-crafted byte pickle via decodeAnnotationTerm. */
     private def decodePickle(
         pickle: Array[Byte],
         names: Array[Tasty.Name],

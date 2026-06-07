@@ -138,8 +138,7 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
                     succeed
                 case Absent =>
                     fail(
-                        s"cp.findSymbol(kyo.fixtures.SomeObject$$) returned Absent; the primary binary key " +
-                            s"must remain indexed (HARD RULE 4 layered compat)."
+                        s"cp.findSymbol(kyo.fixtures.SomeObject$$) returned Absent; the primary binary key must remain indexed."
                     )
     }
 
