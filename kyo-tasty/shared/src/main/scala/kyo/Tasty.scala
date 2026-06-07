@@ -770,6 +770,38 @@ object Tasty:
                 case _                   => Chunk.empty
             ).flatMap(id => cp.symbol(id).toChunk)
 
+    /** Resolve a method's parameter-list groups into `Symbol.Parameter` entries.
+      *
+      * Mirrors `typeParams` and `declarations` in this queries section. The outer `Chunk`
+      * is per parameter list in source order; the inner `Chunk` is the parameters of that
+      * list in source order. For a method with no parameter lists (e.g. `def name: T`),
+      * the result is `Chunk.empty`. For a method with `def f()(a: A): Unit`, the result
+      * has two elements: `Chunk(Chunk.empty, Chunk(a))` preserving the explicit empty clause.
+      *
+      * For a method carrying `Flag.Extension`, the receiver is `paramLists(method).head.head`:
+      * dotty emits the synthetic receiver as the first `PARAM` of the first parameter list,
+      * before any user-written parameter clause. No `Flag.ExtensionReceiver` is consulted;
+      * the positional convention is the sole identification rule.
+      *
+      * Broken `SymbolId` references inside `paramListIds` are dropped from the result.
+      * Non-`Parameter` ids (which by construction Pass C never emits) are also dropped.
+      * Callers that need a one-to-one positional mapping with `paramListIds` should walk
+      * the raw id field via `cp.symbol` themselves.
+      *
+      * Effect row: `< Sync` (lazy classpath init on first access). No new `AllowUnsafe` site.
+      *
+      * @param method the method whose parameter lists are requested
+      * @return per-list-group resolved `Symbol.Parameter` entries; outer chunk preserves list
+      *         boundaries; empty outer chunk for methods with no parameter lists
+      */
+    def paramLists(method: Symbol.Method)(using Frame): Chunk[Chunk[Symbol.Parameter]] < Sync =
+        classpath.map: cp =>
+            method.paramListIds.map: idGroup =>
+                idGroup.flatMap: id =>
+                    cp.symbol(id) match
+                        case Maybe.Present(p: Symbol.Parameter) => Chunk(p)
+                        case _                                  => Chunk.empty
+
     /** Return the permitted direct subclasses of a sealed class or trait.
       *
       * For sealed `Symbol.Class` or sealed `Symbol.Trait`, returns the symbols recorded in
@@ -3079,7 +3111,7 @@ object Tasty:
 
         /** A `def`: a Scala source `def`, a Scala constructor (`<init>`), an extension method, a `transparent inline
           * def`, or a Java method. `paramListIds` records parameter groups in source order; each inner `Chunk`
-          * resolves through `paramLists(using cp)` into `Symbol.Parameter` entries. `typeParamIds` carries the
+          * resolves through `Tasty.paramLists(method)` into `Symbol.Parameter` entries. `typeParamIds` carries the
           * method's own type parameters; per-parameter-list type parameters appear under those parameter symbols.
           *
           * `declaredType` is the method's `MethodType` view (parameter types + result), `Present` for symbols with
@@ -3252,7 +3284,7 @@ object Tasty:
         end TypeParam
 
         /** A value parameter of a method or constructor. Owned by the enclosing `Method`; its position in the
-          * enclosing `paramLists` reflects the parameter's source order within its parameter group.
+          * `Tasty.paramLists(method)` result reflects the parameter's source order within its parameter group.
           *
           * `declaredType` is the parameter's declared type after by-name and repeated wrapping (so an `=> Foo`
           * parameter has `declaredType = Type.ByName(Type.Named(foo))` and a `Foo*` parameter has

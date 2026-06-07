@@ -170,17 +170,67 @@ class KyoMaybeSmokeTest extends kyo.test.Test[Any]:
                         fail("kyo.Maybe not found")
     }
 
-    // ── Leaf 16: maybe_receiver_chain (ignored until Phase 04) ────────────────
+    // ── Leaf 16: maybe_receiver_chain (active, Phase 04) ─────────────────────
     // Given: same JVM fixture; extMethod from leaf 14.
     // When: Tasty.paramLists(extMethod).head.head.declaredType.flatMap(Tasty.typeSymbol) is computed.
     // Then: result is Present(maybeSym) (same OpaqueType as leaf 12).
     // Pins: INV-H6 on real classpath (positional receiver rule via the paramLists helper).
     //       Depends on both G-1 (Phase 02) and Tasty.paramLists (Phase 04).
     // JVM-only: real-classpath cold-load plus helper signature dependency.
-    "kyo.Maybe 'get' receiver chain via paramLists resolves to Maybe OpaqueType (INV-H6 JVM)".onlyJvm.ignore(
-        "Tasty.paramLists helper not yet added (Phase 04); depends on G-1 + G-2 (Phase 02)"
-    ) in {
-        fail("Tasty.paramLists not yet implemented; body populated in Phase 04")
+    "kyo.Maybe 'get' receiver chain via paramLists resolves to Maybe OpaqueType (INV-H6 JVM)".onlyJvm in {
+        import Tasty.Name.asString
+        TestClasspaths.withClasspath(TestClasspaths.standard):
+            Tasty.classpath.flatMap: cp =>
+                cp.findSymbol("kyo.Maybe") match
+                    case Maybe.Present(maybeSym: Tasty.Symbol.OpaqueType) =>
+                        cp.companion(maybeSym) match
+                            case Maybe.Present(companion) =>
+                                Tasty.members(companion, Tasty.MemberScope.Declared).flatMap: members =>
+                                    val getExtensions = members.filter: sym =>
+                                        sym match
+                                            case m: Tasty.Symbol.Method =>
+                                                m.name.asString == "get" && m.isExtension
+                                            case _ => false
+                                    getExtensions.headOption match
+                                        case Some(extMethod: Tasty.Symbol.Method) =>
+                                            Tasty.paramLists(extMethod).flatMap: paramLists =>
+                                                assert(
+                                                    paramLists.nonEmpty,
+                                                    s"Expected non-empty paramLists but got Chunk.empty; G-1 not fixed"
+                                                )
+                                                assert(
+                                                    paramLists.head.nonEmpty,
+                                                    s"Expected non-empty first param list but got Chunk.empty"
+                                                )
+                                                val receiver = paramLists.head.head
+                                                receiver.declaredType match
+                                                    case Maybe.Present(receiverType) =>
+                                                        // Maybe[A] is a generic opaque type; the receiver type is
+                                                        // Type.Applied(Type.Named(maybeId), args) rather than bare
+                                                        // Type.Named. Extract the constructor symbol from either shape.
+                                                        val baseType = receiverType match
+                                                            case Tasty.Type.Applied(base, _) => base
+                                                            case other                       => other
+                                                        Tasty.typeSymbol(baseType).map: maybeResolved =>
+                                                            assert(
+                                                                maybeResolved == Maybe.Present(maybeSym),
+                                                                s"Expected receiver type constructor to resolve to kyo.Maybe OpaqueType but got $maybeResolved"
+                                                            )
+                                                            succeed
+                                                    case Maybe.Absent =>
+                                                        fail("receiver parameter has no declaredType")
+                                                end match
+                                        case Some(other) =>
+                                            fail(s"Expected Method for get extension but got: ${other.getClass.getSimpleName}")
+                                        case None =>
+                                            fail("get extension method not found in Maybe companion")
+                                    end match
+                            case Maybe.Absent =>
+                                fail("cp.companion(maybeSym) returned Absent; G-2 not yet fixed")
+                    case Maybe.Present(other) =>
+                        fail(s"Expected OpaqueType for kyo.Maybe but got: ${other.getClass.getSimpleName}")
+                    case Maybe.Absent =>
+                        fail("kyo.Maybe not found")
     }
 
 end KyoMaybeSmokeTest
