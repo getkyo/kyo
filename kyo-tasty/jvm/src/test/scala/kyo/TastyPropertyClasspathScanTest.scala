@@ -9,23 +9,16 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.PlatformFileSource
 import scala.jdk.CollectionConverters.*
 
-/** JVM-only property tests: walk all kyo-* classpath directories from the JVM test classpath and decode each as an independent single-root
-  * Classpath, asserting zero UnknownTagInPosition errors.
-  *
-  * Lives in jvm/src/test because classpath discovery is JVM-only (java.class.path system property + filesystem walk). The cross-platform
-  * leaves (PROP-001, PROP-002) run in shared/src/test via TastyPropertyTest.
-  *
-  * Proposal 5 of-strict (HARD RULE 13). Leaf 3 of the original TastyPropertyTest.
+/** Walks every kyo-* directory on the live JVM test classpath (via java.class.path) and decodes each as an independent single-root
+  * Classpath, asserting zero UnknownTagInPosition errors across the full set.
   */
-class TastyPropertyJvmTest extends kyo.test.Test[Any]:
+class TastyPropertyClasspathScanTest extends kyo.test.Test[Any]:
 
-    // Allow a longer timeout: loading many individual.tasty files takes time on slow machines.
+    // Loading many individual .tasty files takes time on slow machines.
     override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(5))
 
     import AllowUnsafe.embrace.danger
 
-    // sampled kyo-* classpath directories decode without UnknownTagInPosition
-    // Walk all kyo-* classpath directories; load each as an independent classpath; assert no unknown tags.
     "sampled kyo-* classpath directories decode without UnknownTagInPosition" in {
         val roots = discoverKyoClasspathRoots
         val src   = PlatformFileSource.get
@@ -59,4 +52,4 @@ class TastyPropertyJvmTest extends kyo.test.Test[Any]:
         buf.toList.sorted
     end discoverKyoClasspathRoots
 
-end TastyPropertyJvmTest
+end TastyPropertyClasspathScanTest

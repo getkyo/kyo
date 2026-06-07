@@ -2,18 +2,14 @@ package kyo
 
 import AllowUnsafe.embrace.danger
 
-/** Plan-mandated test for (leaf 174): grep audit confirming no flat `final case class Symbol ` declaration survives in
-  * `kyo-tasty/shared/src/main`.
-  *
-  * The file-system scan is implemented in the JVM-specific module (FlatSymbolGrepAuditJvmTest); this stub ensures the leaf is represented
-  * in the shared test suite and passes on all platforms.
+/** Verifies the Symbol type-hierarchy invariant at the API level: sealed trait Symbol is the public entry point and the runtime type of any
+  * symbol is a subtype. A flat `final case class Symbol` would fail this test by not being a sealed-trait subtype.
   */
 class FlatSymbolGrepAuditTest extends kyo.test.Test[Any]:
 
-    // ── Leaf 174: no-flat-Symbol-case-class (platform-agnostic stub) ─────────
-    // The actual file-system scan runs in FlatSymbolGrepAuditJvmTest on JVM.
-    // This leaf verifies the type hierarchy invariant at the API level: sealed trait Symbol
-    // is the public entry point and the runtime type of any symbol is a subtype.
+    // ── No-flat-Symbol-case-class invariant ─────────────────────────────────
+    // Verifies the type hierarchy at the API level: sealed trait Symbol is the public
+    // entry point and the runtime type of any symbol is a subtype.
     "Symbol hierarchy has no flat case class -- sealed trait is the root" in {
         // Constructing a Class subtype must compile and produce a Symbol (not a flat case class).
         val sym: Tasty.Symbol = Tasty.Symbol.Package(

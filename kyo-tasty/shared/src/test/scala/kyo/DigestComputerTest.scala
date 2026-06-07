@@ -4,13 +4,8 @@ import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.DigestComputer.JarDigestEntry
 
-/** Tests for DigestComputer xxh3 content-addressed digest.
-  *
-  * Cross-platform leaves (3, 4, 5, 6, 8, 9) run on JVM, JS, and Native. JVM-only leaves (1, 2, 7) are
-  * in DigestComputerJvmTest.scala (jvm/src/test), as they require real JARs on disk and
-  * java.nio.file / java.util.zip APIs not available on JS/Native.
-  *
-  * Scaladoc: 8-35 lines.
+/** Cross-platform DigestComputer xxh3 content-addressed digest behavior: digestForJar stability under entry reordering, crc32 sensitivity,
+  * and content-bytes sensitivity.
   */
 class DigestComputerTest extends kyo.test.Test[Any]:
 

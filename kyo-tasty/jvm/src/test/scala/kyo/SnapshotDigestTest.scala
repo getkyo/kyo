@@ -4,13 +4,8 @@ import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotWriter
 
-/** Cross-platform `DigestComputer.compute` tests covering jar-root and directory-root branches.
-  *
-  * post-audit carry: T-J1, T-J3, T-J4, T-J5 migrated to `runJVM` with real temp jars after fix. JVM jar roots now use
-  * CEN-walk (RandomAccessFile) which requires real files on disk; MemoryFileSource jar paths are not accessible via RandomAccessFile and
-  * would produce TastyError.MalformedSection (missing-jar is loud, not silent 0L). See decisions.md entry 10 for rationale.
-  *
-  * Scaladoc: 8-35 lines.
+/** DigestComputer.compute on jar-root and directory-root branches using real temp jars. Jar roots use CEN-walk (RandomAccessFile), which
+  * requires real files on disk.
   */
 class SnapshotDigestTest extends kyo.test.Test[Any]:
 

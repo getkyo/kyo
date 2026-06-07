@@ -2,20 +2,12 @@ package kyo
 
 import kyo.internal.tasty.query.BundledSnapshotProbe
 
-/** cross-platform leaves for BundledSnapshotProbe.
-  *
-  * remap-at-merge preserves identity (symbol id + offset == merged id).
-  * cross-classpath isolation -- two partials with overlapping ids produce disjoint ids after merge.
-  *
-  * JVM-only leaves (1, 2, 3, 11) that require real zip construction (java.util.zip, java.io.File)
-  * live in BundledSnapshotProbeJvmTest.scala (jvm/src/test).
+/** BundledSnapshotProbe merge semantics:
+  *   - remap-at-merge: a partial classpath's symbol ids are shifted by the existing classpath's size
+  *   - cross-classpath isolation: two partials with overlapping local ids produce disjoint merged ids
   */
 class BundledSnapshotProbeTest extends kyo.test.Test[Any]:
 
-    // remap-at-merge preserves identity
-    // Given: bundled partial with SymbolId space {0, 1, 2}; merged with offset 100.
-    // When: mergePartialInto(existing100, partial3) and lookup by name.
-    // Then: symbol with local id=1 in partial has id=101 in merged.
     "remap-at-merge shifts partial ids by existing classpath size" in {
         val existingSyms: Chunk[Tasty.Symbol] = Chunk.from(
             (0 until 100).map: i =>

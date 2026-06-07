@@ -13,7 +13,7 @@ import tastyquery.Symbols.PackageSymbol
   * of the validation-infrastructure (2026-06-02).
   *
   * Platform: JVM-only. tasty-query.ClasspathLoaders requires java.nio.file (JVM filesystem).
-  * The parallel shared tests TastyPropertyTest and TastyPropertyJvmTest cover cross-platform invariants.
+  * The parallel shared tests TastyPropertyTest and TastyPropertyClasspathScanTest cover cross-platform invariants.
   *
   * Comparison scope: top-level class FQN sets. tasty-query does not expose a stable
   * "declared type" API that is directly comparable to kyo-tasty Symbol.Method.declaredType,

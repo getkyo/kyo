@@ -7,18 +7,12 @@ import java.util.zip.ZipOutputStream
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.DigestComputer.JarDigestEntry
 
-/** JVM-only leaves for DigestComputer that require real JARs on disk (java.nio.file, java.util.zip).
-  *
-  * digestForRoot stable across mtime-only copy. Requires real JARs and
-  * java.nio.file.Files.setLastModifiedTime.
-  * digestForRoot changes when class bytes change (sensitivity). Requires real JARs.
-  * jrt:/ compute returns stable 8-byte result. Requires PlatformFileSource (JVM jrt:/ path).
-  *
-  * Cross-platform leaves (3, 4, 5, 6, 8, 9) live in DigestComputerTest.scala (shared/src/test).
-  *
-  * Scaladoc: 8-35 lines.
+/** DigestComputer behavior on real jars and JPMS modules:
+  *   - digestForRoot is stable across an mtime-only copy of byte-identical jars
+  *   - digestForRoot changes when class bytes change
+  *   - compute on the jrt:/ filesystem returns a stable 8-byte result
   */
-class DigestComputerJvmTest extends kyo.test.Test[Any]:
+class DigestComputerJarTest extends kyo.test.Test[Any]:
 
     // digestForRoot for byte-identical JARs with different mtimes returns equal values.
     "digestForRoot stable across mtime-only copy of real JAR" in {
@@ -83,4 +77,4 @@ class DigestComputerJvmTest extends kyo.test.Test[Any]:
         end try
     end writeJar
 
-end DigestComputerJvmTest
+end DigestComputerJarTest

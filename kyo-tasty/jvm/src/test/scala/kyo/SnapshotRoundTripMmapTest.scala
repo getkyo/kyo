@@ -8,17 +8,10 @@ import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import scala.collection.mutable
 
-/** JVM-only tests for SnapshotRoundTrip that require `FileChannel.map` (mmap).
-  *
-  * Per post-audit (cross-platform parity), the four digest leaves (T-J1, T-J3, T-J4, T-J5) were migrated to
-  * `shared/src/test/scala/kyo/SnapshotDigestTest.scala` using `MemoryFileSource`. G16b (post-close sym.body) was migrated to
-  * `shared/src/test/scala/kyo/SnapshotRoundTripTest.scala` since sym.body will be cross-platform when implements it.
-  *
-  * Remaining leaf:
-  *   G16a: writes a snapshot to a real temp file and reads it back via mmap (`PlatformMmapReader.readMapped`). Tests the mmap path itself,
-  *     which is a JVM `FileChannel.map` concern; no cross-platform analog.
+/** Writes a snapshot to a real temp file and reads it back via FileChannel.map, exercising the mmap reader path
+  * (PlatformMmapReader.readMapped) end-to-end.
   */
-class SnapshotRoundTripJvmTest extends kyo.test.Test[Any]:
+class SnapshotRoundTripMmapTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -116,4 +109,4 @@ class SnapshotRoundTripJvmTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-end SnapshotRoundTripJvmTest
+end SnapshotRoundTripMmapTest

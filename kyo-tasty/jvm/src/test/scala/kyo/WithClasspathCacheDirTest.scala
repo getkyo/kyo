@@ -1,18 +1,11 @@
 package kyo
 
-/** JVM-only leaves for WithClasspathTest that require java.nio.file or java.io.File.
-  *
-  * withClasspath(roots, Present(cacheDir)) requires java.nio.file.Files.createTempDirectory
-  * and java.io.File, which are not available in Scala.js or Scala Native. This leaf is kept here
-  * rather than in shared/src/test so that fastLinkJS does not fail with unresolved symbol errors.
-  *
-  * no JS/Native equivalent (concrete blocker).
+/** Verifies withClasspath(roots, Present(cacheDir)) using a real temp directory: writes a snapshot on first call (miss) and reads it back on
+  * the second call (hit).
   */
-class WithClasspathJvmTest extends kyo.test.Test[Any]:
+class WithClasspathCacheDirTest extends kyo.test.Test[Any]:
 
-    // jvmOnly: temp directories (java.nio.file.Files.createTempDirectory) and java.io.File
-    // are not available in Scala.js or Scala Native.
-    "Leaf 6 (JVM): withClasspath(roots, Present(cacheDir)) writes snapshot on miss, reads on hit" in {
+    "withClasspath(roots, Present(cacheDir)) writes snapshot on miss, reads on hit" in {
         val tmpDir = java.nio.file.Files.createTempDirectory("kyo-wc-leaf6-").toAbsolutePath.toString
         // Discover kyo-tasty-fixtures from the JVM classpath (the smallest available fixtures jar/dir).
         val cpRoots: Seq[String] =
@@ -52,4 +45,4 @@ class WithClasspathJvmTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-end WithClasspathJvmTest
+end WithClasspathCacheDirTest

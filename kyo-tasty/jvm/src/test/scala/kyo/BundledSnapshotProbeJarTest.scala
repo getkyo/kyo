@@ -11,23 +11,16 @@ import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import scala.collection.mutable
 
-/** JVM-only leaves for BundledSnapshotProbe that require real zip construction (java.util.zip, java.io.File).
-  *
-  * jar with no snapshot entry returns Maybe.Absent.
-  * jar with valid snapshot and matching digest returns Maybe.Present.
-  * jar with stale digest raises TastyError.DigestMismatch.
-  * probe is idempotent (same bytes returned on two calls).
-  *
-  * Cross-platform leaves (8, 9) live in BundledSnapshotProbeTest.scala (shared/src/test).
+/** Probe behavior against real jars built with java.util.zip:
+  *   - jar with no snapshot entry returns Maybe.Absent
+  *   - jar with valid snapshot and matching digest returns Maybe.Present
+  *   - jar with stale digest raises TastyError.DigestMismatch
+  *   - repeated calls return the same bytes
   */
-class BundledSnapshotProbeJvmTest extends kyo.test.Test[Any]:
+class BundledSnapshotProbeJarTest extends kyo.test.Test[Any]:
 
-    // in-memory zip FileSource (JVM test helper)
-
-    /** A FileSource that serves zip entries from an in-memory map of root -> zip bytes.
-      *
-      * Does NOT extend MemoryFileSource (which is final). All FileSource methods except openZip
-      * return sensible stubs sufficient for probe-only tests.
+    /** A FileSource that serves zip entries from an in-memory map of root -> zip bytes. Does not extend MemoryFileSource (final); all
+      * FileSource methods except openZip return read-only stubs sufficient for probe tests.
       */
     private class ZipMemoryFileSource(zipMap: Map[String, Array[Byte]]) extends FileSource:
         def read(path: String)(using Frame): Array[Byte] < (Sync & Abort[TastyError]) =
@@ -221,4 +214,4 @@ class BundledSnapshotProbeJvmTest extends kyo.test.Test[Any]:
                     end match
     }
 
-end BundledSnapshotProbeJvmTest
+end BundledSnapshotProbeJarTest

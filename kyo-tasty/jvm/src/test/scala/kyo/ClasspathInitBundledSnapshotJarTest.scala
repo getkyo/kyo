@@ -12,16 +12,13 @@ import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import scala.collection.mutable
 
-/** JVM-only leaves for ClasspathInitBundledSnapshot that require real jar files (java.util.zip, java.io.File).
-  *
-  * end-to-end transparent bundled load -- probe HIT; symbols come from bundled snapshot.
-  * mixed-root merge -- bundled jar + cold jar produces combined symbol count.
-  * digest mismatch under SoftFail falls back to cold load.
-  * digest mismatch under FailFast raises DigestMismatch.
-  *
-  * Cross-platform leaf (10) lives in ClasspathInitBundledSnapshotTest.scala (shared/src/test).
+/** End-to-end bundled snapshot loading via classpath init against real jars built with java.util.zip:
+  *   - probe HIT: symbols come from the bundled snapshot
+  *   - mixed-root merge: bundled jar + cold jar produces a combined symbol count
+  *   - digest mismatch under SoftFail falls back to cold load
+  *   - digest mismatch under FailFast raises DigestMismatch
   */
-class ClasspathInitBundledSnapshotJvmTest extends kyo.test.Test[Any]:
+class ClasspathInitBundledSnapshotJarTest extends kyo.test.Test[Any]:
 
     /** Build a valid KRFL snapshot bytes for a synthetic classpath with `n` Package symbols. */
     private def syntheticSnapshotBytes(n: Int, digest: Long): Array[Byte] =
@@ -238,4 +235,4 @@ class ClasspathInitBundledSnapshotJvmTest extends kyo.test.Test[Any]:
                 case other                                        => assert(false, s"expected DigestMismatch failure, got: $other")
     }
 
-end ClasspathInitBundledSnapshotJvmTest
+end ClasspathInitBundledSnapshotJarTest

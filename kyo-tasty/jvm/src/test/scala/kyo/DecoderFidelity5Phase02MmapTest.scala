@@ -12,17 +12,12 @@ import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import scala.collection.mutable
 
-/** JVM-only tests for Decoder-fidelity-5.
-  *
-  * Covers : post-Scope decodeBody behavior on mmap-loaded classpaths. The mmap path sets
-  * sectionBytes = Array.empty for body-bearing symbols; decodeBody detects this and returns
-  * TastyError.MalformedSection("body bytes not available") rather than ClasspathClosed. This is
-  * the pinned contract: an IllegalStateException from the arena would only fire if the view-backed
-  * bytes were accessed after close, but they are not accessed at all when sectionBytes is empty.
-  *
-  * Also covers /31 via a real mmap warm load using a synthetic classpath.
+/** Post-Scope decodeBody behavior on mmap-loaded classpaths. The mmap path sets sectionBytes = Array.empty for body-bearing symbols;
+  * decodeBody detects this and returns TastyError.MalformedSection("body bytes not available") rather than ClasspathClosed.
+  * An IllegalStateException from the arena would only fire if view-backed bytes were accessed after close, but they are not accessed at
+  * all when sectionBytes is empty.
   */
-class DecoderFidelity5Phase02JvmTest extends kyo.test.Test[Any]:
+class DecoderFidelity5Phase02MmapTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -220,4 +215,4 @@ class DecoderFidelity5Phase02JvmTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-end DecoderFidelity5Phase02JvmTest
+end DecoderFidelity5Phase02MmapTest

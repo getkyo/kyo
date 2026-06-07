@@ -837,11 +837,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // T-J1-im: in-memory root digest is deterministic across two calls (mirrors T-J1 in SnapshotRoundTripJvmTest)
-    // Given: a MemoryFileSource with a single.tasty file
-    // When: DigestComputer.compute called twice on the same root
-    // Then: both digests are equal (deterministic for in-memory sources)
-    // Cross-platform: MemoryFileSource stat is stable.
     "DigestComputer.compute on in-memory root returns same digest for two successive calls" in {
         val src = MemoryFileSource()
         src.add("root/A.tasty", Array[Byte](1, 2, 3))
@@ -859,11 +854,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // T-J4-im: adding an extra file (size change) produces a different digest (mirrors T-J4 in SnapshotRoundTripJvmTest)
-    // Given: a MemoryFileSource with one file; then a second MemoryFileSource with the same file plus an extra file
-    // When: DigestComputer.compute called on each
-    // Then: digests differ (different file set = different digest)
-    // Cross-platform: MemoryFileSource stat uses file size; adding a file changes the stat set.
     "DigestComputer.compute detects additional file in root (different digest)" in {
         val src1 = MemoryFileSource()
         src1.add("root/A.tasty", Array[Byte](1, 2, 3))
@@ -883,11 +873,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // T-J5-im: mixed roots produce the same digest regardless of root order (mirrors T-J5 in SnapshotRoundTripJvmTest)
-    // Given: two MemoryFileSources each containing the same two roots in different order
-    // When: DigestComputer.compute called with [root1, root2] vs [root2, root1]
-    // Then: digests are equal (root order does not affect the digest)
-    // Cross-platform: uses MemoryFileSource with deterministic stats.
     "DigestComputer.compute on two in-memory roots is root-order independent" in {
         val src = MemoryFileSource()
         src.add("root1/X.tasty", Array[Byte](10, 20, 30))
@@ -905,7 +890,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // T-J2: directory-root digest is deterministic across two calls
     "DigestComputer.compute on directory root returns same digest for two successive calls" in {
         val src = fixtureSource()
         Abort.run[TastyError]:
@@ -920,12 +904,5 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
             case Result.Panic(t) =>
                 throw t
     }
-
-    // Test G16b: post-close sym.body on mmap-loaded snapshot.
-    // Resolved 2026-06-02 (verdict C: already-covered). The mmap-arena-close pathway is JVM-only by
-    // construction (JS/Native have no mmap), so this leaf cannot be cross-platform as written. The exact
-    // contract (post-Scope decodeBody on mmap-loaded snapshot returns MalformedSection("body bytes not
-    // available") or ClasspathClosed) is covered by DecoderFidelity5Phase02JvmTest "P02.6" at
-    // kyo-tasty/jvm/src/test/scala/kyo/DecoderFidelity5Phase02JvmTest.scala:122.
 
 end SnapshotRoundTripTest

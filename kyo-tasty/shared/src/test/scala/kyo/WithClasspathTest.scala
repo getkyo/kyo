@@ -4,21 +4,11 @@ import kyo.internal.MemoryFileSource
 import kyo.internal.TestClasspaths
 import kyo.internal.tasty.query.ClasspathOrchestrator
 
-/** Tasty.withClasspath and Tasty.withPickles entry points.
-  *
-  * withClasspath(roots) cold-loads and binds; symbols.size > 0 (JVM, real classpath).
-  * withClasspath(cp) binds pure-data without decode context.
-  * withPickles(pickles) binds from pickles; symbols.size > 0.
-  * SOURCE BREAK -- Classpath.init not on surface (compileErrors).
-  * SOURCE BREAK -- Classpath.initCached not on surface (compileErrors).
-  * withClasspath(roots, Present(cacheDir)) activates dev cache (JVM only).
-  *         SPLIT: lives in kyo-tasty/jvm/src/test/scala/kyo/WithClasspathJvmTest.scala because
-  *         java.nio.file.Files.createTempDirectory and java.io.File are not available in
-  *         Scala.js and would cause fastLinkJS linker errors in shared test code.
-  * withClasspath(roots, Absent) does not touch any cache.
-  * SnapshotRunner port -- Classpath.initCached not on surface confirms runner migration.
-  *
-  * runner port; item 27 surface deletion.
+/** Tasty.withClasspath and Tasty.withPickles entry points:
+  *   - withClasspath(cp) binds pure-data without decode context
+  *   - withPickles(pickles) binds from pickles
+  *   - withClasspath(roots, Absent) does not touch any cache
+  *   - Classpath.init and Classpath.initCached are not on the public surface (compileErrors)
   */
 class WithClasspathTest extends kyo.test.Test[Any]:
 

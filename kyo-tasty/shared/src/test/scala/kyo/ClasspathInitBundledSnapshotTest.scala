@@ -3,19 +3,11 @@ package kyo
 import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.query.BundledSnapshotProbe
 
-/** cross-platform leaf for end-to-end transparent bundled snapshot loading.
-  *
-  * cross-platform -- probe returns Absent on platforms that cannot open ZIPs (JS/Native default).
-  *
-  * JVM-only leaves (4, 5, 6, 7) that require real jar files (java.util.zip, java.io.File) live in
-  * ClasspathInitBundledSnapshotJvmTest.scala (jvm/src/test).
+/** Verifies that BundledSnapshotProbe.probe returns Maybe.Absent on a FileSource whose openZip implementation returns Absent (the default
+  * for FileSources without a real zip backend).
   */
 class ClasspathInitBundledSnapshotTest extends kyo.test.Test[Any]:
 
-    // cross-platform -- probe returns Absent for default openZip
-    // Given: a plain MemoryFileSource (no openZip override, returns Absent by default).
-    // When: BundledSnapshotProbe.probe(root, memorySource)
-    // Then: returns Maybe.Absent (default FileSource.openZip returns Absent; probe falls through).
     "probe returns Maybe.Absent when FileSource.openZip returns Absent (cross-platform)" in {
         val source = new MemoryFileSource()
         source.add("some-root.jar", Array[Byte](0xca.toByte))

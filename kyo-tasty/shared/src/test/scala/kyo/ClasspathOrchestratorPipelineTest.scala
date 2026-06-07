@@ -215,12 +215,4 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // T8 Test 2: classpath close during pending body decode.
-    // Resolved 2026-06-02 (verdict C: already-covered). deleted the Closed state from
-    // Tasty.Classpath (now a pure immutable case class with no close method, see
-    // JvmFileSourceTest.scala:530 "P24b-T3"). ClasspathClosed now fires only via the mmap arena
-    // IllegalStateException path after Scope exit (jvm-only), exercised by
-    // DecoderFidelity5Phase02JvmTest "P02.6". The original "explicit close" precondition
-    // no longer exists in the API.
-
 end ClasspathOrchestratorPipelineTest

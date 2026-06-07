@@ -8,16 +8,9 @@ import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import scala.collection.mutable
 
-/** Decoder-fidelity-5 cold/warm fidelity gaps -- 6 findings.
-  *
-  * Findings closed in this phase:,
-  * Finding (post-Scope mmap decodeBody contract) is in the JVM-only companion
-  * `DecoderFidelity5Phase02JvmTest`.
-  *
-  * Tests P02.1 / P02.2 / P02.5 use Tasty.Classpath.make with explicit subclassIndex and
-  * companionIndex to avoid cross-file parentType-resolution ambiguity in embedded fixtures.
-  * Tests P02.3 / P02.4 use the embedded PlainClass / SomeCaseClass fixtures directly.
-  * Leaves are numbered P02.1 through P02.5 for traceability with the exploration document.
+/** Cold and warm decoder-fidelity behaviors using embedded fixtures (PlainClass, SomeCaseClass) and synthetic classpaths built via
+  * Tasty.Classpath.make with explicit subclassIndex and companionIndex (to avoid cross-file parentType-resolution ambiguity in embedded
+  * fixtures).
   */
 class DecoderFidelity5Phase02Test extends kyo.test.Test[Any]:
 
