@@ -242,13 +242,14 @@ use `taggedAs jvmOnly` for new leaves; `runJVM` is the canonical form.
 
 Prefer Kyo types over scala stdlib equivalents throughout:
 
-| Use this   | Not this             |
-|------------|----------------------|
-| `Maybe`    | `Option`             |
-| `Result`   | `Either` / `Try`     |
-| `Chunk`    | `List` / `Seq`       |
-| `Dict`     | `Map`                |
-| `Span`     | `Array` (public ADT) |
+| Use this                     | Not this                              |
+|------------------------------|---------------------------------------|
+| `Maybe`                      | `Option`                              |
+| `Result`                     | `Either` / `Try`                      |
+| `Chunk`                      | `List` / `Seq`                        |
+| `Dict`                       | `Map`                                 |
+| `Span`                       | `Array` (public ADT)                  |
+| `ChunkBuilder.init[Byte]`    | `java.io.ByteArrayOutputStream`       |
 
 `java.util.concurrent.ConcurrentHashMap` is permitted in `shared/src/main` (it
 is cross-platform: Scala.js and Scala Native both provide implementations). All
