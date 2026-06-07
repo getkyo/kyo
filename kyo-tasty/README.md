@@ -29,7 +29,7 @@ import kyo.*
 import kyo.AllowUnsafe.embrace.danger
 import kyo.Tasty.*
 
-val program: Chunk[String] < (Async & Abort[TastyError]) =
+val program: Chunk[Name] < (Async & Abort[TastyError]) =
     Tasty.withClasspath(Seq("target/scala-3.8.3/classes")):
         Tasty.allClassLike.map(Kyo.foreach(_)(sym => Tasty.fullName(sym)))
 ```
@@ -59,9 +59,10 @@ end example
 
 <!-- doctest:setup
 ```scala
-// Type-check stub: every block below is inside a Tasty.withClasspath block.
-// Acquisition happens through Tasty.withClasspath / withPickles at runtime; the
-// stub keeps doctest blocks typed without performing any I/O.
+// Type-check stubs: variables used in subsequent blocks without redeclaration.
+val roots: Seq[String]     = Seq("target/classes")
+val pickles: Chunk[Pickle] = Chunk.empty
+val cp: Tasty.Classpath    = null
 ```
 -->
 
@@ -78,8 +79,6 @@ Every query inside the block reads the installed classpath automatically.
 Pick by where the bytes are coming from:
 
 ```scala
-val roots: Seq[String] = Seq("target/classes")
-
 // From the filesystem (parallel decoder):
 Tasty.withClasspath(roots):
     Tasty.allClassLike // Chunk[Symbol.ClassLike] < Sync
@@ -140,7 +139,7 @@ import kyo.AllowUnsafe.embrace.danger
 Tasty.withClasspath(Seq("target/classes")):
     Tasty.classpath.map { cp =>
         if cp.errors.nonEmpty then Abort.fail(cp.errors.head)
-        else Tasty.findClass("example.Circle").map(Tasty.fullName)
+        else Tasty.findClass("example.Circle").map(mbCircle => mbCircle.map(Tasty.fullName))
     }
 ```
 
@@ -215,24 +214,36 @@ fields are: `id: SymbolId`, `name: Name`, `flags: Flags`,
 IDs, type IDs) vary by case. Symbols derive `Schema` and `CanEqual`; they
 are serialisable and equality-comparable out of the box.
 
+`scaladoc: Maybe[String]` is present on every symbol kind except
+`TypeParam`, `Parameter`, and `Package`, which always return `Maybe.Absent`.
+When present, the returned string is the RAW TASTy comment text, including the
+`/**` opening delimiter, the `*/` closing delimiter, and any inner `*` margin
+characters dotty recorded at compile time. The accessor does not strip, trim,
+or reformat; callers that need cleaned prose, `@param`/`@return` extraction,
+or markdown rendering perform that step themselves.
+
+`sourcePosition: Maybe[Position]` points back into the original source file
+when the TASTy file recorded one. Each `Position` carries `sourceFile: String`,
+`line: Int`, and `column: Int`.
+
 A typed walk over the hierarchy is an exhaustive pattern match:
 
 ```scala
 def role(sym: Symbol): String = sym match
-    case _: Symbol.Class     => "class"
-    case _: Symbol.EnumCase  => "enum case"
-    case _: Symbol.Trait     => "trait"
-    case _: Symbol.Object    => "object"
-    case _: Symbol.Method    => "method"
-    case _: Symbol.Val       => "val"
-    case _: Symbol.Var       => "var"
-    case _: Symbol.Field     => "field"
+    case _: Symbol.Class    => "class"
+    case _: Symbol.EnumCase => "enum case"
+    case _: Symbol.Trait    => "trait"
+    case _: Symbol.Object   => "object"
+    case _: Symbol.Method   => "method"
+    case _: Symbol.Val      => "val"
+    case _: Symbol.Var      => "var"
+    case _: Symbol.Field    => "field"
     case _: Symbol.TypeAlias |
         _: Symbol.OpaqueType |
         _: Symbol.AbstractType |
         _: Symbol.TypeParam => "type"
-    case _: Symbol.Parameter  => "parameter"
-    case _: Symbol.Package    => "package"
+    case _: Symbol.Parameter => "parameter"
+    case _: Symbol.Package   => "package"
 ```
 
 ## Navigating from a symbol
@@ -253,10 +264,10 @@ declared parent of a `Symbol.Class` (the `extends` class) is the head of
 Tasty.withClasspath(roots):
     Tasty.findClass("example.Box").map { mbBox =>
         mbBox.foreach { b =>
-            Tasty.owner(b)        // Maybe[Symbol] < Sync -- the example package, Absent at root
-            Tasty.ownersChain(b)  // Chunk[Symbol] < Sync
-            Tasty.parents(b)      // Chunk[Symbol.ClassLike] < Sync
-            Tasty.companion(b)    // Maybe[Symbol] < Sync
+            Tasty.owner(b)       // Maybe[Symbol] < Sync -- the example package, Absent at root
+            Tasty.ownersChain(b) // Chunk[Symbol] < Sync
+            Tasty.parents(b)     // Chunk[Symbol.ClassLike] < Sync
+            Tasty.companion(b)   // Maybe[Symbol] < Sync
         }
     }
 ```
@@ -362,8 +373,8 @@ verdict rather than a `Boolean`. The third case is the typed "I could not
 decide":
 
 ```scala
-val sub:           SubtypeVerdict = SubtypeVerdict.Sub
-val notSub:        SubtypeVerdict = SubtypeVerdict.NotSub
+val sub: SubtypeVerdict           = SubtypeVerdict.Sub
+val notSub: SubtypeVerdict        = SubtypeVerdict.NotSub
 val indeterminate: SubtypeVerdict = SubtypeVerdict.Indeterminate
 
 Tasty.withClasspath(roots):
@@ -373,8 +384,8 @@ Tasty.withClasspath(roots):
                 circle <- mbCircle
                 shape  <- mbShape
             yield
-                val circleTpe: Type    = Type.Named(circle.id)
-                val shapeTpe: Type     = Type.Named(shape.id)
+                val circleTpe: Type           = Type.Named(circle.id)
+                val shapeTpe: Type            = Type.Named(shape.id)
                 val v1: SubtypeVerdict < Sync = Tasty.isSubtypeOf(circleTpe, shapeTpe) // Sub
                 val v2: SubtypeVerdict < Sync = Tasty.isSubtypeOf(shapeTpe, circleTpe) // NotSub
                 (v1, v2)
@@ -435,13 +446,11 @@ nearly every interactive use:
 
 ```scala
 def walk(tree: Tree): Unit =
-    val a: Chunk[Tree] = tree.children
-    tree.foreach(t => ())
+    val a: Chunk[Tree]   = tree.children
     val b: Chunk[String] = tree.collect { case lit: Tree.Literal => lit.toString }
     val c: Maybe[Tree]   = tree.find(_ => true)
     val d: Int           = tree.foldLeft(0)((acc, _) => acc + 1)
     val e: Boolean       = tree.exists(_ => false)
-    val f: String        = tree.show
     ()
 end walk
 ```
@@ -455,6 +464,60 @@ Alongside `bodyTree`, `Symbol.Method` carries a handful of pure shape fields:
 `declaredType: Maybe[Type]`, plus flag predicates `isExtension` /
 `isInline` / `isGiven` / `isMacro` / `isTailrec`. None carry a `Sync`
 effect; they are straight case-class field reads.
+
+## Extension methods and parameter groups
+
+Extension methods surface as regular `Symbol.Method` entries with
+`isExtension == true`, owned by the companion object of the extended type.
+`Tasty.members(companion, MemberScope.Declared)` returns them alongside
+any other declared members of the companion.
+
+`Symbol.Method.paramListIds: Chunk[Chunk[SymbolId]]` records the parameter
+groups in source order. The outer `Chunk` is one entry per parameter clause;
+the inner `Chunk` is the parameters of that clause. For extension methods,
+dotty emits the synthetic extension receiver as the first element of the
+first inner list. There is no separate flag or field for the receiver: its
+position is always `paramListIds.head.head` when `isExtension == true`.
+
+`Tasty.paramLists(method): Chunk[Chunk[Symbol.Parameter]] < Sync` resolves
+the raw ids into `Symbol.Parameter` entries. Broken references are dropped
+and logged in `cp.errors`; non-`Parameter` ids are also dropped.
+
+**Worked example.** Given this source (the `kyo.fixtures.Meters` fixture):
+
+```scala
+// Fixture source (compiled separately; loaded via Tasty.withClasspath):
+// opaque type Meters = Double
+// object Meters:
+//     def apply(d: Double): Meters            = d
+//     extension (m: Meters) def value: Double = m
+//
+// After loading a classpath that contains the compiled output:
+Tasty.withClasspath(roots):
+    Tasty.findSymbol("kyo.fixtures.Meters").map { mbOpaque =>
+        mbOpaque.foreach { opaqueMeters =>
+            Tasty.companion(opaqueMeters).map { mbCompanion =>
+                mbCompanion.foreach { companion =>
+                    Tasty.members(companion, MemberScope.Declared).map { members =>
+                        members.collect:
+                            case m: Symbol.Method if m.isExtension && m.name.asString == "value" => m
+                        // paramListIds shape: Chunk(Chunk(receiverId))
+                        // outer size == 1 (one parameter clause)
+                        // inner size == 1 (the receiver `m: Meters`)
+                    }
+                }
+            }
+        }
+    }
+```
+
+For a regular method `def f(a: Int)(b: String): Unit`, `paramListIds` has two
+outer entries (`Chunk(Chunk(aId), Chunk(bId))`). For a no-argument accessor
+`def name: T`, it is `Chunk.empty`.
+
+Companion lookup is symmetric for opaque types: `Tasty.companion(opaqueType)`
+returns the companion `Object`, and `Tasty.companion(companionObject)` returns
+the opaque type back. The index is precomputed at classpath open time.
 
 ## Annotations
 
@@ -472,8 +535,8 @@ The two predicates work uniformly across both sides:
 Tasty.withClasspath(roots):
     Tasty.findClass("example.Circle").map { mbCircle =>
         mbCircle.foreach { circle =>
-            Tasty.hasAnnotation(circle, "scala.deprecated")         // Boolean < Sync
-            Tasty.findAnnotation(circle, "scala.deprecated")        // Maybe[Annotation | Java.Annotation] < Sync
+            Tasty.hasAnnotation(circle, "scala.deprecated")  // Boolean < Sync
+            Tasty.findAnnotation(circle, "scala.deprecated") // Maybe[Annotation | Java.Annotation] < Sync
         }
     }
 ```
@@ -629,7 +692,7 @@ def shapeImplementations(roots: Seq[String]): Chunk[String] < (Async & Abort[Tas
                     Tasty.fullName(impl).map { fqn =>
                         Tasty.members(impl, MemberScope.Declared).map { members =>
                             val overrides = members
-                                .collect { case m: Symbol.Method if m.flags.contains(Flag.Override) => m }
+                                .collect { case m: Symbol.Method if m.flags.contains(Tasty.Flag.Override) => m }
                                 .map(_.name.asString)
                                 .mkString(", ")
                             s"$fqn overrides: [$overrides]"

@@ -2855,6 +2855,15 @@ object Tasty:
       *
       * For kind discrimination, use sealed pattern matching: `sym match { case _: Symbol.Class => ... }`
       * rather than the removed `sym.isClass` / `sym.kind` predicates.
+      *
+      * `scaladoc` returns the RAW TASTy comment text, including the `/**` opening delimiter,
+      * the `*/` closing delimiter, and any inner `*` margin characters dotty recorded at
+      * compile time. The string is the UTF-8 bytes copied verbatim from the Comments TASTy section;
+      * no stripping, trimming, or reformatting is performed. Callers that need cleaned prose,
+      * `@param`/`@return` extraction, or markdown rendering must perform those steps themselves.
+      * Returns `Maybe.Absent` when no scaladoc was recorded for the symbol.
+      * `Symbol.TypeParam`, `Symbol.Parameter`, and `Symbol.Package` always return `Maybe.Absent`;
+      * every other symbol kind carries whatever comment the compiler recorded.
       */
     sealed trait Symbol derives CanEqual:
         def id: SymbolId

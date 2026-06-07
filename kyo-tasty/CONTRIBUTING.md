@@ -89,9 +89,15 @@ exhaustive pattern matches can be checked at compile time. Adding a new variant:
 6. Add a round-trip test leaf in `TastyErrorRoundTripTest`.
 
 **Never reuse a tag number.** The tag sequence is append-only; deleted variants
-leave a gap. The current minor version is `11` (bumped from `10` in Phase 11 of
-the cleanup campaign when `UnhandledSubtypingCase`, `UnresolvedReference`,
-`UnknownType`, and `MissingDeclaredType` were added).
+leave a gap. The current minor version is `12`.
+
+Wire-format bump history (append-only; do not reuse or renumber):
+- `10 -> 11` (cleanup campaign Phase 11): added `UnhandledSubtypingCase`,
+  `UnresolvedReference`, `UnknownType`, and `MissingDeclaredType` error variants.
+- `11 -> 12` (handoff-fixes campaign): added the `PLISTS__` section persisting
+  `Symbol.Method.paramListIds` (sparse two-level Int32-LE encoding). Minor-11
+  snapshots lack the section and return `TastyError.SnapshotVersionMismatch`;
+  regenerate the cache.
 
 A snapshot with the wrong minor version is rejected immediately with
 `TastyError.SnapshotVersionMismatch`; there is no downgrade path.
@@ -106,7 +112,7 @@ Adding a new `Tasty.Type` case that must survive a snapshot round-trip requires:
 1. Assign the next free integer tag in `SnapshotWriter.writeType`.
 2. Add the matching reader arm in `SnapshotReader.readType`.
 3. Increment `SnapshotFormat.minorVersion` by 1
-   (`kyo/internal/tasty/snapshot/SnapshotFormat.scala`, currently `11`).
+   (`kyo/internal/tasty/snapshot/SnapshotFormat.scala`, currently `12`).
 4. Add a round-trip test leaf in `SnapshotFidelity2Test` or a dedicated test.
 
 The same rule applies if a new `Tasty.Tree` sub-case is added and snapshots embed
