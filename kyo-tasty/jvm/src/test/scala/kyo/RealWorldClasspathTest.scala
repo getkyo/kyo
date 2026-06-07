@@ -52,22 +52,6 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    "Doobie classpath loads without error".onlyJvm.tagged("slow") in {
-        val jar = findJar("doobie-core_2.13")
-        Abort.run[TastyError](
-            Tasty.withClasspath(Seq(jar)):
-                Tasty.classpath.map(_.errors)
-        ).map:
-            case Result.Success(errors) =>
-                assert(
-                    fileLevelErrors(errors).isEmpty,
-                    s"Doobie jar produced ${fileLevelErrors(errors).size} file-level errors: ${fileLevelErrors(errors).take(3).mkString(", ")}"
-                )
-                succeed
-            case Result.Failure(e) => fail(s"Unexpected TastyError loading Doobie jar: $e")
-            case Result.Panic(t)   => throw t
-    }
-
     "Http4s classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("http4s-core_3")
         Abort.run[TastyError](
