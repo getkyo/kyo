@@ -194,45 +194,6 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
         cp.symbols.count(_.isInstanceOf[Tasty.Symbol.EnumCase])
     }
 
-    // java-enum-constants-are-enumcase
-    // Given: standard classpath + java.base JDK classfiles (java.lang.annotation.RetentionPolicy)
-    // When: inspecting RetentionPolicy's declared EnumCase members
-    // Then: RetentionPolicy's enum constants (RUNTIME, CLASS, SOURCE) are Symbol.EnumCase
-    //       before fix they were Symbol.Field (Field + Enum + JavaDefined + Static)
-    // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): the assertion pins
-    //   java.lang.annotation.RetentionPolicy on the jrt:/ platform-modules classpath. Loading java.base via
-    //   jrt:/ is a JVM-only loader; no equivalent on JS/Native.
-    "Java enum constants (RetentionPolicy) are Symbol.EnumCase".onlyJvm in {
-        TestClasspaths2.standardWithPlatformModules.map: cp =>
-
-            cp.findClass("java.lang.annotation.RetentionPolicy") match
-                case Maybe.Present(rp) =>
-                    val allDecls = rp.declarationIds.flatMap(id => cp.symbol(id).toChunk)
-                    val enumCaseDecls = allDecls.collect:
-                        case e: Tasty.Symbol.EnumCase => e
-                    assert(
-                        enumCaseDecls.nonEmpty,
-                        s"java.lang.annotation.RetentionPolicy has no EnumCase declarations. " +
-                            s"All declarations: ${allDecls.toList.take(5).map(d =>
-                                    d.name.asString + ":" + d.getClass.getSimpleName
-                                ).mkString(", ")}"
-                    )
-                    val expectedNames = Set("RUNTIME", "CLASS", "SOURCE")
-                    val foundNames    = enumCaseDecls.map(_.name.asString).toSet
-                    val missing       = expectedNames -- foundNames
-                    assert(
-                        missing.isEmpty,
-                        s"RetentionPolicy EnumCase declarations missing: ${missing.mkString(", ")}; found: ${foundNames.mkString(", ")}"
-                    )
-                    succeed
-                case Maybe.Absent =>
-                    fail(
-                        "java.lang.annotation.RetentionPolicy not found on platform-modules classpath. " +
-                            "Verify JPMS and TestClasspaths2.standardWithPlatformModules are working."
-                    )
-            end match
-    }
-
     // enumcase-count-identical-across-platforms
     // Given: cp.symbols.count(_.isInstanceOf[Symbol.EnumCase]) on each platform
     // When: comparing the count

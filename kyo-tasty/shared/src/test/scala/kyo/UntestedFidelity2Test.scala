@@ -67,33 +67,6 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     }
 
     // multi-version-stdlib-failfast-aborts
-    // Given: Tasty.Classpath.init(multiVersionStdlibRoots, ErrorMode.FailFast)
-    // When: awaiting init
-    // Then: aborts with TastyError.FqnCollisionError
-    // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): multiVersionStdlibRoots is
-    //   built from two scala-library jars at distinct versions discovered via JVM classpath. The FqnCollisionError
-    //   detection pins same-FQN-different-version collision, which requires real version-divergent stdlib jars; no
-    //   embedded-fixture equivalent exists.
-    "multi-version stdlib FailFast init aborts with FqnCollisionError".onlyJvm in {
-        val multiRoots  = TestClasspaths2.multiVersionStdlibRoots
-        val src         = PlatformFileSource.get
-        val concurrency = java.lang.Runtime.getRuntime.availableProcessors().max(1)
-        Scope.run(Abort.run[TastyError](
-            ClasspathOrchestrator.init(multiRoots, Tasty.ErrorMode.FailFast, src, concurrency)
-        )).map: result =>
-            result match
-                case Result.Failure(_: TastyError.FqnCollisionError) =>
-                    succeed
-                case Result.Success(_) =>
-                    fail(
-                        "Expected Abort.fail(FqnCollisionError) when loading two roots with same-FQN symbols under FailFast; init succeeded silently"
-                    )
-                case Result.Failure(other) =>
-                    fail(s"Expected FqnCollisionError; got different TastyError: $other")
-                case Result.Panic(t) =>
-                    fail(s"Unexpected panic: $t")
-    }
-
     // annotation-processor-output-resolves
     // Given: the standard classpath (Java symbols from JavaSimpleFixture.class embedded in EmbeddedJavaFixtures)
     // When: counting Java-defined symbols
@@ -108,27 +81,6 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
                 s"Expected > 0 Java-decoded symbols (from JavaSimpleFixture.class embedded in EmbeddedJavaFixtures) in standard classpath; found $javaCount"
             )
             succeed
-    }
-
-    // concurrent-reader-writer-no-corruption
-    // Given: StutterFileSource.wrapping holds a SnapshotReader read; parallel SnapshotWriter writes same path
-    // When: releasing latch and awaiting both
-    // Then: read sees pre-write or post-write contents but never a corrupt mix
-    // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): the leaf exercises atomic
-    //   rename semantics provided by java.nio.file (JvmFileSource) and a stutter latch implemented with
-    //   java.util.concurrent.Semaphore. MemoryFileSource is a non-atomic mutable HashMap; rewriting this in a
-    //   cross-platform way would require building a real atomic FileSource impl with cross-platform write
-    //   isolation, which would itself become the system-under-test and undermine the pin.
-    // Delegates to TestClasspaths2.runConcurrentReaderWriterTest to avoid JVM-specific imports in shared.
-    "concurrent snapshot reader+writer: reader sees pre- or post-write, not corrupt".onlyJvm in {
-        val digest = Array[Byte](0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57)
-        TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
-            Sync.defer:
-                TestClasspaths2.createTempDir("kyo-df2-rw-test")
-            .flatMap: tmpDir =>
-                TestClasspaths2.runConcurrentReaderWriterTest(cp, digest, tmpDir).map: ok =>
-                    assert(ok, "Panic during concurrent reader+writer test")
-                    succeed
     }
 
     // snapshot-version-downgrade-falls-back

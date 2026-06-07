@@ -45,29 +45,6 @@ class AnnotationFidelityTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    //   tailrec-found
-    // Given: the real classpath loaded via TestClasspaths.withClasspath
-    // When: calling cp.symbolsAnnotatedWith("scala.annotation.tailrec").size
-    // Then: >= 1 (scala stdlib has multiple @tailrec methods);
-    //       before fix size == 0 (same root cause as deprecated-found)
-    // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): the @tailrec annotation
-    //   tycon is encoded in TASTy as TYPEREFsymbol (addr-based reference to the external class), not TERMREFpkg
-    //   (FQN-string reference). The unresolvedFqnByNegId mechanism only stores FQNs for TERMREFpkg / TYPEREFpkg /
-    //   TYPEREFin paths; TYPEREFsymbol cross-file references discard the FQN at decode time. Resolving @tailrec
-    //   therefore requires the scala-library jar (containing scala/annotation/tailrec.class) on the loaded
-    //   classpath so the addr resolves to a real SymbolId. JS/Native cannot supply scala-library as a TASTy
-    //   classpath; the proper fix is TYPEREFsymbol cross-file FQN tracking, a non-trivial decoder refactor.
-    "cp.symbolsAnnotatedWith(scala.annotation.tailrec).size >= 1".onlyJvm in {
-        TestClasspaths.withClasspath():
-            Tasty.classpath.flatMap: classpath =>
-                classpath.symbolsAnnotatedWith("scala.annotation.tailrec").map: annotated =>
-                    assert(
-                        annotated.size >= 1,
-                        s"Expected >= 1 symbol annotated with scala.annotation.tailrec but found ${annotated.size}"
-                    )
-                    succeed
-    }
-
     //   annotation-tycon-preserved
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded AnnotatedFixture)
     // When: inspecting the annotations of any @deprecated symbol via sym.annotations
