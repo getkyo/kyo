@@ -132,10 +132,10 @@ class HttpClientTest extends BaseHttpTest:
             assert(!config.clientFilter.eq(HttpFilter.noop))
         }
 
-        "withoutFilters resets clientFilter" in {
+        "clearFilters resets clientFilter" in {
             val config = HttpClientConfig()
                 .filter(HttpFilter.client.addHeader("X-Test", "1"))
-                .withoutFilters
+                .clearFilters
             assert(config.clientFilter.eq(HttpFilter.noop))
         }
 

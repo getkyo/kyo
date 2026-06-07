@@ -143,7 +143,7 @@ object HttpClient:
 
     /** Clears client filters for the given computation. ServiceLoader and route filters still apply. */
     def withoutFilters[A, S](v: A < S)(using Frame): A < S =
-        withConfig(_.withoutFilters)(v)
+        withConfig(_.clearFilters)(v)
 
     // --- Factory methods ---
 

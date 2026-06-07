@@ -87,6 +87,6 @@ case class HttpClientConfig(
         copy(clientFilter = clientFilter.andThen(f))
     def filters(fs: Seq[HttpFilter.Passthrough[Nothing]]): HttpClientConfig =
         copy(clientFilter = fs.foldLeft(clientFilter)(_.andThen(_)))
-    def withoutFilters: HttpClientConfig =
+    def clearFilters: HttpClientConfig =
         copy(clientFilter = HttpFilter.noop)
 end HttpClientConfig
