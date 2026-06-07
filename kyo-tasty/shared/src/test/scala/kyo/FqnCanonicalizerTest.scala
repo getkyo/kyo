@@ -6,7 +6,7 @@ import kyo.internal.tasty.symbol.FqnCanonicalizer
   *
   * (T2). Covers toFullName with an inner-class table entry that maps '$' nesting to dotted form.
   */
-class FqnCanonicalizerTest extends Test:
+class FqnCanonicalizerTest extends kyo.test.Test[Any]:
 
     // Test 3 (T2, FqnCanonicalizer): named inner class resolves to dotted form.
     // Given: binaryName = "com/example/Foo$Inner"; innerClassTable with entry

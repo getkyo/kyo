@@ -14,7 +14,7 @@ import scala.compiletime.testing.typeCheckErrors
   *   5. schemaRoundTripsSubtypeVerdict
   *   6. unhandledSubtypingCaseIsClosedEnumVariant
   */
-class IsSubtypeOfTest extends Test:
+class IsSubtypeOfTest extends kyo.test.Test[Any]:
 
     import kyo.Tasty.SymbolId
 
@@ -69,7 +69,7 @@ class IsSubtypeOfTest extends Test:
     }
 
     // Leaf 2: Budget exhaustion yields Indeterminate (not Unknown).
-    "leaf-2: budget exhaustion via 66-deep Rec chain yields Indeterminate" in run {
+    "leaf-2: budget exhaustion via 66-deep Rec chain yields Indeterminate" in {
         nextId = 0
         val leafSym          = makeSym("RecBudgetLeaf")
         val leaf: Tasty.Type = Tasty.Type.Named(leafSym.id)
@@ -93,7 +93,7 @@ class IsSubtypeOfTest extends Test:
     // Uses a Symbol.Class whose parentTypes contains a TermRef (not Named/Applied(Named)),
     // which is outside the matcher set in checkParents. After isSubtypeOf, calling
     // Tasty.classpath folds any accumulated decodeCtx.subtypingErrors into cp.errors.
-    "leaf-3: unhandled parent shape routes to cp.errors" in run {
+    "leaf-3: unhandled parent shape routes to cp.errors" in {
         nextId = 0
         val baseSym  = makeSym("test.Base")
         val baseId   = baseSym.id

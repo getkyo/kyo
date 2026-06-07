@@ -21,7 +21,7 @@ import scala.collection.mutable
   *
   * Cross-platform leaf (10) lives in ClasspathInitBundledSnapshotTest.scala (shared/src/test).
   */
-class ClasspathInitBundledSnapshotJvmTest extends Test:
+class ClasspathInitBundledSnapshotJvmTest extends kyo.test.Test[Any]:
 
     /** Build a valid KRFL snapshot bytes for a synthetic classpath with `n` Package symbols. */
     private def syntheticSnapshotBytes(n: Int, digest: Long): Array[Byte] =
@@ -133,7 +133,7 @@ class ClasspathInitBundledSnapshotJvmTest extends Test:
     end ZipMemoryFileSource
 
     // Leaf 4: end-to-end transparent bundled load (probe HIT)
-    "Leaf 4: end-to-end bundled load produces exact symbol count (probe HIT)" in run {
+    "Leaf 4: end-to-end bundled load produces exact symbol count (probe HIT)" in {
         val baseBytes     = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val baseFile      = writeTempJar(baseBytes)
         val basePath      = baseFile.getAbsolutePath
@@ -163,7 +163,7 @@ class ClasspathInitBundledSnapshotJvmTest extends Test:
     }
 
     // Leaf 5: mixed-root merge (bundled HIT + cold jar)
-    "Leaf 5: mixed-root merge: bundled root contributes exact symbol count from snapshot" in run {
+    "Leaf 5: mixed-root merge: bundled root contributes exact symbol count from snapshot" in {
         val bundledBase     = buildZipBytes("A.class" -> Array[Byte](0xca.toByte))
         val bundledBaseFile = writeTempJar(bundledBase)
         val bundledBasePath = bundledBaseFile.getAbsolutePath
@@ -196,7 +196,7 @@ class ClasspathInitBundledSnapshotJvmTest extends Test:
     }
 
     // Leaf 6: SoftFail falls back on digest mismatch
-    "Leaf 6: SoftFail on digest mismatch falls back to cold load without raising Abort" in run {
+    "Leaf 6: SoftFail on digest mismatch falls back to cold load without raising Abort" in {
         val staleJar = writeTempJar(buildZipBytes(
             "B.class"                              -> Array[Byte](0xca.toByte),
             BundledSnapshotProbe.snapshotEntryPath -> syntheticSnapshotBytes(2, 0xdeadbeefL)
@@ -207,7 +207,7 @@ class ClasspathInitBundledSnapshotJvmTest extends Test:
     }
 
     // Leaf 7: probe raises DigestMismatch on stale snapshot
-    "Leaf 7: probe raises DigestMismatch when embedded digest does not match recomputed digest" in run {
+    "Leaf 7: probe raises DigestMismatch when embedded digest does not match recomputed digest" in {
         val baseBytes      = buildZipBytes("C.class" -> Array[Byte](0xca.toByte))
         val rootFile       = writeTempJar(baseBytes)
         val rootPath       = rootFile.getAbsolutePath

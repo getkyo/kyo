@@ -7,7 +7,7 @@ import kyo.internal.tasty.scala2.InflateHook
   * Mirrors the shared InflateHookTest logic (which is tagged jvmOnly) to verify the Native implementation. Both use the same hardcoded ZLIB
   * envelope for "hello kyo".
   */
-class InflateHookNativeTest extends Test:
+class InflateHookNativeTest extends kyo.test.Test[Any]:
 
     private val zlibCompressed: Array[Byte] = Array(
         0x78.toByte,
@@ -32,7 +32,7 @@ class InflateHookNativeTest extends Test:
     private val expectedBytes: Array[Byte] =
         "hello kyo".getBytes(java.nio.charset.StandardCharsets.UTF_8)
 
-    "InflateHook.inflate (Native) decompresses a known ZLIB envelope to the original bytes" in run {
+    "InflateHook.inflate (Native) decompresses a known ZLIB envelope to the original bytes" in {
         Abort.run[TastyError](InflateHook.inflate(zlibCompressed)).map:
             case Result.Success(bytes) =>
                 assert(

@@ -6,7 +6,7 @@ import kyo.Tasty.SymbolId
   *
   * Also covers leaf 9: visit/foreach demotion to private[kyo].
   */
-class TypeTraversalTest extends Test:
+class TypeTraversalTest extends kyo.test.Test[Any]:
 
     // Leaf 4: collectGathersByNameTypes
     // Given: a fixture Type tree with two ByName sub-types nested inside Applied
@@ -78,17 +78,17 @@ class TypeTraversalTest extends Test:
     "visit is not accessible from outside package kyo" in {
         val errs = compiletime.testing.typeCheckErrors(
             "(kyo.Tasty.Type.Any: kyo.Tasty.Type).visit(_ => ())"
-        )
+        ).length
         // typeCheckErrors is run from inside package kyo so private[kyo] IS visible here.
         // The in-package probe compiles successfully: errs must be empty, confirming the
         // method exists and is accessible from within the kyo package.
-        assert(errs.isEmpty, "visit should be accessible from inside package kyo (private[kyo])")
+        assert(errs == 0, "visit should be accessible from inside package kyo (private[kyo])")
         // Leaf 9 intent: no public API named 'visit' accessible from user scope.
         // We verify via typeCheckErrors from an explicit user-package context.
         val errsFromUser = compiletime.testing.typeCheckErrors(
             "package testuser; object Probe { kyo.Tasty.Type.Any.visit(_ => ()) }"
-        )
-        assert(errsFromUser.nonEmpty, "Expected compile error for visit from outside package kyo")
+        ).length
+        assert(errsFromUser > 0, "Expected compile error for visit from outside package kyo")
     }
 
 end TypeTraversalTest

@@ -25,7 +25,7 @@ import scala.collection.immutable.IntMap
   *   3. Cached failure re-serves as Failure, not Panic (dead Result.Panic arm confirmed removed).
   *   4. No Sync panic escapes under a synthetic corrupt-body scenario.
   */
-class BodyTreeErrorChannelTest extends Test:
+class BodyTreeErrorChannelTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -68,7 +68,7 @@ class BodyTreeErrorChannelTest extends Test:
     // previous specific-exception catch list).
     //
     // After F-015 the NonFatal arm catches it and returns TastyError.MalformedSection("ASTs", ...).
-    "Leaf 1: MalformedVarintException maps to TastyError.MalformedSection via NonFatal arm" in run {
+    "Leaf 1: MalformedVarintException maps to TastyError.MalformedSection via NonFatal arm" in {
         // 0x3E = 62 = TERMREFdirect type tag; 10x 0x00 = continuation bytes (bit 7 clear)
         val sectionBytes: Array[Byte] = Array[Byte](0x3e, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         val sym                       = makeValSym(1)
@@ -113,7 +113,7 @@ class BodyTreeErrorChannelTest extends Test:
     // equivalent bounds violation produces org.scalajs.linker.runtime.UndefinedBehaviorError (extends
     // java.lang.Error, not Exception), which is fatal and would crash the test process because neither
     // the AIOOBE arm nor NonFatal can catch it. The other 3 leaves remain cross-platform.
-    "Leaf 2: ArrayIndexOutOfBoundsException still maps to TastyError.MalformedSection truncated-body" in runJVM {
+    "Leaf 2: ArrayIndexOutOfBoundsException still maps to TastyError.MalformedSection truncated-body".onlyJvm in {
         // One byte: TERMREFdirect tag (0x3E). bodyEnd=12 is beyond the array length, so the JVM
         // throws ArrayIndexOutOfBoundsException when readByte tries to access bytes(1). The existing
         // specific arm catches this and converts it to MalformedSection("ASTs", "truncated body", 0L).
@@ -153,7 +153,7 @@ class BodyTreeErrorChannelTest extends Test:
     // Before F-015, the memo-hit path had a dead `case Result.Panic(t) => throw t` arm; it is now
     // gone. This test verifies that two successive calls both return the same Failure and that the
     // second call (memo-hit path) also returns Failure, confirming the dead arm is absent.
-    "Leaf 3: cached decode failure re-serves as MalformedSection on second bodyTree call" in run {
+    "Leaf 3: cached decode failure re-serves as MalformedSection on second bodyTree call" in {
         val sectionBytes: Array[Byte] = Array[Byte](0x3e, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         val sym                       = makeValSym(3)
         val body = SymbolBody(
@@ -189,7 +189,7 @@ class BodyTreeErrorChannelTest extends Test:
     // Belt-and-suspenders: confirms that the Abort[TastyError] result type holds for both
     // a fresh decode (first call) and a memo-hit (second call), using a different corrupt-byte
     // pattern. Also verifies the section name is always "ASTs".
-    "Leaf 4: no Sync panic under any NonFatal corrupt body bytes" in run {
+    "Leaf 4: no Sync panic under any NonFatal corrupt body bytes" in {
         // Use a byte sequence that triggers MalformedVarintException on first type read.
         val sectionBytes: Array[Byte] = Array[Byte](0x3e, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         val sym                       = makeValSym(4)

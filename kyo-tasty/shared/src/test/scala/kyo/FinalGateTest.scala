@@ -8,7 +8,7 @@ import scala.compiletime.testing.typeCheckErrors
   *
   * INV-007; INV-011; INV-012; INV-013.
   */
-class FinalGate extends Test:
+class FinalGateTest extends kyo.test.Test[Any]:
 
     // ── Leaf 1: INV-IMMUTABLE-ADT Array-field rejection ──────────────────────
     // Given: a probe case class with an Array[Int] field attempting Schema + CanEqual derivation.
@@ -16,15 +16,15 @@ class FinalGate extends Test:
     // Then: errors are non-empty (Array[Int] rejected) for the bad probe;
     //       errors are empty (Chunk[Int] accepted) for the good probe.
     "invImmutableAdtGate" in {
-        val bad = typeCheckErrors(
+        val badCount = typeCheckErrors(
             "final case class P(a: Array[Int]) derives kyo.Schema, CanEqual"
-        )
-        assert(bad.nonEmpty, "Array[Int] field should be rejected by Schema derivation")
+        ).length
+        assert(badCount > 0, "Array[Int] field should be rejected by Schema derivation")
 
-        val good = typeCheckErrors(
+        val goodCount = typeCheckErrors(
             "final case class Q(a: kyo.Chunk[Int]) derives kyo.Schema, CanEqual"
-        )
-        assert(good.isEmpty, "Chunk[Int] field should be accepted by Schema derivation")
+        ).length
+        assert(goodCount == 0, "Chunk[Int] field should be accepted by Schema derivation")
     }
 
-end FinalGate
+end FinalGateTest

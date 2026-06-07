@@ -20,14 +20,14 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
   *
   * runner port; item 27 surface deletion.
   */
-class WithClasspathTest extends Test:
+class WithClasspathTest extends kyo.test.Test[Any]:
 
     // ── Leaf 1: withClasspath(roots) cold-loads and binds ────────────────────
     // Given: fixture classpath with SomeObject.tasty loaded via TestClasspaths.withClasspath
     // When: Tasty.classpath.map(_.symbols.size) inside the withClasspath callback
     // Then: returns n > 0 (non-empty classpath loaded and bound by withClasspath(roots))
     // JVM only: TestClasspaths.standard uses java.class.path discovery (JVM-only).
-    "Leaf 1: withClasspath(roots) cold-loads classpath and binds; symbols.size > 0" in runJVM {
+    "Leaf 1: withClasspath(roots) cold-loads classpath and binds; symbols.size > 0".onlyJvm in {
         TestClasspaths.withClasspath():
             Tasty.classpath.map: cp =>
                 val n = cp.symbols.size
@@ -39,7 +39,7 @@ class WithClasspathTest extends Test:
     // Given: a manually constructed cp: Classpath with 2 symbols
     // When: Tasty.withClasspath(cp) { Tasty.classpath.map(_.symbols.size) }
     // Then: returns 2; no Scope overhead; no Async beyond the inner Sync
-    "Leaf 2: withClasspath(cp) binds pure-data classpath; returns correct symbol count" in run {
+    "Leaf 2: withClasspath(cp) binds pure-data classpath; returns correct symbol count" in {
         val cp = Tasty.Classpath(
             symbols = Chunk(
                 Tasty.Symbol.Package(
@@ -73,7 +73,7 @@ class WithClasspathTest extends Test:
     // Given: a Tasty.Pickle wrapping PlainClass.tasty bytes
     // When: Tasty.withPickles(Chunk(pickle)) { Tasty.classpath.map(_.symbols.size) }
     // Then: returns n > 0; PlainClass symbol is discoverable by FQN
-    "Leaf 3: withPickles(pickles) binds classpath from pickles; PlainClass discoverable" in run {
+    "Leaf 3: withPickles(pickles) binds classpath from pickles; PlainClass discoverable" in {
         val pickle = Tasty.Pickle(
             uuid = "leaf3-plain-class",
             version = Tasty.Version(28, 3, 0),
@@ -92,8 +92,8 @@ class WithClasspathTest extends Test:
     // When: invoked
     // Then: non-empty error; init factory is deleted per
     "Leaf 4: Classpath.init is not on the public surface" in {
-        val err = compiletime.testing.typeCheckErrors("kyo.Tasty.Classpath.init(Seq(\"x\"))")
-        assert(err.nonEmpty, "Classpath.init must not be on the surface; expected a compile error")
+        val errCount = compiletime.testing.typeCheckErrors("kyo.Tasty.Classpath.init(Seq(\"x\"))").length
+        assert(errCount > 0, "Classpath.init must not be on the surface; expected a compile error")
         succeed
     }
 
@@ -102,8 +102,8 @@ class WithClasspathTest extends Test:
     // When: invoked
     // Then: non-empty error; initCached factory is deleted per
     "Leaf 5: Classpath.initCached is not on the public surface" in {
-        val err = compiletime.testing.typeCheckErrors("kyo.Tasty.Classpath.initCached(Seq(\"x\"), \"/tmp\")")
-        assert(err.nonEmpty, "Classpath.initCached must not be on the surface; expected a compile error")
+        val errCount = compiletime.testing.typeCheckErrors("kyo.Tasty.Classpath.initCached(Seq(\"x\"), \"/tmp\")").length
+        assert(errCount > 0, "Classpath.initCached must not be on the surface; expected a compile error")
         succeed
     }
 
@@ -111,7 +111,7 @@ class WithClasspathTest extends Test:
     // Given: embedded fixture loaded via ClasspathOrchestrator.init + manual binding install
     // When: withClasspath(cp) (no cacheDir); Tasty.classpath returns bound cp
     // Then: no extra files; symbol count matches the loaded classpath
-    "Leaf 7: withClasspath(roots, Absent) does not touch any cache" in run {
+    "Leaf 7: withClasspath(roots, Absent) does not touch any cache" in {
         // Use embedded fixture + ClasspathOrchestrator.init to get a cross-platform
         // equivalent of withClasspath(roots, Absent): cold-load with no cache writes.
         val src = MemoryFileSource()
@@ -140,8 +140,8 @@ class WithClasspathTest extends Test:
         // The SnapshotRunner.scala source uses Tasty.withClasspath(roots, Maybe.Present(snapshotDir)).
         // This compile check confirms the old initCached entry point is gone, so the runner
         // cannot accidentally revert to the old pattern.
-        val err = compiletime.testing.typeCheckErrors("kyo.Tasty.Classpath.initCached(Seq(\"x\"), \"/tmp\")")
-        assert(err.nonEmpty, "Classpath.initCached must be absent; expected a compile error")
+        val errCount = compiletime.testing.typeCheckErrors("kyo.Tasty.Classpath.initCached(Seq(\"x\"), \"/tmp\")").length
+        assert(errCount > 0, "Classpath.initCached must be absent; expected a compile error")
         succeed
     }
 

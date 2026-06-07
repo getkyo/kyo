@@ -4,7 +4,7 @@ import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.reader.SectionIndex
 
 /** Tests for SectionIndex.read bounds checks (SectionIndex bounds). */
-class SectionIndexTest extends Test:
+class SectionIndexTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -25,7 +25,7 @@ class SectionIndexTest extends Test:
             Array(((n >> 7) & 0x7f).toByte, ((n & 0x7f) | 0x80).toByte)
     end encodeNat
 
-    "nameRef out-of-range yields MalformedSection" in run {
+    "nameRef out-of-range yields MalformedSection" in {
         // names.length == 3; first section entry has nameRef=99 (out of range).
         val names        = makeNames(3)
         val sectionBytes = encodeNat(99) ++ encodeNat(0)
@@ -45,7 +45,7 @@ class SectionIndexTest extends Test:
     }
 
     // Test oversized sectionLen yields MalformedSection
-    "negative sectionLen yields MalformedSection" in run {
+    "negative sectionLen yields MalformedSection" in {
         // names.length == 1; nameRef=0 (valid).
         // sectionLen encoded as 5-byte Nat: 0x7f,0x7f,0x7f,0x7f,0xff.
         // Pre-Phase-08: Int accumulator overflows to negative; sectionLen < 0 guard fires.
@@ -69,7 +69,7 @@ class SectionIndexTest extends Test:
     }
 
     // Test two-section encoding -- lookup of second section returns correct offset and length
-    "two-section encoding: get(ASTs) returns Present with correct offset and length" in run {
+    "two-section encoding: get(ASTs) returns Present with correct offset and length" in {
         // Build a names array: names(0) = Name("NAMES"), names(1) = Name("ASTs").
         val names = Array(Tasty.Name("NAMES"), Tasty.Name("ASTs"))
         // Encode section table:

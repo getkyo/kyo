@@ -13,7 +13,7 @@ package kyo
   *   4. sentinel-id-not-equal: sentinel id (-1) is never equal to itself or any other symbol (INV-002 guard).
   *   5. hashcode-consistency: equal symbols have equal hashCodes; different-kind symbols at same id differ (INV-002).
   */
-class SymbolEqualityTest extends Test:
+class SymbolEqualityTest extends kyo.test.Test[Any]:
 
     import Tasty.SymbolId
 

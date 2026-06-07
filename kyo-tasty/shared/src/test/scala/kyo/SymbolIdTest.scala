@@ -9,7 +9,7 @@ import kyo.Tasty.SymbolId
   * kyo package scope. typeCheckErrors from within package kyo would not reject private[kyo] members because the test file itself is inside
   * the kyo package.
   */
-class SymbolIdTest extends Test:
+class SymbolIdTest extends kyo.test.Test[Any]:
 
     // Leaf 1: SymbolId identity equality.
     // Given: two SymbolId.apply(7) calls.

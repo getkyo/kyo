@@ -4,12 +4,12 @@ import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.binary.MalformedVarintException
 import kyo.internal.tasty.binary.Varint
 
-class VarintTest extends Test:
+class VarintTest extends kyo.test.Test[Any]:
 
     private def viewOf(bytes: Array[Byte]): ByteView = ByteView(bytes)
 
     // Test 7: readNat decodes 0
-    "readNat decodes 0 (single terminating byte 0x80)" in run {
+    "readNat decodes 0 (single terminating byte 0x80)" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 0 encoded: (0 & 0x7f) | 0x80 = 0x80
@@ -18,7 +18,7 @@ class VarintTest extends Test:
     }
 
     // Test 8: readNat decodes 127
-    "readNat decodes 127 (single byte 0xFF)" in run {
+    "readNat decodes 127 (single byte 0xFF)" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 127 encoded: (127 & 0x7f) | 0x80 = 0x7f | 0x80 = 0xff
@@ -27,7 +27,7 @@ class VarintTest extends Test:
     }
 
     // Test 9: readNat decodes 128 (two bytes)
-    "readNat decodes 128 (two-byte encoding)" in run {
+    "readNat decodes 128 (two-byte encoding)" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 128 = 0x80: high 7 bits = 0x01, low 7 bits = 0x00
@@ -38,7 +38,7 @@ class VarintTest extends Test:
     }
 
     // Test 10: readNat decodes 16383 (two-byte maximum)
-    "readNat decodes 16383 (max two-byte value)" in run {
+    "readNat decodes 16383 (max two-byte value)" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 16383 = 0x3FFF: high 7 bits = 0x7F, low 7 bits = 0x7F
@@ -49,7 +49,7 @@ class VarintTest extends Test:
     }
 
     // Test 11: readNat decodes Int.MaxValue (5 bytes)
-    "readNat decodes Int.MaxValue (5-byte encoding)" in run {
+    "readNat decodes Int.MaxValue (5-byte encoding)" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Int.MaxValue = 2147483647 = 0x7FFFFFFF
@@ -61,7 +61,7 @@ class VarintTest extends Test:
     }
 
     // Test 12: readInt decodes -1 (dotty 2's complement, NOT zigzag)
-    "readInt decodes -1 using dotty sign-extension semantics" in run {
+    "readInt decodes -1 using dotty sign-extension semantics" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // -1 in dotty readLongInt: single byte 0xFF
@@ -73,7 +73,7 @@ class VarintTest extends Test:
     }
 
     // Test 13: readInt decodes Int.MinValue
-    "readInt decodes Int.MinValue using dotty sign-extension semantics" in run {
+    "readInt decodes Int.MinValue using dotty sign-extension semantics" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Int.MinValue = -2147483648 = 0x80000000 in 2's complement
@@ -117,7 +117,7 @@ class VarintTest extends Test:
     }
 
     // Test 14: readLongNat decodes Long.MaxValue
-    "readLongNat decodes Long.MaxValue" in run {
+    "readLongNat decodes Long.MaxValue" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Long.MaxValue = 0x7FFFFFFFFFFFFFFF = 9223372036854775807L
@@ -172,7 +172,7 @@ class VarintTest extends Test:
 
     // Test: readNat delegates to readLongNat; limit inherited from readLongNat (10 bytes)
     // Per actual dotty TastyReader.readNat = readLongNat().toInt: no separate per-byte cap in readNat.
-    "readNat rejects continuation past 10 bytes (inherited readLongNat cap)" in run {
+    "readNat rejects continuation past 10 bytes (inherited readLongNat cap)" in {
         // §839 case 3; direct Varint error-path test, single-threaded, no suspension.
         // 11 bytes with 0x80 CLEAR: readLongNat fires bytes >= 10 after reading the 10th byte.
         import AllowUnsafe.embrace.danger
@@ -191,7 +191,7 @@ class VarintTest extends Test:
 
     // large-section-offsets-decode
     // A 6-byte non-minimal encoding of 0 previously threw "5 bytes"; now decodes to 0.
-    "readNat decodes 6-byte non-minimal encoding (large-section-offset fix)" in run {
+    "readNat decodes 6-byte non-minimal encoding (large-section-offset fix)" in {
         // §839 case 3; direct Varint test, single-threaded, no suspension.
         // Non-minimal encoding of 0 in 6 bytes:
         //   5 continuation bytes (0x80 CLEAR) each with value bits 0x00,
@@ -204,7 +204,7 @@ class VarintTest extends Test:
 
     // readNat truncates values > Int.MaxValue matching dotty behavior
     // Per actual dotty TastyReader.readNat = readLongNat().toInt: silently truncates to Int.
-    "readNat truncates 9-byte Long.MaxValue encoding to Int (dotty parity)" in run {
+    "readNat truncates 9-byte Long.MaxValue encoding to Int (dotty parity)" in {
         // §839 case 3; direct Varint truncation test, single-threaded, no suspension.
         // Long.MaxValue in 9 bytes: 0x7F * 8 continuation + 0xFF terminating.
         // Long.MaxValue.toInt = -1 (low 32 bits of 0x7FFFFFFFFFFFFFFF).
@@ -227,7 +227,7 @@ class VarintTest extends Test:
     // varint-cross-platform-parity
     // The same synthetic 6-byte stream decoded on JVM, JS, and Native returns the same value.
     // This test lives in shared/src/test so it runs on all three platforms per HARD RULE 3.
-    "readNat 6-byte non-minimal decoding is consistent across platforms" in run {
+    "readNat 6-byte non-minimal decoding is consistent across platforms" in {
         // §839 case 3; cross-platform parity test, single-threaded, no suspension.
         // 6-byte non-minimal encoding of value 1:
         //   5 continuation bytes of 0x00 then terminating byte 0x81 (value bits = 0x01).
@@ -236,7 +236,7 @@ class VarintTest extends Test:
         assert(Varint.readNat(view) == 1)
     }
 
-    "readLongNat rejects continuation past 10 bytes (Long overflow guard)" in run {
+    "readLongNat rejects continuation past 10 bytes (Long overflow guard)" in {
         // §839 case 3; direct Varint error-path test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 11 bytes with 0x80 CLEAR = 11 continuation bytes; cap is 10.
@@ -253,7 +253,7 @@ class VarintTest extends Test:
         end try
     }
 
-    "readLongNat accepts exactly 10-byte encoding without throwing" in run {
+    "readLongNat accepts exactly 10-byte encoding without throwing" in {
         // §839 case 3; direct Varint boundary test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 9 bytes with 0x80 CLEAR (continuation) then 1 terminating byte with 0x80 SET.
@@ -275,7 +275,7 @@ class VarintTest extends Test:
     }
 
     // writeNat then readNat round-trip
-    "writeNat then readNat round-trips 1234" in run {
+    "writeNat then readNat round-trips 1234" in {
         // §839 case 3; direct Varint write+read round-trip test, single-threaded.
         import AllowUnsafe.embrace.danger
         val buf = scala.collection.mutable.ArrayBuffer.empty[Byte]
@@ -285,7 +285,7 @@ class VarintTest extends Test:
     }
 
     // writeLongNat then readLongNat round-trip
-    "writeLongNat then readLongNat round-trips 9_999_999_999L" in run {
+    "writeLongNat then readLongNat round-trips 9_999_999_999L" in {
         // §839 case 3; direct Varint write+read round-trip test, single-threaded.
         import AllowUnsafe.embrace.danger
         val buf = scala.collection.mutable.ArrayBuffer.empty[Byte]
@@ -297,7 +297,7 @@ class VarintTest extends Test:
     // seeded generative round-trip for writeLongNat / readLongNat.
     // 100 non-negative Long values drawn from scala.util.Random(seed=0L).
     // Negative values are masked to non-negative via >>> 1 (arithmetic unsigned shift).
-    "writeLongNat then readLongNat round-trips 100 seeded random non-negative Longs" in run {
+    "writeLongNat then readLongNat round-trips 100 seeded random non-negative Longs" in {
         // §839 case 3; direct Varint write+read generative test, single-threaded.
         import AllowUnsafe.embrace.danger
         val rng    = new scala.util.Random(0L)

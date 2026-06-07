@@ -12,7 +12,7 @@ import kyo.Tasty.SymbolId
   * Leaf 5 (showRendersSimpleNameWithoutSyncDefer): show with ShowFormat.Simple still works.
   * Leaf 6 (typeShowReturnsAbsentWithoutSyncDefer): bodyTree for a symbol with no body returns Absent.
   */
-class TastySyncDeferRemovalTest extends Test:
+class TastySyncDeferRemovalTest extends kyo.test.Test[Any]:
 
     private val cls = Tasty.Symbol.Class(
         SymbolId(0),
@@ -30,7 +30,7 @@ class TastySyncDeferRemovalTest extends Test:
         Chunk.empty
     )
 
-    "showRendersSimpleNameWithoutSyncDefer" in run {
+    "showRendersSimpleNameWithoutSyncDefer" in {
         // Given: a Classpath with a Symbol.Class named "Foo".
         // When: Tasty.show(cls, ShowFormat.Simple).eval is called.
         // Then: the result is "Foo" (the simple name).
@@ -42,7 +42,7 @@ class TastySyncDeferRemovalTest extends Test:
                     succeed
     }
 
-    "typeShowReturnsAbsentWithoutSyncDefer" in run {
+    "typeShowReturnsAbsentWithoutSyncDefer" in {
         // Given: a Classpath containing cls which has no body (Maybe.Absent).
         // When: Tasty.bodyTree(cls).eval is called.
         // Then: the result is Maybe.Absent (no body available) without throwing or hanging.

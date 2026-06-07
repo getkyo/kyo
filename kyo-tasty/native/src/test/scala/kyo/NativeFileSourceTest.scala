@@ -10,7 +10,7 @@ import kyo.internal.tasty.query.NativeFileSource
   *
   * Pins T5 (Native-only path).
   */
-class NativeFileSourceTest extends Test:
+class NativeFileSourceTest extends kyo.test.Test[Any]:
 
     private val sourceBytes: Array[Byte] = Array.tabulate(100)(i => (i & 0xff).toByte)
 
@@ -18,7 +18,7 @@ class NativeFileSourceTest extends Test:
         val dir = Option(java.lang.System.getenv("TMPDIR")).filter(_.nonEmpty).getOrElse("/tmp")
         s"$dir/$name"
 
-    "NativeFileSource.read returns all bytes of a 100-byte file written via NativeFileSource.write" in run {
+    "NativeFileSource.read returns all bytes of a 100-byte file written via NativeFileSource.write" in {
         val path = tmpPath("kyo-native-tasty-test-read-100.bin")
         Abort.run[TastyError](
             NativeFileSource.write(path, sourceBytes).flatMap: _ =>
@@ -39,7 +39,7 @@ class NativeFileSourceTest extends Test:
                 throw t
     }
 
-    "NativeFileSource.read on missing path returns Abort[TastyError.FileNotFound]" in run {
+    "NativeFileSource.read on missing path returns Abort[TastyError.FileNotFound]" in {
         Abort.run[TastyError](NativeFileSource.read("/nonexistent-kyo-tasty-native-test/no.bin")).map:
             case Result.Failure(_: TastyError.FileNotFound) =>
                 succeed

@@ -6,7 +6,7 @@ import kyo.Tasty.SymbolId
   *
   * Leaf 24 updated: body field no longer exists on Symbol.Method. Accessing `.body` must be a compile error.
   */
-class MethodBodyNamingTest extends Test:
+class MethodBodyNamingTest extends kyo.test.Test[Any]:
 
     // ── Leaf 24: body no longer exists on Symbol.Method ──────────────────────
 
@@ -29,10 +29,9 @@ class MethodBodyNamingTest extends Test:
         )
         discard(m)
         // body is no longer a field; accessing it must be a compile error
-        assert(
-            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Method).body").nonEmpty,
-            "Expected compile error for Symbol.Method.body (body field removed)"
-        )
+        val __tcErrors1 = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Method).body").length
+
+        assert(__tcErrors1 > 0, "Expected compile error for Symbol.Method.body (body field removed)")
         succeed
     }
 

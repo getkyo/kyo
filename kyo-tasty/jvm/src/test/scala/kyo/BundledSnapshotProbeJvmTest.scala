@@ -20,7 +20,7 @@ import scala.collection.mutable
   *
   * Cross-platform leaves (8, 9) live in BundledSnapshotProbeTest.scala (shared/src/test).
   */
-class BundledSnapshotProbeJvmTest extends Test:
+class BundledSnapshotProbeJvmTest extends kyo.test.Test[Any]:
 
     // in-memory zip FileSource (JVM test helper)
 
@@ -141,7 +141,7 @@ class BundledSnapshotProbeJvmTest extends Test:
     // Given: fixture jar containing only .class entries (no snapshot entry)
     // When: BundledSnapshotProbe.probe(jarPath)
     // Then: returns Maybe.Absent
-    "Leaf 1: jar with no snapshot entry returns Maybe.Absent" in run {
+    "Leaf 1: jar with no snapshot entry returns Maybe.Absent" in {
         val noSnapBytes = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val root        = "no-snap.jar"
         val source      = new ZipMemoryFileSource(Map(root -> noSnapBytes))
@@ -152,7 +152,7 @@ class BundledSnapshotProbeJvmTest extends Test:
 
     // Leaf 2: jar with valid snapshot returns Present
     // Given: real jar on disk with KRFL snapshot; embedded digest matches JVM CEN walk digest.
-    "Leaf 2: jar with valid snapshot and matching digest returns Maybe.Present" in run {
+    "Leaf 2: jar with valid snapshot and matching digest returns Maybe.Present" in {
         val baseBytes     = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val basePath      = writeTempJarBytes(baseBytes)
         val digest        = DigestComputer.digestForRoot(basePath)
@@ -172,7 +172,7 @@ class BundledSnapshotProbeJvmTest extends Test:
 
     // Leaf 3: digest mismatch raises DigestMismatch
     // Given: real jar on disk; snapshot embeds a wrong digest (0xdeadbeef).
-    "Leaf 3: digest mismatch raises TastyError.DigestMismatch" in run {
+    "Leaf 3: digest mismatch raises TastyError.DigestMismatch" in {
         val baseBytes     = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val basePath      = writeTempJarBytes(baseBytes)
         val staleDigest   = 0xdeadbeefL // intentionally wrong
@@ -196,7 +196,7 @@ class BundledSnapshotProbeJvmTest extends Test:
 
     // Leaf 11: probe is idempotent
     // Given: same jar probed twice.
-    "Leaf 11: probe is idempotent; same bytes returned on two calls" in run {
+    "Leaf 11: probe is idempotent; same bytes returned on two calls" in {
         val baseBytes      = buildZipBytes("Bar.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val basePath       = writeTempJarBytes(baseBytes)
         val expectedDigest = DigestComputer.digestForRoot(basePath)

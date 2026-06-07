@@ -17,7 +17,7 @@ import scala.collection.mutable
   * produces byte-equal output. The fix replaces IdentityHashMap[Symbol,String] with HashMap[Int,String] keyed by SymbolId.value
   * so that warm-loaded Symbol instances (with different object identity but same id.value) hit the FQN map correctly.
   */
-class SnapshotWriterTest extends Test:
+class SnapshotWriterTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -60,7 +60,7 @@ class SnapshotWriterTest extends Test:
 
     // Test 1 (INV-015 writer side): PARENTS, MEMBERS, and TPARAMS_ sections have length > 0
     // after writing a snapshot from a real TASTy classpath that has class declarations and parents.
-    "snapshot PARENTS, MEMBERS, and TPARAMS_ sections have length > 0 after writing a real classpath" in run {
+    "snapshot PARENTS, MEMBERS, and TPARAMS_ sections have length > 0 after writing a real classpath" in {
         val src = MemoryFileSource()
         // Use the SomeTrait fixture which extends java.lang.Object (has parents) and has members.
         src.add("root/SomeTrait.tasty", kyo.fixtures.Embedded.someTraitTasty)
@@ -106,7 +106,7 @@ class SnapshotWriterTest extends Test:
     // CARRY-1 test 1: two independent cold serializations of the same classpath produce byte-equal output.
     // Regression guard for F-A4-OPEN-IDEMPOTENT (decoder-fidelity-2 carry-over).
     // Cross-platform: uses embedded fixtures so it runs on JVM, JS, and Native.
-    "CARRY-1 cold-vs-cold: two same-run serializations of the same classpath are byte-equal" in run {
+    "CARRY-1 cold-vs-cold: two same-run serializations of the same classpath are byte-equal" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val digest = Array[Byte](0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67)
             val a      = SnapshotWriter.serializeToBytes(cp, digest)
@@ -124,7 +124,7 @@ class SnapshotWriterTest extends Test:
     // annotation FQN interning order to differ and producing a 13-byte divergence. Fixed by keying
     // fqnBySymbol by SymbolId.value (Int) instead of Symbol object identity.
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory() which works on JVM, JS, and Native.
-    "CARRY-1 warm-reserialize: warm-loaded classpath re-serializes byte-equal to the original snapshot" in run {
+    "CARRY-1 warm-reserialize: warm-loaded classpath re-serializes byte-equal to the original snapshot" in {
         TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
             val digest = Array[Byte](0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77)
             val a      = SnapshotWriter.serializeToBytes(cold, digest)

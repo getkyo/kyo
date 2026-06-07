@@ -29,7 +29,7 @@ import scala.collection.mutable
   *
   * Plan tests 12-24.
   */
-class TypeUnpicklerTest extends Test:
+class TypeUnpicklerTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -85,7 +85,7 @@ class TypeUnpicklerTest extends Test:
     end decodeType
 
     // Test 12: decoding a TYPEREFsymbol node for a known symbol returns Named(sym).
-    "decoding TYPEREFsymbol returns Named(intSymbol)" in run {
+    "decoding TYPEREFsymbol returns Named(intSymbol)" in {
         val sym     = makeSym("Int")
         val symAddr = 42
         val addrMap = IntMap(symAddr -> sym)
@@ -106,7 +106,7 @@ class TypeUnpicklerTest extends Test:
     }
 
     // Test 13: decoding a BYNAMEtype wrapping a symbol returns ByName(Named(sym)).
-    "decoding BYNAMEtype wrapping a TYPEREFsymbol returns ByName(Named(sym))" in run {
+    "decoding BYNAMEtype wrapping a TYPEREFsymbol returns ByName(Named(sym))" in {
         val sym        = makeSym("Int")
         val symAddr    = 10
         val addrMap    = IntMap(symAddr -> sym)
@@ -127,7 +127,7 @@ class TypeUnpicklerTest extends Test:
     }
 
     // Test 14: decoding a REPEATED node returns Repeated(elem).
-    "decoding REPEATED returns Repeated(elem)" in run {
+    "decoding REPEATED returns Repeated(elem)" in {
         val sym       = makeSym("String")
         val symAddr   = 5
         val addrMap   = IntMap(symAddr -> sym)
@@ -148,7 +148,7 @@ class TypeUnpicklerTest extends Test:
     }
 
     // Test 15: decoding APPLIEDtype for List[String] returns Applied(Named(listSym), Chunk(Named(stringSym))).
-    "decoding APPLIEDtype for List[String] returns Applied(Named(list), Chunk(Named(string)))" in run {
+    "decoding APPLIEDtype for List[String] returns Applied(Named(list), Chunk(Named(string)))" in {
         val listSym    = makeSym("List")
         val stringSym  = makeSym("String")
         val listAddr   = 20
@@ -181,7 +181,7 @@ class TypeUnpicklerTest extends Test:
     // Both are decoded in a single shared DecodeSession so addrCache is shared.
     // Asserts that the SHAREDtype result is eq-identical to the first-decoded type (same reference,
     // not a newly-allocated copy), exercising TypeUnpickler.scala lines 175-181 and 157-160.
-    "decoding SHAREDtype reference returns the same reference (no duplication)" in run {
+    "decoding SHAREDtype reference returns the same reference (no duplication)" in {
         val sym     = makeSym("Int")
         val symAddr = 7
         val addrMap = IntMap(symAddr -> sym)
@@ -213,7 +213,7 @@ class TypeUnpicklerTest extends Test:
     }
 
     // Test 17: decoding TYPELAMBDAtype returns TypeLambda(params, body) with params.size == 1.
-    "decoding TYPELAMBDAtype with one param returns TypeLambda with params.size == 1" in run {
+    "decoding TYPELAMBDAtype with one param returns TypeLambda with params.size == 1" in {
         val paramSym   = makeSym("A", SymbolKind.TypeParam)
         val resultSym  = makeSym("Int")
         val paramAddr  = 5
@@ -243,7 +243,7 @@ class TypeUnpicklerTest extends Test:
     // Test 18: decoding ANNOTATEDtype eagerly decodes the annotation term into arguments: Chunk[Tree].
     // (INV-006): arguments is now a plain Chunk[Tree] field populated eagerly during Pass B.
     // The annotation term TYPEREFpkg(0) decodes to a TermRefPkg tree; arguments holds a single-element Chunk.
-    "decoding ANNOTATEDtype eagerly populates Annotation.arguments as Chunk[Tree]" in run {
+    "decoding ANNOTATEDtype eagerly populates Annotation.arguments as Chunk[Tree]" in {
         val sym        = makeSym("Int")
         val symAddr    = 3
         val addrMap    = IntMap(symAddr -> sym)
@@ -272,7 +272,7 @@ class TypeUnpicklerTest extends Test:
 
     // Test 18b: Annotation.arguments for a UNITconst term is Chunk(Literal(UnitConst)) after eager decode.
     // (INV-006): arguments is a plain Chunk[Tree] field; no Abort.run needed to access it.
-    "ANNOTATEDtype with UNITconst term: Annotation.arguments == Chunk(Literal(UnitConst))" in run {
+    "ANNOTATEDtype with UNITconst term: Annotation.arguments == Chunk(Literal(UnitConst))" in {
         val sym        = makeSym("Int")
         val symAddr    = 3
         val addrMap    = IntMap(symAddr -> sym)
@@ -297,14 +297,14 @@ class TypeUnpicklerTest extends Test:
 
     // Test 18c: Annotation constructed directly with Chunk.empty has no arguments (synthetic annotation).
     // (INV-006): pure case class, no decode context needed.
-    "Annotation(type, Chunk.empty).arguments is empty without any effect" in run {
+    "Annotation(type, Chunk.empty).arguments is empty without any effect" in {
         val ann = Tasty.Annotation(Tasty.Type.Named(Tasty.SymbolId(makeSym("Foo").id)), Chunk.empty)
         assert(ann.arguments.isEmpty, s"Expected empty arguments but got ${ann.arguments}")
         succeed
     }
 
     // Test 19: decoding ORtype returns OrType(left, right).
-    "decoding ORtype returns OrType(left, right)" in run {
+    "decoding ORtype returns OrType(left, right)" in {
         val symA    = makeSym("A")
         val symB    = makeSym("B")
         val addrMap = IntMap(5 -> symA, 6 -> symB)
@@ -325,7 +325,7 @@ class TypeUnpicklerTest extends Test:
     }
 
     // Test 20: decoding ANDtype returns AndType(left, right) (or normalized form via TypeOps).
-    "decoding ANDtype returns AndType(left, right) or normalized form" in run {
+    "decoding ANDtype returns AndType(left, right) or normalized form" in {
         val symA    = makeSym("A")
         val symB    = makeSym("B")
         val addrMap = IntMap(5 -> symA, 6 -> symB)
@@ -348,7 +348,7 @@ class TypeUnpicklerTest extends Test:
     }
 
     // Test 21: decoding MATCHtype returns MatchType(bound, scrutinee, cases) with cases.size == 2.
-    "decoding MATCHtype with 2 cases returns MatchType with cases.size == 2" in run {
+    "decoding MATCHtype with 2 cases returns MatchType with cases.size == 2" in {
         val symBound = makeSym("Any")
         val symScrut = makeSym("X")
         val addrMap  = IntMap(1 -> symBound, 2 -> symScrut)
@@ -388,7 +388,7 @@ class TypeUnpicklerTest extends Test:
     }
 
     // Test 22: decoding CONSTANTtype wrapping integer 42 returns ConstantType(IntConst(42)).
-    "decoding INTconst 42 returns ConstantType(IntConst(42))" in run {
+    "decoding INTconst 42 returns ConstantType(IntConst(42))" in {
         // INTconst (70) is category 2: tag + signed Int (dotty readInt).
         // In dotty TASTy, the LAST byte has 0x80 set. For value 42: (42 | 0x80) = 0xAA = 170.
         // readInt reads 0xAA: b=0xAA, x=((0xAA<<1).toByte>>1).toLong=42. Since (0xAA & 0x80) != 0, loop stops.
@@ -407,7 +407,7 @@ class TypeUnpicklerTest extends Test:
     // Actually calls TypeUnpickler.readTypeIntoSession on the RECtype/RECthis byte stream inside a
     // stack-limited thread (64KB), verifying that the decoder terminates without overflow and returns
     // a Tasty.Type.Rec whose parent is Tasty.Type.RecThis.
-    "decoding RECtype with RECthis back-reference completes without stack overflow" in run {
+    "decoding RECtype with RECthis back-reference completes without stack overflow" in {
         // Hand-construct bytes for:
         //   RECtype(100) [parent = RECthis(66) back-ref to addr 0]
         //
@@ -463,7 +463,7 @@ class TypeUnpicklerTest extends Test:
 
     // Test 24 (redesigned for): TYPEREFin with unknown FQN creates a Named(unresolved).
     // deleted UnresolvedRef; cross-file references now resolve to synthetic unresolved symbols directly.
-    "decoding TYPEREFin with unknown FQN returns Named(unresolved) type" in run {
+    "decoding TYPEREFin with unknown FQN returns Named(unresolved) type" in {
         val names = Array(Tasty.Name("scala"), Tasty.Name("SomeCrossFileType"))
         // TYPEREFin (175) = cat5: [NameRef] [qual_Type] [namespace_Type]
         // NameRef = 1 (index to "SomeCrossFileType")

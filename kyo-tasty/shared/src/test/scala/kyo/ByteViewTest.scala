@@ -2,10 +2,10 @@ package kyo
 
 import kyo.internal.tasty.binary.ByteView
 
-class ByteViewTest extends Test:
+class ByteViewTest extends kyo.test.Test[Any]:
 
     // Test 1: peekByte reads at offset without advancing position
-    "peekByte reads byte at offset without advancing position" in run {
+    "peekByte reads byte at offset without advancing position" in {
         val bytes = Array[Byte](10, 20, 30, 40)
         val view  = ByteView(bytes)
         val b     = view.peekByte(2)
@@ -14,7 +14,7 @@ class ByteViewTest extends Test:
     }
 
     // Test 2: readByte advances position by 1 and returns correct byte
-    "readByte advances position by 1 and returns correct byte" in run {
+    "readByte advances position by 1 and returns correct byte" in {
         // §839 case 3; direct ByteView cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = Array[Byte](0x5c.toByte, 0xa1.toByte, 0xab.toByte)
@@ -28,7 +28,7 @@ class ByteViewTest extends Test:
     }
 
     // Test 3: readByte at end produces ArrayIndexOutOfBoundsException (or a wrapping Error on Scala.js)
-    "readByte at end produces ArrayIndexOutOfBoundsException" in run {
+    "readByte at end produces ArrayIndexOutOfBoundsException" in {
         // §839 case 3; direct ByteView cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = Array[Byte](0x80.toByte)
@@ -46,7 +46,7 @@ class ByteViewTest extends Test:
     }
 
     // Test 4: subView shares underlying array, has correct start/end/position
-    "subView shares underlying array with correct bounds" in run {
+    "subView shares underlying array with correct bounds" in {
         val bytes = Array[Byte](1, 2, 3, 4, 5)
         val view  = ByteView(bytes)
         val sub   = view.subView(1, 4)
@@ -58,7 +58,7 @@ class ByteViewTest extends Test:
     }
 
     // Test 5: goto sets position to addr
-    "goto sets position to given address" in run {
+    "goto sets position to given address" in {
         // §839 case 3; direct ByteView cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = Array[Byte](0, 1, 2, 3, 4, 5)
@@ -71,7 +71,7 @@ class ByteViewTest extends Test:
     }
 
     // Test 6: remaining returns end - position
-    "remaining returns end minus current position" in run {
+    "remaining returns end minus current position" in {
         // §839 case 3; direct ByteView cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = Array[Byte](10, 20, 30, 40, 50)
@@ -83,7 +83,7 @@ class ByteViewTest extends Test:
         assert(view.remaining == 2)
     }
 
-    "subView rejects negative from" in run {
+    "subView rejects negative from" in {
         val bytes = Array.fill(10)(0.toByte)
         val view  = ByteView(bytes)
         try
@@ -95,7 +95,7 @@ class ByteViewTest extends Test:
         end try
     }
 
-    "subView rejects until greater than length" in run {
+    "subView rejects until greater than length" in {
         val bytes = Array.fill(10)(0.toByte)
         val view  = ByteView(bytes)
         try

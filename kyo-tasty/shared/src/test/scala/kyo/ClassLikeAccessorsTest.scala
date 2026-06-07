@@ -10,7 +10,7 @@ import scala.collection.mutable
   * Leaves 52-64, 69 use fromPicklesWithSymbols for synthetic fixtures. Leaf 65 (companion-on-class-resolves) uses a real cold-classpath
   * opened via ClasspathOrchestrator to ensure companionIndex is populated (W-02: SnapshotReader does not re-encode relational data).
   */
-class ClassLikeAccessorsTest extends Test:
+class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -219,7 +219,7 @@ class ClassLikeAccessorsTest extends Test:
     // Given: fixture Symbol.Class with two Type.Named parents pointing to AnyRef + T
     // When: c.parents
     // Then: Chunk[ClassLike] size 2
-    "parents-on-class: c.parents returns Chunk[ClassLike] size 2 for two Type.Named parents" in run {
+    "parents-on-class: c.parents returns Chunk[ClassLike] size 2 for two Type.Named parents" in {
         import Tasty.Name.asString
         val anyRefSym = makeClass(id = 0, name = "Object", ownerId = 0)
         val traitT    = makeTrait(id = 1, name = "T", ownerId = 0)
@@ -249,7 +249,7 @@ class ClassLikeAccessorsTest extends Test:
     // Given: fixture class with def foo, def bar, val x
     // When: c.methods
     // Then: Chunk[Method] size 2 names foo/bar
-    "methods-typed-Chunk-Method: c.methods returns Chunk[Method] size 2" in run {
+    "methods-typed-Chunk-Method: c.methods returns Chunk[Method] size 2" in {
         import Tasty.Name.asString
         val classSym  = makeClass(id = 0, name = "Foo", ownerId = 0)
         val method1   = makeMethod(id = 1, name = "foo", ownerId = 0)
@@ -268,7 +268,7 @@ class ClassLikeAccessorsTest extends Test:
     // Given: same fixture class with def foo, def bar, val x
     // When: c.vals
     // Then: Chunk[Val] size 1 name x
-    "vals-typed-Chunk-Val: c.vals returns Chunk[Val] size 1 name x" in run {
+    "vals-typed-Chunk-Val: c.vals returns Chunk[Val] size 1 name x" in {
         import Tasty.Name.asString
         val classSym  = makeClass(id = 0, name = "Foo", ownerId = 0)
         val method1   = makeMethod(id = 1, name = "foo", ownerId = 0)
@@ -285,7 +285,7 @@ class ClassLikeAccessorsTest extends Test:
     // Given: fixture class with var y
     // When: c.vars
     // Then: Chunk[Var] size 1 name y
-    "vars-typed-Chunk-Var: c.vars returns Chunk[Var] size 1 name y" in run {
+    "vars-typed-Chunk-Var: c.vars returns Chunk[Var] size 1 name y" in {
         import Tasty.Name.asString
         val classSym  = makeClass(id = 0, name = "Foo", ownerId = 0)
         val varSym    = makeVar(id = 1, name = "y", ownerId = 0)
@@ -301,7 +301,7 @@ class ClassLikeAccessorsTest extends Test:
     // Given: class fixture with two Field declarations (Java classfile field kind)
     // When: c.fields
     // Then: Chunk[Field] size 2
-    "fields-typed-on-java: c.fields returns Chunk[Field] size 2" in run {
+    "fields-typed-on-java: c.fields returns Chunk[Field] size 2" in {
         import Tasty.Name.asString
         val classSym  = makeClass(id = 0, name = "Foo", ownerId = 0)
         val field1    = makeField(id = 1, name = "F1", ownerId = 0)
@@ -319,7 +319,7 @@ class ClassLikeAccessorsTest extends Test:
     // Given: outer class with declarations: inner class, inner trait, inner object
     // When: c.nestedTypes
     // Then: Chunk[ClassLike] size 3
-    "nestedTypes: c.nestedTypes returns Chunk[ClassLike] size 3" in run {
+    "nestedTypes: c.nestedTypes returns Chunk[ClassLike] size 3" in {
         val outerClass  = makeClass(id = 0, name = "Outer", ownerId = 0)
         val innerClass  = makeClass(id = 1, name = "Inner", ownerId = 0)
         val innerTrait  = makeTrait(id = 2, name = "InnerT", ownerId = 0)
@@ -337,7 +337,7 @@ class ClassLikeAccessorsTest extends Test:
     // Given: class fixture with type A = Int, type B = String
     // When: c.declarations.collect { case t: Tasty.Symbol.TypeAlias => t }
     // Then: Chunk[TypeAlias] size 2
-    "typeAliases: c.declarations.collect { case t: Tasty.Symbol.TypeAlias => t } returns Chunk[TypeAlias] size 2" in run {
+    "typeAliases: c.declarations.collect { case t: Tasty.Symbol.TypeAlias => t } returns Chunk[TypeAlias] size 2" in {
         import Tasty.Name.asString
         val classSym   = makeClass(id = 0, name = "Foo", ownerId = 0)
         val typeAlias1 = makeTypeAlias(id = 1, name = "A", ownerId = 0)
@@ -356,7 +356,7 @@ class ClassLikeAccessorsTest extends Test:
     // Given: trait fixture with abstract type X (no body)
     // When: t.declarations.collect { case t: Tasty.Symbol.AbstractType => t }
     // Then: Chunk[AbstractType] size 1
-    "abstractTypes: t.declarations.collect { case t: Tasty.Symbol.AbstractType => t } returns Chunk[AbstractType] size 1" in run {
+    "abstractTypes: t.declarations.collect { case t: Tasty.Symbol.AbstractType => t } returns Chunk[AbstractType] size 1" in {
         import Tasty.Name.asString
         val traitSym     = makeTrait(id = 0, name = "MyTrait", ownerId = 0)
         val abstractType = makeAbstractType(id = 1, name = "X", ownerId = 0)
@@ -373,7 +373,7 @@ class ClassLikeAccessorsTest extends Test:
     // Given: object fixture with opaque type Money = Long
     // When: o.declarations.collect { case t: Tasty.Symbol.OpaqueType => t }
     // Then: Chunk[OpaqueType] size 1
-    "opaqueTypes: o.declarations.collect { case t: Tasty.Symbol.OpaqueType => t } returns Chunk[OpaqueType] size 1" in run {
+    "opaqueTypes: o.declarations.collect { case t: Tasty.Symbol.OpaqueType => t } returns Chunk[OpaqueType] size 1" in {
         import Tasty.Name.asString
         val objectSym  = makeObject(id = 0, name = "MyObject", ownerId = 0)
         val opaqueType = makeOpaqueType(id = 1, name = "Money", ownerId = 0)
@@ -392,7 +392,7 @@ class ClassLikeAccessorsTest extends Test:
     // Given: class C[A, +B, -C] -- typeParamIds pointing to 3 TypeParam symbols
     // When: c.typeParams
     // Then: Chunk[TypeParam] size 3 variances Invariant/Covariant/Contravariant
-    "typeParams-on-class: c.typeParams returns Chunk[TypeParam] size 3 with correct variances" in run {
+    "typeParams-on-class: c.typeParams returns Chunk[TypeParam] size 3 with correct variances" in {
         val classSym    = makeClass(id = 0, name = "C", ownerId = 0)
         val tpA         = makeTypeParam(id = 1, name = "A", ownerId = 0)
         val tpB         = makeTypeParamCo(id = 2, name = "B", ownerId = 0)
@@ -413,7 +413,7 @@ class ClassLikeAccessorsTest extends Test:
     // Given: class fixture with 4 declarations (method, val, var, field)
     // When: c.declarations
     // Then: Chunk[Symbol] size 4; binding as Chunk[Symbol] compiles
-    "declarations-untyped-Chunk-Symbol: c.declarations returns Chunk[Symbol] size 4" in run {
+    "declarations-untyped-Chunk-Symbol: c.declarations returns Chunk[Symbol] size 4" in {
         val classSym  = makeClass(id = 0, name = "Foo", ownerId = 0)
         val method1   = makeMethod(id = 1, name = "foo", ownerId = 0)
         val valSym    = makeVal(id = 2, name = "x", ownerId = 0)
@@ -430,7 +430,7 @@ class ClassLikeAccessorsTest extends Test:
     // Given: class with primary <init> and secondary <init>
     // When: c.methods.collect { case m: Tasty.Symbol.Method if m.name.asString == "<init>" => m }
     // Then: Chunk[Method] size 2; all names == "<init>"
-    "constructors-typed: declarations filtered by init name returns Chunk[Method] size 2 all named <init>" in run {
+    "constructors-typed: declarations filtered by init name returns Chunk[Method] size 2 all named <init>" in {
         import Tasty.Name.asString
         val classSym  = makeClass(id = 0, name = "MyCaseClass", ownerId = 0)
         val ctor1     = makeMethod(id = 1, name = "<init>", ownerId = 0)
@@ -454,7 +454,7 @@ class ClassLikeAccessorsTest extends Test:
     // Given: trait T with one Type.Named parent pointing to another Trait U
     // When: t.parents
     // Then: Chunk[ClassLike] size 1 element is Symbol.Trait named "U"
-    "parents-on-trait: t.parents returns Chunk[ClassLike] size 1 parent is Symbol.Trait U" in run {
+    "parents-on-trait: t.parents returns Chunk[ClassLike] size 1 parent is Symbol.Trait U" in {
         import Tasty.Name.asString
         val traitU = makeTrait(id = 0, name = "U", ownerId = 0)
         val traitT = makeTrait(id = 1, name = "T", ownerId = 0).copy(
@@ -478,7 +478,7 @@ class ClassLikeAccessorsTest extends Test:
     // When: cls.companion
     // Then: companion returns a Maybe (Present or Absent); the call itself does not throw
     // Note: uses cold-classpath path because fromPicklesWithSymbols has empty companionIndex (W-02)
-    "companion-on-class-resolves: cls.companion is callable on a ClassLike from a cold classpath" in run {
+    "companion-on-class-resolves: cls.companion is callable on a ClassLike from a cold classpath" in {
         val src = MemoryFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:

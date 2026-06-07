@@ -11,7 +11,7 @@ import kyo.internal.tasty.symbol.SymbolKind
   * leaves 1-4 rewritten to use embedded fixture sealed hierarchies (kyo.fixtures.Animal/Vehicle/NonSealedMarker)
   * instead of stdlib scala.Option / scala.util.Either. All 4 leaves are now cross-platform.
   */
-class SealedFidelityTest extends Test:
+class SealedFidelityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -20,7 +20,7 @@ class SealedFidelityTest extends Test:
     // When: calling cp.findClass("kyo.fixtures.Animal").get.permittedSubclassIds.map(_.flatMap(id => cp.symbol(id).toChunk)).getOrElse(Chunk.empty) and resolving FQNs
     // Then: post-fix the FQN set contains "kyo.fixtures.Dog" and "kyo.fixtures.Cat"
     // Cross-platform: kyo.fixtures.Animal is in the embedded fixture set on all platforms.
-    "kyo.fixtures.Animal.permittedSubclassIds.map(_.flatMap(id => cp.symbol(id).toChunk)).getOrElse(Chunk.empty) contains Dog and Cat" in run {
+    "kyo.fixtures.Animal.permittedSubclassIds.map(_.flatMap(id => cp.symbol(id).toChunk)).getOrElse(Chunk.empty) contains Dog and Cat" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             cp.findClassLike("kyo.fixtures.Animal") match
                 case Present(animalSym) =>
@@ -57,7 +57,7 @@ class SealedFidelityTest extends Test:
     // When: calling cp.findClassLike("kyo.fixtures.Vehicle").permittedSubclasses(using cp) and resolving FQNs
     // Then: post-fix the FQN set contains names ending with "Car" and "Bike"
     // Cross-platform: kyo.fixtures.Vehicle is in the embedded fixture set on all platforms.
-    "kyo.fixtures.Vehicle.permittedSubclassIds.map(_.flatMap(id => cp.symbol(id).toChunk)).getOrElse(Chunk.empty) contains Car and Bike" in run {
+    "kyo.fixtures.Vehicle.permittedSubclassIds.map(_.flatMap(id => cp.symbol(id).toChunk)).getOrElse(Chunk.empty) contains Car and Bike" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             cp.findClassLike("kyo.fixtures.Vehicle") match
                 case Present(sym) =>
@@ -96,7 +96,7 @@ class SealedFidelityTest extends Test:
     // classpath (115/119 sealed classes). Embedded fixtures (JS/Native) are 100%: all fixture sealed hierarchies
     // (Animal, Vehicle, SealedBase, Color, Shape) have permits. The 85% floor holds on all three platforms.
     // Cross-platform: embedded fixtures include Animal, Vehicle, SealedBase, Color, Shape; all sealed and have permits.
-    ">= 85% of sealed classes have permittedSubclasses populated" in run {
+    ">= 85% of sealed classes have permittedSubclasses populated" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val sealedClasses = cp.allClassLike.filter(_.isSealed)
             val total         = sealedClasses.size
@@ -120,7 +120,7 @@ class SealedFidelityTest extends Test:
     // When: finding kyo.fixtures.NonSealedMarker (explicitly non-sealed) and calling permittedSubclasses
     // Then: post-fix returns Chunk.empty
     // Cross-platform: kyo.fixtures.NonSealedMarker is in the embedded fixture set on all platforms.
-    "non-sealed class permittedSubclasses returns empty Chunk" in run {
+    "non-sealed class permittedSubclasses returns empty Chunk" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             cp.findClass("kyo.fixtures.NonSealedMarker") match
                 case Present(s) =>
@@ -148,7 +148,7 @@ class SealedFidelityTest extends Test:
     // Then: post-fix they are Symbol.EnumCase instances, not only Symbol.Class; passes trivially when empty
     // Cross-platform: embedded Color (Red/Green/Blue value-form) and Shape (Circle/Square/Rectangle class-form)
     //   provide EnumCase symbols on JS/Native. The leaf succeeds vacuously when enumCases.isEmpty.
-    "enum-case symbols pattern-match as Symbol.EnumCase" in run {
+    "enum-case symbols pattern-match as Symbol.EnumCase" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val enumCases = cp.symbols.filter(_.kind == SymbolKind.EnumCase)
             if enumCases.isEmpty then

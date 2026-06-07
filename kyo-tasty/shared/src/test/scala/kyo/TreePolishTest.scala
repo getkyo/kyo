@@ -5,13 +5,13 @@ import kyo.Tasty.SymbolId
 
 /** Tree.show coverage and Tree.exists.
   */
-class TreePolishTest extends Test:
+class TreePolishTest extends kyo.test.Test[Any]:
 
     // ── Leaf 161: show-covers-all-cases ──────────────────────────────────────
     // Given: one literal per Tree case
     // When: t.show
     // Then: every case returns a non-empty String
-    "Leaf 161: Tree.show returns non-empty String for representative Tree cases" in run {
+    "Leaf 161: Tree.show returns non-empty String for representative Tree cases" in {
         val sym = Tasty.Symbol.Class(
             SymbolId(0),
             Tasty.Name("Foo"),
@@ -65,7 +65,7 @@ class TreePolishTest extends Test:
     // Given: Tree.Apply(fn, args) containing a Tree.Literal somewhere in args
     // When: t.exists { case _: Tree.Literal => true; case _ => false }
     // Then: returns true
-    "Leaf 162: Tree.exists returns true when predicate matches a descendant" in run {
+    "Leaf 162: Tree.exists returns true when predicate matches a descendant" in {
         val fn  = Tasty.Tree.Ident(Tasty.Name("f"), Tasty.Type.Named(SymbolId(0)))
         val lit = Tasty.Tree.Literal(Tasty.Constant.IntConst(1))
         val t   = Tasty.Tree.Apply(fn, Chunk(lit))
@@ -80,7 +80,7 @@ class TreePolishTest extends Test:
     // Given: a tree with no Tree.Literal
     // When: same predicate
     // Then: returns false
-    "Leaf 163: Tree.exists returns false when predicate matches nothing" in run {
+    "Leaf 163: Tree.exists returns false when predicate matches nothing" in {
         val fn  = Tasty.Tree.Ident(Tasty.Name("f"), Tasty.Type.Named(SymbolId(0)))
         val arg = Tasty.Tree.Ident(Tasty.Name("a"), Tasty.Type.Named(SymbolId(0)))
         val t   = Tasty.Tree.Apply(fn, Chunk(arg))

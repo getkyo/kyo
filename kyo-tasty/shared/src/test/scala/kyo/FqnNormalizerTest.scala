@@ -7,7 +7,7 @@ import kyo.internal.tasty.symbol.FqnNormalizer
   * Pins HARD RULE 10 (full compiler-mangling normalization coverage). One leaf per mangling pattern,
   * one leaf per synthetic-name pattern. Cross-platform: pure string operations.
   */
-class FqnNormalizerTest extends Test:
+class FqnNormalizerTest extends kyo.test.Test[Any]:
 
     // canonicalSourceFqn: pattern 1 - opaque-type companion $package$.
     "FqnNormalizer: pattern 1 opaque $package$. strips to source FQN" in {

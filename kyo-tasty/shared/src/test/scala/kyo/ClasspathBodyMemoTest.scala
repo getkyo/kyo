@@ -15,7 +15,7 @@ import scala.collection.mutable
   *   3. cp.copy produces fresh empty bodyMemo (INV-004).
   *   4. decodeBody memoizes within a single Classpath (INV-003 + INV-004).
   */
-class ClasspathBodyMemoTest extends Test:
+class ClasspathBodyMemoTest extends kyo.test.Test[Any]:
 
     final class MemoryFileSource(files: mutable.HashMap[String, Array[Byte]] = mutable.HashMap.empty)
         extends FileSource:
@@ -78,7 +78,7 @@ class ClasspathBodyMemoTest extends Test:
     // (b) cp.hashCode == cp.hashCode (hashCode is stable regardless of bodyMemo state)
     // (c) A cp.copy() that produces an otherwise-identical Classpath (same 11 fields) compares equal.
     //
-    "Leaf 2: bodyMemo excluded from case-class equality" in run {
+    "Leaf 2: bodyMemo excluded from case-class equality" in {
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectBinding.flatMap: binding =>
@@ -118,7 +118,7 @@ class ClasspathBodyMemoTest extends Test:
     // When: a second fresh Binding is created with DecodeContext.fresh().
     // Then: the second DecodeContext's bodyMemo starts at size 0 (independent of the first).
     //   creates a fresh DecodeContext with an empty memo).
-    "Leaf 3: each withClasspath invocation produces a fresh empty DecodeContext bodyMemo" in run {
+    "Leaf 3: each withClasspath invocation produces a fresh empty DecodeContext bodyMemo" in {
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectBinding.flatMap: binding1 =>
@@ -158,7 +158,7 @@ class ClasspathBodyMemoTest extends Test:
     //       TreeUnpickler.decodeSync is invoked only once (verified indirectly: if the second call
     //       returned a fresh decode, it would be a DIFFERENT Tree instance since Symbol instances
     //       with id=-1 use identity equality).
-    "Leaf 4: Tasty.bodyTree memoizes within a single DecodeContext (reference equality)" in run {
+    "Leaf 4: Tasty.bodyTree memoizes within a single DecodeContext (reference equality)" in {
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectBinding.flatMap: binding =>

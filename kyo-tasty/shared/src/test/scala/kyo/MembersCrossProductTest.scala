@@ -19,7 +19,7 @@ import kyo.Tasty.SymbolId
   *   Leaf 10: Object x All       -- all set is exactly {x, y}
   *   Leaf 11: Dedup by simpleName -- three parents each declare "m"; members(child, All).count(_.simpleName=="m") == 1
   */
-class MembersCrossProductTest extends Test:
+class MembersCrossProductTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -391,7 +391,7 @@ class MembersCrossProductTest extends Test:
 
     // ── Class x Declared ─────────────────────────────────────────────────────
 
-    "Leaf 1: Class x Declared returns exactly the declared set {a, b}" in run {
+    "Leaf 1: Class x Declared returns exactly the declared set {a, b}" in {
         buildClassHierarchy.flatMap: cp =>
             Tasty.withClasspath(cp):
                 val baseOpt = cp.symbols.toSeq.collectFirst { case c: Tasty.Symbol.Class if c.simpleName == "Base" => c }
@@ -407,7 +407,7 @@ class MembersCrossProductTest extends Test:
                 end match
     }
 
-    "Leaf 2: Class x Declared for child returns empty (Child declares nothing)" in run {
+    "Leaf 2: Class x Declared for child returns empty (Child declares nothing)" in {
         buildClassHierarchy.flatMap: cp =>
             Tasty.withClasspath(cp):
                 val childOpt = cp.symbols.toSeq.collectFirst { case c: Tasty.Symbol.Class if c.simpleName == "Child" => c }
@@ -423,7 +423,7 @@ class MembersCrossProductTest extends Test:
                 end match
     }
 
-    "Leaf 3: Class x Inherited returns set {a, b, c} for child inheriting from Base" in run {
+    "Leaf 3: Class x Inherited returns set {a, b, c} for child inheriting from Base" in {
         buildClassHierarchy.flatMap: cp =>
             Tasty.withClasspath(cp):
                 val childOpt = cp.symbols.toSeq.collectFirst { case c: Tasty.Symbol.Class if c.simpleName == "Child" => c }
@@ -439,7 +439,7 @@ class MembersCrossProductTest extends Test:
                 end match
     }
 
-    "Leaf 4: Class x All returns union {a, b, c} for child" in run {
+    "Leaf 4: Class x All returns union {a, b, c} for child" in {
         buildClassHierarchy.flatMap: cp =>
             Tasty.withClasspath(cp):
                 val childOpt = cp.symbols.toSeq.collectFirst { case c: Tasty.Symbol.Class if c.simpleName == "Child" => c }
@@ -457,7 +457,7 @@ class MembersCrossProductTest extends Test:
 
     // ── Override wins ─────────────────────────────────────────────────────────
 
-    "Leaf 5: Override wins -- members(C, All) returns Child's id for m, not Parent's" in run {
+    "Leaf 5: Override wins -- members(C, All) returns Child's id for m, not Parent's" in {
         buildOverrideFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
                 val cOpt = cp.symbols.toSeq.collectFirst { case c: Tasty.Symbol.Class if c.simpleName == "C" => c }
@@ -480,7 +480,7 @@ class MembersCrossProductTest extends Test:
 
     // ── Trait x Declared / Inherited / All ───────────────────────────────────
 
-    "Leaf 6: Trait x Declared -- BaseTrait declares {p, q, r}" in run {
+    "Leaf 6: Trait x Declared -- BaseTrait declares {p, q, r}" in {
         buildTraitHierarchy.flatMap: cp =>
             Tasty.withClasspath(cp):
                 val btOpt = cp.symbols.toSeq.collectFirst { case t: Tasty.Symbol.Trait if t.simpleName == "BaseTrait" => t }
@@ -496,7 +496,7 @@ class MembersCrossProductTest extends Test:
                 end match
     }
 
-    "Leaf 7: Trait x Inherited -- ChildTrait inherits {p, q, r} from BaseTrait" in run {
+    "Leaf 7: Trait x Inherited -- ChildTrait inherits {p, q, r} from BaseTrait" in {
         buildTraitHierarchy.flatMap: cp =>
             Tasty.withClasspath(cp):
                 val ctOpt = cp.symbols.toSeq.collectFirst { case t: Tasty.Symbol.Trait if t.simpleName == "ChildTrait" => t }
@@ -512,7 +512,7 @@ class MembersCrossProductTest extends Test:
                 end match
     }
 
-    "Leaf 8: Trait x All -- ChildTrait All is {p, q, r}" in run {
+    "Leaf 8: Trait x All -- ChildTrait All is {p, q, r}" in {
         buildTraitHierarchy.flatMap: cp =>
             Tasty.withClasspath(cp):
                 val ctOpt = cp.symbols.toSeq.collectFirst { case t: Tasty.Symbol.Trait if t.simpleName == "ChildTrait" => t }
@@ -530,7 +530,7 @@ class MembersCrossProductTest extends Test:
 
     // ── Object x Declared / Inherited / All ──────────────────────────────────
 
-    "Leaf 9: Object x Declared -- ChildObj declares {x}" in run {
+    "Leaf 9: Object x Declared -- ChildObj declares {x}" in {
         buildObjectHierarchy.flatMap: cp =>
             Tasty.withClasspath(cp):
                 val objOpt = cp.symbols.toSeq.collectFirst { case o: Tasty.Symbol.Object if o.simpleName == "ChildObj" => o }
@@ -546,7 +546,7 @@ class MembersCrossProductTest extends Test:
                 end match
     }
 
-    "Leaf 10: Object x Inherited -- ChildObj inherits {y} from ParentCls" in run {
+    "Leaf 10: Object x Inherited -- ChildObj inherits {y} from ParentCls" in {
         buildObjectHierarchy.flatMap: cp =>
             Tasty.withClasspath(cp):
                 val objOpt = cp.symbols.toSeq.collectFirst { case o: Tasty.Symbol.Object if o.simpleName == "ChildObj" => o }
@@ -562,7 +562,7 @@ class MembersCrossProductTest extends Test:
                 end match
     }
 
-    "Leaf 11: Object x All -- ChildObj All is {x, y}" in run {
+    "Leaf 11: Object x All -- ChildObj All is {x, y}" in {
         buildObjectHierarchy.flatMap: cp =>
             Tasty.withClasspath(cp):
                 val objOpt = cp.symbols.toSeq.collectFirst { case o: Tasty.Symbol.Object if o.simpleName == "ChildObj" => o }
@@ -580,7 +580,7 @@ class MembersCrossProductTest extends Test:
 
     // ── Dedup by simpleName ───────────────────────────────────────────────────
 
-    "Leaf 12: Dedup by simpleName -- three parents declare m; members(child, All) has exactly one m" in run {
+    "Leaf 12: Dedup by simpleName -- three parents declare m; members(child, All) has exactly one m" in {
         buildDedupFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
                 val childOpt = cp.symbols.toSeq.collectFirst { case c: Tasty.Symbol.Class if c.simpleName == "Child" => c }

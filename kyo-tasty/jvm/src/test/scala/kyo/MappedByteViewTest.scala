@@ -11,7 +11,7 @@ import kyo.internal.tasty.binary.MappedByteView
   * MappedByteView.position and related cursor methods return Long after the 64-bit widening. These tests pin that contract and verify the
   * overflow guard in readByte.
   */
-class MappedByteViewTest extends Test:
+class MappedByteViewTest extends kyo.test.Test[Any]:
 
     /** Create a small temp file backed by a 1-byte mmap, wrapped in a MappedByteView with the given logical end.
       *
@@ -33,7 +33,7 @@ class MappedByteViewTest extends Test:
         (view, cleanup)
     end makeView
 
-    "MappedByteViewTest: position is Long-typed after goto with cursor beyond Int.MaxValue" taggedAs jvmOnly in {
+    "MappedByteViewTest: position is Long-typed after goto with cursor beyond Int.MaxValue".onlyJvm in {
         // §839 case 3; direct MappedByteView cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Given: MappedByteView with logical end=5_000_000_000L, cursor positioned at 3_000_000_000L via goto.
@@ -45,7 +45,7 @@ class MappedByteViewTest extends Test:
         finally cleanup()
     }
 
-    "MappedByteViewTest: readByte past Int.MaxValue raises IllegalStateException with mmap segment overflow" taggedAs jvmOnly in {
+    "MappedByteViewTest: readByte past Int.MaxValue raises IllegalStateException with mmap segment overflow".onlyJvm in {
         // §839 case 3; direct MappedByteView overflow test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Given: MappedByteView with cursor at Int.MaxValue + 1L.

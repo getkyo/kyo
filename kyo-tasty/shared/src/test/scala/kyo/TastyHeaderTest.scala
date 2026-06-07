@@ -19,7 +19,7 @@ import kyo.internal.tasty.reader.TastyHeader
   *     minor=9, exp=0  -> FAIL (9 > 8, neither condition satisfied)
   *     minor=8, exp=1  -> FAIL (minor==8 but exp!=0)
   */
-class TastyHeaderTest extends Test:
+class TastyHeaderTest extends kyo.test.Test[Any]:
 
     // Fixed 16-byte UUID used across tests: all zeros
     private val zeroUuid: Array[Byte] = Array.fill(16)(0x00.toByte)
@@ -60,7 +60,7 @@ class TastyHeaderTest extends Test:
     private val wrongMagic = Array(0xde.toByte, 0xad.toByte, 0xbe.toByte, 0xef.toByte)
 
     // Test 19: valid header 28.8.0 succeeds
-    "reading correct magic + Version(28,8,0) succeeds and returns Data with those values" in run {
+    "reading correct magic + Version(28,8,0) succeeds and returns Data with those values" in {
         // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = headerBytes(validMagic, 28, 8, 0, Array.empty, zeroUuid)
@@ -81,7 +81,7 @@ class TastyHeaderTest extends Test:
     }
 
     // Test 20: wrong magic produces CorruptedFile
-    "reading wrong magic 0xDEADBEEF produces CorruptedFile error" in run {
+    "reading wrong magic 0xDEADBEEF produces CorruptedFile error" in {
         // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = headerBytes(wrongMagic, 28, 8, 0, Array.empty, zeroUuid)
@@ -98,7 +98,7 @@ class TastyHeaderTest extends Test:
     }
 
     // Test 21: major=99 produces UnsupportedVersion
-    "reading major=99 produces UnsupportedVersion error" in run {
+    "reading major=99 produces UnsupportedVersion error" in {
         // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = headerBytes(validMagic, 99, 8, 0, Array.empty, zeroUuid)
@@ -116,7 +116,7 @@ class TastyHeaderTest extends Test:
     }
 
     // Test 22: major=28, minor=7, experimental=0 succeeds (backward compatible: 7 < 8, exp==0)
-    "reading minor=7 experimental=0 succeeds (stable backward compatible)" in run {
+    "reading minor=7 experimental=0 succeeds (stable backward compatible)" in {
         // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = headerBytes(validMagic, 28, 7, 0, Array.empty, zeroUuid)
@@ -138,7 +138,7 @@ class TastyHeaderTest extends Test:
 
     // Test 23: major=28, minor=9, experimental=0 produces UnsupportedVersion
     // (minor=9 > supportedMinor=8, so forward-incompatible per dotty rule)
-    "reading minor=9 experimental=0 produces UnsupportedVersion (forward incompatible)" in run {
+    "reading minor=9 experimental=0 produces UnsupportedVersion (forward incompatible)" in {
         // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = headerBytes(validMagic, 28, 9, 0, Array.empty, zeroUuid)
@@ -155,7 +155,7 @@ class TastyHeaderTest extends Test:
     }
 
     // Test 24: experimental=1 with supportedExperimental=0 produces UnsupportedVersion
-    "reading experimental=1 when supportedExperimental=0 produces UnsupportedVersion" in run {
+    "reading experimental=1 when supportedExperimental=0 produces UnsupportedVersion" in {
         // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = headerBytes(validMagic, 28, 8, 1, Array.empty, zeroUuid)
@@ -172,7 +172,7 @@ class TastyHeaderTest extends Test:
     }
 
     // Additional test: truncated header (only magic bytes) produces MalformedSection
-    "reading truncated header produces MalformedSection error" in run {
+    "reading truncated header produces MalformedSection error" in {
         // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Only 4 magic bytes, no version fields
@@ -190,7 +190,7 @@ class TastyHeaderTest extends Test:
     }
 
     // Additional test: UUID is read as 16 bytes and formatted as hex string
-    "uuid field is formatted correctly from 16 UUID bytes" in run {
+    "uuid field is formatted correctly from 16 UUID bytes" in {
         // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // UUID bytes: first 8 = 0x0102030405060708L, last 8 = 0x090A0B0C0D0E0F10L
@@ -214,7 +214,7 @@ class TastyHeaderTest extends Test:
     }
 
     // Additional test: tooling version string is decoded correctly
-    "tooling version string is decoded from UTF-8 bytes in header" in run {
+    "tooling version string is decoded from UTF-8 bytes in header" in {
         // §839 case 3; TastyHeader.read test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // "scalac" = [0x73, 0x63, 0x61, 0x6c, 0x61, 0x63]

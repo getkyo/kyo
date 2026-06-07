@@ -6,7 +6,7 @@ import scala.concurrent.Future
   *
   * Leaf ids: 9, 10, 16. Pins: INV-008.
   */
-class SubclassesOfTest extends Test:
+class SubclassesOfTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -186,7 +186,7 @@ class SubclassesOfTest extends Test:
     end traitClasspath
 
     // Leaf id:9 -- subclassesOf is transitive
-    "subclassesOf returns transitive closure in BFS order" in run {
+    "subclassesOf returns transitive closure in BFS order" in {
         ladderClasspath.map: cp =>
             import Tasty.Name.asString
             val a          = cp.findClass("A").get
@@ -200,7 +200,7 @@ class SubclassesOfTest extends Test:
     }
 
     // Leaf id:10 -- implementationsOf excludes abstract classes and traits
-    "implementationsOf excludes abstract subclasses" in run {
+    "implementationsOf excludes abstract subclasses" in {
         traitClasspath.map: cp =>
             import Tasty.Name.asString
             val t     = cp.findClassLike("T").get
@@ -214,7 +214,7 @@ class SubclassesOfTest extends Test:
     }
 
     // Leaf id:16 partial -- directSubclassesOf returns one-level subclasses
-    "directSubclassesOf returns exactly one hop" in run {
+    "directSubclassesOf returns exactly one hop" in {
         ladderClasspath.map: cp =>
             import Tasty.Name.asString
             val a      = cp.findClass("A").get
@@ -224,7 +224,7 @@ class SubclassesOfTest extends Test:
             succeed
     }
 
-    "subclassesOf returns empty chunk for leaf class" in run {
+    "subclassesOf returns empty chunk for leaf class" in {
         ladderClasspath.map: cp =>
             val d   = cp.findClass("D").get
             val sub = cp.subclassesOf(d)

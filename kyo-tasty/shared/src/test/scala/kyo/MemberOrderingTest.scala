@@ -9,7 +9,7 @@ package kyo
   *   change call-time semantics: withClasspath (suspend/create) wraps classpath (access) and
   *   the scope-open -> accessor -> close path produces a valid Classpath.
   */
-class MemberOrderingTest extends Test:
+class MemberOrderingTest extends kyo.test.Test[Any]:
 
     // ── Leaf 1: noPublicSymbolRemoved ────────────────────────────────────────
     // Given: every public entry point on object Tasty that was touched by.
@@ -72,7 +72,7 @@ class MemberOrderingTest extends Test:
     // When: Tasty.withClasspath(Seq.empty)(Tasty.classpath) is executed.
     // Then: the result is a Classpath; symbols.size >= 0; no exception or abort.
     //       This exercises the full scope-open -> accessor -> close path after the reorder.
-    "Leaf 2: withClasspathPrecedesClasspathAccess -- re-order does not change call-time semantics" in run {
+    "Leaf 2: withClasspathPrecedesClasspathAccess -- re-order does not change call-time semantics" in {
         Tasty.withClasspath(Seq.empty[String])(Tasty.classpath).map: cp =>
             assert(cp.symbols.size >= 0, s"Classpath.symbols.size must be non-negative; got ${cp.symbols.size}")
             succeed

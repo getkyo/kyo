@@ -29,7 +29,7 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     // Then: post-fix the count is 0; before fix at decoder-fidelity-2 entry the count is 78,501 on the real stdlib classpath
     // Cross-platform: the "no unknown-tag warnings" invariant is decoder-wide and holds on any classpath; embedded fixtures
     //   exercise every TASTy tag used in the fixture corpus. The JVM run additionally exercises the full stdlib corpus.
-    "no unknown-tag warnings on clean classpath load" in run {
+    "no unknown-tag warnings on clean classpath load" in {
         TestClasspaths2.loadEmbeddedWithSink.map: (cp, sink) =>
             val unknownTagCount = sink.unknownTagCount
             assert(
@@ -45,7 +45,7 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     // When: counting unknown-tag entries in the warning sink
     // Then: post-fix the count is 0; before fix the count > 0 (probe-001.log line 59 NEW=95 warning on stdlib)
     // Cross-platform: the per-file decoder produces no unknown-tag warnings on a clean load regardless of corpus size.
-    "single-tasty-load emits zero unknown-tag warnings" in run {
+    "single-tasty-load emits zero unknown-tag warnings" in {
         TestClasspaths2.loadEmbeddedWithSink.map: (_, sink) =>
             assert(
                 sink.unknownTagCount == 0,
@@ -59,7 +59,7 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     // When: counting unknown-tag warnings after load
     // Then: post-fix the count is 0; before fix the count exceeded 5,000 on the kyo-tasty jar per probe-001.log
     // Cross-platform: the production decoder emits no unknown-tag warnings on any clean classpath.
-    "production decoder contributes zero unknown-tag warnings" in run {
+    "production decoder contributes zero unknown-tag warnings" in {
         TestClasspaths2.loadEmbeddedWithSink.map: (cp, sink) =>
             assert(
                 sink.unknownTagCount == 0,
@@ -77,7 +77,7 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     // JVM-only (exception condition 1: dev tool, user is a developer on their dev machine): the leaf walks the
     //   source tree under kyo-tasty/shared/src/test and greps for ScalaTest pending markers. It is a TDD
     //   discipline guard for developers running tests in-tree; not a property of the kyo-tasty runtime decoder.
-    "zero pending fidelity-2 leaves remain" in runJVM {
+    "zero pending fidelity-2 leaves remain".onlyJvm in {
         val pendingCount = TestClasspaths2.pendingLeafCount
         assert(
             pendingCount == 0,
@@ -95,7 +95,7 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     // Given: TestClasspaths.withClasspath invoked on each platform
     // When: counting cp.symbols.size
     // Then: non-zero count (at least the embedded fixtures compile and decode)
-    "Phase-2.10 (HARD RULE 11): embedded-fixture classpath produces non-zero symbol count on all platforms" in run {
+    "Phase-2.10 (HARD RULE 11): embedded-fixture classpath produces non-zero symbol count on all platforms" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             assert(
                 cp.symbols.size > 0,
@@ -110,7 +110,7 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     // When: the test framework selects a leaf on a non-JVM platform
     // Then: the leaf is skipped via runJVM rather than failing
     // This meta-leaf is always passing; it documents the gating convention for auditors.
-    "Phase-2.10 (HARD RULE 12): JVM-only leaves are gated with runJVM (cited per-leaf)" in run {
+    "Phase-2.10 (HARD RULE 12): JVM-only leaves are gated with runJVM (cited per-leaf)" in {
         // The gating convention is enforced structurally by runJVM { ... } on each
         // JVM-only leaf, each carrying a per-leaf rationale citing one of three exception conditions.
         succeed

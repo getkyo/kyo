@@ -10,14 +10,14 @@ import kyo.internal.tasty.classfile.JavaSignatures
   * plan: phase-05; Named(id) no longer carries a Symbol directly. Tests verify structural shape (Applied/Named/Wildcard/Array) without
   * accessing symbol names or kinds. restores name-verification once cp.symbol(id).name is available in resolution methods.
   */
-class JavaSignaturesTest extends Test:
+class JavaSignaturesTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
     // -------------------------------------------------------------------------
     // Test 13: parameterized type
     // -------------------------------------------------------------------------
-    "parseFieldSignature of List<String> produces Applied(Named, Chunk(Named))" in run {
+    "parseFieldSignature of List<String> produces Applied(Named, Chunk(Named))" in {
         JavaSignatures.parseFieldSignature("Ljava/util/List<Ljava/lang/String;>;").map: tpe =>
             tpe match
                 case Tasty.Type.Applied(Tasty.Type.Named(_), args) =>
@@ -36,7 +36,7 @@ class JavaSignaturesTest extends Test:
     // -------------------------------------------------------------------------
     // Test 14: primitive array
     // -------------------------------------------------------------------------
-    "parseFieldSignature of [I produces Array(Named(intSym))" in run {
+    "parseFieldSignature of [I produces Array(Named(intSym))" in {
         JavaSignatures.parseFieldSignature("[I").map: tpe =>
             tpe match
                 case Tasty.Type.Array(Tasty.Type.Named(elemId)) =>
@@ -48,7 +48,7 @@ class JavaSignaturesTest extends Test:
     // -------------------------------------------------------------------------
     // Test 15: nested array of String
     // -------------------------------------------------------------------------
-    "parseFieldSignature of [[Ljava/lang/String; produces Array(Array(Named))" in run {
+    "parseFieldSignature of [[Ljava/lang/String; produces Array(Array(Named))" in {
         JavaSignatures.parseFieldSignature("[[Ljava/lang/String;").map: tpe =>
             tpe match
                 case Tasty.Type.Array(Tasty.Type.Array(Tasty.Type.Named(elemId))) =>
@@ -60,7 +60,7 @@ class JavaSignaturesTest extends Test:
     // -------------------------------------------------------------------------
     // Test 16: covariant upper-bounded wildcard
     // -------------------------------------------------------------------------
-    "parseFieldSignature of List<+Number> produces Applied with Wildcard(Nothing, Named(Number))" in run {
+    "parseFieldSignature of List<+Number> produces Applied with Wildcard(Nothing, Named(Number))" in {
         JavaSignatures.parseFieldSignature("Ljava/util/List<+Ljava/lang/Number;>;").map: tpe =>
             tpe match
                 case Tasty.Type.Applied(_, args) if args.length == 1 =>
@@ -77,7 +77,7 @@ class JavaSignaturesTest extends Test:
     // -------------------------------------------------------------------------
     // Test 17: contravariant lower-bounded wildcard
     // -------------------------------------------------------------------------
-    "parseFieldSignature of List<-Number> produces Applied with Wildcard(Named(Number), Object)" in run {
+    "parseFieldSignature of List<-Number> produces Applied with Wildcard(Named(Number), Object)" in {
         JavaSignatures.parseFieldSignature("Ljava/util/List<-Ljava/lang/Number;>;").map: tpe =>
             tpe match
                 case Tasty.Type.Applied(_, args) if args.length == 1 =>
@@ -94,7 +94,7 @@ class JavaSignaturesTest extends Test:
     // -------------------------------------------------------------------------
     // Test 18: raw type (no angle brackets => Named, not Applied)
     // -------------------------------------------------------------------------
-    "parseFieldSignature of raw Ljava/util/List; produces Named (not Applied)" in run {
+    "parseFieldSignature of raw Ljava/util/List; produces Named (not Applied)" in {
         JavaSignatures.parseFieldSignature("Ljava/util/List;").map: tpe =>
             tpe match
                 case Tasty.Type.Named(rawId) =>
@@ -106,7 +106,7 @@ class JavaSignaturesTest extends Test:
     // -------------------------------------------------------------------------
     // Test 19: method signature with type parameter T
     // -------------------------------------------------------------------------
-    "parseMethodSignature with type param T produces Function with TypeParam for T" in run {
+    "parseMethodSignature with type param T produces Function with TypeParam for T" in {
         JavaSignatures.parseMethodSignature(
             "<T:Ljava/lang/Object;>(Ljava/util/List<TT;>;)TT;"
         ).map: fnTpe =>
@@ -129,7 +129,7 @@ class JavaSignaturesTest extends Test:
     // -------------------------------------------------------------------------
     // Test 20: corrupt signature => ClassfileFormatError
     // -------------------------------------------------------------------------
-    "parseFieldSignature with unclosed < produces ClassfileFormatError" in run {
+    "parseFieldSignature with unclosed < produces ClassfileFormatError" in {
         Abort.run(JavaSignatures.parseFieldSignature("Ljava/util/List<Ljava/lang/String;")).map: result =>
             result match
                 case Result.Failure(TastyError.ClassfileFormatError(_, reason, _)) =>

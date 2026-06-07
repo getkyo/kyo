@@ -7,7 +7,7 @@ import kyo.Tasty.SymbolId
   *
   * Leaves 1-12 per plan 05-plan.yaml id:1. Pins: INV-001, INV-002, INV-003, INV-006, INV-007, INV-008, INV-009.
   */
-class SymbolHierarchyTest extends Test:
+class SymbolHierarchyTest extends kyo.test.Test[Any]:
 
     // ── Leaf 1: subtype-construction-Class ──────────────────────────────────
 

@@ -8,13 +8,13 @@ import AllowUnsafe.embrace.danger
   * The file-system scan is implemented in the JVM-specific module (FlatSymbolGrepAuditJvmTest); this stub ensures the leaf is represented
   * in the shared test suite and passes on all platforms.
   */
-class FlatSymbolGrepAuditTest extends Test:
+class FlatSymbolGrepAuditTest extends kyo.test.Test[Any]:
 
     // ── Leaf 174: no-flat-Symbol-case-class (platform-agnostic stub) ─────────
     // The actual file-system scan runs in FlatSymbolGrepAuditJvmTest on JVM.
     // This leaf verifies the type hierarchy invariant at the API level: sealed trait Symbol
     // is the public entry point and the runtime type of any symbol is a subtype.
-    "Leaf 174: Symbol hierarchy has no flat case class -- sealed trait is the root" in run {
+    "Leaf 174: Symbol hierarchy has no flat case class -- sealed trait is the root" in {
         // Constructing a Class subtype must compile and produce a Symbol (not a flat case class).
         val sym: Tasty.Symbol = Tasty.Symbol.Package(
             kyo.Tasty.SymbolId(-1),

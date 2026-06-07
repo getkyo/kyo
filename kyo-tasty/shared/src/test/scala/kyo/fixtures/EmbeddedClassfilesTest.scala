@@ -6,7 +6,7 @@ package kyo.fixtures
   * to the HEAD literal-byte form, that lazy decoding is single-init, that dispatch
   * parity holds, and that every accessor is cross-platform.
   */
-class EmbeddedClassfilesTest extends kyo.Test:
+class EmbeddedClassfilesTest extends kyo.test.Test[Any]:
 
     /** FNV-1a 64-bit hash of a byte array. Pure Scala, cross-platform, no MessageDigest dependency. */
     private def fnv1a64(data: Array[Byte]): Long =
@@ -21,7 +21,7 @@ class EmbeddedClassfilesTest extends kyo.Test:
     end fnv1a64
 
     // Leaf 1: javaUtilArrayListClass decodes to a non-empty classfile
-    "javaUtilArrayListClass decodes to a non-empty classfile with CAFEBABE magic" in run {
+    "javaUtilArrayListClass decodes to a non-empty classfile with CAFEBABE magic" in {
         val bytes = EmbeddedClassfiles.javaUtilArrayListClass
         assert(bytes.length > 0, "ArrayList bytes must be non-empty")
         assert(bytes(0) == 0xca.toByte, "byte 0 must be 0xCA")
@@ -31,7 +31,7 @@ class EmbeddedClassfilesTest extends kyo.Test:
     }
 
     // Leaf 2: byte-equality with HEAD literals via FNV-1a 64-bit hash
-    "byte equality with HEAD literals for all 8 classes via FNV-1a hash" in run {
+    "byte equality with HEAD literals for all 8 classes via FNV-1a hash" in {
         // Expected FNV-1a 64-bit hashes verified against HEAD literal bytes (JDK 25.0.3).
         val expected: List[(String, Array[Byte], Int, Long)] = List(
             ("java/util/ArrayList.class", EmbeddedClassfiles.javaUtilArrayListClass, 19356, 3965872221081036403L),
@@ -63,7 +63,7 @@ class EmbeddedClassfilesTest extends kyo.Test:
     }
 
     // Leaf 3: loadJdkClass dispatch parity
-    "loadJdkClass dispatch returns the same array as each dedicated accessor" in run {
+    "loadJdkClass dispatch returns the same array as each dedicated accessor" in {
         assert(EmbeddedClassfiles.loadJdkClass("java/util/ArrayList.class") eq EmbeddedClassfiles.javaUtilArrayListClass)
         assert(EmbeddedClassfiles.loadJdkClass("java/io/FileInputStream.class") eq EmbeddedClassfiles.javaIoFileInputStreamClass)
         assert(EmbeddedClassfiles.loadJdkClass("java/util/function/Function.class") eq EmbeddedClassfiles.javaUtilFunctionFunctionClass)
@@ -80,7 +80,7 @@ class EmbeddedClassfilesTest extends kyo.Test:
     // The lazy val is initialized at most once (Scala lazy val semantics); reference equality
     // proves the same backing array is returned on every call without re-decoding.
     // Same approach: ref-equality for lazy-val proof.
-    "lazy decode runs at most once: accessor returns same array instance on repeated access" in run {
+    "lazy decode runs at most once: accessor returns same array instance on repeated access" in {
         val first  = EmbeddedClassfiles.javaUtilArrayListClass
         val second = EmbeddedClassfiles.javaUtilArrayListClass
         assert(first eq second, "lazy val must return the same Array[Byte] instance on repeated access")
@@ -89,7 +89,7 @@ class EmbeddedClassfilesTest extends kyo.Test:
     // Leaf 5: cross-platform decode on JS / Native
     // File is in shared/src/test so it runs on all three platforms.
     // Verify every accessor returns a non-empty classfile array with CAFEBABE magic.
-    "cross-platform: every accessor returns a non-empty classfile with CAFEBABE magic" in run {
+    "cross-platform: every accessor returns a non-empty classfile with CAFEBABE magic" in {
         val allAccessors: List[(String, Array[Byte])] = List(
             ("javaUtilArrayListClass", EmbeddedClassfiles.javaUtilArrayListClass),
             ("javaIoFileInputStreamClass", EmbeddedClassfiles.javaIoFileInputStreamClass),

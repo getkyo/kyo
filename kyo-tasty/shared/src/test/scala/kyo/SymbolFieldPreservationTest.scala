@@ -7,7 +7,7 @@ import kyo.Tasty.SymbolId
   *
   * Leaves 15-19 per plan 05-plan.yaml id:1. Pins: INV-002, INV-003.
   */
-class SymbolFieldPreservationTest extends Test:
+class SymbolFieldPreservationTest extends kyo.test.Test[Any]:
 
     // ── Leaf 15: id-on-every-subtype ─────────────────────────────────────────
 

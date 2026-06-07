@@ -19,13 +19,13 @@ import kyo.internal.tasty.snapshot.NativeMmapReader
   *
   * Pins T5 (Native-only path).
   */
-class NativeMmapReaderTest extends Test:
+class NativeMmapReaderTest extends kyo.test.Test[Any]:
 
     private def tmpPath(name: String): String =
         val dir = Option(java.lang.System.getenv("TMPDIR")).filter(_.nonEmpty).getOrElse("/tmp")
         s"$dir/$name"
 
-    "NativeMmapReader: read inside open Scope succeeds and returns correct first byte" in run {
+    "NativeMmapReader: read inside open Scope succeeds and returns correct first byte" in {
         // §839 case 3; direct MappedByteView readByte test in mmap context.
         import AllowUnsafe.embrace.danger
         val path    = tmpPath("kyo-native-mmap-test-read-open.bin")
@@ -43,7 +43,7 @@ class NativeMmapReaderTest extends Test:
             case Result.Panic(t)           => throw t
     }
 
-    "NativeMmapReader: read after Scope closes raises IllegalStateException with 'mmap arena closed'" in run {
+    "NativeMmapReader: read after Scope closes raises IllegalStateException with 'mmap arena closed'" in {
         // §839 case 3; direct MappedByteView closed-scope test.
         import AllowUnsafe.embrace.danger
         val path    = tmpPath("kyo-native-mmap-test-scope-exit.bin")

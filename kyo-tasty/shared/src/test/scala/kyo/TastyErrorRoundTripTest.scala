@@ -15,7 +15,7 @@ import scala.collection.mutable
   *   3. Minor version is 11 in freshly written snapshot.
   *   4. Old minor=10 snapshot is rejected with TastyError.SnapshotVersionMismatch.
   */
-class TastyErrorRoundTripTest extends Test:
+class TastyErrorRoundTripTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
     import kyo.Tasty.SymbolId
@@ -81,7 +81,7 @@ class TastyErrorRoundTripTest extends Test:
     // Given: an instance with shape="Applied-TermRef-_", lhs=Type.Any, rhs=Type.Nothing, file="X.tasty".
     // When: written via SnapshotWriter and read back via SnapshotReader.
     // Then: decoded value equals original.
-    "round-trip TastyError.UnhandledSubtypingCase with Type.Any and Type.Nothing" in run {
+    "round-trip TastyError.UnhandledSubtypingCase with Type.Any and Type.Nothing" in {
         val err    = TastyError.UnhandledSubtypingCase("Applied-TermRef-_", Tasty.Type.Any, Tasty.Type.Nothing, "X.tasty")
         val errors = Chunk[TastyError](err)
         assert(errors.size == 1)
@@ -108,7 +108,7 @@ class TastyErrorRoundTripTest extends Test:
     // Given: instances of UnresolvedReference("x.Y", 7), UnknownType("X.tasty", 42L, "fail"), MissingDeclaredType(SymbolId(3), "X.tasty").
     // When: each is written and read back.
     // Then: every decoded value equals its original.
-    "round-trip UnresolvedReference, UnknownType, and MissingDeclaredType" in run {
+    "round-trip UnresolvedReference, UnknownType, and MissingDeclaredType" in {
         val e1     = TastyError.UnresolvedReference("x.Y", 7)
         val e2     = TastyError.UnknownType("X.tasty", 42L, "fail")
         val e3     = TastyError.MissingDeclaredType(Tasty.SymbolId(3), "X.tasty")
@@ -139,7 +139,7 @@ class TastyErrorRoundTripTest extends Test:
     // Given: a freshly written snapshot.
     // When: the minor version byte at offset 5 is read.
     // Then: value is 11; SnapshotFormat.minorVersion is 11.
-    "minor version is 11 in freshly written snapshot" in run {
+    "minor version is 11 in freshly written snapshot" in {
         val snapshotBytes = snapshotBytesWithErrors(Chunk.empty)
         val minor         = snapshotBytes(5) & 0xff
         assert(minor == 11, s"Expected snapshot minor version 11, got $minor")
@@ -153,7 +153,7 @@ class TastyErrorRoundTripTest extends Test:
     // Given: a valid minor=11 snapshot with byte at offset 5 patched to 10.
     // When: loaded via SnapshotReader.read.
     // Then: raises TastyError.SnapshotVersionMismatch with found=(1,10,0) and supported=(1,11,0).
-    "snapshot with minorVersion=10 is rejected with SnapshotVersionMismatch" in run {
+    "snapshot with minorVersion=10 is rejected with SnapshotVersionMismatch" in {
         val freshBytes   = snapshotBytesWithErrors(Chunk.empty)
         val patchedBytes = freshBytes.clone()
         patchedBytes(5) = 10.toByte
@@ -195,7 +195,7 @@ class TastyErrorRoundTripTest extends Test:
     // When: written via SnapshotWriter and read back via SnapshotReader.
     // Then: (a) no exception is raised during read; (b) the error round-trips with rhs == Type.Any;
     //   (c) lhs decodes to Type.Nothing (the documented opaque-tag fallback, not data corruption).
-    "W2 carry: tag-255 opaque catch-all round-trips cleanly; lhs falls back to Type.Nothing" in run {
+    "W2 carry: tag-255 opaque catch-all round-trips cleanly; lhs falls back to Type.Nothing" in {
         val refinementType: Tasty.Type = Tasty.Type.Refinement(
             Tasty.Type.Named(Tasty.SymbolId(0)),
             Tasty.Name("x"),

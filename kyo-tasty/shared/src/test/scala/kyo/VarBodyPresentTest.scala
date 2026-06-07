@@ -13,7 +13,7 @@ import scala.collection.mutable
   * `Symbol.Var` with a body slot. This test loads `fixtureClassesPackageTasty` which contains `var topLevelVar: Int = 0` and verifies that
   * the Var's bodyTree returns `Maybe.Present(_)`.
   */
-class VarBodyPresentTest extends Test:
+class VarBodyPresentTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -51,7 +51,7 @@ class VarBodyPresentTest extends Test:
     // Given: FixtureClasses$package.tasty loaded into a Classpath (contains `var topLevelVar: Int = 0`)
     // When: find a Symbol.Var with body.isDefined and call bodyTree
     // Then: bodyTree returns Maybe.Present(_)
-    "VarBodyPresentTest: Tasty.bodyTree(Var) returns Present(Tree) for a var with an initializer" in run {
+    "VarBodyPresentTest: Tasty.bodyTree(Var) returns Present(Tree) for a var with an initializer" in {
         Scope.run:
             Abort.run[TastyError](
                 ClasspathOrchestrator.coldLoadBinding(

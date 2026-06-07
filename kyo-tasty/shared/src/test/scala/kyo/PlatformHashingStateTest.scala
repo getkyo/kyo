@@ -17,12 +17,12 @@ import kyo.internal.tasty.type_.TypeKey
   *
   * T2 coverage.
   */
-class PlatformHashingStateTest extends Test:
+class PlatformHashingStateTest extends kyo.test.Test[Any]:
 
     // Test 1: hashing produces stable output across platforms.
     // TypeKey.of is called twice on the same structural type; PlatformHashingState is exercised on both calls.
     // The two returned hash integers must be equal, confirming platform-stable output.
-    "TypeKey hash of a ConstantType is stable across repeated calls" in run {
+    "TypeKey hash of a ConstantType is stable across repeated calls" in {
         val t  = Tasty.Type.ConstantType(Tasty.Constant.IntConst(42))
         val h1 = TypeKey.of(t).hash
         val h2 = TypeKey.of(t).hash
@@ -32,7 +32,7 @@ class PlatformHashingStateTest extends Test:
     // Test 2: cross-platform discrimination.
     // Two structurally different ConstantType values must hash to different integers,
     // confirming the type-key discriminator is not degenerate.
-    "TypeKey hashes of two distinct ConstantTypes differ" in run {
+    "TypeKey hashes of two distinct ConstantTypes differ" in {
         val t1 = Tasty.Type.ConstantType(Tasty.Constant.IntConst(1))
         val t2 = Tasty.Type.ConstantType(Tasty.Constant.IntConst(2))
         val h1 = TypeKey.of(t1).hash

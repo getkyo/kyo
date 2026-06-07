@@ -16,7 +16,7 @@ import kyo.Tasty.SymbolId
   *   E: treeShow(Literal(IntConst)) and treeShow(Literal(StringConst)) concrete equality (was: only .nonEmpty)
   *   F: members(pkg, All) cross-check reference leaf (already strengthened in Phases 04/09; one anchor leaf here)
   */
-class PublicApiContractTest extends Test:
+class PublicApiContractTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -124,7 +124,7 @@ class PublicApiContractTest extends Test:
     // Given: Symbol.Method carrying @scala.deprecated in its annotations.
     // When: hasAnnotation(method, "scala.deprecated").
     // Then: returns true (concrete Boolean equality).
-    "Leaf A1: hasAnnotation returns true for method carrying the annotation" in run {
+    "Leaf A1: hasAnnotation returns true for method carrying the annotation" in {
         buildAnnotationFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(2)).asInstanceOf[Tasty.Symbol.Method]
             Tasty.withClasspath(cp):
@@ -137,7 +137,7 @@ class PublicApiContractTest extends Test:
     // Given: same Symbol.Method carrying @scala.deprecated.
     // When: findAnnotation(method, "scala.deprecated").
     // Then: returns Present with annotationType == Type.Named(SymbolId(1)).
-    "Leaf A2: findAnnotation returns Present with correct annotationType" in run {
+    "Leaf A2: findAnnotation returns Present with correct annotationType" in {
         buildAnnotationFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(2)).asInstanceOf[Tasty.Symbol.Method]
             Tasty.withClasspath(cp):
@@ -154,7 +154,7 @@ class PublicApiContractTest extends Test:
     // Given: same Symbol.Method carrying @scala.deprecated.
     // When: findAnnotation(method, "scala.inline").
     // Then: returns Absent (isEmpty == true is the concrete assertion; == on union Maybe is not supported).
-    "Leaf A3: findAnnotation returns Absent when fqn does not match" in run {
+    "Leaf A3: findAnnotation returns Absent when fqn does not match" in {
         buildAnnotationFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(2)).asInstanceOf[Tasty.Symbol.Method]
             Tasty.withClasspath(cp):
@@ -167,7 +167,7 @@ class PublicApiContractTest extends Test:
     // Given: self-owned Class "Foo" at id=0.
     // When: show(fooSym, ShowFormat.Code).
     // Then: exactly "class Foo".
-    "Leaf B: show(Class, Code) returns concrete signature string" in run {
+    "Leaf B: show(Class, Code) returns concrete signature string" in {
         buildClassFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
                 val fooSym = cp.symbol(SymbolId(0)).asInstanceOf[Tasty.Symbol.Class]
@@ -181,7 +181,7 @@ class PublicApiContractTest extends Test:
     //        typeShow uses cp.symbol(id).map(_.name.asString) -- simple name only.
     // When: typeShow(Type.Named(SymbolId(0))).
     // Then: exactly "Foo".
-    "Leaf C: typeShow(Named) returns simple name string" in run {
+    "Leaf C: typeShow(Named) returns simple name string" in {
         buildClassFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
                 Tasty.typeShow(Tasty.Type.Named(SymbolId(0))).map: result =>
@@ -193,7 +193,7 @@ class PublicApiContractTest extends Test:
     // Given: any classpath.
     // When: typeShow(Type.Nothing) and typeShow(Type.Any).
     // Then: "Nothing" and "Any" respectively.
-    "Leaf D1: typeShow(Nothing) returns \"Nothing\" and typeShow(Any) returns \"Any\"" in run {
+    "Leaf D1: typeShow(Nothing) returns \"Nothing\" and typeShow(Any) returns \"Any\"" in {
         Tasty.withClasspath(minimalCp):
             for
                 nothingStr <- Tasty.typeShow(Tasty.Type.Nothing)
@@ -208,7 +208,7 @@ class PublicApiContractTest extends Test:
     // Given: any classpath.
     // When: typeShow(Type.Function(Chunk(Type.Nothing), Type.Any)).
     // Then: "(Nothing) => Any" (the single-arg case wraps in parens because typeShow uses "(ps.map...) => r").
-    "Leaf D2: typeShow(Function) returns arrow syntax with parens" in run {
+    "Leaf D2: typeShow(Function) returns arrow syntax with parens" in {
         Tasty.withClasspath(minimalCp):
             Tasty.typeShow(Tasty.Type.Function(Chunk(Tasty.Type.Nothing), Tasty.Type.Any)).map: result =>
                 assert(result == "(Nothing) => Any")
@@ -219,7 +219,7 @@ class PublicApiContractTest extends Test:
     // Given: any classpath.
     // When: typeShow(Type.Tuple(Chunk(Type.Nothing, Type.Any))).
     // Then: "(Nothing, Any)".
-    "Leaf D3: typeShow(Tuple) returns parenthesised comma-separated elements" in run {
+    "Leaf D3: typeShow(Tuple) returns parenthesised comma-separated elements" in {
         Tasty.withClasspath(minimalCp):
             Tasty.typeShow(Tasty.Type.Tuple(Chunk(Tasty.Type.Nothing, Tasty.Type.Any))).map: result =>
                 assert(result == "(Nothing, Any)")
@@ -230,7 +230,7 @@ class PublicApiContractTest extends Test:
     // Given: any classpath.
     // When: treeShow(Tree.Literal(Constant.IntConst(42))).
     // Then: "42" (delegates to Constant.show, which renders IntConst as its decimal value).
-    "Leaf E1: treeShow(Literal(IntConst(42))) returns \"42\"" in run {
+    "Leaf E1: treeShow(Literal(IntConst(42))) returns \"42\"" in {
         Tasty.withClasspath(minimalCp):
             Tasty.treeShow(Tasty.Tree.Literal(Tasty.Constant.IntConst(42))).map: result =>
                 assert(result == "42")
@@ -242,7 +242,7 @@ class PublicApiContractTest extends Test:
     // When: treeShow(Tree.Literal(Constant.StringConst("hi"))).
     // Then: "\"hi\"" (delegates to Constant.show which adds surrounding double-quotes).
     // Pins: F-008 escape semantics round-trip through treeShow.
-    "Leaf E2: treeShow(Literal(StringConst(\"hi\"))) returns quoted string" in run {
+    "Leaf E2: treeShow(Literal(StringConst(\"hi\"))) returns quoted string" in {
         Tasty.withClasspath(minimalCp):
             Tasty.treeShow(Tasty.Tree.Literal(Tasty.Constant.StringConst("hi"))).map: result =>
                 assert(result == "\"hi\"")
@@ -257,7 +257,7 @@ class PublicApiContractTest extends Test:
     // Given: minimalCp with pkg (id=0) having memberIds = Chunk(id=1, child package "root.child").
     // When: members(pkg, All) and members(pkg, Declared) and members(pkg, Inherited).
     // Then: All == Declared == Chunk containing "root.child"; Inherited == Chunk.empty.
-    "Leaf F: members(pkg, All) equals members(pkg, Declared) for Package" in run {
+    "Leaf F: members(pkg, All) equals members(pkg, Declared) for Package" in {
         Tasty.withClasspath(minimalCp):
             for
                 decl <- Tasty.members(pkg, Tasty.MemberScope.Declared).map(_.map(_.simpleName))

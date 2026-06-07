@@ -8,7 +8,7 @@ import kyo.Tasty.SymbolId
   * read the JVM access flags from JavaMetadata.accessFlags. Leaf 82 tests isJvmPublic with a real javaMetadata value. Leaf 83 tests
   * isJvmStatic returning false when javaMetadata is Absent.
   */
-class FieldJvmAccessTest extends Test:
+class FieldJvmAccessTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -58,7 +58,7 @@ class FieldJvmAccessTest extends Test:
     // Given: Field with javaMetadata.accessFlags = ACC_PUBLIC (0x0001)
     // When: f.isJvmPublic
     // Then: true
-    "Leaf 82: isJvmPublic: returns true when ACC_PUBLIC bit is set in accessFlags" in run {
+    "Leaf 82: isJvmPublic: returns true when ACC_PUBLIC bit is set in accessFlags" in {
         val field = makeFieldWithAccess(id = 1, name = "F", accessFlags = 0x0001)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>
             assert(
@@ -88,7 +88,7 @@ class FieldJvmAccessTest extends Test:
     // Given: Field with javaMetadata=Maybe.Absent
     // When: f.isJvmStatic
     // Then: false
-    "Leaf 83: isJvmStatic-absent-javaMetadata: returns false when javaMetadata is Absent" in run {
+    "Leaf 83: isJvmStatic-absent-javaMetadata: returns false when javaMetadata is Absent" in {
         val field = makeFieldNoMeta(id = 1, name = "G")
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>
             assert(
@@ -116,7 +116,7 @@ class FieldJvmAccessTest extends Test:
 
     // ── Additional coverage: all five predicates across multiple flag combinations ──
 
-    "Field JVM access flags: private static final combination" in run {
+    "Field JVM access flags: private static final combination" in {
         // ACC_PRIVATE=0x0002, ACC_STATIC=0x0008, ACC_FINAL=0x0010
         val field = makeFieldWithAccess(id = 1, name = "CONSTANT", accessFlags = 0x0002 | 0x0008 | 0x0010)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>
@@ -143,7 +143,7 @@ class FieldJvmAccessTest extends Test:
             succeed
     }
 
-    "Field JVM access flags: protected field" in run {
+    "Field JVM access flags: protected field" in {
         // ACC_PROTECTED=0x0004
         val field = makeFieldWithAccess(id = 1, name = "protectedField", accessFlags = 0x0004)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>

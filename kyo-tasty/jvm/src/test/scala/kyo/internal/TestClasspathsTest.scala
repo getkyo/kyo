@@ -3,7 +3,7 @@ package kyo.internal
 import kyo.*
 
 /** Verifies the TestClasspaths helper itself: jar discovery, soft-fail mode, and classpath loading. */
-class TestClasspathsTest extends kyo.Test:
+class TestClasspathsTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -11,7 +11,7 @@ class TestClasspathsTest extends kyo.Test:
     // Given: a JVM with java.class.path populated by sbt's test runner
     // When: TestClasspaths.scala3LibraryJar resolves the jar
     // Then: the path exists, ends in .jar, and the filename matches scala-library-3 or scala-library_3
-    "scala-library jar is discoverable from java.class.path" in run {
+    "scala-library jar is discoverable from java.class.path" in {
         val jar = TestClasspaths.scala3LibraryJar
         assert(jar.nonEmpty, "scala3LibraryJar was empty")
         assert(jar.endsWith(".jar"), s"Expected .jar suffix, got: $jar")
@@ -30,7 +30,7 @@ class TestClasspathsTest extends kyo.Test:
     // Then: the error surface is visible (either via cp.errors or via Abort[TastyError]);
     //       the error message refers to the missing path;
     //       before fix: no helper existed to make this observable in tests
-    "soft-fail mode surfaces a diagnostic error for non-existent paths" in run {
+    "soft-fail mode surfaces a diagnostic error for non-existent paths" in {
         val nonExistent = Seq("/no/such/path/does-not-exist.jar")
         Abort.run[TastyError](TestClasspaths.withClasspath(nonExistent)(Tasty.classpath)).map:
             case Result.Success(cp) =>
@@ -55,7 +55,7 @@ class TestClasspathsTest extends kyo.Test:
     // Then: first-call elapsed > 0; both calls succeed without error
     // Note: wall-clock ordering (second < first) is not asserted due to JVM JIT variability; the
     // important invariant is that both loads succeed and produce a usable Classpath.
-    "withClasspath loads successfully on two consecutive invocations" in run {
+    "withClasspath loads successfully on two consecutive invocations" in {
         val roots = TestClasspaths.standard
         val t0    = java.lang.System.currentTimeMillis()
         TestClasspaths.withClasspath(roots)(Tasty.classpath).map: cp1 =>

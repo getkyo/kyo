@@ -15,7 +15,7 @@ import scala.collection.mutable
   * LONGconst, FLOATconst, DOUBLEconst, STRINGconst) plus the category-1 identity constants
   * (NULLconst, UNITconst, FALSEconst, TRUEconst).
   */
-class ConstantTest extends Test:
+class ConstantTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -52,7 +52,7 @@ class ConstantTest extends Test:
     // Given: bytes [STRINGconst tag, Nat(2)] with names(2) = Name("hello").
     // When: Constant.fromTastyTag(STRINGconst, view, session).
     // Then: returns Constant.StringConst("hello").
-    "Constant STRINGconst decodes name table entry to StringConst" in run {
+    "Constant STRINGconst decodes name table entry to StringConst" in {
         val names = Array(
             Tasty.Name("dummy0"),
             Tasty.Name("dummy1"),
@@ -78,7 +78,7 @@ class ConstantTest extends Test:
     // Given: zero bytes after tag (NULLconst is category 1: tag only, already consumed by caller).
     // When: Constant.fromTastyTag(NULLconst, emptyView, session).
     // Then: returns Constant.NullConst.
-    "Constant NULLconst returns NullConst with empty view" in run {
+    "Constant NULLconst returns NullConst with empty view" in {
         val session = makeSession(Array.empty)
         val bytes   = Array.empty[Byte]
         val view    = ByteView(bytes)
@@ -97,7 +97,7 @@ class ConstantTest extends Test:
     // BYTEconst (67) is category 2: tag + readNat, result cast to Byte.
     // Value 42: encodeNat(42) = Array(42 | 0x80) = Array(0xAA).
     // Decoded via Constant.fromTastyTag(BYTEconst, view, session) -> ByteConst(42.toByte).
-    "Constant BYTEconst decodes Nat payload to ByteConst(42)" in run {
+    "Constant BYTEconst decodes Nat payload to ByteConst(42)" in {
         val session = makeSession(Array.empty)
         val bytes   = encodeNat(42)
         val view    = ByteView(bytes)
@@ -116,7 +116,7 @@ class ConstantTest extends Test:
     // SHORTconst (68) is category 2: tag + readNat, result cast to Short.
     // Value 1000: encodeNat(1000) = Array(7, 1000 & 0x7f | 0x80) = Array(0x07, 0xE8).
     // Decoded via Constant.fromTastyTag(SHORTconst, view, session) -> ShortConst(1000.toShort).
-    "Constant SHORTconst decodes Nat payload to ShortConst(1000)" in run {
+    "Constant SHORTconst decodes Nat payload to ShortConst(1000)" in {
         val session = makeSession(Array.empty)
         val bytes   = encodeNat(1000)
         val view    = ByteView(bytes)
@@ -135,7 +135,7 @@ class ConstantTest extends Test:
     // CHARconst (69) is category 2: tag + readNat, result cast to Char.
     // Value 'A' (65): encodeNat(65) = Array(65 | 0x80) = Array(0xC1).
     // Decoded via Constant.fromTastyTag(CHARconst, view, session) -> CharConst('A').
-    "Constant CHARconst decodes Nat payload to CharConst('A')" in run {
+    "Constant CHARconst decodes Nat payload to CharConst('A')" in {
         val session = makeSession(Array.empty)
         val bytes   = encodeNat('A'.toInt)
         val view    = ByteView(bytes)
@@ -154,7 +154,7 @@ class ConstantTest extends Test:
     // LONGconst (71) is category 2: tag + readLongNat.
     // Value 999999999999L: encoded as multi-byte LongNat.
     // Decoded via Constant.fromTastyTag(LONGconst, view, session) -> LongConst(999999999999L).
-    "Constant LONGconst decodes LongNat payload to LongConst(999999999999L)" in run {
+    "Constant LONGconst decodes LongNat payload to LongConst(999999999999L)" in {
         val session   = makeSession(Array.empty)
         val longValue = 999999999999L
         val bytes     = encodeLongNat(longValue)
@@ -174,7 +174,7 @@ class ConstantTest extends Test:
     // FLOATconst (72) is category 2: tag + readNat interpreted via Float.intBitsToFloat.
     // Uses 3.14f (raw bits 0x4048F5C3 = 1078523331) so the multi-byte Nat encode +
     // intBitsToFloat reconstruction is exercised, not the trivially-empty all-zero pattern.
-    "Constant FLOATconst decodes raw-int-bits Nat payload to FloatConst(3.14f)" in run {
+    "Constant FLOATconst decodes raw-int-bits Nat payload to FloatConst(3.14f)" in {
         val session   = makeSession(Array.empty)
         val floatBits = java.lang.Float.floatToRawIntBits(3.14f)
         val bytes     = encodeNat(floatBits)
@@ -194,7 +194,7 @@ class ConstantTest extends Test:
     // DOUBLEconst (73) is category 2: tag + readLongNat interpreted via Double.longBitsToDouble.
     // Uses -2.718281828 so a multi-byte LongNat encode with the sign bit set + longBitsToDouble
     // reconstruction is exercised, not the trivially-empty all-zero pattern.
-    "Constant DOUBLEconst decodes raw-long-bits LongNat payload to DoubleConst(-2.718281828)" in run {
+    "Constant DOUBLEconst decodes raw-long-bits LongNat payload to DoubleConst(-2.718281828)" in {
         val session    = makeSession(Array.empty)
         val value      = -2.718281828
         val doubleBits = java.lang.Double.doubleToRawLongBits(value)

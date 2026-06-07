@@ -10,7 +10,7 @@ import kyo.internal.tasty.query.TastyState
   * Leaf 3: symbolKindNotPublic -- kyo.Tasty.SymbolKind no longer resolves after relocation.
   * Leaf 4: bindingLocalNotPublic -- kyo.Tasty.bindingLocal no longer resolves after deletion.
   */
-class TestProbeFileSourceTest extends Test:
+class TestProbeFileSourceTest extends kyo.test.Test[Any]:
 
     // the original leaf forced TastyState.global and asserted
     // non-null, but did not actually probe the four sites. Behavioral coverage for all four
@@ -21,7 +21,7 @@ class TestProbeFileSourceTest extends Test:
     // When: Tasty.classpath is read.
     // Then: on JVM, PlatformFallback populates TastyState.global so the classpath is non-empty.
     //       The test verifies the binding is reachable (non-empty symbols or at least non-null).
-    "Leaf 2: globalReadResolvesToTastyState -- Tasty.classpath uses TastyState.global as fallback" in runJVM {
+    "Leaf 2: globalReadResolvesToTastyState -- Tasty.classpath uses TastyState.global as fallback".onlyJvm in {
         Tasty.classpath.map: cp =>
             assert(cp.symbols.size >= 1, s"JVM fallback via TastyState.global must yield non-empty classpath; got ${cp.symbols.size}")
             succeed

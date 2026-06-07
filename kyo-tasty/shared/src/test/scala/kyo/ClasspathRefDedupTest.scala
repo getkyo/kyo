@@ -6,7 +6,7 @@ package kyo
   * Tasty.Classpath that is no longer needed since Symbol no longer carries a ClasspathRef and the entire ClasspathRef type was
   * deleted in. The equivalent behavior is covered by ClasspathIndexImmutabilityTest and ClasspathPureAccessorTest.
   */
-class ClasspathRefDedupTest extends Test:
+class ClasspathRefDedupTest extends kyo.test.Test[Any]:
 
     // ClasspathRef deleted; original dedup tests are no longer applicable.
     // The immutability properties are verified by ClasspathIndexImmutabilityTest.

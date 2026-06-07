@@ -10,7 +10,7 @@ import kyo.Tasty.SymbolId
   *   - unresolvedCrossFileRefSurfacesAsTastyError: finalizeMerge accumulates UnresolvedReference in SoftFail mode.
   *   - ownerReturnsMaybe: Tasty.owner(rootPkg) returns Absent for a package with ownerId = SymbolId(-1).
   */
-class ClasspathAccessorsTest extends Test:
+class ClasspathAccessorsTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -87,10 +87,10 @@ class ClasspathAccessorsTest extends Test:
     // When: the test asserts.
     // Then: the returned string is non-empty (the method no longer exists after Cat 19).
     "sentinelUnresolvedDeleted: Classpath.sentinelUnresolved does not exist" in {
-        val err = compiletime.testing.typeCheckErrors(
+        val errCount = compiletime.testing.typeCheckErrors(
             "(??? : kyo.Tasty.Classpath).sentinelUnresolved"
-        )
-        assert(err.nonEmpty, assert(err.nonEmpty, "Classpath.sentinelUnresolved must not exist after "))
+        ).length
+        assert(errCount > 0, "Classpath.sentinelUnresolved must not exist after ")
         succeed
     }
 
@@ -100,7 +100,7 @@ class ClasspathAccessorsTest extends Test:
     //        loaded via triggerUnresolvedReferenceForTest() which calls finalizeMerge with SoftFail.
     // When: the resulting classpath's cp.errors is inspected.
     // Then: cp.errors contains exactly one TastyError.UnresolvedReference with the ghost FQN name.
-    "unresolvedCrossFileRefSurfacesAsTastyError: finalizeMerge emits UnresolvedReference in SoftFail mode" in run {
+    "unresolvedCrossFileRefSurfacesAsTastyError: finalizeMerge emits UnresolvedReference in SoftFail mode" in {
         Abort.run[TastyError](
             kyo.internal.tasty.query.ClasspathOrchestrator.triggerUnresolvedReferenceForTest()
         ).map: result =>
@@ -129,7 +129,7 @@ class ClasspathAccessorsTest extends Test:
     // Given: a fixture classpath where a package symbol has ownerId = SymbolId(-1).
     // When: Tasty.owner(rootPkg).eval is called.
     // Then: the result is Maybe.Absent (the root package has no owner).
-    "ownerReturnsMaybe: Tasty.owner returns Absent for a package with ownerId = SymbolId(-1)" in run {
+    "ownerReturnsMaybe: Tasty.owner returns Absent for a package with ownerId = SymbolId(-1)" in {
         val rootPkg = makePkg(0, "root")
         val cp = Tasty.Classpath.make(
             symbols = Chunk(rootPkg),

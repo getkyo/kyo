@@ -15,7 +15,7 @@ import kyo.Tasty.SymbolId
   *
   * After calling symbolsAnnotatedWith("scala.deprecated"), only symbols at id 1 and 2 must be returned.
   */
-class ClasspathAnnotatedTest extends Test:
+class ClasspathAnnotatedTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
     import Tasty.Name.asString
@@ -143,7 +143,7 @@ class ClasspathAnnotatedTest extends Test:
     // Given: fixture with @deprecated def m1 and @deprecated val v1, plus unannotated PlainA and m2.
     // When: cp.symbolsAnnotatedWith("scala.deprecated")
     // Then: Chunk[Symbol] of size 2; contains m1 and v1; excludes PlainA, deprecatedClass, and m2.
-    "Leaf 128: symbolsAnnotatedWith returns only symbols bearing the given annotation" in run {
+    "Leaf 128: symbolsAnnotatedWith returns only symbols bearing the given annotation" in {
         buildFixture.flatMap: cp =>
             cp.symbolsAnnotatedWith("scala.deprecated").map: annotated =>
                 assert(

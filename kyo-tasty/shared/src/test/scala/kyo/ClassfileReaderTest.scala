@@ -25,7 +25,7 @@ import kyo.internal.tasty.type_.TypeArena
   *   - Test 10 (cross-platform): constructs a bad-magic byte array inline; no classloader needed.
   *   - Test 18 (cross-platform): constructs a synthetic classfile from raw bytes using ByteArrayOutputStream.
   */
-class ClassfileReaderTest extends Test:
+class ClassfileReaderTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -82,7 +82,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK Object.class.
     // The shape assertion (kind=Class, JavaDefined) holds for any Java class.
-    "reading a Java classfile produces kind=Class and flags.contains(JavaDefined)" in run {
+    "reading a Java classfile produces kind=Class and flags.contains(JavaDefined)" in {
         ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena).map: result =>
             val sym = result.classSymbol
             assert(sym.kind == SymbolKind.Class, s"Expected Class kind, got ${sym.kind}")
@@ -95,7 +95,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK String.class.
     // ThrowsFixture declares throwsMethod and normalMethod; the shape assertion (method symbols present) is equivalent.
-    "reading a Java classfile: declarations contain Method symbols" in run {
+    "reading a Java classfile: declarations contain Method symbols" in {
         ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena).map: result =>
             val methods = result.symbols.filter(s => s.kind == SymbolKind.Method)
             assert(methods.nonEmpty, s"Expected at least one Method symbol in ThrowsFixture; got none")
@@ -111,7 +111,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK String.class.
     // ThrowsFixture extends java.lang.Object, which is encoded as a Type.Named parent.
-    "reading a Java classfile: parents contains a Type.Named (superclass reference)" in run {
+    "reading a Java classfile: parents contains a Type.Named (superclass reference)" in {
         ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena).map: result =>
             val parents = result.parents
             assert(parents.nonEmpty, "ThrowsFixture should have at least one parent (java.lang.Object)")
@@ -124,7 +124,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 4: ArrayList.class has at least one TypeParam via class Signature attribute
     // -------------------------------------------------------------------------
-    "reading ArrayList.class: typeParams contains at least one TypeParam with non-empty name" in run {
+    "reading ArrayList.class: typeParams contains at least one TypeParam with non-empty name" in {
         readClass("java/util/ArrayList.class").map: result =>
             val sym = result.classSymbol
             assert(sym.name.asString == "ArrayList", s"Expected 'ArrayList', got '${sym.name.asString}'")
@@ -144,7 +144,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Cross-platform: uses a minimal synthetic interface classfile constructed inline.
     // ACC_INTERFACE (0x0200) is all that's needed to verify the Trait mapping.
-    "reading an interface classfile produces kind=Trait" in run {
+    "reading an interface classfile produces kind=Trait" in {
         // Minimal classfile for interface "kyo/fixtures/MinimalIface":
         //   magic, version 55 (Java 11), pool:
         //     #1 Utf8 "kyo/fixtures/MinimalIface"
@@ -183,7 +183,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Cross-platform: uses a minimal synthetic enum classfile with ACC_ENUM + ACC_ABSTRACT.
     // java.lang.Enum<E> is the super for Java enums; we use java/lang/Object for simplicity (the Enum flag is the key).
-    "reading an enum classfile produces flags.contains(Flag.Enum)" in run {
+    "reading an enum classfile produces flags.contains(Flag.Enum)" in {
         val clsName = "kyo/fixtures/MinimalEnum".getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val supName = "java/lang/Enum".getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val buf     = new java.io.ByteArrayOutputStream()
@@ -212,7 +212,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Cross-platform: uses a minimal synthetic classfile with a static int field.
     // ACC_STATIC (0x0008) on a field triggers the Field kind path in ClassfileUnpickler.
-    "a static field produces kind=Field and flags.contains(JavaDefined)" in run {
+    "a static field produces kind=Field and flags.contains(JavaDefined)" in {
         // Minimal classfile for class "kyo/fixtures/StaticFieldHolder" with one static int field "VALUE":
         //   pool: #1 Utf8 "kyo/fixtures/StaticFieldHolder", #2 Class #1,
         //          #3 Utf8 "java/lang/Object", #4 Class #3,
@@ -263,7 +263,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Cross-platform: uses Embedded.pointRecordClass.
     // Java record component fields are private final, which decodes as Val.
-    "a final non-static field produces kind=Val" in run {
+    "a final non-static field produces kind=Val" in {
         ClassfileUnpickler.read(kyo.fixtures.Embedded.pointRecordClass, new TypeArena).map: result =>
             val valFields = result.symbols.filter(_.kind == SymbolKind.Val)
             assert(
@@ -277,7 +277,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Cross-platform: uses a minimal synthetic classfile with a non-final int field.
     // A field without ACC_FINAL decodes as Var.
-    "a mutable non-final field produces kind=Var" in run {
+    "a mutable non-final field produces kind=Var" in {
         // Minimal classfile for "kyo/fixtures/MutableFieldHolder" with one non-final int field "count":
         //   pool: #1 Utf8 class name, #2 Class #1, #3 Utf8 "java/lang/Object", #4 Class #3, #5 Utf8 "count", #6 Utf8 "I"
         //   access_flags = ACC_PUBLIC | ACC_SUPER (0x0021)
@@ -319,7 +319,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 10: wrong magic produces ClassfileFormatError
     // -------------------------------------------------------------------------
-    "a byte array with wrong magic produces Abort.fail(ClassfileFormatError)" in run {
+    "a byte array with wrong magic produces Abort.fail(ClassfileFormatError)" in {
         val badBytes = Array[Byte](
             0xde.toByte,
             0xad.toByte,
@@ -343,7 +343,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK Object.class.
     // The shape assertion (javaMetadata Present for Java, Absent for TASTy) is fixture-independent.
-    "classfile symbol has javaMetadata Present; TASTy symbol has javaMetadata Absent" in run {
+    "classfile symbol has javaMetadata Present; TASTy symbol has javaMetadata Absent" in {
         ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena).map: javaResult =>
             val javaSym = javaResult.classSymbol
             assert(symJavaMetadata(javaSym).isDefined, "Java-sourced symbol should have javaMetadata Present")
@@ -358,7 +358,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 12: throwsTypes is non-empty for a method declared throws
     // -------------------------------------------------------------------------
-    "a method declared 'throws IOException' has non-empty throwsTypes in symbols" in run {
+    "a method declared 'throws IOException' has non-empty throwsTypes in symbols" in {
         // FileInputStream constructor throws IOException
         readClass("java/io/FileInputStream.class").map: result =>
             val methodsWithThrows = result.symbols.filter: sym =>
@@ -379,7 +379,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 13 (M8/INV-008): BootstrapMethods attribute is parsed and exposed
     // -------------------------------------------------------------------------
-    "M8: BootstrapMethods attribute is parsed into metadata.bootstrapMethods" in run {
+    "M8: BootstrapMethods attribute is parsed into metadata.bootstrapMethods" in {
         // java.util.function.Function uses BootstrapMethods for lambda-compose default methods
         readClass("java/util/function/Function.class").map: result =>
             val md = symJavaMetadata(result.classSymbol).getOrElse(fail("Expected javaMetadata Present"))
@@ -399,7 +399,7 @@ class ClassfileReaderTest extends Test:
     // ClassfileResult.nestHostFqn instead of constructing a sentinel Symbol. The orchestrator
     // resolves the FQN to a real Symbol after finalizeMerge. Tests of the standalone unpickler
     // check nestHostFqn directly.
-    "M8: NestHost attribute is parsed into nestHostFqn for an inner class" in run {
+    "M8: NestHost attribute is parsed into nestHostFqn for an inner class" in {
         // java.util.HashMap$Node is an inner class of HashMap; has NestHost = java/util/HashMap
         readClass("java/util/HashMap$Node.class").map: result =>
             assert(
@@ -418,7 +418,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // After the B-3 architectural fix, ClassfileUnpickler stores NestMembers FQNs in
     // ClassfileResult.nestMemberFqns. Tests of the standalone unpickler check nestMemberFqns directly.
-    "M8: NestMembers attribute is parsed into nestMemberFqns for an outer class" in run {
+    "M8: NestMembers attribute is parsed into nestMemberFqns for an outer class" in {
         // java.util.HashMap has inner classes; NestMembers lists them
         readClass("java/util/HashMap.class").map: result =>
             assert(
@@ -430,7 +430,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 16 (M8/INV-008): PermittedSubclasses attribute is parsed and exposed
     // -------------------------------------------------------------------------
-    "M8: PermittedSubclasses attribute is parsed for a sealed interface" in run {
+    "M8: PermittedSubclasses attribute is parsed for a sealed interface" in {
         // java.lang.constant.ClassDesc is a sealed interface (JDK 12+) with known permitted subclasses
         readClass("java/lang/constant/ClassDesc.class").map: result =>
             val md = symJavaMetadata(result.classSymbol).getOrElse(fail("Expected javaMetadata Present"))
@@ -450,7 +450,7 @@ class ClassfileReaderTest extends Test:
     // -------------------------------------------------------------------------
     // Test 17 (M8/INV-008): MethodParameters attribute is parsed and exposed
     // -------------------------------------------------------------------------
-    "M8: MethodParameters attribute is parsed into method symbol metadata.paramNames" in run {
+    "M8: MethodParameters attribute is parsed into method symbol metadata.paramNames" in {
         // java.lang.module.ModuleDescriptor$Requires$Modifier has MethodParameters in its constructor
         readClass("java/lang/module/ModuleDescriptor$Requires$Modifier.class").map: result =>
             val methodsWithParams = result.symbols.filter: sym =>
@@ -468,7 +468,7 @@ class ClassfileReaderTest extends Test:
     // Test 18: cross-platform (migrated from jvmOnly in decoder-fidelity-3).
     // The synthetic classfile is constructed via ByteArrayOutputStream (cross-platform)
     // without requiring DataOutputStream (JVM-specific), using inline big-endian helpers.
-    "M8: RuntimeVisibleTypeAnnotations attribute is decoded into metadata.runtimeTypeAnnotations" in run {
+    "M8: RuntimeVisibleTypeAnnotations attribute is decoded into metadata.runtimeTypeAnnotations" in {
         // Build a synthetic classfile with RuntimeVisibleTypeAnnotations attribute on the class.
         // Classfile structure: magic, version, minimal pool, flags, this/super, 0 interfaces,
         // 0 fields, 0 methods, 1 attribute (RuntimeVisibleTypeAnnotations).

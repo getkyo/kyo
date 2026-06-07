@@ -8,11 +8,11 @@ package kyo
   *
   * no JS/Native equivalent (concrete blocker).
   */
-class WithClasspathJvmTest extends Test:
+class WithClasspathJvmTest extends kyo.test.Test[Any]:
 
     // jvmOnly: temp directories (java.nio.file.Files.createTempDirectory) and java.io.File
     // are not available in Scala.js or Scala Native.
-    "Leaf 6 (JVM): withClasspath(roots, Present(cacheDir)) writes snapshot on miss, reads on hit" in run {
+    "Leaf 6 (JVM): withClasspath(roots, Present(cacheDir)) writes snapshot on miss, reads on hit" in {
         val tmpDir = java.nio.file.Files.createTempDirectory("kyo-wc-leaf6-").toAbsolutePath.toString
         // Discover kyo-tasty-fixtures from the JVM classpath (the smallest available fixtures jar/dir).
         val cpRoots: Seq[String] =

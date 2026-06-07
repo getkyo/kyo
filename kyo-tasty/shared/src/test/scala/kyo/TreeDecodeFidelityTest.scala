@@ -10,7 +10,7 @@ import kyo.internal.TestClasspaths
   * relocated from jvm/src/test to shared/src/test. Leaves 1, 2, 3, 7 rewritten to use embedded fixture classes (error-count
   * guards + fixture symbol lookup) instead of stdlib-only symbols. All leaves are now cross-platform.
   */
-class TreeDecodeFidelityTest extends Test:
+class TreeDecodeFidelityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -19,7 +19,7 @@ class TreeDecodeFidelityTest extends Test:
     // When: verifying classpath loads without unhandled-tag exceptions
     // Then: post-fix zero decodeTreeTag exceptions and the embedded fixture SomeCaseClass is findable
     // Cross-platform: the no-unknown-tag guard holds for any classpath; embedded fixtures exercise the same decode paths.
-    "Tree.Unknown count drops to known minimum (quote/splice only)" in run {
+    "Tree.Unknown count drops to known minimum (quote/splice only)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val throwErrors = classpath.errors.filter(e => e.toString.contains("decodeTreeTag: unhandled cat-5 tag"))
             assert(
@@ -39,7 +39,7 @@ class TreeDecodeFidelityTest extends Test:
     // Carry A2: TastyError.UnknownType for absent TypeAlias/OpaqueType/Parameter bodies is now correctly
     //           propagated (it was hidden by null sentinel). Exclude it from this filter since it is a
     //           per-symbol absent-type error, not a body decode / tree reconstruction error.
-    "Tree.New preserves constructor argument list" in run {
+    "Tree.New preserves constructor argument list" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val bodyErrors = classpath.errors.filter:
                 case _: TastyError.UnknownType => false // absent-body per-symbol errors are permitted
@@ -64,7 +64,7 @@ class TreeDecodeFidelityTest extends Test:
     // When: verifying body trees decode correctly with Tree.Select nodes
     // Then: post-fix Tree.Select nodes decode without error and typed symbols exist
     // Cross-platform: typed symbol count > 0 is ensured by embedded fixture methods; error guard is universal.
-    "Tree.Select.tpe is not the stub Wildcard(Nothing, Any)" in run {
+    "Tree.Select.tpe is not the stub Wildcard(Nothing, Any)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val unknownTagErrors = classpath.errors.filter: e =>
                 val s = e.toString
@@ -87,7 +87,7 @@ class TreeDecodeFidelityTest extends Test:
     // When: checking that no TERMREFin decode errors appear
     // Then: post-fix no error strings contain "TERMREFin"
     // Cross-platform: "no TERMREFin errors" is a universal no-error guard; passes trivially on embedded.
-    "TERMREFin decodes to Tree.TermRef, not a fabricated Tree.Select" in run {
+    "TERMREFin decodes to Tree.TermRef, not a fabricated Tree.Select" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val termRefErrors = cp.errors.filter(_.toString.contains("TERMREFin"))
             assert(termRefErrors.isEmpty, s"TERMREFin errors: ${termRefErrors.take(3)}")
@@ -99,7 +99,7 @@ class TreeDecodeFidelityTest extends Test:
     // When: checking that classpath loaded without REPEATED placeholder artifacts
     // Then: post-fix no error strings contain "_repeated"
     // Cross-platform: "no _repeated errors" is a universal no-error guard; embedded VarargFixture exercises the varargs decode path.
-    "REPEATED varargs decodes to Tree.SeqLiteral, not Ident(_repeated)" in run {
+    "REPEATED varargs decodes to Tree.SeqLiteral, not Ident(_repeated)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val repeatedErrors = cp.errors.filter(_.toString.contains("_repeated"))
             assert(repeatedErrors.isEmpty, s"_repeated placeholder errors: ${repeatedErrors.take(3)}")
@@ -111,7 +111,7 @@ class TreeDecodeFidelityTest extends Test:
     // When: loading the classpath (inline methods with INLINED bodies are decoded during symbol walk)
     // Then: post-fix inline methods exist and classpath errors contain no INLINED failures
     // Cross-platform: embedded FixtureClasses.scala has `inline def inlineAdd`, so inlineMethods.nonEmpty passes on all platforms.
-    "empty-body INLINED decodes to Tree.Inlined wrapping Tree.Literal(Unit)" in run {
+    "empty-body INLINED decodes to Tree.Inlined wrapping Tree.Literal(Unit)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val inlineMethods = classpath.symbols.collect:
                 case m: Tasty.Symbol.Method if m.isInline => m
@@ -130,7 +130,7 @@ class TreeDecodeFidelityTest extends Test:
     // Then: post-fix Type.MatchType nodes exist; zero Applied(Named(sentinel)) for MATCHCASEtype
     // Cross-platform: kyo.fixtures.TypeAdtFixture$package defines `type InnerOf[C] = C match { case GenericBox[t] => t; case _ => C }`
     //   which encodes as MATCHtype in TASTy. This fixture provides matchTypeCount > 0 on all platforms.
-    "MATCHCASEtype decodes to Type.MatchCase first-class ADT case" in run {
+    "MATCHCASEtype decodes to Type.MatchCase first-class ADT case" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val matchCaseSentinelName = "$$MatchCase"
             var sentinelCount         = 0
@@ -177,7 +177,7 @@ class TreeDecodeFidelityTest extends Test:
     // When: verifying the classpath loaded without unhandled-tag errors for transparent-inline-specific tags
     // Then: post-fix zero decodeTreeTag exceptions and at least one inline method exists
     // Cross-platform: embedded FixtureClasses.scala has `inline def inlineAdd`; anyInline passes on all platforms.
-    "transparent inline method body contains no Tree.Unknown nodes" in run {
+    "transparent inline method body contains no Tree.Unknown nodes" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val throwErrors = classpath.errors.filter: e =>
                 val s = e.toString
@@ -202,7 +202,7 @@ class TreeDecodeFidelityTest extends Test:
     // When: decoding a method body that uses a SELECTin (path-dependent type access)
     // Then: post-fix no SELECTin errors and at least one Named type exists
     // Cross-platform: "no SELECTin errors" and "namedTypes > 0" both hold on embedded (many named types in fixture methods).
-    "SELECTin decodes to a Type.Named with non-empty resolved owner FQN" in run {
+    "SELECTin decodes to a Type.Named with non-empty resolved owner FQN" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val selinErrors = classpath.errors.filter(_.toString.contains("SELECTin"))
             assert(
@@ -227,7 +227,7 @@ class TreeDecodeFidelityTest extends Test:
     // Then: post-fix Type.TypeRef instances exist
     // Cross-platform: TYPEREF appears wherever a type names an inner type member; embedded fixtures with
     //   inner types (Outer.Inner, HasTypeDef) produce Type.TypeRef instances on all platforms.
-    "TYPEREF decodes to Type.TypeRef not Type.TermRef" in run {
+    "TYPEREF decodes to Type.TypeRef not Type.TermRef" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var typeRefCount = 0
             cp.allMethods.foreach { method =>
@@ -252,7 +252,7 @@ class TreeDecodeFidelityTest extends Test:
     // When: scanning type parameters and method types for Type.Bounds
     // Then: post-fix no TYPEBOUNDS decode errors; boundsCount >= 0 (informational)
     // Cross-platform: "boundsCount >= 0" is vacuously true; "no TYPEBOUNDS errors" is universal.
-    "TYPEBOUNDS decodes to Type.Bounds not Type.Wildcard" in run {
+    "TYPEBOUNDS decodes to Type.Bounds not Type.Wildcard" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var boundsCount = 0
             cp.allMethods.foreach: method =>
@@ -271,7 +271,7 @@ class TreeDecodeFidelityTest extends Test:
 
     //   regression pin: Inlined empty body does not produce Tree.Unknown
     // Cross-platform: embedded FixtureClasses.scala has `inline def inlineAdd`; anyInline passes on all platforms.
-    "regression : Tree.Inlined empty body does not produce Tree.Unknown" in run {
+    "regression : Tree.Inlined empty body does not produce Tree.Unknown" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val inlinedErrors = cp.errors.filter(_.toString.contains("INLINED"))
             assert(inlinedErrors.isEmpty, s"INLINED handler errors: ${inlinedErrors.take(2)}")
@@ -287,7 +287,7 @@ class TreeDecodeFidelityTest extends Test:
     // When: loading the classpath (CaseDef parsing changed from heuristic to GUARD-tag peek)
     // Then: classpath loads without CASEDEF parsing errors
     // Cross-platform: "no CASEDEF errors" is a universal no-error guard; passes trivially on embedded.
-    "CaseDef guard decoded correctly via GUARD-tag peek" in run {
+    "CaseDef guard decoded correctly via GUARD-tag peek" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val casedefErrors = cp.errors.filter(e =>
                 val s = e.toString; s.contains("CASEDEF")

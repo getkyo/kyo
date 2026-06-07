@@ -6,7 +6,7 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 /** plan leaves 9-10: Tasty.allClassLike, allClasses, allObjects, allTraits, allMethods,
   * allVals, allVars, allFields, allTypes, allPackages.
   */
-class QueryAggregatorsTest extends Test:
+class QueryAggregatorsTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -19,7 +19,7 @@ class QueryAggregatorsTest extends Test:
     end openFixtureClasspath
 
     // Leaf 9: allClassLike covers all four subtypes
-    "Leaf 9: Tasty.allClassLike is non-empty for fixture classpath" in run {
+    "Leaf 9: Tasty.allClassLike is non-empty for fixture classpath" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Tasty.withClasspath(cp):
@@ -36,7 +36,7 @@ class QueryAggregatorsTest extends Test:
     }
 
     // Leaf 10: aggregators are total on empty Classpath
-    "Leaf 10: all aggregators return Chunk.empty for empty Classpath" in run {
+    "Leaf 10: all aggregators return Chunk.empty for empty Classpath" in {
         Tasty.withPickles(Chunk.empty):
             for
                 acl <- Tasty.allClassLike
@@ -64,7 +64,7 @@ class QueryAggregatorsTest extends Test:
     }
 
     // allClasses result type is correct
-    "allClasses returns Chunk[Symbol.Class]" in run {
+    "allClasses returns Chunk[Symbol.Class]" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Tasty.withClasspath(cp):
@@ -80,7 +80,7 @@ class QueryAggregatorsTest extends Test:
     }
 
     // allObjects returns objects
-    "allObjects returns Chunk[Symbol.Object]" in run {
+    "allObjects returns Chunk[Symbol.Object]" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Tasty.withClasspath(cp):

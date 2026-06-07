@@ -9,7 +9,7 @@ import scala.collection.mutable
 
 /** verify snapshot round-trip with typed subtypes.
   */
-class SnapshotTypedRoundTripTest extends Test:
+class SnapshotTypedRoundTripTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -41,7 +41,7 @@ class SnapshotTypedRoundTripTest extends Test:
 
     // Leaf 39: write-load-roundtrip-preserves-subtypes
     // Given: fixture loaded cp; When: write snapshot reload iterate pairs; Then: each pair matches getClass/id/name/flags
-    "write-load-roundtrip-preserves-subtypes: typed subtypes survive snapshot round-trip" in run {
+    "write-load-roundtrip-preserves-subtypes: typed subtypes survive snapshot round-trip" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08)
         Scope.run:
@@ -80,7 +80,7 @@ class SnapshotTypedRoundTripTest extends Test:
 
     // Leaf 40: byte-format-unchanged
     // Given: same fixture; When: reader reads pre-Phase-02 snapshot; Then: symbols round-trip
-    "byte-format-unchanged: snapshot written by a previous version can be re-read by same reader" in run {
+    "byte-format-unchanged: snapshot written by a previous version can be re-read by same reader" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18)
         Scope.run:

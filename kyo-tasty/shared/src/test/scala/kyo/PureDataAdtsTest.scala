@@ -9,7 +9,7 @@ import kyo.Tasty.SymbolId
   * removed HEAD Symbol methods are absent (compileErrors). Leaf 4: Symbol.EnumCase is a peer of Symbol.Class (compileErrors cross-cast).
   * Leaf 13: Tag[Symbol.EnumCase] summon succeeds.
   */
-class PureDataAdtsTest extends Test:
+class PureDataAdtsTest extends kyo.test.Test[Any]:
 
     // ── Leaf 1: Schema[T] summon at file scope (compile-time check) ──────────
     // All lines below are compile-time assertions: if Schema derivation is missing for any type
@@ -76,22 +76,18 @@ class PureDataAdtsTest extends Test:
     "Leaf 3: removed HEAD Symbol methods are off the surface" in {
         // typeCheckErrors takes a fully-qualified expression string; local vars are not in scope.
         // Use the null-cast idiom: (null: kyo.Tasty.Symbol).xxx -- if xxx is absent the typecheck fails.
-        assert(
-            compiletime.testing.typeCheckErrors("(null: kyo.Tasty.Symbol).isPackage").nonEmpty,
-            "isPackage must be absent"
-        )
-        assert(
-            compiletime.testing.typeCheckErrors("(null: kyo.Tasty.Symbol).isClass").nonEmpty,
-            "isClass must be absent"
-        )
-        assert(
-            compiletime.testing.typeCheckErrors("(null: kyo.Tasty.Symbol).isMethod").nonEmpty,
-            "isMethod must be absent"
-        )
-        assert(
-            compiletime.testing.typeCheckErrors("(null: kyo.Tasty.Symbol).isTrait").nonEmpty,
-            "isTrait must be absent"
-        )
+        val __tcErrors1 = compiletime.testing.typeCheckErrors("(null: kyo.Tasty.Symbol).isPackage").length
+
+        assert(__tcErrors1 > 0, "isPackage must be absent")
+        val __tcErrors2 = compiletime.testing.typeCheckErrors("(null: kyo.Tasty.Symbol).isClass").length
+
+        assert(__tcErrors2 > 0, "isClass must be absent")
+        val __tcErrors3 = compiletime.testing.typeCheckErrors("(null: kyo.Tasty.Symbol).isMethod").length
+
+        assert(__tcErrors3 > 0, "isMethod must be absent")
+        val __tcErrors4 = compiletime.testing.typeCheckErrors("(null: kyo.Tasty.Symbol).isTrait").length
+
+        assert(__tcErrors4 > 0, "isTrait must be absent")
         // kind is private[kyo] so accessible within the kyo package; only verify it's not a public method.
         // The four predicates above (isPackage, isClass, isMethod, isTrait) are sufficient.
         succeed
@@ -124,12 +120,11 @@ class PureDataAdtsTest extends Test:
             case _                        => "other"
         assert(label == "enumCase", s"EnumCase must match EnumCase arm, not Class; got $label")
         // typeCheckErrors: assigning EnumCase to Class-typed val must fail
-        assert(
-            compiletime.testing.typeCheckErrors(
-                "val c: kyo.Tasty.Symbol.Class = (null: kyo.Tasty.Symbol.EnumCase)"
-            ).nonEmpty,
-            "Assigning EnumCase to Symbol.Class must be a type error (EnumCase is no longer a subtype of Class)"
-        )
+        val __tcErrors5 = compiletime.testing.typeCheckErrors(
+            "val c: kyo.Tasty.Symbol.Class = (null: kyo.Tasty.Symbol.EnumCase)"
+        ).length
+
+        assert(__tcErrors5 > 0, "Assigning EnumCase to Symbol.Class must be a type error (EnumCase is no longer a subtype of Class)")
         succeed
     }
 

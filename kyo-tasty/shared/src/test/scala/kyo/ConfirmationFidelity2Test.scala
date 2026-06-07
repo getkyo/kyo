@@ -39,7 +39,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // When: checking symbols and errors
     // Then: 0 symbols, 0 errors
     // Cross-platform: Tasty.Classpath.init(Seq.empty) works on all platforms (no filesystem needed).
-    "empty classpath init returns 0 symbols, 0 errors" in run {
+    "empty classpath init returns 0 symbols, 0 errors" in {
         Tasty.withClasspath(Seq.empty)(Tasty.classpath).map: cp =>
             assert(cp.symbols.size == 0, s"Expected 0 symbols on empty classpath; got ${cp.symbols.size}")
             assert(cp.errors.size == 0, s"Expected 0 errors on empty classpath; got ${cp.errors.size}")
@@ -59,7 +59,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): the assertion pins the
     //   scala-library given count. Scala-library cannot be loaded as a TASTy classpath on JS/Native;
     //   the embedded fixture set contains no `given` instances, so the count would always be 0 there.
-    "allSymbols.count(isGiven) ~= 493 baseline on standard classpath" in runJVM {
+    "allSymbols.count(isGiven) ~= 493 baseline on standard classpath".onlyJvm in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val count = cp.symbols.count(_.isGiven)
             assert(
@@ -77,7 +77,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     //   takes a real filesystem cacheDir and uses java.nio.file atomic-rename for one-writer-wins. MemoryFileSource
     //   has no atomic-rename or concurrent-write semantics, so it cannot exercise the JVM rename-collision path
     //   that this leaf pins.
-    "two concurrent cold-init writers to same cacheDir produce one .krfl file" in runJVM {
+    "two concurrent cold-init writers to same cacheDir produce one .krfl file".onlyJvm in {
         val cacheDir = TestClasspaths2.createTempDir("kyo-df2-concurrent-writers")
         val roots    = TestClasspaths2.standardRoots
         Async.zip(
@@ -105,7 +105,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // When: calling SnapshotReader.read on the truncated path
     // Then: result is a TastyError failure (truncated file rejected)
     // Cross-platform: uses MemoryFileSource; no filesystem needed.
-    "truncated .krfl snapshot fails with TastyError via in-memory reader" in run {
+    "truncated .krfl snapshot fails with TastyError via in-memory reader" in {
         import kyo.internal.MemoryFileSource
         import kyo.internal.tasty.snapshot.SnapshotReader
         Sync.defer:
@@ -130,7 +130,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // When: loading via Tasty.Classpath.init with the MemoryFileSource root
     // Then: cp.errors.head pattern-matches as a sealed TastyError variant
     // Cross-platform: uses MemoryFileSource; no filesystem needed.
-    "cp.errors entries pattern-match as sealed TastyError variants via in-memory source" in run {
+    "cp.errors entries pattern-match as sealed TastyError variants via in-memory source" in {
         import kyo.internal.MemoryFileSource
         import kyo.internal.tasty.query.ClasspathOrchestrator
         Sync.defer:
@@ -165,7 +165,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // When: loading via ClasspathOrchestrator.init with SoftFail
     // Then: cp.errors.nonEmpty and cp.symbols.size == 0 (file-level isolation, no partial symbols)
     // Cross-platform: uses MemoryFileSource; no filesystem needed.
-    "SoftFail mid-stream malformed section produces 0 symbols via in-memory source" in run {
+    "SoftFail mid-stream malformed section produces 0 symbols via in-memory source" in {
         import kyo.internal.MemoryFileSource
         import kyo.internal.tasty.query.ClasspathOrchestrator
         Sync.defer:
@@ -195,7 +195,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // JVM-only (exception condition 3: test asserts JVM-specific behavior): the assertion pins cold-init wall-time
     //   on a 79,567-symbol stdlib classpath, a perf characteristic of the JVM real-classpath loader. The embedded
     //   fixture set holds ~150 symbols; a <5000ms bound there is vacuous (typical load is <500ms).
-    "standard 81,569-symbol classpath cold-init median < 5,000 ms" in runJVM {
+    "standard 81,569-symbol classpath cold-init median < 5,000 ms".onlyJvm in {
         val roots = TestClasspaths2.standardRoots
         def timedLoad: Long < (Async & Abort[TastyError]) =
             val start = java.lang.System.nanoTime()
@@ -222,7 +222,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // Then: count == 69 (probe-001.log baseline)
     // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): jrt:/ JPMS module filesystem
     //   is a JVM-only loader scheme; JS/Native have no equivalent module system to enumerate.
-    "JPMS module count == 69 on platform-modules classpath" in runJVM {
+    "JPMS module count == 69 on platform-modules classpath".onlyJvm in {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
             val count = cp.indices.modulesIndex.size
             assert(
@@ -236,7 +236,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // Given: the standard classpath loaded via TestClasspaths.withClasspath (includes EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
     // When: counting cp.symbols.count(_.isJava)
     // Then: count > 0 (Java symbols from JavaSimpleFixture.class embedded cross-platform)
-    "F-A1-OPEN leaf 9 : Java-defined symbols present in standard classpath (java interop guard)" in run {
+    "F-A1-OPEN leaf 9 : Java-defined symbols present in standard classpath (java interop guard)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val javaCount = cp.symbols.count(_.isJava)
             assert(
@@ -250,7 +250,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // Given: a MemoryFileSource with JavaSimpleFixture.class registered as a standalone root
     // When: Tasty.findClass("kyo.fixtures.JavaSimpleFixture")
     // Then: Maybe.Present(c) where c.isJava == true
-    "findClass(kyo.fixtures.JavaSimpleFixture) returns Present with isJava via MemoryFileSource" in run {
+    "findClass(kyo.fixtures.JavaSimpleFixture) returns Present with isJava via MemoryFileSource" in {
         import kyo.internal.MemoryFileSource
         import kyo.internal.tasty.query.Binding
         import kyo.internal.tasty.query.ClasspathOrchestrator

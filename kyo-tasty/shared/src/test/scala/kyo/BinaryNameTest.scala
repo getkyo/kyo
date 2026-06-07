@@ -11,7 +11,7 @@ import kyo.Tasty.SymbolId
   * All 5 leaves pin INV-003: JVM internal-name format with '/' for package segments, '$' for nested
   * class segments, and trailing '$' for top-level objects.
   */
-class BinaryNameTest extends Test:
+class BinaryNameTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -263,7 +263,7 @@ class BinaryNameTest extends Test:
     // When: Tasty.binaryName(topSym)
     // Then: result == "example/Top"
     // Pins: INV-003 (package prefix joined with '/', no trailing '$' for Class)
-    "top-level class: example.Top maps to example/Top" in run {
+    "top-level class: example.Top maps to example/Top" in {
         buildTopLevelFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
                 cp.findClass("example.Top") match
@@ -281,7 +281,7 @@ class BinaryNameTest extends Test:
     // When: Tasty.binaryName(myObjSym)
     // Then: result == "example/MyObj$"
     // Pins: INV-003 (trailing '$' for Symbol.Object kind)
-    "top-level object: example.MyObj maps to example/MyObj$" in run {
+    "top-level object: example.MyObj maps to example/MyObj$" in {
         buildTopLevelFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
                 cp.findObject("example.MyObj") match
@@ -299,7 +299,7 @@ class BinaryNameTest extends Test:
     // When: Tasty.binaryName(innerSym)
     // Then: result == "example/Outer$Inner"
     // Pins: INV-003 ('$' between nested class segments, '/' after package)
-    "nested class: example.Outer.Inner maps to example/Outer$Inner" in run {
+    "nested class: example.Outer.Inner maps to example/Outer$Inner" in {
         buildNestedFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
                 cp.findClass("example.Outer.Inner") match
@@ -317,7 +317,7 @@ class BinaryNameTest extends Test:
     // When: Tasty.binaryName(innerObjSym)
     // Then: result == "example/Outer$InnerObj$"
     // Pins: INV-003 ('$' between nested segments AND trailing '$' for Object kind)
-    "nested object: example.Outer.InnerObj maps to example/Outer$InnerObj$" in run {
+    "nested object: example.Outer.InnerObj maps to example/Outer$InnerObj$" in {
         buildNestedFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
                 cp.findObject("example.Outer.InnerObj") match
@@ -338,7 +338,7 @@ class BinaryNameTest extends Test:
     // When: Tasty.binaryName(innerSym)
     // Then: result == "a/b/c/Outer$Mid$Inner"
     // Pins: INV-003 (dots in package name replaced with '/', recursion walks every class-nesting level)
-    "deeper nesting: a.b.c.Outer.Mid.Inner maps to a/b/c/Outer$Mid$Inner" in run {
+    "deeper nesting: a.b.c.Outer.Mid.Inner maps to a/b/c/Outer$Mid$Inner" in {
         buildDeepFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
                 cp.findClass("a.b.c.Outer.Mid.Inner") match

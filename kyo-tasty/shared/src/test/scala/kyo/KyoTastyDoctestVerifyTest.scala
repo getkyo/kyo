@@ -17,7 +17,7 @@ import scala.compiletime.testing.typeCheckErrors
   * regex sweep for phantom names that must not appear in the regenerated README. Tagged
   * jvmOnly because it uses TestResourceLoader (JVM classloader).
   */
-class KyoTastyDoctestVerify extends Test:
+class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
 
     // ── Leaf 1: compile-time surface checks ──────────────────────────────────
     // Given: the post-fix public surface of object Tasty.
@@ -28,7 +28,7 @@ class KyoTastyDoctestVerify extends Test:
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Maybe[kyo.Tasty.Symbol.Class] < kyo.Sync = kyo.Tasty.findClass(\"x\")"
         )
-        assert(ok.isEmpty, s"Tasty.findClass should type-check; errors: ${ok.map(_.message).mkString("; ")}")
+        assert(ok.length == 0, s"Tasty.findClass should type-check; errors: ${ok.map(_.message).mkString("; ")}")
         succeed
     }
 
@@ -36,7 +36,7 @@ class KyoTastyDoctestVerify extends Test:
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Tasty.Symbol.Class < (kyo.Sync & kyo.Abort[kyo.TastyError]) = kyo.Tasty.requireClass(\"x\")"
         )
-        assert(ok.isEmpty, s"Tasty.requireClass should type-check; errors: ${ok.map(_.message).mkString("; ")}")
+        assert(ok.length == 0, s"Tasty.requireClass should type-check; errors: ${ok.map(_.message).mkString("; ")}")
         succeed
     }
 
@@ -44,7 +44,7 @@ class KyoTastyDoctestVerify extends Test:
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Maybe[kyo.Tasty.Symbol.ClassLike] < kyo.Sync = kyo.Tasty.findClassLike(\"x\")"
         )
-        assert(ok.isEmpty, s"Tasty.findClassLike should type-check; errors: ${ok.map(_.message).mkString("; ")}")
+        assert(ok.length == 0, s"Tasty.findClassLike should type-check; errors: ${ok.map(_.message).mkString("; ")}")
         succeed
     }
 
@@ -52,7 +52,7 @@ class KyoTastyDoctestVerify extends Test:
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Tasty.Symbol.ClassLike < (kyo.Sync & kyo.Abort[kyo.TastyError]) = kyo.Tasty.requireClassLike(\"x\")"
         )
-        assert(ok.isEmpty, s"Tasty.requireClassLike should type-check; errors: ${ok.map(_.message).mkString("; ")}")
+        assert(ok.length == 0, s"Tasty.requireClassLike should type-check; errors: ${ok.map(_.message).mkString("; ")}")
         succeed
     }
 
@@ -60,7 +60,7 @@ class KyoTastyDoctestVerify extends Test:
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Chunk[kyo.Tasty.Symbol.ClassLike] < kyo.Sync = kyo.Tasty.allClassLike"
         )
-        assert(ok.isEmpty, s"Tasty.allClassLike should type-check; errors: ${ok.map(_.message).mkString("; ")}")
+        assert(ok.length == 0, s"Tasty.allClassLike should type-check; errors: ${ok.map(_.message).mkString("; ")}")
         succeed
     }
 
@@ -68,7 +68,7 @@ class KyoTastyDoctestVerify extends Test:
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Chunk[kyo.Tasty.Symbol.Method] < kyo.Sync = kyo.Tasty.allMethods"
         )
-        assert(ok.isEmpty, s"Tasty.allMethods should type-check; errors: ${ok.map(_.message).mkString("; ")}")
+        assert(ok.length == 0, s"Tasty.allMethods should type-check; errors: ${ok.map(_.message).mkString("; ")}")
         succeed
     }
 
@@ -76,13 +76,13 @@ class KyoTastyDoctestVerify extends Test:
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Tasty.SubtypeVerdict < kyo.Sync = kyo.Tasty.isSubtypeOf(kyo.Tasty.Type.Any, kyo.Tasty.Type.Nothing)"
         )
-        assert(ok.isEmpty, s"Tasty.isSubtypeOf(tpe, other) should type-check; errors: ${ok.map(_.message).mkString("; ")}")
+        assert(ok.length == 0, s"Tasty.isSubtypeOf(tpe, other) should type-check; errors: ${ok.map(_.message).mkString("; ")}")
         succeed
     }
 
     "Leaf 1h: Type.isSubtypeOf does NOT exist on Type" in {
         val bad = typeCheckErrors("(null : kyo.Tasty.Type).isSubtypeOf(kyo.Tasty.Type.Nothing)")
-        assert(bad.nonEmpty, "Type.isSubtypeOf should not exist on Type (it is on object Tasty)")
+        assert(bad.length > 0, "Type.isSubtypeOf should not exist on Type (it is on object Tasty)")
         succeed
     }
 
@@ -91,10 +91,10 @@ class KyoTastyDoctestVerify extends Test:
         val ok2 = typeCheckErrors("val _: kyo.Maybe[kyo.Tasty.Type] = kyo.Tasty.Type.Any.find(_ => true)")
         val ok3 = typeCheckErrors("val _: Int = kyo.Tasty.Type.Any.foldLeft(0)((acc, _) => acc + 1)")
         val ok4 = typeCheckErrors("val _: Boolean = kyo.Tasty.Type.Any.exists(_ => true)")
-        assert(ok1.isEmpty, s"Type.collect should type-check; errors: ${ok1.map(_.message).mkString("; ")}")
-        assert(ok2.isEmpty, s"Type.find should type-check; errors: ${ok2.map(_.message).mkString("; ")}")
-        assert(ok3.isEmpty, s"Type.foldLeft should type-check; errors: ${ok3.map(_.message).mkString("; ")}")
-        assert(ok4.isEmpty, s"Type.exists should type-check; errors: ${ok4.map(_.message).mkString("; ")}")
+        assert(ok1.length == 0, s"Type.collect should type-check; errors: ${ok1.map(_.message).mkString("; ")}")
+        assert(ok2.length == 0, s"Type.find should type-check; errors: ${ok2.map(_.message).mkString("; ")}")
+        assert(ok3.length == 0, s"Type.foldLeft should type-check; errors: ${ok3.map(_.message).mkString("; ")}")
+        assert(ok4.length == 0, s"Type.exists should type-check; errors: ${ok4.map(_.message).mkString("; ")}")
         succeed
     }
 
@@ -106,7 +106,7 @@ class KyoTastyDoctestVerify extends Test:
         // Private[kyo] means accessible within package kyo but not from user code outside.
         // We verify the pure traversal counterparts are the documented public API.
         val okCollect = typeCheckErrors("val _: kyo.Chunk[kyo.Tasty.Type] = kyo.Tasty.Type.Any.collect { case x => x }")
-        assert(okCollect.isEmpty, "Type.collect is the documented public traversal; must type-check")
+        assert(okCollect.length == 0, "Type.collect is the documented public traversal; must type-check")
         succeed
     }
 
@@ -114,46 +114,46 @@ class KyoTastyDoctestVerify extends Test:
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Maybe[kyo.Tasty.Tree] < (kyo.Sync & kyo.Abort[kyo.TastyError]) = kyo.Tasty.bodyTree(null: kyo.Tasty.Symbol)"
         )
-        assert(ok.isEmpty, s"Tasty.bodyTree should type-check; errors: ${ok.map(_.message).mkString("; ")}")
+        assert(ok.length == 0, s"Tasty.bodyTree should type-check; errors: ${ok.map(_.message).mkString("; ")}")
         succeed
     }
 
     "Leaf 1l: SubtypeVerdict.Indeterminate exists (not Unknown)" in {
         val okInd = typeCheckErrors("val _: kyo.Tasty.SubtypeVerdict = kyo.Tasty.SubtypeVerdict.Indeterminate")
-        assert(okInd.isEmpty, s"SubtypeVerdict.Indeterminate should type-check; errors: ${okInd.map(_.message).mkString("; ")}")
+        assert(okInd.length == 0, s"SubtypeVerdict.Indeterminate should type-check; errors: ${okInd.map(_.message).mkString("; ")}")
 
         val badUnk = typeCheckErrors("val _: kyo.Tasty.SubtypeVerdict = kyo.Tasty.SubtypeVerdict.Unknown")
-        assert(badUnk.nonEmpty, "SubtypeVerdict.Unknown must not exist (renamed to Indeterminate)")
+        assert(badUnk.length > 0, "SubtypeVerdict.Unknown must not exist (renamed to Indeterminate)")
         succeed
     }
 
     "Leaf 1m: Tasty.Java.Annotation exists (not JavaAnnotation at top level)" in {
         val okAnn = typeCheckErrors("val _: Class[?] = classOf[kyo.Tasty.Java.Annotation]")
-        assert(okAnn.isEmpty, s"Tasty.Java.Annotation should type-check; errors: ${okAnn.map(_.message).mkString("; ")}")
+        assert(okAnn.length == 0, s"Tasty.Java.Annotation should type-check; errors: ${okAnn.map(_.message).mkString("; ")}")
 
         val badAnn = typeCheckErrors("val _: Any = (null: kyo.Tasty.JavaAnnotation)")
-        assert(badAnn.nonEmpty, "kyo.Tasty.JavaAnnotation must not exist (moved to Tasty.Java.Annotation)")
+        assert(badAnn.length > 0, "kyo.Tasty.JavaAnnotation must not exist (moved to Tasty.Java.Annotation)")
         succeed
     }
 
     "Leaf 1n: Tasty.Java.Module.Descriptor exists (not ModuleDescriptor at top level)" in {
         val okMod = typeCheckErrors("val _: Class[?] = classOf[kyo.Tasty.Java.Module.Descriptor]")
-        assert(okMod.isEmpty, s"Tasty.Java.Module.Descriptor should type-check; errors: ${okMod.map(_.message).mkString("; ")}")
+        assert(okMod.length == 0, s"Tasty.Java.Module.Descriptor should type-check; errors: ${okMod.map(_.message).mkString("; ")}")
 
         val badMod = typeCheckErrors("val _: Any = (null: kyo.Tasty.ModuleDescriptor)")
-        assert(badMod.nonEmpty, "kyo.Tasty.ModuleDescriptor must not exist (moved to Tasty.Java.Module.Descriptor)")
+        assert(badMod.length > 0, "kyo.Tasty.ModuleDescriptor must not exist (moved to Tasty.Java.Module.Descriptor)")
         succeed
     }
 
     "Leaf 1o: Type.Unknown does NOT exist (removed from API)" in {
         val bad = typeCheckErrors("val _: kyo.Tasty.Type = kyo.Tasty.Type.Unknown")
-        assert(bad.nonEmpty, "Type.Unknown must not exist removed from API")
+        assert(bad.length > 0, "Type.Unknown must not exist removed from API")
         succeed
     }
 
     "Leaf 1p: Symbol.Unresolved does NOT exist (removed from API)" in {
         val bad = typeCheckErrors("val _: Any = (null: kyo.Tasty.Symbol.Unresolved)")
-        assert(bad.nonEmpty, "Symbol.Unresolved must not exist (removed from API)")
+        assert(bad.length > 0, "Symbol.Unresolved must not exist (removed from API)")
         succeed
     }
 
@@ -161,7 +161,7 @@ class KyoTastyDoctestVerify extends Test:
         val ok = typeCheckErrors(
             "val _: kyo.Maybe[kyo.Tasty.Symbol] = (null: kyo.Tasty.Classpath).symbol(kyo.Tasty.SymbolId(0))"
         )
-        assert(ok.isEmpty, s"Classpath.symbol should return Maybe[Symbol]; errors: ${ok.map(_.message).mkString("; ")}")
+        assert(ok.length == 0, s"Classpath.symbol should return Maybe[Symbol]; errors: ${ok.map(_.message).mkString("; ")}")
         succeed
     }
 
@@ -171,7 +171,7 @@ class KyoTastyDoctestVerify extends Test:
     // Then: zero matches for any phantom name.
     // JVM only (tagged jvmOnly): uses TestResourceLoader (JVM classloader).
 
-    "Leaf 2: README contains no phantom names" taggedAs jvmOnly in {
+    "Leaf 2: README contains no phantom names".onlyJvm in {
         // README.md is served as a test resource via build.sbt resourceGenerators.
         val content = new String(TestResourceLoader.loadBytes("README.md"), "UTF-8")
 
@@ -211,4 +211,4 @@ class KyoTastyDoctestVerify extends Test:
         succeed
     }
 
-end KyoTastyDoctestVerify
+end KyoTastyDoctestVerifyTest

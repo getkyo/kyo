@@ -19,7 +19,7 @@ import kyo.internal.TestClasspaths2
   * symbolsAnnotatedWith("scala.deprecated") count. Verifies cold == warm on JVM, JS, and Native, closing the
   * cold=1 warm=0 regression documented in the DF2 final-report.md CARRY-3 entry.
   */
-class AnnotationFidelityTest extends Test:
+class AnnotationFidelityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -32,7 +32,7 @@ class AnnotationFidelityTest extends Test:
     //       to the owning symbol
     // Cross-platform: threshold lowered from >= 5 to >= 1. The property is "deprecated symbols found";
     //   embedded AnnotatedFixture provides 2 @deprecated symbols (AnnotatedFixtureDeprecated, deprecatedTopLevel).
-    "cp.symbolsAnnotatedWith(scala.deprecated).size >= 1" in run {
+    "cp.symbolsAnnotatedWith(scala.deprecated).size >= 1" in {
         TestClasspaths.withClasspath():
             Tasty.classpath.flatMap: classpath =>
                 classpath.symbolsAnnotatedWith("scala.deprecated").map: annotated =>
@@ -57,7 +57,7 @@ class AnnotationFidelityTest extends Test:
     //   therefore requires the scala-library jar (containing scala/annotation/tailrec.class) on the loaded
     //   classpath so the addr resolves to a real SymbolId. JS/Native cannot supply scala-library as a TASTy
     //   classpath; the proper fix is TYPEREFsymbol cross-file FQN tracking, a non-trivial decoder refactor.
-    "cp.symbolsAnnotatedWith(scala.annotation.tailrec).size >= 1" in runJVM {
+    "cp.symbolsAnnotatedWith(scala.annotation.tailrec).size >= 1".onlyJvm in {
         TestClasspaths.withClasspath():
             Tasty.classpath.flatMap: classpath =>
                 classpath.symbolsAnnotatedWith("scala.annotation.tailrec").map: annotated =>
@@ -74,7 +74,7 @@ class AnnotationFidelityTest extends Test:
     // Then: post-fix sym.annotations is non-empty and hasAnnotation("scala.deprecated") is true;
     //       before fix sym.annotations was Chunk.empty
     // Cross-platform: embedded AnnotatedFixture provides @deprecated symbols for JS/Native.
-    "a @deprecated symbol carries annotation with correct tycon FQN" in run {
+    "a @deprecated symbol carries annotation with correct tycon FQN" in {
         TestClasspaths.withClasspath():
             Tasty.classpath.flatMap: classpath =>
                 classpath.symbolsAnnotatedWith("scala.deprecated").flatMap: annotated =>
@@ -95,7 +95,7 @@ class AnnotationFidelityTest extends Test:
     // Then: post-fix at least one method carries annotations; count of all annotated methods >= 1;
     //       before fix annotations was Chunk.empty on all methods
     // Cross-platform: AnnotatedFixtureMethods.countDown (@tailrec) and annotatedWithUnused (@unused) are annotated.
-    "an @inline method carries a decodable annotation args tree" in run {
+    "an @inline method carries a decodable annotation args tree" in {
         TestClasspaths.withClasspath():
             Tasty.classpath.map: classpath =>
                 val methodsWithAnnotations = classpath.symbols.collect:
@@ -116,7 +116,7 @@ class AnnotationFidelityTest extends Test:
     // as TermRef(Tuple(empty), Name(fqn)) which typeFqnString correctly unwraps to fqn. The test
     // verifies end-to-end parity. Cold >= 1 is also asserted so a vacuous warm==cold==0 does not pass.
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory (no filesystem needed).
-    "CARRY-3 : in-memory snapshot round-trip preserves symbolsAnnotatedWith count" in run {
+    "CARRY-3 : in-memory snapshot round-trip preserves symbolsAnnotatedWith count" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (cold, warm) =>
             for
                 coldA <- cold.symbolsAnnotatedWith("scala.deprecated")

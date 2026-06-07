@@ -10,7 +10,7 @@ import scala.collection.mutable
   * Leaves:
   *   1. Classpath constructor fields are immutable (INV-003).
   */
-class ClasspathImmutabilityTest extends Test:
+class ClasspathImmutabilityTest extends kyo.test.Test[Any]:
 
     final class MemoryFileSource(files: mutable.HashMap[String, Array[Byte]] = mutable.HashMap.empty)
         extends FileSource:
@@ -49,7 +49,7 @@ class ClasspathImmutabilityTest extends Test:
     // Given: a Classpath cp returned from Classpath.init.
     // When: any cp field is accessed twice.
     // Then: both accesses return the same reference (val semantics); no reassignment is possible.
-    "Leaf 1: Classpath constructor fields are immutable (val semantics)" in run {
+    "Leaf 1: Classpath constructor fields are immutable (val semantics)" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Sync.defer:

@@ -1,7 +1,5 @@
 package kyo.fixtures
 
-import org.scalatest.freespec.AnyFreeSpec
-
 /** Phase 08 plan leaves 1-2: EmbeddedJavaFixtures byte integrity tests.
   *
   * Verifies that the embedded JavaSimpleFixture classfile bytes are non-empty and carry the
@@ -9,7 +7,7 @@ import org.scalatest.freespec.AnyFreeSpec
   *
   * Pins: item 3 / F-A1-OPEN / F-A3-OPEN-AP.
   */
-class EmbeddedJavaFixturesTest extends AnyFreeSpec:
+class EmbeddedJavaFixturesTest extends kyo.test.Test[Any]:
 
     // Leaf 1: bytes are non-empty
     "javaSimpleFixtureClassfile is non-empty" in {

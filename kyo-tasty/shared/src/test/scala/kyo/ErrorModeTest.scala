@@ -4,7 +4,7 @@ package kyo
   *
   * Leaves: enum identity and CanEqual derivation.
   */
-class ErrorModeTest extends Test:
+class ErrorModeTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 

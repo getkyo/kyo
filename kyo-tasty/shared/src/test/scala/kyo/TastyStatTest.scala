@@ -8,13 +8,13 @@ import kyo.stats.Attributes
   *
   * TastyStat.scope is a Stat initialized with scope "kyo-tasty". traceSpan wraps its block in a Sync effect and returns the block result.
   */
-class TastyStatTest extends Test:
+class TastyStatTest extends kyo.test.Test[Any]:
 
     // Test 1 (T2): TastyStat.scope.traceSpan invokes the supplied block exactly once.
     // Given: an AtomicInteger counter; TastyStat.scope available.
     // When: TastyStat.scope.traceSpan("test", Attributes.empty) { counter.incrementAndGet() } is run.
     // Then: counter.get() == 1.
-    "TastyStat.scope.traceSpan invokes the block exactly once" in run {
+    "TastyStat.scope.traceSpan invokes the block exactly once" in {
         val counter = new AtomicInteger(0)
         TastyStat.scope.traceSpan("test", Attributes.empty) {
             counter.incrementAndGet()

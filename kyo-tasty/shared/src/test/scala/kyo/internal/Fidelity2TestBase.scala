@@ -16,7 +16,7 @@ import kyo.*
   *
   * Scaladoc: 8-35 lines.
   */
-abstract class Fidelity2TestBase extends Test:
+abstract class Fidelity2TestBase extends kyo.test.Test[Any]:
 
     /** Run `body` against both a cold classpath and a warm snapshot-loaded classpath.
       *
@@ -31,7 +31,7 @@ abstract class Fidelity2TestBase extends Test:
     protected def coldWarmEquiv[A](
         name: String
     )(body: Tasty.Classpath => A)(using CanEqual[A, A], Frame): Unit =
-        name in run {
+        name in {
             TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
                 val coldResult = body(cold)
                 val warmResult = body(warm)

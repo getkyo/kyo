@@ -10,7 +10,7 @@ import scala.collection.mutable
   * case class accessors behave correctly. The internal pureClass/purePackage/allSymbols methods are gone; the equivalents are findClass,
   * findPackage, and symbols on Tasty.Classpath.
   */
-class ClasspathPureAccessorTest extends Test:
+class ClasspathPureAccessorTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -59,7 +59,7 @@ class ClasspathPureAccessorTest extends Test:
     // Given: fixture classpath containing PlainClass.tasty.
     // When: cp.findClass("kyo.fixtures.PlainClass").
     // Then: result is Maybe.Present(sym) with sym.name.asString == "PlainClass".
-    "findClass returns Present for a known FQN" in run {
+    "findClass returns Present for a known FQN" in {
         Scope.run:
             Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
                 cp.findClass("kyo.fixtures.PlainClass")).map:
@@ -80,7 +80,7 @@ class ClasspathPureAccessorTest extends Test:
     // Given: fixture classpath.
     // When: cp.symbols.
     // Then: non-empty.
-    "symbols is non-empty after open" in run {
+    "symbols is non-empty after open" in {
         Scope.run:
             Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
                 cp.symbols).map:
@@ -96,7 +96,7 @@ class ClasspathPureAccessorTest extends Test:
     // Given: classpath opened inside a Scope.
     // When: Scope exits (cleanup runs).
     // Then: the Tasty.Classpath case class is still accessible (immutable value).
-    "Tasty.Classpath is accessible after Scope exits (no Closed state)" in run {
+    "Tasty.Classpath is accessible after Scope exits (no Closed state)" in {
         var capturedCp: Tasty.Classpath = null
         Abort.run[TastyError]:
             Scope.run:
@@ -117,7 +117,7 @@ class ClasspathPureAccessorTest extends Test:
     // Given: fixture classpath.
     // When: cp.topLevelClasses.
     // Then: non-empty.
-    "topLevelClasses is non-empty after open" in run {
+    "topLevelClasses is non-empty after open" in {
         Scope.run:
             Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
                 cp.topLevelClasses).map:

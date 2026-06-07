@@ -1,13 +1,12 @@
 package kyo.fixtures
 
 import kyo.fixtures.*
-import org.scalatest.freespec.AnyFreeSpec
 
 // Confirms that the fixture module compiles and all fixture classes are importable.
 // The two test cases correspond to the Phase 0.5 test plan items:
 //   1. All fixture classes import without error (fixture module compiles cross-platform).
 //   2. kyo/Test.scala compiles without error (test base class available for all subsequent phases).
-class FixtureCompilationTest extends AnyFreeSpec:
+class FixtureCompilationTest extends kyo.test.Test[Any]:
 
     "fixture module compiles cross-platform" - {
         "all fixture classes are importable" in {

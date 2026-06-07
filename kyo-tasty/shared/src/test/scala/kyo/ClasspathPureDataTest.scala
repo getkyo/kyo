@@ -13,7 +13,7 @@ import kyo.internal.tasty.query.Binding
   * field (compileErrors). Leaf 5: Binding.empty wraps Classpath.empty. Leaf 6: cross-platform
   * (leaves 1-5 are in shared/src/test, which runs on JVM, JS, and Native).
   */
-class ClasspathPureDataTest extends Test:
+class ClasspathPureDataTest extends kyo.test.Test[Any]:
 
     // Compile-time Schema and CanEqual summon checks for Classpath and Indices.
     val _schemaClasspath: Schema[Classpath]             = summon[Schema[Classpath]]

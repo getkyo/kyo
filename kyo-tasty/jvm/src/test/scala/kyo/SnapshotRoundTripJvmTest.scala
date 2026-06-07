@@ -18,7 +18,7 @@ import scala.collection.mutable
   *   - G16a: writes a snapshot to a real temp file and reads it back via mmap (`PlatformMmapReader.readMapped`). Tests the mmap path itself,
   *     which is a JVM `FileChannel.map` concern; no cross-platform analog.
   */
-class SnapshotRoundTripJvmTest extends Test:
+class SnapshotRoundTripJvmTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -83,7 +83,7 @@ class SnapshotRoundTripJvmTest extends Test:
     // Uses PlatformFileSource (real filesystem) to write the snapshot to a temp file, then
     // loads it via readMapped. Verifies that the mmap path loads successfully and the FQN set matches
     // the cold-loaded classpath, confirming no TASTy re-decode happened.
-    "mmap-loaded snapshot has same FQN set as cold-loaded classpath" in run {
+    "mmap-loaded snapshot has same FQN set as cold-loaded classpath" in {
         val fixtSrc = fixtureSource()
         val digest  = Array[Byte](0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57)
         val tmpDir  = java.io.File.createTempFile("kyo-tasty-mmap-test", "").getAbsolutePath

@@ -7,7 +7,7 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 
 /** plan leaves 11-14: Tasty.owner(Tasty), fullName, show, signature, parents; Tag[Symbol.X].
   */
-class QueryTraversalTest extends Test:
+class QueryTraversalTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -18,7 +18,7 @@ class QueryTraversalTest extends Test:
     end openFixtureClasspath
 
     // Leaf 11: Tasty.owner(sym) returns Absent for the root package
-    "Leaf 11: Tasty.owner(Tasty) returns Absent for root package" in run {
+    "Leaf 11: Tasty.owner(Tasty) returns Absent for root package" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Tasty.withClasspath(cp):
@@ -65,7 +65,7 @@ class QueryTraversalTest extends Test:
     }
 
     // Tasty.parents works correctly for ClassLike
-    "Tasty.parents delegates to parentTypes for ClassLike" in run {
+    "Tasty.parents delegates to parentTypes for ClassLike" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Tasty.withClasspath(cp):

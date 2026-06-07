@@ -6,13 +6,13 @@ package kyo
   *
   * makeNamed is inherited from TastyTestSupport.
   */
-class TastyTypeTest extends Test with TastyTestSupport:
+class TastyTypeTest extends kyo.test.Test[Any] with TastyTestSupport:
 
     import AllowUnsafe.embrace.danger
 
     // plan: phase-05; Type.show now requires (using cp: Classpath).
     // Named(id) renders as "Named(<id>)" until The implementation wires cp.symbol(id).name.
-    "Type.show for Applied(scala.List, scala.Int) returns a non-empty string" in run {
+    "Type.show for Applied(scala.List, scala.Int) returns a non-empty string" in {
         Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             val listType          = makeNamed("scala.List")

@@ -11,7 +11,7 @@ import kyo.internal.tasty.scala2.PortableInflate
   * ZLIB envelope for "hello kyo" (9 bytes), pre-computed with java.util.zip.DeflaterOutputStream: 0x78 0x9c (ZLIB header, default
   * compression) + deflate bitstream + 4-byte Adler-32 checksum. Total: 17 bytes.
   */
-class InflateHookTest extends Test:
+class InflateHookTest extends kyo.test.Test[Any]:
 
     private val zlibCompressed: Array[Byte] = Array(
         0x78.toByte,
@@ -36,7 +36,7 @@ class InflateHookTest extends Test:
     private val expectedBytes: Array[Byte] =
         "hello kyo".getBytes(java.nio.charset.StandardCharsets.UTF_8)
 
-    "InflateHook.inflate decompresses a known ZLIB envelope to the original bytes" in run {
+    "InflateHook.inflate decompresses a known ZLIB envelope to the original bytes" in {
         Abort.run[TastyError](InflateHook.inflate(zlibCompressed)).map:
             case Result.Success(bytes) =>
                 assert(
@@ -49,7 +49,7 @@ class InflateHookTest extends Test:
                 throw t
     }
 
-    "InflateHook.inflate returns a TastyError failure for a corrupted ZLIB header (bad CMF byte)" in run {
+    "InflateHook.inflate returns a TastyError failure for a corrupted ZLIB header (bad CMF byte)" in {
         // CMF byte 0x00: compression method bits = 0x0 (not deflate), triggers an error on all platforms.
         // JS/Native (PortableInflate) returns MalformedSection; JVM (InflaterInputStream) returns CorruptedFile.
         val badCmf: Array[Byte] = Array(
@@ -69,7 +69,7 @@ class InflateHookTest extends Test:
                 throw t
     }
 
-    "InflateHook.inflate decompresses a minimal empty-payload ZLIB stream to Array.emptyByteArray" in run {
+    "InflateHook.inflate decompresses a minimal empty-payload ZLIB stream to Array.emptyByteArray" in {
         // Minimal valid ZLIB stream encoding an empty payload, 8 bytes total:
         //   0x78 0x9C  -- CMF/FLG header: CM=8 (deflate), CINFO=7, (0x789C % 31 == 0 checksum OK)
         //   0x03 0x00  -- DEFLATE fixed-Huffman block: BFINAL=1 BTYPE=01, then EOB symbol 256
@@ -97,7 +97,7 @@ class InflateHookTest extends Test:
 
     // T5 JS delegation: JS InflateHook delegates to PortableInflate. Output must be byte-equal
     // to a direct PortableInflate.inflate call on the same input. Pins T5,.
-    "T5 JS delegation: JS InflateHook output is byte-equal to direct PortableInflate.inflate" taggedAs jsOnly in run {
+    "T5 JS delegation: JS InflateHook output is byte-equal to direct PortableInflate.inflate".onlyJs in {
         // §839 case 3; direct PortableInflate.inflate call for JS delegation test, single-threaded.
         import AllowUnsafe.embrace.danger
         val directResult =

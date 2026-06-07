@@ -9,7 +9,7 @@ import kyo.internal.tasty.symbol.TypedSymbolFactory
   *
   * Verifies that TypedSymbolFactory.from dispatches on SymbolKind and produces the correct typed Symbol subtype.
   */
-class TypedSymbolFactoryTest extends Test:
+class TypedSymbolFactoryTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 

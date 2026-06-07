@@ -11,7 +11,7 @@ import kyo.internal.tasty.symbol.SymbolKind
   *   4. private[kyo] constructor accessible from package kyo only.
   *   5. no SingleAssign or OnceCell field survives on Symbol.
   */
-class SymbolCaseClassTest extends Test:
+class SymbolCaseClassTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 

@@ -14,7 +14,7 @@ import kyo.internal.tasty.query.JarCentralDirectory
   * Test JARs are built programmatically via java.util.zip.ZipOutputStream writing to a temp file via java.io.FileOutputStream. Each test
   * allocates its own temp dir and cleans up in teardown.
   */
-class JarCentralDirectoryTest extends Test:
+class JarCentralDirectoryTest extends kyo.test.Test[Any]:
 
     /** Create a temp directory for the test, returning its path. */
     private def makeTempDir(): String =
@@ -61,7 +61,7 @@ class JarCentralDirectoryTest extends Test:
     private val textContent: Array[Byte]  = "some text".getBytes(StandardCharsets.UTF_8)
 
     // T1: empty JAR returns Chunk.empty
-    "T1: empty JAR returns Chunk.empty for any suffix list" taggedAs jvmOnly in run {
+    "T1: empty JAR returns Chunk.empty for any suffix list".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/empty.jar"
         writeJar(jarPath, Seq.empty)
@@ -78,7 +78,7 @@ class JarCentralDirectoryTest extends Test:
 
     // T2: jar with only .tasty entries returns those entries when suffix is .tasty;
     //     returns empty when suffix is .class
-    "T2: jar with only .tasty entries: suffix .tasty returns all, .class returns empty" taggedAs jvmOnly in run {
+    "T2: jar with only .tasty entries: suffix .tasty returns all, .class returns empty".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/tasty-only.jar"
         writeJar(
@@ -115,7 +115,7 @@ class JarCentralDirectoryTest extends Test:
     }
 
     // T3: jar with only .class entries returns those entries when suffix is .class
-    "T3: jar with only .class entries: suffix .class returns all, .tasty returns empty" taggedAs jvmOnly in run {
+    "T3: jar with only .class entries: suffix .class returns all, .tasty returns empty".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/class-only.jar"
         writeJar(
@@ -147,7 +147,7 @@ class JarCentralDirectoryTest extends Test:
     }
 
     // T4: jar with mixed .tasty + .class + .java entries: multi-suffix returns only .tasty and .class
-    "T4: mixed jar with .tasty + .class + .java: multi-suffix returns only .tasty and .class" taggedAs jvmOnly in run {
+    "T4: mixed jar with .tasty + .class + .java: multi-suffix returns only .tasty and .class".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/mixed.jar"
         writeJar(
@@ -183,7 +183,7 @@ class JarCentralDirectoryTest extends Test:
     }
 
     // T5: large JAR (>500 entries) returns all matching entries without missing any
-    "T5: large JAR (>500 entries) returns all matching entries" taggedAs jvmOnly in run {
+    "T5: large JAR (>500 entries) returns all matching entries".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/large.jar"
         val count   = 600
@@ -216,7 +216,7 @@ class JarCentralDirectoryTest extends Test:
 
     // T6: non-JAR file path returns Abort[TastyError.MalformedSection] because the
     //     EOCD signature scan fails on a file that is not a valid ZIP/JAR.
-    "T6: non-JAR file returns Abort[TastyError.MalformedSection]" taggedAs jvmOnly in run {
+    "T6: non-JAR file returns Abort[TastyError.MalformedSection]".onlyJvm in {
         val dir      = makeTempDir()
         val textPath = s"$dir/not-a-jar.txt"
         Files.write(java.nio.file.Paths.get(textPath), "hello world".getBytes(StandardCharsets.UTF_8))
@@ -234,7 +234,7 @@ class JarCentralDirectoryTest extends Test:
     }
 
     // T11: JAR with corrupted EOCD signature (0xdeadbeef) returns Abort[TastyError.MalformedSection]
-    "T11: corrupted EOCD signature returns Abort[TastyError.MalformedSection]" taggedAs jvmOnly in run {
+    "T11: corrupted EOCD signature returns Abort[TastyError.MalformedSection]".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/corrupted-eocd.jar"
         // Write a valid JAR first, then corrupt the EOCD signature
@@ -282,7 +282,7 @@ class JarCentralDirectoryTest extends Test:
     // The CEN-based reader reads entry names from the CEN record and checks only bit-11 (UTF-8
     // flag) for charset selection. Bit-3 is not used by the reader, so an entry with bit-3 set
     // in its CEN GPB field must enumerate correctly (name returned, no error).
-    "T12: JAR with CEN GPB bit-3 (data descriptor flag) set enumerates correctly" taggedAs jvmOnly in run {
+    "T12: JAR with CEN GPB bit-3 (data descriptor flag) set enumerates correctly".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/bit3.jar"
         // Write a normal STORED JAR first.
@@ -323,7 +323,7 @@ class JarCentralDirectoryTest extends Test:
     }
 
     // T13: empty JAR (only EOCD record, zero entries) returns Chunk.empty without throwing
-    "T13: empty JAR with zero entries (EOCD only) returns Chunk.empty" taggedAs jvmOnly in run {
+    "T13: empty JAR with zero entries (EOCD only) returns Chunk.empty".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/zero-entries.jar"
         // writeJar with no entries produces a valid empty JAR
@@ -341,7 +341,7 @@ class JarCentralDirectoryTest extends Test:
 
     // T14: JAR with general-purpose-bit-11 set (UTF-8 entry names containing non-ASCII chars)
     //      decodes entry names correctly.
-    "T14: JAR with UTF-8 entry names (non-ASCII like münchen.tasty) decodes correctly" taggedAs jvmOnly in run {
+    "T14: JAR with UTF-8 entry names (non-ASCII like münchen.tasty) decodes correctly".onlyJvm in {
         val dir       = makeTempDir()
         val jarPath   = s"$dir/utf8-names.jar"
         val nonAscii1 = "kyo/münchen.tasty"
@@ -381,7 +381,7 @@ class JarCentralDirectoryTest extends Test:
     // F4-JAR: JarCentralDirectory.list returns entries in the same order across two consecutive calls.
     //         This exercises the real CEN reader (not the in-memory FileSource fixture used by F4
     //         in FileSourceTest, whose list() pre-sorts and trivially passes the ordering check).
-    "F4-JAR: JarCentralDirectory.list returns identical ordering across two consecutive calls" taggedAs jvmOnly in run {
+    "F4-JAR: JarCentralDirectory.list returns identical ordering across two consecutive calls".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/order-test.jar"
         // Write entries in a deliberately non-alphabetical order to exercise real CEN record ordering.
@@ -421,7 +421,7 @@ class JarCentralDirectoryTest extends Test:
     // This confirms that offset values that would overflow Int on a large file do not silently
     // produce wrong results: the bounds check catches them before any memory is accessed.
     // Pins C1,.
-    "P04a-T1: EOCD cenOffset=0xFFFFFFFF without Zip64 yields MalformedSection 'out of range'" taggedAs jvmOnly in run {
+    "P04a-T1: EOCD cenOffset=0xFFFFFFFF without Zip64 yields MalformedSection 'out of range'".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/sentinel-cenoffset.jar"
 
@@ -477,7 +477,7 @@ class JarCentralDirectoryTest extends Test:
     // We build a real JAR, then inject a Zip64 locator + Zip64 EOCD before the standard EOCD.
     // The test verifies we can still enumerate entries without error, which confirms the Zip64 path
     // is taken and the locator offset arithmetic is correct (no Int truncation at the locator read).
-    "P04a-T2: Zip64 EOCD locator detected and CEN location read correctly" taggedAs jvmOnly in run {
+    "P04a-T2: Zip64 EOCD locator detected and CEN location read correctly".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/zip64-locator.jar"
 
@@ -585,7 +585,7 @@ class JarCentralDirectoryTest extends Test:
     // We craft a minimal CEN buffer (100 bytes) containing a single CEN record whose nameLen field
     // declares 1000 bytes, making recordSize = 46 + 1000 = 1046, far beyond the 100-byte buffer.
     // parseCenRecordsAll must throw IOException rather than silently stopping.
-    "P04c-T1: parseCenRecordsAll raises IOException on truncated CEN record" taggedAs jvmOnly in run {
+    "P04c-T1: parseCenRecordsAll raises IOException on truncated CEN record".onlyJvm in {
         // Build a 100-byte CEN buffer with one record whose nameLen = 1000.
         val cenBuf = new Array[Byte](100)
         // Write CEN signature 0x02014b50 at offset 0 (little-endian).
@@ -633,7 +633,7 @@ class JarCentralDirectoryTest extends Test:
     //   [Zip64 EOCD locator, 20 bytes, sig=0x07064b50, zip64EocdOffset pointing at Zip64 EOCD]
     //   [EOCD, 22 bytes, cenOffset=0xFFFFFFFF sentinel]
     //
-    "P22c-T1: Zip64 EOCD cenOffset=3_000_000_000L is read as 64-bit (not truncated to 32-bit)" taggedAs jvmOnly in run {
+    "P22c-T1: Zip64 EOCD cenOffset=3_000_000_000L is read as 64-bit (not truncated to 32-bit)".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/zip64-3gb-synthetic.jar"
 
@@ -743,7 +743,7 @@ class JarCentralDirectoryTest extends Test:
     //   totalEntries=0, cenSize=0, cenOffset=0, commentLen=0.
     // The scanner searches from the end for the EOCD signature. We write a 22-byte file.
     //
-    "P22c-T2: EOCD with diskNumber=2 yields MalformedSection containing 'multi-disk'" taggedAs jvmOnly in run {
+    "P22c-T2: EOCD with diskNumber=2 yields MalformedSection containing 'multi-disk'".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/multidisk-synthetic.jar"
 
@@ -801,7 +801,7 @@ class JarCentralDirectoryTest extends Test:
     // to a dedicated future phase avoids mixing production-code changes into this test-only phase.
     //
     // Decision: DEFER. Document deferral. No test body.
-    "P22c-T3: JMOD support deferred (production code does not yet detect JMOD magic prefix)" taggedAs jvmOnly in run {
+    "P22c-T3: JMOD support deferred (production code does not yet detect JMOD magic prefix)".onlyJvm in {
         // JMOD support is deferred. See comment above for the required production changes.
         // This placeholder ensures the test ID is tracked in the test suite.
         Sync.defer(succeed)
@@ -812,7 +812,7 @@ class JarCentralDirectoryTest extends Test:
     // Given: a JAR with foo.class = [1, 2, 3]; the ZIP spec places the CRC-32 at CEN record offset +16.
     // When: JarCentralDirectory.read(jarPath).find(_.name == "foo.class").get.crc32
     // Then: equals java.util.zip.CRC32 computed over [1, 2, 3].
-    "T-CRC1: JarEntry.crc32 from CEN offset+16 matches java.util.zip.CRC32 for foo.class=[1,2,3]" taggedAs jvmOnly in {
+    "T-CRC1: JarEntry.crc32 from CEN offset+16 matches java.util.zip.CRC32 for foo.class=[1,2,3]".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/crc1.jar"
         val bytes   = Array[Byte](1, 2, 3)

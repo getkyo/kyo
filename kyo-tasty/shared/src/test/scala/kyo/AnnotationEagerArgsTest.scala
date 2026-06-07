@@ -14,7 +14,7 @@ import scala.collection.immutable.IntMap
   * row. Leaf 2: decode failure stores an empty Chunk and accumulates the error. Leaf 3: no _decodeCtx field on Annotation; structural
   * reflection confirms the pure case-class shape. Leaf 4: Annotation case-class equality is structural.
   */
-class AnnotationEagerArgsTest extends Test:
+class AnnotationEagerArgsTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -45,7 +45,7 @@ class AnnotationEagerArgsTest extends Test:
     // annotation arguments populated at open time.
     // After Annotation.arguments is a plain Chunk[Tree] field. No effect row is needed to access it.
     // A UNITconst annotation term eagerly decoded in ANNOTATEDtype produces arguments == Chunk(Literal(UnitConst)).
-    "leaf 1: Annotation.arguments populated at open time as plain Chunk[Tree]" in run {
+    "leaf 1: Annotation.arguments populated at open time as plain Chunk[Tree]" in {
         val sym        = makeSym("Int")
         val symAddr    = 3
         val addrMap    = IntMap(symAddr -> sym)
@@ -74,7 +74,7 @@ class AnnotationEagerArgsTest extends Test:
     // A corrupt pickle (unknown tag below firstASTtag=60) causes a DecodeException.
     // The ANNOTATEDtype branch catches this, stores arguments = Chunk.empty, and accumulates the error
     // in DecodeSession.annotationDecodeErrors (which flows to cp.errors at file level).
-    "leaf 2: decode failure produces an empty arguments chunk" in run {
+    "leaf 2: decode failure produces an empty arguments chunk" in {
         val sym        = makeSym("Int")
         val symAddr    = 3
         val addrMap    = IntMap(symAddr -> sym)
@@ -101,10 +101,10 @@ class AnnotationEagerArgsTest extends Test:
     // Verify at compile time that _decodeCtx, argsPickle, and the legacy args / argList do not exist.
     // assertDoesNotCompile works on all three platforms (JVM, JS, Native).
     "leaf 3: Annotation case class has no _decodeCtx, argsPickle, args, or argList field" in {
-        assertDoesNotCompile("val a: Tasty.Annotation = null.asInstanceOf[Tasty.Annotation]; a._decodeCtx")
-        assertDoesNotCompile("val a: Tasty.Annotation = null.asInstanceOf[Tasty.Annotation]; a.argsPickle")
-        assertDoesNotCompile("val a: Tasty.Annotation = null.asInstanceOf[Tasty.Annotation]; a.args")
-        assertDoesNotCompile("val a: Tasty.Annotation = null.asInstanceOf[Tasty.Annotation]; a.argList")
+        typeCheckFailure("val a: Tasty.Annotation = null.asInstanceOf[Tasty.Annotation]; a._decodeCtx")
+        typeCheckFailure("val a: Tasty.Annotation = null.asInstanceOf[Tasty.Annotation]; a.argsPickle")
+        typeCheckFailure("val a: Tasty.Annotation = null.asInstanceOf[Tasty.Annotation]; a.args")
+        typeCheckFailure("val a: Tasty.Annotation = null.asInstanceOf[Tasty.Annotation]; a.argList")
         succeed
     }
 

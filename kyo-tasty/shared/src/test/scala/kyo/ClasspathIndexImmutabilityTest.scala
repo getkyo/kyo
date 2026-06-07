@@ -6,7 +6,7 @@ import scala.collection.mutable
 
 /** Tests for Classpath index maps are immutable after Pass C construction.
   */
-class ClasspathIndexImmutabilityTest extends Test:
+class ClasspathIndexImmutabilityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -55,7 +55,7 @@ class ClasspathIndexImmutabilityTest extends Test:
     // Given: a Classpath cp from Classpath.init.
     // When: cp.indices.byFqn is captured before and after an arbitrary read operation.
     // Then: both captures are the same Map reference.
-    "Leaf 1: fqnIndex is built once and never mutated (val semantics)" in run {
+    "Leaf 1: fqnIndex is built once and never mutated (val semantics)" in {
         Scope.run:
             Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
                 val idx1 = cp.indices.byFqn
@@ -84,7 +84,7 @@ class ClasspathIndexImmutabilityTest extends Test:
     // TASTy) resolve to Named(SymbolId(-1)) in; full cross-file parent indexing requires
     // the TASTy APPLY-tree descent added in.
     // This test pins: subclassIndex is constructed as an immutable Map after Pass C.
-    "Leaf 2: subclassIndex is a non-null immutable Map after Pass C (INV-008)" in run {
+    "Leaf 2: subclassIndex is a non-null immutable Map after Pass C (INV-008)" in {
         Scope.run:
             Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
                 val idx1 = cp.indices.subclassIndex

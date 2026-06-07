@@ -27,7 +27,7 @@ import kyo.internal.tasty.type_.TypeArena
   *
   * Platform: shared/src/test (HARD RULE 11). Both approaches are cross-platform.
   */
-class TreeAdtVariantCoverageTest extends Test:
+class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -130,7 +130,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // TypeRefTree: qualified type references (TYPEREF tag) appear in method body type positions.
     // The sweep also confirms that the decode of TreeVariantFixture completes without crash.
 
-    "Sweep: TypeDef, Template, and TypeRefTree appear in TreeVariantFixture body trees" in run {
+    "Sweep: TypeDef, Template, and TypeRefTree appear in TreeVariantFixture body trees" in {
         Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.treeVariantFixturePackageTasty)).map:
             case Result.Success(pass1) =>
                 val seen = scala.collection.mutable.HashSet.empty[String]
@@ -182,7 +182,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // SELFDEF 118 is cat-4: tag + nameRef(Nat) + type(Tree).
     // Decoded as: name = nameFromRef(readNat), tpe = readTree -> Tree.SelfDef(name, tpe).
     // Pickle: SELFDEF(118=0x76) nameRef(0=0x80) UNITconst(2).
-    "SelfDef: SELFDEF tag decodes to Tree.SelfDef" in run {
+    "SelfDef: SELFDEF tag decodes to Tree.SelfDef" in {
         val names  = Array(Tasty.Name("self"))
         val pickle = Array[Byte](118.toByte, (0 | 0x80).toByte, TastyFormat.UNITconst.toByte)
         decodePickle(pickle, names, noSym) match
@@ -197,7 +197,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── Super (cat-5: SUPER=157 + length + qual + mix?) ────────────────────────
     // SUPER 157 is cat-5. Decoded as: end=readEnd, qual=readTree, mix=Maybe(if remaining then readTree).
     // Pickle with no mix: SUPER(157=0x9D) length(2=0x82) TERMREFdirect(62=0x3E) addr(1=0x81).
-    "Super: SUPER tag decodes to Tree.Super" in run {
+    "Super: SUPER tag decodes to Tree.Super" in {
         val (names, addrMap) = sym1("Outer")
         val pickle = Array[Byte](
             TastyFormat.SUPER.toByte,
@@ -216,7 +216,7 @@ class TreeAdtVariantCoverageTest extends Test:
 
     // ── SuperType (cat-5: SUPERtype=158 + length + thistpe + supertpe) ─────────
     // SUPERtype 158 is cat-5. Pickle: SUPERtype(158=0x9E) length(4=0x84) TERMREFdirect(62) addr(1) TERMREFdirect(62) addr(2).
-    "SuperType: SUPERtype tag decodes to Tree.SuperType" in run {
+    "SuperType: SUPERtype tag decodes to Tree.SuperType" in {
         val s1      = LoadingSymbol.Materialising(id = 49, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("This"))
         val s2      = LoadingSymbol.Materialising(id = 20, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("Super"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
@@ -241,7 +241,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // REFINEDtype 159 is cat-5. Decoded as: end=readEnd, nameRef=readNat, parent=readTree, info=readTree.
     // Payload order: nameRef(Nat), parent(Tree), info(Tree).
     // Pickle: REFINEDtype(159) length(4=0x84) nameRef(0=0x80) TERMREFdirect(62) addr(1=0x81) UNITconst(2).
-    "RefinedType: REFINEDtype tag decodes to Tree.RefinedType" in run {
+    "RefinedType: REFINEDtype tag decodes to Tree.RefinedType" in {
         val (names, addrMap) = sym1("Base")
         val pickle = Array[Byte](
             TastyFormat.REFINEDtype.toByte,
@@ -262,7 +262,7 @@ class TreeAdtVariantCoverageTest extends Test:
 
     // ── AndType (cat-5: ANDtype=165 + length + left + right) ───────────────────
     // Pickle: ANDtype(165=0xA5) length(4=0x84) TERMREFdirect(62) addr(1) TERMREFdirect(62) addr(2).
-    "AndType: ANDtype tag decodes to Tree.AndType" in run {
+    "AndType: ANDtype tag decodes to Tree.AndType" in {
         val s1      = LoadingSymbol.Materialising(id = 66, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("A"))
         val s2      = LoadingSymbol.Materialising(id = 55, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("B"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
@@ -285,7 +285,7 @@ class TreeAdtVariantCoverageTest extends Test:
 
     // ── OrType (cat-5: ORtype=167 + length + left + right) ─────────────────────
     // Pickle: ORtype(167=0xA7) length(4=0x84) TERMREFdirect(62) addr(1) TERMREFdirect(62) addr(2).
-    "OrType: ORtype tag decodes to Tree.OrType" in run {
+    "OrType: ORtype tag decodes to Tree.OrType" in {
         val s1      = LoadingSymbol.Materialising(id = 66, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("A"))
         val s2      = LoadingSymbol.Materialising(id = 55, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("B"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
@@ -308,7 +308,7 @@ class TreeAdtVariantCoverageTest extends Test:
 
     // ── AnnotatedType (cat-5: ANNOTATEDtype=153 + length + parent + annot) ─────
     // Pickle: ANNOTATEDtype(153=0x99) length(2=0x82) UNITconst(2) UNITconst(2).
-    "AnnotatedType: ANNOTATEDtype tag decodes to Tree.AnnotatedType" in run {
+    "AnnotatedType: ANNOTATEDtype tag decodes to Tree.AnnotatedType" in {
         val pickle = Array[Byte](
             TastyFormat.ANNOTATEDtype.toByte,
             (2 | 0x80).toByte,
@@ -327,7 +327,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── RecType (cat-3: RECtype=100 + parent_Tree) ──────────────────────────────
     // RECtype 100 is cat-3: tag + sub-AST. Decoded as: parent=readTree -> Tree.RecType(parent).
     // Pickle: RECtype(100=0x64) UNITconst(2).
-    "RecType: RECtype tag decodes to Tree.RecType" in run {
+    "RecType: RECtype tag decodes to Tree.RecType" in {
         val pickle = Array[Byte](TastyFormat.RECtype.toByte, TastyFormat.UNITconst.toByte)
         decodePickle(pickle, Array(Tasty.Name("dummy")), noSym) match
             case Result.Success(Tasty.Tree.RecType(parent)) =>
@@ -340,7 +340,7 @@ class TreeAdtVariantCoverageTest extends Test:
 
     // ── RecThisAddr (cat-2: RECthis=66 + addr_Nat) ──────────────────────────────
     // RECthis 66 is cat-2: tag + Nat. Decoded as: addr=readNat -> Tree.RecThisAddr(addr).
-    "RecThisAddr: RECthis byte + addr decodes to Tree.RecThisAddr" in run {
+    "RecThisAddr: RECthis byte + addr decodes to Tree.RecThisAddr" in {
         val pickle = Array[Byte](TastyFormat.RECthis.toByte, (3 | 0x80).toByte)
         decodePickle(pickle, Array(Tasty.Name("dummy")), noSym) match
             case Result.Success(Tasty.Tree.RecThisAddr(addr)) =>
@@ -355,7 +355,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // IDENTtpt 111 is cat-4: tag + nameRef(Nat) + type(Tree).
     // Decoded as: nameRef=readNat, tpe=readType, name=nameFromRef -> Tree.IdentTpt(name, tpe).
     // Pickle: IDENTtpt(111=0x6F) nameRef(0=0x80) TERMREFdirect(62) addr(1=0x81).
-    "IdentTpt: IDENTtpt tag decodes to Tree.IdentTpt" in run {
+    "IdentTpt: IDENTtpt tag decodes to Tree.IdentTpt" in {
         val (names, addrMap) = sym1("Int")
         val pickle = Array[Byte](
             TastyFormat.IDENTtpt.toByte,
@@ -376,7 +376,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // SELECTtpt 113 is cat-4: tag + nameRef(Nat) + qual(Tree).
     // Decoded as: nameRef=readNat, qual=readTree -> Tree.SelectTpt(qual, name).
     // Pickle: SELECTtpt(113=0x71) nameRef(0=0x80) TERMREFdirect(62) addr(1=0x81).
-    "SelectTpt: SELECTtpt tag decodes to Tree.SelectTpt" in run {
+    "SelectTpt: SELECTtpt tag decodes to Tree.SelectTpt" in {
         val (names, addrMap) = sym1("pkg")
         val pickle = Array[Byte](
             TastyFormat.SELECTtpt.toByte,
@@ -397,7 +397,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // SINGLETONtpt 101 is cat-3: tag + sub-AST (ref tree).
     // Decoded as: tpe=readTree -> Tree.SingletonTpt(tpe).
     // Pickle: SINGLETONtpt(101=0x65) TERMREFdirect(62) addr(1=0x81).
-    "SingletonTpt: SINGLETONtpt tag decodes to Tree.SingletonTpt" in run {
+    "SingletonTpt: SINGLETONtpt tag decodes to Tree.SingletonTpt" in {
         val (names, addrMap) = sym1("obj")
         val pickle = Array[Byte](
             TastyFormat.SINGLETONtpt.toByte,
@@ -418,7 +418,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // Check the actual handler -- looking at the code: it reads a type, not a tree.
     // BYNAMEtpt(94): inner = readType -> Tree.ByNameTpt(inner).
     // Pickle: BYNAMEtpt(94=0x5E) TERMREFdirect(62) addr(1=0x81).
-    "ByNameTpt: BYNAMEtpt tag decodes to Tree.ByNameTpt" in run {
+    "ByNameTpt: BYNAMEtpt tag decodes to Tree.ByNameTpt" in {
         val (names, addrMap) = sym1("Int")
         val pickle = Array[Byte](
             TastyFormat.BYNAMEtpt.toByte,
@@ -437,7 +437,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── ByNameType (cat-3: BYNAMEtype=93 + inner_Tree) ─────────────────────────
     // BYNAMEtype 93 is cat-3: tag + sub-AST. Decoded as: inner=readTree -> Tree.ByNameType(inner).
     // Pickle: BYNAMEtype(93=0x5D) TERMREFdirect(62) addr(1=0x81).
-    "ByNameType: BYNAMEtype tag decodes to Tree.ByNameType" in run {
+    "ByNameType: BYNAMEtype tag decodes to Tree.ByNameType" in {
         val (names, addrMap) = sym1("Int")
         val pickle = Array[Byte](
             TastyFormat.BYNAMEtype.toByte,
@@ -456,7 +456,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── TypeRefPkg (cat-2: TYPEREFpkg=65 + nameRef_Nat) ───────────────────────
     // TYPEREFpkg 65 is cat-2: tag + Nat. Decoded as: nameRef=readNat -> Tree.TypeRefPkg(name).
     // Pickle: TYPEREFpkg(65=0x41) nameRef(0=0x80).
-    "TypeRefPkg: TYPEREFpkg tag decodes to Tree.TypeRefPkg" in run {
+    "TypeRefPkg: TYPEREFpkg tag decodes to Tree.TypeRefPkg" in {
         val names  = Array(Tasty.Name("java"))
         val pickle = Array[Byte](TastyFormat.TYPEREFpkg.toByte, (0 | 0x80).toByte)
         decodePickle(pickle, names, noSym) match
@@ -470,7 +470,7 @@ class TreeAdtVariantCoverageTest extends Test:
 
     // ── TypeRefDirect (cat-2: TYPEREFdirect=63 + addr_Nat) ────────────────────
     // TYPEREFdirect 63 is cat-2: tag + Nat. Decoded as: addr=readNat -> Tree.TypeRefDirect(addr).
-    "TypeRefDirect: TYPEREFdirect tag decodes to Tree.TypeRefDirect" in run {
+    "TypeRefDirect: TYPEREFdirect tag decodes to Tree.TypeRefDirect" in {
         val pickle = Array[Byte](TastyFormat.TYPEREFdirect.toByte, (5 | 0x80).toByte)
         decodePickle(pickle, Array(Tasty.Name("dummy")), noSym) match
             case Result.Success(Tasty.Tree.TypeRefDirect(addr)) =>
@@ -485,7 +485,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // TYPEREFsymbol 116 is cat-4: tag + addr(Nat) + qual(Tree).
     // Decoded as: addr=readNat, qual=readTree -> Tree.TypeRefSymbol(addr, qual).
     // Pickle: TYPEREFsymbol(116=0x74) addr(1=0x81) TERMREFdirect(62) addr(2=0x82).
-    "TypeRefSymbol: TYPEREFsymbol tag decodes to Tree.TypeRefSymbol" in run {
+    "TypeRefSymbol: TYPEREFsymbol tag decodes to Tree.TypeRefSymbol" in {
         val s1      = LoadingSymbol.Materialising(id = 66, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("A"))
         val s2      = LoadingSymbol.Materialising(id = 55, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("B"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
@@ -508,7 +508,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // TERMREFsymbol 114 is cat-4: tag + addr(Nat) + qual(Tree).
     // Decoded as: addr=readNat, qual=readTree -> Tree.TermRefSymbol(addr, qual).
     // Pickle: TERMREFsymbol(114=0x72) addr(1=0x81) TERMREFdirect(62) addr(2=0x82).
-    "TermRefSymbol: TERMREFsymbol tag decodes to Tree.TermRefSymbol" in run {
+    "TermRefSymbol: TERMREFsymbol tag decodes to Tree.TermRefSymbol" in {
         val s1      = LoadingSymbol.Materialising(id = 52, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("x"))
         val s2      = LoadingSymbol.Materialising(id = 37, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("Owner"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
@@ -529,7 +529,7 @@ class TreeAdtVariantCoverageTest extends Test:
 
     // ── Imported (cat-2: IMPORTED=75 + nameRef_Nat) ─────────────────────────────
     // IMPORTED 75 is cat-2: tag + Nat. Decoded as: nameRef=readNat, name=nameFromRef -> Tree.Imported(Ident(name, _)).
-    "Imported: IMPORTED tag decodes to Tree.Imported" in run {
+    "Imported: IMPORTED tag decodes to Tree.Imported" in {
         val names  = Array(Tasty.Name("List"))
         val pickle = Array[Byte](TastyFormat.IMPORTED.toByte, (0 | 0x80).toByte)
         decodePickle(pickle, names, noSym) match
@@ -543,7 +543,7 @@ class TreeAdtVariantCoverageTest extends Test:
 
     // ── Renamed (cat-2: RENAMED=76 + nameRef_Nat) ────────────────────────────────
     // RENAMED 76 is cat-2: tag + Nat. Decoded as: nameRef=readNat -> Tree.Renamed(name).
-    "Renamed: RENAMED tag decodes to Tree.Renamed" in run {
+    "Renamed: RENAMED tag decodes to Tree.Renamed" in {
         val names  = Array(Tasty.Name("AB"))
         val pickle = Array[Byte](TastyFormat.RENAMED.toByte, (0 | 0x80).toByte)
         decodePickle(pickle, names, noSym) match
@@ -558,7 +558,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── ExplicitTpt (cat-3: EXPLICITtpt=103 + tpe_Type) ────────────────────────
     // EXPLICITtpt 103 is cat-3: tag + readType. Decoded as: inner=readType -> Tree.ExplicitTpt(inner).
     // Pickle: EXPLICITtpt(103=0x67) TERMREFdirect(62) addr(1=0x81).
-    "ExplicitTpt: EXPLICITtpt tag decodes to Tree.ExplicitTpt" in run {
+    "ExplicitTpt: EXPLICITtpt tag decodes to Tree.ExplicitTpt" in {
         val (names, addrMap) = sym1("Int")
         val pickle = Array[Byte](
             TastyFormat.EXPLICITtpt.toByte,
@@ -576,7 +576,7 @@ class TreeAdtVariantCoverageTest extends Test:
 
     // ── Bounded (cat-3: BOUNDED=102 + bound_Tree) ────────────────────────────────
     // BOUNDED 102 is cat-3: tag + sub-AST. Decoded as: bound=readTree -> Tree.Bounded(bound).
-    "Bounded: BOUNDED tag decodes to Tree.Bounded" in run {
+    "Bounded: BOUNDED tag decodes to Tree.Bounded" in {
         val pickle = Array[Byte](TastyFormat.BOUNDED.toByte, TastyFormat.UNITconst.toByte)
         decodePickle(pickle, Array(Tasty.Name("dummy")), noSym) match
             case Result.Success(Tasty.Tree.Bounded(bound)) =>
@@ -590,7 +590,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── SelectOuter (cat-5: SELECTouter=148 + length + levels + name + qual + tpe) ─
     // SELECTouter 148 is cat-5. Decoded as: end=readEnd, levels=readNat, nm=nameFromRef(readNat), qual=readTree, tpe=readType.
     // Pickle: SELECTouter(148=0x94) length(6=0x86) levels(1=0x81) nameRef(0=0x80) qual=TERMREFdirect(62) addr(1=0x81) tpe=TERMREFdirect(62) addr(2=0x82).
-    "SelectOuter: SELECTouter tag decodes to Tree.SelectOuter" in run {
+    "SelectOuter: SELECTouter tag decodes to Tree.SelectOuter" in {
         val s1      = LoadingSymbol.Materialising(id = 30, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("Outer"))
         val s2      = LoadingSymbol.Materialising(id = 7, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("Inner"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
@@ -618,7 +618,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── FlexibleType (cat-5: FLEXIBLEtype=193 + length + arg_Tree) ─────────────
     // FLEXIBLEtype 193 is cat-5. Decoded as: end=readEnd, arg=readTree -> Tree.FlexibleType(arg).
     // Emitted only with -Yexplicit-nulls; not produced by standard user Scala sources.
-    "FlexibleType: FLEXIBLEtype tag decodes to Tree.FlexibleType" in run {
+    "FlexibleType: FLEXIBLEtype tag decodes to Tree.FlexibleType" in {
         val (names, addrMap) = sym1("String")
         val pickle = Array[Byte](
             TastyFormat.FLEXIBLEtype.toByte,
@@ -638,7 +638,7 @@ class TreeAdtVariantCoverageTest extends Test:
     // ── Elided (cat-3: ELIDED=104 + tpe_Type) ───────────────────────────────────
     // ELIDED 104 is cat-3: tag + readType. Decoded as: inner=readType -> Tree.Elided(inner).
     // Appears in top-level symbol declarations (inferred type positions) but not in body slices.
-    "Elided: ELIDED tag decodes to Tree.Elided" in run {
+    "Elided: ELIDED tag decodes to Tree.Elided" in {
         val (names, addrMap) = sym1("Int")
         val pickle = Array[Byte](
             TastyFormat.ELIDED.toByte,

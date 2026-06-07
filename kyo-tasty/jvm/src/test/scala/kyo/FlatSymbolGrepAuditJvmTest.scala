@@ -5,9 +5,9 @@ package kyo
   *
   * This test is JVM-only because `java.io.File` and `scala.io.Source.fromFile` are not available on Scala.js.
   */
-class FlatSymbolGrepAuditJvmTest extends Test:
+class FlatSymbolGrepAuditJvmTest extends kyo.test.Test[Any]:
 
-    "FlatSymbolGrepAuditJvmTest: no flat `final case class Symbol ` in main sources (JVM file-scan)" in run {
+    "FlatSymbolGrepAuditJvmTest: no flat `final case class Symbol ` in main sources (JVM file-scan)" in {
         val guesses = Seq(
             "kyo-tasty/shared/src/main/scala",
             "../kyo-tasty/shared/src/main/scala"

@@ -12,12 +12,12 @@ import kyo.internal.tasty.snapshot.SnapshotWriter
   *
   * Scaladoc: 8-35 lines.
   */
-class SnapshotDigestTest extends Test:
+class SnapshotDigestTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
     // T-J1: jar-root digest is deterministic across two calls on the same jar (JVM: real jar; BLOCKER-1 post-fix).
-    "DigestComputer.compute on jar root returns same digest for two successive calls" in runJVM {
+    "DigestComputer.compute on jar root returns same digest for two successive calls".onlyJvm in {
         import java.nio.file.Files
         import kyo.internal.tasty.query.PlatformFileSource
         val dir     = Files.createTempDirectory("kyo-sndt-tj1").toAbsolutePath.toString
@@ -40,7 +40,7 @@ class SnapshotDigestTest extends Test:
     // T-J3: -- bumping jar mtime must NOT change the digest (content-addressed; JVM CEN-walk).
     // After the jar digest is based on CEN CRC32 entries, not mtime. A mtime-only
     // change must produce the same digest (JVM: CEN walk; path-hash fallback is also mtime-invariant).
-    "DigestComputer.compute jar mtime change does NOT change digest (INV-003 content-addressed)" in runJVM {
+    "DigestComputer.compute jar mtime change does NOT change digest (INV-003 content-addressed)".onlyJvm in {
         import java.nio.file.Files
         import kyo.internal.tasty.query.PlatformFileSource
         val dir     = Files.createTempDirectory("kyo-sndt-tj3").toAbsolutePath.toString
@@ -68,7 +68,7 @@ class SnapshotDigestTest extends Test:
 
     // T-J4: different jar paths with identical CEN content produce different compute digests.
     // The outer compute loop mixes the jar path string; two different paths must produce different results.
-    "DigestComputer.compute for two different jar paths produces different digests" in runJVM {
+    "DigestComputer.compute for two different jar paths produces different digests".onlyJvm in {
         import java.nio.file.Files
         import kyo.internal.tasty.query.PlatformFileSource
         val dir      = Files.createTempDirectory("kyo-sndt-tj4").toAbsolutePath.toString
@@ -91,7 +91,7 @@ class SnapshotDigestTest extends Test:
     }
 
     // T-J5: mixed jar+directory roots produce the same digest regardless of root order.
-    "DigestComputer.compute on mixed jar+directory roots is root-order independent" in runJVM {
+    "DigestComputer.compute on mixed jar+directory roots is root-order independent".onlyJvm in {
         import java.nio.file.Files
         import kyo.internal.tasty.query.PlatformFileSource
         val dir     = Files.createTempDirectory("kyo-sndt-tj5").toAbsolutePath.toString
@@ -120,7 +120,7 @@ class SnapshotDigestTest extends Test:
     // Given: a fixture classpath with errors serialized twice.
     // When: digests of both serializations are compared.
     // Then: digests are equal; flipping byte 16 produces a differing digest string.
-    "snapshot serialization is digest-stable across two calls" in run {
+    "snapshot serialization is digest-stable across two calls" in {
         import kyo.Tasty.SymbolId
         val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val errors = Chunk[TastyError](

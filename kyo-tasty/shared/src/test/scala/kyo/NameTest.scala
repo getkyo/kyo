@@ -1,9 +1,8 @@
 package kyo
 
 import kyo.Tasty.Name
-import kyo.Test
 
-class NameTest extends Test:
+class NameTest extends kyo.test.Test[Any]:
 
     "asString round-trips through the opaque alias" in {
         val n = Tasty.Name("hello")
@@ -49,16 +48,16 @@ class NameTest extends Test:
     }
 
     "Name.init and Name.Unsafe.init are not on the surface" in {
-        val ce1 = compiletime.testing.typeCheckErrors("Tasty.Name.init(\"x\")")
-        assert(ce1.nonEmpty)
+        val ce1 = compiletime.testing.typeCheckErrors("Tasty.Name.init(\"x\")").length
+        assert(ce1 > 0)
 
-        val ce2 = compiletime.testing.typeCheckErrors("Tasty.Name.Unsafe.init(\"x\")")
-        assert(ce2.nonEmpty)
+        val ce2 = compiletime.testing.typeCheckErrors("Tasty.Name.Unsafe.init(\"x\")").length
+        assert(ce2 > 0)
     }
 
     "Tasty.globalInterner is not a member" in {
-        val ce = compiletime.testing.typeCheckErrors("kyo.Tasty.globalInterner")
-        assert(ce.nonEmpty)
+        val ce = compiletime.testing.typeCheckErrors("kyo.Tasty.globalInterner").length
+        assert(ce > 0)
     }
 
     "cross-platform placement verified by shared/ directory" in {

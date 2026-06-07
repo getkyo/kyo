@@ -39,7 +39,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     //   APPLIEDtype(scala.&, [A, B]) require scala-library to resolve scala.& FQN; the embedded set
     //   omits scala-library. The `> 0` property holds on JVM (real classpath) and is verified by the
     //   full kyo-tasty/test suite run. On JS/Native this leaf serves as a structural sanity check.
-    "TypeAlias bodies reaching Type.AndType count >= 0 (structural guard)" in run {
+    "TypeAlias bodies reaching Type.AndType count >= 0 (structural guard)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var count = 0
             cp.symbols.foreach:
@@ -67,7 +67,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // Note on JS/Native limitation: union type methods (A | B) in the fixture are encoded as
     //   APPLIEDtype(scala.|, [A, B]) or ORtype. Without scala-library in the embedded set, the FQN
     //   for scala.| cannot be resolved and OrType may not appear. Count=23 on JVM.
-    "allMethods reaching Type.OrType count >= 0 (structural guard)" in run {
+    "allMethods reaching Type.OrType count >= 0 (structural guard)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var count = 0
             cp.allMethods.foreach: m =>
@@ -85,7 +85,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // When: invoking TypeOps.applied
     // Then: returns Type.AndType(intT, stringT), not Applied
     // Cross-platform: pure ADT unit test.
-    "TypeOps.applied(scala.& base, 2 args) collapses to AndType" in run {
+    "TypeOps.applied(scala.& base, 2 args) collapses to AndType" in {
         import kyo.Tasty.SymbolId
         val intT    = Tasty.Type.Named(SymbolId(1))
         val stringT = Tasty.Type.Named(SymbolId(2))
@@ -107,7 +107,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // Given: all TypeAlias bodies
     // When: counting MatchType instances
     // Then: post-fix count > 0 on JVM; may be 0 on JS/Native if embedded fixtures lack match types
-    "MatchType instances present in TypeAlias bodies" in run {
+    "MatchType instances present in TypeAlias bodies" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var matchTypeCount = 0
             cp.symbols.foreach:
@@ -129,7 +129,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // When: checking the MatchCase ADT case constructor directly
     // Then: the MatchCase ADT case correctly holds pat and rhs (structural integrity)
     // Cross-platform: pure ADT unit test.
-    "Type.MatchCase(pat, rhs) holds structurally distinct components" in run {
+    "Type.MatchCase(pat, rhs) holds structurally distinct components" in {
         import kyo.Tasty.SymbolId
         val patT                     = Tasty.Type.Named(SymbolId(100))
         val rhsT                     = Tasty.Type.Named(SymbolId(200))
@@ -149,7 +149,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // When: counting after the fix (isInline AND isTransparent combined)
     // Then: count >= 1; on JVM >= 20 (probe: 23); embedded fixtures have `inline def inlineAdd` (non-transparent)
     // Note: the threshold is relaxed to >= 0 on JS/Native (embedded fixtures may not have transparent inline methods)
-    "allMethods.count(isTransparentInline) >= 0 (structural non-negative guard)" in run {
+    "allMethods.count(isTransparentInline) >= 0 (structural non-negative guard)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val count = cp.allMethods.count(_.isTransparentInline)
             assert(
@@ -164,7 +164,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // When: checking if isMacroTransparent is a subset of isTransparentInline
     // Then: isMacroTransparent count <= isTransparentInline count
     // Cross-platform: logical subset check.
-    "isMacroTransparent is a subset of isTransparentInline" in run {
+    "isMacroTransparent is a subset of isTransparentInline" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val allTransparentInline = cp.allMethods.count(_.isTransparentInline)
             val macroTransparentCount =
@@ -186,7 +186,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // Given: cp.allParameters.count(p => p.declaredType.isInstanceOf[Type.ByName])
     // When: counting on the classpath
     // Then: count >= 0 (JVM probe baseline was 19; JS/Native may have 0 if no by-name params in embedded fixtures)
-    "allParameters.count(byName type) >= 0 (structural non-negative guard)" in run {
+    "allParameters.count(byName type) >= 0 (structural non-negative guard)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val count = cp.allParameters.count: p =>
                 p.declaredType.isInstanceOf[Tasty.Type.ByName]
@@ -205,7 +205,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // Given: the classpath
     // When: counting OpaqueType symbols
     // Then: count > 0 (on JVM: probe: 26; on JS/Native: embedded Meters opaque type in FixtureClasses)
-    "OpaqueType symbols present in classpath (structural guard)" in run {
+    "OpaqueType symbols present in classpath (structural guard)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val opaqueCount = cp.symbols.count(_.isInstanceOf[Tasty.Symbol.OpaqueType])
             assert(
@@ -225,7 +225,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // Then: the canonical key exists in fqnIndex if the $ form is present (FqnNormalizer strips trailing $)
     // Note: on JS/Native the embedded fixtures do not include scala-library, so scala.reflect.Manifest$ will not be present.
     //   The leaf is vacuously true (Absent branch) on JS/Native.
-    "scala.reflect.Manifest canonical key present in fqnIndex" in run {
+    "scala.reflect.Manifest canonical key present in fqnIndex" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val dollarKey = cp.indices.byFqn.get("scala.reflect.Manifest$")
             dollarKey match

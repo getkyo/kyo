@@ -12,12 +12,12 @@ import kyo.internal.tasty.query.TastyState
   * Leaf 22: Tasty.bodyTree returns Present under withClasspath(roots) (decode context attached).
   * Leaf 23: Tasty.bodyTree returns Absent under withClasspath(cp) (no decode context).
   */
-class BodyTreeTest extends Test:
+class BodyTreeTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
     // Leaf 22: bodyTree returns Present under a binding with a populated bodyStore
-    "Leaf 22: Tasty.bodyTree returns Maybe.Present for method with body under live classpath" in run {
+    "Leaf 22: Tasty.bodyTree returns Maybe.Present for method with body under live classpath" in {
         val src = MemoryFileSource()
         src.add("root/SomeObject.tasty", kyo.fixtures.Embedded.someObjectTasty)
         Scope.run:
@@ -55,7 +55,7 @@ class BodyTreeTest extends Test:
     }
 
     // Leaf 23: bodyTree returns Absent under withClasspath(cp) (no decode context)
-    "Leaf 23: Tasty.bodyTree returns Maybe.Absent under withClasspath(cp) (no decode context)" in run {
+    "Leaf 23: Tasty.bodyTree returns Maybe.Absent under withClasspath(cp) (no decode context)" in {
         // withClasspath(cp) installs Binding(cp, Maybe.Absent): no DecodeContext.
         // Tasty.bodyTree checks the DecodeContext first; Absent DecodeContext -> Absent result.
         // We use a synthetic method to confirm that Tasty.bodyTree (not the field) returns Absent.
@@ -98,10 +98,8 @@ class BodyTreeTest extends Test:
     // When: compileErrors is invoked
     // Then: non-empty string (body is not a member of Symbol.Class after)
     "accessing .body on ClassLike is a compile error" in {
-        assert(
-            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Class).body").nonEmpty,
-            "Expected compile error for Symbol.Class.body (body field removed)"
-        )
+        val classErrors = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Class).body").length
+        assert(classErrors > 0, "Expected compile error for Symbol.Class.body (body field removed)")
         succeed
     }
 
@@ -110,18 +108,12 @@ class BodyTreeTest extends Test:
     // When: compileErrors is invoked for each
     // Then: every probe returns a non-empty string
     "accessing .body on Method/Val/Var is a compile error" in {
-        assert(
-            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Method).body").nonEmpty,
-            "Expected compile error for Symbol.Method.body"
-        )
-        assert(
-            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Val).body").nonEmpty,
-            "Expected compile error for Symbol.Val.body"
-        )
-        assert(
-            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Var).body").nonEmpty,
-            "Expected compile error for Symbol.Var.body"
-        )
+        val methodErrors = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Method).body").length
+        val valErrors    = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Val).body").length
+        val varErrors    = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Var).body").length
+        assert(methodErrors > 0, "Expected compile error for Symbol.Method.body")
+        assert(valErrors > 0, "Expected compile error for Symbol.Val.body")
+        assert(varErrors > 0, "Expected compile error for Symbol.Var.body")
         succeed
     }
 
@@ -129,7 +121,7 @@ class BodyTreeTest extends Test:
     // Given: a classpath cp built via coldLoadBinding; encoded via Json/Schema; decoded back
     // When: the test reads fields of the round-tripped cp
     // Then: every field equals the original; .body is not callable (compile check)
-    "Schema round-trip is faithful after body field removal" in run {
+    "Schema round-trip is faithful after body field removal" in {
         val src = MemoryFileSource()
         src.add("root/SomeObject.tasty", kyo.fixtures.Embedded.someObjectTasty)
         Scope.run:

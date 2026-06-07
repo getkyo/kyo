@@ -25,7 +25,7 @@ import scala.collection.immutable.IntMap
   * classfiles (throwsFixtureClass, pointRecordClass) and inline synthetic classfile bytes (interface, static-field class,
   * mutable-field class). The shape assertions (SymbolKind mapping) are equivalent.
   */
-class UnifiedModelTest extends Test:
+class UnifiedModelTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -77,7 +77,7 @@ class UnifiedModelTest extends Test:
     // -------------------------------------------------------------------------
     // Test 11: SymbolKind.Package appears for both Java and Scala contexts
     // -------------------------------------------------------------------------
-    "SymbolKind.Package: Scala TASTy produces Package symbols via ClasspathOrchestrator" in run {
+    "SymbolKind.Package: Scala TASTy produces Package symbols via ClasspathOrchestrator" in {
         import kyo.internal.tasty.query.ClasspathOrchestrator
         import kyo.internal.tasty.query.FileSource
         import scala.collection.mutable
@@ -116,7 +116,7 @@ class UnifiedModelTest extends Test:
     // Test 12: SymbolKind.Class for Java class and Scala class
     // -------------------------------------------------------------------------
     // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK Object.class.
-    "SymbolKind.Class appears for Java class and Scala class" in run {
+    "SymbolKind.Class appears for Java class and Scala class" in {
         readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map: javaResult =>
             assert(
                 javaResult.classSymbol.kind == SymbolKind.Class,
@@ -134,7 +134,7 @@ class UnifiedModelTest extends Test:
     // Test 13: SymbolKind.Trait for Java interface and Scala trait
     // -------------------------------------------------------------------------
     // Cross-platform: uses inline synthetic interface bytes instead of JDK Runnable.class.
-    "SymbolKind.Trait appears for Java interface and Scala trait" in run {
+    "SymbolKind.Trait appears for Java interface and Scala trait" in {
         val clsName = "kyo/fixtures/SyntheticRunnable".getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val supName = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val buf     = new java.io.ByteArrayOutputStream()
@@ -169,7 +169,7 @@ class UnifiedModelTest extends Test:
     // Test 14: SymbolKind.Object appears ONLY for Scala object; no Java symbol has Object kind
     // -------------------------------------------------------------------------
     // Cross-platform: uses embedded fixtures instead of JDK Object.class + System.class.
-    "SymbolKind.Object appears only for Scala object; no Java symbol has Object kind" in run {
+    "SymbolKind.Object appears only for Scala object; no Java symbol has Object kind" in {
         readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map: javaObjectResult =>
             assert(
                 javaObjectResult.classSymbol.kind != SymbolKind.Object,
@@ -194,7 +194,7 @@ class UnifiedModelTest extends Test:
     // Test 15: TypeAlias, OpaqueType, AbstractType appear only for TASTy-sourced symbols
     // -------------------------------------------------------------------------
     // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK Object.class.
-    "TypeAlias, OpaqueType, AbstractType appear only in TASTy-sourced symbols" in run {
+    "TypeAlias, OpaqueType, AbstractType appear only in TASTy-sourced symbols" in {
         readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map: javaResult =>
             val allJavaSyms    = javaResult.classSymbol :: javaResult.symbols.toList
             val scalaOnlyKinds = Set(SymbolKind.TypeAlias, SymbolKind.OpaqueType, SymbolKind.AbstractType)
@@ -229,7 +229,7 @@ class UnifiedModelTest extends Test:
     // -------------------------------------------------------------------------
     // Test 16: Type.Array is decoded from a Java record with int[] component
     // -------------------------------------------------------------------------
-    "Type.Array is decoded from ArrayRecord classfile: record component 'values' has type Type.Array" in run {
+    "Type.Array is decoded from ArrayRecord classfile: record component 'values' has type Type.Array" in {
         // ArrayRecord is a Java record with a single int[] component named "values".
         // The classfile bytes are embedded cross-platform in Embedded.arrayRecordClass.
         // ClassfileUnpickler.buildRecordComponents calls parseErasedDescriptorType which
@@ -256,7 +256,7 @@ class UnifiedModelTest extends Test:
     // -------------------------------------------------------------------------
     // Test 17: Scala case class has Flag.Case
     // -------------------------------------------------------------------------
-    "a Scala case class decoded from TASTy has flags.contains(Flag.Case)" in run {
+    "a Scala case class decoded from TASTy has flags.contains(Flag.Case)" in {
         tastySymbols("SomeCaseClass.tasty").map: result =>
             val caseClass = result.symbols.find: sym =>
                 sym.kind == SymbolKind.Class && sym.flags.contains(Tasty.Flag.Case)
@@ -280,7 +280,7 @@ class UnifiedModelTest extends Test:
     //   Val: pointRecordClass (record component fields are final)
     //   Var: inline synthetic class with non-final field
     //   Object, Package, TypeAlias, OpaqueType, AbstractType, TypeParam, Parameter: TASTy fixtures
-    "full SymbolKind matrix: each non-Unresolved kind has at least one symbol in fixtures" in run {
+    "full SymbolKind matrix: each non-Unresolved kind has at least one symbol in fixtures" in {
         def kindsFromClassResult(r: ClassfileResult): Set[SymbolKind] =
             val buf = scala.collection.mutable.Set[SymbolKind]()
             buf += r.classSymbol.kind
@@ -401,7 +401,7 @@ class UnifiedModelTest extends Test:
     // ── / M10: CLASSconst decoding via TypeUnpickler ─────────────────
 
     // Test 19: CLASSconst with a known TYPEREFdirect decodes to ConstantType(ClassConst(Named(sym))).
-    "CLASSconst with TYPEREFdirect decodes to ConstantType(ClassConst(Named(stringSym)))" in run {
+    "CLASSconst with TYPEREFdirect decodes to ConstantType(ClassConst(Named(stringSym)))" in {
         val stringSym =
             LoadingSymbol.Materialising(id = 1, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("java.lang.String"))
         val stringAddr = 10
@@ -428,7 +428,7 @@ class UnifiedModelTest extends Test:
 
     // Test 20: CLASSconst with an unresolved TYPEREFpkg decodes to ConstantType(ClassConst(Named(unresolved))).
     // The unresolved symbol carries the class fqn as its name.
-    "CLASSconst with unresolved TYPEREFpkg decodes to ConstantType(ClassConst(Named(Unresolved)))" in run {
+    "CLASSconst with unresolved TYPEREFpkg decodes to ConstantType(ClassConst(Named(Unresolved)))" in {
         val missingFqn = "com.missing.X"
         val names      = Array(Tasty.Name(missingFqn))
         val nameRef    = 0

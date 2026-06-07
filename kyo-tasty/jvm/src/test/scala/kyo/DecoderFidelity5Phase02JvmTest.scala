@@ -22,7 +22,7 @@ import scala.collection.mutable
   *
   * Also covers  /31 via a real mmap warm load using a synthetic classpath.
   */
-class DecoderFidelity5Phase02JvmTest extends Test:
+class DecoderFidelity5Phase02JvmTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -117,7 +117,7 @@ class DecoderFidelity5Phase02JvmTest extends Test:
     // Then: returns TastyError.MalformedSection("body bytes not available") because the mmap path
     //       sets sectionBytes = Array.empty intentionally; ClasspathClosed would only fire if
     //       the view-backed arena bytes were directly accessed after close.
-    "P02.6 post-Scope decodeBody on mmap-loaded snapshot returns MalformedSection (body bytes not available)" in run {
+    "P02.6 post-Scope decodeBody on mmap-loaded snapshot returns MalformedSection (body bytes not available)" in {
         val fixtureSrc = MemSrc()
         fixtureSrc.add("root/Animal.tasty", kyo.fixtures.Embedded.animalTasty)
         fixtureSrc.add("root/Dog.tasty", kyo.fixtures.Embedded.dogTasty)
@@ -185,7 +185,7 @@ class DecoderFidelity5Phase02JvmTest extends Test:
     // Given: synthetic cp with explicit subclassIndex and companionIndex; snapshot written to real filesystem
     // When: loaded via readMapped (mmap path)
     // Then: warm subclassIndex.size == cold subclassIndex.size AND warm companionIndex.size == cold companionIndex.size
-    "P02.7 (mmap): subclassIndex and companionIndex populated on mmap warm load" in run {
+    "P02.7 (mmap): subclassIndex and companionIndex populated on mmap warm load" in {
         val digest  = Array[Byte](0x02, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
         val tmpDir  = java.io.File.createTempFile("kyo-df5-p02-mmap", "").getAbsolutePath
         val _       = new java.io.File(tmpDir).delete()

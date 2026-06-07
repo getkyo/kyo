@@ -10,7 +10,7 @@ import scala.collection.mutable
   * Verifies that Symbol.fullName, Symbol.parents, and Symbol.companion return expected values when the caller provides (using AllowUnsafe).
   * Uses the fixture classpath to stay cross-platform (jvm, js, native) while exercising the same INV-001 invariants.
   */
-class TastySymbolTest extends Test:
+class TastySymbolTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -82,7 +82,7 @@ class TastySymbolTest extends Test:
     // Given: fixture classpath containing PlainClass.tasty; AllowUnsafe in scope.
     // When: cp.findClass("kyo.fixtures.PlainClass").get; sym.fullName.asString evaluated.
     // Then: returns String "kyo.fixtures.PlainClass".
-    "Symbol.fullName.asString returns the dotted FQN for a fixture class" in run {
+    "Symbol.fullName.asString returns the dotted FQN for a fixture class" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
@@ -107,7 +107,7 @@ class TastySymbolTest extends Test:
     // When: cp.findClass("kyo.fixtures.PlainClass").get; sym.parents evaluated.
     // Then: returned Chunk is non-empty (AnyRef/Object placeholder present).
     // plan: phase-02 update; sym.parents renamed to sym.parentTypes (direct field, no effect row).
-    "Symbol.parentTypes for PlainClass returns a non-empty Chunk" in run {
+    "Symbol.parentTypes for PlainClass returns a non-empty Chunk" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
@@ -130,7 +130,7 @@ class TastySymbolTest extends Test:
     // Given: fixture classpath with SomeCaseClass.tasty; AllowUnsafe in scope.
     // When: classSym.companion evaluated.
     // Then: result is Maybe.Present(modSym) with modSym.kind == SymbolKind.Object.
-    "SomeCaseClass class-Symbol companion returns Module Symbol with kind Object" in run {
+    "SomeCaseClass class-Symbol companion returns Module Symbol with kind Object" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(someCaseClassSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.SomeCaseClass") match
@@ -170,7 +170,7 @@ class TastySymbolTest extends Test:
     // Given: synthetic Symbol tree com.example.Outer.Inner where Outer and Inner have SymbolKind.Class.
     // When: kyo.internal.tasty.symbol.BinaryName.compute(sym, cp) evaluated.
     // Then: contains "Outer" and "Inner" separated by "$".
-    "kyo.internal.tasty.symbol.BinaryName.compute(Symbol, cp) nested class returns com/example/Outer$Inner" in run {
+    "kyo.internal.tasty.symbol.BinaryName.compute(Symbol, cp) nested class returns com/example/Outer$Inner" in {
         import kyo.Tasty.SymbolId
         val comSym     = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("com"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val exampleSym = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("example"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
@@ -213,7 +213,7 @@ class TastySymbolTest extends Test:
             )
     }
 
-    "kyo.internal.tasty.symbol.BinaryName.compute(Symbol, cp) top-level class returns com/example/Foo" in run {
+    "kyo.internal.tasty.symbol.BinaryName.compute(Symbol, cp) top-level class returns com/example/Foo" in {
         import kyo.Tasty.SymbolId
         val comSym     = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("com"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val exampleSym = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("example"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
@@ -311,7 +311,7 @@ class TastySymbolTest extends Test:
     // When: sym.declarations.
     // Then: returns a Chunk (possibly empty or containing synthetic members).
     // plan: phase-02 update; sym.declarations -> sym.declarationIds (Chunk[SymbolId]).
-    "Symbol.declarationIds returns Chunk for fixture class" in run {
+    "Symbol.declarationIds returns Chunk for fixture class" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
@@ -329,7 +329,7 @@ class TastySymbolTest extends Test:
     // Given: fixture classpath containing PlainClass.tasty; AllowUnsafe in scope.
     // When: sym.typeParamIds.
     // Then: returns a Chunk (PlainClass has no type params so it is empty).
-    "Symbol.typeParams returns Chunk for fixture class" in run {
+    "Symbol.typeParams returns Chunk for fixture class" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass") match
@@ -390,7 +390,7 @@ class TastySymbolTest extends Test:
     }
 
     // Test (T4, root-owned FQN): root sentinel Symbol where ownerId == id returns just its own name.
-    "T4: root sentinel Symbol fullName returns its own name" in run {
+    "T4: root sentinel Symbol fullName returns its own name" in {
         import kyo.Tasty.SymbolId
         val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(rootSym)).flatMap: cp =>
@@ -399,7 +399,7 @@ class TastySymbolTest extends Test:
                 assert(fqn.isEmpty || fqn == "", s"Expected empty fullName for root sentinel but got '$fqn'")
     }
 
-    "T4: deeply nested inner class binaryName contains dollar separators" in run {
+    "T4: deeply nested inner class binaryName contains dollar separators" in {
         import kyo.Tasty.SymbolId
         val syms: Seq[Tasty.Symbol] = (0 to 5).map: i =>
             val ownerId = if i == 0 then 0 else i - 1
@@ -433,7 +433,7 @@ class TastySymbolTest extends Test:
 
     // seeded generative test for Symbol.fullName.asString.
     // Build Symbol chains with explicit ownerId and assert fullName matches dot-joined segments.
-    "Symbol.fullName.asString matches dot-joined segments for a known chain" in run {
+    "Symbol.fullName.asString matches dot-joined segments for a known chain" in {
         import kyo.Tasty.SymbolId
         val segments = List("com", "example", "MyClass")
         val syms: List[Tasty.Symbol.Class] = segments.zipWithIndex.map: (seg, i) =>

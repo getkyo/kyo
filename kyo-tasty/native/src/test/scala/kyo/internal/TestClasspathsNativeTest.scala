@@ -15,13 +15,13 @@ import kyo.*
   *   5. native-enum-case-symbol-kind: at least one Symbol.EnumCase from shapeTasty (pins + 15 on Native).
   *   6. native-cross-file-resolution: BaseClass and ChildClass both findable by FQN (pins cross-file work on Native).
   */
-class TestClasspathsNativeTest extends Test:
+class TestClasspathsNativeTest extends kyo.test.Test[Any]:
 
     // Leaf 1: native-embedded-fixture-loads
     // Given: the embedded TASTy fixtures compiled into the Native test bundle.
     // When: calling TestClasspaths.withClasspath on Native.
     // Then: the resulting Classpath has at least one class-like symbol.
-    "native-embedded-fixture-loads: allClassLike non-empty from embedded fixtures" in run {
+    "native-embedded-fixture-loads: allClassLike non-empty from embedded fixtures" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             // The fixture set adds 70+ TASTy files (see TestClasspaths.withClasspath). The exact total
             // count is fragile against decoder changes, so we assert specific class-likes are findable
@@ -40,7 +40,7 @@ class TestClasspathsNativeTest extends Test:
     // Given: the embedded TASTy fixtures.
     // When: calling cp.symbols.
     // Then: size == 1010 (exact count for the full embedded fixture set including Java fixture).
-    "native-symbols-non-empty: cp.symbols non-empty from embedded fixtures" in run {
+    "native-symbols-non-empty: cp.symbols non-empty from embedded fixtures" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             // Exact count: the embedded fixture set (all kyo.fixtures.Embedded.* files including
             // JavaSimpleFixture added in) produces exactly 1010 symbols. This is
@@ -56,7 +56,7 @@ class TestClasspathsNativeTest extends Test:
     // Given: the Native test source for fixture leaves.
     // When: scalac runs in Native mode.
     // Then: the suite compiles and runs without "compile error: class not found".
-    "native-fidelity-suite-compiles: test suite compiles and runs on Native" in run {
+    "native-fidelity-suite-compiles: test suite compiles and runs on Native" in {
         // The fact that this test body executes proves compilation succeeded.
         // The isNative assertion verifies the runtime is Scala Native (not JVM or JS).
         assert(kyo.internal.Platform.isNative, "Expected isNative to be true in Native test runner")
@@ -67,7 +67,7 @@ class TestClasspathsNativeTest extends Test:
     // Given: the embedded TASTy fixtures (all well-formed, compiled from real Scala source).
     // When: loading via TestClasspaths.withClasspath with ErrorMode.SoftFail.
     // Then: cp.errors is empty (no parse errors on valid fixture bytes).
-    "native-no-classpath-errors: no errors loading well-formed embedded fixtures" in run {
+    "native-no-classpath-errors: no errors loading well-formed embedded fixtures" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             assert(
                 cp.errors.isEmpty,
@@ -82,7 +82,7 @@ class TestClasspathsNativeTest extends Test:
     // Then: at least one symbol is an instance of Symbol.EnumCase (class-form enum case from Shape).
     // Note: class-form enum cases like `case Circle(radius: Double)` produce Symbol.EnumCase, not Symbol.Val.
     //   Symbol.EnumCase is decoded and round-trips correctly on Native.
-    "native-enum-case-symbol-kind: shapeTasty produces Symbol.EnumCase instances" in run {
+    "native-enum-case-symbol-kind: shapeTasty produces Symbol.EnumCase instances" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val enumCaseSymbols = cp.symbols.filter(_.isInstanceOf[Tasty.Symbol.EnumCase])
             assert(
@@ -96,7 +96,7 @@ class TestClasspathsNativeTest extends Test:
     // Given: both BaseClass.tasty and ChildClass.tasty embedded in the fixture set.
     // When: loading via TestClasspaths.withClasspath (both files loaded together).
     // Then: both kyo.fixtures.BaseClass and kyo.fixtures.ChildClass are findable by FQN.
-    "native-cross-file-resolution: BaseClass and ChildClass both resolve by FQN" in run {
+    "native-cross-file-resolution: BaseClass and ChildClass both resolve by FQN" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val baseResult  = cp.findClassLike("kyo.fixtures.BaseClass")
             val childResult = cp.findClassLike("kyo.fixtures.ChildClass")

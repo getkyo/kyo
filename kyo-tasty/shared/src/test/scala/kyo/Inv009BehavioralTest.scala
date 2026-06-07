@@ -17,7 +17,7 @@ import scala.collection.mutable
   * Leaf 13: evictOlderThanWithSource call log contains list + delete entries (F-001: no rename).
   * Leaf 14: all 13 prior leaves also pass on JS and Native (cross-platform placement).
   */
-class Inv009BehavioralTest extends Test:
+class Inv009BehavioralTest extends kyo.test.Test[Any]:
 
     // ── Shared test fixture for leaves 1-8 ───────────────────────────────────
 
@@ -98,7 +98,7 @@ class Inv009BehavioralTest extends Test:
     // When: each of findClass, findClassLike, findObject, findSymbol, findPackage,
     //       findModule, findConcreteClass, findClassesByName invoked
     // Then: each returns a Maybe / Chunk result without raising the A1 sentinel
-    "Leaf 1: pure find-family queries perform no IO" in run {
+    "Leaf 1: pure find-family queries perform no IO" in {
         Tasty.withClasspath(minimalCp):
             for
                 c1 <- Tasty.findClass("root.Nonexistent")
@@ -131,7 +131,7 @@ class Inv009BehavioralTest extends Test:
     //       requirePackage, requireMethod invoked (with known or unknown FQNs)
     // Then: calls with unknown FQNs abort with NotFound (not a probe sentinel);
     //       requirePackage("root") returns the root Package without IO
-    "Leaf 2: pure require-family queries perform no IO" in run {
+    "Leaf 2: pure require-family queries perform no IO" in {
         Tasty.withClasspath(minimalCp):
             Abort.run[TastyError]:
                 for
@@ -168,7 +168,7 @@ class Inv009BehavioralTest extends Test:
     //       allVals, allVars, allFields, allTypes, allPackages invoked
     // Then: each returns a Chunk result without raising the A1 sentinel;
     //       allPackages returns the 2 Package symbols in the fixture
-    "Leaf 3: pure aggregator queries perform no IO" in run {
+    "Leaf 3: pure aggregator queries perform no IO" in {
         Tasty.withClasspath(minimalCp):
             for
                 a1  <- Tasty.allClassLike
@@ -192,7 +192,7 @@ class Inv009BehavioralTest extends Test:
     // Given: minimalCp bound via Tasty.withClasspath(cp); pkg as representative sym
     // When: owner(pkg), fullName(pkg), show(pkg, ShowFormat.Code) invoked
     // Then: each returns its value without raising the A1 sentinel
-    "Leaf 4: pure traversal queries perform no IO" in run {
+    "Leaf 4: pure traversal queries perform no IO" in {
         Tasty.withClasspath(minimalCp):
             for
                 o1 <- Tasty.owner(pkg)
@@ -212,7 +212,7 @@ class Inv009BehavioralTest extends Test:
     //        pkg (SymbolId(0)) has memberIds = Chunk(SymbolId(1)) pointing to child package
     // When: members(pkg, scope) across all three MemberScope cases invoked
     // Then: Declared == Chunk(child); All == Chunk(child); Inherited == Chunk.empty
-    "Leaf 5: package member scope concrete equality (F-004)" in run {
+    "Leaf 5: package member scope concrete equality (F-004)" in {
         Tasty.withClasspath(minimalCp):
             for
                 decl <- Tasty.members(pkg, Tasty.MemberScope.Declared).map(_.map(_.simpleName))
@@ -239,7 +239,7 @@ class Inv009BehavioralTest extends Test:
     // Given: minimalCp bound via Tasty.withClasspath(cp)
     // When: hasAnnotation, findAnnotation, symbolsAnnotatedWith invoked
     // Then: each returns its Boolean / Maybe / Chunk result without raising the A1 sentinel
-    "Leaf 6: pure annotation queries perform no IO" in run {
+    "Leaf 6: pure annotation queries perform no IO" in {
         Tasty.withClasspath(minimalCp):
             for
                 b1 <- Tasty.hasAnnotation(pkg, "scala.deprecated")
@@ -256,7 +256,7 @@ class Inv009BehavioralTest extends Test:
     // Given: minimalCp bound via Tasty.withClasspath(cp)
     // When: Tasty.classpath read
     // Then: returns minimalCp without raising the A1 sentinel
-    "Leaf 7: Tasty.classpath accessor performs no IO" in run {
+    "Leaf 7: Tasty.classpath accessor performs no IO" in {
         Tasty.withClasspath(minimalCp):
             Tasty.classpath.map: cp =>
                 assert(cp.symbols.size == 2, s"classpath must return bound cp; got ${cp.symbols.size} symbols")
@@ -269,7 +269,7 @@ class Inv009BehavioralTest extends Test:
     // When: Tasty.bodyTree(pkg) invoked under Abort.run[TastyError]
     // Then: returns Maybe.Absent (short-circuits at decodeCtx isEmpty check);
     //       probe sentinel not raised
-    "Leaf 8: bodyTree returns Maybe.Absent under withClasspath(cp)" in run {
+    "Leaf 8: bodyTree returns Maybe.Absent under withClasspath(cp)" in {
         Tasty.withClasspath(minimalCp):
             Abort.run[TastyError](Tasty.bodyTree(pkg)).map:
                 case Result.Success(t) =>
@@ -285,7 +285,7 @@ class Inv009BehavioralTest extends Test:
     // Given: a TestProbeFileSource installed; cacheDir = "inv009-cache"
     // When: Tasty.Snapshot.evictOlderThanWithSource(cacheDir, maxAgeMs, probe) under Abort.run
     // Then: Result.Panic carrying "A1 probe: no IO permitted (list inv009-cache)"
-    "Leaf 9: evictOlderThan exercises FileSource (probe sentinel raised)" in run {
+    "Leaf 9: evictOlderThan exercises FileSource (probe sentinel raised)" in {
         val probe = new TestProbeFileSource()
         Abort.run[TastyError](
             Tasty.Snapshot.evictOlderThanWithSource("inv009-cache", 86400000L, probe)
@@ -307,7 +307,7 @@ class Inv009BehavioralTest extends Test:
     // When: ClasspathOrchestrator.coldLoadBinding(roots, mode, cacheDir, probe, 1)
     //       called under Scope.run and Abort.run[TastyError]
     // Then: Result.Panic carrying "A1 probe: no IO permitted" for list or exists call
-    "Leaf 10: withClasspath(roots) cold-load reads FileSource (probe sentinel raised)" in run {
+    "Leaf 10: withClasspath(roots) cold-load reads FileSource (probe sentinel raised)" in {
         val probe = new TestProbeFileSource()
         Scope.run:
             Abort.run[TastyError](
@@ -336,7 +336,7 @@ class Inv009BehavioralTest extends Test:
     // When: Tasty.withPickles(pickles) { Tasty.classpath.map(_.symbols.size) }
     //       invoked (no probe installed in bindingLocal)
     // Then: returns symbol count > 0; no probe sentinel raised
-    "Leaf 11: withPickles does not touch FileSource" in run {
+    "Leaf 11: withPickles does not touch FileSource" in {
         val pickle = Tasty.Pickle(
             uuid = "inv009-leaf11",
             version = Tasty.Version(28, 3, 0),
@@ -360,12 +360,12 @@ class Inv009BehavioralTest extends Test:
     // When: snippets checked
     // Then: every error set is non-empty (name not found)
     "Leaf 12: no public Unsafe-tier mirrors on object Tasty.*" in {
-        val e1 = compiletime.testing.typeCheckErrors("kyo.Tasty.unsafeInit(Seq.empty)")
-        val e2 = compiletime.testing.typeCheckErrors("kyo.Tasty.decodeUnsafe")
-        val e3 = compiletime.testing.typeCheckErrors("kyo.Tasty.Unsafe.bodyTree")
-        assert(e1.nonEmpty, "Tasty.unsafeInit must not be a public member; expected compile error")
-        assert(e2.nonEmpty, "Tasty.decodeUnsafe must not be a public member; expected compile error")
-        assert(e3.nonEmpty, "Tasty.Unsafe.bodyTree must not be a public member; expected compile error")
+        val e1 = compiletime.testing.typeCheckErrors("kyo.Tasty.unsafeInit(Seq.empty)").length
+        val e2 = compiletime.testing.typeCheckErrors("kyo.Tasty.decodeUnsafe").length
+        val e3 = compiletime.testing.typeCheckErrors("kyo.Tasty.Unsafe.bodyTree").length
+        assert(e1 > 0, "Tasty.unsafeInit must not be a public member; expected compile error")
+        assert(e2 > 0, "Tasty.decodeUnsafe must not be a public member; expected compile error")
+        assert(e3 > 0, "Tasty.Unsafe.bodyTree must not be a public member; expected compile error")
         succeed
     }
 
@@ -375,7 +375,7 @@ class Inv009BehavioralTest extends Test:
     //        (mtime = 0, maxAge = 1 ms => always stale)
     // When: Tasty.Snapshot.evictOlderThanWithSource("cache13", 1L, rec) invoked
     // Then: rec.calls contains "list cache13" and "delete cache13/dead.krfl"; no "rename ..." entry
-    "Leaf 13: evictOlderThan site-4 calls FileSource.delete, not rename" in run {
+    "Leaf 13: evictOlderThan site-4 calls FileSource.delete, not rename" in {
         val cacheDir  = "cache13"
         val staleFile = s"$cacheDir/dead.krfl"
         // filesToList=staleFile so list returns a file; mtime=0 means infinitely old

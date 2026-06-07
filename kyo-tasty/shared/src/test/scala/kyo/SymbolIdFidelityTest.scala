@@ -7,7 +7,7 @@ import kyo.internal.TestClasspaths
   * Verifies that the number of symbols with SymbolId(-1) is bounded and that no fabricated placeholder names survive into the final
   * classpath. A single sentinelUnresolved is interned per Classpath instead of a fresh symbol per unresolved reference.
   */
-class SymbolIdFidelityTest extends Test:
+class SymbolIdFidelityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -16,7 +16,7 @@ class SymbolIdFidelityTest extends Test:
     // When: computing cp.symbols.filter(_.id.value == -1).map(_.name.asString).toSet.size
     // Then: post-fix size is strictly less than the old pre-consolidation baseline (11);
     //       embedded fixtures have 0, which satisfies < 11 trivially.
-    "partial : SymbolId(-1) sentinel name-set size decreased from pre-consolidation baseline" in run {
+    "partial : SymbolId(-1) sentinel name-set size decreased from pre-consolidation baseline" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString
             val sentinelNames = classpath.symbols.filter(_.id.value == -1).map(_.name.asString).toSet
@@ -35,7 +35,7 @@ class SymbolIdFidelityTest extends Test:
     // When: computing cp.symbols.filter(_.id.value == -1).map(_.name.asString).toSet.size
     // Then: post-fix size <= 3 (one per failure category: unresolved, rec-placeholder, unknown-tag)
     // Cross-platform: invariant "count <= 3" holds for any classpath; embedded fixtures have 0 which satisfies <= 3.
-    "SymbolId(-1) sentinel name-set size <= 3 on real classpath" in run {
+    "SymbolId(-1) sentinel name-set size <= 3 on real classpath" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString
             val sentinelNames = classpath.symbols.filter(_.id.value == -1).map(_.name.asString).toSet
@@ -53,7 +53,7 @@ class SymbolIdFidelityTest extends Test:
     // When: scanning cp.symbols.map(_.name.asString)
     // Then: zero names start with "rec@", "rec-placeholder@", "typeref@", or "termref@"
     // Cross-platform: invariant "no fabricated names" holds for any classpath; passes trivially on embedded fixtures too.
-    "no fabricated type-decode placeholder names remain in cp.symbols" in run {
+    "no fabricated type-decode placeholder names remain in cp.symbols" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString
             val allNames = classpath.symbols.map(_.name.asString)
@@ -79,7 +79,7 @@ class SymbolIdFidelityTest extends Test:
     // When: checking cp.unresolvedTypeReferenceCount
     // Then: count is bounded; structural correctness check.
     // Cross-platform: "count >= 0" is a non-negative structural guard that trivially holds on any classpath.
-    "cp.unresolvedTypeReferenceCount is bounded (cross-file resolution reduces sentinel count)" in run {
+    "cp.unresolvedTypeReferenceCount is bounded (cross-file resolution reduces sentinel count)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val count = cp.unresolvedTypeReferenceCount
             assert(count >= 0, "unresolvedTypeReferenceCount must be non-negative")

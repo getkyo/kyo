@@ -7,10 +7,10 @@ import kyo.internal.tasty.symbol.Flags as InternalFlags
   *
   * Plan tests 1-6.
   */
-class FlagsTest extends Test:
+class FlagsTest extends kyo.test.Test[Any]:
 
     // Test 1: Flag.Inline is a single-bit flag (Flags(Flag.Inline) is non-empty and contains exactly Inline).
-    "Flag.Inline encodes a non-empty single-flag Flags value" in run {
+    "Flag.Inline encodes a non-empty single-flag Flags value" in {
         val f = Tasty.Flags(Tasty.Flag.Inline)
         // Stronger assertion than "non-empty": the Flags value must equal exactly the single-flag
         // representation built from Flag.Inline.
@@ -21,13 +21,13 @@ class FlagsTest extends Test:
     }
 
     // Test 2: Flags.empty does not contain Flag.Inline.
-    "Flags.empty.contains(Flag.Inline) is false" in run {
+    "Flags.empty.contains(Flag.Inline) is false" in {
         assert(!Tasty.Flags.empty.contains(Tasty.Flag.Inline))
         succeed
     }
 
     // Test 3: Flags constructed from multiple flags contains those flags.
-    "Flags(Inline, Private) contains both Flag.Inline and Flag.Private" in run {
+    "Flags(Inline, Private) contains both Flag.Inline and Flag.Private" in {
         val flags = Tasty.Flags(Tasty.Flag.Inline, Tasty.Flag.Private)
         assert(flags.contains(Tasty.Flag.Private))
         assert(flags.contains(Tasty.Flag.Inline))
@@ -35,21 +35,21 @@ class FlagsTest extends Test:
     }
 
     // Test 4: fromTastyModifierTag maps PRIVATE (tag 6) to a Flags containing Flag.Private.
-    "fromTastyModifierTag(PRIVATE=6) maps to Flags containing Flag.Private" in run {
+    "fromTastyModifierTag(PRIVATE=6) maps to Flags containing Flag.Private" in {
         val flags = InternalFlags.fromTastyModifierTag(TastyFormat.PRIVATE)
         assert(flags.contains(Tasty.Flag.Private))
         succeed
     }
 
     // Test 5: fromTastyModifierTag maps INLINE (tag 17) to a Flags containing Flag.Inline.
-    "fromTastyModifierTag(INLINE=17) maps to Flags containing Flag.Inline" in run {
+    "fromTastyModifierTag(INLINE=17) maps to Flags containing Flag.Inline" in {
         val flags = InternalFlags.fromTastyModifierTag(TastyFormat.INLINE)
         assert(flags.contains(Tasty.Flag.Inline))
         succeed
     }
 
     // Test 6: all 45 declared Flag values are pairwise distinct (no two flags collapse to the same encoding).
-    "all declared Flag values are pairwise distinct" in run {
+    "all declared Flag values are pairwise distinct" in {
         val allFlags = List(
             Tasty.Flag.Inline,
             Tasty.Flag.Private,
@@ -121,7 +121,7 @@ class FlagsTest extends Test:
     }
 
     // Test 7: ACC_ABSTRACT (0x0400) sets Flag.Abstract; not set by ACC_INTERFACE alone.
-    "fromJvmAccessFlags: ACC_PUBLIC|ACC_ABSTRACT (0x0401) sets Flag.Abstract, not Flag.Trait" in run {
+    "fromJvmAccessFlags: ACC_PUBLIC|ACC_ABSTRACT (0x0401) sets Flag.Abstract, not Flag.Trait" in {
         // 0x0001 = ACC_PUBLIC, 0x0400 = ACC_ABSTRACT
         val flags = InternalFlags.fromJvmAccessFlags(0x0001 | 0x0400)
         assert(flags.contains(Tasty.Flag.Abstract), "Expected Flag.Abstract for ACC_ABSTRACT class")
@@ -130,7 +130,7 @@ class FlagsTest extends Test:
     }
 
     // Test 8: ACC_PUBLIC|ACC_INTERFACE|ACC_ABSTRACT (0x0601) sets both Flag.Trait and Flag.Abstract.
-    "fromJvmAccessFlags: ACC_PUBLIC|ACC_INTERFACE|ACC_ABSTRACT (0x0601) sets both Flag.Trait and Flag.Abstract" in run {
+    "fromJvmAccessFlags: ACC_PUBLIC|ACC_INTERFACE|ACC_ABSTRACT (0x0601) sets both Flag.Trait and Flag.Abstract" in {
         // Typical interface access_flags per JVMS: ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT
         // 0x0001 = ACC_PUBLIC, 0x0200 = ACC_INTERFACE, 0x0400 = ACC_ABSTRACT
         val flags = InternalFlags.fromJvmAccessFlags(0x0001 | 0x0200 | 0x0400)
@@ -140,7 +140,7 @@ class FlagsTest extends Test:
     }
 
     // Test 9: ACC_STATIC (0x0008) sets Flag.Static, not Flag.JavaDefined.
-    "fromJvmAccessFlags: ACC_PUBLIC|ACC_STATIC (0x0009) sets Flag.Static but not Flag.JavaDefined" in run {
+    "fromJvmAccessFlags: ACC_PUBLIC|ACC_STATIC (0x0009) sets Flag.Static but not Flag.JavaDefined" in {
         // Flag.JavaDefined is set unconditionally by ClassfileUnpickler, not here.
         // ACC_STATIC (0x0008) should map only to Flag.Static.
         val flags = InternalFlags.fromJvmAccessFlags(0x0001 | 0x0008)

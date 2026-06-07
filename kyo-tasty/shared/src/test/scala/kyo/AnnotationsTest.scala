@@ -9,7 +9,7 @@ import kyo.Tasty.SymbolId
   * sym[0] = Package "scala", sym[1] = Class "deprecated" (owner=scala), so FQN = "scala.deprecated".
   * sym[2] = Method "m1" annotated with @deprecated, sym[3] = Method "m2" not annotated.
   */
-class AnnotationsTest extends Test:
+class AnnotationsTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -69,7 +69,7 @@ class AnnotationsTest extends Test:
     end buildAnnotatedClasspath
 
     // Leaf 20: Tasty.hasAnnotation returns true for annotated symbol
-    "Leaf 20: Tasty.hasAnnotation returns true for @deprecated method" in run {
+    "Leaf 20: Tasty.hasAnnotation returns true for @deprecated method" in {
         buildAnnotatedClasspath.flatMap: cp =>
             val m1 = cp.symbols(2) // annotated method (sym[2])
             Tasty.withClasspath(cp):
@@ -79,7 +79,7 @@ class AnnotationsTest extends Test:
     }
 
     // Leaf 20b: Tasty.hasAnnotation returns false for non-annotated symbol
-    "Leaf 20b: Tasty.hasAnnotation returns false for non-annotated method" in run {
+    "Leaf 20b: Tasty.hasAnnotation returns false for non-annotated method" in {
         buildAnnotatedClasspath.flatMap: cp =>
             val m2 = cp.symbols(3) // not annotated (sym[3])
             Tasty.withClasspath(cp):
@@ -89,7 +89,7 @@ class AnnotationsTest extends Test:
     }
 
     // Leaf 21: Tasty.symbolsAnnotatedWith returns exactly the annotated symbols
-    "Leaf 21: Tasty.symbolsAnnotatedWith returns only annotated symbols" in run {
+    "Leaf 21: Tasty.symbolsAnnotatedWith returns only annotated symbols" in {
         buildAnnotatedClasspath.flatMap: cp =>
             Tasty.withClasspath(cp):
                 Tasty.symbolsAnnotatedWith("scala.deprecated").map: annotated =>

@@ -24,7 +24,7 @@ import tastyquery.Symbols.PackageSymbol
   * two distinct loads (fixtureRoots and standard) in DifferentialTastyTest.Cache ensures
   * each root set is read at most once across all leaves.
   */
-class DifferentialTastyTest extends Test:
+class DifferentialTastyTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -83,10 +83,10 @@ class DifferentialTastyTest extends Test:
     // DIFF-001: kyo-tasty and tasty-query see the same top-level class FQNs on the fixture classpath.
     // Loaded from TestClasspaths.kyoTastyFixtures (JVM classes dir for kyo-tasty-fixtures).
     // Any FQN present in kyo-tasty but absent in tasty-query (or vice versa) is a real decoder bug.
-    "DIFF-001: kyo-tasty and tasty-query decode the same top-level class FQNs from fixtures" in run {
+    "DIFF-001: kyo-tasty and tasty-query decode the same top-level class FQNs from fixtures" in {
         val fixtureRoots = TestClasspaths.kyoTastyFixtures
         if fixtureRoots.isEmpty then
-            info("DIFF-001: kyo-tasty-fixtures not found on test classpath; skipping differential check")
+            println("DIFF-001: kyo-tasty-fixtures not found on test classpath; skipping differential check")
             Kyo.lift(succeed)
         else
             TestClasspaths.withClasspath(fixtureRoots)(Tasty.classpath).map: kyoCp =>
@@ -145,7 +145,7 @@ class DifferentialTastyTest extends Test:
     // count on a real classpath because every companion object and $package synthetic adds one Object
     // symbol in kyo-tasty but zero non-$-ending names in tasty-query. Excluding Objects aligns the
     // surfaces and the ratio should be close to 1.0.
-    "DIFF-002: kyo-tasty top-level class count is within 20% of tasty-query count on standard classpath" in run {
+    "DIFF-002: kyo-tasty top-level class count is within 20% of tasty-query count on standard classpath" in {
         val roots = TestClasspaths.standard
         TestClasspaths.withClasspath(roots)(Tasty.classpath).map: kyoCp =>
             // Count non-Object top-level ClassLike symbols (equivalent to tasty-query's !endsWith("$") filter).
@@ -156,7 +156,7 @@ class DifferentialTastyTest extends Test:
             val tqCount = tqTopLevelFqns(DifferentialTastyTest.standardContext).size
 
             if tqCount == 0 then
-                info("DIFF-002: tasty-query returned 0 top-level classes; skipping ratio check")
+                println("DIFF-002: tasty-query returned 0 top-level classes; skipping ratio check")
                 succeed
             else
                 val ratio = kyoCountNoObj.toDouble / tqCount.toDouble
@@ -176,10 +176,10 @@ class DifferentialTastyTest extends Test:
 
     // DIFF-003: fixture FQN sets are non-empty in both decoders.
     // Guards against silent load failure where both decoders return empty but there is no error.
-    "DIFF-003: both kyo-tasty and tasty-query decode at least one fixture class" in run {
+    "DIFF-003: both kyo-tasty and tasty-query decode at least one fixture class" in {
         val fixtureRoots = TestClasspaths.kyoTastyFixtures
         if fixtureRoots.isEmpty then
-            info("DIFF-003: kyo-tasty-fixtures not found on test classpath; skipping")
+            println("DIFF-003: kyo-tasty-fixtures not found on test classpath; skipping")
             Kyo.lift(succeed)
         else
             TestClasspaths.withClasspath(fixtureRoots)(Tasty.classpath).map: kyoCp =>
@@ -196,10 +196,10 @@ class DifferentialTastyTest extends Test:
 
     // DIFF-004: fixture parent types decoded by kyo-tasty include at least one parent per class
     // that appears in tasty-query's symbol tree. Checks that parent-type resolution is functioning.
-    "DIFF-004: kyo-tasty parent types for fixtures are non-empty where expected" in run {
+    "DIFF-004: kyo-tasty parent types for fixtures are non-empty where expected" in {
         val fixtureRoots = TestClasspaths.kyoTastyFixtures
         if fixtureRoots.isEmpty then
-            info("DIFF-004: kyo-tasty-fixtures not found on test classpath; skipping")
+            println("DIFF-004: kyo-tasty-fixtures not found on test classpath; skipping")
             Kyo.lift(succeed)
         else
             TestClasspaths.withClasspath(fixtureRoots)(Tasty.classpath).map: kyoCp =>
@@ -214,10 +214,10 @@ class DifferentialTastyTest extends Test:
                         )
                         succeed
                     case Maybe.Present(_) =>
-                        info(s"DIFF-004: $childClassFqn resolved to a non-ClassLike symbol; skipping parent check")
+                        println(s"DIFF-004: $childClassFqn resolved to a non-ClassLike symbol; skipping parent check")
                         succeed
                     case Maybe.Absent =>
-                        info(s"DIFF-004: $childClassFqn not found in fixture classpath; skipping parent check")
+                        println(s"DIFF-004: $childClassFqn not found in fixture classpath; skipping parent check")
                         succeed
                 end match
         end if

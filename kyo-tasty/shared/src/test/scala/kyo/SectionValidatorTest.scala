@@ -12,7 +12,7 @@ import scala.collection.mutable
   *
   * Covered:   (validateRange before arraycopy),   (sectionCount bound).
   */
-class SectionValidatorTest extends Test:
+class SectionValidatorTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -91,7 +91,7 @@ class SectionValidatorTest extends Test:
 
     // ── validateRange path ──────────────────────────────────────────
 
-    "validateRange: OOB section-index entry produces structured TastyError, not AIOOBE" in run {
+    "validateRange: OOB section-index entry produces structured TastyError, not AIOOBE" in {
         val mem  = new MemFileSource()
         val full = minimalSnapshot()
         val out  = java.util.Arrays.copyOf(full, full.length)
@@ -107,7 +107,7 @@ class SectionValidatorTest extends Test:
             case other => succeed
     }
 
-    "validateRange: negative section offset produces structured TastyError, not panic" in run {
+    "validateRange: negative section offset produces structured TastyError, not panic" in {
         val mem  = new MemFileSource()
         val full = minimalSnapshot()
         val out  = java.util.Arrays.copyOf(full, full.length)
@@ -120,7 +120,7 @@ class SectionValidatorTest extends Test:
             case _ => succeed
     }
 
-    "validateRange: valid minimal snapshot loads cleanly (no false positives)" in run {
+    "validateRange: valid minimal snapshot loads cleanly (no false positives)" in {
         val mem  = new MemFileSource()
         val path = "mem/sv-valid.krfl"
         mem.put(path, minimalSnapshot())
@@ -131,7 +131,7 @@ class SectionValidatorTest extends Test:
 
     // ── sectionCount bound ─────────────────────────────────────────
 
-    "sectionCount bound: Int.MaxValue sectionCount produces SnapshotFormatError, not OOM" in run {
+    "sectionCount bound: Int.MaxValue sectionCount produces SnapshotFormatError, not OOM" in {
         val mem  = new MemFileSource()
         val full = minimalSnapshot()
         val out  = java.util.Arrays.copyOf(full, full.length)
@@ -146,7 +146,7 @@ class SectionValidatorTest extends Test:
             case Result.Success(_)     => fail("expected failure for corrupt sectionCount")
     }
 
-    "sectionCount bound: sectionCount=0 loads cleanly (no sections is valid)" in run {
+    "sectionCount bound: sectionCount=0 loads cleanly (no sections is valid)" in {
         val mem  = new MemFileSource()
         val full = minimalSnapshot()
         val out  = java.util.Arrays.copyOf(full, full.length)

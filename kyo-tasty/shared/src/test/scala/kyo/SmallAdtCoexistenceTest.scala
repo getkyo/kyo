@@ -7,7 +7,7 @@ import kyo.Tasty.SymbolId
   *
   * Leaves 20-23 per plan 05-plan.yaml id:1. Pins: INV-009.
   */
-class SmallAdtCoexistenceTest extends Test:
+class SmallAdtCoexistenceTest extends kyo.test.Test[Any]:
 
     // ── Leaf 20: variance-can-equal-and-exhaustive ───────────────────────────
 

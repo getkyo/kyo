@@ -10,12 +10,12 @@ package kyo
   *
   * Proposal 5 of-strict (HARD RULE 13).
   */
-class TastyPropertyTest extends Test:
+class TastyPropertyTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
     // Leaf 1: embedded fixture .tasty files decode with zero unknown-tag errors
-    "PROP-001: embedded fixture .tasty files decode with zero UnknownTagInPosition errors" in run {
+    "PROP-001: embedded fixture .tasty files decode with zero UnknownTagInPosition errors" in {
         kyo.internal.TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val unknownTag = cp.errors.collect:
                 case TastyError.UnknownTagInPosition(tag, pos) =>
@@ -28,7 +28,7 @@ class TastyPropertyTest extends Test:
     }
 
     // Leaf 2: embedded fixture: zero Named(-1) in allMethods declaredType
-    "PROP-002: embedded fixture: zero Named(-1) in allMethods declaredType" in run {
+    "PROP-002: embedded fixture: zero Named(-1) in allMethods declaredType" in {
         kyo.internal.TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             import kyo.Tasty.SymbolId.value as idValue
             var sentinelCount   = 0

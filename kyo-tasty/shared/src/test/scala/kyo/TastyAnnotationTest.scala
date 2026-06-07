@@ -8,14 +8,14 @@ import kyo.internal.tasty.symbol.SymbolKind
   *
   * makeNamed is inherited from TastyTestSupport.
   */
-class TastyAnnotationTest extends Test with TastyTestSupport:
+class TastyAnnotationTest extends kyo.test.Test[Any] with TastyTestSupport:
 
     import AllowUnsafe.embrace.danger
 
     // Test 6 (INV: T1, Annotation): synthetic factory produces correct field values.
     // Type.Named(id).show resolves cp.symbol(id).map(_.name.asString).getOrElse("<unresolved>"); the symbol must
     // be registered in the classpath at index id.value.
-    "Annotation case class: annotationType.show returns leaf name 'deprecated', arguments is empty" in run {
+    "Annotation case class: annotationType.show returns leaf name 'deprecated', arguments is empty" in {
         import kyo.Tasty.SymbolId
         val deprecatedSym = Tasty.Symbol.Class(
             SymbolId(0),
@@ -49,7 +49,7 @@ class TastyAnnotationTest extends Test with TastyTestSupport:
     }
 
     // Test 2: case-class unapply matches (annotationType, arguments).
-    "Annotation case class unapply matches (annotationType, arguments)" in run {
+    "Annotation case class unapply matches (annotationType, arguments)" in {
         Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             val deprecatedType    = makeNamed("scala.deprecated")
@@ -69,7 +69,7 @@ class TastyAnnotationTest extends Test with TastyTestSupport:
 
     // Test 3: Annotation with non-empty arguments field holds the trees directly.
     // : arguments is a plain Chunk[Tree] field; no effect row needed.
-    "Annotation with a non-empty arguments chunk holds the trees as a plain field" in run {
+    "Annotation with a non-empty arguments chunk holds the trees as a plain field" in {
         import AllowUnsafe.embrace.danger
         val sym  = Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name("Foo"), Tasty.Flags.empty, Tasty.SymbolId(-1), Chunk.empty)
         val tree = Tasty.Tree.Literal(Tasty.Constant.UnitConst)

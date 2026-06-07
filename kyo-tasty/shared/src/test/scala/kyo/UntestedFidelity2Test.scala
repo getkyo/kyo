@@ -37,7 +37,7 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     // Then: at least one method has a declared type whose result chain reaches a Named or TermRef pointing at a Parameter
     // Cross-platform: uses TestClasspaths.withClasspath() which works on all platforms; passes unconditionally
     // (dependent types may not appear in embedded fixtures but the test is informational).
-    "F-A2-OPEN-DEP leaf 10 : dependent function types decode with result type referencing parameter" in run {
+    "F-A2-OPEN-DEP leaf 10 : dependent function types decode with result type referencing parameter" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
             var dependentFound    = false
@@ -53,7 +53,7 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     // When: checking the F-A2-OPEN-CAPS row
     // Then: the row contains "DEFERRED per OQ-007"
     // Cross-platform: content inlined from Untested.txt; no classloader needed.
-    "F-A2-OPEN-CAPS leaf 11 : capture-checking deferred row present in Untested.txt" in run {
+    "F-A2-OPEN-CAPS leaf 11 : capture-checking deferred row present in Untested.txt" in {
         val content = UntestedFidelity2Test.untestedTxtContent
         assert(
             content.contains("F-A2-OPEN-CAPS"),
@@ -74,7 +74,7 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     //   built from two scala-library jars at distinct versions discovered via JVM classpath. The FqnCollisionError
     //   detection pins same-FQN-different-version collision, which requires real version-divergent stdlib jars; no
     //   embedded-fixture equivalent exists.
-    "F-A1-OPEN-MULTI leaf 12 : multi-version stdlib FailFast init aborts with FqnCollisionError" in runJVM {
+    "F-A1-OPEN-MULTI leaf 12 : multi-version stdlib FailFast init aborts with FqnCollisionError".onlyJvm in {
         val multiRoots  = TestClasspaths2.multiVersionStdlibRoots
         val src         = PlatformFileSource.get
         val concurrency = java.lang.Runtime.getRuntime.availableProcessors().max(1)
@@ -100,7 +100,7 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     // Then: count > 0
     // Java-defined (Flag.JavaDefined) classfile decode coverage now available on JS and Native via
     // EmbeddedJavaFixtures.javaSimpleFixtureClassfile registered as a standalone root in TestClasspaths.
-    "F-A3-OPEN-AP leaf 13 : Java classfile decoding path active in standard classpath (AP structural guard)" in run {
+    "F-A3-OPEN-AP leaf 13 : Java classfile decoding path active in standard classpath (AP structural guard)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val javaCount = cp.symbols.count(_.isJava)
             assert(
@@ -120,7 +120,7 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     //   cross-platform way would require building a real atomic FileSource impl with cross-platform write
     //   isolation, which would itself become the system-under-test and undermine the pin.
     // Delegates to TestClasspaths2.runConcurrentReaderWriterTest to avoid JVM-specific imports in shared.
-    "F-A4-OPEN-RW leaf 14 : concurrent snapshot reader+writer: reader sees pre- or post-write, not corrupt" in runJVM {
+    "F-A4-OPEN-RW leaf 14 : concurrent snapshot reader+writer: reader sees pre- or post-write, not corrupt".onlyJvm in {
         val digest = Array[Byte](0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57)
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             Sync.defer:
@@ -137,7 +137,7 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     // Then: result is a TastyError.SnapshotVersionMismatch (version 3 is below current)
     // Cross-platform: v3FormatKrflBytes is a pure byte array; MemoryFileSource replaces JVM filesystem.
     // Migration: was jvmOnly via TestClasspaths2.v3FormatKrflBytes + createTempDir + JvmFileSource.
-    "F-A4-OPEN-VER leaf 15 : old-version .krfl snapshot causes SnapshotVersionMismatch" in run {
+    "F-A4-OPEN-VER leaf 15 : old-version .krfl snapshot causes SnapshotVersionMismatch" in {
         import kyo.internal.MemoryFileSource
         import kyo.internal.tasty.snapshot.SnapshotReader
         Sync.defer:
@@ -169,7 +169,7 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     // When: loading each snapshot as a warm classpath and comparing symbol/fqnIndex counts
     // Then: both warm classpaths are structurally equivalent
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory (no filesystem needed).
-    "F-A4-OPEN-IDEMPOTENT leaf 16 : two independent cold-init invocations produce logically equivalent snapshots" in run {
+    "F-A4-OPEN-IDEMPOTENT leaf 16 : two independent cold-init invocations produce logically equivalent snapshots" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (cold1, warm1) =>
             TestClasspaths2.withSnapshotInMemory().map: (cold2, warm2) =>
                 assert(
@@ -196,7 +196,7 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     // When: counting non-empty resolution rows (lines starting with F-)
     // Then: exactly 7 rows; 1 DEFERRED (OQ-007), 6 RESOLVED
     // Cross-platform: content inlined from Untested.txt; no classloader needed.
-    "HARD RULE 11 leaf 17 : Untested.txt has 7 rows (6 RESOLVED + 1 DEFERRED per OQ-007)" in run {
+    "HARD RULE 11 leaf 17 : Untested.txt has 7 rows (6 RESOLVED + 1 DEFERRED per OQ-007)" in {
         val content = UntestedFidelity2Test.untestedTxtContent
         val rows    = content.split("\n").filter(line => line.startsWith("F-") && !line.startsWith("# "))
         assert(

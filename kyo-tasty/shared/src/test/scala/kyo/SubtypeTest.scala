@@ -10,7 +10,7 @@ import kyo.internal.tasty.symbol.SymbolKind
   * All tests use synthetic Symbol instances with distinct SymbolId values so that Named(id) equality matches correctly in Subtyping. Each
   * test uses makeTestClasspath to register symbols at their id.value indices so cp.symbol(id) resolves correctly.
   */
-class SubtypeTest extends Test:
+class SubtypeTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
     import kyo.Tasty.SymbolId
@@ -87,7 +87,7 @@ class SubtypeTest extends Test:
     end makeTestClasspath
 
     // Test 1: Named(A).isSubtypeOf(Named(A)) -- reflexivity via same SymbolId
-    "Named(A).isSubtypeOf(Named(A)) returns Sub (reflexivity)" in run {
+    "Named(A).isSubtypeOf(Named(A)) returns Sub (reflexivity)" in {
         nextId = 0
         val intSym  = makeSym("scala.Int")
         val intType = Tasty.Type.Named(intSym.id)
@@ -97,7 +97,7 @@ class SubtypeTest extends Test:
     }
 
     // Test 2: Named(String).isSubtypeOf(Named(Object)) returns Sub via parent chain
-    "Named(String).isSubtypeOf(Named(Object)) returns Sub via parent chain" in run {
+    "Named(String).isSubtypeOf(Named(Object)) returns Sub via parent chain" in {
         nextId = 0
         val objectSym  = makeSym("java.lang.Object")
         val objectType = Tasty.Type.Named(objectSym.id)
@@ -109,7 +109,7 @@ class SubtypeTest extends Test:
     }
 
     // Test 3: Named(String).isSubtypeOf(Named(Int)) returns NotSub
-    "Named(String).isSubtypeOf(Named(Int)) returns NotSub" in run {
+    "Named(String).isSubtypeOf(Named(Int)) returns NotSub" in {
         nextId = 0
         val intSym     = makeSym("scala.Int")
         val stringSym  = makeSym("java.lang.String")
@@ -121,7 +121,7 @@ class SubtypeTest extends Test:
     }
 
     // Test 4: AndType(A, B).isSubtypeOf(A) returns Sub
-    "AndType(A, B).isSubtypeOf(A) returns Sub" in run {
+    "AndType(A, B).isSubtypeOf(A) returns Sub" in {
         nextId = 0
         val symA    = makeSym("test.A")
         val symB    = makeSym("test.B")
@@ -134,7 +134,7 @@ class SubtypeTest extends Test:
     }
 
     // Test 5: A.isSubtypeOf(OrType(A, B)) returns Sub
-    "A.isSubtypeOf(OrType(A, B)) returns Sub" in run {
+    "A.isSubtypeOf(OrType(A, B)) returns Sub" in {
         nextId = 0
         val symA   = makeSym("test.A")
         val symB   = makeSym("test.B")
@@ -147,7 +147,7 @@ class SubtypeTest extends Test:
     }
 
     // Test 6: Applied(List[String]).isSubtypeOf(Applied(List[AnyRef])) Sub when List is covariant
-    "Applied(List[String]).isSubtypeOf(Applied(List[AnyRef])) Sub when List is covariant" in run {
+    "Applied(List[String]).isSubtypeOf(Applied(List[AnyRef])) Sub when List is covariant" in {
         nextId = 0
         val anyRefSym  = makeSym("java.lang.Object")
         val anyRefType = Tasty.Type.Named(anyRefSym.id)
@@ -165,7 +165,7 @@ class SubtypeTest extends Test:
     }
 
     // Test 7: Named(Nothing).isSubtypeOf(anyType) returns Sub (Nothing is subtype of all)
-    "Named(Nothing).isSubtypeOf(any type) returns Sub (bottom)" in run {
+    "Named(Nothing).isSubtypeOf(any type) returns Sub (bottom)" in {
         nextId = 0
         val nothingSym  = makeSym("scala.Nothing")
         val nothingType = Tasty.Type.Named(nothingSym.id)
@@ -177,7 +177,7 @@ class SubtypeTest extends Test:
     }
 
     // Test 8: TypeLambda([T], C[T]) isSubtypeOf TypeLambda([U], C[U]) Sub (alpha-equivalence)
-    "TypeLambda([T], C[T]).isSubtypeOf(TypeLambda([U], C[U])) Sub (alpha-equiv)" in run {
+    "TypeLambda([T], C[T]).isSubtypeOf(TypeLambda([U], C[U])) Sub (alpha-equiv)" in {
         nextId = 0
         val cSym  = makeSym("test.C")
         val cType = Tasty.Type.Named(cSym.id)
@@ -199,7 +199,7 @@ class SubtypeTest extends Test:
     }
 
     // Test 9: Rec type with RecThis back-reference does not cause infinite recursion
-    "Rec type with RecThis back-reference terminates (budget exhaustion safety)" in run {
+    "Rec type with RecThis back-reference terminates (budget exhaustion safety)" in {
         nextId = 0
         val cSym    = makeSym("test.C")
         val cType   = Tasty.Type.Named(cSym.id)
@@ -219,7 +219,7 @@ class SubtypeTest extends Test:
     // ── tests (SubtypeVerdict) ──────────────────────────────────────
 
     // Test 10: Int <: Any returns Sub
-    "Int <: Any returns Sub" in run {
+    "Int <: Any returns Sub" in {
         nextId = 0
         val intSym  = makeSym("scala.Int")
         val anySym  = makeSym("scala.Any")
@@ -231,7 +231,7 @@ class SubtypeTest extends Test:
     }
 
     // Test 11: String <: Int returns NotSub
-    "String <: Int returns NotSub" in run {
+    "String <: Int returns NotSub" in {
         nextId = 0
         val stringSym  = makeSym("java.lang.String")
         val intSym     = makeSym("scala.Int")
@@ -243,7 +243,7 @@ class SubtypeTest extends Test:
     }
 
     // Test 12: budget=0 forces Indeterminate (simulates deep Rec exhaustion without building 66 unfoldings)
-    "budget exhaustion returns Indeterminate" in run {
+    "budget exhaustion returns Indeterminate" in {
         nextId = 0
         val stringSym  = makeSym("java.lang.String")
         val intSym     = makeSym("scala.Int")
@@ -256,7 +256,7 @@ class SubtypeTest extends Test:
     }
 
     // Test 14: real deeply-nested Rec type exhausts default budget.
-    "real 66-deep Rec chain exhausts default budget=64 and returns Indeterminate" in run {
+    "real 66-deep Rec chain exhausts default budget=64 and returns Indeterminate" in {
         nextId = 0
         val leafSym          = makeSym("RecBudgetLeaf")
         val leaf: Tasty.Type = Tasty.Type.Named(leafSym.id)
@@ -277,7 +277,7 @@ class SubtypeTest extends Test:
     }
 
     // Test 13: missing parent chain returns NotSub
-    "empty parent chain returns NotSub" in run {
+    "empty parent chain returns NotSub" in {
         nextId = 0
         val fooSym  = makeSym("test.Foo")
         val barSym  = makeSym("test.Bar")
@@ -296,7 +296,7 @@ class SubtypeTest extends Test:
     // ── F-003 tests: ADT sentinel cases Type.Any and Type.Nothing ──────────
 
     // Test F003-1: Named(X).isSubtypeOf(Type.Any) returns Sub via ADT sentinel arm
-    "F003-1: Named(X).isSubtypeOf(Type.Any) == Sub (ADT sentinel)" in run {
+    "F003-1: Named(X).isSubtypeOf(Type.Any) == Sub (ADT sentinel)" in {
         nextId = 0
         val intSym  = makeSym("scala.Int")
         val intType = Tasty.Type.Named(intSym.id)
@@ -307,7 +307,7 @@ class SubtypeTest extends Test:
     }
 
     // Test F003-2: Type.Nothing.isSubtypeOf(Named(X)) returns Sub via ADT sentinel arm
-    "F003-2: Type.Nothing.isSubtypeOf(Named(X)) == Sub (ADT sentinel)" in run {
+    "F003-2: Type.Nothing.isSubtypeOf(Named(X)) == Sub (ADT sentinel)" in {
         nextId = 0
         val stringSym  = makeSym("java.lang.String")
         val stringType = Tasty.Type.Named(stringSym.id)
@@ -318,7 +318,7 @@ class SubtypeTest extends Test:
     }
 
     // Test F003-3: Type.Nothing.isSubtypeOf(Type.Any) returns Sub (both ADT sentinels)
-    "F003-3: Type.Nothing.isSubtypeOf(Type.Any) == Sub (both ADT sentinels)" in run {
+    "F003-3: Type.Nothing.isSubtypeOf(Type.Any) == Sub (both ADT sentinels)" in {
         nextId = 0
         makeTestClasspath(Chunk.empty).flatMap: cp =>
             Tasty.withClasspath(cp):
@@ -327,7 +327,7 @@ class SubtypeTest extends Test:
     }
 
     // Test F003-4: Type.Any.isSubtypeOf(Named(X)) returns NotSub (Any is not sub of random type)
-    "F003-4: Type.Any.isSubtypeOf(Named(X)) == NotSub (negative pinning)" in run {
+    "F003-4: Type.Any.isSubtypeOf(Named(X)) == NotSub (negative pinning)" in {
         nextId = 0
         val intSym  = makeSym("scala.Int")
         val intType = Tasty.Type.Named(intSym.id)
@@ -338,7 +338,7 @@ class SubtypeTest extends Test:
     }
 
     // Test F003-5: Named(X).isSubtypeOf(Type.Nothing) returns NotSub (Nothing is bottom type)
-    "F003-5: Named(X).isSubtypeOf(Type.Nothing) == NotSub (negative pinning)" in run {
+    "F003-5: Named(X).isSubtypeOf(Type.Nothing) == NotSub (negative pinning)" in {
         nextId = 0
         val stringSym  = makeSym("java.lang.String")
         val stringType = Tasty.Type.Named(stringSym.id)

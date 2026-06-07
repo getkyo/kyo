@@ -16,7 +16,7 @@ import scala.collection.mutable
   *
   * Plan tests 19, 21, 35.
   */
-class SymbolResolutionTest extends Test:
+class SymbolResolutionTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -70,7 +70,7 @@ class SymbolResolutionTest extends Test:
     // Test 19: two concurrent findClass calls for the same FQN return reference-equal Symbol instances.
     // The fqnIndex is an immutable HashMap populated once during Phase C. Both calls read the same
     // HashMap entry and return the same object reference (reference equality via HashMap identity).
-    "two concurrent findClass calls for the same FQN return reference-equal symbols" in run {
+    "two concurrent findClass calls for the same FQN return reference-equal symbols" in {
         Scope.run:
             Abort.run[TastyError](openClasspath(fixtureSource()).flatMap: cp =>
                 Async.zip[TastyError, Maybe[Tasty.Symbol.Class], Maybe[Tasty.Symbol.Class], Any](
@@ -91,7 +91,7 @@ class SymbolResolutionTest extends Test:
     }
 
     // Test 21 (renumbered from prior Test 20): two concurrent findClass calls for different FQNs both resolve independently
-    "two concurrent findClass calls for different FQNs both resolve independently" in run {
+    "two concurrent findClass calls for different FQNs both resolve independently" in {
         // Use the same file twice with different paths so we get two distinct FQNs
         // Since we only have PlainClass, we open a classpath with it twice (once in each root path slot)
         // and look up the same FQN plus a non-existent one
@@ -115,7 +115,7 @@ class SymbolResolutionTest extends Test:
     }
 
     // Test 21: Unresolved sentinel: findClass for a missing FQN returns Absent (soft-fail mode)
-    "findClass for missing FQN returns Absent in soft-fail mode" in run {
+    "findClass for missing FQN returns Absent in soft-fail mode" in {
         Scope.run:
             Abort.run[TastyError](openClasspath(fixtureSource()).flatMap: cp =>
                 cp.findClass("no.such.Class")).map:
@@ -132,7 +132,7 @@ class SymbolResolutionTest extends Test:
     // Test 35: cross-classpath structural equality by FQN
     // Two separate Classpath instances over the same roots yield different Symbol object references
     // (not reference-equal) but the same full names (structural equality by FQN).
-    "cross-classpath FQN structural equality: different instances but same FQN" in run {
+    "cross-classpath FQN structural equality: different instances but same FQN" in {
         val src1 = fixtureSource()
         val src2 = fixtureSource()
         Scope.run:
@@ -179,7 +179,7 @@ class SymbolResolutionTest extends Test:
     // Test 1 (redesigned for): cross-file type references are resolved via fqnIndex
     // at Phase C finalizeMerge. The UnresolvedRef mechanism is deleted.
     // Verify that PlainClass.tasty opens successfully and parentTypes are populated.
-    "Phase C: cross-file type references resolved (PlainClass has parentTypes)" in run {
+    "Phase C: cross-file type references resolved (PlainClass has parentTypes)" in {
         val src = MemoryFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
@@ -210,7 +210,7 @@ class SymbolResolutionTest extends Test:
     //      it opens without panic (no unset SingleAssign).
     // Test 2 (redesigned for): unresolved cross-file references become Unresolved
     // symbols in the classpath. Verify that ChildClass.tasty opens without panic when base file is absent.
-    "Phase C: classpath opens without panic when cross-file parent is absent (unresolved symbols)" in run {
+    "Phase C: classpath opens without panic when cross-file parent is absent (unresolved symbols)" in {
         val src = MemoryFileSource()
         src.add("root/ChildClass.tasty", kyo.fixtures.Embedded.childClassTasty)
         Scope.run:
@@ -295,7 +295,7 @@ class SymbolResolutionTest extends Test:
     end makeVarSym9
 
     // Leaf 1: owner resolves to the correct Symbol.
-    "Phase09: owner resolves to the correct Symbol" in run {
+    "Phase09: owner resolves to the correct Symbol" in {
         val pkgSym = makePkgSym9(id = 0, name = "p")
         val fooSym = makeClassSym9(id = 1, name = "Foo", ownerId = 0)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(pkgSym, fooSym)).flatMap: cp =>
@@ -310,7 +310,7 @@ class SymbolResolutionTest extends Test:
     }
 
     // Leaf 2: parents extracts only Type.Named entries.
-    "Phase09: parents extracts only Type.Named entries from parentTypes" in run {
+    "Phase09: parents extracts only Type.Named entries from parentTypes" in {
         val symA = makeClassSym9(id = 0, name = "A", ownerId = 0)
         val symB = makeClassSym9(id = 1, name = "B", ownerId = 0)
         val symC = makeClassSym9(id = 2, name = "C", ownerId = 0).copy(parentTypes =
@@ -335,7 +335,7 @@ class SymbolResolutionTest extends Test:
     }
 
     // Leaf 3: methods returns only method-kind declarations.
-    "Phase09: methods returns only method-kind declarations" in run {
+    "Phase09: methods returns only method-kind declarations" in {
         val classSym  = makeClassSym9(id = 0, name = "Foo", ownerId = 0)
         val method1   = makeMethodSym9(id = 1, name = "foo", ownerId = 0)
         val method2   = makeMethodSym9(id = 2, name = "bar", ownerId = 0)
@@ -350,7 +350,7 @@ class SymbolResolutionTest extends Test:
     }
 
     // Leaf 4: findDeclaredMember by string name returns Maybe.Absent when missing.
-    "Phase09: findDeclaredMember by string name returns Maybe.Absent when missing" in run {
+    "Phase09: findDeclaredMember by string name returns Maybe.Absent when missing" in {
         val classSym  = makeClassSym9(id = 0, name = "Foo", ownerId = 0)
         val memberSym = makeMethodSym9(id = 1, name = "existingMethod", ownerId = 0)
         val withDecls = classSym.copy(declarationIds = Chunk(SymbolId(1)))
@@ -363,7 +363,7 @@ class SymbolResolutionTest extends Test:
     }
 
     // Leaf 5: sym.parents, Tasty.owner(sym), sym.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method]) are direct member calls.
-    "Phase09: sym.parents, Tasty.owner(sym), sym.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method]) compile as direct member calls" in run {
+    "Phase09: sym.parents, Tasty.owner(sym), sym.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method]) compile as direct member calls" in {
         val pkgSym = makePkgSym9(id = 0, name = "pkg")
         val fooSym = makeClassSym9(id = 1, name = "Foo", ownerId = 0)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(pkgSym, fooSym)).flatMap: cp =>
@@ -380,7 +380,7 @@ class SymbolResolutionTest extends Test:
     }
 
     // Leaf 6: no AllowUnsafe on resolution accessors.
-    "Phase09: resolution accessors require only Classpath, no AllowUnsafe" in run {
+    "Phase09: resolution accessors require only Classpath, no AllowUnsafe" in {
         val sym = makeClassSym9(id = 0, name = "X", ownerId = 0)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(sym)).flatMap: cp =>
             Tasty.withClasspath(cp):

@@ -17,7 +17,7 @@ import scala.collection.mutable
   * yet implemented in this version of kyo-tasty. It is never returned for "this attribute does not apply to this symbol kind" (use
   * Maybe.Absent) and never returned for an unrecognized TASTy tag during tree decode (use Tree.Unknown for graceful degradation).
   */
-class TastyErrorMaybeTest extends Test:
+class TastyErrorMaybeTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -223,7 +223,7 @@ class TastyErrorMaybeTest extends Test:
     // This distinguishes the two call sites in SnapshotReader.parseErrorString from
     // any hypothetical misuse.
 
-    "leaf-1: recognized error prefix round-trips without NotImplemented; unrecognized yields NotImplemented" in run {
+    "leaf-1: recognized error prefix round-trips without NotImplemented; unrecognized yields NotImplemented" in {
         val recognized = TastyError.FileNotFound("/some/path.tasty")
         // Forward-compat (string-tag format): an unknown tag string maps to NotImplemented.
         val unknownTag = "FutureError"
@@ -284,7 +284,7 @@ class TastyErrorMaybeTest extends Test:
     // decodeSymBody -> readTree -> decodeTreeTag -> "Unknown category 2-4" arm -> Tree.Unknown(77, 0).
     // The Unresolved kind is used so decodeSymBody falls into the generic readTree path.
 
-    "leaf-2: TreeUnpickler unknown category-2 tag produces Tree.Unknown not TastyError.NotImplemented" in run {
+    "leaf-2: TreeUnpickler unknown category-2 tag produces Tree.Unknown not TastyError.NotImplemented" in {
         // Tag 77 is in the category-2 range (60-89) and is not assigned in TastyFormat.
         // Category-2 tag body is: [tag][Nat]. Nat 0x80 encodes value 0 in TASTy Nat encoding.
         val unknownCat2Tag: Byte      = 77.toByte
@@ -340,7 +340,7 @@ class TastyErrorMaybeTest extends Test:
     // TastyError variants not known to this reader. The SnapshotReader.parseErrorString fallback
     // returns NotImplemented so that callers can inspect accumulated errors without losing them.
 
-    "leaf-3: ERRORS section with unrecognized error string produces TastyError.NotImplemented" in run {
+    "leaf-3: ERRORS section with unrecognized error string produces TastyError.NotImplemented" in {
         // Forward-compat scenario (string-tag format): a future kyo-tasty version adds a new
         // TastyError variant with an unknown tag string. The current reader maps it to NotImplemented.
         val futureTag     = "QuantumEntanglementError"
@@ -380,7 +380,7 @@ class TastyErrorMaybeTest extends Test:
     // FQN produces exactly one UnresolvedReference in cp.errors, whose name matches the ghost FQN.
     // Replaces the prior vacuous field-roundtrip probe per B-5 carry fix.
 
-    "leaf-4: TastyError.UnresolvedReference is emitted by finalizeMerge for unresolvable FQN entries" in run {
+    "leaf-4: TastyError.UnresolvedReference is emitted by finalizeMerge for unresolvable FQN entries" in {
         Abort.run[TastyError](
             kyo.internal.tasty.query.ClasspathOrchestrator.triggerUnresolvedReferenceForTest()
         ).map: result =>
@@ -440,10 +440,10 @@ class TastyErrorMaybeTest extends Test:
             "CanEqual structural equality must hold for MissingDeclaredType"
         )
         // Verify neither is constructable from the other's shape (compile-time probe)
-        val errs = compiletime.testing.typeCheckErrors(
+        val errCount = compiletime.testing.typeCheckErrors(
             "kyo.TastyError.UnknownType(kyo.Tasty.SymbolId(3), \"f\")"
-        )
-        assert(errs.nonEmpty, "UnknownType(SymbolId, String) must not compile -- wrong arity")
+        ).length
+        assert(errCount > 0, "UnknownType(SymbolId, String) must not compile -- wrong arity")
         succeed
     }
 

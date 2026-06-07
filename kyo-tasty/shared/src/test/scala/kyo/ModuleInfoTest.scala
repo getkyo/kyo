@@ -9,7 +9,7 @@ import scala.collection.mutable.ArrayBuffer
   * Tests 1-5 use synthetic module-info.class bytes built inline; these are cross-platform. Test 6 is JVM-only and uses the JDK jrt:/
   * filesystem to load java.base/module-info.class.
   */
-class ModuleInfoTest extends Test:
+class ModuleInfoTest extends kyo.test.Test[Any]:
 
     // ─────────────────────────────────────────────────────────────────────────
     // Byte-building helpers
@@ -252,7 +252,7 @@ class ModuleInfoTest extends Test:
     // ─────────────────────────────────────────────────────────────────────────
     // Test 1: synthetic module-info.class with requires java.base decodes correctly
     // ─────────────────────────────────────────────────────────────────────────
-    "synthetic module-info.class for 'foo.bar requires java.base' decodes to correct name and requires" in run {
+    "synthetic module-info.class for 'foo.bar requires java.base' decodes to correct name and requires" in {
         val bytes = buildModuleInfoClass(
             moduleName = "foo.bar",
             moduleVersion = "",
@@ -281,7 +281,7 @@ class ModuleInfoTest extends Test:
     // ─────────────────────────────────────────────────────────────────────────
     // Test 2: module with exports: exports list correct
     // ─────────────────────────────────────────────────────────────────────────
-    "module-info.class with exports foo/bar to baz.qux: exports list decodes correctly" in run {
+    "module-info.class with exports foo/bar to baz.qux: exports list decodes correctly" in {
         val bytes = buildModuleInfoClass(
             moduleName = "my.module",
             moduleVersion = "",
@@ -314,7 +314,7 @@ class ModuleInfoTest extends Test:
     // ─────────────────────────────────────────────────────────────────────────
     // Test 3: module with uses: uses list decodes correctly
     // ─────────────────────────────────────────────────────────────────────────
-    "module-info.class with 'uses com/example/Service' decodes uses list correctly" in run {
+    "module-info.class with 'uses com/example/Service' decodes uses list correctly" in {
         val bytes = buildModuleInfoClass(
             moduleName = "com.example.provider",
             moduleVersion = "",
@@ -339,7 +339,7 @@ class ModuleInfoTest extends Test:
     // ─────────────────────────────────────────────────────────────────────────
     // Test 4: module with provides: provides list decodes correctly
     // ─────────────────────────────────────────────────────────────────────────
-    "module-info.class with 'provides com/example/Service with com/example/Impl' decodes provides correctly" in run {
+    "module-info.class with 'provides com/example/Service with com/example/Impl' decodes provides correctly" in {
         val bytes = buildModuleInfoClass(
             moduleName = "com.example.impl",
             moduleVersion = "",
@@ -372,7 +372,7 @@ class ModuleInfoTest extends Test:
     // ─────────────────────────────────────────────────────────────────────────
     // Test 5: wrong magic returns ClassfileFormatError
     // ─────────────────────────────────────────────────────────────────────────
-    "module-info.class with wrong magic returns Abort.fail(ClassfileFormatError)" in run {
+    "module-info.class with wrong magic returns Abort.fail(ClassfileFormatError)" in {
         // Build a byte array with wrong magic (0xDEADBEEF)
         val buf = new ArrayBuffer[Byte]()
         u4(buf, 0xdeadbeef.toInt)

@@ -24,7 +24,7 @@ import scala.collection.immutable.IntMap
   * TASTy Nat encoding: small values (0-127) use a single byte with bit 7 SET = (n | 0x80).toByte. TASTy LongInt encoding: for zero span,
   * use 0x80.toByte (bit 7 SET = stop bit, bit 6 CLEAR = non-negative sign; value decodes to 0).
   */
-class CommentsUnpicklerTest extends Test:
+class CommentsUnpicklerTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -32,13 +32,13 @@ class CommentsUnpicklerTest extends Test:
 
     /** Encode a small Nat (0-127) as a single TASTy byte. */
     private def encNat(n: Int): Array[Byte] =
-        assert(n >= 0 && n < 128, s"encNat only handles 0-127, got $n")
+        require(n >= 0 && n < 128, s"encNat only handles 0-127, got $n")
         Array((n | 0x80).toByte)
 
     /** Encode a UTF-8 string as Nat(length) + bytes. */
     private def encUtf8(s: String): Array[Byte] =
         val bytes = s.getBytes(StandardCharsets.UTF_8)
-        assert(bytes.length < 128, s"encUtf8 only handles strings < 128 bytes, got ${bytes.length}")
+        require(bytes.length < 128, s"encUtf8 only handles strings < 128 bytes, got ${bytes.length}")
         encNat(bytes.length) ++ bytes
     end encUtf8
 
@@ -73,7 +73,7 @@ class CommentsUnpicklerTest extends Test:
 
     // Test 1: a TASTy Comments section with a documented class produces a result with an
     // entry for that symbol containing the documented text.
-    "CommentsUnpickler: documented class entry produces result with comment text" in run {
+    "CommentsUnpickler: documented class entry produces result with comment text" in {
         val sym     = makeTestSymbol("Foo")
         val addrMap = IntMap(10 -> sym) // addr 10 -> sym
         val payload = buildSection(10 -> "/** My doc */")
@@ -95,7 +95,7 @@ class CommentsUnpicklerTest extends Test:
 
     // Test 2: an empty Comments section (zero-length payload) returns an empty map without
     // error.
-    "CommentsUnpickler: empty payload returns empty map without error" in run {
+    "CommentsUnpickler: empty payload returns empty map without error" in {
         val view = ByteView(Array.empty[Byte])
         Abort.run[TastyError](CommentsUnpickler.read(view, IntMap.empty)).map:
             case Result.Success(result) =>
@@ -110,7 +110,7 @@ class CommentsUnpicklerTest extends Test:
 
     // Test 3: a Comments section truncated mid-entry produces
     // Abort.fail(TastyError.MalformedSection("Comments", ...)).
-    "CommentsUnpickler: truncated section produces MalformedSection error" in run {
+    "CommentsUnpickler: truncated section produces MalformedSection error" in {
         // Write addr Nat(5) = 0x85, then start a Utf8: Nat(20) = 0x94, then only 3 bytes of a
         // 20-byte string. ArrayIndexOutOfBoundsException triggers MalformedSection.
         val payload = Array[Byte](
@@ -139,7 +139,7 @@ class CommentsUnpicklerTest extends Test:
 
     // Test 4 (plan: phase-02 update): CommentsUnpickler returns a LongMap keyed by sym.id.
     // A symbol at an addr that has a comment entry appears in the map; one without does not.
-    "CommentsUnpickler: symbol with comment appears in returned map; symbol without does not" in run {
+    "CommentsUnpickler: symbol with comment appears in returned map; symbol without does not" in {
         val symWithDoc    = makeTestSymbol("WithDoc")
         val symWithoutDoc = makeTestSymbol("WithoutDoc")
         val addrMap       = IntMap(1 -> symWithDoc, 2 -> symWithoutDoc)
@@ -171,7 +171,7 @@ class CommentsUnpicklerTest extends Test:
 
     // Test 5: comments from two sibling definitions in the same file are independently
     // accessible with no cross-contamination between addresses.
-    "CommentsUnpickler: two sibling definitions have independent scaladoc entries" in run {
+    "CommentsUnpickler: two sibling definitions have independent scaladoc entries" in {
         val symAlpha = makeTestSymbol("Alpha")
         val symBeta  = makeTestSymbol("Beta")
         val addrMap  = IntMap(10 -> symAlpha, 20 -> symBeta)
@@ -211,7 +211,7 @@ class CommentsUnpicklerTest extends Test:
     // Test 6: a Java-sourced classfile symbol always has scaladoc == Absent because
     // classfiles have no Comments section; ClassfileUnpickler sets _scaladoc to Absent for all
     // classfile symbols.
-    "CommentsUnpickler: Java classfile symbol always has scaladoc == Absent" in run {
+    "CommentsUnpickler: Java classfile symbol always has scaladoc == Absent" in {
         val classBytes = kyo.fixtures.Embedded.arrayRecordClass
         val arena      = new TypeArena
         Abort.run[TastyError]:

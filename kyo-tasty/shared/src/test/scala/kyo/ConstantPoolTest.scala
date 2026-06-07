@@ -8,7 +8,7 @@ import kyo.internal.tasty.classfile.ConstantPool
   *
   * reference kinds; malformed pool produces structured errors.
   */
-class ConstantPoolTest extends Test:
+class ConstantPoolTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -116,7 +116,7 @@ class ConstantPoolTest extends Test:
     // -------------------------------------------------------------------------
     // Test 1 (C3): ConstantPool.read succeeds on a Mapped ByteView; utf8 entry decoded correctly.
     // -------------------------------------------------------------------------
-    "ConstantPool.read on Mapped ByteView decodes UTF-8 entry correctly" in run {
+    "ConstantPool.read on Mapped ByteView decodes UTF-8 entry correctly" in {
         // Given: a Mapped ByteView wrapping pool bytes with a single UTF-8 entry "foo".
         // When: ConstantPool.read is called with the Mapped view.
         // Then: utf8(1) returns "foo" without throwing IllegalStateException.
@@ -138,7 +138,7 @@ class ConstantPoolTest extends Test:
     // -------------------------------------------------------------------------
     // Test 2 (C3): ConstantPool.read on Mapped ByteView preserves cursor position after read.
     // -------------------------------------------------------------------------
-    "ConstantPool.read on Mapped ByteView: cursor is positioned past pool after read" in run {
+    "ConstantPool.read on Mapped ByteView: cursor is positioned past pool after read" in {
         // Given: Mapped ByteView with cursor initially at 0; pool bytes for "bar".
         // When: ConstantPool.read is called.
         // Then: the view cursor is positioned at the end of the pool (no cursor corruption).
@@ -163,7 +163,7 @@ class ConstantPoolTest extends Test:
     // -------------------------------------------------------------------------
 
     // Test B5-1: utf8(idx) rejects a ClassRef entry; error message names the found kind.
-    "utf8 at a ClassRef index yields structured error naming ClassRef" in run {
+    "utf8 at a ClassRef index yields structured error naming ClassRef" in {
         // Given: pool with entry[1]=ClassRef(nameIdx=2), entry[2]=Utf8("scala/Int").
         // When: utf8(1) is called.
         // Then: Abort[TastyError] with message containing "expected Utf8" and "ClassRef".
@@ -186,7 +186,7 @@ class ConstantPoolTest extends Test:
     }
 
     // Test B5-2: classRef resolves ClassRef.nameIdx to Utf8 string.
-    "classRef resolving through nameIdx returns the Utf8 string" in run {
+    "classRef resolving through nameIdx returns the Utf8 string" in {
         // Given: pool with entry[1]=ClassRef(nameIdx=2), entry[2]=Utf8("scala/Int").
         // When: classRef(1) is called.
         // Then: returns "scala/Int".
@@ -204,7 +204,7 @@ class ConstantPoolTest extends Test:
     }
 
     // Test B5-3: utf8At the Utf8 slot succeeds; classRef(idx) where idx points to Utf8 yields structured error naming Utf8.
-    "classRef at a Utf8 index yields structured error naming Utf8" in run {
+    "classRef at a Utf8 index yields structured error naming Utf8" in {
         // Given: pool with entry[1]=ClassRef(nameIdx=2), entry[2]=Utf8("scala/Int").
         // When: classRef(2) is called (slot 2 is Utf8, not ClassRef).
         // Then: Abort[TastyError] with message containing "ClassRef" and "Utf8".
@@ -227,7 +227,7 @@ class ConstantPoolTest extends Test:
     }
 
     // Test T2-1: entry() on an out-of-range index yields a structured ClassfileFormatError.
-    "entry at an out-of-range index yields structured ClassfileFormatError containing index and 'out of bounds'" in run {
+    "entry at an out-of-range index yields structured ClassfileFormatError containing index and 'out of bounds'" in {
         // Given: a pool with 4 real entries (count=5); entry[1]=Utf8("a"), [2]=Utf8("b"), [3]=Utf8("c"), [4]=Utf8("d").
         // When: utf8(99) is called (index 99 is far out of range).
         // Then: Abort[TastyError.ClassfileFormatError] with message containing "99" and "out of bounds" (case-insensitive).
@@ -269,7 +269,7 @@ class ConstantPoolTest extends Test:
     }
 
     // Test T2-2: ClassRef resolution via nameIdx returns the Utf8 string.
-    "ClassRef at slot 5 with nameIdx=6 resolves to the Utf8 string at slot 6" in run {
+    "ClassRef at slot 5 with nameIdx=6 resolves to the Utf8 string at slot 6" in {
         // Given: pool with 6 entries: slots 1..4 = Utf8 padding, slot 5 = ClassRef(nameIdx=6), slot 6 = Utf8("scala/Int").
         // When: classRef(5) is called.
         // Then: returns "scala/Int".
@@ -320,7 +320,7 @@ class ConstantPoolTest extends Test:
     }
 
     // Test B5-4: entry() rejects Long/Double Hole slot with structured error.
-    "utf8 at a Long/Double Hole slot yields structured error" in run {
+    "utf8 at a Long/Double Hole slot yields structured error" in {
         // Given: pool with entry[1]=Long(42L); slot 2 is the Hole.
         // When: utf8(2) is called (slot 2 is a Hole).
         // Then: Abort[TastyError] mentioning "hole" (case-insensitive).

@@ -11,7 +11,7 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
   *
   * Runs on JVM/JS/Native via the embedded TASTy fixture classpath (cross-platform, no filesystem dependency).
   */
-class PureDataInvariantTest extends Test:
+class PureDataInvariantTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -34,7 +34,7 @@ class PureDataInvariantTest extends Test:
     // Given: a classpath loaded from the embedded fixtures
     // When: calling each accessor on a sample of symbols twice in succession
     // Then: both calls return structurally equal results (no hidden mutation, no cache artifact)
-    "HARD RULE 7: Symbol accessors are idempotent (same value on second call)" in run {
+    "HARD RULE 7: Symbol accessors are idempotent (same value on second call)" in {
         openFixtureClasspath.map: cp =>
             given Tasty.Classpath = cp
             val sample            = cp.symbols.take(50)
@@ -59,7 +59,7 @@ class PureDataInvariantTest extends Test:
     // Given: ClassLike symbols accessed twice
     // When: comparing parentTypes and annotations Chunk references
     // Then: both references compare equal structurally
-    "HARD RULE 7: ClassLike parentTypes and annotations are stable across aliasing reads" in run {
+    "HARD RULE 7: ClassLike parentTypes and annotations are stable across aliasing reads" in {
         openFixtureClasspath.map: cp =>
             given Tasty.Classpath = cp
             val sample            = cp.symbols.take(50)
@@ -81,7 +81,7 @@ class PureDataInvariantTest extends Test:
     // Given: the same Symbol instance retrieved twice (materialized symbols have non-sentinel ids)
     // When: comparing with ==
     // Then: equal; hashCode also matches (F-006: id-and-kind equality is reflexive for non-sentinel ids)
-    "HARD RULE 7: Symbol equality is reflexive (same instance equals itself)" in run {
+    "HARD RULE 7: Symbol equality is reflexive (same instance equals itself)" in {
         openFixtureClasspath.map: cp =>
             val sample = cp.symbols.take(20)
             sample.foreach: sym =>

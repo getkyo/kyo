@@ -71,7 +71,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     // Given: init with a MemoryFileSource containing no files for root "missing", ErrorMode.SoftFail
     // When: awaiting init result
     // Then: returns Classpath with cp.errors.head == TastyError.FileNotFound and cp.symbols.size == 0
-    "SoftFail missing root accumulates FileNotFound in cp.errors" in run {
+    "SoftFail missing root accumulates FileNotFound in cp.errors" in {
         val src = MemoryFileSource()
         // "missing" root exists in neither key: exists("missing") returns false, triggering FileNotFound
         ClasspathOrchestrator.init(Seq("missing"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
@@ -99,7 +99,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     // Given: same missing root with ErrorMode.FailFast
     // When: awaiting init result
     // Then: aborts with Abort.fail(TastyError.FileNotFound(...))
-    "FailFast missing root still raises FileNotFound" in run {
+    "FailFast missing root still raises FileNotFound" in {
         val src = MemoryFileSource()
         Abort.run[TastyError](ClasspathOrchestrator.init(Seq("missing"), Tasty.ErrorMode.FailFast, src, 1)).map: result =>
             result match
@@ -117,7 +117,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     // Given: truncated .tasty bytes loaded with SoftFail via MemoryFileSource
     // When: inspecting cp.errors
     // Then: cp.errors contains at least one MalformedSection
-    "SoftFail truncated .tasty produces MalformedSection" in run {
+    "SoftFail truncated .tasty produces MalformedSection" in {
         loadFromMemory("Truncated.tasty", truncatedTastyBytes, Tasty.ErrorMode.SoftFail).map: cp =>
             assert(
                 cp.errors.nonEmpty,
@@ -136,7 +136,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     // Given: bit-flipped magic .tasty bytes loaded with SoftFail via MemoryFileSource
     // When: inspecting cp.errors
     // Then: cp.errors contains at least one CorruptedFile or MalformedSection
-    "SoftFail bit-flipped magic produces CorruptedFile or MalformedSection" in run {
+    "SoftFail bit-flipped magic produces CorruptedFile or MalformedSection" in {
         loadFromMemory("BitFlipped.tasty", bitFlippedMagicBytes, Tasty.ErrorMode.SoftFail).map: cp =>
             assert(
                 cp.errors.nonEmpty,
@@ -157,7 +157,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     // Given: requireSymbol('non.existent.fqn') against embedded classpath
     // When: awaiting result
     // Then: aborts with TastyError.NotFound('non.existent.fqn')
-    "requireSymbol raises NotFound for absent FQN" in run {
+    "requireSymbol raises NotFound for absent FQN" in {
         kyo.internal.TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             given Tasty.Classpath = cp
             Abort.run[TastyError](cp.requireSymbol("non.existent.fqn.abc.xyz")).map: result =>
@@ -180,7 +180,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     // Given: requireSymbol('PlainClass') against embedded classpath
     // When: awaiting
     // Then: returns the corresponding Symbol (no abort)
-    "(requireSymbol happy path): requireSymbol returns symbol for present FQN" in run {
+    "(requireSymbol happy path): requireSymbol returns symbol for present FQN" in {
         kyo.internal.TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             given Tasty.Classpath = cp
             // Find any real FQN from the loaded classpath
@@ -201,7 +201,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     // Given: synthetic degenerate MergeState + FailFast
     // When: awaiting finalizeMerge result
     // Then: aborts with TastyError.ClasspathBuilding
-    "ClasspathBuilding fires from orchestrator on invariant violation" in run {
+    "ClasspathBuilding fires from orchestrator on invariant violation" in {
         Abort.run[TastyError](kyo.internal.tasty.query.ClasspathOrchestrator.triggerClasspathBuildingForTest()).map: result =>
             result match
                 case Result.Failure(TastyError.ClasspathBuilding(_)) =>
@@ -221,7 +221,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     // Given: mid-stream corrupted bytes loaded via MemoryFileSource
     // When: inspecting cp.errors
     // Then: cp.errors contains exactly one structured error
-    "SoftFail mid-stream corruption produces structured error" in run {
+    "SoftFail mid-stream corruption produces structured error" in {
         loadFromMemory("MidStream.tasty", corruptedMidStreamBytes, Tasty.ErrorMode.SoftFail).map: cp =>
             assert(
                 cp.errors.nonEmpty,

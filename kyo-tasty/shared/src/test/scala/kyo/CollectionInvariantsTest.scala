@@ -13,7 +13,7 @@ import kyo.internal.TestClasspaths
   * JS/Native run the same assertions against the embedded fixture set. Leaves 5-7 remain jvmOnly because they require kyo-data
   * (isExtension/kyo.Ansi$.cyan), companion .class javaMetadata merging, and the large stdlib sentinel-count baseline.
   */
-class CollectionInvariantsTest extends Test:
+class CollectionInvariantsTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -23,7 +23,7 @@ class CollectionInvariantsTest extends Test:
     // Then: post-fix the assertion holds;
     //       before fix cp.topLevelClasses.size == 3,514 and cp.allClassLike.size == 1,508
     // Cross-platform: invariant holds for any classpath size.
-    "cp.allClassLike.size >= cp.topLevelClasses.size" in run {
+    "cp.allClassLike.size >= cp.topLevelClasses.size" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val allSz = classpath.allClassLike.size
             val topSz = classpath.topLevelClasses.size
@@ -40,7 +40,7 @@ class CollectionInvariantsTest extends Test:
     // When: asserting cp.topLevelClasses.toSet.subsetOf(cp.allClassLike.toSet)
     // Then: post-fix the assertion holds
     // Cross-platform: subset invariant holds for any classpath.
-    "cp.topLevelClasses is a subset of cp.allClassLike" in run {
+    "cp.topLevelClasses is a subset of cp.allClassLike" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val allSet = classpath.allClassLike.toSet
             val topSet = classpath.topLevelClasses.toSet
@@ -58,7 +58,7 @@ class CollectionInvariantsTest extends Test:
     // Then: post-fix every result is NOT a Symbol.Parameter
     // Cross-platform: invariant "isGiven excludes parameters" holds vacuously when no given symbols exist in embedded
     // fixtures, and holds by construction on JVM. Either way the assertion passes on all platforms.
-    "isGiven returns false for Symbol.Parameter (using-clause params excluded)" in run {
+    "isGiven returns false for Symbol.Parameter (using-clause params excluded)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val givenSyms   = classpath.symbols.filter(_.isGiven)
             val paramGivens = givenSyms.filter(_.isInstanceOf[Tasty.Symbol.Parameter])
@@ -77,7 +77,7 @@ class CollectionInvariantsTest extends Test:
     // Then: post-fix every result is a Symbol.Method and NOT Flag.Synthetic
     // Cross-platform: invariant "isMacro excludes synthetic" holds for any classpath. On JVM it covers stdlib enum-case
     // synthetics; on JS/Native the Color/Shape enum-case synthetics from embedded fixtures exercise the same predicate.
-    "isMacro returns false for enum-case synthetic methods" in run {
+    "isMacro returns false for enum-case synthetic methods" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val macroSyms       = classpath.symbols.filter(_.isMacro)
             val syntheticMacros = macroSyms.filter(_.flags.contains(Tasty.Flag.Synthetic))
@@ -103,7 +103,7 @@ class CollectionInvariantsTest extends Test:
     // Then: at least one extension method is found (kyo.fixtures.Meters.value is defined as an extension)
     //       and all results are Symbol.Method instances
     // Cross-platform: kyo.fixtures.Meters in FixtureClasses$package has `extension (m: Meters) def value: Double`.
-    "regression PIN : extension methods are found via isExtension on embedded fixtures" in run {
+    "regression PIN : extension methods are found via isExtension on embedded fixtures" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString
             val extensions = classpath.symbols.filter(_.isExtension)
@@ -129,7 +129,7 @@ class CollectionInvariantsTest extends Test:
     // Cross-platform: Embedded.plainClassClassfile is registered as "root/PlainClass.class" alongside
     //   "root/PlainClass.tasty" in JS/Native TestClasspaths; ClasspathOrchestrator.readAndDecodeTastyFile
     //   speculatively reads the companion via source.exists/source.read and merges javaMetadata.
-    "at least one class has javaMetadata Present after .class companion merge" in run {
+    "at least one class has javaMetadata Present after .class companion merge" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val withMeta = classpath.allClassLike.filter(_.javaMetadata.isDefined)
             assert(
@@ -146,7 +146,7 @@ class CollectionInvariantsTest extends Test:
     // When: computing cp.symbols.filter(_.id.value == -1).map(_.name.asString).toSet.size
     // Then: post-fix <= 3
     // Cross-platform: the sentinel-count invariant holds for any correctly-decoded classpath; embedded fixtures produce 0 or 1 sentinel names.
-    "SymbolId(-1) sentinel count is <= 3" in run {
+    "SymbolId(-1) sentinel count is <= 3" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString
             val sentinelNames = classpath.symbols.filter(_.id.value == -1).map(_.name.asString).toSet

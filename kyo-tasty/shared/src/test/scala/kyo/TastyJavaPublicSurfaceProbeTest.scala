@@ -10,7 +10,7 @@ package kyo
   * Supersedes the probes for `kyo.Tasty.JavaMetadata` and `kyo.Tasty.JavaAnnotation` which
   * asserted the pre-Phase-04 paths; those probes were retired here because removes those paths.
   */
-class TastyJavaPublicSurfaceProbeTest extends Test:
+class TastyJavaPublicSurfaceProbeTest extends kyo.test.Test[Any]:
 
     // ── Probe: Java.Metadata type resolves ──────────────────────────────────
     // Given: kyo.Tasty.Java.Metadata path introduced in.

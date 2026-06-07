@@ -12,7 +12,7 @@ import scala.collection.mutable
   * Leaves:
   *   6. Symbol.body delegates to cp.decodeBody (structural equality).
   */
-class TastyEffectRowTest extends Test:
+class TastyEffectRowTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -70,7 +70,7 @@ class TastyEffectRowTest extends Test:
     // ConcurrentHashMap guarantees that the first decode result is stored and returned on all
     // subsequent calls, producing the same object reference.
     //
-    "Leaf 6: Symbol.body and Tasty.bodyTree return the same Tree instance via bodyMemo" in run {
+    "Leaf 6: Symbol.body and Tasty.bodyTree return the same Tree instance via bodyMemo" in {
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectCp.flatMap: binding =>

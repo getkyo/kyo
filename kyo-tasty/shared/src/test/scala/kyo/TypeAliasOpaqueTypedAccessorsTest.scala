@@ -7,7 +7,7 @@ import kyo.Tasty.SymbolId
   * Leaf 91 pins INV-008: the body field on TypeAlias is named `body`, not `rhs` or `rhsType`. Leaves 92-95 exercise the typed resolution
   * methods on TypeAlias and OpaqueType.
   */
-class TypeAliasOpaqueTypedAccessorsTest extends Test:
+class TypeAliasOpaqueTypedAccessorsTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -66,7 +66,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
     // Given: type Foo = Int  (TypeAlias body = Type.Named pointing to Int)
     // When: t.body
     // Then: Type whose Named symbolId target resolves to a symbol with name Int
-    "Leaf 91: typealias-body-Type: TypeAlias.body field holds the alias body as a Type" in run {
+    "Leaf 91: typealias-body-Type: TypeAlias.body field holds the alias body as a Type" in {
         val intId = SymbolId(0)
         val intSymbol = Tasty.Symbol.Class(
             intId,
@@ -107,7 +107,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
     // Given: type Foo[A,B] = (A,B)  (TypeAlias with 2 type param ids)
     // When: t.typeParams
     // Then: Chunk[TypeParam] size 2
-    "Leaf 92: typealias-typeParams: TypeAlias.typeParams returns Chunk[TypeParam] size 2" in run {
+    "Leaf 92: typealias-typeParams: TypeAlias.typeParams returns Chunk[TypeParam] size 2" in {
         // Indices: tpA=0, tpB=1, typeAlias=2
         val tpA       = makeTypeParam(0, "A", ownerId = 2)
         val tpB       = makeTypeParam(1, "B", ownerId = 2)
@@ -126,7 +126,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
     // Given: opaque type Money = Long  (OpaqueType body = Type.Named pointing to Long)
     // When: o.body
     // Then: Type.Named whose target resolves to symbol named Long
-    "Leaf 93: opaque-body-Type: OpaqueType.body holds the underlying Type" in run {
+    "Leaf 93: opaque-body-Type: OpaqueType.body holds the underlying Type" in {
         val longId = SymbolId(0)
         val longSymbol = Tasty.Symbol.Class(
             longId,
@@ -168,7 +168,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
     // Given: opaque type N <: Int = Int  (OpaqueType with bounds upper=Int)
     // When: o.bounds
     // Then: TypeBounds whose upper is a Type.Named resolving to Int
-    "Leaf 94: opaque-bounds: OpaqueType.bounds field exposes TypeBounds with correct upper type" in run {
+    "Leaf 94: opaque-bounds: OpaqueType.bounds field exposes TypeBounds with correct upper type" in {
         val intId = SymbolId(0)
         val intSymbol = Tasty.Symbol.Class(
             intId,
@@ -210,7 +210,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends Test:
     // Given: opaque type Box[A] = A  (OpaqueType with 1 type param)
     // When: o.typeParams
     // Then: Chunk[TypeParam] size 1 name A
-    "Leaf 95: opaque-typeParams: OpaqueType.typeParams returns Chunk[TypeParam] size 1 name A" in run {
+    "Leaf 95: opaque-typeParams: OpaqueType.typeParams returns Chunk[TypeParam] size 1 name A" in {
         // Indices: tpA=0, opaqueType=1
         val tpA        = makeTypeParam(0, "A", ownerId = 1)
         val bounds     = Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any)

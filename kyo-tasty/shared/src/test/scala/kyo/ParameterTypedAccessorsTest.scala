@@ -8,7 +8,7 @@ import kyo.Tasty.SymbolId
   * Leaf 98: isImplicit returns true for a Given-flagged Parameter. Leaf 99: isByName returns true for a Parameter with a Type.ByName
   * declared type. Leaf 100: isRepeated returns true for a Parameter with a Type.Repeated declared type.
   */
-class ParameterTypedAccessorsTest extends Test:
+class ParameterTypedAccessorsTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -51,7 +51,7 @@ class ParameterTypedAccessorsTest extends Test:
     // Given: def f(x: Int = 0) -- parameter with defaultArgId pointing to a default-arg method
     // When: p.defaultArg
     // Then: Maybe.Present(_)
-    "Leaf 96: defaultArg-present: Parameter.defaultArg returns Present when defaultArgId is Present" in run {
+    "Leaf 96: defaultArg-present: Parameter.defaultArg returns Present when defaultArgId is Present" in {
         // defaultArgMethod at index 0, parameter at index 1
         val defaultArgMethod = makeDefaultArgSymbol(0)
         val param            = makeParameter(1, "x", Maybe.Absent, defaultArgId = Maybe(SymbolId(0)))
@@ -66,7 +66,7 @@ class ParameterTypedAccessorsTest extends Test:
     // Given: def f(x: Int) -- parameter with no default argument
     // When: p.defaultArg
     // Then: Maybe.Absent
-    "Leaf 97: defaultArg-absent: Parameter.defaultArg returns Absent when defaultArgId is Absent" in run {
+    "Leaf 97: defaultArg-absent: Parameter.defaultArg returns Absent when defaultArgId is Absent" in {
         val param = makeParameter(0, "x", Maybe.Absent, defaultArgId = Maybe.Absent)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(param)).map: cp =>
             given Tasty.Classpath       = cp
@@ -79,7 +79,7 @@ class ParameterTypedAccessorsTest extends Test:
     // Given: def f(using x: Int) -- parameter with Flag.Given
     // When: p.isImplicit
     // Then: true
-    "Leaf 98: isImplicit-given: Parameter.isImplicit returns true for a Given-flagged parameter" in run {
+    "Leaf 98: isImplicit-given: Parameter.isImplicit returns true for a Given-flagged parameter" in {
         val givenFlags = Tasty.Flags(Tasty.Flag.Given)
         val param      = makeParameter(0, "x", Maybe.Absent, flags = givenFlags)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(param)).map: cp =>
@@ -91,7 +91,7 @@ class ParameterTypedAccessorsTest extends Test:
     // Given: Parameter declaredType = Type.ByName(underlying)
     // When: p.isByName
     // Then: true
-    "Leaf 99: isByName-typed: Parameter.isByName returns true when declaredType is Type.ByName" in run {
+    "Leaf 99: isByName-typed: Parameter.isByName returns true when declaredType is Type.ByName" in {
         val byNameType = Tasty.Type.ByName(Tasty.Type.Nothing)
         val param      = makeParameter(0, "x", Maybe.Present(byNameType))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(param)).map: cp =>
@@ -110,7 +110,7 @@ class ParameterTypedAccessorsTest extends Test:
     // Given: Parameter declaredType = Type.Repeated(elem)
     // When: p.isRepeated
     // Then: true
-    "Leaf 100: isRepeated-typed: Parameter.isRepeated returns true when declaredType is Type.Repeated" in run {
+    "Leaf 100: isRepeated-typed: Parameter.isRepeated returns true when declaredType is Type.Repeated" in {
         val repeatedType = Tasty.Type.Repeated(Tasty.Type.Nothing)
         val param        = makeParameter(0, "xs", Maybe.Present(repeatedType))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(param)).map: cp =>

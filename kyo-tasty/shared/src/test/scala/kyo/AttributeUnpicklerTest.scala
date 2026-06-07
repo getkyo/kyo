@@ -5,10 +5,10 @@ import kyo.internal.tasty.reader.AttributeUnpickler
 import kyo.internal.tasty.reader.FileAttributes
 import kyo.internal.tasty.reader.TastyFormat
 
-class AttributeUnpicklerTest extends Test:
+class AttributeUnpicklerTest extends kyo.test.Test[Any]:
 
     // Test 12: a TASTy file with no Attributes section returns FileAttributes.default with all flags false.
-    "absent Attributes section returns FileAttributes.default (all flags false)" in run {
+    "absent Attributes section returns FileAttributes.default (all flags false)" in {
         // Empty view = no attributes section payload.
         val view   = ByteView(Array.empty[Byte])
         val result = Abort.run[TastyError](AttributeUnpickler.read(view, Array.empty))
@@ -30,7 +30,7 @@ class AttributeUnpicklerTest extends Test:
     }
 
     // Test 13: a synthesized Attributes section with isJava = true is parsed correctly.
-    "synthesized Attributes section with JAVAattr sets isJava=true" in run {
+    "synthesized Attributes section with JAVAattr sets isJava=true" in {
         // JAVAattr = tag 5 (no payload)
         // EXPLICITNULLSattr = tag 2 (no payload)
         val attrs = Array[Byte](
@@ -55,7 +55,7 @@ class AttributeUnpicklerTest extends Test:
     }
 
     // Test 14: a synthesized Attributes section with explicitNulls = true sets that flag.
-    "synthesized Attributes section with EXPLICITNULLSattr sets explicitNulls=true" in run {
+    "synthesized Attributes section with EXPLICITNULLSattr sets explicitNulls=true" in {
         val attrs = Array[Byte](TastyFormat.EXPLICITNULLSattr.toByte)
         val view  = ByteView(attrs)
         Abort.run[TastyError](AttributeUnpickler.read(view, Array.empty)).map { result =>
@@ -74,7 +74,7 @@ class AttributeUnpicklerTest extends Test:
     }
 
     // Test 15: sourceFile attribute is decoded as Present("Foo.scala") when present, Absent otherwise.
-    "SOURCEFILEattr decodes to Present(sourceFileName) when present" in run {
+    "SOURCEFILEattr decodes to Present(sourceFileName) when present" in {
         import AllowUnsafe.embrace.danger
         // Build a names array with "Foo.scala" at index 0.
         val nameStr                  = "Foo.scala"

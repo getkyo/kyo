@@ -4,7 +4,7 @@ package kyo
   *
   * Leaf id:7. Pins: INV-005, INV-008.
   */
-class ShowMethodTest extends Test with TastyTestSupport:
+class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
 
     import AllowUnsafe.embrace.danger
 
@@ -117,7 +117,7 @@ class ShowMethodTest extends Test with TastyTestSupport:
     end method
 
     // Leaf id:7 -- Tasty.show(Symbol), Tasty.show(Type), Tasty.show(Tree), Tasty.show(Constant) emit non-empty strings
-    "Tasty.show(Symbol) returns non-empty string" in run {
+    "Tasty.show(Symbol) returns non-empty string" in {
         makeClasspath.flatMap: cp =>
             Tasty.withClasspath(cp):
                 val sym = cp.findClass("p.Foo").get
@@ -126,7 +126,7 @@ class ShowMethodTest extends Test with TastyTestSupport:
                     succeed
     }
 
-    "Tasty.show(Type) returns non-empty string" in run {
+    "Tasty.show(Type) returns non-empty string" in {
         makeClasspath.flatMap: cp =>
             Tasty.withClasspath(cp):
                 import kyo.Tasty.SymbolId
@@ -136,7 +136,7 @@ class ShowMethodTest extends Test with TastyTestSupport:
                     succeed
     }
 
-    "Tasty.show(Tree) returns non-empty string" in run {
+    "Tasty.show(Tree) returns non-empty string" in {
         makeClasspath.flatMap: cp =>
             Tasty.withClasspath(cp):
                 val tree: Tasty.Tree = Tasty.Tree.Literal(Tasty.Constant.IntConst(42))
@@ -235,7 +235,7 @@ class ShowMethodTest extends Test with TastyTestSupport:
     // Given: method def map[B](f: A => B): List[B]
     // When: Tasty.signature(mapMethod)
     // Then: exact string "def map[B](f: A => B): List[B]"
-    "renderType renders Function as Scala arrow syntax in signature" in run {
+    "renderType renders Function as Scala arrow syntax in signature" in {
         import kyo.Tasty.SymbolId
         // id=0: TypeParam "A" (self-owned)
         // id=1: TypeParam "B" (self-owned)
@@ -264,7 +264,7 @@ class ShowMethodTest extends Test with TastyTestSupport:
     // Given: method def pair: (A, B)
     // When: Tasty.signature(pairMethod)
     // Then: exact string "def pair: (A, B)"
-    "renderType renders Tuple return type in signature" in run {
+    "renderType renders Tuple return type in signature" in {
         import kyo.Tasty.SymbolId
         // id=0: TypeParam "A" (self-owned)
         // id=1: TypeParam "B" (self-owned)
@@ -289,7 +289,7 @@ class ShowMethodTest extends Test with TastyTestSupport:
     // Given: method def fill(xs: Array[Int]): Unit
     // When: Tasty.signature(fillMethod)
     // Then: exact string "def fill(xs: Array[Int]): Unit"
-    "renderType renders Array param type in signature" in run {
+    "renderType renders Array param type in signature" in {
         import kyo.Tasty.SymbolId
         // id=0: Class "Int" (self-owned)
         // id=1: Class "Unit" (self-owned)
@@ -316,7 +316,7 @@ class ShowMethodTest extends Test with TastyTestSupport:
     // Given: method def combine(f: (A, B) => C): C
     // When: Tasty.signature(combineMethod)
     // Then: exact string "def combine(f: (A, B) => C): C"
-    "renderType renders multi-arg Function param type in signature" in run {
+    "renderType renders multi-arg Function param type in signature" in {
         import kyo.Tasty.SymbolId
         // id=0: TypeParam "A" (self-owned)
         // id=1: TypeParam "B" (self-owned)
@@ -349,7 +349,7 @@ class ShowMethodTest extends Test with TastyTestSupport:
     // Given: method def eval(x: => Int): Int
     // When: Tasty.signature(evalMethod)
     // Then: exact string "def eval(x: => Int): Int"
-    "renderType renders ByName param type in signature" in run {
+    "renderType renders ByName param type in signature" in {
         import kyo.Tasty.SymbolId
         // id=0: Class "Int" (self-owned)
         // id=1: Parameter "x" with declaredType==> Int

@@ -10,7 +10,7 @@ import scala.collection.mutable
   * breaking change: minor=6 is a breaking bump (FQNMAP__ section added).
   * Snapshots with minor < 6 are rejected with SnapshotVersionMismatch to force cold re-decode.
   */
-class SnapshotReaderTest extends Test:
+class SnapshotReaderTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -50,7 +50,7 @@ class SnapshotReaderTest extends Test:
     // Test 3: a snapshot with minorVersion=2 (below minimum of 5)
     // must be rejected with SnapshotVersionMismatch to force cold re-decode. Before this
     // snapshot loaded successfully; the bump to minor=4 is a breaking change.
-    "minor=2 snapshot (no PARENTS/MEMBERS/TPARAMS_ sections) is rejected with SnapshotVersionMismatch" in run {
+    "minor=2 snapshot (no PARENTS/MEMBERS/TPARAMS_ sections) is rejected with SnapshotVersionMismatch" in {
         // Build a minimal valid KRFL snapshot at minorVersion=2 (same majorVersion=1 as current).
         // The snapshot contains only NAMES and SYMBOLS sections (no PARENTS/MEMBERS/TPARAMS_).
         // NAMES section: 0 names.

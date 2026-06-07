@@ -21,7 +21,7 @@ import kyo.internal.tasty.snapshot.SnapshotReader
   * scala.Option.permittedSubclassIds >= 2) are removed; the shape assertions (round-trip preserves count equality) are preserved. All leaves
   * now run on JVM, JS, and Native.
   */
-class SnapshotFidelityTest extends Test:
+class SnapshotFidelityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -31,7 +31,7 @@ class SnapshotFidelityTest extends Test:
     // Then: warm count >= cold count; permittedSubclassIds sizes match for any sealed class
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly via withRoundTrip (real stdlib); now uses embedded fixtures.
-    "snapshot warm-load preserves annotations and permittedSubclassIds" in run {
+    "snapshot warm-load preserves annotations and permittedSubclassIds" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
             for
                 coldAnnot <- coldCp.symbolsAnnotatedWith("scala.deprecated")
@@ -75,7 +75,7 @@ class SnapshotFidelityTest extends Test:
     // Then: sizes match for any class that has permittedSubclassIds in cold
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly via withRoundTrip; now uses embedded fixtures.
-    "permittedSubclassIds survives in-memory snapshot round-trip" in run {
+    "permittedSubclassIds survives in-memory snapshot round-trip" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
             Kyo.foreachDiscard(coldCp.allClassLike):
                 case cold: Tasty.Symbol.Class =>
@@ -107,7 +107,7 @@ class SnapshotFidelityTest extends Test:
     // Then: warm count >= cold count (annotations survive in-memory snapshot round-trip)
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly with `>= 5` lower bound on real stdlib; now uses embedded fixtures (bound removed).
-    "symbolsAnnotatedWith count survives in-memory snapshot round-trip" in run {
+    "symbolsAnnotatedWith count survives in-memory snapshot round-trip" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
             for
                 coldA <- coldCp.symbolsAnnotatedWith("scala.deprecated")
@@ -128,7 +128,7 @@ class SnapshotFidelityTest extends Test:
     // Then: javaMetadata Present in warm (if any javaMetadata symbol exists in fixtures); fields match
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly (required real stdlib .class files); embedded fixtures suffice for shape assertion.
-    "javaMetadata survives in-memory snapshot round-trip" in run {
+    "javaMetadata survives in-memory snapshot round-trip" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
             coldCp.allClassLike.flatMap:
                 case c: Tasty.Symbol.ClassLike if c.javaMetadata.isDefined => Chunk(c)
@@ -180,7 +180,7 @@ class SnapshotFidelityTest extends Test:
     // When: comparing symbols.size between cold and warm
     // Then: symbol count is preserved end-to-end via MemoryFileSource (no disk needed)
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; works on JVM, JS, Native.
-    "in-memory snapshot round-trip preserves symbols count" in run {
+    "in-memory snapshot round-trip preserves symbols count" in {
         TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
             assert(
                 cold.symbols.size == warm.symbols.size,
@@ -194,7 +194,7 @@ class SnapshotFidelityTest extends Test:
     // When: writing it to a MemoryFileSource and calling SnapshotReader.read
     // Then: result is Failure(TastyError.SnapshotVersionMismatch) where found.minor == 3 and supported.minor == current
     // Cross-platform: migrated from jvmOnly to use MemoryFileSource.
-    "old-snapshot-triggers-cold-decode" in run {
+    "old-snapshot-triggers-cold-decode" in {
         Sync.defer:
             val fakeOld = new Array[Byte](36)
             fakeOld(0) = 'K'.toByte

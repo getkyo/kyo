@@ -6,7 +6,7 @@ import kyo.Tasty.SymbolId
   *
   * Fixture: a synthetic classpath with pkg.A (class with method foo and val x, parent B) and pkg.B (class).
   */
-class SteeringTargetUseCaseTest extends Test:
+class SteeringTargetUseCaseTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -96,7 +96,7 @@ class SteeringTargetUseCaseTest extends Test:
     // Given: fixture with pkg.A having method foo, val x, parent B
     // When: run the steering snippet
     // Then: cls is Present(c); c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method]) includes "foo"; c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Val]) includes "x"; c.parents includes "pkg.B"
-    "Leaf 175: steering target use case runs end-to-end" in run {
+    "Leaf 175: steering target use case runs end-to-end" in {
         buildFixture.flatMap: cp =>
             val cls = cp.findClass("pkg.A")
             assert(cls.isDefined, "findClass(\"pkg.A\") must return Present")
@@ -134,7 +134,7 @@ class SteeringTargetUseCaseTest extends Test:
     // Given: same fixture
     // When: bind val ms: Chunk[Tasty.Symbol.Method] = c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method])
     // Then: compiles; ms.size == 1 (buildFixture declares exactly one method "foo" in class A)
-    "Leaf 176: c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method]) returns Chunk[Symbol.Method] with size == 1" in run {
+    "Leaf 176: c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method]) returns Chunk[Symbol.Method] with size == 1" in {
         buildFixture.map: cp =>
             cp.findClass("pkg.A") match
                 case Maybe.Present(c) =>
@@ -154,7 +154,7 @@ class SteeringTargetUseCaseTest extends Test:
     // Given: same fixture loaded
     // When: walk cp.symbols and invoke every predicate from the 40-set on each symbol
     // Then: no NoSuchMethodError; every invocation returns a Boolean
-    "Leaf 177: all 40 flag predicates invoke without error on every symbol in the fixture" in run {
+    "Leaf 177: all 40 flag predicates invoke without error on every symbol in the fixture" in {
         buildFixture.map: cp =>
             cp.symbols.foreach: sym =>
                 // 40 flag predicates must all be callable
@@ -173,7 +173,7 @@ class SteeringTargetUseCaseTest extends Test:
     // Given: same fixture
     // When: cp.symbols.size
     // Then: returns count of all loaded symbols; static type is Chunk[Tasty.Symbol]
-    "Leaf 178: cp.symbols returns a Chunk[Tasty.Symbol] with the expected count" in run {
+    "Leaf 178: cp.symbols returns a Chunk[Tasty.Symbol] with the expected count" in {
         buildFixture.map: cp =>
             val all: Chunk[Tasty.Symbol] = cp.symbols
             assert(all.length == 5, s"Expected 5 symbols (B, A, foo, x, pkg) but got ${all.length}")

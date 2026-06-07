@@ -19,7 +19,7 @@ import scala.collection.mutable
   * Tests P02.3 / P02.4 use the embedded PlainClass / SomeCaseClass fixtures directly.
   * Leaves are numbered P02.1 through P02.5 for traceability with the exploration document.
   */
-class DecoderFidelity5Phase02Test extends Test:
+class DecoderFidelity5Phase02Test extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -143,7 +143,7 @@ class DecoderFidelity5Phase02Test extends Test:
     // When: write snapshot and read back (warm load)
     // Then: warm subclassIndex.size == cold subclassIndex.size (1 entry, Animal -> [Dog, Cat])
     // AND warm.directSubclassesOf(Animal) == cold.directSubclassesOf(Animal)
-    "P02.1 subclassIndex populated on warm load matches cold load" in run {
+    "P02.1 subclassIndex populated on warm load matches cold load" in {
         Abort.run[TastyError]:
             syntheticCp.flatMap: cold =>
                 roundTrip(cold, 0x01).map: (cold, warm) =>
@@ -179,7 +179,7 @@ class DecoderFidelity5Phase02Test extends Test:
     // When: write snapshot and read back (warm load)
     // Then: warm companionIndex.size == cold companionIndex.size (2 entries)
     // AND warm.companion(Foo) resolves to Foo$ and vice versa
-    "P02.2 companionIndex populated on warm load matches cold load" in run {
+    "P02.2 companionIndex populated on warm load matches cold load" in {
         Abort.run[TastyError]:
             syntheticCp.flatMap: cold =>
                 roundTrip(cold, 0x02).map: (cold, warm) =>
@@ -215,7 +215,7 @@ class DecoderFidelity5Phase02Test extends Test:
     // When: we compare symbols with the same FQN from cp1 and cp2 using ==
     // Then: they are equal (because equals is overridden to use id.value, not body bytes)
     // AND they serve as equivalent HashMap keys cross-classpath
-    "P02.3: Symbol equality is id.value-based; two cold loads of same input produce equal Symbols" in run {
+    "P02.3: Symbol equality is id.value-based; two cold loads of same input produce equal Symbols" in {
         Scope.run:
             Abort.run[TastyError]:
                 // Load cp1
@@ -272,7 +272,7 @@ class DecoderFidelity5Phase02Test extends Test:
     // Given: a Classpath cp produced by ClasspathOrchestrator.init
     // When: Tasty.Classpath.copyWithErrors(cp, cp.errors) is called
     // Then: the resulting Classpath equals the original (bodyMemo is NOT part of Classpath since)
-    "P02.4 cp.copy produces structurally equal classpath (bodyMemo moved to DecodeContext)" in run {
+    "P02.4 cp.copy produces structurally equal classpath (bodyMemo moved to DecodeContext)" in {
         Scope.run:
             Abort.run[TastyError]:
                 val src = MemSrc()
@@ -300,7 +300,7 @@ class DecoderFidelity5Phase02Test extends Test:
     // Given: synthetic cp with subclassIndex: Animal -> [Dog, Cat]
     // When: write snapshot and reload; call subclassesOf(Animal) on both cold and warm
     // Then: both return 2 entries (Dog, Cat); sizes match
-    "P02.5 transitive subclassesOf parity between cold and warm load" in run {
+    "P02.5 transitive subclassesOf parity between cold and warm load" in {
         Abort.run[TastyError]:
             syntheticCp.flatMap: cold =>
                 roundTrip(cold, 0x05).map: (cold, warm) =>

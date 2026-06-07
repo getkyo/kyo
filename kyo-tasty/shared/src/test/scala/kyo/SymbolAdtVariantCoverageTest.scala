@@ -9,7 +9,7 @@ import kyo.Tasty.SymbolId
   * When: the test reads sym.sourcePosition for each.
   * Then: every value is a Maybe[Position]; pattern matches against Maybe.Present(p) and Maybe.Absent are exhaustive.
   */
-class SymbolAdtVariantCoverageTest extends Test:
+class SymbolAdtVariantCoverageTest extends kyo.test.Test[Any]:
 
     // ── Fixture helpers ──────────────────────────────────────────────────────
 
@@ -236,31 +236,26 @@ class SymbolAdtVariantCoverageTest extends Test:
 
     // Confirms that ClassLike subtypes no longer carry a body field (Cat 17 Option A).
     "Symbol.Class has no body field (ClassLike.body accessor removed)" in {
-        assert(
-            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Class).body").nonEmpty,
-            "Symbol.Class must not have a body field"
-        )
-        assert(
-            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.ClassLike).body").nonEmpty,
-            "Symbol.ClassLike must not have a body accessor"
-        )
+        val __tcErrors1 = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Class).body").length
+
+        assert(__tcErrors1 > 0, "Symbol.Class must not have a body field")
+        val __tcErrors2 = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.ClassLike).body").length
+
+        assert(__tcErrors2 > 0, "Symbol.ClassLike must not have a body accessor")
         succeed
     }
 
     // Confirms that Method, Val, Var no longer carry a body field (Cat 17 Option A).
     "Symbol.Method, Val, Var have no body field" in {
-        assert(
-            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Method).body").nonEmpty,
-            "Symbol.Method must not have a body field"
-        )
-        assert(
-            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Val).body").nonEmpty,
-            "Symbol.Val must not have a body field"
-        )
-        assert(
-            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Var).body").nonEmpty,
-            "Symbol.Var must not have a body field"
-        )
+        val __tcErrors3 = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Method).body").length
+
+        assert(__tcErrors3 > 0, "Symbol.Method must not have a body field")
+        val __tcErrors4 = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Val).body").length
+
+        assert(__tcErrors4 > 0, "Symbol.Val must not have a body field")
+        val __tcErrors5 = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Var).body").length
+
+        assert(__tcErrors5 > 0, "Symbol.Var must not have a body field")
         succeed
     }
 
@@ -269,10 +264,9 @@ class SymbolAdtVariantCoverageTest extends Test:
     // Confirms that Symbol.Unresolved is not a valid symbol subtype (Cat 19 deletion).
     "unresolvedCaseDeleted: Symbol.Unresolved is not part of the ADT" in {
         // Symbol.Unresolved was deleted in. A compileErrors probe must return non-empty.
-        assert(
-            compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Unresolved)").nonEmpty,
-            "Symbol.Unresolved must not exist after "
-        )
+        val __tcErrors6 = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Unresolved)").length
+
+        assert(__tcErrors6 > 0, "Symbol.Unresolved must not exist after ")
         succeed
     }
 
@@ -281,10 +275,9 @@ class SymbolAdtVariantCoverageTest extends Test:
     // Confirms that Symbol.makePlaceholder is not a valid method (Cat 19 deletion).
     "makePlaceholderDeleted: Symbol.makePlaceholder is not available" in {
         // Symbol.makePlaceholder was deleted in. A compileErrors probe must return non-empty.
-        assert(
-            compiletime.testing.typeCheckErrors("kyo.Tasty.Symbol.makePlaceholder(???, ???, ???)").nonEmpty,
-            "Symbol.makePlaceholder must not exist after "
-        )
+        val __tcErrors7 = compiletime.testing.typeCheckErrors("kyo.Tasty.Symbol.makePlaceholder(???, ???, ???)").length
+
+        assert(__tcErrors7 > 0, "Symbol.makePlaceholder must not exist after ")
         succeed
     }
 

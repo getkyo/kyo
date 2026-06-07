@@ -16,13 +16,13 @@ import kyo.internal.tasty.query.TastyState
   *
   * script/REPL ergonomic, effect-row contract.
   */
-class FallbackBindingTest extends Test:
+class FallbackBindingTest extends kyo.test.Test[Any]:
 
     // ── Leaf 1: JVM fallback yields non-empty Classpath ───────────────────────
     // Given: no Tasty.withClasspath call; JVM java.class.path is non-empty at test time.
     // When: Tasty.classpath.map(_.symbols.size) without any withClasspath scope.
     // Then: returns a value >= 1; lazy init runs once and is cached.
-    "Leaf 1: JVM fallback yields non-empty Classpath when no withClasspath scope is active" in runJVM {
+    "Leaf 1: JVM fallback yields non-empty Classpath when no withClasspath scope is active".onlyJvm in {
         Tasty.classpath.map: cp =>
             val n = cp.symbols.size
             assert(n >= 1, s"JVM fallback must load at least 1 symbol from java.class.path; got $n")
@@ -33,7 +33,7 @@ class FallbackBindingTest extends Test:
     // Given: no Tasty.withClasspath call on JS; PlatformFallback returns Binding.empty.
     // When: Tasty.classpath.map(_.symbols.size).
     // Then: returns 0; Tasty.findClass returns Maybe.Absent.
-    "Leaf 2: JS fallback yields empty Classpath" taggedAs jsOnly in run {
+    "Leaf 2: JS fallback yields empty Classpath".onlyJs in {
         Tasty.classpath.map: cp =>
             val n = cp.symbols.size
             assert(n == 0, s"JS fallback must yield 0 symbols; got $n")
@@ -44,7 +44,7 @@ class FallbackBindingTest extends Test:
     // Given: no Tasty.withClasspath call on Native; PlatformFallback returns Binding.empty.
     // When: Tasty.classpath.map(_.symbols.size).
     // Then: returns 0.
-    "Leaf 3: Native fallback yields empty Classpath" taggedAs nativeOnly in run {
+    "Leaf 3: Native fallback yields empty Classpath".onlyNative in {
         Tasty.classpath.map: cp =>
             val n = cp.symbols.size
             assert(n == 0, s"Native fallback must yield 0 symbols; got $n")
@@ -58,7 +58,7 @@ class FallbackBindingTest extends Test:
     // Rationale: TastyState.global is a lazy val; both reads get the same Binding instance (eq holds).
     // JVM only: JS/Native fallback always returns Binding.empty (static); the eq check is trivially true
     //           but has no observable "init" meaning. Test is gated jvmOnly for semantic clarity.
-    "Leaf 4: TastyState.global lazy val is initialized at most once (reference equality)" in runJVM {
+    "Leaf 4: TastyState.global lazy val is initialized at most once (reference equality)".onlyJvm in {
         // Access global twice; both must return the same object reference.
         val b1 = TastyState.global
         val b2 = TastyState.global
@@ -70,7 +70,7 @@ class FallbackBindingTest extends Test:
     // Given: explicit Tasty.withClasspath(cp) binding with a known Classpath.
     // When: Tasty.classpath reads the binding inside the withClasspath scope.
     // Then: returns the fixture-bound count, NOT the fallback count.
-    "Leaf 5: Tasty.withClasspath(cp) overrides the module-level fallback binding" in run {
+    "Leaf 5: Tasty.withClasspath(cp) overrides the module-level fallback binding" in {
         val cp = Tasty.Classpath(
             symbols = Chunk(
                 Tasty.Symbol.Package(
@@ -102,7 +102,7 @@ class FallbackBindingTest extends Test:
     //        test java.class.path, so kyo-tasty-fixtures symbols are findable.
     // When: Tasty.classpath.map(_.symbols.nonEmpty) using the module-level JVM fallback.
     // Then: fallback classpath is non-empty (verified by leaf 1); Tasty.findClassLike on a fixture class succeeds.
-    "Leaf 6: Tasty query works under JVM fallback: non-empty classpath implies findable symbols" in runJVM {
+    "Leaf 6: Tasty query works under JVM fallback: non-empty classpath implies findable symbols".onlyJvm in {
         // The JVM fallback loads java.class.path which includes kyo-tasty-fixtures.
         // Verify that the fallback classpath is non-empty and allClasses returns at least one symbol.
         Tasty.allClasses.map: classes =>
@@ -118,7 +118,7 @@ class FallbackBindingTest extends Test:
     // Rationale (supervisor C2 resolution): bodyTree first checks sym.body; if Absent it short-circuits
     //   without consulting the DecodeContext. So for any symbol with no body bytes, bodyTree always
     //   returns Maybe.Absent regardless of the active binding.
-    "Leaf 7: Tasty.bodyTree returns Maybe.Absent for a symbol with body = Maybe.Absent" in run {
+    "Leaf 7: Tasty.bodyTree returns Maybe.Absent for a symbol with body = Maybe.Absent" in {
         // Use a synthetic Method with no body bytes; bodyTree must return Absent.
         val noBodyMethod = Tasty.Symbol.Method(
             id = Tasty.SymbolId(99),

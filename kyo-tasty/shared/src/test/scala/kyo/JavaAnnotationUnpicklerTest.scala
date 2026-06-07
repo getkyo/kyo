@@ -9,7 +9,7 @@ import kyo.internal.tasty.classfile.JavaAnnotationUnpickler
   *
   * All tests are in shared/ (cross-platform). JavaAnnotationUnpickler is pure byte arithmetic with no JVM I/O.
   */
-class JavaAnnotationUnpicklerTest extends Test:
+class JavaAnnotationUnpicklerTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -46,7 +46,7 @@ class JavaAnnotationUnpicklerTest extends Test:
     // Assert: result is Chunk of one JavaAnnotation; annotationClass.name.asString == "java.lang.Deprecated";
     //         values map is empty.
     // -------------------------------------------------------------------------
-    "readAnnotations decodes @Deprecated (no pairs) into JavaAnnotation with name java.lang.Deprecated" in run {
+    "readAnnotations decodes @Deprecated (no pairs) into JavaAnnotation with name java.lang.Deprecated" in {
         val poolBytes = buildUtf8OnlyPool("Ljava/lang/Deprecated;")
         val poolView  = ByteView(poolBytes)
         Abort.run(ConstantPool.read(poolView, "<test>")).map:
@@ -85,7 +85,7 @@ class JavaAnnotationUnpicklerTest extends Test:
     //       element_value: u1 tag='s', u2 const_index=4
     // Assert: values == Map(Name("value") -> ArrayVal(Chunk(StringVal("a"), StringVal("b"))))
     // -------------------------------------------------------------------------
-    "readAnnotations decodes @Foo(value={\"a\",\"b\"}) into ArrayVal(StringVal,StringVal)" in run {
+    "readAnnotations decodes @Foo(value={\"a\",\"b\"}) into ArrayVal(StringVal,StringVal)" in {
         val poolBytes = buildUtf8OnlyPool("LFoo;", "value", "a", "b")
         val poolView  = ByteView(poolBytes)
         Abort.run(ConstantPool.read(poolView, "<test>")).map:

@@ -20,7 +20,7 @@ import kyo.internal.TestClasspaths
   * `TestClasspaths.withClasspath`, so JVM (real classpath), JS (embedded), and
   * Native (embedded) all dispatch to the same checks.
   */
-class PortedTastyBugTest extends Test:
+class PortedTastyBugTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -33,7 +33,7 @@ class PortedTastyBugTest extends Test:
     // TASTy level.
     // Post-fix behavior: `findClass` returns Absent for the FQN; only
     // `findObject` resolves it.
-    "tasty-query#74: object FQN exposes only the Object symbol, not a Class" in run {
+    "tasty-query#74: object FQN exposes only the Object symbol, not a Class" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val fqn      = s"$FixturePkg.PortedBug74Object"
             val asClass  = cp.findClass(fqn)
@@ -50,7 +50,7 @@ class PortedTastyBugTest extends Test:
     // module classes could not be found unless companion was loaded first.
     // Post-fix behavior: deeply-nested packages and the object inside them are
     // both reachable by FQN.
-    "tasty-query#71/#72: nested package member and inner object both resolve by FQN" in run {
+    "tasty-query#71/#72: nested package member and inner object both resolve by FQN" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val pkgFqn    = s"$FixturePkg.portedBug71Outer.portedBug71Inner"
             val markerFqn = s"$pkgFqn.Marker"
@@ -67,7 +67,7 @@ class PortedTastyBugTest extends Test:
     // infinite loop in Symbols.scala.
     // Post-fix behavior: a subtype query on a `outer.Inner` reference terminates
     // and returns a definitive verdict.
-    "tasty-query#193: subtype query on path-dependent inner class terminates" in run {
+    "tasty-query#193: subtype query on path-dependent inner class terminates" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             Tasty.withClasspath(cp):
                 val outer = cp.findClass(s"$FixturePkg.PortedBug193Outer")
@@ -92,7 +92,7 @@ class PortedTastyBugTest extends Test:
     // Post-fix behavior: the Parent class still exposes its `y` val as a member;
     // the Child class exposes only its private ctor parameter, not the inherited
     // val (which is fine for findMember; the bug was in qualifier resolution).
-    "tasty-query#195: parent val survives findMember even when child has private ctor param of same name" in run {
+    "tasty-query#195: parent val survives findMember even when child has private ctor param of same name" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val parent = cp.findClass(s"$FixturePkg.PortedBug195$$.Parent")
                 .orElse(cp.findClass(s"$FixturePkg.PortedBug195$$Parent"))
@@ -113,7 +113,7 @@ class PortedTastyBugTest extends Test:
     // Post-fix behavior: when a file contains both a class C and top-level
     // defs (which compile to a `C$package` synthetic), both the user class and
     // the synthetic package object are reachable.
-    "tasty-query#263: class and top-level defs in same file produce both class and package-object" in run {
+    "tasty-query#263: class and top-level defs in same file produce both class and package-object" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val cls = cp.findClass(s"$FixturePkg.PortedBug263ClassAndPackageObjectSameName")
             assert(cls.isDefined, "user class must be findable")
@@ -129,7 +129,7 @@ class PortedTastyBugTest extends Test:
     // Symptom: computing the type of `new java.lang.Enum[Foo]()` inside an enum
     // throws NonMethodReferenceException.
     // Post-fix behavior: decoding the enum's body or methods does not raise.
-    "tasty-query#380: enum extending java.lang.Enum[Self] decodes without raising" in run {
+    "tasty-query#380: enum extending java.lang.Enum[Self] decodes without raising" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClassLike(s"$FixturePkg.PortedBug380Foo") match
                 case kyo.Maybe.Present(sym) =>
@@ -148,7 +148,7 @@ class PortedTastyBugTest extends Test:
     // UnsupportedOperationException.
     // Post-fix behavior: a class with a refined type member declaration loads
     // without raising; the refining anonymous-class type member is reachable.
-    "tasty-query#415: refinement-introduced anonymous type member does not raise on decode" in run {
+    "tasty-query#415: refinement-introduced anonymous type member does not raise on decode" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug415Holder") match
                 case kyo.Maybe.Present(holder) =>
@@ -167,7 +167,7 @@ class PortedTastyBugTest extends Test:
     // https://github.com/scalacenter/tasty-query/issues/428
     // Symptom: cannot resolve a member of a value class.
     // Post-fix behavior: AnyVal subclass's user-defined method is findable.
-    "tasty-query#428: value class user method is findable as a declared member" in run {
+    "tasty-query#428: value class user method is findable as a declared member" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClass(s"$FixturePkg.PortedBug428ValueClass") match
                 case kyo.Maybe.Present(cls) =>
@@ -185,7 +185,7 @@ class PortedTastyBugTest extends Test:
     // Post-fix behavior: a val whose declared type is a match-type alias
     // application loads without raising; `cp.errors` carries no MalformedSection
     // attributable to this fixture.
-    "tasty-query#134: match-type declared type decodes without raising" in run {
+    "tasty-query#134: match-type declared type decodes without raising" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug134") match
                 case kyo.Maybe.Present(holder) =>
@@ -203,7 +203,7 @@ class PortedTastyBugTest extends Test:
     // unsigned name, returning None.
     // Post-fix behavior: both overloads of `foo` are visible via declarations;
     // findMember returns at least one match.
-    "tasty-query#187: both overloads of foo are visible in declarations" in run {
+    "tasty-query#187: both overloads of foo are visible in declarations" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClass(s"$FixturePkg.PortedBug187OverloadedApply") match
                 case kyo.Maybe.Present(cls) =>
@@ -224,7 +224,7 @@ class PortedTastyBugTest extends Test:
     // Post-fix behavior: a val typed as `Int ?=> String` decodes to
     // Type.ContextFunction (not raised, not a Type.TermRef with Unresolved
     // qualifier).
-    "tasty-query#125: ContextFunction reference resolves to Type.ContextFunction" in run {
+    "tasty-query#125: ContextFunction reference resolves to Type.ContextFunction" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug125") match
                 case kyo.Maybe.Present(holder) =>
@@ -240,7 +240,7 @@ class PortedTastyBugTest extends Test:
     // https://github.com/scalacenter/tasty-query/issues/192
     // Symptom: result type of Apply trees was not instantiated.
     // Post-fix behavior: identity[A](42) decodes; the holder object loads.
-    "tasty-query#192: generic identity call decodes without raising" in run {
+    "tasty-query#192: generic identity call decodes without raising" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug192").isDefined match
                 case true  => succeed
@@ -253,7 +253,7 @@ class PortedTastyBugTest extends Test:
     // symbol.
     // Post-fix behavior: `class C extends B { def m = super.m + 10 }` decodes
     // and the method is reachable.
-    "tasty-query#224: super-select inside override decodes without raising" in run {
+    "tasty-query#224: super-select inside override decodes without raising" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClass(s"$FixturePkg.PortedBug224C") match
                 case kyo.Maybe.Present(cls) =>
@@ -270,7 +270,7 @@ class PortedTastyBugTest extends Test:
     // Symptom: UnsupportedOperationException: "TypeTreeTypeTest is not a simple name"
     // Post-fix behavior: pattern matching with qualified type-test names decodes;
     // the holder's classify method is visible.
-    "tasty-query#357: qualified TypeTest patterns decode without raising" in run {
+    "tasty-query#357: qualified TypeTest patterns decode without raising" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug357") match
                 case kyo.Maybe.Present(holder) =>
@@ -288,7 +288,7 @@ class PortedTastyBugTest extends Test:
     // per-file package declarations were left in an inconsistent state.
     // Post-fix behavior: fixture top-level method is reachable, and the
     // classpath errors are empty for our fixtures (regardless of stdlib).
-    "tasty-query#412: top-level def is reachable; fixture decode is consistent" in run {
+    "tasty-query#412: top-level def is reachable; fixture decode is consistent" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val methods = cp.allMethods.filter(_.name.asString == "portedBug412topLevel")
             assert(methods.nonEmpty, "portedBug412topLevel must be reachable via allMethods")
@@ -300,7 +300,7 @@ class PortedTastyBugTest extends Test:
     // Symptom: cannot resolve `valueOf` from `scala.Predef`.
     // Post-fix behavior: an enum that calls `Color.valueOf("Red")` decodes; the
     // surrounding `parsed` val is visible.
-    "tasty-query#414: enum.valueOf call decodes without raising" in run {
+    "tasty-query#414: enum.valueOf call decodes without raising" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug414") match
                 case kyo.Maybe.Present(holder) =>
@@ -316,7 +316,7 @@ class PortedTastyBugTest extends Test:
     // Symptom: "Unexpected type tag INLINED in SELECTtpt"
     // Post-fix behavior: an inline def returning a path-dependent type member
     // decodes; the wrapper object is reachable.
-    "tasty-query#424: inline def returning path-dependent type decodes" in run {
+    "tasty-query#424: inline def returning path-dependent type decodes" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug424") match
                 case kyo.Maybe.Present(holder) =>
@@ -334,7 +334,7 @@ class PortedTastyBugTest extends Test:
     // Post-fix behavior: a val whose declared type is
     // `scala.collection.immutable.Map[String, Int]` decodes; the holder is
     // reachable.
-    "tasty-query#464: scala.collection.immutable.Map reference decodes without raising" in run {
+    "tasty-query#464: scala.collection.immutable.Map reference decodes without raising" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug464") match
                 case kyo.Maybe.Present(holder) =>
@@ -351,7 +351,7 @@ class PortedTastyBugTest extends Test:
     // match type.
     // Post-fix behavior: a holder using a self-referential match type loads
     // without timing out; the val is visible.
-    "tasty-query#401: recursive match type holder loads without looping" in run {
+    "tasty-query#401: recursive match type holder loads without looping" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug401") match
                 case kyo.Maybe.Present(holder) =>
@@ -367,7 +367,7 @@ class PortedTastyBugTest extends Test:
     // Symptom: PolyType.resultType crashed because it expected type params for
     // `class Any`.
     // Post-fix behavior: a polymorphic method with `<: Any` bound decodes.
-    "tasty-query#108: polymorphic method with <: Any bound decodes" in run {
+    "tasty-query#108: polymorphic method with <: Any bound decodes" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClass(s"$FixturePkg.PortedBug108") match
                 case kyo.Maybe.Present(cls) =>
@@ -384,7 +384,7 @@ class PortedTastyBugTest extends Test:
     // were not supported.
     // Post-fix behavior: a holder using `type Lam[F[_]] = F[Int]` followed by
     // an instantiation loads and the type alias is visible.
-    "tasty-query#7: type lambda parameter references decode" in run {
+    "tasty-query#7: type lambda parameter references decode" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug7") match
                 case kyo.Maybe.Present(holder) =>
@@ -401,7 +401,7 @@ class PortedTastyBugTest extends Test:
     // Symptom: refinement types unsupported.
     // Post-fix behavior: a val whose declared type is a refinement decodes; the
     // alias and val are both visible.
-    "tasty-query#213: refinement type alias decodes" in run {
+    "tasty-query#213: refinement type alias decodes" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug213") match
                 case kyo.Maybe.Present(holder) =>
@@ -417,7 +417,7 @@ class PortedTastyBugTest extends Test:
     // Symptom: crashed on inner class references in java-style signatures.
     // Post-fix behavior: a method returning `Outer#Inner` decodes; method is
     // visible.
-    "tasty-query#172: Outer#Inner method signature decodes" in run {
+    "tasty-query#172: Outer#Inner method signature decodes" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClass(s"$FixturePkg.PortedBug172Outer") match
                 case kyo.Maybe.Present(cls) =>
@@ -433,7 +433,7 @@ class PortedTastyBugTest extends Test:
     // Symptom: wrong erasure of path-dependent opaque type alias.
     // Post-fix behavior: a class with an opaque type member and a wrap method
     // decodes; wrap is visible.
-    "tasty-query#403: path-dependent opaque type alias decodes" in run {
+    "tasty-query#403: path-dependent opaque type alias decodes" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClass(s"$FixturePkg.PortedBug403Container") match
                 case kyo.Maybe.Present(cls) =>
@@ -449,7 +449,7 @@ class PortedTastyBugTest extends Test:
     // Symptom: IArray erased to java.lang.Object regardless of element type.
     // Post-fix behavior: a trait declaring `def from(): IArray[String]` decodes;
     // method is visible.
-    "tasty-query#116: IArray[String] method signature decodes" in run {
+    "tasty-query#116: IArray[String] method signature decodes" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findTrait(s"$FixturePkg.PortedBug116IArraySig") match
                 case kyo.Maybe.Present(trt) =>
@@ -466,7 +466,7 @@ class PortedTastyBugTest extends Test:
     // Symptom: wrong erasure of parametric value classes.
     // Post-fix behavior: a parametric AnyVal subclass decodes; its constructor
     // and raw field are reachable.
-    "tasty-query#405: parametric value class decodes with raw field visible" in run {
+    "tasty-query#405: parametric value class decodes with raw field visible" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClass(s"$FixturePkg.PortedBug405ParamValueClass") match
                 case kyo.Maybe.Present(cls) =>
@@ -487,7 +487,7 @@ class PortedTastyBugTest extends Test:
     // Symptom: Java inner class references not supported.
     // Post-fix behavior: a method returning java.util.Map.Entry decodes; method
     // is visible.
-    "tasty-query#178: java.util.Map.Entry reference decodes" in run {
+    "tasty-query#178: java.util.Map.Entry reference decodes" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug178") match
                 case kyo.Maybe.Present(holder) =>
@@ -504,7 +504,7 @@ class PortedTastyBugTest extends Test:
     // Symptom: Java raw-type support caused endless forcing of the javalib.
     // Post-fix behavior: a class holding `java.util.List[String]` field decodes
     // without classpath errors attributable to the fixture.
-    "tasty-query#80: java.util.List[String] field does not trigger transitive forcing crash" in run {
+    "tasty-query#80: java.util.List[String] field does not trigger transitive forcing crash" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClass(s"$FixturePkg.PortedBug80UsesRawAware") match
                 case kyo.Maybe.Present(cls) =>
@@ -526,7 +526,7 @@ class PortedTastyBugTest extends Test:
     // trait with abstract inline def across project boundaries.
     // Post-fix behavior: both trait and implementing class decode; abstract and
     // concrete inline defs are visible.
-    "scala3#11075: abstract+concrete inline def pair decodes" in run {
+    "scala3#11075: abstract+concrete inline def pair decodes" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val abs = cp.findTrait(s"$FixturePkg.PortedBug11075A")
             val con = cp.findClass(s"$FixturePkg.PortedBug11075B")
@@ -546,7 +546,7 @@ class PortedTastyBugTest extends Test:
     // Symptom: pickler crash on typed-pattern bind `x @ (y: Int)`.
     // Post-fix behavior: the fixture loads and the wrapping object is visible;
     // the bug fix made bind+typed patterns round-trip safely.
-    "scala3#16843: typed-pattern bind in match decodes" in run {
+    "scala3#16843: typed-pattern bind in match decodes" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug16843") match
                 case kyo.Maybe.Present(holder) =>
@@ -563,7 +563,7 @@ class PortedTastyBugTest extends Test:
     // distinguished after pickle/unpickle.
     // Post-fix behavior: both overloads of `foo` are present after decode of
     // the subclass.
-    "scala3#7022: overloaded foo retains both alternatives after decode" in run {
+    "scala3#7022: overloaded foo retains both alternatives after decode" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClass(s"$FixturePkg.PortedBug7022C") match
                 case kyo.Maybe.Present(c) =>
@@ -580,7 +580,7 @@ class PortedTastyBugTest extends Test:
     // Symptom: default param values were not passed to scala 2 tasty-reader.
     // Post-fix behavior: the case class with a defaulted param decodes; the
     // synthetic apply$default$N method is visible on the companion (Scala 3 side).
-    "scala3#12704: case class with default param value decodes and exposes the default-arg method" in run {
+    "scala3#12704: case class with default param value decodes and exposes the default-arg method" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val obj = cp.findObject(s"$FixturePkg.PortedBug12704CaseClass")
             val cls = cp.findClass(s"$FixturePkg.PortedBug12704CaseClass")
@@ -604,7 +604,7 @@ class PortedTastyBugTest extends Test:
     // unpickling type Api from TASTy.
     // Post-fix behavior: the type-alias `Aux` with a higher-kinded refinement
     // member decodes; both the outer object and the trait are visible.
-    "scala3#25801: refinement with higher-kinded type member decodes" in run {
+    "scala3#25801: refinement with higher-kinded type member decodes" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug25801") match
                 case kyo.Maybe.Present(holder) =>
@@ -622,7 +622,7 @@ class PortedTastyBugTest extends Test:
     // Symptom: pattern matching on quoted.Type crashes.
     // Post-fix behavior: a Bounded type alias and constrained-bound usage
     // decodes; the surrounding object loads.
-    "tasty-query#284: bounded type alias with refined usage decodes" in run {
+    "tasty-query#284: bounded type alias with refined usage decodes" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findObject(s"$FixturePkg.PortedBug284") match
                 case kyo.Maybe.Present(holder) =>

@@ -10,13 +10,13 @@ import kyo.internal.tasty.query.BundledSnapshotProbe
   * JVM-only leaves (4, 5, 6, 7) that require real jar files (java.util.zip, java.io.File) live in
   * ClasspathInitBundledSnapshotJvmTest.scala (jvm/src/test).
   */
-class ClasspathInitBundledSnapshotTest extends Test:
+class ClasspathInitBundledSnapshotTest extends kyo.test.Test[Any]:
 
     // Leaf 10: cross-platform -- probe returns Absent for default openZip
     // Given: a plain MemoryFileSource (no openZip override, returns Absent by default).
     // When: BundledSnapshotProbe.probe(root, memorySource)
     // Then: returns Maybe.Absent (default FileSource.openZip returns Absent; probe falls through).
-    "Leaf 10: probe returns Maybe.Absent when FileSource.openZip returns Absent (cross-platform)" in run {
+    "Leaf 10: probe returns Maybe.Absent when FileSource.openZip returns Absent (cross-platform)" in {
         val source = new MemoryFileSource()
         source.add("some-root.jar", Array[Byte](0xca.toByte))
         Scope.run:

@@ -31,7 +31,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
     // Then: sizes are equal (in-memory round-trip preserves full fqnIndex)
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly with standardWithSnapshot + >= 110,000 stdlib lower bound (removed).
-    "cold.indices.byFqn.size == warm.indices.byFqn.size after in-memory round-trip" in run {
+    "cold.indices.byFqn.size == warm.indices.byFqn.size after in-memory round-trip" in {
         TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
             val coldSize = cold.indices.byFqn.size
             val warmSize = warm.indices.byFqn.size
@@ -46,7 +46,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
     // Leaf 5: cold-findsymbol-predef-resolves
     // Uses TestClasspaths.withClasspath which is cross-platform, but the assertion checks scala.Predef$ which is only
     // in the JVM stdlib. On JS/Native the embedded fixtures don't have scala.Predef$; the leaf produces succeed (Absent branch).
-    "cold.findSymbol('scala.Predef$') resolves via binary-alias fqnIndex entry" in run {
+    "cold.findSymbol('scala.Predef$') resolves via binary-alias fqnIndex entry" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cold =>
             cold.findSymbol("scala.Predef$") match
                 case Absent =>
@@ -67,7 +67,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
     // When: counting Named(-1) refs in cold and warm via SnapshotEquivalence.countUnresolvedRefs
     // Then: both are 0 (in-memory round-trip applies   defensive filter)
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
-    "cold and warm both have 0 Named(-1) refs after in-memory round-trip" in run {
+    "cold and warm both have 0 Named(-1) refs after in-memory round-trip" in {
         TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
             val coldUnresolved = SnapshotEquivalence.countUnresolvedRefs(cold)
             val warmUnresolved = SnapshotEquivalence.countUnresolvedRefs(warm)
@@ -87,7 +87,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
     // When: running SnapshotEquivalence.warmColdEquivalent
     // Then: result is Equal (in-memory round-trip produces structurally equivalent classpaths)
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
-    "-DF2 : SnapshotEquivalence.warmColdEquivalent returns Equal after in-memory round-trip" in run {
+    "-DF2 : SnapshotEquivalence.warmColdEquivalent returns Equal after in-memory round-trip" in {
         TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
             val result = SnapshotEquivalence.warmColdEquivalent(cold, warm)
             assert(
@@ -103,7 +103,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
     // When: checking warm.parentTypes for Named(-1) entries
     // Then: count == 0 (defensive filter removes Named(-1) entries)
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
-    "warm.parentTypes has 0 Named(-1) after in-memory round-trip" in run {
+    "warm.parentTypes has 0 Named(-1) after in-memory round-trip" in {
         TestClasspaths2.withSnapshotInMemory().map: (_, warm) =>
             import kyo.Tasty.SymbolId.value as idValue
             var namedMinusOne = 0
@@ -126,7 +126,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
     // When: comparing symbols.size and fqnIndex.size across both pairs
     // Then: all four counts are equal (idempotent cold-init + round-trip)
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
-    "two in-memory cold-inits produce logically equivalent snapshots" in run {
+    "two in-memory cold-inits produce logically equivalent snapshots" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (cold1, warm1) =>
             TestClasspaths2.withSnapshotInMemory().map: (cold2, warm2) =>
                 assert(
@@ -160,7 +160,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
     // When: comparing cp.symbols.size between cold and warm
     // Then: both symbol counts are equal (round-trip preserves all symbols)
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory (no filesystem).
-    "in-memory snapshot round-trip preserves symbols.size" in run {
+    "in-memory snapshot round-trip preserves symbols.size" in {
         TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
             assert(
                 cold.symbols.size == warm.symbols.size,
@@ -174,7 +174,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
     // When: comparing unresolvedFqnByNegId.size between cold and warm
     // Then: warm size equals cold size (FQNMAP__ section persists the map correctly)
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory.
-    "in-memory snapshot round-trip persists unresolvedFqnByNegId via FQNMAP__ section" in run {
+    "in-memory snapshot round-trip persists unresolvedFqnByNegId via FQNMAP__ section" in {
         TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
             val coldSize = cold.indices.unresolvedFqnByNegId.size
             val warmSize = warm.indices.unresolvedFqnByNegId.size

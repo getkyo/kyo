@@ -30,7 +30,7 @@ import scala.collection.mutable
   *   : stale SnapshotFormat home comment removed: FIXED; pinned P04.15
   *   : evictOlderThan units clarification: DOCUMENTED-CONTRACT; pinned P04.16
   */
-class DecoderFidelity5Phase04Test extends Test:
+class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -106,7 +106,7 @@ class DecoderFidelity5Phase04Test extends Test:
     // Contract pin: the scaladoc on findClass states a null fqn returns Maybe.Absent. This test
     // verifies the contract holds at runtime so regressions (e.g. a Map.get replacement that
     // delegates to a null-hostile backend) are caught.
-    "P04.1 findClass(null) returns Absent without NPE" in run {
+    "P04.1 findClass(null) returns Absent without NPE" in {
         Abort.run[TastyError]:
             val src = MemSrc()
             src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
@@ -128,7 +128,7 @@ class DecoderFidelity5Phase04Test extends Test:
     // The implementation now caches the result in a private lazy val. This test verifies:
     // (a) the same integer is returned on repeated calls (not recomputed incorrectly)
     // (b) the result is non-negative
-    "P04.2 unresolvedTypeReferenceCount is idempotent across multiple calls" in run {
+    "P04.2 unresolvedTypeReferenceCount is idempotent across multiple calls" in {
         Abort.run[TastyError]:
             val src = MemSrc()
             src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
@@ -150,7 +150,7 @@ class DecoderFidelity5Phase04Test extends Test:
     // P04.3:   -- copyWithErrors and copyWithPreErrors work correctly; stale scaladoc removed.
     //
     // Verifies the helpers remain functional (the scaladoc fix is behaviorally neutral).
-    "P04.3 copyWithErrors and copyWithPreErrors produce correct errors fields" in run {
+    "P04.3 copyWithErrors and copyWithPreErrors produce correct errors fields" in {
         Abort.run[TastyError]:
             snapshotRoundTrip().map: cp =>
                 val err = TastyError.FileNotFound("test.krfl")
@@ -172,7 +172,7 @@ class DecoderFidelity5Phase04Test extends Test:
     // P04.4:   -- findClassByBinary applies FqnNormalizer to handle named inner classes.
     //
     // Contract pin: findClassByBinary("X") == findClass(FqnNormalizer.canonicalSourceFqn("X" with slashes replaced))
-    "P04.4 findClassByBinary result equals findClass(FqnNormalizer(dotted))" in run {
+    "P04.4 findClassByBinary result equals findClass(FqnNormalizer(dotted))" in {
         Abort.run[TastyError]:
             val src = MemSrc()
             src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
@@ -205,7 +205,7 @@ class DecoderFidelity5Phase04Test extends Test:
     //
     // Pins the documented CanEqual contract: two symbols are equal iff their id.value is the same
     // and neither is the sentinel.
-    "P04.5 Symbol equality is id-based; different ids are never equal" in run {
+    "P04.5 Symbol equality is id-based; different ids are never equal" in {
         Abort.run[TastyError]:
             val src = MemSrc()
             src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
@@ -232,7 +232,7 @@ class DecoderFidelity5Phase04Test extends Test:
     //
     // An empty FQN is a caller programming error: raise InvalidFqn (distinct from a genuine not-found result) so
     // callers can distinguish "I asked for the wrong thing" from "the classpath does not contain this class".
-    "P04.6 findClass(empty) returns Absent; requireClass(empty) raises InvalidFqn(empty)" in run {
+    "P04.6 findClass(empty) returns Absent; requireClass(empty) raises InvalidFqn(empty)" in {
         Abort.run[TastyError]:
             val src = MemSrc()
             src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
@@ -261,7 +261,7 @@ class DecoderFidelity5Phase04Test extends Test:
     // P04.7:   -- requireValidSectionNames passes for all current section names.
     //
     // Pins the CI-style guard: all entries in SnapshotFormat.sectionNames are <= 8 bytes and NUL-free.
-    "P04.7 all SnapshotFormat.sectionNames are <= 8 chars and NUL-free" in run {
+    "P04.7 all SnapshotFormat.sectionNames are <= 8 chars and NUL-free" in {
         SnapshotFormat.requireValidSectionNames()
         SnapshotFormat.sectionNames.foreach: name =>
             assert(name.length <= 8, s"Section name '$name' exceeds 8-byte limit")
@@ -272,7 +272,7 @@ class DecoderFidelity5Phase04Test extends Test:
     // P04.8:   -- cp.symbol(id) returns sentinel for any negative id, not only -1.
     //
     // Pins the extended scaladoc contract.
-    "P04.8 cp.symbol returns sentinel for id=-1, id=-2, and id=Int.MinValue" in run {
+    "P04.8 cp.symbol returns sentinel for id=-1, id=-2, and id=Int.MinValue" in {
         Abort.run[TastyError]:
             snapshotRoundTrip().map: cp =>
                 // cp.symbol now returns Maybe[Symbol]; out-of-range/negative ids return Maybe.Absent
@@ -293,7 +293,7 @@ class DecoderFidelity5Phase04Test extends Test:
     //
     // The MemSrc model simulates the "one file read per call" semantics of a real file-backed source.
     // 8 sequential reads (cross-platform) verify determinism and absence of state corruption.
-    "P04.9 8 sequential SnapshotReader.read calls on MemSrc produce identical results" in run {
+    "P04.9 8 sequential SnapshotReader.read calls on MemSrc produce identical results" in {
         Abort.run[TastyError]:
             snapshotRoundTrip(0x42).flatMap: cp =>
                 val digest   = Array.fill[Byte](8)(0x42.toByte)
@@ -322,7 +322,7 @@ class DecoderFidelity5Phase04Test extends Test:
     //
     // A snapshot whose embedded digest does not match what the caller computes is still decoded
     // successfully. The digest in the filename (not the file body) is what prevents stale hits.
-    "P04.10 SnapshotReader.read succeeds regardless of embedded digest value" in run {
+    "P04.10 SnapshotReader.read succeeds regardless of embedded digest value" in {
         Abort.run[TastyError]:
             val fooClass = makeClass(0, "Foo")
             Sync.defer:
@@ -359,7 +359,7 @@ class DecoderFidelity5Phase04Test extends Test:
     // P04.11:   -- cp.symbol(cp.rootSymbolId) on empty classpath returns sentinel.
     //
     // An empty classpath has rootSymbolId = -1, so cp.symbol(cp.rootSymbolId) returns sentinelUnresolved.
-    "P04.11 empty classpath cp.symbol(cp.rootSymbolId) returns sentinel" in run {
+    "P04.11 empty classpath cp.symbol(cp.rootSymbolId) returns sentinel" in {
         Abort.run[TastyError]:
             Scope.run:
                 ClasspathOrchestrator.init(Seq.empty, Tasty.ErrorMode.SoftFail, MemSrc(), 1).map: cp =>
@@ -381,7 +381,7 @@ class DecoderFidelity5Phase04Test extends Test:
     //
     // The override renders sectionBytes as "len=<N>" and names as "[<N> entries]".
     // After SymbolBody moved to kyo.internal.tasty.symbol.SymbolBody.
-    "P04.12 SymbolBody.toString contains len= not array identity hash" in run {
+    "P04.12 SymbolBody.toString contains len= not array identity hash" in {
         val body = SymbolBody(
             bodyStart = 10,
             bodyEnd = 20,
@@ -400,7 +400,7 @@ class DecoderFidelity5Phase04Test extends Test:
     // P04.13:   -- findClassesByName uses nameIndex for O(1) lookup; repeated calls return same result.
     //
     // Contract pin: repeated calls return the same Chunk (idempotency).
-    "P04.13 findClassesByName returns stable results across multiple calls" in run {
+    "P04.13 findClassesByName returns stable results across multiple calls" in {
         Abort.run[TastyError]:
             val src = MemSrc()
             src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
@@ -431,7 +431,7 @@ class DecoderFidelity5Phase04Test extends Test:
     // P04.14:   -- evictOlderThan API is callable on an empty cache dir.
     //
     // The O(N) cost is a design decision documented in scaladoc, not a bug.
-    "P04.14 evictOlderThan on empty cache dir completes without error" in run {
+    "P04.14 evictOlderThan on empty cache dir completes without error" in {
         Abort.run[TastyError]:
             Scope.run:
                 val src = MemSrc()
@@ -446,7 +446,7 @@ class DecoderFidelity5Phase04Test extends Test:
     // P04.15:   -- SnapshotFormat.sectionNames contains no phantom home-field sections.
     //
     // Pins the cleanup: the stale comment about a `home` field that never existed has been removed.
-    "P04.15 SnapshotFormat.sectionNames contains no HOMEFLD_ or HOME____ section" in run {
+    "P04.15 SnapshotFormat.sectionNames contains no HOMEFLD_ or HOME____ section" in {
         val names = SnapshotFormat.sectionNames.toSet
         assert(!names.contains("HOMEFLD_"), "Unexpected HOMEFLD_ section in SnapshotFormat")
         assert(!names.contains("HOME____"), "Unexpected HOME____ section in SnapshotFormat")
@@ -465,7 +465,7 @@ class DecoderFidelity5Phase04Test extends Test:
     //
     // Pins the documented unit behavior: evictOlderThan(dir, d: Duration) delegates to
     // evictOlderThan(dir, d.toMillis: Long).
-    "P04.16 evictOlderThan Duration overload delegates correctly to Long overload" in run {
+    "P04.16 evictOlderThan Duration overload delegates correctly to Long overload" in {
         Abort.run[TastyError]:
             Scope.run:
                 val src = MemSrc()
@@ -492,7 +492,7 @@ class DecoderFidelity5Phase04Test extends Test:
     //
     // Post-fix: SymbolBody overrides equals/hashCode using Span.is (structural) for sectionBytes
     // and names. Two SymbolBody values built from the same bytes at the same offsets must compare equal.
-    "P04.17 SymbolBody structural equality: two loads of the same fixture produce equal bodies" in run {
+    "P04.17 SymbolBody structural equality: two loads of the same fixture produce equal bodies" in {
         import kyo.internal.tasty.query.DecodeContext
         Abort.run[TastyError]:
             val src = MemSrc()

@@ -7,7 +7,7 @@ import kyo.internal.tasty.symbol.SymbolSignature
   *
   * Verifies that the signature string is non-empty and follows the documented pattern for each subtype.
   */
-class SymbolSignatureTest extends Test:
+class SymbolSignatureTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -109,7 +109,7 @@ class SymbolSignatureTest extends Test:
                 errors = Chunk.empty
             )
 
-    "SymbolSignature.compute for Method returns def-prefixed string with param list" in run {
+    "SymbolSignature.compute for Method returns def-prefixed string with param list" in {
         buildFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(2)).asInstanceOf[Tasty.Symbol.Method]
             SymbolSignature.compute(m, cp).map: sig =>
@@ -118,7 +118,7 @@ class SymbolSignatureTest extends Test:
                 succeed
     }
 
-    "SymbolSignature.compute for Class returns class-prefixed string" in run {
+    "SymbolSignature.compute for Class returns class-prefixed string" in {
         buildFixture.flatMap: cp =>
             val c = cp.symbol(SymbolId(1)).asInstanceOf[Tasty.Symbol.Class]
             SymbolSignature.compute(c, cp).map: sig =>
@@ -127,7 +127,7 @@ class SymbolSignatureTest extends Test:
                 succeed
     }
 
-    "SymbolSignature.compute for Val returns val-prefixed string" in run {
+    "SymbolSignature.compute for Val returns val-prefixed string" in {
         buildFixture.flatMap: cp =>
             val v = cp.symbol(SymbolId(4)).asInstanceOf[Tasty.Symbol.Val]
             SymbolSignature.compute(v, cp).map: sig =>
@@ -135,7 +135,7 @@ class SymbolSignatureTest extends Test:
                 succeed
     }
 
-    "SymbolSignature.compute for Package returns package-prefixed string" in run {
+    "SymbolSignature.compute for Package returns package-prefixed string" in {
         buildFixture.flatMap: cp =>
             val p = cp.symbol(SymbolId(0)).asInstanceOf[Tasty.Symbol.Package]
             SymbolSignature.compute(p, cp).map: sig =>
@@ -143,7 +143,7 @@ class SymbolSignatureTest extends Test:
                 succeed
     }
 
-    "SymbolSignature.compute for TypeAlias returns type-equals string" in run {
+    "SymbolSignature.compute for TypeAlias returns type-equals string" in {
         val ta = Tasty.Symbol.TypeAlias(
             SymbolId(0),
             Tasty.Name("MyAlias"),

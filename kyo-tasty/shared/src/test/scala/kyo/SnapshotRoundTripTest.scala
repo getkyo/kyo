@@ -16,7 +16,7 @@ import scala.collection.mutable
   *
   * Plan tests 22-30.
   */
-class SnapshotRoundTripTest extends Test:
+class SnapshotRoundTripTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -95,7 +95,7 @@ class SnapshotRoundTripTest extends Test:
     end writeSnapshot
 
     // Test 22: write snapshot to memory, read it back, compare topLevelClasses by FQN
-    "snapshot round-trip: topLevelClasses by FQN match after write+read" in run {
+    "snapshot round-trip: topLevelClasses by FQN match after write+read" in {
         val cacheSrc = MemoryFileSource()
         Scope.run:
             Abort.run[TastyError](
@@ -120,7 +120,7 @@ class SnapshotRoundTripTest extends Test:
     }
 
     // Test 23: reading a snapshot with wrong magic produces SnapshotFormatError
-    "reading a snapshot with wrong magic produces SnapshotFormatError" in run {
+    "reading a snapshot with wrong magic produces SnapshotFormatError" in {
         val cacheSrc = MemoryFileSource()
         cacheSrc.add("cache/bad.krfl", Array[Byte]('X', 'Y', 'Z', 'W', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
         Abort.run[TastyError]:
@@ -137,7 +137,7 @@ class SnapshotRoundTripTest extends Test:
     }
 
     // Test 24: reading a snapshot with different major version produces SnapshotVersionMismatch
-    "reading a snapshot with different major version produces SnapshotVersionMismatch" in run {
+    "reading a snapshot with different major version produces SnapshotVersionMismatch" in {
         val badVersionBytes = Array.fill[Byte](64)(0)
         badVersionBytes(0) = 'K'
         badVersionBytes(1) = 'R'
@@ -165,7 +165,7 @@ class SnapshotRoundTripTest extends Test:
     }
 
     // Test 24a: attempting to write a snapshot when the underlying FileSource always fails produces SnapshotIoError
-    "writing snapshot when FileSource write fails produces SnapshotIoError" in run {
+    "writing snapshot when FileSource write fails produces SnapshotIoError" in {
         val failSrc = new FileSource:
             def read(path: String)(using Frame): Array[Byte] < (Sync & Abort[TastyError]) =
                 Abort.fail(TastyError.FileNotFound(path))
@@ -197,7 +197,7 @@ class SnapshotRoundTripTest extends Test:
     }
 
     // Test 25: two concurrent snapshot writers for the same input produce one valid snapshot file
-    "two concurrent snapshot writers produce one valid snapshot file (atomic rename)" in run {
+    "two concurrent snapshot writers produce one valid snapshot file (atomic rename)" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11)
         val hex      = DigestComputer.toHexString(digest)
@@ -237,7 +237,7 @@ class SnapshotRoundTripTest extends Test:
     }
 
     // Test 26: openCached on warm cache hit returns same symbol graph as cold open (structural equality by FQN)
-    "openCached warm cache hit returns same symbol graph as cold open" in run {
+    "openCached warm cache hit returns same symbol graph as cold open" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19)
 
@@ -269,7 +269,7 @@ class SnapshotRoundTripTest extends Test:
     }
 
     // Test 27: openCached on a cold miss writes a snapshot file to the cache dir
-    "cold miss writes snapshot file to cache dir" in run {
+    "cold miss writes snapshot file to cache dir" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27)
         val hex      = DigestComputer.toHexString(digest)
@@ -300,7 +300,7 @@ class SnapshotRoundTripTest extends Test:
     }
 
     // Test 28: evictOlderThanWithSource removes all snapshot files older than maxAgeMs
-    "evictOlderThan removes all snapshot files older than maxAgeMs" in run {
+    "evictOlderThan removes all snapshot files older than maxAgeMs" in {
         // stat returns mtime=0, so all files are older than 0 ms (now - 0 > 0 is always true)
         val evictSrc = MemoryFileSource()
         evictSrc.add("cache/aabbccdd01020304.krfl", Array[Byte](1, 2, 3, 4))
@@ -325,7 +325,7 @@ class SnapshotRoundTripTest extends Test:
     }
 
     // Test 29: DigestComputer.compute for the same roots returns the same digest (deterministic)
-    "DigestComputer.compute for the same roots is deterministic" in run {
+    "DigestComputer.compute for the same roots is deterministic" in {
         val src = fixtureSource()
         Abort.run[TastyError]:
             DigestComputer.compute(Seq("root"), src).flatMap: digest1 =>
@@ -342,7 +342,7 @@ class SnapshotRoundTripTest extends Test:
     }
 
     // Test 30: DigestComputer.compute for two different file sets returns different digests
-    "DigestComputer.compute for different file sets returns different digests" in run {
+    "DigestComputer.compute for different file sets returns different digests" in {
         val src1 = MemoryFileSource()
         src1.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
 
@@ -363,7 +363,7 @@ class SnapshotRoundTripTest extends Test:
     }
 
     // Test G15: written snapshot header inputDigest field (bytes 16-23) equals the digest passed to write
-    "snapshot header inputDigest field equals digest passed to write (not zeros)" in run {
+    "snapshot header inputDigest field equals digest passed to write (not zeros)" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](1, 2, 3, 4, 5, 6, 7, 8)
         Scope.run:
@@ -392,7 +392,7 @@ class SnapshotRoundTripTest extends Test:
     // Test G14a: after snapshot round-trip, bodyTree returns Absent (bodies not serialized).
     // Bodies are stored in DecodeContext.bodyStore which is not persisted in snapshots.
     // Use withClasspath(roots) to re-populate the body store from TASTy files.
-    "BODY_BYTES round-trip: bodyTree returns Absent on snapshot-loaded symbol (snapshot contract)" in run {
+    "BODY_BYTES round-trip: bodyTree returns Absent on snapshot-loaded symbol (snapshot contract)" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37)
         Scope.run:
@@ -416,7 +416,7 @@ class SnapshotRoundTripTest extends Test:
     }
 
     // Test G14b: snapshot written from classfile-only classpath has empty BODY_BYTES section
-    "snapshot from classfile-only classpath has empty BODY_BYTES section (length 0)" in run {
+    "snapshot from classfile-only classpath has empty BODY_BYTES section (length 0)" in {
         // Use an empty classpath (no TASTy files) to produce a snapshot with no body bytes.
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47)
@@ -463,7 +463,7 @@ class SnapshotRoundTripTest extends Test:
     }
 
     // Test: parents, typeParams, and declarations are preserved across a snapshot write+read round-trip.
-    "snapshot round-trip: parents, typeParams, and declarations preserved after write+read" in run {
+    "snapshot round-trip: parents, typeParams, and declarations preserved after write+read" in {
         // Use SomeTrait fixture which has parents (java.lang.Object) and member declarations (compute method).
         val tastySource = MemoryFileSource()
         tastySource.add("root/SomeTrait.tasty", kyo.fixtures.Embedded.someTraitTasty)
@@ -538,7 +538,7 @@ class SnapshotRoundTripTest extends Test:
     // When: snapshot write + read.
     // Then: the warm-loaded test.Foo symbol's parents is non-empty and contains a Named type whose
     //       fullName equals "test.Bar".
-    "snapshot round-trip: local Named parent is preserved in Foo.parents" in run {
+    "snapshot round-trip: local Named parent is preserved in Foo.parents" in {
         val cacheSrc = MemoryFileSource()
         val digest =
             Array[Byte](0x70.toByte, 0x71.toByte, 0x72.toByte, 0x73.toByte, 0x74.toByte, 0x75.toByte, 0x76.toByte, 0x77.toByte)
@@ -629,7 +629,7 @@ class SnapshotRoundTripTest extends Test:
     // Checks symbols count, fqnIndex keys, topLevelClassIds, packageIds, and errors.
     // Does NOT use cp == cp2: subclassIndex / companionIndex / moduleIndex are not serialized
     // (they are Map.empty in the reader) so strict equality would fail on a correct round-trip.
-    "snapshot round-trip preserves Classpath data (symbols, fqnIndex, topLevelClassIds, errors)" in run {
+    "snapshot round-trip preserves Classpath data (symbols, fqnIndex, topLevelClassIds, errors)" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0xa0.toByte, 0xa1.toByte, 0xa2.toByte, 0xa3.toByte, 0xa4.toByte, 0xa5.toByte, 0xa6.toByte, 0xa7.toByte)
         Scope.run:
@@ -672,7 +672,7 @@ class SnapshotRoundTripTest extends Test:
     // Classpath.make fields) is readable by the current SnapshotReader without error.
     // This replaces the missing committed binary fixture: the synthetic Classpath exercises the
     // same wire-format contract as a pre-campaign snapshot.
-    "legacy snapshot reads with the new reader (synthetic inline fixture)" in run {
+    "legacy snapshot reads with the new reader (synthetic inline fixture)" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0xb0.toByte, 0xb1.toByte, 0xb2.toByte, 0xb3.toByte, 0xb4.toByte, 0xb5.toByte, 0xb6.toByte, 0xb7.toByte)
 
@@ -740,7 +740,7 @@ class SnapshotRoundTripTest extends Test:
     // present (10 pre-Phase-12 + 3 Phase-12 additions: PERMITS2, ANNOTS_, JAVAMETA + 1 dual-FQN: FQNIDX__ +
     // 1 Phase-2.13 addition: FQNMAP__ for unresolvedFqnByNegId persistence) and that section offsets are
     // monotone increasing.
-    "new snapshot section-index: all 17 sections present and offsets monotone increasing" in run {
+    "new snapshot section-index: all 17 sections present and offsets monotone increasing" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0xc0.toByte, 0xc1.toByte, 0xc2.toByte, 0xc3.toByte, 0xc4.toByte, 0xc5.toByte, 0xc6.toByte, 0xc7.toByte)
         Scope.run:
@@ -808,7 +808,7 @@ class SnapshotRoundTripTest extends Test:
     // after snapshot round-trip, bodyTree returns Absent for all symbols.
     // Bodies are not serialized in snapshots; DecodeContext.bodyStore is empty after snapshot load.
     // bodyMemo stays at size 0 because bodyTree returns Absent before any decode attempt.
-    "snapshot body: bodyTree returns Absent for snapshot-loaded symbol (bodyStore is empty)" in run {
+    "snapshot body: bodyTree returns Absent for snapshot-loaded symbol (bodyStore is empty)" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0xd0.toByte, 0xd1.toByte, 0xd2.toByte, 0xd3.toByte, 0xd4.toByte, 0xd5.toByte, 0xd6.toByte, 0xd7.toByte)
         Scope.run:
@@ -844,7 +844,7 @@ class SnapshotRoundTripTest extends Test:
     // When: DigestComputer.compute called twice on the same root
     // Then: both digests are equal (deterministic for in-memory sources)
     // Cross-platform: MemoryFileSource stat is stable.
-    "DigestComputer.compute on in-memory root returns same digest for two successive calls" in run {
+    "DigestComputer.compute on in-memory root returns same digest for two successive calls" in {
         val src = MemoryFileSource()
         src.add("root/A.tasty", Array[Byte](1, 2, 3))
         src.add("root/B.tasty", Array[Byte](4, 5, 6))
@@ -866,7 +866,7 @@ class SnapshotRoundTripTest extends Test:
     // When: DigestComputer.compute called on each
     // Then: digests differ (different file set = different digest)
     // Cross-platform: MemoryFileSource stat uses file size; adding a file changes the stat set.
-    "DigestComputer.compute detects additional file in root (different digest)" in run {
+    "DigestComputer.compute detects additional file in root (different digest)" in {
         val src1 = MemoryFileSource()
         src1.add("root/A.tasty", Array[Byte](1, 2, 3))
         val src2 = MemoryFileSource()
@@ -890,7 +890,7 @@ class SnapshotRoundTripTest extends Test:
     // When: DigestComputer.compute called with [root1, root2] vs [root2, root1]
     // Then: digests are equal (root order does not affect the digest)
     // Cross-platform: uses MemoryFileSource with deterministic stats.
-    "DigestComputer.compute on two in-memory roots is root-order independent" in run {
+    "DigestComputer.compute on two in-memory roots is root-order independent" in {
         val src = MemoryFileSource()
         src.add("root1/X.tasty", Array[Byte](10, 20, 30))
         src.add("root2/Y.tasty", kyo.fixtures.Embedded.plainClassTasty)
@@ -908,7 +908,7 @@ class SnapshotRoundTripTest extends Test:
     }
 
     // T-J2: directory-root digest is deterministic across two calls
-    "DigestComputer.compute on directory root returns same digest for two successive calls" in run {
+    "DigestComputer.compute on directory root returns same digest for two successive calls" in {
         val src = fixtureSource()
         Abort.run[TastyError]:
             DigestComputer.compute(Seq("root"), src).flatMap: d1 =>

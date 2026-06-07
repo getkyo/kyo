@@ -11,7 +11,7 @@ import kyo.internal.tasty.type_.TypeArena
   * plan: phase-05; Named(id) carries SymbolId; makeSym assigns unique ids so that Named types created from different symbols are distinct
   * (id equality, not reference equality).
   */
-class TypeArenaTest extends Test:
+class TypeArenaTest extends kyo.test.Test[Any]:
 
     private var nextId: Int = 0
 
@@ -40,7 +40,7 @@ class TypeArenaTest extends Test:
     end makeSym
 
     // Test 1: intern called twice with structurally identical Type.Named(id) returns the same reference.
-    "intern called twice with the same Named(id) returns the same reference" in run {
+    "intern called twice with the same Named(id) returns the same reference" in {
         nextId = 0
         val arena = TypeArena.canonical()
         val sym   = makeSym("Foo")
@@ -52,7 +52,7 @@ class TypeArenaTest extends Test:
     }
 
     // Test 2: intern on Applied with different arg lists returns different references.
-    "intern on Applied with different args returns different references" in run {
+    "intern on Applied with different args returns different references" in {
         nextId = 0
         val arena = TypeArena.canonical()
         val base  = makeSym("Base")
@@ -66,7 +66,7 @@ class TypeArenaTest extends Test:
     }
 
     // Test 3: merge of two arenas containing the same structural type produces canonical arena with one entry.
-    "merge of two arenas with structurally equal types produces one canonical entry" in run {
+    "merge of two arenas with structurally equal types produces one canonical entry" in {
         nextId = 0
         val sym = makeSym("X")
         // Two separately-allocated Named values: same id, different object identity.
@@ -86,7 +86,7 @@ class TypeArenaTest extends Test:
     }
 
     // Test 4: merge correctly handles a Type.Rec(parent) containing Type.RecThis(rec) back-reference.
-    "merge of Rec/RecThis cycle completes without stack overflow" in run {
+    "merge of Rec/RecThis cycle completes without stack overflow" in {
         nextId = 0
         val sym      = makeSym("RecSentinel")
         val sentinel = Tasty.Type.Named(sym.id)
@@ -106,7 +106,7 @@ class TypeArenaTest extends Test:
     }
 
     // Test 5: after merge, structurally-equal types from two arenas are reference-equal.
-    "after merge, structurally-equal types from two arenas are reference-equal" in run {
+    "after merge, structurally-equal types from two arenas are reference-equal" in {
         nextId = 0
         val sym = makeSym("Shared")
         val t1  = Tasty.Type.ByName(Tasty.Type.Named(sym.id))
@@ -131,7 +131,7 @@ class TypeArenaTest extends Test:
     //   Applied types so that the JVM call stack (configured to -Xss10M in CI) can reach the depth-guard check at
     //   TypeArena.MaxDepth (1024). The JS engine call stack and Scala Native default stack overflow well before depth
     //   1024 (RangeError on JS, native SOE on Native), so the assertion would not exercise the depth-guard branch.
-    "B8/INV-019: Applied chain at MaxDepth+1 throws DepthExceededException during merge" in runJVM {
+    "B8/INV-019: Applied chain at MaxDepth+1 throws DepthExceededException during merge".onlyJvm in {
         nextId = 0
         val baseSym       = makeSym("DepthBase")
         val argSym        = makeSym("DepthArg")
@@ -163,7 +163,7 @@ class TypeArenaTest extends Test:
     //   require a JVM-sized call stack (-Xss10M in CI). JS engines and Scala Native have substantially smaller
     //   default stacks and would overflow before reaching depth 1023, so the "merges successfully" property
     //   cannot be observed there.
-    "B8: nesting at MaxDepth-1 (1023 levels) merges successfully" in runJVM {
+    "B8: nesting at MaxDepth-1 (1023 levels) merges successfully".onlyJvm in {
         nextId = 0
         val baseSym       = makeSym("BoundBase")
         val argSym        = makeSym("BoundArg")
@@ -189,7 +189,7 @@ class TypeArenaTest extends Test:
     // Test 8 (T4, Rec depth boundary): Rec-type nesting at MaxDepth-1 succeeds.
     // JVM-only (exception condition 3: test asserts JVM-specific behavior): 1023 levels of nested Rec types require
     //   the JVM call stack size; JS/Native default stacks overflow before reaching depth 1023.
-    "T4: Rec nesting at MaxDepth-1 merges successfully without DepthExceededException" in runJVM {
+    "T4: Rec nesting at MaxDepth-1 merges successfully without DepthExceededException".onlyJvm in {
         nextId = 0
         val leafSym          = makeSym("RecDepthLeaf")
         val leaf: Tasty.Type = Tasty.Type.Named(leafSym.id)
@@ -207,7 +207,7 @@ class TypeArenaTest extends Test:
     }
 
     // Test 9 (T4, cyclic Rec self-reference): canonical map produces reference-equal result.
-    "T4: cyclic Rec(RecThis) self-reference interns to reference-equal canonical value" in run {
+    "T4: cyclic Rec(RecThis) self-reference interns to reference-equal canonical value" in {
         nextId = 0
         val sentinel = Tasty.Type.Named(makeSym("CyclicSentinel").id)
         val inner    = Tasty.Type.Rec(sentinel)
@@ -223,7 +223,7 @@ class TypeArenaTest extends Test:
     }
 
     // Test 10 (T7): 8-fiber concurrent interning with separate per-fiber arenas preserves canonicality.
-    "T7: 8-fiber concurrent interning with per-fiber arenas all return eq canonical reference" in run {
+    "T7: 8-fiber concurrent interning with per-fiber arenas all return eq canonical reference" in {
         nextId = 0
         val sym        = makeSym("ConcurrentCanon")
         val t          = Tasty.Type.Named(sym.id)

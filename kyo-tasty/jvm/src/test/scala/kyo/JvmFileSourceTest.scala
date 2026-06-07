@@ -15,7 +15,7 @@ import kyo.internal.tasty.query.JvmFileSource
   * Tests T-J1, T-J2, T-J3, T-J4 use synthetic JARs built programmatically via ZipOutputStream. Test T-J5 uses a real jar from the JVM
   * classpath that contains .tasty entries.
   */
-class JvmFileSourceTest extends Test:
+class JvmFileSourceTest extends kyo.test.Test[Any]:
 
     private def makeTempDir(): String =
         Files.createTempDirectory("kyo-tasty-jvmfilesource-test").toAbsolutePath.toString
@@ -41,7 +41,7 @@ class JvmFileSourceTest extends Test:
     private val knownBytes3: Array[Byte] = "fake-tasty-content-gamma".getBytes(StandardCharsets.UTF_8)
 
     // T-J1: Build a temp JAR with one .tasty entry. Read it via jar!/entry path. Assert bytes match.
-    "T-J1: read single .tasty entry from jar returns known bytes" taggedAs jvmOnly in run {
+    "T-J1: read single .tasty entry from jar returns known bytes".onlyJvm in {
         val dir       = makeTempDir()
         val jarPath   = s"$dir/single-entry.jar"
         val entryName = "kyo/Foo.tasty"
@@ -62,7 +62,7 @@ class JvmFileSourceTest extends Test:
     }
 
     // T-J2: Jar with multiple entries; read each by name; assert bytes match.
-    "T-J2: read multiple entries from jar, each returns correct bytes" taggedAs jvmOnly in run {
+    "T-J2: read multiple entries from jar, each returns correct bytes".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/multi-entry.jar"
         val entries = Seq(
@@ -98,7 +98,7 @@ class JvmFileSourceTest extends Test:
     }
 
     // T-J3: Missing entry in existing jar returns Abort[TastyError.FileNotFound].
-    "T-J3: missing entry in existing jar returns Abort[TastyError.FileNotFound]" taggedAs jvmOnly in run {
+    "T-J3: missing entry in existing jar returns Abort[TastyError.FileNotFound]".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/one-entry.jar"
         writeJar(jarPath, Seq(("kyo/Exists.tasty", knownBytes1)))
@@ -117,7 +117,7 @@ class JvmFileSourceTest extends Test:
     }
 
     // T-J4: Missing jar file returns Abort[TastyError.FileNotFound].
-    "T-J4: missing jar file returns Abort[TastyError.FileNotFound]" taggedAs jvmOnly in run {
+    "T-J4: missing jar file returns Abort[TastyError.FileNotFound]".onlyJvm in {
         val dir      = makeTempDir()
         val jarPath  = s"$dir/nonexistent.jar"
         val fullPath = s"$jarPath!/kyo/Foo.tasty"
@@ -137,7 +137,7 @@ class JvmFileSourceTest extends Test:
     // T-J5: Real-classpath integration test.
     // Finds a jar on the JVM classpath that contains .tasty entries (via JvmFileSource.list),
     // reads the first 20 entries, and asserts all reads succeed with non-empty bytes.
-    "T-J5: real-classpath jar: list entries then read first 20, all return non-empty bytes" taggedAs jvmOnly in run {
+    "T-J5: real-classpath jar: list entries then read first 20, all return non-empty bytes".onlyJvm in {
         // Find a real jar from the JVM classpath that has .tasty entries.
         val cpEntries = java.lang.System.getProperty("java.class.path", "")
             .split(java.io.File.pathSeparator)
@@ -185,7 +185,7 @@ class JvmFileSourceTest extends Test:
 
     // T-M1: Build a synthetic jar with 3 entries (DEFLATED by default via ZipOutputStream).
     //        Open via JarMappedReader, read each entry, assert bytes match the originals.
-    "T-M1: JarMappedReader reads all entries from a synthetic jar and returns correct bytes" taggedAs jvmOnly in {
+    "T-M1: JarMappedReader reads all entries from a synthetic jar and returns correct bytes".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/mmap-basic.jar"
         writeJar(
@@ -207,7 +207,7 @@ class JvmFileSourceTest extends Test:
 
     // T-M2: Concurrent reads from a single JarMappedReader.
     //        8 fibers each read all 3 entries; assert correctness from every fiber.
-    "T-M2: JarMappedReader concurrent reads from multiple threads return correct bytes" taggedAs jvmOnly in run {
+    "T-M2: JarMappedReader concurrent reads from multiple threads return correct bytes".onlyJvm in {
         import AllowUnsafe.embrace.danger
         Async.timeout(10.seconds) {
             val dir     = makeTempDir()
@@ -247,7 +247,7 @@ class JvmFileSourceTest extends Test:
     // T-M3: Jar with GPB bit-3 set (data-descriptor entries where LFH carries 0 sizes).
     //        The CEN still has the true sizes. JarMappedReader uses CEN metadata so it must still
     //        decompress correctly.
-    "T-M3: JarMappedReader reads entries with GPB bit-3 (data-descriptor flag) set in LFH" taggedAs jvmOnly in {
+    "T-M3: JarMappedReader reads entries with GPB bit-3 (data-descriptor flag) set in LFH".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/mmap-bit3.jar"
         // Write a normal jar first, then patch the LFH of the first entry to set GPB bit-3 and zero
@@ -275,7 +275,7 @@ class JvmFileSourceTest extends Test:
 
     // T-M4: STORED entry (method=0). ZipOutputStream uses DEFLATE by default for non-zero-length entries;
     //        we force STORED by setting the compression level to 0 (NO_COMPRESSION) via ZipEntry.setMethod.
-    "T-M4: JarMappedReader reads STORED (method=0) entry correctly" taggedAs jvmOnly in {
+    "T-M4: JarMappedReader reads STORED (method=0) entry correctly".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/mmap-stored.jar"
         // Write a STORED entry by using STORED method with pre-computed CRC and size.
@@ -317,7 +317,7 @@ class JvmFileSourceTest extends Test:
     // of how the body exits.
     //
     // Both scenarios verify via reflection that activePool is null after Scope.run.
-    "P05a-T1: withReadBatch releases pool and clears activePool after successful body" taggedAs jvmOnly in run {
+    "P05a-T1: withReadBatch releases pool and clears activePool after successful body".onlyJvm in {
         val activePoolField = JvmFileSource.getClass.getDeclaredField("kyo$internal$tasty$query$JvmFileSource$$$activePool")
         activePoolField.setAccessible(true)
 
@@ -334,7 +334,7 @@ class JvmFileSourceTest extends Test:
             )
     }
 
-    "P05a-T2: withReadBatch releases pool and clears activePool when body raises Abort failure" taggedAs jvmOnly in run {
+    "P05a-T2: withReadBatch releases pool and clears activePool when body raises Abort failure".onlyJvm in {
         val activePoolField = JvmFileSource.getClass.getDeclaredField("kyo$internal$tasty$query$JvmFileSource$$$activePool")
         activePoolField.setAccessible(true)
 
@@ -372,7 +372,7 @@ class JvmFileSourceTest extends Test:
     // We cannot literally create a 2GB+ JAR in a unit test, so we verify the defensive guard
     // directly by patching a JarMappedReader's entry map to carry an oversized lfhOffset.
     // This pins the B2 invariant: no silent Int truncation of the LFH offset field.
-    "P04a-T3: JarMappedReader.readEntry rejects lfhOffset > Int.MaxValue with IOException" taggedAs jvmOnly in {
+    "P04a-T3: JarMappedReader.readEntry rejects lfhOffset > Int.MaxValue with IOException".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/big-offset.jar"
         writeJar(jarPath, Seq(("kyo/BigOffset.tasty", knownBytes1)))
@@ -415,7 +415,7 @@ class JvmFileSourceTest extends Test:
     // The channel.close() in the finally block must execute before the exception propagates.
     // The exception must be an IOException with "empty file" in the message, confirming
     // the init() guard fired and the channel was cleanly closed.
-    "P05b-T1: JarMappedReader.init on empty file throws IOException with 'empty file' message" taggedAs jvmOnly in {
+    "P05b-T1: JarMappedReader.init on empty file throws IOException with 'empty file' message".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/empty.jar"
         // Write an empty file so RandomAccessFile succeeds but channel.size() == 0.
@@ -446,7 +446,7 @@ class JvmFileSourceTest extends Test:
     // The channel.close() in the finally block fires before that exception leaves init().
     // The thrown exception must be a plain IOException, not a ClosedChannelException, which
     // would indicate the channel was still open when the error was constructed.
-    "P05b-T2: JarMappedReader.init on malformed JAR throws plain IOException from parseAllEntries" taggedAs jvmOnly in {
+    "P05b-T2: JarMappedReader.init on malformed JAR throws plain IOException from parseAllEntries".onlyJvm in {
         val dir     = makeTempDir()
         val jarPath = s"$dir/not-a-jar.jar"
         // 4 bytes of garbage: channel.map() succeeds but parseAllEntries rejects the content.
@@ -481,7 +481,7 @@ class JvmFileSourceTest extends Test:
     // from a single JarMappedReader (one per jar path, cached in ConcurrentHashMap). After the
     // Scope exits the pool is cleared and activePool returns to null.
     //
-    "P24b-T1: 50 concurrent fibers reading the same JAR entry all succeed and pool is cleared on scope exit" taggedAs jvmOnly in run {
+    "P24b-T1: 50 concurrent fibers reading the same JAR entry all succeed and pool is cleared on scope exit".onlyJvm in {
         val dir       = makeTempDir()
         val jarPath   = s"$dir/pool-exhaustion.jar"
         val entryName = "kyo/PoolTest.tasty"
@@ -529,7 +529,7 @@ class JvmFileSourceTest extends Test:
     // opened inside a Scope remains accessible (as an immutable case class) after the Scope exits,
     // and that Scope.ensure cleanup runs without error.
     //
-    "P24b-T3: Tasty.Classpath remains accessible after scope exits (no Closed state)" taggedAs jvmOnly in run {
+    "P24b-T3: Tasty.Classpath remains accessible after scope exits (no Closed state)".onlyJvm in {
         import kyo.internal.tasty.query.ClasspathOrchestrator
         import kyo.internal.tasty.query.FileSource
         import scala.collection.mutable

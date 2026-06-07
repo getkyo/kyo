@@ -6,7 +6,7 @@ import kyo.*
   *
   * Per plan test leaves 1-3 (TestClasspaths2Test.scala group).
   */
-class TestClasspaths2Test extends kyo.Test:
+class TestClasspaths2Test extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -16,7 +16,7 @@ class TestClasspaths2Test extends kyo.Test:
     //       which post-fix emits zero unknown-tag warnings
     // Then: the sink collects zero "unhandled cat" / "unknown TASTy type tag" entries
     //       confirming both that the sink is wired correctly AND that the routing fix works.
-    "warning-sink-captures-tag-warnings" in run {
+    "warning-sink-captures-tag-warnings" in {
         TestClasspaths2.loadStandardWithSink.map: (cp, sink) =>
             val tagWarningCount = sink.unknownTagCount
             assert(
@@ -31,7 +31,7 @@ class TestClasspaths2Test extends kyo.Test:
     // Given: the standard classpath loaded cold then snapshot-read as warm
     // When: comparing symbol counts across cold and warm
     // Then: cold.symbols.size == warm.symbols.size and cold.fqnIndex.size == warm.fqnIndex.size
-    "cold-vs-warm-loader-determinism" in run {
+    "cold-vs-warm-loader-determinism" in {
         TestClasspaths2.standardWithSnapshot().map: (cold, warm) =>
             assert(
                 cold.symbols.size == warm.symbols.size,
@@ -52,7 +52,7 @@ class TestClasspaths2Test extends kyo.Test:
     //       these arise when the AstUnpickler's TypeUnpickler.readTypeIntoSession catches a decode exception
     //       and returns Absent (cross-file type refs that cannot be decoded in Phase B). Carry A2 correctly
     //       wires Cat 14 producers so these were hidden by the null sentinel before.
-    "standard-classpath-includes-stdlib-kyodata-kyotasty" in run {
+    "standard-classpath-includes-stdlib-kyodata-kyotasty" in {
         TestClasspaths.withClasspath(TestClasspaths2.standardRoots)(Tasty.classpath).map: cp =>
             assert(
                 cp.symbols.size >= 81000,

@@ -20,7 +20,7 @@ import kyo.internal.tasty.type_.TypeArena
   * arrayRecordClass, pointRecordClass, anonymousFixture1Class). Test 3 uses synthetic classfile bytes
   * (cross-platform). Tests 1, 2 use the existing arrayRecordClass fixture (cross-platform).
   */
-class JavaSymbolTest extends Test:
+class JavaSymbolTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -121,7 +121,7 @@ class JavaSymbolTest extends Test:
     // Test 1: fullName for inner class - restores sym.fullName.
     // ArrayRecord is a JVM-only class fixture in kyo-tasty fixtures.
     // -------------------------------------------------------------------------
-    "sym.fullName for ArrayRecord returns a non-empty string" in run {
+    "sym.fullName for ArrayRecord returns a non-empty string" in {
         import kyo.Tasty.SymbolId
         val bytes = kyo.fixtures.Embedded.arrayRecordClass
         Abort.run[TastyError]:
@@ -140,7 +140,7 @@ class JavaSymbolTest extends Test:
     // -------------------------------------------------------------------------
     // Test 2: binaryName - restores kyo.internal.tasty.symbol.BinaryName.compute(sym, cp).
     // -------------------------------------------------------------------------
-    "kyo.internal.tasty.symbol.BinaryName.compute(sym, cp) for ArrayRecord returns a non-empty string" in run {
+    "kyo.internal.tasty.symbol.BinaryName.compute(sym, cp) for ArrayRecord returns a non-empty string" in {
         import kyo.Tasty.SymbolId
         val bytes = kyo.fixtures.Embedded.arrayRecordClass
         Abort.run[TastyError]:
@@ -163,7 +163,7 @@ class JavaSymbolTest extends Test:
     // Binary name: "com/example/Foo$Bar" with NO InnerClasses entry.
     // Expected fullName: "com.example.Foo$Bar" (dollar sign preserved literally).
     // -------------------------------------------------------------------------
-    "top-level class with literal $ in binary name preserves $ in fullName" in run {
+    "top-level class with literal $ in binary name preserves $ in fullName" in {
         // Minimal classfile: magic + version 55.0 (Java 11) + empty pool-stub + ...
         // We use the real JDK to build the fixture, stored in resources, but here we construct
         // bytes minimally. Since we can't javac at test time, we build a synthetic minimal classfile.
@@ -275,7 +275,7 @@ class JavaSymbolTest extends Test:
     // Test 4: isJava is true for Java classfile symbols, false for TASTy symbols
     // -------------------------------------------------------------------------
     // Cross-platform: uses Embedded.throwsFixtureClass (fixture classfile) instead of JDK Object.class.
-    "sym.isJava: true for Java classfile, false for TASTy" in run {
+    "sym.isJava: true for Java classfile, false for TASTy" in {
         val bytes = kyo.fixtures.Embedded.throwsFixtureClass
         for
             javaResult <- readClass(bytes)
@@ -297,7 +297,7 @@ class JavaSymbolTest extends Test:
     // Test 5: javaMetadata is Present for Java symbols, Absent for TASTy symbols
     // -------------------------------------------------------------------------
     // Cross-platform: uses Embedded.arrayRecordClass (fixture classfile) instead of JDK String.class.
-    "symJavaMetadata(sym): Present for Java, Absent for TASTy" in run {
+    "symJavaMetadata(sym): Present for Java, Absent for TASTy" in {
         val bytes = kyo.fixtures.Embedded.arrayRecordClass
         for
             javaResult <- readClass(bytes)
@@ -318,7 +318,7 @@ class JavaSymbolTest extends Test:
     // Test 6: throwsTypes is non-empty for a method declared throws Exception
     // -------------------------------------------------------------------------
     // Cross-platform: uses Embedded.throwsFixtureClass instead of loadFixture("ThrowsFixture.class").
-    "JavaMetadata.throwsTypes is non-empty for a method declared throws Exception" in run {
+    "JavaMetadata.throwsTypes is non-empty for a method declared throws Exception" in {
         val bytes = kyo.fixtures.Embedded.throwsFixtureClass
         readClass(bytes).map: result =>
             val methodsWithThrows = result.symbols.filter: sym =>
@@ -338,7 +338,7 @@ class JavaSymbolTest extends Test:
     // Test 7: accessFlags for a final class has ACC_FINAL bit set
     // -------------------------------------------------------------------------
     // Cross-platform: uses Embedded.pointRecordClass (Java records are automatically final) instead of JDK String.class.
-    "JavaMetadata.accessFlags has ACC_FINAL bit set for a final class" in run {
+    "JavaMetadata.accessFlags has ACC_FINAL bit set for a final class" in {
         val bytes = kyo.fixtures.Embedded.pointRecordClass
         readClass(bytes).map: result =>
             val sym = result.classSymbol
@@ -355,7 +355,7 @@ class JavaSymbolTest extends Test:
     // Test 8: Java record produces Flag.JavaRecord and non-empty recordComponents
     // -------------------------------------------------------------------------
     // Cross-platform: uses Embedded.pointRecordClass instead of loadFixture("PointRecord.class").
-    "Java record class produces Flag.JavaRecord and non-empty recordComponents" in run {
+    "Java record class produces Flag.JavaRecord and non-empty recordComponents" in {
         val bytes = kyo.fixtures.Embedded.pointRecordClass
         readClass(bytes).map: result =>
             val sym = result.classSymbol
@@ -380,7 +380,7 @@ class JavaSymbolTest extends Test:
     // -------------------------------------------------------------------------
     // Test 9: annotations for @Deprecated class contains Retention annotation
     // -------------------------------------------------------------------------
-    "JavaMetadata.annotations for java.lang.Deprecated includes @Retention" in run {
+    "JavaMetadata.annotations for java.lang.Deprecated includes @Retention" in {
         // java.lang.Deprecated is annotated with @Retention(RetentionPolicy.RUNTIME)
         // and @Documented. We test that at least one annotation is present with
         // class name containing "Retention" or "Documented".
@@ -409,7 +409,7 @@ class JavaSymbolTest extends Test:
     // resolves the FQN to a real Symbol after finalizeMerge. Tests of the standalone unpickler
     // check enclosingMethodData directly.
     // Cross-platform: uses Embedded.anonymousFixture1Class instead of loadFixture("AnonymousFixture$1.class").
-    "JavaMetadata.enclosingMethod data is Present for an anonymous class inside enclosingMethodFixture" in run {
+    "JavaMetadata.enclosingMethod data is Present for an anonymous class inside enclosingMethodFixture" in {
         // AnonymousFixture$1.class is the anonymous Runnable inside enclosingMethodFixture()
         val bytes = kyo.fixtures.Embedded.anonymousFixture1Class
         readClass(bytes).map: result =>

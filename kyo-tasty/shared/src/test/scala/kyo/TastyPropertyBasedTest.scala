@@ -20,7 +20,7 @@ import scala.collection.mutable
   *
   * Cross-platform: uses embedded fixture bytes from Embedded.scala. No filesystem required.
   */
-class TastyPropertyBasedTest extends Test:
+class TastyPropertyBasedTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -97,7 +97,7 @@ class TastyPropertyBasedTest extends Test:
     // 100 random inputs, fixed seed 0xc0ffee42 for reproducibility.
     // Acceptable outcomes: Success, TastyError (any variant), known decode rejection.
     // Unacceptable: NullPointerException, ArrayIndexOutOfBoundsException, IllegalStateException.
-    "PROP-PB-001: decoder never panics on 100 random byte arrays (seed=0xc0ffee42)" in run {
+    "PROP-PB-001: decoder never panics on 100 random byte arrays (seed=0xc0ffee42)" in {
         val rng = new scala.util.Random(SEED)
         def go(remaining: Int, panics: List[String]): List[String] < (Async & Scope) =
             if remaining == 0 then panics
@@ -119,7 +119,7 @@ class TastyPropertyBasedTest extends Test:
     // PROP-PB-002: decoder never panics on truncated real fixture bytes.
     // Takes kyo.fixtures.Embedded.plainClassTasty, truncates at random offsets, attempts decode.
     // Same panic-class criteria as PROP-PB-001.
-    "PROP-PB-002: decoder never panics on 100 truncated fixture byte arrays (seed=0xc0ffee42)" in run {
+    "PROP-PB-002: decoder never panics on 100 truncated fixture byte arrays (seed=0xc0ffee42)" in {
         val rng      = new scala.util.Random(SEED)
         val original = kyo.fixtures.Embedded.plainClassTasty
         def go(remaining: Int, panics: List[String]): List[String] < (Async & Scope) =
@@ -140,7 +140,7 @@ class TastyPropertyBasedTest extends Test:
 
     // PROP-PB-003: idempotency - loading the same fixture 5 times produces equal symbol counts
     // and equal FQN index sizes. Guards against non-deterministic initialization.
-    "PROP-PB-003: loading fixture classpath 5 times produces equal symbol counts and FQN index sizes" in run {
+    "PROP-PB-003: loading fixture classpath 5 times produces equal symbol counts and FQN index sizes" in {
         def loadOnce(using Frame): (Int, Int) < (Async & Scope & Abort[TastyError]) =
             val src = MemFileSource()
             src.files("root/PlainClass.tasty") = kyo.fixtures.Embedded.plainClassTasty
@@ -175,7 +175,7 @@ class TastyPropertyBasedTest extends Test:
     // classpath with a non-zero symbol count AND zero errors. Either the load fails (error is clean),
     // or the classpath has errors recorded.
     // Uses 50 random single-byte flip positions; seed 0xdeadbeefL.
-    "PROP-PB-004: bit-flipped fixture either fails cleanly or reports errors (seed=0xdeadbeef)" in run {
+    "PROP-PB-004: bit-flipped fixture either fails cleanly or reports errors (seed=0xdeadbeef)" in {
         val rng  = new scala.util.Random(0xdeadbeefL)
         val base = kyo.fixtures.Embedded.plainClassTasty
         def flipOneByte(offset: Int): Array[Byte] =

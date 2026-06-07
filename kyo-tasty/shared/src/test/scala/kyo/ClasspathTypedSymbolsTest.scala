@@ -6,7 +6,7 @@ import scala.collection.mutable
 
 /** verify that ClasspathOrchestrator's Pass C produces the correct typed Symbol subtypes.
   */
-class ClasspathTypedSymbolsTest extends Test:
+class ClasspathTypedSymbolsTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -41,7 +41,7 @@ class ClasspathTypedSymbolsTest extends Test:
 
     // Leaf 25: orchestrator-returns-typed-Class
     // Given: fixture jar pkg.A class; When: cp.findClass('pkg.A'); Then: instance of Symbol.Class
-    "orchestrator-returns-typed-Class: findClass returns Symbol.Class" in run {
+    "orchestrator-returns-typed-Class: findClass returns Symbol.Class" in {
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
@@ -60,7 +60,7 @@ class ClasspathTypedSymbolsTest extends Test:
     // Given: fixture trait pkg.T; When: find by name (findClassLike); Then: instance of Symbol.Trait.
     // Note: this leaf used findClass before; findClass narrows to Symbol.Class, so a Trait can only be
     // surfaced via findClassLike (whose return type Maybe[Symbol.ClassLike] admits Symbol.Trait).
-    "orchestrator-returns-typed-Trait: findClassLike returns Symbol.Trait for trait" in run {
+    "orchestrator-returns-typed-Trait: findClassLike returns Symbol.Trait for trait" in {
         val src = fixtureWith("SomeTrait.tasty" -> kyo.fixtures.Embedded.someTraitTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
@@ -82,7 +82,7 @@ class ClasspathTypedSymbolsTest extends Test:
 
     // Leaf 27: orchestrator-returns-typed-Object
     // Given: fixture object pkg.O; When: find by name; Then: instance of Symbol.Object
-    "orchestrator-returns-typed-Object: findClass returns Symbol.Object for object" in run {
+    "orchestrator-returns-typed-Object: findClass returns Symbol.Object for object" in {
         val src = fixtureWith("SomeObject.tasty" -> kyo.fixtures.Embedded.someObjectTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
@@ -102,7 +102,7 @@ class ClasspathTypedSymbolsTest extends Test:
 
     // Leaf 28: orchestrator-returns-typed-Method
     // Given: fixture def foo(x: Int): Int; When: find foo; Then: Symbol.Method; paramListIds 1x1
-    "orchestrator-returns-typed-Method: symbols contain Symbol.Method instances" in run {
+    "orchestrator-returns-typed-Method: symbols contain Symbol.Method instances" in {
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
@@ -123,7 +123,7 @@ class ClasspathTypedSymbolsTest extends Test:
 
     // Leaf 29: orchestrator-returns-typed-Val
     // Given: fixture val x: Int; When: find x; Then: Symbol.Val
-    "orchestrator-returns-typed-Val: all Val-kind symbols are Symbol.Val instances" in run {
+    "orchestrator-returns-typed-Val: all Val-kind symbols are Symbol.Val instances" in {
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
@@ -138,7 +138,7 @@ class ClasspathTypedSymbolsTest extends Test:
     }
 
     // Leaf 30: orchestrator-returns-typed-Var
-    "orchestrator-returns-typed-Var: all Var-kind symbols are Symbol.Var instances" in run {
+    "orchestrator-returns-typed-Var: all Var-kind symbols are Symbol.Var instances" in {
         val src = fixtureWith(
             "PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty,
             "SomeObject.tasty" -> kyo.fixtures.Embedded.someObjectTasty
@@ -157,7 +157,7 @@ class ClasspathTypedSymbolsTest extends Test:
 
     // Leaf 31: orchestrator-returns-typed-Field
     // Given: Java classfile public static int F; When: find F; Then: Symbol.Field; javaMetadata Present
-    "orchestrator-returns-typed-Field: all Field-kind symbols are Symbol.Field instances" in run {
+    "orchestrator-returns-typed-Field: all Field-kind symbols are Symbol.Field instances" in {
         val src = MemoryFileSource()
         // Use arrayRecordClass as a Java classfile source (it's a .class file, not .tasty)
         // ClasspathOrchestrator only decodes .tasty files from FileSource currently
@@ -176,7 +176,7 @@ class ClasspathTypedSymbolsTest extends Test:
     }
 
     // Leaf 32: orchestrator-returns-typed-TypeAlias
-    "orchestrator-returns-typed-TypeAlias: all TypeAlias-kind symbols are Symbol.TypeAlias instances" in run {
+    "orchestrator-returns-typed-TypeAlias: all TypeAlias-kind symbols are Symbol.TypeAlias instances" in {
         val src = fixtureWith(
             "PlainClass.tasty"    -> kyo.fixtures.Embedded.plainClassTasty,
             "SomeCaseClass.tasty" -> kyo.fixtures.Embedded.someCaseClassTasty
@@ -194,7 +194,7 @@ class ClasspathTypedSymbolsTest extends Test:
     }
 
     // Leaf 33: orchestrator-returns-typed-OpaqueType
-    "orchestrator-returns-typed-OpaqueType: all OpaqueType-kind symbols are Symbol.OpaqueType instances" in run {
+    "orchestrator-returns-typed-OpaqueType: all OpaqueType-kind symbols are Symbol.OpaqueType instances" in {
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
@@ -209,7 +209,7 @@ class ClasspathTypedSymbolsTest extends Test:
     }
 
     // Leaf 34: orchestrator-returns-typed-AbstractType
-    "orchestrator-returns-typed-AbstractType: all AbstractType-kind symbols are Symbol.AbstractType instances" in run {
+    "orchestrator-returns-typed-AbstractType: all AbstractType-kind symbols are Symbol.AbstractType instances" in {
         val src = fixtureWith("SomeTrait.tasty" -> kyo.fixtures.Embedded.someTraitTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
@@ -225,7 +225,7 @@ class ClasspathTypedSymbolsTest extends Test:
 
     // Leaf 35: orchestrator-returns-typed-TypeParam
     // Given: class C[+A]; When: find A; Then: Symbol.TypeParam; variance==Covariant
-    "orchestrator-returns-typed-TypeParam: all TypeParam-kind symbols are Symbol.TypeParam instances" in run {
+    "orchestrator-returns-typed-TypeParam: all TypeParam-kind symbols are Symbol.TypeParam instances" in {
         val src = fixtureWith("GenericBox.tasty" -> kyo.fixtures.Embedded.genericBoxTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
@@ -243,7 +243,7 @@ class ClasspathTypedSymbolsTest extends Test:
     }
 
     // Leaf 36: orchestrator-returns-typed-Parameter
-    "orchestrator-returns-typed-Parameter: all Parameter-kind symbols are Symbol.Parameter instances" in run {
+    "orchestrator-returns-typed-Parameter: all Parameter-kind symbols are Symbol.Parameter instances" in {
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
@@ -259,7 +259,7 @@ class ClasspathTypedSymbolsTest extends Test:
 
     // Leaf 37: orchestrator-returns-typed-Package
     // Given: fixture pkg; When: findPackage('kyo.fixtures'); Then: Symbol.Package; memberIds nonEmpty
-    "orchestrator-returns-typed-Package: findPackage returns Symbol.Package" in run {
+    "orchestrator-returns-typed-Package: findPackage returns Symbol.Package" in {
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>
@@ -280,7 +280,7 @@ class ClasspathTypedSymbolsTest extends Test:
     // Given: real cp; When: cp.symbol(SymbolId(999999)); Then: Maybe.Absent (out-of-range)
     // cp.symbol now returns Maybe[Symbol]. An out-of-range id returns Absent.
     // Previously the sentinel Symbol.Unresolved (now deleted) was returned for out-of-range ids.
-    "orchestrator-returns-typed-Unresolved-on-out-of-range: sentinel is Symbol.Unresolved" in run {
+    "orchestrator-returns-typed-Unresolved-on-out-of-range: sentinel is Symbol.Unresolved" in {
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
             Abort.run[TastyError](openClasspath(src).flatMap: cp =>

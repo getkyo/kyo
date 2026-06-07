@@ -33,7 +33,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // When: counting all ContextFunction types reachable from symbol declarations
     // Then: post-fix count > 0; before fix count is 0
     // Cross-platform: ContextFunctionFixture embedded in fixture set.
-    "classpath symbols have at least one ContextFunction in their types" in run {
+    "classpath symbols have at least one ContextFunction in their types" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
 
             def walkType(t: Tasty.Type): Int =
@@ -70,7 +70,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // When: counting all parameters with ContextFunction type
     // Then: post-fix count > 0; before fix none
     // Cross-platform: ContextFunctionFixture embedded.
-    "classpath parameters have at least one ContextFunction type" in run {
+    "classpath parameters have at least one ContextFunction type" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var paramCtxFnCount = 0
             cp.symbols.foreach: sym =>
@@ -91,7 +91,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // When: counting total ContextFunction types across all symbol types
     // Then: post-fix count > 0; before fix the count is 0
     // Cross-platform: ContextFunctionFixture embedded.
-    "-DF2 : classpath has positive ContextFunction count across all symbol types" in run {
+    "-DF2 : classpath has positive ContextFunction count across all symbol types" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var total = 0
             cp.symbols.foreach: sym =>
@@ -119,7 +119,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // Cross-platform: ContextFunctionFixture embedded.
     // Note: isContext field removed in (Cat 10); the Boolean flag is gone.
     // The test now confirms structural disjointness rather than a flag value.
-    "HARD RULE 4 : no symbol has Function used where ContextFunction expected" in run {
+    "HARD RULE 4 : no symbol has Function used where ContextFunction expected" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             // All three symbol subtypes are covered via their type fields.
             // The invariant is that ContextFunction and Function are structurally distinct:
@@ -152,7 +152,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // When: pattern matching on Type.Function(p, r) (post-Cat-10 two-arg form)
     // Then: the match does NOT trigger on ContextFunction types (cases are structurally disjoint)
     // Cross-platform: uses pure ADT construction; works on JS/Native.
-    "HARD RULE 4 : Type.Function pattern does not match Type.ContextFunction" in run {
+    "HARD RULE 4 : Type.Function pattern does not match Type.ContextFunction" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val cfType = Tasty.Type.ContextFunction(
                 Chunk(Tasty.Type.Named(SymbolId(0))),
@@ -185,7 +185,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // When: invoking .show
     // Then: the result contains "?=>" (context function arrow)
     // Cross-platform: uses pure ADT construction + show; works on JS/Native.
-    "show : Type.ContextFunction.show uses ?=> arrow" in run {
+    "show : Type.ContextFunction.show uses ?=> arrow" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             Tasty.withClasspath(cp):
                 val paramType  = Tasty.Type.Named(SymbolId(0))

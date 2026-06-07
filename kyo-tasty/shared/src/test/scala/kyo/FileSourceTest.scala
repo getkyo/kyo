@@ -10,7 +10,7 @@ import scala.collection.mutable
   * Uses an in-memory FileSource to remain cross-platform. The multi-suffix variant is tested for correctness and consistency with the
   * single-suffix delegate.
   */
-class FileSourceTest extends Test:
+class FileSourceTest extends kyo.test.Test[Any]:
 
     /** Minimal in-memory FileSource for multi-suffix list testing. */
     final class MultiSuffixMemorySource(
@@ -60,7 +60,7 @@ class FileSourceTest extends Test:
     private val emptyBytes: Array[Byte] = Array.emptyByteArray
 
     // F1: list(dir, Chunk(".tasty", ".class")) returns merged results in deterministic order
-    "F1: list with multiple suffixes returns merged results in deterministic order" in run {
+    "F1: list with multiple suffixes returns merged results in deterministic order" in {
         val src = MultiSuffixMemorySource()
         src.add("root/kyo/Foo.tasty", emptyBytes)
         src.add("root/kyo/Foo.class", emptyBytes)
@@ -90,7 +90,7 @@ class FileSourceTest extends Test:
     }
 
     // F2: list(dir, Chunk.empty) returns Chunk.empty
-    "F2: list with empty suffix list returns Chunk.empty" in run {
+    "F2: list with empty suffix list returns Chunk.empty" in {
         val src = MultiSuffixMemorySource()
         src.add("root/kyo/Foo.tasty", emptyBytes)
         src.add("root/kyo/Foo.class", emptyBytes)
@@ -106,7 +106,7 @@ class FileSourceTest extends Test:
     }
 
     // F3: list(dir, Chunk(".tasty")) matches existing single-suffix list(dir, ".tasty") behavior
-    "F3: list with single-element Chunk matches single-suffix list behavior" in run {
+    "F3: list with single-element Chunk matches single-suffix list behavior" in {
         val src = MultiSuffixMemorySource()
         src.add("root/kyo/Foo.tasty", emptyBytes)
         src.add("root/kyo/Bar.tasty", emptyBytes)
@@ -132,7 +132,7 @@ class FileSourceTest extends Test:
     }
 
     // F4: ordering of returned paths is deterministic across two consecutive calls on the same root
-    "F4: result ordering is deterministic across two consecutive calls on the same root" in run {
+    "F4: result ordering is deterministic across two consecutive calls on the same root" in {
         val src = MultiSuffixMemorySource()
         src.add("root/kyo/Alpha.tasty", emptyBytes)
         src.add("root/kyo/Beta.tasty", emptyBytes)

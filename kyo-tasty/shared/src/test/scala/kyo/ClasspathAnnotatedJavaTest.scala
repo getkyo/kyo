@@ -12,7 +12,7 @@ import kyo.Tasty.SymbolId
   *
   * After calling symbolsAnnotatedWith("java.lang.Deprecated"), only symbol 1 ("A") must be returned.
   */
-class ClasspathAnnotatedJavaTest extends Test:
+class ClasspathAnnotatedJavaTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -90,7 +90,7 @@ class ClasspathAnnotatedJavaTest extends Test:
     // Given: fixture with class A carrying JavaAnnotation(Deprecated, _) and class B with no annotation
     // When: symbolsAnnotatedWith("java.lang.Deprecated")
     // Then: returns exactly class A (the Java-annotation path is exercised)
-    "ClasspathAnnotatedJavaTest: symbolsAnnotatedWith returns class A via Java annotation path" in run {
+    "ClasspathAnnotatedJavaTest: symbolsAnnotatedWith returns class A via Java annotation path" in {
         buildFixture.flatMap: cp =>
             cp.symbolsAnnotatedWith("java.lang.Deprecated").map: result =>
                 assert(

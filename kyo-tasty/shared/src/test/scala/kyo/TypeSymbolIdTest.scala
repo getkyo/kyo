@@ -9,7 +9,7 @@ import kyo.internal.tasty.symbol.SymbolKind
   *
   * Produces INV-009: SymbolId in Type ADT eliminates case-class cycles.
   */
-class TypeSymbolIdTest extends Test:
+class TypeSymbolIdTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
     import kyo.Tasty.SymbolId
@@ -37,7 +37,7 @@ class TypeSymbolIdTest extends Test:
       * via cp.symbol(id). Then: cp.symbols contains a symbol with kind=Unresolved at the SymbolId index; no NullPointerException, no
       * AIOOBE. Pins: INV-002 (every Type.Named id resolves to a valid symbol).
       */
-    "Type.Named(unresolved) references a valid symbol in classpath" in run {
+    "Type.Named(unresolved) references a valid symbol in classpath" in {
         val unresolvedSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("does.not.Exist"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(unresolvedSym)).map: cp =>
             val namedType = Tasty.Type.Named(SymbolId(0))
@@ -77,7 +77,7 @@ class TypeSymbolIdTest extends Test:
     /** Given: a Type t. When: Tasty.isSubtypeOf(t, other) and Tasty.typeShow(t) are called from user code without importing any extension namespace. Then:
       * both calls compile and resolve to the enum member. Pins: INV-009 (member methods on owned types).
       */
-    "isSubtypeOf and show are member methods, not extensions" in run {
+    "isSubtypeOf and show are member methods, not extensions" in {
         Tasty.withPickles(Chunk.empty):
             val t: Tasty.Type     = Tasty.Type.Named(SymbolId(0))
             val other: Tasty.Type = Tasty.Type.Named(SymbolId(1))

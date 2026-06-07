@@ -20,7 +20,7 @@ import scala.collection.mutable
   *
   * Plan tests 7-20.
   */
-class AstUnpicklerTest extends Test:
+class AstUnpicklerTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -72,7 +72,7 @@ class AstUnpicklerTest extends Test:
     end runPass1WithArena
 
     // Test 7: pass 1 on PlainClass.tasty returns at least one symbol with kind == Class.
-    "pass 1 on PlainClass.tasty returns at least one Class symbol" in run {
+    "pass 1 on PlainClass.tasty returns at least one Class symbol" in {
         val bytes = loadFixtureBytes("PlainClass.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
@@ -86,7 +86,7 @@ class AstUnpicklerTest extends Test:
     }
 
     // Test 8: the fixture top-level class name "PlainClass" is in the returned symbol set.
-    "pass 1 on PlainClass.tasty: symbol named 'PlainClass' with kind Class is present" in run {
+    "pass 1 on PlainClass.tasty: symbol named 'PlainClass' with kind Class is present" in {
         val bytes = loadFixtureBytes("PlainClass.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
@@ -104,7 +104,7 @@ class AstUnpicklerTest extends Test:
     }
 
     // Test 9: a def inside the fixture class produces a symbol with kind == Method.
-    "pass 1 on PlainClass.tasty: constructor <init> symbol has kind Method" in run {
+    "pass 1 on PlainClass.tasty: constructor <init> symbol has kind Method" in {
         val bytes = loadFixtureBytes("PlainClass.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
@@ -123,7 +123,7 @@ class AstUnpicklerTest extends Test:
 
     // Test 10: a val inside an object produces a symbol with kind == Val.
     // SomeObject has `val value: Int = 42` which is a plain VALDEF inside the object body.
-    "pass 1 on SomeObject.tasty: 'value' field has kind Val" in run {
+    "pass 1 on SomeObject.tasty: 'value' field has kind Val" in {
         val bytes = loadFixtureBytes("SomeObject.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
@@ -141,7 +141,7 @@ class AstUnpicklerTest extends Test:
     }
 
     // Test 11: a trait in the fixture produces a symbol with kind == Trait.
-    "pass 1 on SomeTrait.tasty: symbol 'SomeTrait' has kind Trait" in run {
+    "pass 1 on SomeTrait.tasty: symbol 'SomeTrait' has kind Trait" in {
         val bytes = loadFixtureBytes("SomeTrait.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
@@ -160,7 +160,7 @@ class AstUnpicklerTest extends Test:
 
     // Test 12: an object in the fixture produces a symbol with kind == Object.
     // In TASTy, Scala objects produce a module class (TYPEDEF with OBJECT modifier), typically named "SomeObject$".
-    "pass 1 on SomeObject.tasty: symbol with kind Object is present" in run {
+    "pass 1 on SomeObject.tasty: symbol with kind Object is present" in {
         val bytes = loadFixtureBytes("SomeObject.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
@@ -178,7 +178,7 @@ class AstUnpicklerTest extends Test:
     }
 
     // Test 13: an enum in the fixture produces a symbol with kind == Class and flags.contains(Flag.Enum).
-    "pass 1 on Color.tasty: symbol 'Color' has kind Class and Enum flag" in run {
+    "pass 1 on Color.tasty: symbol 'Color' has kind Class and Enum flag" in {
         val bytes = loadFixtureBytes("Color.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
@@ -201,7 +201,7 @@ class AstUnpicklerTest extends Test:
 
     // Test 14: an inline def produces a symbol with flags.contains(Flag.Inline).
     // Top-level defs are in FixtureClasses$package.tasty (the package-level object file).
-    "pass 1 on FixtureClasses$package.tasty: symbol 'inlineAdd' has Inline flag" in run {
+    "pass 1 on FixtureClasses$package.tasty: symbol 'inlineAdd' has Inline flag" in {
         val bytes = loadFixtureBytes("FixtureClasses$package.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
@@ -220,7 +220,7 @@ class AstUnpicklerTest extends Test:
     }
 
     // Test 15: a type parameter produces a symbol with kind == TypeParam.
-    "pass 1 on GenericBox.tasty: type param 'A' has kind TypeParam" in run {
+    "pass 1 on GenericBox.tasty: type param 'A' has kind TypeParam" in {
         val bytes = loadFixtureBytes("GenericBox.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
@@ -239,7 +239,7 @@ class AstUnpicklerTest extends Test:
 
     // Test 16: method symbol's owner is tracked in ownerBySymbol map.
     // plan: phase-02 update; sym.owner is removed; use r.ownerBySymbol instead.
-    "pass 1 on PlainClass.tasty: method symbol's owner is the class symbol (via ownerBySymbol)" in run {
+    "pass 1 on PlainClass.tasty: method symbol's owner is the class symbol (via ownerBySymbol)" in {
         val bytes = loadFixtureBytes("PlainClass.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
@@ -267,7 +267,7 @@ class AstUnpicklerTest extends Test:
 
     // Test 17: Inner class owner chain is tracked in ownerBySymbol.
     // plan: phase-02 update; sym.fullName removed; test owner chain instead.
-    "pass 1 on Outer.tasty: Inner class owner is tracked in ownerBySymbol" in run {
+    "pass 1 on Outer.tasty: Inner class owner is tracked in ownerBySymbol" in {
         val bytes = loadFixtureBytes("Outer.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
@@ -293,7 +293,7 @@ class AstUnpicklerTest extends Test:
 
     // Test 18: body slices (bodyStart, bodyEnd) for a DEFDEF are non-zero.
     // plan: phase-02 update; TastyOrigin removed; use bodyDataByAddr instead.
-    "pass 1 on PlainClass.tasty: Method symbol body slice (bodyStart, bodyEnd) is non-zero (via bodyDataByAddr)" in run {
+    "pass 1 on PlainClass.tasty: Method symbol body slice (bodyStart, bodyEnd) is non-zero (via bodyDataByAddr)" in {
         val bytes = loadFixtureBytes("PlainClass.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
@@ -322,7 +322,7 @@ class AstUnpicklerTest extends Test:
     // Note: plan line 202 called for a C[T1 <: T2, T2] fixture; using GenericBox as a fallback per
     // CLEANUP-BATCH-2-NOTES.md anti-thrash rule. The addr-keyed assertion covers the critical
     // addrMap(addr).name.asString == "A" check.
-    "pass 1 on GenericBox.tasty: type param A is retrievable from addrMap by its byte address" in run {
+    "pass 1 on GenericBox.tasty: type param A is retrievable from addrMap by its byte address" in {
         val bytes = loadFixtureBytes("GenericBox.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
             result match
@@ -363,7 +363,7 @@ class AstUnpicklerTest extends Test:
     // Test 21: pass 1 on PlainClass.tasty with arena wiring produces non-empty placeholders.
     // PlainClass.tasty references cross-file types (scala.Int, etc.) encoded as TYPEREFpkg/TYPEREFin nodes.
     // After wiring, these produce UnresolvedRef entries in Pass1Result.placeholders.
-    "pass 1 on PlainClass.tasty with arena produces non-empty placeholders" in run {
+    "pass 1 on PlainClass.tasty with arena produces non-empty placeholders" in {
         val bytes = loadFixtureBytes("PlainClass.tasty")
         val arena = TypeArena.canonical()
         Abort.run[TastyError](runPass1WithArena(bytes, arena)).map { result =>
@@ -386,7 +386,7 @@ class AstUnpicklerTest extends Test:
     // Test 22 (TEMPLATE parent decoding): SomeCaseClass.tasty extends Product and Serializable.
     // After UnresolvedRef is deleted; cross-file parent references are created as synthetic
     // unresolved symbols (SymbolId(-1)) directly in parentsBySymbol.
-    "TEMPLATE parents decode for SomeCaseClass.tasty: class symbol has parents" in run {
+    "TEMPLATE parents decode for SomeCaseClass.tasty: class symbol has parents" in {
         val bytes = loadFixtureBytes("SomeCaseClass.tasty")
         val arena = TypeArena.canonical()
         Abort.run[TastyError](runPass1WithArena(bytes, arena)).map { result =>
@@ -412,7 +412,7 @@ class AstUnpicklerTest extends Test:
 
     // Test 6: Pass1Result.parentsBySymbol for PlainClass.tasty contains an entry for the
     // PlainClass symbol with a non-empty parent list. PlainClass extends AnyRef (Object) in TASTy.
-    "Pass1Result.parentsBySymbol for PlainClass contains entry with non-empty parents" in run {
+    "Pass1Result.parentsBySymbol for PlainClass contains entry with non-empty parents" in {
         val bytes = loadFixtureBytes("PlainClass.tasty")
         val arena = TypeArena.canonical()
         Abort.run[TastyError](runPass1WithArena(bytes, arena)).map { result =>
@@ -443,7 +443,7 @@ class AstUnpicklerTest extends Test:
     // Test 7: Pass1Result.childrenByOwner for PlainClass.tasty maps the PlainClass symbol
     // to all its directly-owned members. At minimum, the field 'x' and the constructor '<init>'
     // must be present.
-    "Pass1Result.childrenByOwner for PlainClass maps class symbol to members including x and <init>" in run {
+    "Pass1Result.childrenByOwner for PlainClass maps class symbol to members including x and <init>" in {
         val bytes = loadFixtureBytes("PlainClass.tasty")
         val arena = TypeArena.canonical()
         Abort.run[TastyError](runPass1WithArena(bytes, arena)).map { result =>
@@ -483,7 +483,7 @@ class AstUnpicklerTest extends Test:
     // payload bytes follow. The readEnd() returns cursor+127 but the next readByte() is past
     // the end of the array, triggering ArrayIndexOutOfBoundsException which readPass1 converts
     // to MalformedSection("ASTs", ...).
-    "pass 1 on truncated ASTs section produces MalformedSection(ASTs, ...)" in run {
+    "pass 1 on truncated ASTs section produces MalformedSection(ASTs, ...)" in {
         // PACKAGE = 128 (category 5: tag + Length + payload)
         // Length Nat = 127 (single byte in dotty Nat encoding: (127 | 0x80).toByte = 0xff)
         // Then 0 actual payload bytes. readByte() inside the payload will AIOOB.
@@ -511,7 +511,7 @@ class AstUnpicklerTest extends Test:
     // so it may be Type.TermRef (qualified reference) or Type.Named (proxy) depending on the
     // TASTy encoding. Assert on symbol presence and that a type was decoded; do NOT assert on
     // resolved FQN since this is raw Pass1Result before Phase C placeholder resolution.
-    "typeBySymbol for SomeTrait.compute contains entry with Named type" in run {
+    "typeBySymbol for SomeTrait.compute contains entry with Named type" in {
         val bytes = loadFixtureBytes("SomeTrait.tasty")
         val arena = TypeArena.canonical()
         Abort.run[TastyError](runPass1WithArena(bytes, arena)).map { result =>
@@ -547,7 +547,7 @@ class AstUnpicklerTest extends Test:
     // contains an entry for 'content'. In raw Pass1Result, the TYPEREFsym for A produces a
     // Type.Named(unresolvedProxy) before Phase C resolves names. Assert that the entry exists
     // and the type is Named (structure check only; the proxy symbol name is synthetic at this stage).
-    "typeBySymbol for GenericBox.content (val content: A) contains Named type" in run {
+    "typeBySymbol for GenericBox.content (val content: A) contains Named type" in {
         val bytes = loadFixtureBytes("GenericBox.tasty")
         val arena = TypeArena.canonical()
         Abort.run[TastyError](runPass1WithArena(bytes, arena)).map { result =>
@@ -583,7 +583,7 @@ class AstUnpicklerTest extends Test:
     // changed internal maps from JVM-only IdentityHashMap to cross-platform LongMap keyed on
     // LoadingSymbol.Materialising.id. Assigns the four map fields to explicitly typed LongMap variables;
     // the assignment compiles only if the field types are correct. Asserts structural invariants.
-    "T-P4-1: Pass1Result map fields are LongMap instances " in run {
+    "T-P4-1: Pass1Result map fields are LongMap instances " in {
         import scala.collection.mutable
         import kyo.internal.tasty.symbol.LoadingSymbol
         val bytes = loadFixtureBytes("GenericBox.tasty")
@@ -612,7 +612,7 @@ class AstUnpicklerTest extends Test:
 
     // T-P4-3: addrMap is populated after pass1 completes.
     // plan: phase-02 update; TastyOrigin.addrMap removed; use r.addrMap (Pass1Result.addrMap) instead.
-    "T-P4-3: addrMap is populated after pass1 completes (via Pass1Result.addrMap)" in run {
+    "T-P4-3: addrMap is populated after pass1 completes (via Pass1Result.addrMap)" in {
         val bytes = loadFixtureBytes("PlainClass.tasty")
         val arena = TypeArena.canonical()
         Abort.run[TastyError](runPass1WithArena(bytes, arena)).map { result =>

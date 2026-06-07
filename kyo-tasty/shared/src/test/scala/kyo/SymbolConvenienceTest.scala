@@ -6,7 +6,7 @@ import kyo.Tasty.SymbolId
   *
   * Covers: fullNameString, simpleName, ownersChain, owner.
   */
-class SymbolConvenienceTest extends Test:
+class SymbolConvenienceTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -54,7 +54,7 @@ class SymbolConvenienceTest extends Test:
     // Given: Symbol.Class named "List" owned by package "scala.collection".
     // When: c.fullNameString.
     // Then: returns "scala.collection.List".
-    "Leaf 131: fullNameString returns dotted FQN" in run {
+    "Leaf 131: fullNameString returns dotted FQN" in {
         Sync.defer {
             val pkg = makePackage(0, "scala.collection", ownerId = -1, Chunk(SymbolId(1)))
             val cls = makeClass(1, "List", ownerId = 0)
@@ -90,7 +90,7 @@ class SymbolConvenienceTest extends Test:
     // Given: a 5-deep nested fixture pkg.A.B.C.D.
     // When: d.ownersChain.map(_.simpleName).
     // Then: returns Chunk("D", "C", "B", "A", "pkg").
-    "Leaf 133: ownersChain returns self-first chain" in run {
+    "Leaf 133: ownersChain returns self-first chain" in {
         val pkg  = makePackage(0, "pkg", ownerId = -1, Chunk(SymbolId(1)))
         val clsA = makeClass(1, "A", ownerId = 0, Chunk(SymbolId(2)))
         val clsB = makeClass(2, "B", ownerId = 1, Chunk(SymbolId(3)))
@@ -118,7 +118,7 @@ class SymbolConvenienceTest extends Test:
     // Given: a synthetic fixture where ownerId == id (self-loop).
     // When: s.ownersChain.size.
     // Then: returns 1 (the cycle guard stops the walk).
-    "Leaf 134: ownersChain stops on self-loop" in run {
+    "Leaf 134: ownersChain stops on self-loop" in {
         val pkg = makePackage(5, "root", ownerId = 5, Chunk.empty)
         val cp = Tasty.Classpath.make(
             symbols = Chunk(pkg),
@@ -142,7 +142,7 @@ class SymbolConvenienceTest extends Test:
     // Given: Symbol.Method declared in Symbol.Class A.
     // When: Tasty.owner(m).
     // Then: returns Maybe.Present(a) where a.simpleName == "A".
-    "Leaf 135: owner returns Present for method with owner" in run {
+    "Leaf 135: owner returns Present for method with owner" in {
         Sync.defer {
             val cls = makeClass(0, "A", ownerId = -1)
             val m   = makeMethod(1, "foo", ownerId = 0)

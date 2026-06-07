@@ -20,7 +20,7 @@ import kyo.internal.tasty.reader.TastyHeader
   * Name-table byte-count delimiting: the loop runs until `position >= nameTableEnd`, not for a fixed entry count. This is verified by the
   * corrupt-section test, which uses a truncated payload.
   */
-class NameUnpicklerTest extends Test:
+class NameUnpicklerTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -32,7 +32,7 @@ class NameUnpicklerTest extends Test:
         TastyHeader.read(view).unit
 
     // Test 7: loading the fixture TASTy file: the Names section is present and non-empty.
-    "loading PlainClass.tasty produces a non-empty name array" in run {
+    "loading PlainClass.tasty produces a non-empty name array" in {
         val bytes = loadFixture()
         val view  = ByteView(bytes)
         Abort.run[TastyError] {
@@ -54,7 +54,7 @@ class NameUnpicklerTest extends Test:
     }
 
     // Test 8: the name "PlainClass" is in the decoded name array (fixture top-level class name).
-    "PlainClass fixture: name 'PlainClass' appears in the decoded name array" in run {
+    "PlainClass fixture: name 'PlainClass' appears in the decoded name array" in {
         val bytes = loadFixture()
         val view  = ByteView(bytes)
         Abort.run[TastyError] {
@@ -73,7 +73,7 @@ class NameUnpicklerTest extends Test:
     }
 
     // Test 9: a QUALIFIED name entry (two simple-name parts joined by ".") decodes to a dotted string.
-    "PlainClass fixture: a QUALIFIED name entry decodes to a dotted string" in run {
+    "PlainClass fixture: a QUALIFIED name entry decodes to a dotted string" in {
         val bytes = loadFixture()
         val view  = ByteView(bytes)
         Abort.run[TastyError] {
@@ -99,7 +99,7 @@ class NameUnpicklerTest extends Test:
     }
 
     // Test 10: a corrupt section (truncated mid-name) produces Abort.fail(TastyError.MalformedSection("Names", ...)).
-    "corrupt name table (truncated mid-entry) produces MalformedSection" in run {
+    "corrupt name table (truncated mid-entry) produces MalformedSection" in {
         // Build a fake name table: name-table-byte-count Nat says 10 bytes are coming, but we only provide 3.
         // Name table length = 10 (as Nat: single byte 0x8a because 10 | 0x80 = 0x8a)
         // Then UTF8 tag (0x01), then length=5 (0x85), then only 2 bytes of payload -> truncated.
@@ -123,7 +123,7 @@ class NameUnpicklerTest extends Test:
     }
 
     // Test 11: all decoded names are interned: same bytes interned twice give reference-equal underlying entries.
-    "interning the same byte sequence twice gives reference-equal underlying entries" in run {
+    "interning the same byte sequence twice gives reference-equal underlying entries" in {
         val bytes = loadFixture()
         val view  = ByteView(bytes)
         Abort.run[TastyError] {
@@ -150,7 +150,7 @@ class NameUnpicklerTest extends Test:
 
     // Test 12 (P2-W5 STEERING directive): trailing padding bytes must NOT be interpreted as an extra entry.
     // The byte-count-delimited loop must stop at nameTableEnd even if more bytes follow.
-    "name table loop stops at nameTableByteCount boundary, ignoring trailing bytes" in run {
+    "name table loop stops at nameTableByteCount boundary, ignoring trailing bytes" in {
         // Construct a name table with:
         //   nameTableByteCount = 7 (encoded as Nat: 7 | 0x80 = 0x87)
         //   Then: UTF8 tag (0x01) + length=5 (0x85) + 5 payload bytes ("hello") = 7 bytes total
@@ -186,7 +186,7 @@ class NameUnpicklerTest extends Test:
     }
 
     // QUALIFIED entry with out-of-range prefix yields MalformedSection
-    "QUALIFIED entry with out-of-range prefix yields MalformedSection" in run {
+    "QUALIFIED entry with out-of-range prefix yields MalformedSection" in {
         // Build a name table with:
         //   1 UTF8 entry: "hello" (5 bytes, tag=1)
         //   1 QUALIFIED entry: prefix=99 (out of range since tableSize=1), selector=0 (valid)

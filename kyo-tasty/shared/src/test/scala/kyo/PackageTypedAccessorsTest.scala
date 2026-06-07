@@ -6,7 +6,7 @@ import kyo.Tasty.SymbolId
   *
   * All six leaves use a synthetic fixture: a Package with memberIds pointing to 1 Class, 1 Trait, 1 Object, and 1 sub-Package.
   */
-class PackageTypedAccessorsTest extends Test:
+class PackageTypedAccessorsTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -103,7 +103,7 @@ class PackageTypedAccessorsTest extends Test:
     // Given: pkg with 1 class + 1 trait + 1 object + 1 subpackage (total 4 memberIds)
     // When: pkg.memberIds.flatMap(id => cp.symbol(id).toChunk)
     // Then: Chunk[Symbol] size 4
-    "Leaf 85: members-untyped: Package.members returns Chunk[Symbol] with all 4 direct members" in run {
+    "Leaf 85: members-untyped: Package.members returns Chunk[Symbol] with all 4 direct members" in {
         buildFixture.map: (pkg, cp) =>
             given Tasty.Classpath = cp
             val ms                = pkg.memberIds.flatMap(id => cp.symbol(id).toChunk)
@@ -115,7 +115,7 @@ class PackageTypedAccessorsTest extends Test:
     // Given: same fixture
     // When: pkg.memberIds.flatMap(id => cp.symbol(id).toChunk).collect { case c: Tasty.Symbol.Class => c }
     // Then: Chunk[Symbol.Class] size 1
-    "Leaf 86: classes-typed: Package.classes returns Chunk[Class] size 1" in run {
+    "Leaf 86: classes-typed: Package.classes returns Chunk[Class] size 1" in {
         buildFixture.map: (pkg, cp) =>
             given Tasty.Classpath = cp
             val cs                = pkg.memberIds.flatMap(id => cp.symbol(id).toChunk).collect { case c: Tasty.Symbol.Class => c }
@@ -129,7 +129,7 @@ class PackageTypedAccessorsTest extends Test:
     // Given: same fixture
     // When: pkg.memberIds.flatMap(id => cp.symbol(id).toChunk).collect { case t: Tasty.Symbol.Trait => t }
     // Then: Chunk[Symbol.Trait] size 1
-    "Leaf 87: traits-typed: Package.traits returns Chunk[Trait] size 1" in run {
+    "Leaf 87: traits-typed: Package.traits returns Chunk[Trait] size 1" in {
         buildFixture.map: (pkg, cp) =>
             given Tasty.Classpath = cp
             val ts                = pkg.memberIds.flatMap(id => cp.symbol(id).toChunk).collect { case t: Tasty.Symbol.Trait => t }
@@ -143,7 +143,7 @@ class PackageTypedAccessorsTest extends Test:
     // Given: same fixture
     // When: pkg.memberIds.flatMap(id => cp.symbol(id).toChunk).collect { case o: Tasty.Symbol.Object => o }
     // Then: Chunk[Symbol.Object] size 1
-    "Leaf 88: objects-typed: Package.objects returns Chunk[Object] size 1" in run {
+    "Leaf 88: objects-typed: Package.objects returns Chunk[Object] size 1" in {
         buildFixture.map: (pkg, cp) =>
             given Tasty.Classpath = cp
             val os                = pkg.memberIds.flatMap(id => cp.symbol(id).toChunk).collect { case o: Tasty.Symbol.Object => o }
@@ -157,7 +157,7 @@ class PackageTypedAccessorsTest extends Test:
     // Given: same fixture (class + trait + object)
     // When: pkg.memberIds.flatMap(id => cp.symbol(id).toChunk).collect { case cl: Tasty.Symbol.ClassLike => cl }
     // Then: Chunk[Symbol.ClassLike] size 3
-    "Leaf 89: classLike-typed: Package.classLike returns Chunk[ClassLike] of size 3" in run {
+    "Leaf 89: classLike-typed: Package.classLike returns Chunk[ClassLike] of size 3" in {
         buildFixture.map: (pkg, cp) =>
             given Tasty.Classpath = cp
             val cl                = pkg.memberIds.flatMap(id => cp.symbol(id).toChunk).collect { case cl: Tasty.Symbol.ClassLike => cl }
@@ -169,7 +169,7 @@ class PackageTypedAccessorsTest extends Test:
     // Given: same fixture (1 sub-Package)
     // When: pkg.memberIds.flatMap(id => cp.symbol(id).toChunk).collect { case sp: Tasty.Symbol.Package => sp }
     // Then: Chunk[Symbol.Package] size 1
-    "Leaf 90: subpackages-typed: Package.subpackages returns Chunk[Package] size 1" in run {
+    "Leaf 90: subpackages-typed: Package.subpackages returns Chunk[Package] size 1" in {
         buildFixture.map: (pkg, cp) =>
             given Tasty.Classpath = cp
             val sp                = pkg.memberIds.flatMap(id => cp.symbol(id).toChunk).collect { case sp: Tasty.Symbol.Package => sp }

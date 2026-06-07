@@ -10,7 +10,7 @@ import kyo.internal.tasty.symbol.SymbolKind
   *   2. Single-kind discriminator equality: isTrait / isClass / isClassLike composites.
   *   3. Composite kind predicates compose correctly (isCaseClass = isClass && isCase).
   */
-class SymbolPredicateTest extends Test:
+class SymbolPredicateTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 

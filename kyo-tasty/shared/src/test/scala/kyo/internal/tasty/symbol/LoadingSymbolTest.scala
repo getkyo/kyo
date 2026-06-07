@@ -9,7 +9,7 @@ import kyo.*
   *   - materialisingHoldsId: Materialising.id holds the assigned value; structural equality on id.
   *   - placeholderDeleted: LoadingSymbol.Placeholder no longer exists (deleted in Phase 18).
   */
-class LoadingSymbolTest extends kyo.Test:
+class LoadingSymbolTest extends kyo.test.Test[Any]:
 
     // loadingSymbolInaccessibleFromUserCode
     //

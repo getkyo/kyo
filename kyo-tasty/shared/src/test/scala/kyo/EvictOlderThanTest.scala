@@ -11,13 +11,13 @@ import kyo.internal.MemoryFileSource
   *
   * Uses MemoryFileSource with controlled mtimes so the test is deterministic and cross-platform.
   */
-class EvictOlderThanTest extends Test:
+class EvictOlderThanTest extends kyo.test.Test[Any]:
 
     // ── Leaf 9: evictOlderThan deletes files older than cutoff ───────────────
     // Given: cacheDir with 3 .krfl files: two mtime 30 days ago, one mtime 1 hour ago
     // When: Tasty.Snapshot.evictOlderThanWithSource(cacheDir, 7 days, src)
     // Then: the two old files are deleted; the recent file remains; returns Success(())
-    "Leaf 9: evictOlderThan deletes old .krfl files and keeps recent ones" in run {
+    "Leaf 9: evictOlderThan deletes old .krfl files and keeps recent ones" in {
         val src    = MemoryFileSource()
         val now    = java.lang.System.currentTimeMillis()
         val old1   = "cache/aaa.krfl"
@@ -51,7 +51,7 @@ class EvictOlderThanTest extends Test:
 
     // ── Leaf 9b: verify old files are completely removed after eviction ───────
     // F-001: after eviction via source.delete the .krfl namespace is clean.
-    "Leaf 9b: evictOlderThan removes old files completely (no residual paths)" in run {
+    "Leaf 9b: evictOlderThan removes old files completely (no residual paths)" in {
         val src  = MemoryFileSource()
         val now  = java.lang.System.currentTimeMillis()
         val old1 = "cache2/aaaa.krfl"
@@ -81,7 +81,7 @@ class EvictOlderThanTest extends Test:
     // Given: MemoryFileSource pre-loaded with old1, old2 (30 days old) and recent (1 hour old)
     // When: evictOlderThanWithSource(cacheDir, 7 days, src) runs to completion
     // Then: old paths are absent; recent path is present; no residue paths with ".deleting" suffix exist
-    "Leaf 9c (F-001): evictOlderThan removes bytes from source; no stale residue paths appear" in run {
+    "Leaf 9c (F-001): evictOlderThan removes bytes from source; no stale residue paths appear" in {
         val src      = MemoryFileSource()
         val now      = java.lang.System.currentTimeMillis()
         val cacheDir = "cache9c"
@@ -131,7 +131,7 @@ class EvictOlderThanTest extends Test:
     // When: Tasty.Snapshot.evictOlderThanWithSource(nonExistent, maxAgeMs, src)
     // Then: returns Result.Success(()) -- listing an empty/absent directory returns Chunk.empty
     //       and there are no files to delete, so the operation is a no-op
-    "Leaf 10: evictOlderThan on non-existent directory is a no-op (Success)" in run {
+    "Leaf 10: evictOlderThan on non-existent directory is a no-op (Success)" in {
         val src         = MemoryFileSource()
         val nonExistent = "no-such-dir"
         val maxAgeMs    = 7L * 24 * 60 * 60 * 1000

@@ -7,7 +7,7 @@ import kyo.Tasty.SymbolId
   *
   * Leaves 13-14 per plan 05-plan.yaml id:1. Pins: INV-006.
   */
-class SymbolExhaustiveMatchTest extends Test:
+class SymbolExhaustiveMatchTest extends kyo.test.Test[Any]:
 
     // ── Leaf 13: exhaustive-match-14-cases-compiles ──────────────────────────
 

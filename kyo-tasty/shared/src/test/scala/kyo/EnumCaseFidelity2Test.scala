@@ -38,7 +38,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     //         on JS/Native: embedded fixtures include Color with Red/Green/Blue value-form enum cases)
     // When: collecting any EnumCase symbols from the classpath
     // Then: post-fix count > 0; before fix count is 0 (value-form cases were Symbol.Val)
-    "classpath has at least one EnumCase child (value-form or class-form)" in run {
+    "classpath has at least one EnumCase child (value-form or class-form)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val enumCases = cp.symbols.count(_.isInstanceOf[Tasty.Symbol.EnumCase])
             assert(
@@ -55,7 +55,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     // When: for each enum class, collecting Symbol.EnumCase reachable via permittedSubclasses or companion declarations
     // Then: post-fix every enum has at least 1 EnumCase; before fix 15 of 17 had 0
     // Note: on JS/Native the embedded fixture set has Color (value-form) and Shape (class-form).
-    "-DF2 : every enum class has at least one EnumCase child" in run {
+    "-DF2 : every enum class has at least one EnumCase child" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
 
             val enums = cp.allClassLike.filter(e => e.isEnum && !e.isInstanceOf[Tasty.Symbol.EnumCase]).toList
@@ -96,7 +96,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     // When: counting cp.symbols that are Symbol.EnumCase
     // Then: post-fix count > 0 (on JVM: > 10; before fix exactly 2 per probe-001.log line 39911)
     //       on JS/Native: embedded fixtures contribute Color (3 value-form) + Shape (3 class-form) = 6 minimum
-    "total EnumCase count > 0 after reclassification (at least embedded Color + Shape cases)" in run {
+    "total EnumCase count > 0 after reclassification (at least embedded Color + Shape cases)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val enumCaseCount = cp.symbols.count(_.isInstanceOf[Tasty.Symbol.EnumCase])
             assert(
@@ -115,7 +115,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     //   (FileNotFound / FixedRecordWithHeader enum cases have non-Object owners due to a pre-existing
     //   class-form owner resolution quirk; that is documented and not regressed by this phase).
     //   Color.Red/Green/Blue are definitively value-form and their owner should always be Color$.
-    "Color value-form EnumCase owner is the companion Object" in run {
+    "Color value-form EnumCase owner is the companion Object" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
 
             // Look for value-form enum cases from known enums:
@@ -154,7 +154,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     //        or kyo.TastyError on JVM (class-form enum with constructor parameters)
     // When: inspecting its class-form enum cases via permittedSubclasses after
     // Then: permittedSubclasses contains EnumCase symbols (regression guard for fix)
-    "class-form EnumCase still correctly classified (Shape or TastyError)" in run {
+    "class-form EnumCase still correctly classified (Shape or TastyError)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
 
             // Try kyo.TastyError first (JVM), fall back to kyo.fixtures.Shape (JS/Native)
@@ -202,7 +202,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): the assertion pins
     //   java.lang.annotation.RetentionPolicy on the jrt:/ platform-modules classpath. Loading java.base via
     //   jrt:/ is a JVM-only loader; no equivalent on JS/Native.
-    "Java enum constants (RetentionPolicy) are Symbol.EnumCase" in runJVM {
+    "Java enum constants (RetentionPolicy) are Symbol.EnumCase".onlyJvm in {
         TestClasspaths2.standardWithPlatformModules.map: cp =>
 
             cp.findClass("java.lang.annotation.RetentionPolicy") match
@@ -240,7 +240,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     // Note: On JVM the real classpath contributes many more enum cases. On JS/Native the embedded fixture set
     //   contributes Color (value-form: up to 3) and Shape (class-form: up to 3). The exact count on JS/Native
     //   may differ from 6 due to companion-object decoding specifics; the invariant is non-zero.
-    "Phase-2.10 (HARD RULE 12): embedded fixture EnumCase count > 0 on all platforms" in run {
+    "Phase-2.10 (HARD RULE 12): embedded fixture EnumCase count > 0 on all platforms" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val count = cp.symbols.count(_.isInstanceOf[Tasty.Symbol.EnumCase])
             assert(

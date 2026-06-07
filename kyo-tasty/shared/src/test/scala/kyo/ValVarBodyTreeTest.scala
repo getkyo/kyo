@@ -14,7 +14,7 @@ import scala.collection.mutable
   * fixture with a Var body constructed from a Val's body bytes (same shape) to verify Tasty.bodyTree(Var). Leaf 81b is a static-type compile check
   * for Tasty.bodyTree(Val) effect row.
   */
-class ValVarBodyTreeTest extends Test:
+class ValVarBodyTreeTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -59,7 +59,7 @@ class ValVarBodyTreeTest extends Test:
     // Given: a loaded SomeObject classpath containing a Val with body bytes
     // When: run Tasty.bodyTree(v)
     // Then: Success(Maybe.Present(_))
-    "Leaf 79: val-bodyTree: Tasty.bodyTree(Val) returns Present(Tree) for a val with body" in run {
+    "Leaf 79: val-bodyTree: Tasty.bodyTree(Val) returns Present(Tree) for a val with body" in {
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectBinding.flatMap: binding =>
@@ -91,7 +91,7 @@ class ValVarBodyTreeTest extends Test:
     // Given: a loaded SomeObject classpath; find a Var with a body if present
     // When: run Tasty.bodyTree(v)
     // Then: Success(Maybe.Present(_)) or inconclusive if no Var with body found
-    "Leaf 80: var-bodyTree: Tasty.bodyTree(Var) returns Present(Tree) for a var with body" in run {
+    "Leaf 80: var-bodyTree: Tasty.bodyTree(Var) returns Present(Tree) for a var with body" in {
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectBinding.flatMap: binding =>
@@ -139,7 +139,7 @@ class ValVarBodyTreeTest extends Test:
     // Given: val e: Maybe[Tree] < (Sync & Abort[TastyError]) = Tasty.bodyTree(v)
     // When: compile inside bindingLocal.let(Present(Binding(cp, Present(ctx))))
     // Then: compiles; no other effect; runtime result is Success
-    "Leaf 81b: Tasty.bodyTree(Val) effect row is exactly (Sync & Abort[TastyError]) -- compile check" in run {
+    "Leaf 81b: Tasty.bodyTree(Val) effect row is exactly (Sync & Abort[TastyError]) -- compile check" in {
         val valSym = Tasty.Symbol.Val(
             SymbolId(1),
             Tasty.Name("x"),

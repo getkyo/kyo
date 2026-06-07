@@ -7,15 +7,15 @@ import kyo.Tasty.SymbolId
   *
   * Leaves 1-3 from the phase-05 plan. Leaf 4 (unknownDeleted) from phase-10 plan.
   */
-class TypeAdtVariantCoverageTest extends Test:
+class TypeAdtVariantCoverageTest extends kyo.test.Test[Any]:
 
     // unknownDeleted
     // Given: a probe compiletime.testing.typeCheckErrors("kyo.Tasty.Type.Unknown")
     // When: the test asserts
     // Then: the returned list is non-empty (Type.Unknown was removed in Cat 14)
     "Type.Unknown no longer exists after Cat 14 elimination" in {
-        val errs = compiletime.testing.typeCheckErrors("kyo.Tasty.Type.Unknown")
-        assert(errs.nonEmpty, "Expected compile error for Type.Unknown, but got none")
+        val errCount = compiletime.testing.typeCheckErrors("kyo.Tasty.Type.Unknown").length
+        assert(errCount > 0, "Expected compile error for Type.Unknown, but got none")
         succeed
     }
 
@@ -24,10 +24,10 @@ class TypeAdtVariantCoverageTest extends Test:
     // When: the test asserts
     // Then: the returned list is non-empty
     "Type.Function no longer accepts a third isContext argument" in {
-        val errs = compiletime.testing.typeCheckErrors(
+        val errCount = compiletime.testing.typeCheckErrors(
             "kyo.Tasty.Type.Function(kyo.Chunk.empty, kyo.Tasty.Type.Any, true)"
-        )
-        assert(errs.nonEmpty, "Expected compile error for three-argument Type.Function, but got none")
+        ).length
+        assert(errCount > 0, "Expected compile error for three-argument Type.Function, but got none")
         succeed
     }
 

@@ -11,7 +11,7 @@ import kyo.internal.tasty.symbol.SymbolKind
   * Actual SymbolKind cases: Package, Class, Trait, Object, Method, Field, Val, Var, TypeAlias, OpaqueType, AbstractType, TypeParam,
   * Parameter, EnumCase. Total: 14 cases (Unresolved removed in).
   */
-class SymbolKindTest extends Test:
+class SymbolKindTest extends kyo.test.Test[Any]:
 
     // Test 8 (T2, SymbolKind): enum contains every documented case and has the expected count.
     // Given: SymbolKind.values array.

@@ -13,7 +13,7 @@ import kyo.Tasty.SymbolId
   * Leaf 6: moduleSubRecordsSchemaRoundTrip -- Java.Module.Requires/Exports/Opens/Provides round-trip.
   * Leaf 7: annotationMutualRecursionWorkaroundUnchangedSemantics -- Java.Annotation mutual-recursion round-trip.
   */
-class TastyJavaNamespaceTest extends Test:
+class TastyJavaNamespaceTest extends kyo.test.Test[Any]:
 
     // ── Leaf 1: pathsResolveUnderTastyJava ───────────────────────────────────
     // Given: imports of the new Tasty.Java.* paths.

@@ -12,7 +12,7 @@ import kyo.internal.tasty.type_.TypeOps
   * directly. Both methods return Applied/AndType pass-through until restores name-based normalization. Tests updated to expect
   * Applied/AndType shapes.
   */
-class TypeOpsTest extends Test:
+class TypeOpsTest extends kyo.test.Test[Any]:
 
     private def makeNamedSym(fqn: String): Tasty.Type.Named =
         // plan: phase-05; Symbol.make returns id = SymbolId(-1); Named(id) is a structural value.
@@ -29,7 +29,7 @@ class TypeOpsTest extends Test:
 
     // Test 6: applied(Named(scala.Function2), Chunk(A, B, C)) returns Applied(base, args) in phase-05.
     // plan: phase-05; normalization to Function deferred to.
-    "applied(Named(scala.Function2), [A, B, C]) => Applied (phase-05 pass-through)" in run {
+    "applied(Named(scala.Function2), [A, B, C]) => Applied (phase-05 pass-through)" in {
         import AllowUnsafe.embrace.danger
         val base   = makeNamedSym("scala.Function2")
         val result = TypeOps.applied(base, Chunk(A, B, C))
@@ -43,7 +43,7 @@ class TypeOpsTest extends Test:
 
     // Test 7: applied(Named(scala.Tuple2), Chunk(A, B)) returns Applied in phase-05.
     // plan: phase-05; normalization to Tuple deferred to.
-    "applied(Named(scala.Tuple2), [A, B]) => Applied (phase-05 pass-through)" in run {
+    "applied(Named(scala.Tuple2), [A, B]) => Applied (phase-05 pass-through)" in {
         import AllowUnsafe.embrace.danger
         val base   = makeNamedSym("scala.Tuple2")
         val result = TypeOps.applied(base, Chunk(A, B))
@@ -57,7 +57,7 @@ class TypeOpsTest extends Test:
 
     // Test 8: applied(Named(scala.ContextFunction1), Chunk(A, B)) returns Applied in phase-05.
     // plan: phase-05; normalization to Function deferred to.
-    "applied(Named(scala.ContextFunction1), [A, B]) => Applied (phase-05 pass-through)" in run {
+    "applied(Named(scala.ContextFunction1), [A, B]) => Applied (phase-05 pass-through)" in {
         import AllowUnsafe.embrace.danger
         val base   = makeNamedSym("scala.ContextFunction1")
         val result = TypeOps.applied(base, Chunk(A, B))
@@ -71,7 +71,7 @@ class TypeOpsTest extends Test:
 
     // Test 9: applied(Named(scala.Array), Chunk(T)) returns Applied in phase-05.
     // plan: phase-05; normalization to Array deferred to.
-    "applied(Named(scala.Array), [T]) => Applied (phase-05 pass-through)" in run {
+    "applied(Named(scala.Array), [T]) => Applied (phase-05 pass-through)" in {
         import AllowUnsafe.embrace.danger
         val base   = makeNamedSym("scala.Array")
         val result = TypeOps.applied(base, Chunk(T))
@@ -85,7 +85,7 @@ class TypeOpsTest extends Test:
 
     // Test 10: andType(Named(scala.Singleton), X) returns AndType in phase-05.
     // plan: phase-05; Singleton collapse deferred to.
-    "andType(Named(scala.Singleton), X) => AndType (phase-05 pass-through)" in run {
+    "andType(Named(scala.Singleton), X) => AndType (phase-05 pass-through)" in {
         import AllowUnsafe.embrace.danger
         val singleton = makeNamedSym("scala.Singleton")
         val result    = TypeOps.andType(singleton, X)
@@ -100,7 +100,7 @@ class TypeOpsTest extends Test:
 
     // Test 11: andType(X, Named(scala.Singleton)) returns AndType in phase-05.
     // plan: phase-05; Singleton collapse deferred to.
-    "andType(X, Named(scala.Singleton)) => AndType (phase-05 pass-through)" in run {
+    "andType(X, Named(scala.Singleton)) => AndType (phase-05 pass-through)" in {
         import AllowUnsafe.embrace.danger
         val singleton = makeNamedSym("scala.Singleton")
         val result    = TypeOps.andType(X, singleton)

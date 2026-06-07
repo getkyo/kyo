@@ -11,7 +11,7 @@ import kyo.internal.TestClasspaths
   * traverse for `.tasty` files. The narrowed assertion verifies module-info discovery (java.base is present) without requiring
   * `findClassLike("java.lang.String")` to return Present. See JpmsFidelityTest.
   */
-class JpmsFidelityTest extends Test:
+class JpmsFidelityTest extends kyo.test.Test[Any]:
 
     // initWithPlatformModules loads 20,000+ JDK classfiles from jrt:/. Allow 10 minutes for the load.
     override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(10))
@@ -23,7 +23,7 @@ class JpmsFidelityTest extends Test:
     // When: calling cp.findModule("java.base")
     // Then: post-fix Present(m) with m.exports non-empty containing at least one entry starting with "java.lang";
     //       before fix initWithPlatformModules did not exist
-    "Classpath.initWithPlatformModules discovers java.base with exports" in run {
+    "Classpath.initWithPlatformModules discovers java.base with exports" in {
         Tasty.Classpath.initWithPlatformModules(Seq.empty).map: cp =>
             cp.findModule("java.base") match
                 case Present(m) =>
@@ -43,7 +43,7 @@ class JpmsFidelityTest extends Test:
     // Then: post-fix cp.findModule("java.base") returns Present (module-info.class was decoded from jrt-fs.jar);
     //       narrowed from "cp.findClassLike(java.lang.String) returns Present" because jrt-fs.jar uses the jrt:/
     //       virtual filesystem which the current PlatformFileSource walker does not traverse for .tasty files.
-    "cp.findClassLike(java.lang.String) returns Present after initWithPlatformModules" in run {
+    "cp.findClassLike(java.lang.String) returns Present after initWithPlatformModules" in {
         Tasty.Classpath.initWithPlatformModules(Seq.empty).map: cp =>
             val javaBase = cp.findModule("java.base")
             assert(
@@ -60,7 +60,7 @@ class JpmsFidelityTest extends Test:
     // Then: both return Present; user roots are merged with JDK module discovery;
     //       HARD RULE 4 (layer-don't-restrict): initWithPlatformModules must not break init contract.
     //       Also calls TestClasspaths.withClasspath to satisfy real-classpath-discipline anchor.
-    "HARD RULE 4: initWithPlatformModules merges user roots with JDK modules" in run {
+    "HARD RULE 4: initWithPlatformModules merges user roots with JDK modules" in {
         // Verify baseline: TestClasspaths.withClasspath still works (INV-001 anchor requirement).
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: baseCp =>
             assert(baseCp.findClassLike("kyo.Tasty").isDefined, "baseline withClasspath: kyo.Tasty not found")

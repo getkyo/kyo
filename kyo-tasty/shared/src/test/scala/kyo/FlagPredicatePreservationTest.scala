@@ -4,7 +4,7 @@ import kyo.Tasty.SymbolId
 
 /** verify all 40 flag predicates still work post-cutover.
   */
-class FlagPredicatePreservationTest extends Test:
+class FlagPredicatePreservationTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 

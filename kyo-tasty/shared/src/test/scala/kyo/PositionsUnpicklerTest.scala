@@ -25,7 +25,7 @@ import scala.collection.immutable.IntMap
   * TASTy Nat encoding: continuation bit = 0x80 CLEAR; last byte has 0x80 SET. Small values (0-127) = single byte (value | 0x80). TASTy Int
   * (signed): first byte bit-6 is sign; same continuation convention.
   */
-class PositionsUnpicklerTest extends Test:
+class PositionsUnpicklerTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -33,17 +33,17 @@ class PositionsUnpicklerTest extends Test:
 
     /** Encode a small non-negative Nat (0-127) as a single TASTy byte. */
     private def encNat(n: Int): Byte =
-        assert(n >= 0 && n < 128, s"encNat only handles 0-127, got $n")
+        require(n >= 0 && n < 128, s"encNat only handles 0-127, got $n")
         (n | 0x80).toByte
 
     /** Encode a small signed Int (0-63) as a single TASTy byte (bit 6 = sign = 0). */
     private def encInt(n: Int): Byte =
-        assert(n >= 0 && n < 64, s"encInt helper only handles 0-63, got $n")
+        require(n >= 0 && n < 64, s"encInt helper only handles 0-63, got $n")
         (n | 0x80).toByte
 
     /** Encode a negative signed Int (-64 to -1) as a single TASTy byte. */
     private def encNegInt(n: Int): Byte =
-        assert(n >= -64 && n < 0, s"encNegInt helper only handles -64..-1, got $n")
+        require(n >= -64 && n < 0, s"encNegInt helper only handles -64..-1, got $n")
         // Sign-extend: bit 6 = 1 (sign), value in low 6 bits, stop bit = 0x80.
         // For a single-byte signed Int: encode = (n & 0x3f) | 0x80
         ((n & 0x3f) | 0x80).toByte
@@ -77,7 +77,7 @@ class PositionsUnpicklerTest extends Test:
     //   line 3: chars 17-37, lineStarts[2]=17
     // The class definition at offset 17 => line 3, column 1.
     // addrMap has {5 -> sym} so header = (5<<3)|4 = 44 (addrDelta=5, hasStart=true), start_delta=17.
-    "PositionsUnpickler: class at line 3 column 1 returns Position(Foo.scala, 3, 1)" in run {
+    "PositionsUnpickler: class at line 3 column 1 returns Position(Foo.scala, 3, 1)" in {
         val sym     = makeTestSymbol("Foo")
         val addrMap = IntMap(5 -> sym)
         // LinesSizes: numLines=3, sizes=[10,5,20]
@@ -109,7 +109,7 @@ class PositionsUnpicklerTest extends Test:
     // ── Test 2: no Positions section returns empty map without error ──────────
 
     // Test 2: an empty Positions section (zero-length payload) returns an empty map without error.
-    "PositionsUnpickler: empty payload returns empty map without error" in run {
+    "PositionsUnpickler: empty payload returns empty map without error" in {
         val view = ByteView(Array.empty[Byte])
         Abort.run[TastyError](PositionsUnpickler.read(view, IntMap.empty, Absent)).map:
             case Result.Success(result) =>
@@ -126,7 +126,7 @@ class PositionsUnpicklerTest extends Test:
     // Abort.fail(TastyError.MalformedSection("Positions", ...)).
     // Payload: numLines=2, line sizes [10, 10], then a header byte indicating hasStart=true but
     // no start_delta follows (truncated). ArrayIndexOutOfBoundsException triggers MalformedSection.
-    "PositionsUnpickler: truncated section produces MalformedSection error" in run {
+    "PositionsUnpickler: truncated section produces MalformedSection error" in {
         val payload = Array[Byte](
             encNat(2),  // numLines = 2
             encNat(10), // line 1 size = 10
@@ -153,7 +153,7 @@ class PositionsUnpicklerTest extends Test:
 
     // Test 4: a Java-sourced classfile symbol always has position == Absent because
     // classfiles have no TASTy Positions section; ClassfileUnpickler sets _position to Absent.
-    "PositionsUnpickler: Java classfile symbol always has position == Absent" in run {
+    "PositionsUnpickler: Java classfile symbol always has position == Absent" in {
         val classBytes = kyo.fixtures.Embedded.arrayRecordClass
         val arena      = new TypeArena
         Abort.run[TastyError]:
@@ -183,7 +183,7 @@ class PositionsUnpicklerTest extends Test:
     // Sym1 at addrIndex=3, offset=2 => line 1, col 3.
     // Sym2 at addrIndex=7, offset_delta=+11 => cumulative offset=13 => line 2, col 3.
     // (addrDelta from previous is 7-3=4; this second entry has hasStart=true.)
-    "PositionsUnpickler: two sibling definitions have distinct line/column values" in run {
+    "PositionsUnpickler: two sibling definitions have distinct line/column values" in {
         val symAlpha = makeTestSymbol("Alpha")
         val symBeta  = makeTestSymbol("Beta")
         val addrMap  = IntMap(3 -> symAlpha, 7 -> symBeta)
@@ -241,7 +241,7 @@ class PositionsUnpicklerTest extends Test:
     //   - addrMap has {i+1 -> sym(i)} for i in [0, 10000)
     //
     // Spot checks at entries 0, 999, 4999, 7777, 9999.
-    "T-P5-1: PositionsUnpickler.readSync with IntMap addrMap of 10,000 entries returns correct positions" in run {
+    "T-P5-1: PositionsUnpickler.readSync with IntMap addrMap of 10,000 entries returns correct positions" in {
         val N = 10000
 
         // Build 10,000 symbols, one per addr index 1..N
@@ -340,7 +340,7 @@ class PositionsUnpicklerTest extends Test:
     //   5 bytes big-endian in 7-bit groups: [7, 127, 127, 127, 127].
     //   bytes: 0x07, 0x7F, 0x7F, 0x7F, 0xFF (last byte has stop-bit 0x80 set).
     //   Verify: (7 << 28) | (127 << 21) | (127 << 14) | (127 << 7) | 127 = 2147483647.
-    "B9-1: PositionsUnpickler: Int overflow on lineStarts cumulation produces MalformedSection" in run {
+    "B9-1: PositionsUnpickler: Int overflow on lineStarts cumulation produces MalformedSection" in {
         // numLines=1 encoded as Nat: single byte (1 | 0x80) = 0x81
         // lineSizes[0] = Int.MaxValue = 2147483647 encoded as 5-byte Nat
         //   7-bit groups (big-endian): [7, 127, 127, 127, 127]
@@ -380,7 +380,7 @@ class PositionsUnpicklerTest extends Test:
     //
     // Payload encodes numLines=200, then 200 line sizes in [100..299], then a single Assoc entry
     // at addrDelta=1, hasStart=true, start_delta=0 (curStart=0 => line 1, col 1).
-    "B9-2: PositionsUnpickler: 200-line file with varying line sizes decodes lineStarts correctly" in run {
+    "B9-2: PositionsUnpickler: 200-line file with varying line sizes decodes lineStarts correctly" in {
         val numLines = 200
 
         // Build payload: numLines as Nat, then numLines line sizes (each in 100..299), then one Assoc entry
@@ -451,7 +451,7 @@ class PositionsUnpicklerTest extends Test:
     // B9-3: Confirms the exact value of lineStarts(10) for a 200-line file where line k has size (100+k).
     // lineStarts(10) = 101*10 + 10*9/2 = 1010 + 45 = 1055.
     // A symbol at address 1 with curStart=1055 should decode to (line=11, col=1).
-    "B9-3: PositionsUnpickler: lineStarts(10) equals 1055 for 200-line file with sizes 100+k" in run {
+    "B9-3: PositionsUnpickler: lineStarts(10) equals 1055 for 200-line file with sizes 100+k" in {
         val numLines = 200
 
         // Build line size bytes

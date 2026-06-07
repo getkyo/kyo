@@ -19,7 +19,7 @@ import scala.deriving.*
   *
   * Platform: shared/src/test (HARD RULE 11). Mirror-based enumeration compiles on all platforms.
   */
-class SealedAdtCompletenessTest extends Test:
+class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 

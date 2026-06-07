@@ -15,7 +15,7 @@ import java.nio.file.Paths
   *
   * To populate real numbers: sbt 'kyo-tasty-bench/Jmh/run -i 5 -wi 5 -f 1 -bm avgt -tu ms'
   */
-class BenchmarkRegressionTest extends Test:
+class BenchmarkRegressionTest extends kyo.test.Test[Any]:
 
     /** Walk up from user.dir until a directory containing build.sbt is found. */
     private def findWorktreeRoot: Path =
@@ -42,7 +42,7 @@ class BenchmarkRegressionTest extends Test:
     // cold_load_ms must be -1 (sentinel = not yet JMH-measured) or a non-negative number.
     // The pre-campaign baseline (cold-load.json) is absent; this test documents that known gap
     // rather than failing on it.
-    "P27-T1: post-campaign baseline file exists and cold_load_ms is sentinel or non-negative" taggedAs jvmOnly in {
+    "P27-T1: post-campaign baseline file exists and cold_load_ms is sentinel or non-negative".onlyJvm in {
         val worktreeRoot     = findWorktreeRoot
         val postCampaignFile = worktreeRoot.resolve("kyo-tasty/bench-baselines/post-campaign.json")
 
@@ -72,7 +72,7 @@ class BenchmarkRegressionTest extends Test:
                 "pre-campaign baseline present"
             else
                 "pre-campaign baseline absent (expected: no baseline was captured before the campaign)"
-        info(
+        println(
             s"P27-T1 baseline status: cold_load_ms=$coldVal  $preCampaignNote"
         )
 
@@ -83,7 +83,7 @@ class BenchmarkRegressionTest extends Test:
     //
     // warm_cache_ms must be -1 (sentinel = not yet JMH-measured) or a non-negative number.
     // Same pre-campaign gap documentation applies.
-    "P27-T2: post-campaign baseline file exists and warm_cache_ms is sentinel or non-negative" taggedAs jvmOnly in {
+    "P27-T2: post-campaign baseline file exists and warm_cache_ms is sentinel or non-negative".onlyJvm in {
         val worktreeRoot     = findWorktreeRoot
         val postCampaignFile = worktreeRoot.resolve("kyo-tasty/bench-baselines/post-campaign.json")
 
@@ -113,7 +113,7 @@ class BenchmarkRegressionTest extends Test:
                 "pre-campaign baseline present"
             else
                 "pre-campaign baseline absent (expected: no baseline was captured before the campaign)"
-        info(
+        println(
             s"P27-T2 baseline status: warm_cache_ms=$warmVal  $preCampaignNote"
         )
 

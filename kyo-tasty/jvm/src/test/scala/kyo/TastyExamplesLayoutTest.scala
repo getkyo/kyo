@@ -10,7 +10,7 @@ import scala.jdk.CollectionConverters.*
   * Uses java.nio.file to walk the worktree source tree; not available on Scala.js or Scala Native at link time, so these tests live in
   * jvm/src/test rather than shared/src/test.
   */
-class TastyExamplesLayoutTest extends Test:
+class TastyExamplesLayoutTest extends kyo.test.Test[Any]:
 
     "examples no longer ship in kyo-tasty source tree" in {
         // : kyo-tasty/shared/src/main/scala/kyo/tasty/examples must not exist after.

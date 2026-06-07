@@ -25,7 +25,7 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
     // When: traversing every Named inside the type recursively
     // Then: post-fix no Named(sym).symbolId.value == -1 is found; before fix second Applied arg was Named(-1)
     // On JS/Native: scala.Tuple is not in the embedded fixture set; the leaf produces succeed (Absent branch).
-    "scala.Tuple.splitAt declaredType contains no Named(-1)" in run {
+    "scala.Tuple.splitAt declaredType contains no Named(-1)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findSymbol("scala.Tuple") match
                 case Absent =>
@@ -58,7 +58,7 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
     // When: traversing the declaredType recursively
     // Then: post-fix no Named(-1) found; before fix (probe-001.log line 39873) second Applied arg was Named(-1)
     // On JS/Native: scala.Tuple is not in the embedded fixture set; the leaf produces succeed (Absent branch).
-    "scala.Tuple.++ declaredType contains no Named(-1)" in run {
+    "scala.Tuple.++ declaredType contains no Named(-1)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findSymbol("scala.Tuple") match
                 case Absent =>
@@ -92,7 +92,7 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
     // Then: post-fix the count of Named(id) where id.value == -1 reachable from any method's declaredType is 0;
     //       before fix at least 2 (probe-001.log) and likely dozens
     // On JS/Native: allMethods from embedded fixtures is a small set; the sentinel count must still be 0.
-    "all-stdlib-methods have zero Named(-1) in declaredType" in run {
+    "all-stdlib-methods have zero Named(-1) in declaredType" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var sentinelCount   = 0
             val sampleViolators = new scala.collection.mutable.ArrayBuffer[String]()
@@ -120,7 +120,7 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
     // Then: every platform produces a non-empty string for the same embedded fixture set
     // Note: exact byte-equality across platforms is a property of the TASTy decoder + embedded bytes being identical;
     //   this leaf verifies the show function works without panicking and produces a deterministic non-empty result.
-    "Phase-2.10 (HARD RULE 11): cp.allMethods.headOption.declaredType.show is non-empty on all platforms" in run {
+    "Phase-2.10 (HARD RULE 11): cp.allMethods.headOption.declaredType.show is non-empty on all platforms" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             Tasty.withClasspath(cp):
                 cp.allMethods.headOption match

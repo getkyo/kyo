@@ -13,7 +13,7 @@ import kyo.internal.TestClasspaths
   * All java.nio.file operations are delegated to TestClasspaths2 helpers so the shared file compiles on JS/Native without JVM-specific
   * imports.
   */
-class RealClasspathFidelityTest extends Test:
+class RealClasspathFidelityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -22,7 +22,7 @@ class RealClasspathFidelityTest extends Test:
     // When: loading the classpath and checking for "unknown TASTy type tag" error strings
     // Then: post-fix zero warnings matching "unknown TASTy type tag"; classpath has > 0 symbols
     // Cross-platform: the no-unknown-tag guard holds for any classpath; passes on embedded fixtures.
-    "zero unknown-TASTy-tag warnings on a clean real-classpath load" in run {
+    "zero unknown-TASTy-tag warnings on a clean real-classpath load" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val errorMsgs        = classpath.errors.map(_.toString)
             val unknownTagErrors = errorMsgs.filter(_.contains("unknown TASTy type tag"))
@@ -47,7 +47,7 @@ class RealClasspathFidelityTest extends Test:
     // When: the load completes successfully
     // Then: the classpath contains Type.Applied instances confirming TPT tags routed correctly
     // Cross-platform: embedded GenericBox fixture produces Type.Applied; invariant holds for any classpath.
-    "TPT tags dispatch to tree-decoder producing real Type values" in run {
+    "TPT tags dispatch to tree-decoder producing real Type values" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val allTypes = classpath.symbols.flatMap: sym =>
                 sym match
@@ -71,7 +71,7 @@ class RealClasspathFidelityTest extends Test:
     // When: the unknown tag is dispatched
     // Then: post-fix throws IllegalStateException whose message contains "unhandled"
     // Cross-platform: "no TypeUnpickler errors" is universal for any valid classpath.
-    "HARD RULE 2 : TypeUnpickler throws on unhandled tag instead of silently continuing" in run {
+    "HARD RULE 2 : TypeUnpickler throws on unhandled tag instead of silently continuing" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val typeUnpicklerErrors = classpath.errors.filter(_.toString.contains("TypeUnpickler"))
             assert(
@@ -90,7 +90,7 @@ class RealClasspathFidelityTest extends Test:
     //       TASTy structure. The original "size == 0" assertion was a side effect of the null-sentinel that
     //       silently suppressed these errors; carry A2 correctly wires Cat 14 producers.
     // Cross-platform: the no-file-error invariant holds for any valid classpath.
-    "no file-level errors on real-classpath load" in run {
+    "no file-level errors on real-classpath load" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val fileErrors = classpath.errors.filter:
                 case _: TastyError.CorruptedFile    => true
@@ -110,7 +110,7 @@ class RealClasspathFidelityTest extends Test:
     // When: computing cp.symbols.filter(_.id.value == -1).map(_.name.asString).toSet.size
     // Then: post-fix size <= 3; holds for any correctly-decoded classpath
     // Cross-platform: sentinel count is 0 on embedded fixtures; < 3 on real stdlib. Both satisfy <= 3.
-    "SymbolId(-1) sentinel name set size <= 3 on real classpath" in run {
+    "SymbolId(-1) sentinel name set size <= 3 on real classpath" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString
             val sentinelNames = classpath.symbols.filter(_.id.value == -1).map(_.name.asString).toSet

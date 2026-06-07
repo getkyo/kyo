@@ -8,7 +8,7 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
   *
   * Uses embedded PlainClass/SomeObject/SomeTrait fixtures for cross-platform coverage.
   */
-class QueryFindTest extends Test:
+class QueryFindTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -21,7 +21,7 @@ class QueryFindTest extends Test:
     end openFixtureClasspath
 
     // Leaf 5 + 6: findClass returns Present / Absent
-    "Leaf 5+6: Tasty.findClass returns Present for fixture class, Absent for missing" in run {
+    "Leaf 5+6: Tasty.findClass returns Present for fixture class, Absent for missing" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Tasty.withClasspath(cp):
@@ -38,7 +38,7 @@ class QueryFindTest extends Test:
     }
 
     // Leaf 7: requireClass aborts on missing FQN
-    "Leaf 7: Tasty.requireClass aborts with TastyError.NotFound for missing FQN" in run {
+    "Leaf 7: Tasty.requireClass aborts with TastyError.NotFound for missing FQN" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Tasty.withClasspath(cp):
@@ -52,7 +52,7 @@ class QueryFindTest extends Test:
     }
 
     // Tasty.allClassLike returns a non-empty Chunk for fixture classpath
-    "Leaf 9 (partial): Tasty.allClassLike returns non-empty Chunk for fixture classpath" in run {
+    "Leaf 9 (partial): Tasty.allClassLike returns non-empty Chunk for fixture classpath" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Tasty.withClasspath(cp):
@@ -65,7 +65,7 @@ class QueryFindTest extends Test:
     }
 
     // Leaf 10: aggregators on empty Classpath return Chunk.empty
-    "Leaf 10: aggregators on empty Classpath return Chunk.empty" in run {
+    "Leaf 10: aggregators on empty Classpath return Chunk.empty" in {
         Tasty.withPickles(Chunk.empty):
             for
                 acl <- Tasty.allClassLike
@@ -81,7 +81,7 @@ class QueryFindTest extends Test:
     }
 
     // Tasty.findObject returns Present for a Scala object
-    "Tasty.findObject returns Present for SomeObject fixture" in run {
+    "Tasty.findObject returns Present for SomeObject fixture" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Tasty.withClasspath(cp):
@@ -94,7 +94,7 @@ class QueryFindTest extends Test:
     }
 
     // Tasty.findClassLike returns Present for a trait
-    "Tasty.findClassLike returns Present for SomeTrait fixture" in run {
+    "Tasty.findClassLike returns Present for SomeTrait fixture" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Tasty.withClasspath(cp):

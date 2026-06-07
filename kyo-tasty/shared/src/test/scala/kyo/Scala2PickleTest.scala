@@ -26,7 +26,7 @@ import kyo.internal.tasty.type_.TypeArena
   *
   * Name entry data: raw UTF-8 bytes of the name string.
   */
-class Scala2PickleTest extends Test:
+class Scala2PickleTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -93,7 +93,7 @@ class Scala2PickleTest extends Test:
     // Test 1: ScalaSig attribute -> Flag.Scala2 on all symbols
     // -------------------------------------------------------------------------
 
-    "Test 1: ScalaSig classfile dispatch: classfile with ScalaSig produces symbols with Flag.Scala2" in run {
+    "Test 1: ScalaSig classfile dispatch: classfile with ScalaSig produces symbols with Flag.Scala2" in {
         // Build a minimal pickle with one TERMname entry (idx 0 = "MyClass") and one CLASSsym entry (idx 1)
         // CLASSsym data: nameRef=0 ownerRef=0 flags=0 (no flags)
         val nameEntry   = entry(Scala2PickleReader.TERMname, nameData("MyClass"))
@@ -110,7 +110,7 @@ class Scala2PickleTest extends Test:
     // Test 2: Scala 2 case class -> kind == Class, Flag.Case
     // -------------------------------------------------------------------------
 
-    "Test 2: Scala 2 case class: CLASSsym with CASE flag -> kind=Class and Flag.Case" in run {
+    "Test 2: Scala 2 case class: CLASSsym with CASE flag -> kind=Class and Flag.Case" in {
         // CLASSsym with CASE_FLAG (0x00000800L) set
         val nameEntry   = entry(Scala2PickleReader.TERMname, nameData("MyCaseClass"))
         val classEntry  = entry(Scala2PickleReader.CLASSsym, symData(0, 0, Scala2PickleReader.CASE_FLAG))
@@ -129,7 +129,7 @@ class Scala2PickleTest extends Test:
     // Test 3: Scala 2 method -> declaredType is Type.Function
     // -------------------------------------------------------------------------
 
-    "Test 3: Scala 2 method: VALsym with METH flag -> declaredType is Type.Function" in run {
+    "Test 3: Scala 2 method: VALsym with METH flag -> declaredType is Type.Function" in {
         // VALsym with METH_FLAG (0x00040000L): a method named "apply"
         val nameEntry   = entry(Scala2PickleReader.TERMname, nameData("apply"))
         val methodEntry = entry(Scala2PickleReader.VALsym, symData(0, 0, Scala2PickleReader.METH_FLAG))
@@ -158,7 +158,7 @@ class Scala2PickleTest extends Test:
     // Test 4: Scala 2 type alias -> kind == TypeAlias, declaredType is Named
     // -------------------------------------------------------------------------
 
-    "Test 4: Scala 2 type alias: ALIASsym -> kind=TypeAlias and declaredType=Type.Named" in run {
+    "Test 4: Scala 2 type alias: ALIASsym -> kind=TypeAlias and declaredType=Type.Named" in {
         // ALIASsym entry: a type alias named "Alias"
         val nameEntry   = entry(Scala2PickleReader.TERMname, nameData("Alias"))
         val aliasEntry  = entry(Scala2PickleReader.ALIASsym, symData(0, 0, 0L))
@@ -189,7 +189,7 @@ class Scala2PickleTest extends Test:
 
     // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK Object.class.
     // Any Java classfile without ScalaSig works; the shape assertion (no Scala2 flag) is fixture-independent.
-    "Test 5: Java-only classfile (no ScalaSig attribute) -> Flag.Scala2 is absent" in run {
+    "Test 5: Java-only classfile (no ScalaSig attribute) -> Flag.Scala2 is absent" in {
         val result = ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena)
         result.map: r =>
             val sym = r.classSymbol
@@ -205,7 +205,7 @@ class Scala2PickleTest extends Test:
     // Test 6: corrupt ScalaSig bytes -> Abort.fail(CorruptedFile)
     // -------------------------------------------------------------------------
 
-    "Test 6: corrupt Scala 2 pickle bytes -> Abort.fail(CorruptedFile)" in run {
+    "Test 6: corrupt Scala 2 pickle bytes -> Abort.fail(CorruptedFile)" in {
         // A pickle with wrong major version (e.g., 99 instead of 5) should produce CorruptedFile
         val badPickle = Array[Byte](99.toByte, 0.toByte) // wrong major version
         Abort.run(readPickleDirect(badPickle)).map: result =>
@@ -224,7 +224,7 @@ class Scala2PickleTest extends Test:
     // Test 7: Scala 2 class parents resolve via placeholder mechanism
     // -------------------------------------------------------------------------
 
-    "Test 7: Scala 2 class symbol has at least one parent type (AnyRef placeholder)" in run {
+    "Test 7: Scala 2 class symbol has at least one parent type (AnyRef placeholder)" in {
         // Build a pickle with a single CLASSsym entry. The Scala2PickleReader adds an AnyRef placeholder parent.
         val nameEntry   = entry(Scala2PickleReader.TERMname, nameData("MyParentClass"))
         val classEntry  = entry(Scala2PickleReader.CLASSsym, symData(0, 0, 0L))
@@ -244,7 +244,7 @@ class Scala2PickleTest extends Test:
     // Test 8: EXTref decodes to Unresolved symbol with correct FQN
     // -------------------------------------------------------------------------
 
-    "Test 8: EXTref decodes to Unresolved symbol with FQN com.example.Foo" in run {
+    "Test 8: EXTref decodes to Unresolved symbol with FQN com.example.Foo" in {
         // Pickle layout (entry indices):
         //   0: TERMname "com"
         //   1: TERMname "example"
@@ -274,7 +274,7 @@ class Scala2PickleTest extends Test:
     // Test 9: EXTMODCLASSref appends $ and decodes to Unresolved symbol
     // -------------------------------------------------------------------------
 
-    "Test 9: EXTMODCLASSref appends $ and decodes to Unresolved symbol with FQN com.example.Foo$" in run {
+    "Test 9: EXTMODCLASSref appends $ and decodes to Unresolved symbol with FQN com.example.Foo$" in {
         // Layout (same owner chain as Test 8 but entry 3 is EXTMODCLASSref):
         //   0: TERMname "com.example"
         //   1: EXTref nameRef=0 (no owner) -> "com.example"
@@ -300,7 +300,7 @@ class Scala2PickleTest extends Test:
     // Test 10: EXTref owner-cycle does not StackOverflow; resolves to a finite FQN
     // -------------------------------------------------------------------------
 
-    "Test 10: malformed EXTref owner-cycle terminates safely without StackOverflow" in run {
+    "Test 10: malformed EXTref owner-cycle terminates safely without StackOverflow" in {
         // Pickle layout (entry indices):
         //   0: TERMname "Foo"
         //   1: EXTref nameRef=0 ownerRef=1  <- self-cycle: ownerRef points to itself

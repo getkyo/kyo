@@ -14,7 +14,7 @@ import scala.collection.mutable
   *   - noSentinelIdInParentTypes: parentTypes Chunk contains no Named(SymbolId(-1))
   *   - noSentinelIdInClassLikeAnnotations: ClassLike annotation tycon types are not Named(SymbolId(-1))
   */
-class SentinelIdLeakInvariantTest extends Test:
+class SentinelIdLeakInvariantTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -81,7 +81,7 @@ class SentinelIdLeakInvariantTest extends Test:
     // Given: a cold-loaded fixture classpath.
     // When: every ClassLike symbol's parentTypes are inspected.
     // Then: no Named(SymbolId(-1)) appears in any parent type (at any nesting depth).
-    "noSentinelIdInParentTypes: no Named(SymbolId(-1)) in any symbol parentTypes after cold load" in run {
+    "noSentinelIdInParentTypes: no Named(SymbolId(-1)) in any symbol parentTypes after cold load" in {
         Scope.run:
             Abort.run[TastyError](loadFixtureCp.map: cp =>
                 var violations = List.empty[String]
@@ -106,7 +106,7 @@ class SentinelIdLeakInvariantTest extends Test:
     // Given: a cold-loaded fixture classpath.
     // When: every ClassLike symbol's annotations are inspected.
     // Then: no Named(SymbolId(-1)) appears in any annotation's annotationType.
-    "noSentinelIdInClassLikeAnnotations: no Named(SymbolId(-1)) in ClassLike annotation types after cold load" in run {
+    "noSentinelIdInClassLikeAnnotations: no Named(SymbolId(-1)) in ClassLike annotation types after cold load" in {
         Scope.run:
             Abort.run[TastyError](loadFixtureCp.map: cp =>
                 var violations = List.empty[String]

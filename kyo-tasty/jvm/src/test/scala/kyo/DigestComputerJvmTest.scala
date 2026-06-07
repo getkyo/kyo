@@ -18,10 +18,10 @@ import kyo.internal.tasty.snapshot.DigestComputer.JarDigestEntry
   *
   * Scaladoc: 8-35 lines.
   */
-class DigestComputerJvmTest extends Test:
+class DigestComputerJvmTest extends kyo.test.Test[Any]:
 
     // Leaf 1: digestForRoot for byte-identical JARs with different mtimes returns equal values (INV-003).
-    "Leaf 1: digestForRoot stable across mtime-only copy of real JAR (INV-003)" in run {
+    "Leaf 1: digestForRoot stable across mtime-only copy of real JAR (INV-003)" in {
         val dir     = Files.createTempDirectory("kyo-dct-leaf1").toAbsolutePath.toString
         val jarA    = s"$dir/A.jar"
         val jarB    = s"$dir/B.jar"
@@ -42,7 +42,7 @@ class DigestComputerJvmTest extends Test:
     }
 
     // Leaf 2: digestForRoot changes when class bytes differ (CRC32 in CEN changes).
-    "Leaf 2: digestForRoot changes when class bytes change (CEN CRC32 differs)" in run {
+    "Leaf 2: digestForRoot changes when class bytes change (CEN CRC32 differs)" in {
         val dir    = Files.createTempDirectory("kyo-dct-leaf2").toAbsolutePath.toString
         val jarA   = s"$dir/A.jar"
         val jarMod = s"$dir/A_mod.jar"
@@ -54,7 +54,7 @@ class DigestComputerJvmTest extends Test:
     }
 
     // Leaf 7: jrt:/ compute returns a stable non-empty 8-byte result.
-    "Leaf 7: jrt:/ compute returns a stable 8-byte result" in run {
+    "Leaf 7: jrt:/ compute returns a stable 8-byte result" in {
         import kyo.internal.tasty.query.PlatformFileSource
         val src = PlatformFileSource.get
         Abort.run[TastyError]:

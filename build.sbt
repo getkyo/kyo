@@ -746,6 +746,7 @@ lazy val `kyo-tasty` =
         .crossType(CrossType.Full)
         .in(file("kyo-tasty"))
         .dependsOn(`kyo-core`, `kyo-schema`)
+        .withKyoTest
         .settings(
             `kyo-settings`,
             doctestPredef := Seq("import kyo.*", "import kyo.Tasty.*"),
@@ -815,6 +816,7 @@ lazy val `kyo-tasty-fixtures` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-tasty-fixtures"))
+        .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)

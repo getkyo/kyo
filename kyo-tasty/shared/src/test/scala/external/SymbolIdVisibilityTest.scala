@@ -6,7 +6,7 @@ package external
   * and SymbolId.value. typeCheckErrors called from within package kyo cannot detect this restriction because private[kyo] is accessible
   * from that package.
   */
-class SymbolIdVisibilityTest extends kyo.Test:
+class SymbolIdVisibilityTest extends kyo.test.Test[Any]:
 
     // Leaf 4: no-public-construction compile pin.
     // Given: caller code outside package kyo.

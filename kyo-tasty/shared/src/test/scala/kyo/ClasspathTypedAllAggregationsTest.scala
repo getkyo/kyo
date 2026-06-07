@@ -9,7 +9,7 @@ import kyo.Tasty.SymbolId
   * (ta1) 15 -> 1 OpaqueType symbol (ot1) 16 -> 1 AbstractType symbol (at1) 17 -> 1 TypeParam symbol (tp1) -- part of class A 18 -> 1
   * Parameter symbol (p1) -- part of m1 19-20 -> 2 Package symbols (pkg, pkg.sub)
   */
-class ClasspathTypedAllAggregationsTest extends Test:
+class ClasspathTypedAllAggregationsTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -210,7 +210,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     // When: cp.allClassLike
     // Then: Chunk[Symbol.ClassLike] including Class, Trait, Object -- size 6 (3+2+1)
     //   fix: allClassLike returns Chunk[Symbol.ClassLike] covering Class, Trait, Object, EnumCase.
-    "Leaf 118: allClassLike returns Chunk[ClassLike] of size 6 (3 Class + 2 Trait + 1 Object)" in run {
+    "Leaf 118: allClassLike returns Chunk[ClassLike] of size 6 (3 Class + 2 Trait + 1 Object)" in {
         buildFixture.map: cp =>
             val cs: Chunk[Tasty.Symbol.ClassLike] = cp.allClassLike
             assert(cs.size == 6, s"Expected 6 classlike symbols (3 class + 2 trait + 1 object) but got ${cs.size}: $cs")
@@ -221,7 +221,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     // Given: fixture with 2 traits.
     // When: cp.allTraits
     // Then: Chunk[Symbol.Trait] size 2
-    "Leaf 119: allTraits returns Chunk[Trait] of size 2" in run {
+    "Leaf 119: allTraits returns Chunk[Trait] of size 2" in {
         buildFixture.map: cp =>
             val ts: Chunk[Tasty.Symbol.Trait] = cp.allTraits
             assert(ts.size == 2, s"Expected 2 traits but got ${ts.size}: $ts")
@@ -232,7 +232,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     // Given: fixture with 1 object.
     // When: cp.allObjects
     // Then: Chunk[Symbol.Object] size 1
-    "Leaf 120: allObjects returns Chunk[Object] of size 1" in run {
+    "Leaf 120: allObjects returns Chunk[Object] of size 1" in {
         buildFixture.map: cp =>
             val os: Chunk[Tasty.Symbol.Object] = cp.allObjects
             assert(os.size == 1, s"Expected 1 object but got ${os.size}: $os")
@@ -243,7 +243,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     // Given: fixture with 3 classes + 2 traits + 1 object.
     // When: cp.allClassLike.size
     // Then: 6
-    "Leaf 121: allClassLike size equals sum of classes + traits + objects" in run {
+    "Leaf 121: allClassLike size equals sum of classes + traits + objects" in {
         buildFixture.map: cp =>
             val cl: Chunk[Tasty.Symbol.ClassLike] = cp.allClassLike
             assert(cl.size == 6, s"Expected 6 ClassLike symbols but got ${cl.size}: $cl")
@@ -254,7 +254,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     // Given: fixture with 5 methods.
     // When: cp.allMethods
     // Then: Chunk[Method] size 5
-    "Leaf 122: allMethods returns Chunk[Method] of size 5" in run {
+    "Leaf 122: allMethods returns Chunk[Method] of size 5" in {
         buildFixture.map: cp =>
             val ms: Chunk[Tasty.Symbol.Method] = cp.allMethods
             assert(ms.size == 5, s"Expected 5 methods but got ${ms.size}: $ms")
@@ -265,7 +265,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     // Given: fixture with 2 vals, 1 var, 0 fields.
     // When: invoke 3 accessors
     // Then: sizes 2, 1, 0; typed returns
-    "Leaf 123: allVals=2, allVars=1, allFields=0" in run {
+    "Leaf 123: allVals=2, allVars=1, allFields=0" in {
         buildFixture.map: cp =>
             val vs: Chunk[Tasty.Symbol.Val]   = cp.allVals
             val ws: Chunk[Tasty.Symbol.Var]   = cp.allVars
@@ -280,7 +280,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     // Given: fixture with 1 each.
     // When: invoke 3 accessors
     // Then: sizes 1, 1, 1; typed returns
-    "Leaf 124: allTypeAliases=1, allOpaqueTypes=1, allAbstractTypes=1" in run {
+    "Leaf 124: allTypeAliases=1, allOpaqueTypes=1, allAbstractTypes=1" in {
         buildFixture.map: cp =>
             val tas: Chunk[Tasty.Symbol.TypeAlias]    = cp.allTypeAliases
             val ots: Chunk[Tasty.Symbol.OpaqueType]   = cp.allOpaqueTypes
@@ -295,7 +295,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     // Given: fixture with 1 TypeParam and 1 Parameter.
     // When: invoke 2 accessors
     // Then: sizes 1, 1; typed returns
-    "Leaf 125: allTypeParams=1, allParameters=1" in run {
+    "Leaf 125: allTypeParams=1, allParameters=1" in {
         buildFixture.map: cp =>
             val tps: Chunk[Tasty.Symbol.TypeParam] = cp.allTypeParams
             val ps: Chunk[Tasty.Symbol.Parameter]  = cp.allParameters
@@ -308,7 +308,7 @@ class ClasspathTypedAllAggregationsTest extends Test:
     // Given: fixture with 2 packages (pkg and pkg.sub).
     // When: cp.allPackages.size
     // Then: 2; typed return
-    "Leaf 126: allPackages returns Chunk[Package] of size 2" in run {
+    "Leaf 126: allPackages returns Chunk[Package] of size 2" in {
         buildFixture.map: cp =>
             val ps: Chunk[Tasty.Symbol.Package] = cp.allPackages
             assert(ps.size == 2, s"Expected 2 packages but got ${ps.size}: $ps")
@@ -319,10 +319,9 @@ class ClasspathTypedAllAggregationsTest extends Test:
     // allUnresolved was deleted in (Cat 19). Symbol.Unresolved no longer exists.
     // The test is replaced with a compile-time check that allUnresolved does not exist.
     "Leaf 127: allUnresolved and Symbol.Unresolved are gone" in {
-        assert(
-            compiletime.testing.typeCheckErrors("val _: kyo.Chunk[kyo.Tasty.Symbol.Unresolved] = ???").nonEmpty,
-            "Symbol.Unresolved should not exist"
-        )
+        val __tcErrors1 = compiletime.testing.typeCheckErrors("val _: kyo.Chunk[kyo.Tasty.Symbol.Unresolved] = ???").length
+
+        assert(__tcErrors1 > 0, "Symbol.Unresolved should not exist")
         succeed
     }
 

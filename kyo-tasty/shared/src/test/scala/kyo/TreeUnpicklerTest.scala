@@ -20,7 +20,7 @@ import scala.collection.mutable
   * Tests 1-5 and 8: decode bodies directly from pass-1 TastyOrigin values using decodeSync (no full classpath needed). Test 6: verifies
   * Java symbol error path. Test 7: verifies ClasspathClosed error path via scope exit.
   */
-class TreeUnpicklerTest extends Test:
+class TreeUnpicklerTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
     import Tasty.Name.asString
@@ -148,7 +148,7 @@ class TreeUnpicklerTest extends Test:
     // ── Typed(Literal(IntConst(42)), _), or ValDef(_, _, Literal(IntConst(42))).       ──
     // ── No recursive search: only one level of wrapping is accepted.                   ──
 
-    "Test 1: body of SomeObject.value decodes to top-level Literal/Block/Typed/ValDef containing IntConst(42)" in run {
+    "Test 1: body of SomeObject.value decodes to top-level Literal/Block/Typed/ValDef containing IntConst(42)" in {
         Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.someObjectTasty)).map:
             case Result.Success(pass1) =>
                 val valueSym = pass1.symbols.find(s => s.name.asString == "value" && s.kind == SymbolKind.Val)
@@ -204,7 +204,7 @@ class TreeUnpicklerTest extends Test:
             case _                                      => false
     end containsApplyOrIdentOrLiteral
 
-    "Test 2: method bodies in SomeObject decode to Trees containing Apply, Ident, or Literal nodes" in run {
+    "Test 2: method bodies in SomeObject decode to Trees containing Apply, Ident, or Literal nodes" in {
         Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.someObjectTasty)).map:
             case Result.Success(pass1) =>
                 import AllowUnsafe.embrace.danger
@@ -235,7 +235,7 @@ class TreeUnpicklerTest extends Test:
 
     // ── Test 3: If tree decoded correctly ─────────────────────────────────────
 
-    "Test 3: bodies in baseClassTasty decode without crash; If trees have 3 subtrees" in run {
+    "Test 3: bodies in baseClassTasty decode without crash; If trees have 3 subtrees" in {
         Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.baseClassTasty)).map:
             case Result.Success(pass1) =>
                 import AllowUnsafe.embrace.danger
@@ -261,7 +261,7 @@ class TreeUnpicklerTest extends Test:
 
     // ── Test 4: Match tree decodes to Match with CaseDef children ─────────────
 
-    "Test 4: bodies in colorTasty decode without crash; Match trees have CaseDefs" in run {
+    "Test 4: bodies in colorTasty decode without crash; Match trees have CaseDefs" in {
         Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.colorTasty)).map:
             case Result.Success(pass1) =>
                 import AllowUnsafe.embrace.danger
@@ -290,7 +290,7 @@ class TreeUnpicklerTest extends Test:
 
     // ── Test 5: Recursive method bodies decode without stack overflow ──────────
 
-    "Test 5: decoding all bodies in fixtureClassesPackageTasty completes without stack overflow" in run {
+    "Test 5: decoding all bodies in fixtureClassesPackageTasty completes without stack overflow" in {
         Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.fixtureClassesPackageTasty)).map:
             case Result.Success(pass1) =>
                 import AllowUnsafe.embrace.danger
@@ -328,7 +328,7 @@ class TreeUnpicklerTest extends Test:
 
     // ── Test 8: truncated body slice does not panic the runtime ───────────────
 
-    "Test 8: a 1-byte truncated body slice does not cause an unhandled exception" in run {
+    "Test 8: a 1-byte truncated body slice does not cause an unhandled exception" in {
         Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.someObjectTasty)).map:
             case Result.Success(pass1) =>
                 val valueSym = pass1.symbols.find(s => s.name.asString == "value" && s.kind == SymbolKind.Val)
@@ -359,7 +359,7 @@ class TreeUnpicklerTest extends Test:
 
     // ── Test 9: two consecutive body calls return reference-equal Tree ────────
 
-    "Test 9: two consecutive _bodyOnce.get() calls return the same Tree reference" in run {
+    "Test 9: two consecutive _bodyOnce.get() calls return the same Tree reference" in {
         Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.someObjectTasty)).map:
             case Result.Success(pass1) =>
                 val valueSym = pass1.symbols.find(s => s.name.asString == "value" && s.kind == SymbolKind.Val)
@@ -406,7 +406,7 @@ class TreeUnpicklerTest extends Test:
 
     // Test A (INV-006, M2): UNITconst pickle decodes to Literal(UnitConst).
     // decodeAnnotationTerm takes raw bytes; no DecodeContext needed.
-    "Phase17-A: UNITconst pickle decodes to Literal(UnitConst)" in run {
+    "Phase17-A: UNITconst pickle decodes to Literal(UnitConst)" in {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
         val sym     = LoadingSymbol.Materialising(id = 1, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("Int"))
@@ -433,7 +433,7 @@ class TreeUnpicklerTest extends Test:
     // ── Tests (M1, category-1 modifiers) ────────────────────────────
 
     // Test 18a-1 (M1 category 1): PRIVATE tag decodes to Modifier(Private).
-    "Phase18a-1: PRIVATE byte decodes to Tree.Modifier(Flag.Private)" in run {
+    "Phase18a-1: PRIVATE byte decodes to Tree.Modifier(Flag.Private)" in {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
         val names   = Array(Tasty.Name("dummy"))
@@ -448,7 +448,7 @@ class TreeUnpicklerTest extends Test:
     }
 
     // Test 18a-2 (M1 category 1 negative): unknown category-1 tag throws DecodeException.
-    "Phase18a-2: unrecognised category-1 byte yields Failure(MalformedSection)" in run {
+    "Phase18a-2: unrecognised category-1 byte yields Failure(MalformedSection)" in {
         import scala.collection.immutable.IntMap
         val names      = Array(Tasty.Name("dummy"))
         val addrMap    = IntMap.empty[LoadingSymbol.Materialising]
@@ -465,7 +465,7 @@ class TreeUnpicklerTest extends Test:
 
     // Test 18a-debt-1 through 18a-debt-3 (M1 category 1, BLOCKER from audit).
 
-    "Phase18a-debt-1: OBJECT byte decodes to Tree.Modifier(Flag.Module)" in run {
+    "Phase18a-debt-1: OBJECT byte decodes to Tree.Modifier(Flag.Module)" in {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
         val pickle = Array(TastyFormat.OBJECT.toByte)
@@ -474,7 +474,7 @@ class TreeUnpicklerTest extends Test:
             case other                                                                  => fail(s"Expected Modifier(Module), got: $other")
     }
 
-    "Phase18a-debt-2: TRAIT byte decodes to Tree.Modifier(Flag.Trait)" in run {
+    "Phase18a-debt-2: TRAIT byte decodes to Tree.Modifier(Flag.Trait)" in {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
         val pickle = Array(TastyFormat.TRAIT.toByte)
@@ -483,7 +483,7 @@ class TreeUnpicklerTest extends Test:
             case other                                                                 => fail(s"Expected Modifier(Trait), got: $other")
     }
 
-    "Phase18a-debt-3: ENUM byte decodes to Tree.Modifier(Flag.Enum)" in run {
+    "Phase18a-debt-3: ENUM byte decodes to Tree.Modifier(Flag.Enum)" in {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
         val pickle = Array(TastyFormat.ENUM.toByte)
@@ -495,7 +495,7 @@ class TreeUnpicklerTest extends Test:
     // ── Tests (M1, category-2 tags) ────────────────────────────────
 
     // Test 18b-1 (M1 category 2): SHAREDtype byte + nat(42) decodes to Tree.Shared(42).
-    "Phase18b-1: SHAREDtype + nat(42) decodes to Tree.Shared(42)" in run {
+    "Phase18b-1: SHAREDtype + nat(42) decodes to Tree.Shared(42)" in {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
         val names   = Array(Tasty.Name("dummy"))
@@ -511,7 +511,7 @@ class TreeUnpicklerTest extends Test:
     }
 
     // Test 18b-2 (M1 category 2): INTconst byte + int(7) decodes to Tree.Literal(Constant.IntConst(7)).
-    "Phase18b-2: INTconst + int(7) decodes to Tree.Literal(Constant.IntConst(7))" in run {
+    "Phase18b-2: INTconst + int(7) decodes to Tree.Literal(Constant.IntConst(7))" in {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
         val names   = Array(Tasty.Name("dummy"))
@@ -535,7 +535,7 @@ class TreeUnpicklerTest extends Test:
     //   APPLIEDtype = 161 (0xA1), TERMREFdirect = 62 (0x3E), MATCHtype = 190 (0xBE).
 
     // Test 18c-1 (M1 category 3): APPLIEDtype decodes nested arguments.
-    "Phase18c-1: APPLIEDtype decodes tycon + one arg into Tree.AppliedType" in run {
+    "Phase18c-1: APPLIEDtype decodes tycon + one arg into Tree.AppliedType" in {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
         val listSym = LoadingSymbol.Materialising(id = 3, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("List"))
@@ -569,7 +569,7 @@ class TreeUnpicklerTest extends Test:
     }
 
     // Test 18c-2 (M1 category 3): MATCHtype with 2 case nodes decodes into Tree.MatchType.
-    "Phase18c-2: MATCHtype with 2 case nodes decodes into Tree.MatchType with cases.length==2" in run {
+    "Phase18c-2: MATCHtype with 2 case nodes decodes into Tree.MatchType with cases.length==2" in {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
         var _symId = 10
@@ -605,7 +605,7 @@ class TreeUnpicklerTest extends Test:
     // ── Tests (M1, category-4 type-position tags) ──────────────────
 
     // Test 18d-1 (M1 category 4): TERMREFpkg + nameRef decodes to Tree.TermRefPkg(Name("scala")).
-    "Phase18d-1: TERMREFpkg + nameRef decodes to Tree.TermRefPkg(Name(scala))" in run {
+    "Phase18d-1: TERMREFpkg + nameRef decodes to Tree.TermRefPkg(Name(scala))" in {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
         val names = Array(
@@ -627,7 +627,7 @@ class TreeUnpicklerTest extends Test:
     }
 
     // Test 18d-2 (M1 category 4): SELECTin with 3 components decodes to Tree.SelectIn(qual, name, owner).
-    "Phase18d-2: SELECTin with nameRef + qual + owner decodes to Tree.SelectIn" in run {
+    "Phase18d-2: SELECTin with nameRef + qual + owner decodes to Tree.SelectIn" in {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
         val listSym  = LoadingSymbol.Materialising(id = 3, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("List"))
@@ -668,7 +668,7 @@ class TreeUnpicklerTest extends Test:
     // When: TreeUnpickler.decodeSync is called.
     // Then: returns Tree.ValDef(sym, tpt, _) where sym is non-null, tpt is a non-null Tasty.Type,
     //       and the body is either Absent or Present(non-null tree).
-    "Phase18e-1: VALDEF body from SomeObject.value decodes to Tree.ValDef with non-null fields" in run {
+    "Phase18e-1: VALDEF body from SomeObject.value decodes to Tree.ValDef with non-null fields" in {
         Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.someObjectTasty)).map:
             case Result.Success(pass1) =>
                 import AllowUnsafe.embrace.danger
@@ -699,7 +699,7 @@ class TreeUnpicklerTest extends Test:
 
     // Test 18e-2: APPLY with fun + 2 args hand-crafted pickle decodes to Tree.Apply with correct structure.
     // uses decodeAnnPickle helper directly instead of Annotation internal factory.
-    "Phase18e-2: APPLY with fun + 2 args decodes to Tree.Apply with fun and 2-element args chunk" in run {
+    "Phase18e-2: APPLY with fun + 2 args decodes to Tree.Apply with fun and 2-element args chunk" in {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
         var _symId2 = 20
@@ -748,7 +748,7 @@ class TreeUnpicklerTest extends Test:
     // When: all symbol bodies are decoded via AstUnpickler.readPass1 + TreeUnpickler.decodeSync
     //       and the resulting trees are walked recursively.
     // Then: countCat5Unknown across all decoded trees == 0, demonstrating.
-    "Phase18e-3: INV-005 zero-Unknown sweep: no category-5 Unknown nodes in someObjectTasty or plainClassTasty bodies" in run {
+    "Phase18e-3: INV-005 zero-Unknown sweep: no category-5 Unknown nodes in someObjectTasty or plainClassTasty bodies" in {
         def countCat5Unknown(tree: Tasty.Tree): Int =
             tree match
                 case Tasty.Tree.Unknown(tag, _) if tag >= 128 => 1

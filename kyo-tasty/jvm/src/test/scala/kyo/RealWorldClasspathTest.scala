@@ -1,7 +1,5 @@
 package kyo
 
-import org.scalatest.Tag
-
 /** plan leaves 1-9: real-world classpath alphabetical iteration.
   *
   * Leaf 1: Akka actor classpath loads without error (BIND-018, Akka).
@@ -19,9 +17,7 @@ import org.scalatest.Tag
   *
   * INV-006, INV-007, INV-008, INV-009.
   */
-class RealWorldClasspathTest extends Test:
-
-    private object slow extends Tag("slow")
+class RealWorldClasspathTest extends kyo.test.Test[Any]:
 
     /** Filter cp.errors to only file-level failures (CorruptedFile, MalformedSection, FileNotFound).
       *
@@ -43,7 +39,7 @@ class RealWorldClasspathTest extends Test:
     // When: Tasty.withClasspath(Seq(akkaJar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
     // JVM-only: java.class.path discovery requires JVM; jar path extraction uses java.io.File.
-    "Akka classpath loads without error" taggedAs slow in runJVM {
+    "Akka classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("akka-actor_3")
         Abort.run[TastyError](
             Tasty.withClasspath(Seq(jar)):
@@ -63,7 +59,7 @@ class RealWorldClasspathTest extends Test:
     // Given: cats-effect_3-3.7.0.jar on java.class.path via build.sbt % Test intransitive dep
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
-    "Cats Effect classpath loads without error" taggedAs slow in runJVM {
+    "Cats Effect classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("cats-effect_3")
         Abort.run[TastyError](
             Tasty.withClasspath(Seq(jar)):
@@ -85,7 +81,7 @@ class RealWorldClasspathTest extends Test:
     // Loading it produces cp.symbols.isEmpty && cp.errors.isEmpty (no TASTy decoding occurs).
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
-    "Doobie classpath loads without error" taggedAs slow in runJVM {
+    "Doobie classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("doobie-core_2.13")
         Abort.run[TastyError](
             Tasty.withClasspath(Seq(jar)):
@@ -105,7 +101,7 @@ class RealWorldClasspathTest extends Test:
     // Given: http4s-core_3-0.23.28.jar on java.class.path via build.sbt % Test intransitive dep
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
-    "Http4s classpath loads without error" taggedAs slow in runJVM {
+    "Http4s classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("http4s-core_3")
         Abort.run[TastyError](
             Tasty.withClasspath(Seq(jar)):
@@ -125,7 +121,7 @@ class RealWorldClasspathTest extends Test:
     // Given: pekko-actor_3-1.1.3.jar on java.class.path via build.sbt % Test intransitive dep
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
-    "Pekko classpath loads without error" taggedAs slow in runJVM {
+    "Pekko classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("pekko-actor_3")
         Abort.run[TastyError](
             Tasty.withClasspath(Seq(jar)):
@@ -146,7 +142,7 @@ class RealWorldClasspathTest extends Test:
     // Note: Play 3.x moved to org.playframework groupId.
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
-    "Play classpath loads without error" taggedAs slow in runJVM {
+    "Play classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("play_3")
         Abort.run[TastyError](
             Tasty.withClasspath(Seq(jar)):
@@ -168,7 +164,7 @@ class RealWorldClasspathTest extends Test:
     // Loading it produces cp.symbols.isEmpty && cp.errors.isEmpty (no TASTy decoding occurs).
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
-    "Spark classpath loads without error" taggedAs slow in runJVM {
+    "Spark classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("spark-core_2.13")
         Abort.run[TastyError](
             Tasty.withClasspath(Seq(jar)):
@@ -188,7 +184,7 @@ class RealWorldClasspathTest extends Test:
     // Given: spire_3-0.18.0.jar on java.class.path via build.sbt % Test intransitive dep
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
-    "Spire classpath loads without error" taggedAs slow in runJVM {
+    "Spire classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("spire_3")
         Abort.run[TastyError](
             Tasty.withClasspath(Seq(jar)):
@@ -208,7 +204,7 @@ class RealWorldClasspathTest extends Test:
     // Given: zio_3-2.0.15.jar on java.class.path via build.sbt % Test intransitive dep
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
-    "ZIO classpath loads without error" taggedAs slow in runJVM {
+    "ZIO classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("zio_3")
         Abort.run[TastyError](
             Tasty.withClasspath(Seq(jar)):
@@ -229,7 +225,7 @@ class RealWorldClasspathTest extends Test:
     // rather than silently skipping (which would mask real failures).
     // Must be inside runJVM { ... } because java.lang.System.getProperty and
     // java.io.File.pathSeparatorChar are JVM-only.
-    private def findJar(nameFragment: String): String =
+    private def findJar(nameFragment: String)(using kyo.test.AssertScope, Frame): String =
         java.lang.System.getProperty("java.class.path", "")
             .split(java.io.File.pathSeparatorChar)
             .find(_.contains(nameFragment))

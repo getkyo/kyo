@@ -8,7 +8,7 @@ import kyo.internal.tasty.query.JvmFileSource
   * Verifies that wrapping(delegate).read blocks until the semaphore is released, then completes promptly. This validates the latch primitive
   * before it is used in the concurrent-reader-writer test.
   */
-class StutterFileSourceTest extends Test:
+class StutterFileSourceTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -16,7 +16,7 @@ class StutterFileSourceTest extends Test:
     // Given: (stutter, semaphore) = StutterFileSource.wrapping(JvmFileSource)
     // When: Async-launched read held at semaphore.acquire; after 50ms read incomplete; semaphore.release() releases it
     // Then: post-release read completes; before release fiber is in pending state (not done)
-    "StutterFileSource.wrapping blocks read until semaphore is released" in run {
+    "StutterFileSource.wrapping blocks read until semaphore is released" in {
         // Write a temp file to read
         val tmpDir  = java.nio.file.Files.createTempDirectory("kyo-stutter-test")
         val tmpFile = tmpDir.resolve("stutter.dat")

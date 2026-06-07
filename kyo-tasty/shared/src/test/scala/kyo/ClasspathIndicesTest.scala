@@ -13,7 +13,7 @@ import kyo.Tasty.SymbolId
   * Leaf 3 (dictRoundTripOverSchema): Dict[String, SymbolId] fields round-trip through Schema.
   * Leaf 4 (dictAggregationsBuilderPreservesIds): bySimpleName aggregation is correct.
   */
-class ClasspathIndicesTest extends Test:
+class ClasspathIndicesTest extends kyo.test.Test[Any]:
 
     private def makeCls(id: Int, name: String): Tasty.Symbol.Class =
         Tasty.Symbol.Class(

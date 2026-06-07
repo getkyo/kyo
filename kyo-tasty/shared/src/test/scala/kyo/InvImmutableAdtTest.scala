@@ -9,7 +9,7 @@ package kyo
   * Leaf 1 (arrayFieldRejectedOnProbe): Array[Int] field causes a compile error.
   * Leaf 2 (chunkFieldAcceptedOnProbe): Chunk[Int] field compiles successfully.
   */
-class InvImmutableAdtTest extends Test:
+class InvImmutableAdtTest extends kyo.test.Test[Any]:
 
     "arrayFieldRejectedOnProbe" in {
         // Given: a probe case class with an Array[Int] field attempting Schema + CanEqual derivation.

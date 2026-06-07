@@ -4,7 +4,7 @@ package kyo
   *
   * Leaf ids: 17, partial of 16. Pins: Steering rule on case classes for pure data.
   */
-class CaseClassConsistencyTest extends Test:
+class CaseClassConsistencyTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 

@@ -19,7 +19,7 @@ import scala.collection.mutable
   *   tests (P03.4, P03.5) verify context is non-empty in the respective error variants.
   *   test (P03.6) verifies the exception class name appears in SnapshotFormatError messages.
   */
-class DecoderFidelity5Phase03Test extends Test:
+class DecoderFidelity5Phase03Test extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -77,7 +77,7 @@ class DecoderFidelity5Phase03Test extends Test:
     // Given: a synthetic TASTy byte stream with major=99 (far beyond supported range).
     // When:  TastyHeader.read is called directly via Abort.run.
     // Then:  Result.Failure(TastyError.UnsupportedVersion(found, supported)) where found.major == 99.
-    "P03.1 TastyHeader.read with major=99 produces UnsupportedVersion with correct found.major" in run {
+    "P03.1 TastyHeader.read with major=99 produces UnsupportedVersion with correct found.major" in {
         val bytes = syntheticTasty(99, 0, 0)
         val view  = ByteView(bytes)
         Abort.run[TastyError](TastyHeader.read(view)).map: result =>
@@ -96,7 +96,7 @@ class DecoderFidelity5Phase03Test extends Test:
     // When:  ClasspathOrchestrator.init is called with SoftFail.
     // Then:  cp.errors contains at least one UnsupportedVersion (or CorruptedFile on path-patching)
     //        entry; no panic escapes.
-    "P03.2 UnsupportedVersion (major=99 .tasty) accumulates in cp.errors under SoftFail" in run {
+    "P03.2 UnsupportedVersion (major=99 .tasty) accumulates in cp.errors under SoftFail" in {
         Scope.run:
             Abort.run[TastyError]:
                 val src = MemSrc()
@@ -121,7 +121,7 @@ class DecoderFidelity5Phase03Test extends Test:
     // Given: a ByteView containing a single byte 0xFF (255), which is not a valid type-position tag.
     // When:  TypeUnpickler.readType is called with that view; the byte is read as the type tag.
     // Then:  Abort.fail(TastyError.UnknownTagInPosition(255, "type")) is returned.
-    "P03.3 TypeUnpickler.readType with tag=0xFF produces Abort.fail(UnknownTagInPosition(255, type))" in run {
+    "P03.3 TypeUnpickler.readType with tag=0xFF produces Abort.fail(UnknownTagInPosition(255, type))" in {
         val bytes: Array[Byte] = Array(0xff.toByte)
         val view               = ByteView(bytes)
         val arena              = TypeArena.canonical()
@@ -146,7 +146,7 @@ class DecoderFidelity5Phase03Test extends Test:
     // Given: TastyError.ClasspathClosed is constructed with a context string.
     // When:  the context field is read via pattern match.
     // Then:  context is non-empty and contains "decodeBody".
-    "P03.4 ClasspathClosed carries non-empty context field" in run {
+    "P03.4 ClasspathClosed carries non-empty context field" in {
         val err: TastyError = TastyError.ClasspathClosed("decodeBody(sym.id=7)")
         err match
             case TastyError.ClasspathClosed(ctx) =>
@@ -163,7 +163,7 @@ class DecoderFidelity5Phase03Test extends Test:
     // Given: TastyError.ClasspathBuilding is constructed with a context string.
     // When:  the context field is read via pattern match.
     // Then:  context is non-empty and contains "finalizeMerge".
-    "P03.5 ClasspathBuilding carries non-empty context field" in run {
+    "P03.5 ClasspathBuilding carries non-empty context field" in {
         val err: TastyError = TastyError.ClasspathBuilding("finalizeMerge: brokenFqnCount=1")
         err match
             case TastyError.ClasspathBuilding(ctx) =>
@@ -180,7 +180,7 @@ class DecoderFidelity5Phase03Test extends Test:
     // Given: ClasspathOrchestrator.triggerClasspathBuildingForTest produces a ClasspathBuilding abort.
     // When:  the error is caught and inspected.
     // Then:  context is non-empty and mentions "brokenFqnCount".
-    "P03.6 ClasspathOrchestrator.triggerClasspathBuildingForTest produces ClasspathBuilding with non-empty context" in run {
+    "P03.6 ClasspathOrchestrator.triggerClasspathBuildingForTest produces ClasspathBuilding with non-empty context" in {
         Abort.run[TastyError](ClasspathOrchestrator.triggerClasspathBuildingForTest()).map: result =>
             result match
                 case Result.Failure(TastyError.ClasspathBuilding(ctx)) =>
