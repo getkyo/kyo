@@ -18,8 +18,8 @@ import scala.language.implicitConversions
   *      A background fiber sets the ref to a chosen series after the first captured frame, so frame 2 shows
   *      the highlighted series with the dark select stroke.
   *   3. Animated multi-series colored AREA: three non-stacked area series that morph between two
-  *      same-structure datasets via `.animate`. Showcases the animated-area-colorScale fix (colors persist
-  *      through the morph).
+  *      same-structure datasets via `.animate`. Shows that animated-area colorScale colors persist
+  *      through the morph.
   *   4. Animated bars with per-bar opacity + text labels: `.animate` on bars with `opacity` and `label`
   *      encodings that update live (value annotations float above the bars).
   *

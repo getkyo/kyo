@@ -4,7 +4,6 @@ import kyo.Chart.*
 import kyo.UI.*
 import kyo.UI.Ast.*
 import kyo.UI.Ast.Reactive
-import kyo.internal.ChartLower
 import kyo.internal.HtmlRenderer
 import scala.language.implicitConversions
 
@@ -214,8 +213,8 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             // After threshold=1000, the rule y1/y2 is at pixel 335.
             // After threshold=3000, the rule y1/y2 is at pixel 125.
             // A vertical reactive rule is a single Svg.Line whose y1 and y2 BOTH equal the scaled
-            // pixel (125 after threshold=3000). The original `||` was a test bug: it green-lit a rule
-            // with only one endpoint moved to the new pixel (a misplaced line). Require BOTH endpoints.
+            // pixel (125 after threshold=3000). Require BOTH endpoints with `&&`: an `||` check would
+            // green-light a rule with only one endpoint moved to the new pixel (a misplaced line).
             assert(
                 html1.contains("y1=\"125") && html1.contains("y2=\"125"),
                 s"Reactive rule must place BOTH y1 and y2 at 125 (threshold=3000), got:\n${html1.take(2000)}"
@@ -518,7 +517,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
 
     case class CatRow(x: String, y: Double, cat: String) derives CanEqual
 
-    given CanEqual[Set[String], Set[String]] = CanEqual.derived
+    given CanEqual[Set[Int], Set[Int]] = CanEqual.derived
 
     /** Coord -> Double helper. */
     private def coordNum(c: Maybe[Svg.Coord]): Maybe[Double] = c match
@@ -530,16 +529,16 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
         root.children.collect:
             case r: Svg.Rect if coordNum(r.svgAttrs.width).contains(12.0) && coordNum(r.svgAttrs.height).contains(12.0) => r
 
-    // ---- clicking a swatch toggles its label in the hiddenSeries ref ----
+    // ---- clicking a swatch toggles its index in the hiddenSeries ref ----
 
-    "clicking a legend swatch toggles its label in the user hiddenSeries ref" in {
+    "clicking a legend swatch toggles its index in the user hiddenSeries ref" in {
         val rows = Chunk(CatRow("p", 1.0, "catA"), CatRow("q", 2.0, "catB"))
         for
-            hidden <- Signal.initRef(Set.empty[String])
+            hidden <- Signal.initRef(Set.empty[Int])
             spec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
                 .legend(_.interactive(hidden))
             root = (spec).lower
-            // The first swatch corresponds to catA (enum/encounter order). Its onClick toggles "catA".
+            // The first swatch corresponds to catA (encounter order, index 0). Its onClick toggles index 0.
             swatches = legendSwatches(root)
             _        = assert(swatches.size == 2, s"Expected 2 legend swatches but got ${swatches.size}")
             click    = swatches(0).attrs.onClick
@@ -549,22 +548,21 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             _      <- runAction(click.get)
             after2 <- hidden.get
         yield
-            assert(after1 == Set("catA"), s"First click should hide catA but ref was $after1")
-            assert(after2 == Set.empty[String], s"Second click should show catA again but ref was $after2")
+            assert(after1 == Set(0), s"First click should add index 0 (catA) but ref was $after1")
+            assert(after2 == Set.empty[Int], s"Second click should remove index 0 (catA) again but ref was $after2")
         end for
     }
 
     // ---- the hidden filter drops the specified series from the marks ----
 
-    "with hiddenSeries={catA}, the catA bar is dropped from the marks while catB remains" in {
-        // catA at x-band "p", catB at x-band "q". Hiding catA must drop catA's bar (the one at band "p")
-        // while keeping catB's bar. The bar count drops from 2 to 1, and the remaining bar is NOT at band "p".
+    "with hiddenSeries={0}, the catA bar (index 0) is dropped from the marks while catB remains" in {
+        // catA at x-band "p" (index 0), catB at x-band "q" (index 1). Hiding index 0 drops catA's bar.
         val rowsFull = Chunk(CatRow("p", 1.0, "catA"), CatRow("q", 2.0, "catB"))
         def markBars(root: Svg.Root): Chunk[Svg.Rect] =
             rectsIn(root).filter(r => !(coordNum(r.svgAttrs.width).contains(12.0) && coordNum(r.svgAttrs.height).contains(12.0)))
         for
-            none   <- Signal.initRef(Set.empty[String])
-            hidden <- Signal.initRef(Set("catA"))
+            none   <- Signal.initRef(Set.empty[Int])
+            hidden <- Signal.initRef(Set(0))
             specFull = Chart(rowsFull)(bar(x = _.x, y = _.y, color = _.cat)).legend(_.interactive(none))
             specHid  = Chart(rowsFull)(bar(x = _.x, y = _.y, color = _.cat)).legend(_.interactive(hidden))
             rootFull = (specFull).lower
@@ -587,14 +585,14 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
 
     // ---- the hidden filter applies before color-splitting ----
 
-    "with 3 series and catB hidden, mark colors index over the visible set {catA, catC} only" in {
+    "with 3 series and catB hidden (index 1), mark colors index over the visible set {catA, catC} only" in {
         val rows = Chunk(
             CatRow("p", 1.0, "catA"),
             CatRow("q", 2.0, "catB"),
             CatRow("r", 3.0, "catC")
         )
         for
-            hidden <- Signal.initRef(Set("catB"))
+            hidden <- Signal.initRef(Set(1)) // catB is encounter index 1
             spec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
                 .legend(_.interactive(hidden))
             root = (spec).lower
@@ -625,7 +623,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
     "hiding all series leaves the legend swatches visible but the marks region empty" in {
         val rows = Chunk(CatRow("p", 1.0, "catA"), CatRow("q", 2.0, "catB"))
         for
-            hidden <- Signal.initRef(Set("catA", "catB"))
+            hidden <- Signal.initRef(Set(0, 1)) // catA=index 0, catB=index 1
             spec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
                 .legend(_.interactive(hidden))
             root = (spec).lower
@@ -783,10 +781,10 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
     // so a Chart(signal) with onSelect/onHover/highlightSelect propagates interaction configuration.
 
     // Test 20: live bar carries onClick handler from onSelect
-    "LIVE bar with onSelect: rendered rect carries data-kyo-ev=click (live-path interaction bug)" in {
+    "LIVE bar with onSelect: rendered rect carries data-kyo-ev=click" in {
         // AnimateConfig.default.enabled=true, so Chart(signal)(...) routes through
-        // marksRegionWithTransitions -> lowerBarSimpleWithTransitions. Without this fix that
-        // arm never calls buildInteractionAttrs, so no data-kyo-ev attribute is emitted.
+        // marksRegionWithTransitions -> lowerBarSimpleWithTransitions. That arm must call
+        // buildInteractionAttrs so the data-kyo-ev attribute is emitted.
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -802,7 +800,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
     }
 
     // Test 21: live bar with highlightSelect: after setting selectRef the active bar carries the select stroke
-    "LIVE bar with highlightSelect: after selectRef is set, the active bar carries stroke=#000000 (live-path highlight bug)" in {
+    "LIVE bar with highlightSelect: after selectRef is set, the active bar carries stroke=#000000" in {
         // withHighlight must be called in lowerBarSimpleWithTransitions;
         // a Reactive highlight region must be created so the select stroke appears.
         for
@@ -827,7 +825,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
     }
 
     // Test 22: live line carries onClick handler from onSelect
-    "LIVE line with onSelect: rendered path carries data-kyo-ev=click (live-path interaction bug)" in {
+    "LIVE line with onSelect: rendered path carries data-kyo-ev=click" in {
         // lowerLineWithTransitions must call lowerLineSeries with spec/internalHoverRef,
         // so interaction attrs are attached to the line path.
         for
@@ -845,7 +843,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
     }
 
     // Test 23: live line with highlightSelect fires after selection
-    "LIVE line with highlightSelect: after selectRef is set, the active series path carries stroke=#000000 (live-path highlight bug)" in {
+    "LIVE line with highlightSelect: after selectRef is set, the active series path carries stroke=#000000" in {
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -868,7 +866,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
     }
 
     // Test 24: live area carries onClick handler from onSelect
-    "LIVE area with onSelect: rendered path carries data-kyo-ev=click (live-path interaction bug)" in {
+    "LIVE area with onSelect: rendered path carries data-kyo-ev=click" in {
         // lowerAreaWithTransitions must call lowerArea with internalHoverRef for the
         // non-stacked path, so interaction attrs are on the area path element.
         for
@@ -886,7 +884,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
     }
 
     // Test 25: live area with highlightSelect fires after selection
-    "LIVE area with highlightSelect: after selectRef is set, the active series path carries stroke=#000000 (live-path highlight bug)" in {
+    "LIVE area with highlightSelect: after selectRef is set, the active series path carries stroke=#000000" in {
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -907,6 +905,54 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             htmlAfter.contains("stroke=\"#000000\"") && htmlAfter.contains("stroke-width=\"2px\""),
             s"LIVE area with highlightSelect must carry stroke=#000000 after selection, but got:\n${htmlAfter.take(2000)}"
         )
+    }
+
+    // ---- interactive legend hide-set keyed by series index ----
+
+    "colliding-toString categories toggle independently via index-based hiddenSeries Set[Int]" in {
+        // Two color categories whose toString both return "x". A Set[String] hide-set would map both
+        // categories to the key "x", so toggling one would hide BOTH. With index-based keying,
+        // index 0 toggles only category A and index 1 toggles only category B.
+        enum Col derives CanEqual, Plottable:
+            case A, B
+            override def toString: String = "x"
+
+        case class ColRow(pos: String, v: Double, col: Col) derives CanEqual
+
+        val rows = Chunk(
+            ColRow("p", 1.0, Col.A),
+            ColRow("q", 2.0, Col.B)
+        )
+
+        for
+            hidden <- Signal.initRef(Set.empty[Int])
+            spec = Chart(rows)(bar(x = _.pos, y = _.v, color = _.col))
+                .legend(_.interactive(hidden))
+            root = (spec).lower
+            // The legend should have 2 swatches, one per color category.
+            swatches = legendSwatches(root)
+            _        = assert(swatches.size == 2, s"Expected 2 legend swatches but got ${swatches.size}")
+            // Click the first swatch: should toggle index 0 (Col.A only).
+            click0 = swatches(0).attrs.onClick
+            _      = assert(click0.isDefined, "First swatch must have an onClick")
+            _      <- runAction(click0.get)
+            after0 <- hidden.get
+            _ = assert(after0 == Set(0), s"After clicking swatch 0, hiddenSeries must be Set(0) but was $after0")
+            // Render the chart: only Col.A rows should be filtered; Col.B must still produce a bar.
+            rootHidden = (spec).lower
+        yield
+            // Build a fresh root from the same spec to reflect the current hidden state.
+            // After hiding index 0 (Col.A), Col.B's row must still be rendered.
+            // We compute it by lowering again (hiddenSeries ref is read synchronously at lower time).
+            val markBars = rectsIn(rootHidden).filter(r =>
+                !(coordNum(r.svgAttrs.width).contains(12.0) && coordNum(r.svgAttrs.height).contains(12.0))
+            )
+            // Col.A is hidden, Col.B is visible: exactly 1 bar remains.
+            assert(
+                markBars.size == 1,
+                s"Hiding index 0 (Col.A) must leave exactly 1 bar (Col.B), but found ${markBars.size}"
+            )
+        end for
     }
 
 end ChartInteractionTest

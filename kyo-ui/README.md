@@ -1141,12 +1141,12 @@ val highlightPage: UI < Async =
 
 ### Interactive legend
 
-`.legend(_.interactive(ref))` makes the legend swatches clickable: clicking a series toggles its visibility. `ref` is a `SignalRef[Set[String]]` holding the labels of the currently hidden series. Clicking a swatch adds or removes its label, and the marks lowering drops rows whose `color` label is in the set, so the remaining series re-lay out to fill the plot. It is the same `SignalRef` model as the rest of the page, so the hidden set is also readable anywhere else (for a count, a "reset" button, and so on):
+`.legend(_.interactive(ref))` makes the legend swatches clickable: clicking a series toggles its visibility. `ref` is a `SignalRef[Set[Int]]` holding the indices of the currently hidden series. Clicking a swatch adds or removes its series index, and the marks lowering drops rows whose series is in the set, so the remaining series re-lay out to fill the plot. Index keying (rather than a label) keeps two categories that share a `toString` independently toggleable. It is the same `SignalRef` model as the rest of the page, so the hidden set is also readable anywhere else (for a count, a "reset" button, and so on):
 
 ```scala
 val legendTogglePage: UI < Async =
     for
-        hidden <- Signal.initRef(Set.empty[String])
+        hidden <- Signal.initRef(Set.empty[Int])
     yield
         val chart: Svg.Root =
             Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))

@@ -6,7 +6,6 @@ import kyo.Svg.PathCommand
 import kyo.Svg.PathData
 import kyo.UI.*
 import kyo.UI.Ast.*
-import kyo.internal.ChartLower
 import kyo.internal.Scale
 import scala.language.implicitConversions
 
@@ -421,10 +420,10 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         // The labels must clear the tick numbers: left ticks are the End-anchored numeric texts (the rotated
         // axis labels are Middle-anchored, so anchor=End isolates the tick numbers). The Revenue label centre
         // at ~14 must be left of every tick-number anchor.
-        // NOTE: a layout fix grows the left margin so the 5-digit "50000" tick label does not clip
-        // the rotated title. The tick-number anchor sits at ~61 (plotX 70 minus
-        // TickLen+gap); the `< PlotX` (60) filter from an older test
-        // assumed plotX stayed at the default 60, so it is replaced by an anchor-only filter.
+        // NOTE: the left margin auto-grows to fit tick labels so the 5-digit "50000" tick label does not
+        // clip the rotated title. The tick-number anchor sits at ~61 (plotX 70 minus
+        // TickLen+gap), so a `< PlotX` (60) filter that assumes plotX stays at the default 60 would not
+        // hold here; an anchor-only filter is used instead.
         val leftTickLabels = texts.filter(t => t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
         assert(leftTickLabels.nonEmpty, "Expected left-axis tick numbers")
         leftTickLabels.foldLeft(()): (_, t) =>
@@ -1045,9 +1044,9 @@ class ChartAxisTest extends kyo.test.Test[Any]:
 
     "xScale linear with an explicit domain honors it exactly and does not nice-expand it" in {
         // Data x spans 1..12; an explicit .xScale(_.linear(1.0, 12.0)) must resolve to [1,12].
-        // Without this fix the X path passed nice=true uniformly, so fitLinear would nice-expand
-        // [1,12] to [0,15] (data crammed into part of the plot). The Y path already honors an
-        // explicit linear domain with nice=false.
+        // The X path must honor the explicit domain with nice=false; passing nice=true uniformly would
+        // let fitLinear nice-expand [1,12] to [0,15] (data crammed into part of the plot). The Y path
+        // already honors an explicit linear domain with nice=false.
         case class XRow(x: Double, y: Double)
         val rows    = Chunk.from((1 to 12).map(m => XRow(m.toDouble, m.toDouble)))
         val spec    = Chart(rows)(point(x = _.x, y = _.y)).xScale(_.linear(1.0, 12.0))
@@ -1122,7 +1121,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         assert(yPadded < yNoPad, s"Padded log datum y ($yPadded) must be inset above the baseline ($yNoPad)")
     }
 
-    // ---- Layout defect fixes ----
+    // ---- Layout edge cases ----
 
     /** All `Svg.Circle`s that are DIRECT children of root (frame chrome, e.g. size-legend sample bubbles),
       * not the per-point data circles which live inside the marks group.
@@ -1138,7 +1137,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
     // Wide left y-tick labels with a rotated left axis title must not clip at the left SVG edge.
     // A 5-digit revenue domain forces a "50000"-class tick label; with a left axis title the
     // left margin must grow so the leftmost tick label stays >= 0 and the plot is pushed right of the labels.
-    "wide 5-digit left y-tick labels + a left axis title do not clip at the SVG edge (defect 2)" in {
+    "wide 5-digit left y-tick labels + a left axis title do not clip at the SVG edge" in {
         val rows = Chunk(
             WideRow("Jan", 45000, 0.0),
             WideRow("Jun", 83000, 18.6)
@@ -1172,9 +1171,9 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         assert(leftmost >= 0.0, s"Leftmost tick-label pixel ($leftmost) clips off the left edge (labelX=$labelX)")
 
         // The plot must be pushed right of the labels. The left axis SPINE is the vertical frame line with
-        // x1 == x2 and y1 < y2; its x is plotX. The old (bug) layout pinned plotX at the default 60 (so the
-        // "50000" label, right-anchored at x=51, extended left to ~16 and collided with the rotated title at
-        // x=14, clipping the leading digit). The fix grows plotX so the widest label clears the title column.
+        // x1 == x2 and y1 < y2; its x is plotX. Pinning plotX at the default 60 would let the
+        // "50000" label, right-anchored at x=51, extend left to ~16 and collide with the rotated title at
+        // x=14, clipping the leading digit. plotX grows so the widest label clears the title column.
         val spineXs = frameLinesIn(root).flatMap: l =>
             (l.svgAttrs.x1, l.svgAttrs.x2, l.svgAttrs.y1, l.svgAttrs.y2) match
                 case (Present(x1), Present(x2), Present(y1), Present(y2)) if math.abs(x1 - x2) < Tol && y1 < y2 =>
@@ -1182,7 +1181,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
                 case _ => Chunk.empty
         val plotX = if spineXs.isEmpty then 0.0 else spineXs.min
         assert(plotX >= 70.0, s"Left margin did not grow for wide labels: plotX=$plotX (default 60)")
-        // The tick label likewise shifted right of its old buggy x=51 (it now sits at plotX - TickLen - 4).
+        // The tick label likewise sits right of the default x=51, at plotX - TickLen - 4.
         assert(labelX > 51.0, s"Tick label x ($labelX) did not move right of the default 51")
     }
 
@@ -1192,7 +1191,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
     // A point chart with a size encoding must render its size legend as sample circles OUTSIDE the plot data
     // area, not floating over a data bubble. The plot is shifted down to reserve a top legend strip; the
     // sample bubbles sit entirely above plotY.
-    "size-legend sample circles render outside the plot data area, above plotY (defect 4)" in {
+    "size-legend sample circles render outside the plot data area, above plotY" in {
         val rows = Chunk(
             SizeRow(1.2, 3.4, 8.0),
             SizeRow(5.0, 5.5, 15.0),
@@ -1226,7 +1225,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
     // GUARD: a bar+line combo lists bar THEN line, so spec order must place the line path AFTER all bar rects
     // in the SVG so the line draws ON TOP of the bars. This was reported as a possible z-order issue; it is
     // correct already, and this test guards that the spec-order layering holds.
-    "bar+line combo emits the line path after all bar rects (z-order guard, defect 3)" in {
+    "bar+line combo emits the line path after all bar rects (z-order guard)" in {
         val rows = Chunk(
             ComboRow("Jan", 45000, 0.0),
             ComboRow("Feb", 52000, 15.6),
@@ -1393,11 +1392,11 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             assert(t.svgAttrs.fontSize.isEmpty, s"Default theme must NOT add font-size; got ${t.svgAttrs.fontSize}")
     }
 
-    // ---- x tick-label chrome unchanged through shared helper ----
+    // ---- x tick-label chrome resolved through the shared helper ----
 
-    "x tick rotateTicks/anchor/font stay byte-identical" in {
-        // buildXAxis adds withFont to the title block; the tickLabel helper call is
-        // unchanged. This test re-asserts the baseline.
+    "x tick rotateTicks/anchor/font are applied through the shared helper" in {
+        // buildXAxis adds withFont to the title block; the tickLabel helper applies rotation, anchor,
+        // and font to each x tick label.
         val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
 
         // Rotation (mirrors the rotateTicks test at line 972):

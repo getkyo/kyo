@@ -537,8 +537,8 @@ private[kyo] object HtmlRenderer:
     //   '  -> \'   (single-quote, safe-by-default)
     //  \r  -> \r   (CR, JS line terminator)
     //  \n  -> \n   (LF, JS line terminator)
-    // U+2028 ->    (LINE SEPARATOR, JS line terminator)
-    // U+2029 ->    (PARAGRAPH SEPARATOR, JS line terminator)
+    // U+2028 -> U+2028  (LINE SEPARATOR, JS line terminator)
+    // U+2029 -> U+2029  (PARAGRAPH SEPARATOR, JS line terminator)
     //  </  -> <\/  (prevents </script> from closing the element; < alone is harmless in JS)
     private def jsStr(s: String): String =
         val sb = new StringBuilder(s.length)

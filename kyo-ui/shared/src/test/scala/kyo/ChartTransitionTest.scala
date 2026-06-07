@@ -410,11 +410,10 @@ class ChartTransitionTest extends kyo.test.Test[Any]:
     // ---- animated path: a color-split ANIMATED line honors an explicit categorical colorScale ----
 
     // A chart with `.animate(...)` is lowered through `lowerLineWithTransitions`,
-    // not `lowerLine`. Without this fix `lowerLineWithTransitions` colored each series from
-    // `themePalette(spec.theme)` by category index, ignoring `spec.legendCfg.colorScale`. So an animated
-    // color-split line drew DefaultPalette blue/orange while the legend (which uses resolvePalette) showed
-    // the colorScale cyan/amber: legend and line disagreed (e.g. the LiveDashboard latency chart).
-    // `lowerLineWithTransitions` now resolves colors via resolvePalette, so the "a" series path
+    // not `lowerLine`. `lowerLineWithTransitions` must resolve each series via resolvePalette so it
+    // respects `spec.legendCfg.colorScale`, rather than coloring by category index from
+    // `themePalette(spec.theme)`, which would draw DefaultPalette blue/orange and disagree with the
+    // legend (which uses resolvePalette) showing the colorScale cyan/amber. So the "a" series path
     // carries the colorScale cyan and the "b" series path carries the colorScale amber, matching the legend
     // and the static (non-animated) line path.
     "an animated color-split line honors an explicit categorical colorScale (transitions path)" in {
@@ -463,7 +462,7 @@ class ChartTransitionTest extends kyo.test.Test[Any]:
                 strokes(1) == amberCss,
                 s"animated: series 'b' line must use colorScale amber $amberCss but got ${strokes(1)}:\n$html"
             )
-            // DefaultPalette colours must not appear: the bug rendered these instead.
+            // DefaultPalette colours must not appear; series must use the configured colorScale.
             assert(
                 !html.contains(s"stroke=\"$blueCss\""),
                 s"animated: DefaultPalette blue $blueCss must not be a stroke under a colorScale:\n$html"
@@ -540,12 +539,12 @@ class ChartTransitionTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- no-encoding animated bar is byte-identical ----
+    // ---- no-encoding animated bar emits no encoding attributes but keeps SMIL animates ----
 
-    "no-encoding animated bar is byte-identical" in {
+    "no-encoding animated bar emits no encoding attributes but keeps SMIL animates" in {
         // A bar with NO opacity/label/tooltip encodings. applyBarEncodings returns the rect
-        // unchanged (Absent arms for all three encodings) and an empty label Chunk. The SMIL animates are
-        // attached as before. Output must be byte-identical to the baseline animated bar.
+        // unchanged (Absent arms for all three encodings) and an empty label Chunk, while the SMIL
+        // animates are still attached.
         val rows = Chunk(Sale("Jan", Rev(1000.0)))
         for
             ref <- Signal.initRef[Seq[Sale]](rows)

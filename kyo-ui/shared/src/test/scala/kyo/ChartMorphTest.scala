@@ -31,7 +31,7 @@ import scala.language.implicitConversions
   *   edge, so the lowering adds bandW/2 to centre:
   *   px_Jan = 60 + 0*280 + (280-252)/2 + 252/2 = 74 + 126 = 200
   *   px_Feb = 60 + 1*280 + (280-252)/2 + 252/2 = 354 + 126 = 480
-  *   (The old 74/354 were the band LEFT edge and encoded the off-by-half-band bug; the centring fix uses bandW/2.)
+  *   (74/354 are the band LEFT edge, half a band off from the tick; centring adds bandW/2.)
   *
   * Y scale linear(0,4000), baseline=440, top=20: pixel(v) = 440 - v*0.105
   *   1000 -> 335,  2000 -> 230,  3000 -> 125,  500 -> 387.5
@@ -50,7 +50,7 @@ import scala.language.implicitConversions
   *   5. Double-pull idempotency (line): two renders of the same emission reproduce the same from/to.
   *   6. Double-pull idempotency (area): same discipline for area paths.
   *   7. No animate on the FIRST emission (no previous path stored yet).
-  *   8-14. markIdx keying stability, CatKey dedup, area parity, gate check.
+  *   8-14. mark-index keying stability, CatKey dedup, area parity, gate check.
   */
 class ChartMorphTest extends kyo.test.Test[Any]:
 
@@ -74,7 +74,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
     given CanEqual[MultiSale, MultiSale] = CanEqual.derived
 
     // Enum with colliding toString for the colliding-toString dedup test.
-    // Both cases override toString to "color" so they collide under the old toString-keyed dedup.
+    // Both cases override toString to "color" so they would collide under a toString-keyed dedup.
     // distinctKeyed uses CatKey (class + value), keeping them distinct.
     enum Col derives CanEqual:
         case Red
@@ -125,7 +125,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             // The transition animate must use begin="indefinite", not begin="0s": with begin="0s" a
             // post-load reactive update snaps to the frozen end (the animate's window is already past on
             // the shared document timeline), so the chart jumps instead of tweening. The reactive runtime
-            // calls beginElement() on insert to start it. A revert to begin="0s" reintroduces that bug.
+            // calls beginElement() on insert to start it; begin="0s" would reintroduce the snap.
             assert(
                 html.contains("begin=\"indefinite\"") && !html.contains("begin=\"0s\""),
                 s"Expected begin=indefinite (not 0s) so the runtime can start the tween on insert:\n$html"
@@ -373,11 +373,11 @@ class ChartMorphTest extends kyo.test.Test[Any]:
     "multi-mark: line pathKey is stable when a preceding bar's geom count changes" in {
         // mark-0: ungrouped bar (uses rowKey, content-based, not pathKey).
         //   Emission 1: 2 bars (Jan, Feb). Emission 2: 3 bars (Jan, Feb, Mar).
-        //   Bar geom entries go from 2 to 3; under the old keyOffset scheme this shifted
+        //   Bar geom entries go from 2 to 3. A key derived from a running geom-count offset would shift
         //   mark-1's line key from "line-2" to "line-3", causing a missed lookup and snap.
         // mark-1: line with stable 2 points (Jan, Feb) across both emissions.
         //   The Mar row has v2=NaN so it is filtered as non-finite and skipped by the line.
-        //   With the markIdx fix the key is "line-1-0" on both emissions: lookup hits,
+        //   Keying by mark index, the key is "line-1-0" on both emissions: lookup hits,
         //   SMIL fires (from/to differ since y-values change).
         //
         // Line v2 (Maybe[Rev]): emission 1 Jan/Feb present; emission 2 Jan/Feb present + Mar=Absent.
@@ -520,10 +520,9 @@ class ChartMorphTest extends kyo.test.Test[Any]:
 
     "two series with colliding toString stay as distinct pathKeys per CatKey seriesIdx" in {
         // Col.Red and Col.Blue both override toString to "color".
-        // Under the old toString-keyed dedup they collapse to one bucket,
-        // and only one <path> appears. Under the CatKey fix (distinctKeyed),
-        // Red and Blue are distinct (CatKey(class, value)), two <path> elements appear,
-        // with keys "line-0-0" and "line-0-1".
+        // A toString-keyed dedup would collapse them to one bucket, so only one <path> appears.
+        // With CatKey-based dedup (distinctKeyed), Red and Blue are distinct (CatKey(class, value)),
+        // so two <path> elements appear, with keys "line-0-0" and "line-0-1".
         val rows = Chunk(
             ColSale("Jan", Rev(1000.0), Col.Red),
             ColSale("Feb", Rev(2000.0), Col.Blue),
@@ -584,12 +583,12 @@ class ChartMorphTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- structural gate preserved after markIdx fix ----
+    // ---- structural gate: same command count but changed types must snap ----
 
-    "line with changed point count snaps (structural gate unchanged after markIdx fix)" in {
-        // The prevCount==newCount gate is unchanged.
+    "line with changed point count snaps (structural gate: count-match is not enough)" in {
+        // The prevCount==newCount gate gives a structural change here.
         // 2 points -> 3 points = structural change -> no <animate>.
-        // This mirrors test 2 but explicitly guards the gate under the new markIdx keying.
+        // This mirrors test 2 but explicitly guards the gate under mark-index keying.
         val e1 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val e2 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)), Sale("Mar", Rev(1500.0)))
         for
@@ -618,9 +617,9 @@ class ChartMorphTest extends kyo.test.Test[Any]:
         // Emission 2: row 1 defined, row 2 absent (gap), rows 3+4 defined -> two segments ->
         //   segment1=(Jan only)->M, segment2=(Mar,Apr)->M L => total M M L (3 commands, types differ!).
         //
-        // Both emissions have exactly 3 path commands, so the OLD count gate (prevCount==newCount) fires
-        // and emits a garbage SMIL morph interpolating between structurally incompatible paths.
-        // The FIX compares command-type signatures (ordinals), finds M-L-L != M-M-L, and snaps instead.
+        // Both emissions have exactly 3 path commands, so a count-only gate (prevCount==newCount) would fire
+        // and emit a garbage SMIL morph interpolating between structurally incompatible paths.
+        // The type-signature check compares command ordinals, finds M-L-L != M-M-L, and snaps instead.
         //
         // Y scale linear(0, 4000), baseline=440: pixel(v) = 440 - v*0.105
         //   Jan=1000 -> 335, Feb=2000 -> 230, Mar=3000 -> 125, Apr=4000 -> 20
@@ -665,11 +664,11 @@ class ChartMorphTest extends kyo.test.Test[Any]:
     "gap type-signature area: area stable-structure morph still fires" in {
         // Area paths use buildSimpleAreaPath which skips gap rows (Absent y -> skip, not MoveTo gap).
         // So area gap rows reduce the point count rather than inserting extra MoveTo commands.
-        // The type-signature fix for area is therefore equivalent to the count gate for linear area
+        // The type-signature check for area is therefore equivalent to the count gate for linear area
         // (same count implies same types for M-L-...-L-Z sequences without curve-generated CubicTos).
         //
-        // This test is a regression guard: verifies the type-sig fix does NOT over-snap a stable-
-        // structure area morph. Emission 1 and emission 2 both have 3 defined area points, so the
+        // Verifies the type-signature gate does not over-snap a stable-structure area morph.
+        // Emission 1 and emission 2 both have 3 defined area points, so the
         // type signature is identical (M-L-L-L-L-Z) -> morph MUST fire (not snap).
         //
         // GapSale with Maybe[Rev]: area skips Absent rows, so emission 2 has 3 defined rows (Jan, Mar, Apr).
@@ -711,12 +710,12 @@ class ChartMorphTest extends kyo.test.Test[Any]:
         // Emission 1: two series [Red, Blue].
         //   Red: Jan=1000 (py=340), Feb=2000 (py=240)  -> d = "M200 340 L480 240"
         //   Blue: Jan=3000 (py=140), Feb=1000 (py=340)  -> d = "M200 140 L480 340"
-        //   Old (buggy) keys: line-0-0=Red's path, line-0-1=Blue's path.
+        //   Positional keys would be: line-0-0=Red's path, line-0-1=Blue's path.
         // Emission 2: Red removed; only Blue series with NEW y-values (Jan=2000, Feb=1500).
         //   Blue (new): Jan=2000 (py=240), Feb=1500 (py=290) -> d = "M200 240 L480 290"
-        //   Old (buggy) key lookup: Blue at seriesIdx=0 -> "line-0-0" -> finds Red's old path "M200 340 L480 240".
-        //   Command count (2) matches (bug fires a morph from Red's path!), from="M200 340 L480 240" (WRONG).
-        //   With series-identity keying: key is "line-0-Blue" by label. Blue's own prior path "M200 140 L480 340" is found.
+        //   A positional-key lookup would put Blue at seriesIdx=0 -> "line-0-0" -> Red's path "M200 340 L480 240".
+        //   Command count (2) matches, so it would morph from Red's path, from="M200 340 L480 240" (WRONG).
+        //   With series-identity keying: key is "line-0-Blue" by category. Blue's own prior path "M200 140 L480 340" is found.
         //   from="M200 140 L480 340" (CORRECT, Blue's OWN prior path).
         //
         // Band scale (Jan, Feb): px_Jan=200, px_Feb=480.
@@ -760,7 +759,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
                 html.contains("to=\"M200 240 L480 290\""),
                 s"series-identity keying line: Blue series must morph to M200 240 L480 290, got:\n$html"
             )
-            // Must NOT morph from Red's old path (the positional-index bug symptom).
+            // Must NOT morph from Red's old path; keying must be per-category, not per-position.
             assert(
                 !html.contains("from=\"M200 340 L480 240\""),
                 s"series-identity keying line: must NOT morph from Red's old path M200 340 L480 240, got:\n$html"
@@ -776,10 +775,10 @@ class ChartMorphTest extends kyo.test.Test[Any]:
         // Emission 1:
         //   Red: Jan=1000, Feb=2000 -> top "M200 340 L480 240" -> area "M200 340 L480 240 L480 440 L200 440 Z"
         //   Blue: Jan=3000, Feb=1000 -> top "M200 140 L480 340" -> area "M200 140 L480 340 L480 440 L200 440 Z"
-        //   Old (buggy) keys: area-0-0=Red's area path, area-0-1=Blue's area path.
+        //   Positional keys would be: area-0-0=Red's area path, area-0-1=Blue's area path.
         // Emission 2 (Blue only with new values: Jan=2000, Feb=1500):
         //   Blue new area: "M200 240 L480 290 L480 440 L200 440 Z"
-        //   Old (buggy) lookup: Blue at idx=0 -> "area-0-0" -> finds Red's area path (WRONG).
+        //   A positional-key lookup would put Blue at idx=0 -> "area-0-0" -> Red's area path (WRONG).
         //   With series-identity keying: Blue at label "Blue" -> "area-0-Blue" -> finds Blue's own area path (CORRECT).
         //
         // Y scale linear(0, 4000), pixel(v) = 440 - v*0.1
@@ -824,10 +823,10 @@ class ChartMorphTest extends kyo.test.Test[Any]:
 
     // ---- Colliding-toString transition tests ----
     //
-    // Col.Red and Col.Blue both override toString to "color". Under the old label-string keying
-    // the transition geometry map stores both series under the same key "line-0-color" (or
-    // "area-0-color"), so Red's geometry silently overwrites Blue's (or vice versa). On the
-    // second emission each series looks up the wrong prior geometry and morphs from a crossed
+    // Col.Red and Col.Blue both override toString to "color". Under label-string keying
+    // the transition geometry map would store both series under the same key "line-0-color" (or
+    // "area-0-color"), so Red's geometry would silently overwrite Blue's (or vice versa). On the
+    // second emission each series would look up the wrong prior geometry and morph from a crossed
     // or merged path. With TransKey keyed by CatKey identity the two series stay
     // distinct and each morphs from its OWN prior path.
     //
@@ -844,12 +843,12 @@ class ChartMorphTest extends kyo.test.Test[Any]:
         // Emission 1:
         //   Red: Jan=1000 (py=340), Feb=2000 (py=240) -> "M200 340 L480 240"
         //   Blue: Jan=500 (py=390), Feb=1500 (py=290)  -> "M200 390 L480 290"
-        //   Old bug: both stored under key "line-0-color"; Blue overwrites Red (last wins).
-        //   After emission 1, currentGeom["line-0-color"] = Blue's path "M200 390 L480 290".
+        //   Without CatKey: both stored under key "line-0-color"; Blue overwrites Red (last wins).
+        //   After emission 1, currentGeom["line-0-color"] would be Blue's path "M200 390 L480 290".
         // Emission 2:
         //   Red: Jan=2000 (py=240), Feb=3000 (py=140) -> "M200 240 L480 140"
         //   Blue: Jan=800 (py=360), Feb=1200 (py=320)  -> "M200 360 L480 320"
-        //   Old bug: both look up key "line-0-color" -> find Blue's emission-1 path "M200 390 L480 290"
+        //   Without CatKey: both look up key "line-0-color" -> find Blue's emission-1 path "M200 390 L480 290"
         //     -> Red morphs from Blue's path (WRONG), Blue morphs from itself only by accident.
         //   With CatKey identity: Red looks up TransKey.Series(0, CatKey(ColTag, Red)) -> "M200 340 L480 240" (CORRECT).
         //                         Blue looks up TransKey.Series(0, CatKey(ColTag, Blue)) -> "M200 390 L480 290" (CORRECT).
@@ -905,8 +904,8 @@ class ChartMorphTest extends kyo.test.Test[Any]:
                 s"colliding-toString LINE: Blue must morph to M200 360 L480 320, got:\n$html"
             )
             // Red must NOT morph from Blue's prior path (the colliding-key symptom).
-            // Without the CatKey fix: both series use from="M200 390 L480 290" (Blue's path overwrote Red's).
-            // With the fix: Red uses from="M200 340 L480 240", Blue uses from="M200 390 L480 290".
+            // Without CatKey: both series would use from="M200 390 L480 290" (Blue's path overwrote Red's).
+            // With CatKey: Red uses from="M200 340 L480 240", Blue uses from="M200 390 L480 290".
             val pathSegments = html.split("<path ").toSeq.drop(1)
             val redSeg       = pathSegments.find(_.contains("stroke=\"#3b82f6\""))
             assert(
@@ -922,11 +921,11 @@ class ChartMorphTest extends kyo.test.Test[Any]:
         // Emission 1:
         //   Red: Jan=1000 (py=340), Feb=2000 (py=240) -> "M200 340 L480 240 L480 440 L200 440 Z"
         //   Blue: Jan=500 (py=390), Feb=1500 (py=290)  -> "M200 390 L480 290 L480 440 L200 440 Z"
-        //   Old bug: both stored under key "area-0-color"; Blue overwrites Red.
+        //   Without CatKey: both stored under key "area-0-color"; Blue overwrites Red.
         // Emission 2:
         //   Red: Jan=2000 (py=240), Feb=3000 (py=140) -> "M200 240 L480 140 L480 440 L200 440 Z"
         //   Blue: Jan=800 (py=360), Feb=1200 (py=320)  -> "M200 360 L480 320 L480 440 L200 440 Z"
-        //   Old bug: Red morphs from Blue's E1 area path (WRONG).
+        //   Without CatKey: Red would morph from Blue's E1 area path (WRONG).
         //   With CatKey identity keying: Red morphs from Red's own E1 area path (CORRECT).
         val e1 = Chunk(
             ColSale("Jan", Rev(1000.0), Col.Red),

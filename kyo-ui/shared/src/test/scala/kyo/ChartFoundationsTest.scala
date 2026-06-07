@@ -5,7 +5,6 @@ import kyo.UI.*
 import kyo.UI.Ast.*
 import kyo.internal.ChartFoundations
 import kyo.internal.ChartFoundations.CatKey
-import kyo.internal.ChartLower
 import kyo.internal.Domain
 import kyo.internal.HtmlRenderer
 import scala.language.implicitConversions

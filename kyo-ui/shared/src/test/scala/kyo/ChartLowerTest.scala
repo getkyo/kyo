@@ -128,7 +128,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             case Absent      => fail("Expected path to have d attribute")
         // Band: n=2, slot=280, bandW=252, padding=(280-252)/2=14.
         // Line vertices sit at the band CENTRE (left edge + bandW/2), aligning with the centred x-tick labels.
-        // (Old values 74/354 were the band LEFT edge and encoded the off-by-half-band bug.)
+        // (74/354 would be the band LEFT edge, half a band off from the tick.)
         val slot  = 280.0
         val bandW = 252.0
         val pad   = (slot - bandW) / 2.0               // 14.0
@@ -170,7 +170,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             case Present(pd) => PathData.commands(pd)
             case Absent      => fail("Expected path to have d attribute")
         // Area vertices sit at the band CENTRE (left edge + bandW/2), aligning with the centred x-tick labels.
-        // (Old values 74/354 were the band LEFT edge and encoded the off-by-half-band bug.)
+        // (74/354 would be the band LEFT edge, half a band off from the tick.)
         val slot  = 280.0
         val bandW = 252.0
         val pad   = (slot - bandW) / 2.0
@@ -221,7 +221,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val circles = circlesIn(root)
         assert(circles.size == 2, s"Expected 2 circles but got ${circles.size}")
         // Point glyphs sit at the band CENTRE (left edge + bandW/2), aligning with the centred x-tick labels.
-        // (Old value 354.0 was the band LEFT edge and encoded the off-by-half-band bug.)
+        // (354.0 would be the band LEFT edge, half a band off from the tick.)
         val slot  = 280.0
         val bandW = 252.0
         val pad   = (slot - bandW) / 2.0
@@ -330,7 +330,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         // Both commands should be MoveTos (no LineTo between gaps)
         assert(cmds.size == 2, s"Expected exactly 2 path commands but got ${cmds.size}")
         // Vertices sit at the band CENTRE (left edge + bandW/2), aligning with the centred x-tick labels.
-        // (Old values were the band LEFT edge and encoded the off-by-half-band bug.)
+        // (The band LEFT edge would be half a band off from the tick.)
         val slot  = PlotW / 3.0
         val bandW = PlotW * 0.9 / 3.0 // 168.0
         val pad   = (slot - bandW) / 2.0
@@ -396,13 +396,13 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assertClose(xs(2), 88.0 + 2 * expectedSubW, "third sub-band x")
     }
 
-    // ---- Test 8a (BUG): color 1:1 with x must NOT dodge; bars stay full-band and slot-centered ----
+    // ---- Test 8a: color 1:1 with x must NOT dodge; bars stay full-band and slot-centered ----
     // When the color encoding is 1:1 with the x encoding (each x-band contains exactly ONE color),
     // grammar-of-graphics convention says color must NOT subdivide the band: it just paints full-width
-    // bars. The old lowerBarGrouped dodged EVERY bar into a global color sub-slot keyed by global color
-    // index, so category 0 landed at the far left (width bandW/N), category 1 one slot right, etc. =>
-    // thin bars marching left-to-right, misaligned with their centered x-axis tick labels. The fix
-    // renders simple full-band bars when no band holds more than one distinct color.
+    // bars. Dodging every bar into a global color sub-slot keyed by global color index would put
+    // category 0 at the far left (width bandW/N), category 1 one slot right, etc., yielding thin bars
+    // marching left-to-right and misaligned with their centered x-axis tick labels. Instead,
+    // lowerBarGrouped renders simple full-band bars when no band holds more than one distinct color.
 
     "color encoding that is 1:1 with x does not dodge: bars stay full-band and slot-centered" in {
         // 3 distinct categories A/B/C, each its OWN color (color == label). Each x-band holds exactly one
@@ -444,8 +444,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     // ---- grouped bar with numeric color encoding honors a Sequential color scale ----
     // A non-stacked bar whose color encoding is NUMERIC plus `.legend(_.colorScaleSequential(low, high))`
     // must paint each bar with the interpolated gradient color for its value, the same way lowerPoint and
-    // lowerArea do via resolvePalette. Without this fix, lowerBarGrouped colored bars from the categorical
-    // theme/DefaultPalette (blue/orange/...), ignoring the Sequential scale entirely.
+    // lowerArea do via resolvePalette. lowerBarGrouped must route the Sequential scale through
+    // resolvePalette rather than coloring bars from the categorical theme/DefaultPalette (blue/orange/...).
 
     "grouped bar with numeric color encoding honors a Sequential color scale (gradient, not categorical)" in {
         // Three rows, same x="Jan", numeric color values 0.0/50.0/100.0 over domain extent [0, 100].
@@ -486,11 +486,10 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     }
 
     // ---- grouped bar with a Categorical colorScale uses the scale colors ----
-    // Without this fix, lowerBarGrouped's `palette` val matched only `Present(_: Sequential)` and routed
-    // `Present(_: Categorical)` into the `case _` fallback (the by-index basePalette), so bars got
-    // DefaultPalette colors (#3b82f6 blue, #f97316 orange, ...) instead of the colorScale colors.
-    // The fix changes `Present(_: Sequential) => resolvePalette` to `Present(_) => resolvePalette`, so
-    // both Categorical and Sequential colorScales are honoured.
+    // lowerBarGrouped's `palette` val routes any `Present(_)` colorScale through resolvePalette, so both
+    // Categorical and Sequential colorScales are honoured. A `Present(_: Categorical)` must not fall
+    // through to the by-index basePalette, which would give DefaultPalette colors (#3b82f6 blue,
+    // #f97316 orange, ...) instead of the colorScale colors.
 
     "grouped bar with categorical colorScale uses the scale colors, not DefaultPalette" in {
         // Three rows sharing x="Jan", one per region -- this guarantees dodge=true (multiple distinct
@@ -547,8 +546,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     }
 
     // ---- Test 9: line path has fill=None, stroke present, strokeWidth present ----
-    // Regression test for the bug where lowerLineSeries produced a filled black polygon instead of a stroked line.
-    // The old code did `Svg.path.d(pathData)` with no paint, so the browser filled the path with black (default fill).
+    // Verifies that lowerLineSeries emits fill=None and a stroke, so the path renders as a stroked line
+    // rather than a filled black polygon (a path with no paint is filled black by the browser default).
 
     "line mark lowers to a path with fill=Paint.None, stroke present, and strokeWidth present" in {
         case class Row(x: String, y: Int)
@@ -638,8 +637,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     }
 
     // ---- Test 11: dark-theme bar uses a light/visible fill color ----
-    // Regression for the bug where dark-theme bars used browser-default black fill,
-    // making them invisible on the dark (#1f2937) background.
+    // Verifies dark-theme bars use a visible fill color rather than the browser-default black,
+    // which would be invisible on the dark (#1f2937) background.
 
     "dark-theme bar uses a light fill color, not black" in {
         val rows  = Chunk(Sale("Jan", Usd(1000)))
@@ -1926,11 +1925,10 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     }
 
     // a color-split line must honor an explicit categorical colorScale.
-    // Without this fix, lowerLine's color-split branch colored each series from themePalette(s.theme) by
-    // category index, ignoring spec.legendCfg.colorScale. The line drew DefaultPalette blue/orange while
-    // the legend (which uses resolvePalette) showed the colorScale colors: legend and line disagreed.
-    // lowerLine resolves colors via resolvePalette, so the "a" path is the colorScale cyan
-    // and the "b" path is the colorScale amber, matching the legend.
+    // lowerLine's color-split branch must resolve each series via resolvePalette so it respects
+    // spec.legendCfg.colorScale, rather than coloring by category index from themePalette(s.theme),
+    // which would draw DefaultPalette blue/orange and disagree with the legend (which uses resolvePalette).
+    // So the "a" path is the colorScale cyan and the "b" path is the colorScale amber, matching the legend.
     "a color-split line honors an explicit categorical colorScale" in {
         case class SRow(x: Double, y: Double, series: String) derives CanEqual
         val cyan  = Style.Color.rgb(6, 182, 212)
@@ -2084,7 +2082,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(pair._1.children.nonEmpty, "spec.lowerWithScales must return a pure Svg.Root with no effect row")
     }
 
-    // ---- Bug A: TEXT mark over a band x is centred on the band, honouring TextAnchor.Middle ----
+    // ---- TEXT mark over a band x is centred on the band, honouring TextAnchor.Middle ----
     // A text label with anchor=Middle over a categorical (band) x must sit at the band CENTRE (the same x
     // the bar is centred on), not the band's LEFT edge where the bar rect starts.
     "text mark with anchor=Middle over a band x is positioned at the band centre, not the band left edge" in {
@@ -2109,7 +2107,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assertClose(txtX, barCx, "Middle-anchored text x must equal the bar/band centre x")
     }
 
-    // ---- Bug B: SEQUENTIAL color legend carries numeric min/max scale labels ----
+    // ---- SEQUENTIAL color legend carries numeric min/max scale labels ----
     // The gradient swatch alone is quantitatively meaningless; the legend must show the value extent.
     "sequential color legend emits numeric min and max value labels as text" in {
         case class P(x: Double, y: Double, heat: Double)
@@ -2130,7 +2128,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(texts.contains(maxStr), s"sequential legend must show max value label '$maxStr'; texts=$texts")
     }
 
-    // ---- Bug C: POINT chart color/size legend sits in a reserved band, plot reserves top headroom ----
+    // ---- POINT chart color/size legend sits in a reserved band, plot reserves top headroom ----
     // A point chart with a sequential color legend must place the legend ABOVE the plot area, and the
     // topmost plotted point must clear the plot top (cy - r >= plotY): no overlap, no clipping.
     "point chart with a sequential color legend reserves a top band; legend is above plot and top point is not clipped" in {
@@ -2165,7 +2163,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(topCy - topR >= plotY - Tol, s"topmost point top (cy-r=${topCy - topR}) must clear plotY ($plotY)")
     }
 
-    // ---- Bug D (root cause): area/line/point over a band x are centred on the band, aligning with the
+    // ---- area/line/point over a band x are centred on the band, aligning with the
     // centred x-tick labels. A left-edge area leaves the last band slot empty (the "empty wedge"). ----
     "stacked area over a band x spans the full plot width; the last vertex is centred on the last band" in {
         case class S(month: String, units: Double, region: Region = Region.NA)
@@ -2200,8 +2198,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     // non-stacked area with color encoding emits one path per series.
     "non-stacked area with color=_.region emits one closed path per series at fill-opacity 0.7, each colored by colorScale" in {
         // Use colors that differ from DefaultPalette(0)=blue so failure is unambiguous on the color assertions.
-        // red and purple are not DefaultPalette(0) (blue) so the EU path having purple unambiguously fails
-        // when the single-path bug produces blue.
+        // red and purple are not DefaultPalette(0) (blue), so an EU path that came out blue (from a single
+        // merged path instead of one path per series) would unambiguously fail the purple assertion.
         val naColor = Style.Color.red    // #ef4444 -> NA
         val euColor = Style.Color.purple // #a855f7 -> EU
         val rows = Chunk(
@@ -2267,7 +2265,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
 
     // non-stacked area WITHOUT a color encoding emits exactly 1 closed path.
     // The buildSimpleAreaPath refactor must not change the Absent-color arm.
-    "non-stacked area with no color encoding still emits exactly one closed path (byte-identical)" in {
+    "non-stacked area with no color encoding still emits exactly one closed path" in {
         case class SimpleRow(x: String, y: Int) derives CanEqual
         val rows = Chunk(SimpleRow("a", 100), SimpleRow("b", 200))
         val spec = Chart(rows)(area(x = _.x, y = _.y))
@@ -2292,10 +2290,10 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     }
 
     // ---- text mark with categorical colorScale uses the scale colors ----
-    // Without this fix, lowerText resolves palette by index from themePalette(theme) only, ignoring
-    // spec.legendCfg.colorScale. With no custom theme.palette this yields DefaultPalette colors
-    // (#3b82f6 blue / #f97316 orange), not the colorScale colors. The fix adds spec: Maybe[Chart[A]]
-    // and routes a Present colorScale through resolvePalette (mirroring lowerLine / lowerPoint).
+    // lowerText takes spec: Maybe[Chart[A]] and routes a Present colorScale through resolvePalette
+    // (mirroring lowerLine / lowerPoint). Resolving palette by index from themePalette(theme) only would
+    // ignore spec.legendCfg.colorScale and, with no custom theme.palette, yield DefaultPalette colors
+    // (#3b82f6 blue / #f97316 orange) instead of the colorScale colors.
 
     "text mark with categorical colorScale uses the scale colors, not DefaultPalette" in {
         val naColor = Style.Color.hex("#e63946").getOrElse(fail("bad hex naColor"))
@@ -2345,9 +2343,9 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     }
 
     // ---- errorBar with categorical colorScale uses the scale colors ----
-    // Without this fix, lowerErrorBar resolves palette by index from themePalette(theme) only, ignoring
-    // spec.legendCfg.colorScale. All three sub-shapes (vLine + caps + center marker) derive their
-    // stroke/fill from that broken palette. The fix mirrors the lowerText fix.
+    // lowerErrorBar routes a Present colorScale through resolvePalette, mirroring lowerText. All three
+    // sub-shapes (vLine + caps + center marker) derive their stroke/fill from the resolved palette.
+    // Resolving palette by index from themePalette(theme) only would ignore spec.legendCfg.colorScale.
 
     "errorBar with categorical colorScale uses the scale colors, one stroke per row" in {
         val naColor = Style.Color.hex("#e63946").getOrElse(fail("bad hex naColor"))
@@ -2446,10 +2444,10 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     }
 
     // ---- legend margin reserved for color-bearing text/errorBar ----
-    // Without this fix, buildLayout.hasLegend uses wildcard patterns for Mark.Text and Mark.ErrorBar that
-    // hardcode false regardless of a color encoding. A chart whose ONLY color mark is text or errorBar
-    // does NOT reserve legend margin (topPad stays 0, plotY stays MarginTop=20). With the fix, those
-    // cases check m.color.isDefined, matching the Bar/Line/Area/Point treatment. plotY becomes 40.0.
+    // buildLayout.hasLegend must check m.color.isDefined for Mark.Text and Mark.ErrorBar, matching the
+    // Bar/Line/Area/Point treatment, so a chart whose ONLY color mark is text or errorBar reserves legend
+    // margin and plotY becomes 40.0. Wildcard patterns that hardcode false regardless of a color encoding
+    // would leave topPad at 0 and plotY at MarginTop=20.
 
     // text-only color mark reserves the top strip (legend margin reserved, plotY = 40.0).
     "legend margin reserved for color-bearing text mark, plot shifted by LegendReservedH" in {
@@ -2506,7 +2504,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     }
 
     // no-color text mark keeps hasLegend==false, plotY unchanged at 20.0.
-    "no-color text mark keeps plotY=20 (hasLegend=false, topPad=0) (byte-identical)" in {
+    "no-color text mark keeps plotY=20 (hasLegend=false, topPad=0)" in {
         // text mark WITHOUT a color encoding: m.color.isDefined==false, hasLegend stays false.
         val rows = Chunk(
             Sale("Jan", Usd(4000)), // no region => Region.NA default, but no color encoding on mark
@@ -2527,10 +2525,9 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     }
 
     // ---- animated non-stacked area with colorScale honors the scale colors ----
-    // Without this fix, lowerAreaWithTransitions called lowerArea with spec=Absent, so the
-    // animated path resolved the palette from DefaultPalette by index (blue/orange), ignoring the
-    // explicit colorScale. The fix forwards Present(spec) into both lowerArea calls inside
-    // lowerAreaWithTransitions.
+    // lowerAreaWithTransitions forwards Present(spec) into both lowerArea calls, so the animated path
+    // resolves the palette from the explicit colorScale. Calling lowerArea with spec=Absent would
+    // resolve the palette from DefaultPalette by index (blue/orange), ignoring the colorScale.
 
     "animated non-stacked area with categorical colorScale honors the scale colors" in {
         case class ARow(x: Double, y: Double, series: String) derives CanEqual
@@ -2597,9 +2594,9 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     // spec into lowerAreaStacked, which uses resolvePalette when spec is Present. resolvePalette honors:
     // (1) categorical colorScale; (2) sequential colorScale; (3) theme.palette when no colorScale;
     // (4) DefaultPalette as final fallback.
-    // Without this fix, lowerAreaWithTransitions called lowerArea with spec=Absent, routing
-    // lowerAreaStacked to resolvePaletteFromCfg (DefaultPalette only), dropping BOTH colorScale AND
-    // custom theme.palette. Present(spec) is forwarded and resolvePalette is used.
+    // lowerAreaWithTransitions forwards Present(spec) so lowerAreaStacked uses resolvePalette. Calling
+    // lowerArea with spec=Absent would route lowerAreaStacked to resolvePaletteFromCfg (DefaultPalette
+    // only), dropping BOTH the colorScale AND a custom theme.palette.
     //
     // Test A: custom theme.palette (no colorScale). The animated stacked area must produce the same
     // per-group fills as the static twin.
@@ -2878,17 +2875,17 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
     }
 
-    // ---- L-bug: CatKey collision tests (toString-collision bug) ----
+    // ---- CatKey collision tests (non-injective toString) ----
     // A group type whose toString is non-injective: Grp(1) and Grp(2) both produce "G".
-    // This exposes the bug where dataMap / rowBySlot / colorIdxByKey key by toString, causing
-    // collisions: last-writer-wins on the data map while the category list expands to two entries,
-    // leading to one group's value being lost and the other double-counted.
+    // dataMap / rowBySlot / colorIdxByKey must key by category value identity, not toString. Keying by
+    // toString would collide: last-writer-wins on the data map while the category list expands to two
+    // entries, leading to one group's value being lost and the other double-counted.
 
     final case class GrpRow(month: String, value: Double, grp: GrpTag) derives CanEqual
     final case class GrpTag(id: Int) derives CanEqual:
         override def toString: String = "G" // non-injective: all GrpTag values share the same label
 
-    "L-bug-stacked-bar: distinct groups with colliding toString must produce two segments with correct heights (not double-counted)" in {
+    "stacked bar: distinct groups with colliding toString must produce two segments with correct heights (not double-counted)" in {
         // Two rows at the same x="Jan": grp=GrpTag(1) with value=10, grp=GrpTag(2) with value=30.
         // Correct: two distinct segments of height 10 and 30 (total stack = 40).
         // Buggy:   dataMap merges both under "G" (last-writer-wins -> 30), groupKeys=["G","G"],
@@ -2908,25 +2905,25 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rects = rectsIn(root)
 
         // Must have exactly 2 segments (one per distinct group).
-        assert(rects.size == 2, s"L-bug-stacked-bar: expected 2 stacked segments but got ${rects.size}")
+        assert(rects.size == 2, s"stacked bar: expected 2 stacked segments but got ${rects.size}")
 
         // Effective plot height: legend reserve (LegendReservedH=20) shifts the plot down so plotH_eff = 400.
         val plotHEff = 400.0
         val heights  = rects.map(r => numOf(r.svgAttrs.height)).toSeq.sorted
         // The two heights must sum to plotH_eff (total stack 40 covers the full effective plot height).
         val totalHeight = heights.sum
-        assertClose(totalHeight, plotHEff, "L-bug-stacked-bar: total stacked height must equal effective plotH=400")
+        assertClose(totalHeight, plotHEff, "stacked bar: total stacked height must equal effective plotH=400")
         // Smaller segment (value=10): 10/40 of plotH_eff = 100.
-        assertClose(heights(0), plotHEff * 10.0 / 40.0, "L-bug-stacked-bar: smaller segment height (value=10 portion)")
+        assertClose(heights(0), plotHEff * 10.0 / 40.0, "stacked bar: smaller segment height (value=10 portion)")
         // Larger segment (value=30): 30/40 of plotH_eff = 300.
-        assertClose(heights(1), plotHEff * 30.0 / 40.0, "L-bug-stacked-bar: larger segment height (value=30 portion)")
+        assertClose(heights(1), plotHEff * 30.0 / 40.0, "stacked bar: larger segment height (value=30 portion)")
 
         // Legend must have 2 distinct swatches.
         val swatches = legendSwatchRects(root)
-        assert(swatches.size == 2, s"L-bug-stacked-bar: expected 2 legend swatches but got ${swatches.size}")
+        assert(swatches.size == 2, s"stacked bar: expected 2 legend swatches but got ${swatches.size}")
     }
 
-    "L-bug-stacked-area: distinct groups with colliding toString must produce two distinct area bands (not one doubled)" in {
+    "stacked area: distinct groups with colliding toString must produce two distinct area bands (not one doubled)" in {
         // Two rows at the same x="Jan": grp=GrpTag(1) with value=10, grp=GrpTag(2) with value=30.
         // Correct: two distinct stacked area bands, total stack [0,40], top of stack at plotY=20.
         // Buggy:   groupKeys=["G","G"], dataMap["Jan"]["G"]=30, second band accumulates to 60 ->
@@ -2942,11 +2939,11 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val areaPaths = marks.children.collect { case p: Svg.Path => p }
 
         // Must have exactly 2 area band paths (one per distinct group).
-        assert(areaPaths.size == 2, s"L-bug-stacked-area: expected 2 area band paths but got ${areaPaths.size}")
+        assert(areaPaths.size == 2, s"stacked area: expected 2 area band paths but got ${areaPaths.size}")
 
         // The two bands must have distinct fill colors (each group gets its own palette color).
         val fills = areaPaths.map(p => fillColorOfPath(p)).toSeq.distinct
-        assert(fills.size == 2, s"L-bug-stacked-area: expected 2 distinct fill colors but got $fills")
+        assert(fills.size == 2, s"stacked area: expected 2 distinct fill colors but got $fills")
 
         // Critical correctness check: no path command should produce a y coordinate above plotY_eff.
         // Layout: stack.group defined => hasLegend=true, LegendReservedH=20.
@@ -2959,19 +2956,19 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             Svg.PathData.commands(p.svgAttrs.d.getOrElse(Svg.PathData.empty)).toSeq.collect:
                 case PathCommand.MoveTo(_, y) => y
                 case PathCommand.LineTo(_, y) => y
-        assert(allPathYs.nonEmpty, "L-bug-stacked-area: expected path y coordinates")
+        assert(allPathYs.nonEmpty, "stacked area: expected path y coordinates")
         val minY = allPathYs.min
         assert(
             minY >= plotYEff - Tol,
-            s"L-bug-stacked-area: topmost y=$minY must be >= plotYEff=$plotYEff (second band must not exceed total stack of 40)"
+            s"stacked area: topmost y=$minY must be >= plotYEff=$plotYEff (second band must not exceed total stack of 40)"
         )
 
         // Legend must have 2 distinct swatches.
         val swatches = legendSwatchRects(root)
-        assert(swatches.size == 2, s"L-bug-stacked-area: expected 2 legend swatches but got ${swatches.size}")
+        assert(swatches.size == 2, s"stacked area: expected 2 legend swatches but got ${swatches.size}")
     }
 
-    "L-bug-grouped-bar: distinct groups with colliding toString must produce two dodged bars with correct heights" in {
+    "grouped bar: distinct groups with colliding toString must produce two dodged bars with correct heights" in {
         // Two rows at the same x="Jan": grp=GrpTag(1) with value=10, grp=GrpTag(2) with value=30.
         // Correct: 2 dodged bars, one with height proportional to 10, one to 30, in 2 distinct colors.
         // Buggy:   colorIdxByKey["G"]=0, both rows land in sub-slot 0, second overwrites first -> only 1 value rendered.
@@ -2984,7 +2981,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rects = rectsIn(root)
 
         // Must have exactly 2 bar rects (one per distinct group).
-        assert(rects.size == 2, s"L-bug-grouped-bar: expected 2 dodged bar rects but got ${rects.size}")
+        assert(rects.size == 2, s"grouped bar: expected 2 dodged bar rects but got ${rects.size}")
 
         // The two bars must have distinct heights (10-proportional and 30-proportional).
         // Layout: color encoding defined => hasLegend=true, LegendReservedH=20.
@@ -2994,28 +2991,28 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         //                                          apply(30)=40; barH=440-40=400.
         val plotHEff = 400.0
         val heights  = rects.map(r => numOf(r.svgAttrs.height)).toSeq.sorted
-        assertClose(heights(0), plotHEff * 10.0 / 30.0, "L-bug-grouped-bar: smaller bar height (value=10 portion)")
-        assertClose(heights(1), plotHEff, "L-bug-grouped-bar: taller bar height (value=30 fills full effective plot)")
+        assertClose(heights(0), plotHEff * 10.0 / 30.0, "grouped bar: smaller bar height (value=10 portion)")
+        assertClose(heights(1), plotHEff, "grouped bar: taller bar height (value=30 fills full effective plot)")
 
         // The two bars must have distinct x positions (dodged side by side).
         val xs = rects.map(r => numOf(r.svgAttrs.x)).toSeq.sorted
-        assert(xs(0) != xs(1), s"L-bug-grouped-bar: the two bars must be at different x positions (dodged), but both at ${xs(0)}")
+        assert(xs(0) != xs(1), s"grouped bar: the two bars must be at different x positions (dodged), but both at ${xs(0)}")
 
         // The two bars must have distinct fill colors.
         val fills = rects.map(r => numOf(r.svgAttrs.x)).toSeq
         val fillColors = rects.map(r =>
             r.svgAttrs.fill match
                 case Present(Svg.Paint.Color(c)) => c
-                case other                       => fail(s"L-bug-grouped-bar: expected color fill but got $other")
+                case other                       => fail(s"grouped bar: expected color fill but got $other")
         ).toSeq.distinct
-        assert(fillColors.size == 2, s"L-bug-grouped-bar: expected 2 distinct fill colors but got $fillColors")
+        assert(fillColors.size == 2, s"grouped bar: expected 2 distinct fill colors but got $fillColors")
 
         // Legend must have 2 distinct swatches.
         val swatches = legendSwatchRects(root)
-        assert(swatches.size == 2, s"L-bug-grouped-bar: expected 2 legend swatches but got ${swatches.size}")
+        assert(swatches.size == 2, s"grouped bar: expected 2 legend swatches but got ${swatches.size}")
     }
 
-    "L-bug-line-color: distinct color series with colliding toString must not be merged into one another" in {
+    "line color: distinct color series with colliding toString must not be merged into one another" in {
         // GrpTag(1) appears only at x="Jan"; GrpTag(2) only at x="Feb". With both toString=="G",
         // the static lowerLine color split filtered `accessor(r).toString == key` (== "G"), so EVERY
         // series swept up ALL rows. Correct: each series path holds only its own single point (1 MoveTo,
@@ -3027,7 +3024,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec  = Chart(rows)(line(x = _.month, y = _.value, color = _.grp))
         val root  = (spec).lower
         val paths = pathsIn(root)
-        assert(paths.size == 2, s"L-bug-line-color: expected 2 series paths but got ${paths.size}")
+        assert(paths.size == 2, s"line color: expected 2 series paths but got ${paths.size}")
         def lineToCount(p: Svg.Path): Int =
             Svg.PathData.commands(p.svgAttrs.d.getOrElse(Svg.PathData.empty)).toSeq.count:
                 case _: PathCommand.LineTo => true
@@ -3035,12 +3032,12 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val lineTos = paths.map(lineToCount).toSeq
         assert(
             lineTos.forall(_ == 0),
-            s"L-bug-line-color: each single-point series must have 0 LineTo commands (one point each), got $lineTos"
+            s"line color: each single-point series must have 0 LineTo commands (one point each), got $lineTos"
         )
     }
 
-    "L-bug-area-color: distinct color series with colliding toString must not be merged into one another" in {
-        // Same setup as L-bug-line-color, for the non-stacked color area path. The static lowerArea
+    "area color: distinct color series with colliding toString must not be merged into one another" in {
+        // Same setup as line color, for the non-stacked color area path. The static lowerArea
         // color split also filtered `accessor(r).toString == key`, merging distinct-toString series.
         // A single-point closed area = top MoveTo, lineTo(lastX, baseline), lineTo(firstX, baseline), close
         // -> exactly 2 LineTo commands. The buggy merge (both points) adds a top-edge LineTo -> 3.
@@ -3051,7 +3048,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec  = Chart(rows)(area(x = _.month, y = _.value, color = _.grp))
         val root  = (spec).lower
         val paths = pathsIn(root)
-        assert(paths.size == 2, s"L-bug-area-color: expected 2 series paths but got ${paths.size}")
+        assert(paths.size == 2, s"area color: expected 2 series paths but got ${paths.size}")
         def lineToCount(p: Svg.Path): Int =
             Svg.PathData.commands(p.svgAttrs.d.getOrElse(Svg.PathData.empty)).toSeq.count:
                 case _: PathCommand.LineTo => true
@@ -3059,11 +3056,11 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val lineTos = paths.map(lineToCount).toSeq
         assert(
             lineTos.forall(_ == 2),
-            s"L-bug-area-color: each single-point series area must have 2 LineTo commands, got $lineTos"
+            s"area color: each single-point series area must have 2 LineTo commands, got $lineTos"
         )
     }
 
-    "L-bug-text-color: distinct color categories with colliding toString must get distinct palette colors" in {
+    "text color: distinct color categories with colliding toString must get distinct palette colors" in {
         // GrpTag(1) at x="Jan", GrpTag(2) at x="Feb", both toString=="G". lowerText keyed its color
         // index by label toString (catIdxText: Map[String,Int], first-seen wins), so both rows resolved
         // to palette(0). Correct: GrpTag(1) -> palette(0), GrpTag(2) -> palette(1) (two distinct colors).
@@ -3076,16 +3073,16 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val root  = (spec).lower
         val marks = marksGroup(root)
         val texts = marks.children.collect { case t: Svg.Text => t }
-        assert(texts.size == 2, s"L-bug-text-color: expected 2 text glyphs but got ${texts.size}")
+        assert(texts.size == 2, s"text color: expected 2 text glyphs but got ${texts.size}")
         val byX = texts.toSeq.sortBy(t => numOf(t.svgAttrs.x))
         val c0  = fillColorOf(byX(0).svgAttrs.fill)
         val c1  = fillColorOf(byX(1).svgAttrs.fill)
-        assert(c0 != c1, s"L-bug-text-color: the two distinct color categories must get distinct fills, both got $c0")
+        assert(c0 != c1, s"text color: the two distinct color categories must get distinct fills, both got $c0")
     }
 
-    "L-bug-errorbar-color: distinct color categories with colliding toString must get distinct stroke colors" in {
-        // Mirror of L-bug-text-color for errorBar. lowerErrorBar keyed colorIdx by label toString
-        // (catIdxErr), collapsing the two distinct categories onto palette(0).
+    "errorBar color: distinct color categories with colliding toString must get distinct stroke colors" in {
+        // Mirror of text color for errorBar. lowerErrorBar must key colorIdx by category value identity;
+        // keying by label toString (catIdxErr) would collapse the two distinct categories onto palette(0).
         case class EbGrp(x: String, mean: Double, lo: Double, hi: Double, grp: GrpTag) derives CanEqual
         val rows = Chunk(
             EbGrp("a", 6.0, 4.0, 8.0, GrpTag(1)),
@@ -3096,11 +3093,210 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val root    = (spec).lower
         val marks   = marksGroup(root)
         val circles = marks.children.collect { case c: Svg.Circle => c }
-        assert(circles.size == 2, s"L-bug-errorbar-color: expected 2 center-marker circles but got ${circles.size}")
+        assert(circles.size == 2, s"errorBar color: expected 2 center-marker circles but got ${circles.size}")
         val byX = circles.toSeq.sortBy(c => c.svgAttrs.cx.getOrElse(0.0))
         val f0  = fillColorOf(byX(0))
         val f1  = fillColorOf(byX(1))
-        assert(f0 != f1, s"L-bug-errorbar-color: the two distinct color categories must get distinct strokes, both got $f0")
+        assert(f0 != f1, s"errorBar color: the two distinct color categories must get distinct strokes, both got $f0")
+    }
+
+    // ---- negative-value bar emits a non-negative-height rect anchored at the zero baseline ----
+
+    "negative-value bar emits a non-negative-height rect anchored at the zero baseline" in {
+        // Data: two bars, one positive (y=5) and one negative (y=-3).
+        // y extent: Continuous(-3, 5) from data; after ensureZero: Continuous(-3, 5).
+        // niceTicks(-3, 5, 5): rawStep=2, step=2; snappedLo=floor(-3/2)*2=-4, snappedHi=ceil(5/2)*2=6.
+        // Scale.Linear(-4, 6, 440, 20) (domainRange=10, pixelRange=-420):
+        //   apply(0)  = 440 + (0-(-4))/10 * (20-440) = 440 + 4/10 * (-420) = 440 - 168 = 272
+        //   apply(5)  = 440 + (5-(-4))/10 * (-420)   = 440 + 9/10 * (-420) = 440 - 378 = 62
+        //   apply(-3) = 440 + ((-3)-(-4))/10 * (-420) = 440 + 1/10 * (-420) = 440 - 42 = 398
+        // zero-line baseline = ys.apply(0) = 272
+        // Positive bar (y=5): barY=62, rectY=min(62,272)=62, rectH=|272-62|=210
+        // Negative bar (y=-3): barY=398, rectY=min(398,272)=272, rectH=|272-398|=126
+        case class Row(x: String, y: Int) derives CanEqual
+        val rows  = Chunk(Row("a", 5), Row("b", -3))
+        val spec  = Chart(rows)(bar(x = _.x, y = _.y))
+        val root  = (spec).lower
+        val rects = rectsIn(root)
+        assert(rects.size == 2, s"Expected 2 rects but got ${rects.size}")
+        // Every rect must have a non-negative height.
+        rects.foldLeft(()) { (_, r) =>
+            val h = numOf(r.svgAttrs.height)
+            assert(h >= 0.0, s"Rect height must be >= 0 but got $h")
+        }
+        // The rect for the negative bar (-3) at x="b" comes second (bar order follows data order).
+        // zero-line baseline (ys.apply(0) for the snapped domain (-4,6)) = 272.0
+        val zeroBaseline = 272.0
+        val negRect      = rects(1) // second row is "b" with y=-3
+        val negY         = numOf(negRect.svgAttrs.y)
+        val negH         = numOf(negRect.svgAttrs.height)
+        // The negative bar's rect must start at the zero baseline and extend down to apply(-3)=398.
+        assertClose(negY, zeroBaseline, "negative bar rectY must equal zero-line baseline")
+        assertClose(negH, 126.0, "negative bar rectH must equal |apply(-3) - zero-baseline|")
+        // The positive bar (y=5) must start at apply(5)=62 and extend up to the zero baseline=272.
+        val posRect = rects(0)
+        val posY    = numOf(posRect.svgAttrs.y)
+        val posH    = numOf(posRect.svgAttrs.height)
+        assertClose(posY, 62.0, "positive bar rectY must equal apply(5)")
+        assertClose(posH, 210.0, "positive bar rectH must equal |zero-baseline - apply(5)|")
+    }
+
+    // ---- y0/y1 area band ribbon is band-centered (not left-edge) ----
+
+    "y0-y1 area band ribbon x coordinates are centered on the band, matching a point on the same data" in {
+        // A band ribbon (area with y0/y1 on a categorical x) must place its vertices at the band
+        // CENTER (bandLeft + bandwidth/2), the same position where a point mark on the same x lands.
+        // n=2, slot=280, bandW=252, pad=14
+        // Center of "a": 60 + 0*280 + 14 + 252/2 = 60 + 14 + 126 = 200.0
+        // Center of "b": 60 + 1*280 + 14 + 126    = 480.0
+        case class Row(x: String, lo: Double, hi: Double) derives CanEqual
+        val rows = Chunk(Row("a", 10.0, 30.0), Row("b", 20.0, 50.0))
+        // Use a fixed y scale so pixel positions are deterministic.
+        val spec = Chart(rows)(area(x = _.x, y0 = _.lo, y1 = _.hi))
+            .yScale(_.linear(0.0, 60.0))
+        val root  = (spec).lower
+        val paths = pathsIn(root)
+        assert(paths.nonEmpty, "Expected at least one area ribbon path")
+        val cmds = paths(0).svgAttrs.d match
+            case Present(pd) => Svg.PathData.commands(pd)
+            case Absent      => fail("Expected path to have d attribute")
+        // Extract all x coordinates from path commands.
+        val xs = cmds.collect:
+            case Svg.PathCommand.MoveTo(x, _) => x
+            case Svg.PathCommand.LineTo(x, _) => x
+        // The slot / band dimensions for n=2.
+        val slot  = 280.0
+        val bandW = 252.0
+        val pad   = (slot - bandW) / 2.0                 // 14.0
+        val cx_a  = PlotX + 0 * slot + pad + bandW / 2.0 // 200.0
+        val cx_b  = PlotX + 1 * slot + pad + bandW / 2.0 // 480.0
+        assert(
+            xs.exists(x => math.abs(x - cx_a) < Tol),
+            s"Ribbon must contain a vertex at band center cx_a=$cx_a; found x coords: $xs"
+        )
+        assert(
+            xs.exists(x => math.abs(x - cx_b) < Tol),
+            s"Ribbon must contain a vertex at band center cx_b=$cx_b; found x coords: $xs"
+        )
+    }
+
+    // ---- stacked area must skip all-negative groups consistently in render and accumulator ----
+
+    "stacked area with a negative-value group does not corrupt subsequent group baselines" in {
+        // Three groups at x="a": "first"=4 (positive), "neg"=-2 (all-negative, skipped), "second"=3 (positive).
+        // "neg" is skipped by hasContribution (> 0.0); its values must NOT be added to accByX either.
+        // If they were, accByX would reflect the neg accumulation when "second" is rendered, so "second"'s
+        // bottom edge would use the wrong baseline, leaving a gap between "first" and "second".
+        // The group must be skipped consistently in BOTH the render and the accumulator.
+        // This chart has 3 groups (stack grouping), so hasLegend=true -> LegendReservedH=20 reserved,
+        // making plotY=40, plotH=400, baseline=440, rangeHi=40. Scale.Linear(0, 10, 440, 40):
+        //   apply(0) = 440 + 0/10 * (-400) = 440
+        //   apply(2) = 440 + 2/10 * (-400) = 440 - 80 = 360  <- corrupted: neg accumulation leaves accY=2
+        //   apply(4) = 440 + 4/10 * (-400) = 440 - 160 = 280 <- correct: "first" top = "second" bottom
+        //   apply(7) = 440 + 7/10 * (-400) = 440 - 280 = 160 <- "second" top
+        // Correct: "second" py0 = apply(4) = 280 (= "first"'s top). Correct stack, no gap.
+        // Corrupted: "second" py0 = apply(2) = 360 (below "first"'s top at 280). Gap in stack.
+        case class Row(x: String, y: Double, grp: String) derives CanEqual
+        val rows = Chunk(
+            Row("a", 4.0, "first"),
+            Row("a", -2.0, "neg"),
+            Row("a", 3.0, "second")
+        )
+        val spec = Chart(rows)(area(x = _.x, y = _.y, stack = by(_.grp)))
+            .yScale(_.linear(0.0, 10.0))
+        val root  = (spec).lower
+        val paths = pathsIn(root)
+        assert(paths.nonEmpty, "Expected at least one stacked area path")
+        // Collect all y-coords from all rendered paths.
+        val allYCoords: Chunk[Double] = paths.flatMap: p =>
+            val cmds = p.svgAttrs.d match
+                case Present(pd) => Svg.PathData.commands(pd)
+                case Absent      => Chunk.empty
+            cmds.collect:
+                case Svg.PathCommand.MoveTo(_, y) => y
+                case Svg.PathCommand.LineTo(_, y) => y
+        // "second" group bottom = apply(4) = 280 must appear.
+        val expectedSecondBot = 280.0
+        assert(
+            allYCoords.exists(y => math.abs(y - expectedSecondBot) < Tol),
+            s"Second group bottom edge must be $expectedSecondBot (first group top); got y coords: $allYCoords"
+        )
+        // A corrupted baseline would put "second" bottom at apply(2) = 360. This must NOT appear.
+        val bugSecondBot = 360.0
+        assert(
+            !allYCoords.exists(y => math.abs(y - bugSecondBot) < Tol),
+            s"Second group bottom must NOT be the corrupted baseline $bugSecondBot; got y coords: $allYCoords"
+        )
+    }
+
+    // ---- sparse grouped bars are packed and centered within the band ----
+
+    "sparse grouped bar: two present categories in a band are packed and centered, not placed at their global slots" in {
+        // 3 color categories total (Cat.A=0, Cat.B=1, Cat.C=2). Band "Jan" has only Cat.A and Cat.C.
+        // Band "Feb" has all three, so dodge=true.
+        //
+        // Band scale: 2 x-categories ["Jan","Feb"], plotW=560.
+        //   slot = 560/2 = 280, bandW = 560*0.9/2 = 252, pad = (280-252)/2 = 14
+        //   bandX["Jan"] = 60 + 0*280 + 14 = 74
+        //   bandX["Feb"] = 60 + 1*280 + 14 = 354
+        //
+        // subW = bandW/numColors = 252/3 = 84.0
+        //
+        // Dense band "Feb" (k=3, all present): groupOffset=0, localIdx=colorIdx.
+        //   Cat.A (colorIdx=0): barX = 354 + 0 + 0*84 = 354
+        //   Cat.B (colorIdx=1): barX = 354 + 0 + 1*84 = 438
+        //   Cat.C (colorIdx=2): barX = 354 + 0 + 2*84 = 522
+        //
+        // Sparse band "Jan" (k=2, Cat.A and Cat.C only):
+        //   groupOffset = (252 - 2*84) / 2 = (252 - 168) / 2 = 42
+        //   Cat.A (localIdx=0): barX = 74 + 42 + 0*84 = 116
+        //   Cat.C (localIdx=1): barX = 74 + 42 + 1*84 = 200
+        //
+        // A global-slot placement would instead give Cat.A barX = 74 + 0*84 = 74 and
+        //   Cat.C barX = 74 + 2*84 = 242, leaving the band uncentered.
+
+        enum Cat derives CanEqual, Plottable:
+            case A, B, C
+
+        case class GRow(x: String, y: Double, cat: Cat) derives CanEqual
+
+        val rows = Chunk(
+            GRow("Jan", 1.0, Cat.A), // Jan has Cat.A
+            GRow("Jan", 2.0, Cat.C), // Jan has Cat.C (Cat.B absent from Jan)
+            GRow("Feb", 3.0, Cat.A),
+            GRow("Feb", 4.0, Cat.B),
+            GRow("Feb", 5.0, Cat.C)
+        )
+        val spec  = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
+        val root  = (spec).lower
+        val rects = rectsIn(root)
+        assert(rects.size == 5, s"Expected 5 rects but got ${rects.size}")
+
+        // Extract x coords from the 5 rects. The first two are for "Jan" (Cat.A and Cat.C).
+        val xs0 = rects(0).svgAttrs.x
+        val xs1 = rects(1).svgAttrs.x
+
+        // Band and subW constants.
+        val bandW  = 252.0       // 560 * 0.9 / 2
+        val subW   = bandW / 3.0 // 84.0
+        val bandXj = 74.0        // bandX for "Jan"
+
+        // Expected packed+centered positions.
+        val groupOffset   = (bandW - 2.0 * subW) / 2.0        // 42.0
+        val expectedBarX0 = bandXj + groupOffset + 0.0 * subW // 116.0
+        val expectedBarX1 = bandXj + groupOffset + 1.0 * subW // 200.0
+
+        assertClose(numOf(xs0), expectedBarX0, s"Cat.A bar in sparse Jan band must be at packed+centered slot 0")
+        assertClose(numOf(xs1), expectedBarX1, s"Cat.C bar in sparse Jan band must be at packed+centered slot 1")
+
+        // Verify the dense "Feb" band uses the simple dense placement (groupOffset=0).
+        val xs2    = rects(2).svgAttrs.x
+        val xs3    = rects(3).svgAttrs.x
+        val xs4    = rects(4).svgAttrs.x
+        val bandXf = 354.0
+        assertClose(numOf(xs2), bandXf + 0.0 * subW, s"Cat.A in dense Feb band: slot 0")
+        assertClose(numOf(xs3), bandXf + 1.0 * subW, s"Cat.B in dense Feb band: slot 1")
+        assertClose(numOf(xs4), bandXf + 2.0 * subW, s"Cat.C in dense Feb band: slot 2")
     }
 
 end ChartLowerTest

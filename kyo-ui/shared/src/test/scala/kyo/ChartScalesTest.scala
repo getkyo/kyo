@@ -126,4 +126,18 @@ class ChartScalesTest extends kyo.test.Test[Any]:
         end match
     }
 
+    // ---- .ordinal is not a valid positional scale override ----
+
+    "ScaleOverride.ordinal does not exist: xScale(_.ordinal) must not compile" in {
+        typeCheckFailure("""
+            import kyo.*
+            import kyo.Chart.*
+            import scala.language.implicitConversions
+            case class R(x: String, y: Int)
+            given CanEqual[R, R] = CanEqual.derived
+            val rows = Chunk(R("a", 1), R("b", 2))
+            Chart(rows)(bar(x = _.x, y = _.y)).xScale(_.ordinal)
+        """)("value ordinal is not a member")
+    }
+
 end ChartScalesTest

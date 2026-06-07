@@ -99,7 +99,7 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
         // niceTicks(0, 5000, 5): step=2000, tks=[0,2000,4000]; math.max(5000,4000)=5000 -> domain=[0,5000].
         //   Scale.Linear(0, 5000, 440, 20).ticks(5): niceTicks(0,5000,5)=[0,2000,4000].
         //   Labels include "4000"; "200" absent (ticks step by 2000, not 50).
-        // Domain [0,5000] contains the data max (5000) -- the fix ensures no clipping.
+        // Domain [0,5000] contains the data max (5000); the scale is fitted to the full signal extent.
         // Bar for Jan (rev=2500) maps to height 440-(440+(2500/5000)*(20-440))=210 in the fixed domain.
         val initialRows = Chunk(Sale("Jan", Rev(100.0)), Sale("Feb", Rev(200.0)))
         val updatedRows = Chunk(Sale("Jan", Rev(2500.0)), Sale("Feb", Rev(5000.0)))
@@ -212,7 +212,7 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
 
     "reactive bar chart x-axis emits band category labels (Jan, Feb) not linear-fallback numerics (0.25)" in {
         // x-axis for a bar chart with categories "Jan" and "Feb" must use a Band scale sourced from
-        // the live data. If the x-axis is built from Chunk.empty (the old static approach), the extent
+        // the live data. If the x-axis were built from Chunk.empty, the extent
         // is Continuous(0, -1) (empty data default), which resolves to a Linear [0, 1] fallback and
         // emits tick labels "0", "0.25", "0.5", "0.75", "1" -- none of which are category names.
         // The x-axis is built inside the reactive region using the live xs, which is a

@@ -6,6 +6,7 @@ import kyo.Chart.*
 import kyo.Chunk
 import kyo.Maybe
 import kyo.Present
+import kyo.Svg
 import kyo.UI
 import kyo.UI.*
 import kyo.UI.Ast.*
@@ -72,11 +73,11 @@ class ScaleTest extends kyo.test.Test[Any]:
     }
 
     "Scale.fit Linear nice [10,210] snaps to [0,250] and the top tick equals domainMax" in {
-        // Regression: niceTicks(10,210,5) picks step 50 -> snaps to [0,250]. But niceTicks(0,250,5)
-        // independently recomputes step 100 (ticks 0/100/200, top 200 != 250). The old fitLinear
-        // asserted that the recomputed top tick == snappedHi, which THREW AssertionError here,
-        // crashing the render path. The fix shares the snap step with ticks so the top tick is
-        // always domainMax (250), with NO overshoot and NO crash.
+        // niceTicks(10,210,5) picks step 50 -> snaps to [0,250]. But niceTicks(0,250,5)
+        // independently recomputes step 100 (ticks 0/100/200, top 200 != 250). Asserting the recomputed
+        // top tick == snappedHi would throw AssertionError here and crash the render path. fitLinear
+        // instead shares the snap step with ticks so the top tick is always domainMax (250), with NO
+        // overshoot and NO crash.
         val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(10.0, 210.0), 0.0, 200.0, nice = true)
         scale match
             case Scale.Linear(domainMin, domainMax, _, _, _, _) =>
@@ -216,7 +217,7 @@ class ScaleTest extends kyo.test.Test[Any]:
     // ---- Log domain drops non-positive ----
 
     // fitLog with a manually constructed extent starting at 10.0 does not floor to 1e-10.
-    "fitLog over extent [10,1000] sets domainMin == 10.0, not the old 1e-10 floor" in {
+    "fitLog uses the actual extent minimum as domainMin" in {
         val scale = Scale.fit(Scale.Kind.Log, Extent.continuous(10.0, 1000.0), 0.0, 300.0)
         scale match
             case Scale.Log(domainMin, _, _, _, _) =>
@@ -274,8 +275,8 @@ class ScaleTest extends kyo.test.Test[Any]:
         end match
     }
 
-    "no yScaleRight override -> right scale resolves as Linear (default byte-identity)" in {
-        // Without yScaleRight, the right scale defaults to Linear+nice, matching the old hardcoded call.
+    "no yScaleRight override -> right scale resolves as Linear+nice by default" in {
+        // Without yScaleRight the right scale resolves as Linear+nice by default.
         val rows = kyo.Chunk(ScRow("a", 100.0, 0.0), ScRow("b", 200.0, 20.0))
         val spec = Chart(rows)(
             bar(x = _.x, y = _.yL),
@@ -290,6 +291,95 @@ class ScaleTest extends kyo.test.Test[Any]:
             case Absent =>
                 fail("Expected a right axis (yRight is Present) but got Absent")
         end match
+    }
+
+    // ---- niceTicks with an inverted domain (min > max) must return finite ascending ticks ----
+
+    "niceTicks(100.0, 0.0, 5) returns finite ascending ticks including 0 and 100" in {
+        // An inverted domain (min=100, max=0) with rawStep=(0-100)/(5-1)=-25 would give
+        // log10(-25)=NaN, producing NaN ticks. niceTicks uses sorted bounds internally to avoid this.
+        val result = Scale.niceTicks(100.0, 0.0, 5)
+        assert(result.forall(v => !v.isNaN && !v.isInfinite), s"All ticks must be finite, got $result")
+        assert(result.nonEmpty, "Expected non-empty ticks for inverted domain")
+        // Ticks must be in ascending order and span [0, 100].
+        assert(result.exists(v => math.abs(v - 0.0) < 1e-9), s"Ticks must include 0.0, got $result")
+        assert(result.exists(v => math.abs(v - 100.0) < 1e-9), s"Ticks must include 100.0, got $result")
+        // Ascending check
+        result.zipWithIndex.foldLeft(()) { (_, vi) =>
+            val (v, i) = vi
+            if i > 0 then
+                assert(v >= result(i - 1), s"Ticks must be ascending but got $result")
+        }
+    }
+
+    "inverted linear domain via yScale(_.linear(100.0, 0.0)) produces no NaN in lowered SVG" in {
+        // An inverted domain passed via yScale(_.linear(100,0)) triggers niceTicks(100,0,5) which
+        // produced NaN ticks. Verify no "NaN" substring appears in tick label text nodes.
+        case class Row(x: String, y: Double)
+        given scala.CanEqual[Row, Row] = scala.CanEqual.derived
+        val rows                       = kyo.Chunk(Row("a", 20.0), Row("b", 80.0))
+        val spec = Chart(rows)(line(x = _.x, y = _.y))
+            .yScale(_.linear(100.0, 0.0))
+        val root = (spec).lower
+        // Collect all Svg.Text nodes anywhere in the tree (axes, labels, ticks).
+        def collectTexts(children: kyo.Chunk[UI]): kyo.Chunk[Svg.Text] =
+            children.flatMap:
+                case t: Svg.Text => kyo.Chunk(t)
+                case g: Svg.G    => collectTexts(g.children)
+                case _           => kyo.Chunk.empty
+        val allTexts = collectTexts(root.children)
+        // None of the text nodes should carry a "NaN" string child.
+        allTexts.foldLeft(()) { (_, t) =>
+            t.children.foldLeft(()) { (_, child) =>
+                child match
+                    case UI.Ast.Text(s) =>
+                        assert(!s.contains("NaN"), s"Tick label must not contain NaN but got: $s")
+                    case _ => ()
+            }
+        }
+    }
+
+    // ---- Band.invert returns the correct category for reversed pixel ranges ----
+
+    "Band.invert returns the correct category for both normal and reversed pixel ranges" in {
+        // Normal range: rangeLo=0, rangeHi=300, keys=["a","b","c"]
+        // slot=100, bandW=90, pad=5
+        // "a" left edge = 0 + 0*100 + 5 = 5;  center = 50
+        // "b" left edge = 0 + 1*100 + 5 = 105; center = 150
+        // "c" left edge = 0 + 2*100 + 5 = 205; center = 250
+        // invert(50)  -> slot index = floor((50-0)/100) = 0 -> "a"   (correct)
+        // invert(150) -> floor((150-0)/100) = 1 -> "b"   (correct)
+        // invert(250) -> floor((250-0)/100) = 2 -> "c"   (correct)
+        val keys         = kyo.Chunk("a", "b", "c")
+        val normalBand   = Scale.fit(Scale.Kind.Band, Extent.categories(keys), 0.0, 300.0)
+        val reversedBand = Scale.fit(Scale.Kind.Band, Extent.categories(keys), 300.0, 0.0)
+
+        // Normal range: verify invert at each band's slot midpoint
+        normalBand.invert(50.0) match
+            case Domain.Category(k) => assert(k == "a", s"Normal invert(50) should be 'a' but got '$k'")
+            case other              => fail(s"Expected Category but got $other")
+        normalBand.invert(150.0) match
+            case Domain.Category(k) => assert(k == "b", s"Normal invert(150) should be 'b' but got '$k'")
+            case other              => fail(s"Expected Category but got $other")
+        normalBand.invert(250.0) match
+            case Domain.Category(k) => assert(k == "c", s"Normal invert(250) should be 'c' but got '$k'")
+            case other              => fail(s"Expected Category but got $other")
+
+        // Reversed range: rangeLo=300, rangeHi=0, slot=-100 (negative slot corrupts the formula).
+        // apply("a") in reversed band: rangeLo=300, slot=-100, bandW=-90, pad=-5
+        //   "a" -> 300 + 0*(-100) + (-100 - (-90))/2 = 300 - 5 = 295
+        //   "b" -> 300 + 1*(-100) - 5 = 195
+        //   "c" -> 300 + 2*(-100) - 5 = 95
+        // invert(295) should map back to "a", invert(195) -> "b", invert(95) -> "c".
+        reversedBand.invert(295.0) match
+            case Domain.Category(k) => assert(k == "a", s"Reversed invert(295) should be 'a' but got '$k'")
+            case other              => fail(s"Expected Category but got $other")
+        reversedBand.invert(195.0) match
+            case Domain.Category(k) => assert(k == "b", s"Reversed invert(195) should be 'b' but got '$k'")
+            case other              => fail(s"Expected Category but got $other")
+        reversedBand.invert(95.0) match
+            case Domain.Category(k) => assert(k == "c", s"Reversed invert(95) should be 'c' but got '$k'")
+            case other              => fail(s"Expected Category but got $other")
     }
 
 end ScaleTest

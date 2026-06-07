@@ -112,9 +112,15 @@ private[kyo] object Scale:
       * the range, following D3's nice-tick algorithm and the BarChart demo's `niceTicks` helper.
       */
     def niceTicks(min: Double, max: Double, maxTicks: Int = 5): Chunk[Double] =
-        if maxTicks <= 1 || min == max then Chunk(min)
+        // Sort bounds so that an inverted domain (min > max) does not produce a negative rawStep,
+        // which would make log10(rawStep) return NaN and corrupt all tick values.
+        // The tick VALUES are always ascending (lo..hi); axis orientation is handled by the range
+        // mapping in Linear.apply, not by the tick direction.
+        val lo = math.min(min, max)
+        val hi = math.max(min, max)
+        if maxTicks <= 1 || lo == hi then Chunk(lo)
         else
-            val rawStep   = (max - min) / (maxTicks - 1).toDouble
+            val rawStep   = (hi - lo) / (maxTicks - 1).toDouble
             val magnitude = math.pow(10.0, math.floor(math.log10(rawStep)))
             val residual  = rawStep / magnitude
             val niceUnit =
@@ -125,9 +131,9 @@ private[kyo] object Scale:
             val step = niceUnit * magnitude
             @scala.annotation.tailrec
             def loop(i: Int, t: Double, acc: Chunk[Double]): Chunk[Double] =
-                if i >= maxTicks || t > max + step * 1.0e-9 then acc
+                if i >= maxTicks || t > hi + step * 1.0e-9 then acc
                 else loop(i + 1, t + step, acc.append(t))
-            loop(0, min, Chunk.empty)
+            loop(0, lo, Chunk.empty)
         end if
     end niceTicks
 
@@ -182,7 +188,7 @@ private[kyo] object Scale:
                     // domainMax over the widened snapped range (e.g. [0,250] -> step 100 -> top
                     // tick 200 != 250). fitStep divides the snapped range exactly by construction
                     // (snappedHi = fitStep*ceil(hi/fitStep)). When the maxTicks-honoring step
-                    // already lands on domainMax, use it directly (byte-identical to the old
+                    // already lands on domainMax, use it directly (it matches the plain
                     // niceTicks output for every non-overshooting domain). Otherwise fall back to
                     // the fitStep multiple closest to that step, which is guaranteed to land on
                     // domainMax.
@@ -320,7 +326,14 @@ private[kyo] object Scale:
             case Domain.Temporal(_) => rangeLo
 
         def invert(px: Double): Domain =
-            if n <= 0 || totalW <= 0 then Domain.Category(if keys.isEmpty then "" else keys(0))
+            // Guard against empty scale or degenerate (zero-width) range.
+            // A reversed range (rangeLo > rangeHi) has slot < 0, which is valid and
+            // the formula ((px - rangeLo) / slot).toInt handles correctly: both numerator
+            // and denominator are negative for a px strictly inside the reversed range,
+            // yielding a positive index. totalW <= 0 was the original guard but it
+            // incorrectly caught reversed ranges (totalW < 0) and short-circuited to
+            // the first key. Use slot == 0 instead.
+            if n <= 0 || slot == 0.0 then Domain.Category(if keys.isEmpty then "" else keys(0))
             else
                 val i = math.min(n - 1, math.max(0, ((px - rangeLo) / slot).toInt))
                 Domain.Category(keys(i))

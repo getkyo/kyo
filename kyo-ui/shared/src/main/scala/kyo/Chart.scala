@@ -511,14 +511,14 @@ object Chart:
       *
       * `isInteractive` and `hiddenSeries` enable click-to-toggle series visibility: when a
       * `hiddenSeries` ref is attached via `interactive`, clicking a legend swatch toggles that
-      * series label in the ref, and the marks lowering filters out the hidden series.
+      * series index in the ref, and the marks lowering filters out the hidden series.
       */
     final case class LegendConfig(
         position: Maybe[LegendPosition],
         isHidden: Boolean,
         colorScale: Maybe[LegendConfig.ColorScale],
         isInteractive: Boolean = false,
-        hiddenSeries: Maybe[Signal.SignalRef[Set[String]]] = Absent
+        hiddenSeries: Maybe[Signal.SignalRef[Set[Int]]] = Absent
     ):
         def top: LegendConfig    = copy(position = Present(LegendPosition.Top))
         def bottom: LegendConfig = copy(position = Present(LegendPosition.Bottom))
@@ -528,16 +528,19 @@ object Chart:
 
         /** Enables click-to-toggle series visibility, driven by the supplied `ref`.
           *
-          * Clicking a legend swatch toggles that series' label in `ref`: a label not in the set is added
-          * (the series is hidden), a label already present is removed (the series is shown again). The marks
-          * lowering reads `ref` and drops rows whose `color` parameter label is in the hidden set, applying the
-          * filter before color-splitting so the visible categories keep their stable palette order.
+          * Clicking a legend swatch toggles that series' ordinal index in `ref`: an index not in the set is
+          * added (the series is hidden), an index already present is removed (the series is shown again). The
+          * marks lowering reads `ref` and drops rows whose color category index is in the hidden set, applying
+          * the filter before color-splitting so the visible categories keep their stable palette order.
           *
-          * The hidden labels are held in a plain `scala.Predef.Set[String]`: this is genuine set membership
-          * (unordered, unique, toggled with `contains`/`+`/`-`), for which kyo has no first-class primitive
-          * and a `Chunk` would be the wrong shape.
+          * Index-based keying means two color categories with colliding `toString` values are treated as
+          * distinct entries and can be toggled independently.
+          *
+          * The hidden indices are held in a plain `scala.Predef.Set[Int]`: genuine set membership (unordered,
+          * unique, toggled with `contains`/`+`/`-`), for which kyo has no first-class primitive and a
+          * `Chunk` would be the wrong shape.
           */
-        def interactive(ref: Signal.SignalRef[Set[String]]): LegendConfig =
+        def interactive(ref: Signal.SignalRef[Set[Int]]): LegendConfig =
             copy(isInteractive = true, hiddenSeries = Present(ref))
 
         /** Attaches a color scale built from value-equality pairs over a typed key `K`.
@@ -698,7 +701,6 @@ object Chart:
         def log: ScaleOverride                            = copy(kind = Present(ScaleKind.Log))
         def linear(lo: Double, hi: Double): ScaleOverride = copy(kind = Present(ScaleKind.Linear(lo, hi)))
         def time: ScaleOverride                           = copy(kind = Present(ScaleKind.Time))
-        def ordinal: ScaleOverride                        = copy(kind = Present(ScaleKind.Ordinal))
         def point: ScaleOverride                          = copy(kind = Present(ScaleKind.Point))
         def symlog: ScaleOverride                         = copy(kind = Present(ScaleKind.Symlog))
         def withNice(on: Boolean): ScaleOverride          = copy(nice = on)
@@ -893,7 +895,6 @@ object Chart:
         case Log
         case Linear(lo: Double, hi: Double)
         case Time
-        case Ordinal
         case Point
         case Symlog
     end ScaleKind
@@ -1120,8 +1121,6 @@ object Chart:
                 scale match
                     case b: kyo.internal.Scale.Band =>
                         if b.keys.contains(key) then Present(scale.apply(kyo.internal.Domain.Category(key))) else Absent
-                    case o: kyo.internal.Scale.Ordinal =>
-                        if o.keys.contains(key) then Present(scale.apply(kyo.internal.Domain.Category(key))) else Absent
                     case _ => Absent
                 end match
             end toPixelCategory
@@ -1135,12 +1134,12 @@ object Chart:
         final private case class Impl(x: Axis, y: Axis, yRight: Maybe[Axis], plot: Rect) extends Scales
 
         private def kindOf(scale: kyo.internal.Scale): ScaleKind = scale match
-            case _: kyo.internal.Scale.Band    => ScaleKind.Band
-            case _: kyo.internal.Scale.Log     => ScaleKind.Log
-            case s: kyo.internal.Scale.Linear  => ScaleKind.Linear(s.domainMin, s.domainMax)
-            case _: kyo.internal.Scale.Time    => ScaleKind.Time
-            case _: kyo.internal.Scale.Ordinal => ScaleKind.Ordinal
-            case _: kyo.internal.Scale.Symlog  => ScaleKind.Symlog
+            case _: kyo.internal.Scale.Band   => ScaleKind.Band
+            case _: kyo.internal.Scale.Log    => ScaleKind.Log
+            case s: kyo.internal.Scale.Linear => ScaleKind.Linear(s.domainMin, s.domainMax)
+            case _: kyo.internal.Scale.Time   => ScaleKind.Time
+            case _: kyo.internal.Scale.Symlog => ScaleKind.Symlog
+            case _ => ScaleKind.Band // fallback: Ordinal internal scale is not reachable via public positional override
 
         /** Internal factory used by the lowering to project resolved scales into the public surface. */
         private[kyo] def from(
