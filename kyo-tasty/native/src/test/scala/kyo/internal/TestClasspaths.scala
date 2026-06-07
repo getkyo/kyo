@@ -27,6 +27,9 @@ import kyo.internal.tasty.query.TastyState
   */
 private[kyo] object TestClasspaths:
 
+    /** On Native the `roots` parameter is ignored; the embedded MemoryFileSource always loads all fixtures. */
+    val kyoTastyFixtures: Seq[String] = Seq.empty
+
     /** Run `f` in a fresh classpath scope built from the embedded TASTy fixtures.
       *
       * Builds the classpath from an in-memory MemoryFileSource, installs the Binding in `TastyState.bindingLocal`,

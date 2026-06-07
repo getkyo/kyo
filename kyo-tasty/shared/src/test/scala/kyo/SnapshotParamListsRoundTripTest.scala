@@ -21,6 +21,12 @@ import scala.collection.mutable
   */
 class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
 
+    // Leaf 1 (roundtrip_meters_extension_methods_preserve_paramListIds) cold-loads the standard
+    // classpath (kyo-tasty + kyo-data + scala-library) then writes and reads a snapshot.
+    // A single cold-load takes 20-30s on a loaded machine; the full leaf exceeds the 60s default.
+    // Matches the identical override in SnapshotFidelity2Test which loads the same classpath pair.
+    override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(3))
+
     import AllowUnsafe.embrace.danger
     import Tasty.Name.asString
     import Tasty.SymbolId
@@ -65,6 +71,9 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
 
     // ── Leaf 1: roundtrip_meters_extension_methods_preserve_paramListIds ──────
     // Given: cross-platform classpath loaded from embedded fixtures (Meters opaque type).
+    //   On JVM: TestClasspaths.kyoTastyFixtures (minimal; only the fixture classes needed
+    //           for kyo.fixtures.Meters; avoids loading scala-library which takes 2+ minutes).
+    //   On JS/Native: TestClasspaths.withClasspath() uses the embedded MemoryFileSource.
     // When: SnapshotWriter.write + SnapshotReader.read round-trip.
     // Then: the Meters value extension method has identical paramListIds shape after reload;
     //       assert inner-Chunk sizes match and outer-Chunk size matches.
@@ -73,7 +82,10 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
         import Tasty.Name.asString
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0xe0.toByte, 0xe1.toByte, 0xe2.toByte, 0xe3.toByte, 0xe4.toByte, 0xe5.toByte, 0xe6.toByte, 0xe7.toByte)
-        TestClasspaths.withClasspath()(Tasty.classpath).flatMap: coldCp =>
+        // Use the fixture-only subset on JVM to stay well within the 3-minute class timeout.
+        // TestClasspaths.withClasspath takes a Seq[String]; on JS/Native the parameter is
+        // ignored and the embedded MemoryFileSource is always used.
+        TestClasspaths.withClasspath(TestClasspaths.kyoTastyFixtures)(Tasty.classpath).flatMap: coldCp =>
             Scope.run:
                 Abort.run[TastyError](
                     SnapshotWriter.write(coldCp, "cache", digest, cacheSrc).andThen:

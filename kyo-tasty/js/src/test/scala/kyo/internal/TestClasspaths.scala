@@ -33,6 +33,9 @@ private[kyo] object TestClasspaths:
       * and runs `f` in that scope. Call inside a `run {. }` test body. The `roots` parameter is ignored on
       * JS (no filesystem); embedded fixtures are always used.
       */
+    /** On JS the `roots` parameter is ignored; the embedded MemoryFileSource always loads all fixtures. */
+    val kyoTastyFixtures: Seq[String] = Seq.empty
+
     def withClasspath[A, S](roots: Seq[String] = Seq.empty)(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
         val src = MemoryFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
