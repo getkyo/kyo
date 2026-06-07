@@ -8,11 +8,11 @@ import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.TastyState
 import scala.collection.mutable
 
-/** Tasty.bodyTree(Val) and Tasty.bodyTree(Var) accessors.
+/** Tests for Tasty.bodyTree(Val) and Tasty.bodyTree(Var) accessors.
   *
-  * Leaf 79 uses a real cold-classpath (SomeObject.tasty) to verify that Tasty.bodyTree(Val) returns a Present Tree. Leaf 80 uses a synthetic
-  * fixture with a Var body constructed from a Val's body bytes (same shape) to verify Tasty.bodyTree(Var). Leaf 81b is a static-type compile check
-  * for Tasty.bodyTree(Val) effect row.
+  * One test uses a real cold-classpath (SomeObject.tasty) to verify that Tasty.bodyTree(Val) returns a Present Tree.
+  * Another uses a synthetic fixture with a Var body constructed from a Val's body bytes (same shape) to verify
+  * Tasty.bodyTree(Var). A static-type compile check verifies the Tasty.bodyTree(Val) effect row.
   */
 class ValVarBodyTreeTest extends kyo.test.Test[Any]:
 

@@ -2,12 +2,7 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Parameter typed accessors.
-  *
-  * defaultArg resolves to Present when defaultArgId is Present. Leaf 97: defaultArg returns Absent when defaultArgId is Absent.
-  * isImplicit returns true for a Given-flagged Parameter. Leaf 99: isByName returns true for a Parameter with a Type.ByName
-  * declared type. Leaf 100: isRepeated returns true for a Parameter with a Type.Repeated declared type.
-  */
+/** Tests for Parameter typed accessors: defaultArg, isImplicit, isByName, and isRepeated. */
 class ParameterTypedAccessorsTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger

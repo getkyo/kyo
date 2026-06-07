@@ -9,7 +9,6 @@ class VarintTest extends kyo.test.Test[Any]:
     private def viewOf(bytes: Array[Byte]): ByteView = ByteView(bytes)
 
     "readNat decodes 0 (single terminating byte 0x80)" in {
-        // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 0 encoded: (0 & 0x7f) | 0x80 = 0x80
         val view = viewOf(Array(0x80.toByte))
@@ -17,7 +16,6 @@ class VarintTest extends kyo.test.Test[Any]:
     }
 
     "readNat decodes 127 (single byte 0xFF)" in {
-        // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 127 encoded: (127 & 0x7f) | 0x80 = 0x7f | 0x80 = 0xff
         val view = viewOf(Array(0xff.toByte))
@@ -25,7 +23,6 @@ class VarintTest extends kyo.test.Test[Any]:
     }
 
     "readNat decodes 128 (two-byte encoding)" in {
-        // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 128 = 0x80: high 7 bits = 0x01, low 7 bits = 0x00
         // Continuation byte (0x80 CLEAR): 0x01
@@ -35,7 +32,6 @@ class VarintTest extends kyo.test.Test[Any]:
     }
 
     "readNat decodes 16383 (max two-byte value)" in {
-        // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 16383 = 0x3FFF: high 7 bits = 0x7F, low 7 bits = 0x7F
         // Continuation byte: 0x7F
@@ -45,7 +41,6 @@ class VarintTest extends kyo.test.Test[Any]:
     }
 
     "readNat decodes Int.MaxValue (5-byte encoding)" in {
-        // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Int.MaxValue = 2147483647 = 0x7FFFFFFF
         // Split into 5 groups of 7 bits: 0x07, 0x7F, 0x7F, 0x7F, 0x7F
@@ -56,7 +51,6 @@ class VarintTest extends kyo.test.Test[Any]:
     }
 
     "readInt decodes -1 using dotty sign-extension semantics" in {
-        // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 1 in dotty readLongInt: single byte 0xFF
         // First byte b = 0xFF, x = ((0xFF << 1).toByte >> 1) = (0xFE.toByte >> 1) = -1
@@ -67,7 +61,6 @@ class VarintTest extends kyo.test.Test[Any]:
     }
 
     "readInt decodes Int.MinValue using dotty sign-extension semantics" in {
-        // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Int.MinValue = -2147483648 = 0x80000000 in 2's complement
         // Encoding in 5 bytes (groups of 7 from high to low):
@@ -109,7 +102,6 @@ class VarintTest extends kyo.test.Test[Any]:
     }
 
     "readLongNat decodes Long.MaxValue" in {
-        // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Long.MaxValue = 0x7FFFFFFFFFFFFFFF = 9223372036854775807L
         // Split into 9 groups of 7 bits + 1 bit:
@@ -162,7 +154,6 @@ class VarintTest extends kyo.test.Test[Any]:
     // Test: readNat delegates to readLongNat; limit inherited from readLongNat (10 bytes)
     // Per actual dotty TastyReader.readNat = readLongNat.toInt: no separate per-byte cap in readNat.
     "readNat rejects continuation past 10 bytes (inherited readLongNat cap)" in {
-        // §839 case 3; direct Varint error-path test, single-threaded, no suspension.
         // 11 bytes with 0x80 CLEAR: readLongNat fires bytes >= 10 after reading the 10th byte.
         import AllowUnsafe.embrace.danger
         val view = viewOf(Array.fill(11)(0x00.toByte))
@@ -181,7 +172,6 @@ class VarintTest extends kyo.test.Test[Any]:
     // large-section-offsets-decode
     // A 6-byte non-minimal encoding of 0 decodes to 0 (non-minimal encodings are accepted).
     "readNat decodes 6-byte non-minimal encoding (large-section-offset fix)" in {
-        // §839 case 3; direct Varint test, single-threaded, no suspension.
         // Non-minimal encoding of 0 in 6 bytes:
         //   5 continuation bytes (0x80 CLEAR) each with value bits 0x00,
         //   1 terminating byte (0x80 SET) with value bits 0x00.
@@ -194,7 +184,6 @@ class VarintTest extends kyo.test.Test[Any]:
     // readNat truncates values > Int.MaxValue matching dotty behavior
     // Per actual dotty TastyReader.readNat = readLongNat.toInt: silently truncates to Int.
     "readNat truncates 9-byte Long.MaxValue encoding to Int (dotty parity)" in {
-        // §839 case 3; direct Varint truncation test, single-threaded, no suspension.
         // Long.MaxValue in 9 bytes: 0x7F * 8 continuation + 0xFF terminating.
         // Long.MaxValue.toInt = -1 (low 32 bits of 0x7FFFFFFFFFFFFFFF).
         import AllowUnsafe.embrace.danger
@@ -214,7 +203,6 @@ class VarintTest extends kyo.test.Test[Any]:
     }
 
     "readNat 6-byte non-minimal decoding is consistent across platforms" in {
-        // §839 case 3; cross-platform parity test, single-threaded, no suspension.
         // 6-byte non-minimal encoding of value 1:
         //   5 continuation bytes of 0x00 then terminating byte 0x81 (value bits = 0x01).
         import AllowUnsafe.embrace.danger
@@ -223,7 +211,6 @@ class VarintTest extends kyo.test.Test[Any]:
     }
 
     "readLongNat rejects continuation past 10 bytes (Long overflow guard)" in {
-        // §839 case 3; direct Varint error-path test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 11 bytes with 0x80 CLEAR = 11 continuation bytes; cap is 10.
         val view = viewOf(Array.fill(11)(0x00.toByte))
@@ -240,7 +227,6 @@ class VarintTest extends kyo.test.Test[Any]:
     }
 
     "readLongNat accepts exactly 10-byte encoding without throwing" in {
-        // §839 case 3; direct Varint boundary test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // 9 bytes with 0x80 CLEAR (continuation) then 1 terminating byte with 0x80 SET.
         // 0x81 has 0x80 CLEAR (bit 7 = 1 = 0x80, wait: 0x81 = 1000_0001, so bit 7 IS set).
@@ -262,7 +248,6 @@ class VarintTest extends kyo.test.Test[Any]:
 
     // writeNat then readNat round-trip
     "writeNat then readNat round-trips 1234" in {
-        // §839 case 3; direct Varint write+read round-trip test, single-threaded.
         import AllowUnsafe.embrace.danger
         val buf = scala.collection.mutable.ArrayBuffer.empty[Byte]
         Varint.writeNat(buf, 1234)
@@ -272,7 +257,6 @@ class VarintTest extends kyo.test.Test[Any]:
 
     // writeLongNat then readLongNat round-trip
     "writeLongNat then readLongNat round-trips 9_999_999_999L" in {
-        // §839 case 3; direct Varint write+read round-trip test, single-threaded.
         import AllowUnsafe.embrace.danger
         val buf = scala.collection.mutable.ArrayBuffer.empty[Byte]
         Varint.writeLongNat(buf, 9_999_999_999L)
@@ -284,7 +268,6 @@ class VarintTest extends kyo.test.Test[Any]:
     // 100 non-negative Long values drawn from scala.util.Random(seed=0L).
     // Negative values are masked to non-negative via >>> 1 (arithmetic unsigned shift).
     "writeLongNat then readLongNat round-trips 100 seeded random non-negative Longs" in {
-        // §839 case 3; direct Varint write+read generative test, single-threaded.
         import AllowUnsafe.embrace.danger
         val rng    = new scala.util.Random(0L)
         val trials = 100

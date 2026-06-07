@@ -62,7 +62,7 @@ class TypeTraversalTest extends kyo.test.Test[Any]:
         // The in-package probe compiles successfully: errs must be empty, confirming the
         // method exists and is accessible from within the kyo package.
         assert(errs == 0, "visit should be accessible from inside package kyo (private[kyo])")
-        // Leaf 9 intent: no public API named 'visit' accessible from user scope.
+        // Verify no public API named 'visit' is accessible from user scope.
         // We verify via typeCheckErrors from an explicit user-package context.
         val errsFromUser = compiletime.testing.typeCheckErrors(
             "package testuser; object Probe { kyo.Tasty.Type.Any.visit(_ => ()) }"

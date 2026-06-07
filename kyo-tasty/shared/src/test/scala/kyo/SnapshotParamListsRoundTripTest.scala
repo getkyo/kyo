@@ -71,7 +71,6 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
     //           for kyo.fixtures.Meters; avoids loading scala-library which takes 2+ minutes).
     //   On JS/Native: TestClasspaths.withClasspath() uses the embedded MemoryFileSource.
     //       assert inner-Chunk sizes match and outer-Chunk size matches.
-    // Pins: INV-H2 (snapshot round-trip preserves paramListIds shape).
     "roundtrip_meters_extension_methods_preserve_paramListIds" in {
         import Tasty.Name.asString
         val cacheSrc = MemoryFileSource()
@@ -136,7 +135,6 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
                         throw t
     }
 
-    // Pins: INV-H2 (empty-clause preserved; distinct from no-parameter-lists).
     "roundtrip_empty_paramListIds_for_noarg_method" in {
         val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val pkgSym  = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("test"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
@@ -197,8 +195,6 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    //       and supported.minor==12.
-    // Pins: INV-H5 (REJECT-old policy; no synthesis for minor < 12).
     "minor_11_snapshot_rejected_with_version_mismatch" in {
         val buf = new Array[Byte](64)
         buf(0) = 'K'
@@ -233,7 +229,6 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Pins: writer always emits PLISTS__ unconditionally (even when count=0).
     "plists_section_present_in_minor_12_writer_output" in {
         val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val emptyCp = Tasty.Classpath.make(

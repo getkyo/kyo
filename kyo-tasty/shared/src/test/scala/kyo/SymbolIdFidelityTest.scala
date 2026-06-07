@@ -11,8 +11,6 @@ class SymbolIdFidelityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // Sentinel-count leaf 1: sentinel-count-phase04
-    //       embedded fixtures have 0, which satisfies < 11 trivially.
     "partial : SymbolId(-1) sentinel name-set size decreased from pre-consolidation baseline" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString
@@ -27,7 +25,6 @@ class SymbolIdFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Sentinel-count leaf 2: sentinel-count-bounded
     "SymbolId(-1) sentinel name-set size <= 3 on real classpath" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString

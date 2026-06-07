@@ -7,11 +7,11 @@ import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.TastyState
 import scala.collection.mutable
 
-/** followup for W-04-02: exercises the Present path of `Tasty.bodyTree(Var)`.
+/** Exercises the Present path of `Tasty.bodyTree(Var)`.
   *
-  * W-04-02 noted that the existing leaf 80 in `ValVarBodyTreeTest` only exercises the Absent path because `SomeObject.tasty` contains no
-  * `Symbol.Var` with a body slot. This test loads `fixtureClassesPackageTasty` which contains `var topLevelVar: Int = 0` and verifies that
-  * the Var's bodyTree returns `Maybe.Present(_)`.
+  * `ValVarBodyTreeTest` only exercises the Absent path because `SomeObject.tasty` contains no `Symbol.Var` with a body slot.
+  * This test loads `fixtureClassesPackageTasty` which contains `var topLevelVar: Int = 0` and verifies that the Var's
+  * bodyTree returns `Maybe.Present(_)`.
   */
 class VarBodyPresentTest extends kyo.test.Test[Any]:
 

@@ -74,7 +74,6 @@ class UnifiedModelTest extends kyo.test.Test[Any]:
         import kyo.internal.tasty.query.ClasspathOrchestrator
         import kyo.internal.tasty.query.FileSource
         import scala.collection.mutable
-        // Use PlainClass fixture which lives in package kyo.fixtures.
         final class MemFileSource(files: mutable.HashMap[String, Array[Byte]] = mutable.HashMap.empty) extends FileSource:
             def add(p: String, b: Array[Byte]): Unit = files(p) = b
             def read(p: String)(using Frame): Array[Byte] < (Sync & Abort[TastyError]) =

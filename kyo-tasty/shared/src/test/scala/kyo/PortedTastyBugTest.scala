@@ -6,19 +6,17 @@ import kyo.internal.TestClasspaths
 /** Ported regression tests for closed TASTy-reader bugs from scalacenter/tasty-query
   * and scala/scala3.
   *
-  * Each test references its source issue by URL in the leading comment block. The
-  * fixture for each bug lives in
-  * `kyo-tasty-fixtures/shared/src/main/scala/kyo/fixtures/PortedBugFixture.scala`.
+  * Each test references its source issue by URL in the leading comment block.
   *
   * Test contract: the test loads the standard real classpath (which includes the
   * fixture jar plus scala-library) and asserts the behavior the original
   * issue established. A failing test indicates a real kyo-tasty bug that needs
   * a fix; failures are NOT to be weakened to pass.
   *
-  * Lives in shared/src/test: every fixture FQN exercised here is embedded in
-  * `kyo.fixtures.Embedded` and registered by the platform-specific
-  * `TestClasspaths.withClasspath`, so JVM (real classpath), JS (embedded)
-  * Native (embedded) all dispatch to the same checks.
+  * Every fixture FQN exercised here is embedded in `kyo.fixtures.Embedded` and
+  * registered by the platform-specific `TestClasspaths.withClasspath`, so JVM
+  * (real classpath), JS (embedded), and Native (embedded) all dispatch to the
+  * same checks.
   */
 class PortedTastyBugTest extends kyo.test.Test[Any]:
 

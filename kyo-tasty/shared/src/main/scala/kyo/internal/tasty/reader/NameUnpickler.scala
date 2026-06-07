@@ -47,8 +47,6 @@ object NameUnpickler:
             catch
                 case ex: ArrayIndexOutOfBoundsException =>
                     // Translate raw JVM array-index message to a typed, reader-comprehensible reason.
-                    // Before fix: reason == "Array index out of range: 254" (JVM default message).
-                    // After fix:  reason == "name table index 254 out of range" (field-specific, stable wording).
                     val reason =
                         if ex.getMessage != null then
                             val msg   = ex.getMessage

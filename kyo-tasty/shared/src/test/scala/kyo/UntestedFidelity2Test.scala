@@ -31,8 +31,7 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     // Allow extra time for the 3-cold-init idempotency test and version-downgrade fallback
     override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(10))
 
-    // dependent-function-type-decodes
-    // (dependent types may not appear in embedded fixtures but the test is informational).
+    // dependent types may not appear in embedded fixtures but the test is informational.
     "dependent function types decode with result type referencing parameter" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
@@ -44,7 +43,6 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // capture-checking-deferred-documented
     "capture-checking deferred row present in Untested.txt" in {
         val content = UntestedFidelity2Test.untestedTxtContent
         assert(
@@ -58,8 +56,6 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
         succeed
     }
 
-    // multi-version-stdlib-failfast-aborts
-    // annotation-processor-output-resolves
     // Java-defined (Flag.JavaDefined) classfile decode coverage now available on JS and Native via
     // EmbeddedJavaFixtures.javaSimpleFixtureClassfile registered as a standalone root in TestClasspaths.
     "Java classfile decoding path active in standard classpath (AP structural guard)" in {

@@ -15,8 +15,6 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    //   no-unresolved-return-types
-    //   methods have real return types after the fix.
     "no method declaredType resolves to Named(SymbolId(-1))" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val scalaOnlyMethods = classpath.allMethods.filter(!_.isJava)
@@ -35,7 +33,6 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    //   scala-methods-have-non-sentinel-types
     "classpath Scala methods have at least one non-sentinel declared type" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val methodsWithNonSentinelTypes = classpath.allMethods
@@ -54,8 +51,6 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    //   function-types-materialize
-    // the fix property is "types exist", not "exactly 100+ types exist"; embedded fixtures provide enough methods to exercise the path.
     "at least one Scala method has a non-sentinel declared type (decoder fix)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val scalaMethodsWithRealTypes = classpath.allMethods
@@ -75,7 +70,6 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    //   this-type-resolves
     "every Type.ThisType resolves to a real Class/Trait/Object symbol" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             var badThisCount   = 0
@@ -106,7 +100,6 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    //   rec-no-placeholder-names
     "no symbols with name starting rec@ in cp.symbols" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             import Tasty.Name.asString
@@ -120,8 +113,6 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    // sentinel-count-decreased
-    // the stdlib sentinel-count reduction; on JS/Native it passes with embedded fixtures (usually 0 or 1 sentinel names).
     "partial : SymbolId(-1) sentinel count decreased from pre-consolidation baseline" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             import Tasty.Name.asString
@@ -136,7 +127,6 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    //   method-type-preserves-param-names
     "kyo.fixtures.SomeCaseClass methods have non-sentinel declaredType" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val caseClassMaybe = classpath.findSymbol("kyo.fixtures.SomeCaseClass")
@@ -159,7 +149,6 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    // nullary-method-still-decodes
     "regression PIN : kyo.fixtures.SomeTrait.compute.declaredType is not Named(SymbolId(-1))" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val traitMaybe = classpath.findSymbol("kyo.fixtures.SomeTrait")
@@ -189,7 +178,6 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    // applied-tpt-yields-applied-type
     "APPLIEDtpt-encoded return type decodes to Type.Applied" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val allDeclaredTypes = classpath.symbols.flatMap: sym =>
@@ -216,8 +204,6 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // findConcreteClass-excludes-abstract
-    //       findConcreteClass("kyo.fixtures.ConcreteA") returns Present (concrete class)
     "findConcreteClass excludes abstract classes while findClass remains permissive" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             assert(
@@ -235,7 +221,6 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    //   parent injection improves coverage
     "parent injection improves non-empty parentTypes coverage" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val allClassLike = cp.allClassLike
@@ -250,7 +235,6 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    //   fixture-class parents non-empty (structural check)
     "kyo.fixtures.ChildClass.parentTypes is non-empty (extends BaseClass)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClassLike("kyo.fixtures.ChildClass") match
@@ -265,7 +249,6 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
                     fail("kyo.fixtures.ChildClass not found on classpath; embedded fixture must be present on all platforms")
     }
 
-    // nested-class ThisType resolves to non-sentinel SymbolId
     "ThisType resolution quality maintained (badFraction <= 0.5)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var badCount   = 0

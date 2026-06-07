@@ -4,10 +4,9 @@ import kyo.Tasty.SymbolId
 
 /** Tests for the SymbolId opaque type.
   *
-  * Covers identity equality, inequality, and pattern-binding. The private[kyo] construction constraint (leaf 4)
-  * lives in external.SymbolIdVisibilityTest, which is in package external so that assertDoesNotCompile evaluates the snippet outside the
-  * kyo package scope. typeCheckErrors from within package kyo would not reject private[kyo] members because the test file itself is inside
-  * the kyo package.
+  * Covers identity equality, inequality, and pattern-binding. The private[kyo] construction constraint is
+  * verified in external.SymbolIdVisibilityTest (package external), because typeCheckErrors from within
+  * package kyo cannot detect the private[kyo] restriction.
   */
 class SymbolIdTest extends kyo.test.Test[Any]:
 

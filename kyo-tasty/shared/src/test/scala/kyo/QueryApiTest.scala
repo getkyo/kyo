@@ -472,7 +472,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
                 assert(finalCount == 0, s"Expected counter to be 0 after all reads complete, but got: $finalCount")
     }
 
-    // and no panic. Verifies end-to-end Phase C placeholder resolution.
+    // Verifies end-to-end Phase C placeholder resolution: no errors and no panic.
     "two-file classpath (ChildClass extends BaseClass) opens with no errors and no panic" in {
         val src = MemoryFileSource()
         src.add("root/BaseClass.tasty", kyo.fixtures.Embedded.baseClassTasty)

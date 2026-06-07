@@ -11,7 +11,6 @@ import tastyquery.Symbols.PackageSymbol
   * the decoded top-level class FQNs. Any disagreement is a real kyo-tasty bug.
   *
   * Platform: JVM-only. tasty-query.ClasspathLoaders requires java.nio.file (JVM filesystem).
-  * The parallel shared tests TastyPropertyTest and TastyPropertyClasspathScanTest cover cross-platform invariants.
   *
   * Comparison scope: top-level class FQN sets. tasty-query does not expose a stable
   * "declared type" API that is directly comparable to kyo-tasty Symbol.Method.declaredType,

@@ -114,9 +114,9 @@ private[kyo] object TestClasspaths2:
 
     /** Load the embedded-fixture classpath with a warning sink (cross-platform).
       *
-      * Mirrors `loadStandardWithSink` but uses `TestClasspaths.withClasspath` (embedded fixtures on all platforms,
-      * including JVM) instead of the real stdlib classpath. Captures warn messages emitted during decode so callers
-      * can assert on unknown-tag counts. Works on JVM, JS, and Native.
+      * Uses `TestClasspaths.withClasspath` (embedded fixtures on all platforms, including JVM) instead of the real
+      * stdlib classpath. Captures warn messages emitted during decode so callers can assert on unknown-tag counts.
+      * Works on JVM, JS, and Native.
       */
     def loadEmbeddedWithSink(using Frame): (Tasty.Classpath, WarningSink) < (Sync & Async & Abort[TastyError]) =
         import AllowUnsafe.embrace.danger

@@ -14,8 +14,8 @@ import kyo.*
   *
   * Note: topLevelClassIds.size is intentionally excluded. The cold-load path computes topLevelClassIds by checking owner-is-Package on
   * final symbols. The warm-load (SnapshotReader) reconstructs it from per-symbol FQN presence and kind, which may include nested class
-  * entries that cold filtered out. This asymmetry is a pre-existing known limitation of the reader reconstruction and is not fixed in this
-  * phase. The axis that matters for is fqnIndex.size.
+  * entries that cold filtered out. This asymmetry is a documented difference in reader reconstruction and is not expected to be equal.
+  * The axis that matters is fqnIndex.size.
   *
   * Returns EquivResult.Equal when all checked axes match, or EquivResult.Diverged with the first failing axis.
   *

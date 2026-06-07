@@ -2,9 +2,9 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** TypeAlias.body/typeParams and OpaqueType.body/bounds/typeParams accessors.
+/** Tests for TypeAlias.body/typeParams and OpaqueType.body/bounds/typeParams accessors.
   *
-  * Leaf 91 pins : the body field on TypeAlias is named `body`, not `rhs` or `rhsType`. exercise the typed resolution
+  * Pins that the body field on TypeAlias is named `body`, not `rhs` or `rhsType`. Exercises the typed resolution
   * methods on TypeAlias and OpaqueType.
   */
 class TypeAliasOpaqueTypedAccessorsTest extends kyo.test.Test[Any]:

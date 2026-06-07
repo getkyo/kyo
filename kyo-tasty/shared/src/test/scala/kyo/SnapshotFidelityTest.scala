@@ -138,8 +138,6 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
             end match
     }
 
-    // Wire-format leaf 5: format-version-bumped
-    // History: set 6,b set 7, set 8, set 9, prior set 10, set 11, this set 12.
     "SnapshotFormat.FORMAT_VERSION reflects current minor version" in {
         assert(
             SnapshotFormat.minorVersion == 12,
@@ -147,7 +145,6 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
         )
     }
 
-    // New leaf: in-memory-roundtrip-preserves-symbols
     "in-memory snapshot round-trip preserves symbols count" in {
         TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
             assert(

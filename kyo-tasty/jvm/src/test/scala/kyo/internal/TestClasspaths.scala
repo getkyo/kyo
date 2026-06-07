@@ -100,8 +100,6 @@ private[kyo] object TestClasspaths:
       *
       * Delegates to `Tasty.withClasspath`, which handles `Scope.run` internally. Call inside a `run {. }` test
       * body. Inside `f`, use `Tasty.*` query operations; they read the active binding from `TastyState.bindingLocal`.
-      *
-      * The `withClasspath` name is the canonical pattern that every `*FidelityTest.scala` uses (TDD-real-classpath discipline).
       */
     def withClasspath[A, S](roots: Seq[String] = standard)(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
         Tasty.withClasspath(roots)(f)
