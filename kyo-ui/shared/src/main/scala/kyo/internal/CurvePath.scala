@@ -70,6 +70,9 @@ private[kyo] object CurvePath:
     // each knot. Uses a single mutable Array[Double] tangent scratch buffer (the
     // tightest-scoped local accumulator) because pass 2 clamps tangents in place;
     // it is filled and updated via @tailrec, never `var` or an index loop.
+    // Array (not the immutable Span the codebase defaults to) is required here precisely
+    // because the Fritsch-Carlson pass mutates tangents in place; the buffer is method-local
+    // and never escapes, so the in-place writes stay isolated behind this pure interface.
     private def monotone(d: Svg.PathData, pts: Chunk[(Double, Double)]): Svg.PathData =
         val n  = pts.size
         val xs = pts.map(_._1)

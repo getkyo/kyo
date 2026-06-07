@@ -47,6 +47,8 @@ private[kyo] object ChartFoundations:
         // `value` may be `null` when a typed encoding accessor yields a null reference. `CatKey` keys it
         // by `(tag, null)`: case-class structural equality treats two nulls under the same tag as equal,
         // and the value is never dereferenced here, so there is no NPE.
+        // Unsafe: widening `ConcreteTag[C]` to `ConcreteTag[Any]` is erasure-safe; the tag is used only as a
+        // structural identity component of the key, never to reconstruct or constrain `C`.
         CatKey(tag.asInstanceOf[ConcreteTag[Any]], value)
 
     /** True when `v` is a finite double (not NaN, not +/-Infinity). */

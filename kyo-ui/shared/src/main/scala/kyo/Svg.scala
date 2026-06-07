@@ -331,6 +331,20 @@ object Svg:
         case Translate, Scale, Rotate, SkewX, SkewY
     end TransformType
 
+    /** `animate` `calcMode`: the interpolation mode between keyframe values. Cases render to their lowercase SVG
+      * tokens (`Discrete -> "discrete"`, `Spline -> "spline"`, ...). `Spline` is the mode that activates
+      * `keySplines`.
+      */
+    enum CalcMode derives CanEqual:
+        case Discrete, Linear, Paced, Spline
+    end CalcMode
+
+    private def calcModeToken(v: CalcMode): String = v match
+        case CalcMode.Discrete => "discrete"
+        case CalcMode.Linear   => "linear"
+        case CalcMode.Paced    => "paced"
+        case CalcMode.Spline   => "spline"
+
     // ---- SVG attribute bag ----
 
     /** Typed presentation/geometry attributes for an SVG element. Separate from CSS
@@ -1099,9 +1113,21 @@ object Svg:
         def dur(v: String): Animate           = withSvg(svgAttrs.copy(animDur = Present(v)))
         def repeatCount(v: String): Animate   = withSvg(svgAttrs.copy(animRepeatCount = Present(v)))
         def begin(v: String): Animate         = withSvg(svgAttrs.copy(animBegin = Present(v)))
-        def calcMode(v: String): Animate      = withSvg(svgAttrs.copy(animCalcMode = Present(v)))
-        def keyTimes(v: String): Animate      = withSvg(svgAttrs.copy(animKeyTimes = Present(v)))
-        def keySplines(v: String): Animate    = withSvg(svgAttrs.copy(animKeySplines = Present(v)))
+
+        /** Sets the interpolation mode between keyframe values. `CalcMode.Spline` is the mode that activates
+          * `keySplines`; the other modes ignore it.
+          */
+        def calcMode(v: CalcMode): Animate = withSvg(svgAttrs.copy(animCalcMode = Present(calcModeToken(v))))
+
+        /** Sets the `keyTimes` list (semicolon-separated fractions in `[0,1]`) defining when each keyframe value
+          * applies.
+          */
+        def keyTimes(v: String): Animate = withSvg(svgAttrs.copy(animKeyTimes = Present(v)))
+
+        /** Sets the `keySplines` control points for spline interpolation. Requires `calcMode = CalcMode.Spline` to
+          * take effect.
+          */
+        def keySplines(v: String): Animate = withSvg(svgAttrs.copy(animKeySplines = Present(v)))
     end Animate
 
     /** `<animateTransform>`: animates a transform attribute on the parent element over time.

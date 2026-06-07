@@ -376,6 +376,14 @@ private[kyo] object ChartLower:
     // to `Any` at the typed-mark boundary and is `A` by construction; it cannot fail at runtime.
     // Likewise, `colorEnc.asInstanceOf[Encoding[A, Any]]` recovers the concrete element type from a
     // `Encoding[?, ?]` that was widened during pattern-match erasure; the cast is total.
+    //
+    // This note also covers two further families that share the same erasure invariant:
+    //   - `Plottable.string.asInstanceOf[Plottable[Any]]` (the group/color encoding builders): the group
+    //     accessor produces label strings keyed categorically, so the shared `string` instance is the
+    //     correct evidence and the widening to `Plottable[Any]` is erasure-safe.
+    //   - `mark.color.map(_.tag.asInstanceOf[ConcreteTag[Any]])` and `colorEnc.tag.asInstanceOf[ConcreteTag[Any]]`
+    //     (the color-tag widenings): the tag is used only as a structural CatKey identity component, never to
+    //     reconstruct or constrain the element type, so widening to `ConcreteTag[Any]` cannot fail.
 
     /** Collect x-extent across all marks' x encodings for the given rows. */
     private def xExtent[A](rows: Chunk[A], marks: Chunk[Mark[A]]): Maybe[Extent] =
@@ -1445,9 +1453,9 @@ private[kyo] object ChartLower:
                 case e: scala.reflect.Enum => e.ordinal
                 case _                     => encounterIdx // stable encounter-order index
             (label, raw, ordinal)
-        // Sort by ordinal so enum cases appear in declaration order.
-        // toSeq here is a genuine stdlib boundary: Chunk has no sortBy; the sort is a terminal operation on a small collection.
-        triples.toSeq.sortBy(_._3).foldLeft(Chunk.empty[(String, Any)])((acc, t) => acc.append((t._1, t._2)))
+        // Sort by ordinal so enum cases appear in declaration order. `Chunk` is a `Seq`, so `sortBy` applies
+        // directly; the result is folded straight back into a `Chunk`.
+        triples.sortBy(_._3).foldLeft(Chunk.empty[(String, Any)])((acc, t) => acc.append((t._1, t._2)))
     end collectColorCategoriesWithRaw
 
     /** Collect category labels (without raw values) for use in stacked-bar lowering. */
@@ -1834,6 +1842,10 @@ private[kyo] object ChartLower:
         // chart uses palette(0). Grouped/stacked color encoding marks keep mapping color categories to the
         // palette (handled inside the per-mark lowerers).
         val theme = spec.map(_.theme).getOrElse(Theme.default)
+        // Unsafe (per-mark lowerer result widening, covers every `.asInstanceOf[Chunk[UI]]` in this dispatcher):
+        // each `lower*` returns a `Chunk[<Svg subtype>]` (e.g. `Chunk[Svg.Rect]`). `Svg` subtypes are `UI`, and
+        // `Chunk` is covariant in its element, so widening `Chunk[<Svg subtype>]` to `Chunk[UI]` is sound; the
+        // cast only restates a subtype relation the type system already permits at the element level.
         val allShapes: Chunk[UI] = marks.zipWithIndex.flatMap: (mark, markIdx) =>
             val markColor = markDefaultColor(theme, markIdx)
             val ys = mark match
@@ -3565,7 +3577,7 @@ private[kyo] object ChartLower:
             .from(from)
             .to(to)
             .dur(dur)
-            .calcMode("spline")
+            .calcMode(Svg.CalcMode.Spline)
             .keyTimes("0;1")
             .keySplines(EaseInOutCubicSplines)
             .begin("indefinite")
@@ -3584,7 +3596,7 @@ private[kyo] object ChartLower:
             .from(fromD)
             .to(toD)
             .dur(dur)
-            .calcMode("spline")
+            .calcMode(Svg.CalcMode.Spline)
             .keyTimes("0;1")
             .keySplines(EaseInOutCubicSplines)
             .begin("indefinite")
@@ -3699,7 +3711,7 @@ private[kyo] object ChartLower:
                                         val (fromH, fromY) = Maybe.fromOption(fromGeom.get(transKey)) match
                                             case Present(MarkGeom.Bar(ph, py)) => (ph, py)
                                             case _                             => (0.0, baseline) // enter from baseline
-                                        // decoratedRect is a Svg.Rect at runtime (applyBarEncodings returns the rect with
+                                        // Unsafe: decoratedRect is a Svg.Rect at runtime (applyBarEncodings returns the rect with
                                         // opacity/title applied; only .fillOpacity and .apply(ShapeChild) are called,
                                         // both returning Svg.Rect). Cast back to Svg.Rect to attach the SMIL animate
                                         // children. Child order: tooltip (<title>) added first by applyBarEncodings,
@@ -4141,7 +4153,9 @@ private[kyo] object ChartLower:
                 case c: Svg.Circle => g(c)
                 case l: Svg.Line   => g(l)
                 case inner: Svg.G  => g(inner)
-                case other         => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+                // Unsafe: `shapes` only ever holds the Svg element subtypes the lowerers emit, each of which is an
+                // `SvgElement & SvgChild`; the residual `other` arm restates that bound for elements not matched above.
+                case other => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
     end marksRegionWithTransitions
 
     // ---- reactive helpers ----
@@ -4250,7 +4264,9 @@ private[kyo] object ChartLower:
                 el match
                     case l: Svg.Line => g(l)
                     case t: Svg.Text => g(t)
-                    case other       => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+                    // Unsafe: the axis/legend builders only emit `Svg.Line`/`Svg.Text` (and the cases above);
+                    // every such element is an `SvgElement & SvgChild`, so the residual arm restates that bound.
+                    case other => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
             Svg.g(xAxisG)(marksG)
         else
             // Inferred domain: include y-axis ticks, x-axis ticks, and the legend inside the reactive region.
@@ -4278,7 +4294,9 @@ private[kyo] object ChartLower:
                 el match
                     case l: Svg.Line => g(l)
                     case t: Svg.Text => g(t)
-                    case other       => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+                    // Unsafe: the axis/legend builders only emit `Svg.Line`/`Svg.Text` (and the cases above);
+                    // every such element is an `SvgElement & SvgChild`, so the residual arm restates that bound.
+                    case other => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
             Svg.g(axisG)(marksG)
         end if
     end buildReactiveRegion
@@ -4384,7 +4402,9 @@ private[kyo] object ChartLower:
                 case l: Svg.Line => acc(l)
                 case t: Svg.Text => acc(t)
                 case g: Svg.G    => acc(g)
-                case other       => acc(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+                // Unsafe: the static frame only holds `Svg.Rect`/`Line`/`Text`/`G` (the cases above); each is an
+                // `SvgElement & SvgChild`, so the residual arm restates that bound for any element not matched.
+                case other => acc(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
         // Create the chart-private transition-state ref when animation is enabled.
         // Unsafe: AtomicRef.Unsafe bypasses kyo effects tracking; sound because the ref is private to this
         // chart and writes occur only on genuine row changes (idempotent within any single emission).
@@ -4605,7 +4625,9 @@ private[kyo] object ChartLower:
                 case l: Svg.Line => acc(l)
                 case t: Svg.Text => acc(t)
                 case g: Svg.G    => acc(g)
-                case other       => acc(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+                // Unsafe: the static frame only holds `Svg.Rect`/`Line`/`Text`/`G` (the cases above); each is an
+                // `SvgElement & SvgChild`, so the residual arm restates that bound for any element not matched.
+                case other => acc(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
         val withMarks = withFrame(marksG)
         // Append the tooltip overlay as the last child so it renders on top.
         (spec.tooltip, internalHoverRef) match

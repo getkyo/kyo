@@ -22,6 +22,40 @@ sealed private[kyo] trait Scale:
     def bandwidth: Double
 end Scale
 
+/** The data domain before a scale is fitted: either a continuous numeric range or an ordered set of category keys.
+  *
+  * `Continuous(min, max)` is produced by folding numeric domain values. `Categories(keys)` is produced by folding
+  * categorical domain values in encounter order (deduplication preserving order).
+  *
+  * Defined above `object Scale` because it appears in `Scale.fit` and other companion signatures.
+  */
+private[kyo] enum Extent derives CanEqual:
+    case Continuous(min: Double, max: Double)
+    case Categories(keys: Chunk[String])
+end Extent
+
+private[kyo] object Extent:
+    /** Construct a continuous extent over `[lo, hi]`. */
+    def continuous(lo: Double, hi: Double): Extent = Extent.Continuous(lo, hi)
+
+    /** Construct a categorical extent from an ordered key list. */
+    def categories(keys: Chunk[String]): Extent = Extent.Categories(keys)
+end Extent
+
+/** The scale domain coordinate produced by `Chart.Plottable.toDomain`.
+  *
+  * Three variants cover all scale families: `Continuous` for linear/log/time numeric axes, `Category` for band and
+  * ordinal axes, and `Temporal` for time axes (epoch milliseconds). Scales consume this union; the kind selects
+  * which variant is valid.
+  *
+  * Defined above `object Scale` because `Scale.apply`/`Scale.invert` reference it.
+  */
+private[kyo] enum Domain derives CanEqual:
+    case Continuous(value: Double)
+    case Category(key: String)
+    case Temporal(epochMillis: Long)
+end Domain
+
 /** Companion object providing `Scale.Kind`, `Scale.Tick`, `Extent`, and the `fit` factory.
   *
   * `Scale.fit` is the single entry point: supply a `Kind`, the domain `Extent`, and the pixel range, and get back a
@@ -513,33 +547,3 @@ private[kyo] object Scale:
     end Symlog
 
 end Scale
-
-/** The data domain before a scale is fitted: either a continuous numeric range or an ordered set of category keys.
-  *
-  * `Continuous(min, max)` is produced by folding numeric domain values. `Categories(keys)` is produced by folding
-  * categorical domain values in encounter order (deduplication preserving order).
-  */
-private[kyo] enum Extent derives CanEqual:
-    case Continuous(min: Double, max: Double)
-    case Categories(keys: Chunk[String])
-end Extent
-
-private[kyo] object Extent:
-    /** Construct a continuous extent over `[lo, hi]`. */
-    def continuous(lo: Double, hi: Double): Extent = Extent.Continuous(lo, hi)
-
-    /** Construct a categorical extent from an ordered key list. */
-    def categories(keys: Chunk[String]): Extent = Extent.Categories(keys)
-end Extent
-
-/** The scale domain coordinate produced by `Chart.Plottable.toDomain`.
-  *
-  * Three variants cover all scale families: `Continuous` for linear/log/time numeric axes, `Category` for band and
-  * ordinal axes, and `Temporal` for time axes (epoch milliseconds). Scales consume this union; the kind selects
-  * which variant is valid.
-  */
-private[kyo] enum Domain derives CanEqual:
-    case Continuous(value: Double)
-    case Category(key: String)
-    case Temporal(epochMillis: Long)
-end Domain
