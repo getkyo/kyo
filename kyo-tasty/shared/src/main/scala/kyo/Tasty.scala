@@ -1233,21 +1233,26 @@ object Tasty:
             maxAgeMs: Long,
             source: kyo.internal.tasty.query.FileSource
         )(using Frame): Unit < (Sync & Abort[TastyError]) =
-            source.list(cacheDir, Chunk(".krfl")).flatMap: files =>
+            source.list(cacheDir, Chunk(".krfl")).map { files =>
                 // Collect (path, mtime) for each file that can be statted; skip files with stat errors.
-                Kyo.collect(files): path =>
-                    Abort.run[TastyError](source.stat(path)).map:
+                Kyo.collect(files) { path =>
+                    Abort.run[TastyError](source.stat(path)).map {
                         case Result.Success(st) => Maybe((path, st.mtimeMs))
                         case _                  => Maybe.Absent
-                .flatMap: pairs =>
-                    // Sort by mtime ascending so oldest files come first. Convert to Seq for sortBy.
-                    val now    = java.lang.System.currentTimeMillis()
-                    val sorted = pairs.toSeq.sortBy(_._2)
-                    // Delete in order; stop at the first non-stale file (early exit).
-                    Kyo.foreachDiscard(sorted.takeWhile { case (_, mtimeMs) => now - mtimeMs > maxAgeMs }):
-                        case (path, _) =>
-                            // Ignore errors: concurrent writers may have already replaced or removed the file.
-                            Abort.run[TastyError](deleteFile(source, path)).andThen(Kyo.unit)
+                    }
+                }.map { pairs =>
+                    Clock.now.map { now =>
+                        val nowMs  = now.toDuration.toMillis
+                        val sorted = pairs.toSeq.sortBy(_._2)
+                        // Delete in order; stop at the first non-stale file (early exit).
+                        Kyo.foreachDiscard(sorted.takeWhile { case (_, mtimeMs) => nowMs - mtimeMs > maxAgeMs }) {
+                            case (path, _) =>
+                                // Ignore errors: concurrent writers may have already replaced or removed the file.
+                                Abort.run[TastyError](deleteFile(source, path)).map(_ => Kyo.unit)
+                        }
+                    }
+                }
+            }
         end evictOlderThanWithSource
 
         private def deleteFile(
