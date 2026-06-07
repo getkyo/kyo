@@ -1019,31 +1019,50 @@ object Tasty:
                                 // F-015: the memo only stores Success/Failure; the prior Result.Panic arm was dead.
                         else
                             val result: Result[TastyError, Tree] =
-                                try
-                                    val syms = cp.symbols
-                                    Result.Success(kyo.internal.tasty.reader.TreeUnpickler.decodeSync(
-                                        blob,
-                                        sym,
-                                        idx => if idx >= 0 && idx < syms.size then syms(idx) else sym
+                                // Upfront bounds validation. A malformed (bodyStart, bodyEnd) tuple is documented as
+                                // MalformedSection; computing the verdict from the integers themselves avoids relying
+                                // on a thrown ArrayIndexOutOfBoundsException. Scala.js converts the same bounds violation
+                                // into org.scalajs.linker.runtime.UndefinedBehaviorError (extends java.lang.Error, which
+                                // NonFatal explicitly filters out), so on JS the throw would escape every catch arm and
+                                // crash the test process. The upfront check is platform-agnostic by construction.
+                                val sectionLen = blob.sectionBytes.size
+                                if blob.bodyStart < 0 || blob.bodyEnd > sectionLen || blob.bodyStart > blob.bodyEnd then
+                                    Result.Failure(TastyError.MalformedSection(
+                                        "ASTs",
+                                        s"truncated body: bodyStart=${blob.bodyStart}, bodyEnd=${blob.bodyEnd}, sectionSize=$sectionLen",
+                                        0L
                                     ))
-                                catch
-                                    case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
-                                        Result.Failure(TastyError.MalformedSection("ASTs", ex.getMessage, ex.byteOffset))
-                                    case _: ArrayIndexOutOfBoundsException =>
-                                        Result.Failure(TastyError.MalformedSection("ASTs", "truncated body", 0L))
-                                    case _: IllegalStateException =>
-                                        // mmap arena closed before bodyTree ran; documented contract is ClasspathClosed.
-                                        Result.Failure(TastyError.ClasspathClosed(s"bodyTree(sym.id=${sym.id.value})"))
-                                    // F-015 / INV-013: NonFatal final arm wraps every other decoder bug into
-                                    // MalformedSection, preserving the documented Abort[TastyError] error channel.
-                                    // Fatal throwables (OOM, InterruptedException) propagate untouched because
-                                    // NonFatal filters them out.
-                                    case ex: Throwable if NonFatal(ex) =>
-                                        Result.Failure(TastyError.MalformedSection(
-                                            "ASTs",
-                                            s"${ex.getClass.getSimpleName}: ${ex.getMessage}",
-                                            0L
+                                else
+                                    try
+                                        val syms = cp.symbols
+                                        Result.Success(kyo.internal.tasty.reader.TreeUnpickler.decodeSync(
+                                            blob,
+                                            sym,
+                                            idx => if idx >= 0 && idx < syms.size then syms(idx) else sym
                                         ))
+                                    catch
+                                        case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
+                                            Result.Failure(TastyError.MalformedSection("ASTs", ex.getMessage, ex.byteOffset))
+                                        case _: ArrayIndexOutOfBoundsException =>
+                                            // Defense-in-depth backstop for any other path the upfront bounds check
+                                            // does not cover (e.g. a nested decoder reading past its slice). Not the
+                                            // primary handler for the truncated-body case anymore.
+                                            Result.Failure(TastyError.MalformedSection("ASTs", "truncated body", 0L))
+                                        case _: IllegalStateException =>
+                                            // mmap arena closed before bodyTree ran; documented contract is ClasspathClosed.
+                                            Result.Failure(TastyError.ClasspathClosed(s"bodyTree(sym.id=${sym.id.value})"))
+                                        // F-015 / INV-013: NonFatal final arm wraps every other decoder bug into
+                                        // MalformedSection, preserving the documented Abort[TastyError] error channel.
+                                        // Fatal throwables (OOM, InterruptedException) propagate untouched because
+                                        // NonFatal filters them out.
+                                        case ex: Throwable if NonFatal(ex) =>
+                                            Result.Failure(TastyError.MalformedSection(
+                                                "ASTs",
+                                                s"${ex.getClass.getSimpleName}: ${ex.getMessage}",
+                                                0L
+                                            ))
+                                end if
+                            end result
                             ctx.bodyMemo.put(sym.id, result)
                             result match
                                 case Result.Success(t) => Maybe(t)

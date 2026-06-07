@@ -19,9 +19,10 @@ import scala.collection.immutable.IntMap
   *
   * Leaves:
   *   1. MalformedVarintException maps to TastyError.MalformedSection via the NonFatal arm.
-  *   2. ArrayIndexOutOfBoundsException still maps to TastyError.MalformedSection (regression). JVM
-  *      only (runJVM): on Scala.js the equivalent bounds violation throws UndefinedBehaviorError
-  *      (java.lang.Error), which is fatal; leaves 1, 3, and 4 cover this contract cross-platform.
+  *   2. Truncated body (bodyEnd beyond sectionBytes) maps to TastyError.MalformedSection via
+  *      the upfront bounds check in bodyTree, on every platform. Cross-platform because the
+  *      check tests the integer tuple before any unsafe read, so neither the JVM
+  *      ArrayIndexOutOfBoundsException nor Scala.js's UndefinedBehaviorError ever throws.
   *   3. Cached failure re-serves as Failure, not Panic (dead Result.Panic arm confirmed removed).
   *   4. No Sync panic escapes under a synthetic corrupt-body scenario.
   */
@@ -103,25 +104,24 @@ class BodyTreeErrorChannelTest extends kyo.test.Test[Any]:
                     fail(s"bodyTree must NOT produce a Sync panic for MalformedVarintException; got: $t")
     }
 
-    // Leaf 2: ArrayIndexOutOfBoundsException still maps to TastyError.MalformedSection (regression).
+    // Leaf 2: truncated body (bodyEnd > sectionBytes.size) maps to TastyError.MalformedSection on every platform.
     //
-    // The previous catch block handled ArrayIndexOutOfBoundsException explicitly with a
-    // "truncated body" message. After F-015, this arm is retained unchanged above the NonFatal arm.
-    // This leaf confirms the specific arm still fires (not the broader NonFatal fallback).
+    // bodyTree's upfront bounds check inspects the (bodyStart, bodyEnd, sectionSize) tuple BEFORE invoking
+    // TreeUnpickler.decodeSync. The check is platform-agnostic by construction: no unsafe read occurs, so
+    // neither the JVM ArrayIndexOutOfBoundsException nor Scala.js's UndefinedBehaviorError can fire. The
+    // documented Abort[TastyError] channel surfaces MalformedSection identically on JVM, JS, and Native.
     //
-    // JVM only: asserts JVM-specific ArrayIndexOutOfBoundsException identity. On Scala.js the
-    // equivalent bounds violation produces org.scalajs.linker.runtime.UndefinedBehaviorError (extends
-    // java.lang.Error, not Exception), which is fatal and would crash the test process because neither
-    // the AIOOBE arm nor NonFatal can catch it. The other 3 leaves remain cross-platform.
-    "Leaf 2: ArrayIndexOutOfBoundsException still maps to TastyError.MalformedSection truncated-body".onlyJvm in {
-        // One byte: TERMREFdirect tag (0x3E). bodyEnd=12 is beyond the array length, so the JVM
-        // throws ArrayIndexOutOfBoundsException when readByte tries to access bytes(1). The existing
-        // specific arm catches this and converts it to MalformedSection("ASTs", "truncated body", 0L).
-        val tooShortBytes: Array[Byte] = Array[Byte](0x3e) // TERMREFdirect tag only; no Nat bytes follow
+    // The defense-in-depth ArrayIndexOutOfBoundsException catch arm below the upfront check remains, but
+    // this leaf never exercises it for the truncated-body case; it covers any nested decoder path that
+    // might still throw under inputs the upfront check does not reach.
+    "Leaf 2: truncated body (bodyEnd beyond sectionBytes) maps to TastyError.MalformedSection cross-platform" in {
+        // One byte: TERMREFdirect tag (0x3E). bodyEnd=12 is beyond the array length of 1.
+        // The upfront bounds check in bodyTree (bodyEnd > sectionLen) fires and returns MalformedSection.
+        val tooShortBytes: Array[Byte] = Array[Byte](0x3e)
         val sym                        = makeValSym(2)
         val body = SymbolBody(
             bodyStart = 0,
-            bodyEnd = 12, // beyond the array length of 1, so readByte throws AIOOBE
+            bodyEnd = 12, // beyond the array length of 1; upfront check fires
             sectionBytes = Span.fromUnsafe(tooShortBytes),
             names = Span.empty[Tasty.Name],
             sectionOffset = 0,
@@ -139,11 +139,18 @@ class BodyTreeErrorChannelTest extends kyo.test.Test[Any]:
                     e match
                         case ms: TastyError.MalformedSection =>
                             assert(ms.name == "ASTs", s"Expected section name 'ASTs' but got '${ms.name}'")
+                            // The upfront check reports the exact tuple so callers can diagnose without rerun.
+                            assert(
+                                ms.reason.contains("bodyStart=0") && ms.reason.contains("bodyEnd=12") && ms.reason.contains(
+                                    "sectionSize=1"
+                                ),
+                                s"Expected upfront-check reason with the (start, end, size) tuple; got '${ms.reason}'"
+                            )
                             succeed
                         case other =>
                             fail(s"Expected TastyError.MalformedSection but got $other")
                 case Result.Panic(t) =>
-                    fail(s"bodyTree must NOT produce a Sync panic for AIOOBE; got: $t")
+                    fail(s"bodyTree must NOT produce a Sync panic for truncated body; got: $t")
     }
 
     // Leaf 3: Cached failure re-serves as Failure, not Panic (confirms dead Result.Panic arm removed).
