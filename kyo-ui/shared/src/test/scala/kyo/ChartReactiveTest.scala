@@ -8,7 +8,7 @@ import kyo.internal.ChartLower
 import kyo.internal.HtmlRenderer
 import scala.language.implicitConversions
 
-/** Phase 05 tests: reactivity, static/reactive split, fixed vs inferred domain.
+/** Tests for reactivity, static/reactive split, fixed vs inferred domain.
   *
   * Layout defaults: plotX=60, plotY=20, plotW=560, plotH=420, baseline=440
   * (chart size 640x480, MarginL=60, MarginR=20, MarginT=20, MarginB=40).
@@ -119,7 +119,7 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
             assert(!html0.contains(">4000<"), s"Expected '4000' absent before signal update:\n$html0")
             // After update, domain=[0,5000] (contains the data max); tick "4000" appears.
             assert(html1.contains(">4000<"), s"Expected tick label '4000' after signal update:\n$html1")
-            // The domain was NOT clipped to [0,4000]: "200" is no longer a tick (step is 2000 now).
+            // The domain spans [0,5000]: "200" is not a tick at step 2000.
             assert(!html1.contains(">200<"), s"Expected '200' absent after scale update:\n$html1")
         end for
     }
@@ -215,7 +215,7 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
         // the live data. If the x-axis is built from Chunk.empty (the old static approach), the extent
         // is Continuous(0, -1) (empty data default), which resolves to a Linear [0, 1] fallback and
         // emits tick labels "0", "0.25", "0.5", "0.75", "1" -- none of which are category names.
-        // After Must-fix 3 the x-axis is built inside the reactive region using the live xs, which is a
+        // The x-axis is built inside the reactive region using the live xs, which is a
         // Band scale over the actual categories, so tick labels "Jan" and "Feb" appear and "0.25" does not.
         val rows           = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val signal         = Signal.initConst[Seq[Sale]](rows)
@@ -236,7 +236,7 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
     // ---- Test 6: live legend with explicit colorScale emits swatches+labels in the rendered emission ----
 
     "live chart .legend(_.top.colorScale{...}) emits a legend (swatches + labels) in the rendered HTML" in {
-        // The live legend is built inside the reactive region (INV-029), so its swatches and labels appear in
+        // The live legend is built inside the reactive region, so its swatches and labels appear in
         // the rendered HTML of each emission. The category set (2xx/4xx/5xx) comes from the live stack groups.
         val rows = Chunk(
             StatusRow("/login", "2xx", 90.0),
@@ -280,9 +280,9 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- Leaf 18 (INV-029): a late color category gets a swatch on the emission that introduces it ----
+    // ---- a late color category gets a swatch on the emission that introduces it ----
 
-    "a live chart legend gains a swatch for a category that appears after the first emission (INV-029)" in {
+    "a live chart legend gains a swatch for a category that appears after the first emission" in {
         given CanEqual[Chunk[StatusRow], Chunk[StatusRow]] = CanEqual.derived
         for
             ref <- Signal.initRef[Seq[StatusRow]](Chunk(StatusRow("/x", "a", 5.0)))
@@ -301,9 +301,9 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- Leaf 19 (INV-029): a fixed-category live legend is unchanged across emissions ----
+    // ---- a fixed-category live legend is unchanged across emissions ----
 
-    "a live chart legend with a fixed category set is unchanged across emissions (INV-029)" in {
+    "a live chart legend with a fixed category set is unchanged across emissions" in {
         given CanEqual[Chunk[StatusRow], Chunk[StatusRow]] = CanEqual.derived
         for
             ref <- Signal.initRef[Seq[StatusRow]](Chunk(StatusRow("/x", "a", 5.0), StatusRow("/y", "b", 7.0)))
@@ -323,11 +323,11 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- Leaf 20 (INV-029): the legend is reactive, built from emitted rows, not a one-shot sample ----
+    // ---- the legend is reactive, built from emitted rows, not a one-shot sample ----
 
-    "live chart legend is built from reactive rows: an empty first emission yields no swatch, a later one does (INV-029)" in {
+    "live chart legend is built from reactive rows: an empty first emission yields no swatch, a later one does" in {
         // If the lowering still sampled signal.current once (the removed one-shot), the FIRST render would show
-        // swatches sampled from the ref's current value. Because the legend is now built per emission from the
+        // swatches sampled from the ref's current value. Because the legend is built per emission from the
         // emitted rows, an empty first emission yields NO swatch, and a later non-empty emission yields one.
         given CanEqual[Chunk[StatusRow], Chunk[StatusRow]] = CanEqual.derived
         for

@@ -8,7 +8,7 @@ import kyo.internal.ChartLower
 import kyo.internal.HtmlRenderer
 import scala.language.implicitConversions
 
-/** Phase 07 tests: hover/select handlers, tooltip overlay, reactive rule, linked views.
+/** Tests for hover/select handlers, tooltip overlay, reactive rule, and linked views.
   *
   * Layout defaults: plotX=60, plotY=20, plotW=560, plotH=420, baseline=440
   * (chart size 640x480, MarginL=60, MarginR=20, MarginT=20, MarginB=40).
@@ -304,10 +304,10 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
                     case _           => Chunk.empty
             case _ => Chunk.empty
 
-    // ---- Phase-4 tests: line/area interaction (INV-023) ----
+    // ---- line/area interaction ----
 
-    // Test 8 (plan leaf 12): line chart onSelect fires on click (INV-023)
-    "line chart with onSelect carries a Present onClick handler that fires (INV-023)" in {
+    // line chart onSelect fires on click
+    "line chart with onSelect carries a Present onClick handler that fires" in {
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -316,19 +316,19 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             root  = (spec).lower
             paths = pathsIn(root)
             _     = assert(paths.nonEmpty, s"Expected at least one Svg.Path from line mark but got none")
-            // The line path should carry a click handler (INV-023).
+            // The line path should carry a click handler.
             linePath = paths.toSeq.find(p => p.attrs.onClick.isDefined)
             _        = assert(linePath.isDefined, "line path must carry Present onClick when onSelect is configured")
             _     <- runAction(linePath.get.attrs.onClick.get)
             after <- selectRef.get
         yield assert(
-            after.isDefined,
-            s"After clicking the line path, selectRef must be Present but got $after"
+            after == Present(Sale("Jan", Rev(1000.0))),
+            s"After clicking the line path, selectRef must be Present(Sale(Jan, 1000)) but got $after"
         )
     }
 
-    // Test 9 (plan leaf 13): area chart onHover fires (INV-023)
-    "area chart with onHover carries a Present onHover handler that fires (INV-023)" in {
+    // area chart onHover fires
+    "area chart with onHover carries a Present onHover handler that fires" in {
         for
             hoverRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -341,11 +341,14 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             _        = assert(areaPath.isDefined, "area path must carry Present onHover when onHover is configured")
             _     <- runAction(areaPath.get.attrs.onHover.get)
             after <- hoverRef.get
-        yield assert(after.isDefined, s"After hovering area path, hoverRef must be Present but got $after")
+        yield assert(
+            after == Present(Sale("Jan", Rev(1000.0))),
+            s"After hovering area path, hoverRef must be Present(Sale(Jan, 1000)) but got $after"
+        )
     }
 
-    // Test 10 (plan leaf 14): stacked area attaches one handler per segment path (INV-023)
-    "stacked area with onSelect carries Present onClick on each segment path (INV-023)" in {
+    // stacked area attaches one handler per segment path
+    "stacked area with onSelect carries Present onClick on each segment path" in {
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(
@@ -374,8 +377,8 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
         yield ()
     }
 
-    // Test 11 (plan leaf 15): line single series has exactly one handler (INV-023)
-    "line without color split has exactly one interaction-bearing path (INV-023)" in {
+    // line single series has exactly one handler
+    "line without color split has exactly one interaction-bearing path" in {
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -390,7 +393,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
         )
     }
 
-    // ---- Phase-4 tests: highlight (INV-024) ----
+    // ---- highlight ----
 
     /** Count Reactive nodes anywhere under the marks `<g>` (the highlight region wraps the bars in a
       * `Svg.g(Reactive[Svg.G])`). The lowering must create the highlight as a user-ref-driven Reactive and
@@ -405,8 +408,8 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
                     case _              => Chunk.empty
             case _ => Chunk.empty
 
-    // Test 12 (plan leaf 16): highlightSelect drives the active bar's style from the select ref (INV-024)
-    "bar with highlightSelect: after the select ref is set, the active bar carries the select style (INV-024)" in {
+    // highlightSelect drives the active bar's style from the select ref
+    "bar with highlightSelect: after the select ref is set, the active bar carries the select style" in {
         // Default highlight (no custom style) is a dark 2px stroke outline on the active bar only.
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
@@ -425,7 +428,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             _         <- selectRef.set(Present(Sale("Jan", Rev(1000.0))))
             htmlAfter <- HtmlRenderer.render(root, Seq.empty)
         yield
-            // The active bar carries the default select style: a dark 2px stroke (INV-024).
+            // The active bar carries the default select style: a dark 2px stroke.
             assert(
                 htmlAfter.contains("stroke=\"#000000\"") && htmlAfter.contains("stroke-width=\"2px\""),
                 s"Selected bar must carry the select style (stroke=#000000, stroke-width=2px) but got:\n${htmlAfter.take(2000)}"
@@ -438,8 +441,8 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             )
     }
 
-    // Test 13 (plan leaf 17): highlightHover with a custom hoverStyle applies that style value (INV-024)
-    "bar with a custom hoverStyle: the hovered bar carries the custom style value in the output (INV-024)" in {
+    // highlightHover with a custom hoverStyle applies that style value
+    "bar with a custom hoverStyle: the hovered bar carries the custom style value in the output" in {
         // Custom hover style: a purple fill (Style.Color.purple == #a855f7), chosen distinct from the default
         // palette fill (palette(0) == blue == #3b82f6). When the hover ref points at the row, the active bar's
         // emitted fill must become the custom color.
@@ -465,8 +468,8 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
         )
     }
 
-    // Test 14 (plan leaf 18): highlight with no ref configured is a no-op (INV-024)
-    "interaction(_.highlightSelect) with no onSelect configured is a no-op (INV-024)" in {
+    // highlight with no ref configured is a no-op
+    "interaction(_.highlightSelect) with no onSelect configured is a no-op" in {
         val rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
             .interaction(_.highlightSelect) // highlight configured, but no onSelect ref
@@ -475,8 +478,8 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
         val withClick = rects.toSeq.filter(r => r.attrs.onClick.isDefined)
         assert(rects.size == 2, s"Expected 2 rects but got ${rects.size}")
         // No ref means no handlers and no highlight reactive region: bars are plain, no crash.
-        assert(withClick.isEmpty, "no onClick on rects when no onSelect ref is configured (no-op, INV-024)")
-        assert(markRegionReactives(root).isEmpty, "no highlight reactive region without a ref (no-op, INV-024)")
+        assert(withClick.isEmpty, "no onClick on rects when no onSelect ref is configured (no-op)")
+        assert(markRegionReactives(root).isEmpty, "no highlight reactive region without a ref (no-op)")
         // No bar carries the default select stroke (highlight produced nothing).
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield assert(
@@ -485,8 +488,8 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
         )
     }
 
-    // Test 15 (plan leaf 19): highlight is a Reactive region driven by the user ref, with no internal cell (INV-024)
-    "highlight is a Reactive region driven by the user onSelect ref, with no internal SignalRef (INV-024)" in {
+    // highlight is a Reactive region driven by the user ref, with no internal cell
+    "highlight is a Reactive region driven by the user onSelect ref, with no internal SignalRef" in {
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)))
@@ -506,12 +509,12 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             htmlAfter  <- HtmlRenderer.render(root, Seq.empty)
         yield assert(
             !htmlBefore.contains("stroke=\"#000000\"") && htmlAfter.contains("stroke=\"#000000\""),
-            s"Setting the user ref must drive the highlight region directly (INV-024).\nbefore:\n${htmlBefore
+            s"Setting the user ref must drive the highlight region directly.\nbefore:\n${htmlBefore
                     .take(1500)}\nafter:\n${htmlAfter.take(1500)}"
         )
     }
 
-    // ---- Phase 05 interactive-legend tests (INV-026) ----
+    // ---- interactive-legend tests ----
 
     case class CatRow(x: String, y: Double, cat: String) derives CanEqual
 
@@ -527,9 +530,9 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
         root.children.collect:
             case r: Svg.Rect if coordNum(r.svgAttrs.width).contains(12.0) && coordNum(r.svgAttrs.height).contains(12.0) => r
 
-    // ---- Leaf 5 (INV-026): clicking a swatch toggles its label in the hiddenSeries ref ----
+    // ---- clicking a swatch toggles its label in the hiddenSeries ref ----
 
-    "clicking a legend swatch toggles its label in the user hiddenSeries ref (INV-026)" in {
+    "clicking a legend swatch toggles its label in the user hiddenSeries ref" in {
         val rows = Chunk(CatRow("p", 1.0, "catA"), CatRow("q", 2.0, "catB"))
         for
             hidden <- Signal.initRef(Set.empty[String])
@@ -551,9 +554,9 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- Leaf 6 (INV-026): the hidden filter drops the specified series from the marks ----
+    // ---- the hidden filter drops the specified series from the marks ----
 
-    "with hiddenSeries={catA}, the catA bar is dropped from the marks while catB remains (INV-026)" in {
+    "with hiddenSeries={catA}, the catA bar is dropped from the marks while catB remains" in {
         // catA at x-band "p", catB at x-band "q". Hiding catA must drop catA's bar (the one at band "p")
         // while keeping catB's bar. The bar count drops from 2 to 1, and the remaining bar is NOT at band "p".
         val rowsFull = Chunk(CatRow("p", 1.0, "catA"), CatRow("q", 2.0, "catB"))
@@ -582,9 +585,9 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- Leaf 7 (INV-026): the hidden filter applies before color-splitting ----
+    // ---- the hidden filter applies before color-splitting ----
 
-    "with 3 series and catB hidden, mark colors index over the visible set {catA, catC} only (INV-026)" in {
+    "with 3 series and catB hidden, mark colors index over the visible set {catA, catC} only" in {
         val rows = Chunk(
             CatRow("p", 1.0, "catA"),
             CatRow("q", 2.0, "catB"),
@@ -617,9 +620,9 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- Leaf 8 (INV-026): hiding all series leaves the legend visible but the marks empty ----
+    // ---- hiding all series leaves the legend visible but the marks empty ----
 
-    "hiding all series leaves the legend swatches visible but the marks region empty (INV-026)" in {
+    "hiding all series leaves the legend swatches visible but the marks region empty" in {
         val rows = Chunk(CatRow("p", 1.0, "catA"), CatRow("q", 2.0, "catB"))
         for
             hidden <- Signal.initRef(Set("catA", "catB"))
@@ -642,15 +645,14 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- Phase-9 tests: highlight coverage for line/area/text/errorBar (L20 / INV-024) ----
+    // ---- highlight coverage for line/area/text/errorBar ----
 
     // Domain type for errorBar tests (needs low/high accessors).
     case class EB(x: String, y: Double, lo: Double, hi: Double) derives CanEqual
 
-    // Test 16 (L20): line with highlightSelect: the active series path carries stroke="#000000" (INV-024)
-    "line with highlightSelect: after the select ref is set, the active series path carries the select style (L20)" in {
+    // line with highlightSelect: the active series path carries stroke="#000000"
+    "line with highlightSelect: after the select ref is set, the active series path carries the select style" in {
         // 2-row chart: Jan and Feb. Select Jan; the single-series line path must carry the dark stroke.
-        // Before fix: withHighlight is not called in lowerLine, so no stroke appears after selection.
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -678,10 +680,9 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             )
     }
 
-    // Test 17 (L20): area with highlightSelect: the active series path carries stroke="#000000" (INV-024)
-    "area with highlightSelect: after the select ref is set, the active series path carries the select style (L20)" in {
+    // area with highlightSelect: the active series path carries stroke="#000000"
+    "area with highlightSelect: after the select ref is set, the active series path carries the select style" in {
         // 2-row chart: Jan and Feb. Select Jan; the single-series area path must carry the dark stroke.
-        // Before fix: withHighlight is not called in lowerArea, so no stroke appears after selection.
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -710,10 +711,9 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             )
     }
 
-    // Test 18 (L20): text with highlightSelect: the active glyph carries stroke="#000000" (INV-024)
-    "text with highlightSelect: after the select ref is set, the active glyph carries the select style (L20)" in {
+    // text with highlightSelect: the active glyph carries stroke="#000000"
+    "text with highlightSelect: after the select ref is set, the active glyph carries the select style" in {
         // 2-row chart: Jan and Feb. Select Jan; only the Jan glyph must carry the dark stroke.
-        // Before fix: withHighlight is not called in lowerText, so no stroke appears after selection.
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -742,10 +742,9 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             )
     }
 
-    // Test 19 (L20): errorBar with highlightSelect: the active row GROUP carries stroke="#000000" once (INV-024)
-    "errorBar with highlightSelect: after the select ref is set, the active row group carries the select style once (L20)" in {
+    // errorBar with highlightSelect: the active row GROUP carries stroke="#000000" once
+    "errorBar with highlightSelect: after the select ref is set, the active row group carries the select style once" in {
         // 2-row chart: Jan and Feb. Select Jan; the Jan error-bar GROUP must carry the dark stroke exactly once.
-        // Before fix: withHighlight is not called in lowerErrorBar, so no stroke appears after selection.
         // The group wraps the 4 sub-shapes (vLine, capLow, capHigh, marker) so highlight fires once, not 4 times.
         for
             selectRef <- Signal.initRef[Maybe[EB]](Absent)
@@ -778,16 +777,15 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             )
     }
 
-    // ---- Live-path tests: interaction on animated bar/line/area (LIVE-PATH BUG) ----
-    // These tests reproduce the confirmed bug: the animated (live-chart) arms of
-    // marksRegionWithTransitions do NOT attach onClick/onHover handlers or withHighlight,
-    // so a Chart(signal) with onSelect/onHover/highlightSelect silently drops all of it.
-    // Each test is expected to FAIL before the fix and PASS after.
+    // ---- Live-path tests: interaction on animated bar/line/area ----
+    // These tests verify that the animated (live-chart) arms of marksRegionWithTransitions
+    // correctly attach onClick/onHover handlers and withHighlight,
+    // so a Chart(signal) with onSelect/onHover/highlightSelect propagates interaction configuration.
 
     // Test 20: live bar carries onClick handler from onSelect
     "LIVE bar with onSelect: rendered rect carries data-kyo-ev=click (live-path interaction bug)" in {
         // AnimateConfig.default.enabled=true, so Chart(signal)(...) routes through
-        // marksRegionWithTransitions -> lowerBarSimpleWithTransitions. Before the fix that
+        // marksRegionWithTransitions -> lowerBarSimpleWithTransitions. Without this fix that
         // arm never calls buildInteractionAttrs, so no data-kyo-ev attribute is emitted.
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
@@ -805,8 +803,8 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
 
     // Test 21: live bar with highlightSelect: after setting selectRef the active bar carries the select stroke
     "LIVE bar with highlightSelect: after selectRef is set, the active bar carries stroke=#000000 (live-path highlight bug)" in {
-        // Before the fix: withHighlight is not called in lowerBarSimpleWithTransitions, so
-        // no Reactive highlight region is created and the select stroke never appears.
+        // withHighlight must be called in lowerBarSimpleWithTransitions;
+        // a Reactive highlight region must be created so the select stroke appears.
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -830,8 +828,8 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
 
     // Test 22: live line carries onClick handler from onSelect
     "LIVE line with onSelect: rendered path carries data-kyo-ev=click (live-path interaction bug)" in {
-        // Before the fix: lowerLineWithTransitions calls lowerLineSeries without spec/internalHoverRef,
-        // so no interaction attrs are attached to the line path.
+        // lowerLineWithTransitions must call lowerLineSeries with spec/internalHoverRef,
+        // so interaction attrs are attached to the line path.
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -871,8 +869,8 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
 
     // Test 24: live area carries onClick handler from onSelect
     "LIVE area with onSelect: rendered path carries data-kyo-ev=click (live-path interaction bug)" in {
-        // Before the fix: lowerAreaWithTransitions calls lowerArea without internalHoverRef for the
-        // non-stacked path, so no interaction attrs are on the area path element.
+        // lowerAreaWithTransitions must call lowerArea with internalHoverRef for the
+        // non-stacked path, so interaction attrs are on the area path element.
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))

@@ -238,7 +238,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             case Absent     => fail("Expected r to be Present")
     }
 
-    // ---- Test 4b (ISSUE 2): point circles carry a separating outline stroke ----
+    // ---- point circles carry a separating outline stroke ----
     // A filled point with no outline lets overlapping/adjacent bubbles merge into one blob. Each point
     // circle must have BOTH a fill (the per-mark palette color) AND a stroke (the separating outline,
     // the theme background color: white on the light theme) with a positive stroke width.
@@ -441,10 +441,10 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assertClose(xsSorted(2), bandLeft(2), "C band left edge (442.666..)")
     }
 
-    // ---- Test 8b (ISSUE): grouped bar with numeric color encoding honors a Sequential color scale ----
+    // ---- grouped bar with numeric color encoding honors a Sequential color scale ----
     // A non-stacked bar whose color encoding is NUMERIC plus `.legend(_.colorScaleSequential(low, high))`
     // must paint each bar with the interpolated gradient color for its value, the same way lowerPoint and
-    // lowerArea do via resolvePalette. Before the fix, lowerBarGrouped colored bars from the categorical
+    // lowerArea do via resolvePalette. Without this fix, lowerBarGrouped colored bars from the categorical
     // theme/DefaultPalette (blue/orange/...), ignoring the Sequential scale entirely.
 
     "grouped bar with numeric color encoding honors a Sequential color scale (gradient, not categorical)" in {
@@ -485,14 +485,14 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
     }
 
-    // ---- Leaf L1 (GAP-COLOR-GROUPEDBAR): grouped bar with a Categorical colorScale uses the scale colors ----
-    // Before the fix, lowerBarGrouped's `palette` val matched only `Present(_: Sequential)` and routed
+    // ---- grouped bar with a Categorical colorScale uses the scale colors ----
+    // Without this fix, lowerBarGrouped's `palette` val matched only `Present(_: Sequential)` and routed
     // `Present(_: Categorical)` into the `case _` fallback (the by-index basePalette), so bars got
     // DefaultPalette colors (#3b82f6 blue, #f97316 orange, ...) instead of the colorScale colors.
     // The fix changes `Present(_: Sequential) => resolvePalette` to `Present(_) => resolvePalette`, so
-    // both Categorical and Sequential colorScales are honoured. The Absent arm is byte-identical (§0.1).
+    // both Categorical and Sequential colorScales are honoured.
 
-    "grouped bar with categorical colorScale uses the scale colors, not DefaultPalette (GAP-COLOR-GROUPEDBAR)" in {
+    "grouped bar with categorical colorScale uses the scale colors, not DefaultPalette" in {
         // Three rows sharing x="Jan", one per region -- this guarantees dodge=true (multiple distinct
         // colors in the same x-band). Colors are chosen to be unambiguously distinct from the
         // DefaultPalette entries (#3b82f6 blue and #f97316 orange) so an accidental fallback is caught.
@@ -602,7 +602,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // ---- Test 10c (ISSUE 1): multi-mark combo assigns DISTINCT palette colors per mark index ----
+    // ---- multi-mark combo assigns DISTINCT palette colors per mark index ----
     // In a combo chart (bar + line, both without an explicit color encoding) mark 0 (bar) must use
     // palette(0) (blue) and mark 1 (line) must use palette(1) (orange), so the line is visually
     // distinguishable from the bars rather than sharing the same default color.
@@ -660,10 +660,10 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // ---- Test 12 (ISSUE 3 + ISSUE 1): dark-theme axis text colors ----
+    // ---- dark-theme axis text colors ----
     // On the dark theme the SVG background is dark, so axis text must not be the browser default black.
     // The shared x-axis chrome stays the neutral light gray (#e5e7eb). The left y-axis is bound to exactly
-    // one mark (the single bar = mark 0), so ISSUE 1 color-codes its tick labels to that mark's palette
+    // one mark (the single bar = mark 0), so the axis color-codes its tick labels to that mark's palette
     // color (palette(0) = blue), not the neutral gray.
 
     "dark-theme axis text: x-axis stays neutral light gray, single-mark y-axis is color-coded (never black)" in {
@@ -710,7 +710,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
                 case other => fail(s"Expected a left y-axis tick fill but got $other")
     }
 
-    // ---- Test 13 (ISSUE 3): dark-theme background covers the whole SVG canvas ----
+    // ---- dark-theme background covers the whole SVG canvas ----
     // The background rect must span the entire SVG (not only the plot rect) so the axis margins read dark.
 
     "dark-theme background rect covers the whole SVG canvas" in {
@@ -724,7 +724,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assertClose(numOf(bg.svgAttrs.height), 240.0, "background height spans full SVG")
     }
 
-    // ---- Phase 3 tests: point color / symbol / size / curve / area band / stacks / encodings ----
+    // ---- point color / symbol / size / curve / area band / stacks / encodings ----
 
     case class Row(x: String, y: Double, g: String, mag: Double = 1.0, name: String = "")
     given CanEqual[Row, Row] = CanEqual.derived
@@ -798,8 +798,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             case PathCommand.Close => true
             case _                 => false
 
-    // --- Test 1: point color splits (INV-013) ---
-    "point color splits into per-group colors (INV-013)" in {
+    // --- point color splits ---
+    "point color splits into per-group colors" in {
         val rows = Chunk(Row("a", 10.0, "g1"), Row("b", 20.0, "g2"))
         val spec = Chart(rows)(point(x = _.x, y = _.y, color = _.g))
         val root = (spec).lower
@@ -809,8 +809,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(fills.size == 2, s"Expected 2 distinct fill colors for 2 groups, got $fills")
     }
 
-    // --- Test 2: CatKey identity (Int vs String) (INV-013, INV-002) ---
-    "point color uses CatKey identity: Int 1 vs String '1' are distinct groups (INV-013, INV-002)" in {
+    // --- CatKey identity (Int vs String) ---
+    "point color uses CatKey identity: Int 1 vs String '1' are distinct groups" in {
         case class RawRow(x: String, y: Double, grp: Any)
         given CanEqual[RawRow, RawRow] = CanEqual.derived
         val rows                       = Chunk(RawRow("a", 10.0, 1: Int), RawRow("b", 20.0, "1"))
@@ -821,8 +821,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(fills.size == 2, s"Int 1 and String '1' must be distinct color groups, got $fills")
     }
 
-    // --- Test 3: no color keeps defaultColor (INV-013) ---
-    "point without color encoding: all circles have the same default fill (INV-013)" in {
+    // --- no color keeps defaultColor ---
+    "point without color encoding: all circles have the same default fill" in {
         val rows = Chunk(Row("a", 10.0, "g1"), Row("b", 20.0, "g2"))
         val spec = Chart(rows)(point(x = _.x, y = _.y))
         val root = (spec).lower
@@ -832,8 +832,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(fills.size == 1, s"All circles without color encoding should share one fill, got $fills")
     }
 
-    // --- Test 4: symbol=square renders Svg.Path not Svg.Circle (INV-014) ---
-    "symbol=square renders Svg.Path elements, not circles (INV-014)" in {
+    // --- symbol=square renders Svg.Path not Svg.Circle ---
+    "symbol=square renders Svg.Path elements, not circles" in {
         val rows = Chunk(Row("a", 10.0, "g1"), Row("b", 20.0, "g2"))
         val spec = Chart(rows)(point(x = _.x, y = _.y, symbol = _ => Symbol.square))
         val root = (spec).lower
@@ -843,8 +843,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(ps.nonEmpty, s"symbol=square must emit Svg.Path elements")
     }
 
-    // --- Test 5: each Symbol case (INV-014) ---
-    "triangle, diamond, cross each render their documented glyph (INV-014)" in {
+    // --- each Symbol case ---
+    "triangle, diamond, cross each render their documented glyph" in {
         val rows = Chunk(Row("a", 10.0, "g"))
         // Triangle and diamond should produce Svg.Path.
         for sym <- Seq(Symbol.triangle, Symbol.diamond) do
@@ -866,8 +866,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(ls.nonEmpty, "Symbol.cross must emit Svg.Line strokes")
     }
 
-    // --- Test 6: size is sqrt-area scaled (INV-015) ---
-    "point size is sqrt-area scaled: bigger magnitude produces bigger radius (INV-015)" in {
+    // --- size is sqrt-area scaled ---
+    "point size is sqrt-area scaled: bigger magnitude produces bigger radius" in {
         case class Bubble(x: Double, y: Double, mag: Double)
         given CanEqual[Bubble, Bubble] = CanEqual.derived
         val rows                       = Chunk(Bubble(1.0, 1.0, 1.0), Bubble(2.0, 1.0, 100.0))
@@ -884,8 +884,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(math.abs(rs(1) - 20.0) < 1e-6, s"r(mag=100) should be rMax=20.0, got ${rs(1)}")
     }
 
-    // --- Test 7: equal magnitudes yield rMin, no div-by-zero (INV-015) ---
-    "equal magnitudes yield rMin, no div-by-zero (INV-015)" in {
+    // --- equal magnitudes yield rMin, no div-by-zero ---
+    "equal magnitudes yield rMin, no div-by-zero" in {
         case class Bubble(x: Double, y: Double, mag: Double)
         given CanEqual[Bubble, Bubble] = CanEqual.derived
         val rows                       = Chunk(Bubble(1.0, 1.0, 5.0), Bubble(2.0, 1.0, 5.0))
@@ -898,8 +898,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(badRadii.isEmpty, s"All circles with equal magnitudes should have rMin=2.0; bad: ${badRadii.map(_.svgAttrs.r)}")
     }
 
-    // --- Test 8: size legend is emitted (INV-015) ---
-    "size legend is emitted when size encoding is set (INV-015)" in {
+    // --- size legend is emitted ---
+    "size legend is emitted when size encoding is set" in {
         case class Bubble(x: Double, y: Double, mag: Double)
         given CanEqual[Bubble, Bubble] = CanEqual.derived
         val rows                       = Chunk(Bubble(1.0, 1.0, 1.0), Bubble(2.0, 1.0, 100.0))
@@ -914,18 +914,18 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(allCircles.nonEmpty, "Size legend should emit circle elements")
     }
 
-    // --- Test 9: size wins over sizePx (INV-015, Q-005) ---
-    "size wins over sizePx when both supplied: Mark.Point.size is Present, sizePx is Absent (INV-015)" in {
+    // --- size wins over sizePx ---
+    "size wins over sizePx when both supplied: Mark.Point.size is Present, sizePx is Absent" in {
         case class Bubble(x: Double, y: Double, mag: Double)
         given CanEqual[Bubble, Bubble] = CanEqual.derived
         val m                          = point[Bubble, Double, Double](x = _.x, y = _.y, size = _.mag, sizePx = _ => 8.0)
         val pm                         = m.asInstanceOf[Mark.Point[Bubble, Double, Double]]
         assert(pm.size.isDefined, "size encoding must be Present when both size and sizePx supplied")
-        assert(!pm.sizePx.isDefined, "sizePx must be Absent when size wins per Q-005")
+        assert(!pm.sizePx.isDefined, "sizePx must be Absent when size wins")
     }
 
-    // --- Test 10: sizePx alone uses raw radius (INV-015) ---
-    "sizePx alone uses raw pixel radius (INV-015)" in {
+    // --- sizePx alone uses raw radius ---
+    "sizePx alone uses raw pixel radius" in {
         case class Bubble(x: Double, y: Double)
         given CanEqual[Bubble, Bubble] = CanEqual.derived
         val rows                       = Chunk(Bubble(1.0, 1.0), Bubble(2.0, 2.0))
@@ -945,8 +945,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     case class DRowMaybe(x: Double, y: Maybe[Double])
     given CanEqual[DRowMaybe, DRowMaybe] = CanEqual.derived
 
-    // --- Test 11: curve=stepAfter emits H/V staircase (INV-016) ---
-    "curve=stepAfter line emits HLineTo and VLineTo commands (INV-016)" in {
+    // --- curve=stepAfter emits H/V staircase ---
+    "curve=stepAfter line emits HLineTo and VLineTo commands" in {
         val rows = Chunk(DRow(0.0, 0.0), DRow(1.0, 2.0), DRow(2.0, 1.0))
         val spec = Chart(rows)(line(x = _.x, y = _.y, curve = Curve.stepAfter))
         val root = (spec).lower
@@ -958,8 +958,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(hasV, "stepAfter line must emit VLineTo commands")
     }
 
-    // --- Test 12: curve=monotone emits cubics (INV-016) ---
-    "curve=monotone line emits CubicTo commands (INV-016)" in {
+    // --- curve=monotone emits cubics ---
+    "curve=monotone line emits CubicTo commands" in {
         val rows = Chunk(DRow(0.0, 0.0), DRow(1.0, 2.0), DRow(2.0, 1.0))
         val spec = Chart(rows)(line(x = _.x, y = _.y, curve = Curve.monotone))
         val root = (spec).lower
@@ -968,8 +968,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(ps.toSeq.exists(hasCubicCmd), "monotone line must emit CubicTo commands")
     }
 
-    // --- Test 13: basis and catmullRom emit cubics (INV-016) ---
-    "curve=basis and catmullRom emit CubicTo commands (INV-016)" in {
+    // --- basis and catmullRom emit cubics ---
+    "curve=basis and catmullRom emit CubicTo commands" in {
         val rows4   = Chunk(DRow(0.0, 0.0), DRow(1.0, 2.0), DRow(2.0, 0.0), DRow(3.0, 2.0))
         val basSpec = Chart(rows4)(line(x = _.x, y = _.y, curve = Curve.basis))
         val catSpec = Chart(rows4)(line(x = _.x, y = _.y, curve = Curve.catmullRom))
@@ -979,8 +979,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(pathsIn(catRoot).toSeq.exists(hasCubicCmd), "catmullRom line must emit CubicTo commands")
     }
 
-    // --- Test 14: curve applies per-segment, not across gaps (INV-016) ---
-    "curve=monotone with gap: path has two MoveTo segments (INV-016)" in {
+    // --- curve applies per-segment, not across gaps ---
+    "curve=monotone with gap: path has two MoveTo segments" in {
         val rows = Chunk(DRowMaybe(0.0, Present(0.0)), DRowMaybe(1.0, Absent), DRowMaybe(2.0, Present(1.0)))
         val spec = Chart(rows)(line(x = _.x, y = _.y, curve = Curve.monotone))
         val root = (spec).lower
@@ -993,8 +993,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(moveTos.size >= 2, s"Gap must produce at least 2 MoveTo commands, got ${moveTos.size}")
     }
 
-    // --- Test 15: < 2 points degrades to linear (INV-016) ---
-    "curve=basis with 1 point: no cubic emitted (INV-016)" in {
+    // --- fewer than 2 points degrades to linear ---
+    "curve=basis with 1 point: no cubic emitted" in {
         val rows = Chunk(DRow(1.0, 2.0))
         val spec = Chart(rows)(line(x = _.x, y = _.y, curve = Curve.basis))
         val root = (spec).lower
@@ -1002,8 +1002,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(!ps.toSeq.exists(hasCubicCmd), "1-point line must not emit cubics")
     }
 
-    // --- Test 16: area band ribbon (INV-017) ---
-    "area y0/y1 band renders a non-empty closed ribbon (INV-017)" in {
+    // --- area band ribbon ---
+    "area y0/y1 band renders a non-empty closed ribbon" in {
         case class Band(t: Double, lo: Double, hi: Double)
         given CanEqual[Band, Band] = CanEqual.derived
         val rows                   = Chunk(Band(0.0, 0.0, 2.0), Band(1.0, 0.5, 2.5))
@@ -1014,8 +1014,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(ps.size == 1, s"area y0/y1 band must emit exactly 1 closed ribbon path but got ${ps.size}")
     }
 
-    // --- Test 17: invalid area combo emits empty, siblings render (INV-017) ---
-    "area with only y1 (no y0, no y): mark emits empty, bar sibling renders (INV-017)" in {
+    // --- invalid area combo emits empty, siblings render ---
+    "area with only y1 (no y0, no y): mark emits empty, bar sibling renders" in {
         case class Datum(x: String, y1: Double, y: Double)
         given CanEqual[Datum, Datum] = CanEqual.derived
         val rows                     = Chunk(Datum("a", 2.0, 1.0), Datum("b", 3.0, 2.0))
@@ -1028,8 +1028,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(pathsIn(root).isEmpty, "area with only y1 (invalid combo) must emit no path elements")
     }
 
-    // --- Test 18: single y wins over y+y0/y1 (INV-017) ---
-    "area with y and y0/y1 both supplied: single y wins (INV-017)" in {
+    // --- single y wins over y+y0/y1 ---
+    "area with y and y0/y1 both supplied: single y wins" in {
         case class Band(t: Double, v: Double, lo: Double, hi: Double)
         given CanEqual[Band, Band] = CanEqual.derived
         val rows                   = Chunk(Band(0.0, 1.0, 0.0, 2.0), Band(1.0, 1.5, 0.5, 2.5))
@@ -1048,8 +1048,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
     }
 
-    // --- Test 19: curve applies to BOTH area band edges (INV-016, INV-017) ---
-    "area y0/y1 band with curve=monotone emits cubics on both edges (INV-016, INV-017)" in {
+    // --- curve applies to BOTH area band edges ---
+    "area y0/y1 band with curve=monotone emits cubics on both edges" in {
         case class Band(t: Double, lo: Double, hi: Double)
         given CanEqual[Band, Band] = CanEqual.derived
         val rows                   = Chunk(Band(0.0, 0.0, 2.0), Band(1.0, 0.5, 2.5), Band(2.0, 0.2, 1.8), Band(3.0, 0.6, 2.2))
@@ -1068,8 +1068,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
     }
 
-    // --- Test 20: stacked bar with negative value: non-negative rect height (INV-018) ---
-    "stacked bar with negative value has non-negative rect height (INV-018)" in {
+    // --- stacked bar with negative value: non-negative rect height ---
+    "stacked bar with negative value has non-negative rect height" in {
         val rows = Chunk(Row("a", 10.0, "pos"), Row("a", -5.0, "neg"))
         val spec = Chart(rows)(bar(x = _.x, y = _.y, stack = by(_.g)))
         val root = (spec).lower
@@ -1082,8 +1082,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(negH.isEmpty, s"All rect heights must be non-negative; negatives: ${negH.map(_.svgAttrs.height)}")
     }
 
-    // --- Test 21: negative stack does not clip positive segments (INV-018) ---
-    "stacked bar with mixed signs: positive and negative stacks both render (INV-018)" in {
+    // --- negative stack does not clip positive segments ---
+    "stacked bar with mixed signs: positive and negative stacks both render" in {
         val rows = Chunk(Row("a", 10.0, "pos"), Row("a", -5.0, "neg"))
         val spec = Chart(rows)(bar(x = _.x, y = _.y, stack = by(_.g)))
         val root = (spec).lower
@@ -1092,8 +1092,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(rs.size >= 2, s"Expected rects for both positive and negative groups, got ${rs.size}")
     }
 
-    // --- Test 22: all-positive stack renders rects (INV-018 regression) ---
-    "all-positive stacked bar renders non-empty rects (INV-018 no-regression)" in {
+    // --- all-positive stack renders rects ---
+    "all-positive stacked bar renders non-empty rects" in {
         val rows = Chunk(Row("a", 10.0, "g1"), Row("a", 5.0, "g2"))
         val spec = Chart(rows)(bar(x = _.x, y = _.y, stack = by(_.g)))
         val root = (spec).lower
@@ -1106,8 +1106,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(badH.isEmpty, s"All-positive stack rects must have positive height; bad: ${badH.map(_.svgAttrs.height)}")
     }
 
-    // --- Test 23: opacity encoding (INV-019) ---
-    "opacity encoding: bar fills are clamped to [0,1] fill-opacity (INV-019)" in {
+    // --- opacity encoding ---
+    "opacity encoding: bar fills are clamped to [0,1] fill-opacity" in {
         val rows = Chunk(Row("a", 10.0, "g", 1.0), Row("b", 20.0, "g", 1.0))
         val spec = Chart(rows)(bar(x = _.x, y = _.y, opacity = r => if r.x == "a" then 0.5 else 1.7))
         val root = (spec).lower
@@ -1121,8 +1121,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(opacities.exists(v => math.abs(v - 1.0) < 1e-9), "Expected fillOpacity clamped to 1.0 for out-of-range value")
     }
 
-    // --- Test 24: label encoding (INV-019) ---
-    "label encoding: bar emits per-datum Svg.Text elements (INV-019)" in {
+    // --- label encoding ---
+    "label encoding: bar emits per-datum Svg.Text elements" in {
         val rows = Chunk(Row("a", 10.0, "g"), Row("b", 20.0, "g"))
         val spec = Chart(rows)(bar(x = _.x, y = _.y, label = r => r.y.toString))
         val root = (spec).lower
@@ -1131,8 +1131,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(ts.size >= 2, s"Expected at least 2 text labels for 2 bars, got ${ts.size}")
     }
 
-    // --- Test 25: tooltip encoding (INV-019) ---
-    "tooltip encoding: point emits title children on circles (INV-019)" in {
+    // --- tooltip encoding ---
+    "tooltip encoding: point emits title children on circles" in {
         val rows = Chunk(Row("a", 10.0, "g", 1.0, "alpha"), Row("b", 20.0, "g", 1.0, "beta"))
         val spec = Chart(rows)(point(x = _.x, y = _.y, tooltip = _.name))
         val root = (spec).lower
@@ -1145,8 +1145,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(withTitle.nonEmpty, "tooltip encoding must attach Svg.Title children to circles")
     }
 
-    // --- Test 26: existing call sites compile and render unchanged (INV-019 backward compat) ---
-    "point(x,y) and bar(x,y) without new encodings still produce circles and rects (INV-019)" in {
+    // --- existing call sites compile and render unchanged ---
+    "point(x,y) and bar(x,y) without new encodings still produce circles and rects" in {
         val rows  = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val pSpec = Chart(rows)(point(x = _.month, y = _.revenue))
         val bSpec = Chart(rows)(bar(x = _.month, y = _.revenue))
@@ -1156,10 +1156,10 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(rectsIn(bRoot).nonEmpty, "bar without new encodings must still emit rects")
     }
 
-    // ---- Phase-4 tests: text mark (INV-021) ----
+    // ---- text mark ----
 
-    // Test 27 (plan leaf 1): text mark renders one Svg.Text per row at the data coordinate (INV-021)
-    "text mark renders one Svg.Text per row at the data coordinate (INV-021)" in {
+    // text mark renders one Svg.Text per row at the data coordinate
+    "text mark renders one Svg.Text per row at the data coordinate" in {
         case class Pt(x: Int, y: Double, note: String)
         val rows = Chunk(Pt(1, 5.0, "peak"))
         val spec = Chart(rows)(text(x = _.x, y = _.y, label = _.note))
@@ -1182,8 +1182,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
     }
 
-    // Test 28 (plan leaf 2): text anchor maps to Svg.TextAnchor (INV-021)
-    "text anchor maps to text-anchor attribute (INV-021)" in {
+    // text anchor maps to Svg.TextAnchor
+    "text anchor maps to text-anchor attribute" in {
         case class Pt(x: Int, y: Double)
         val rows = Chunk(Pt(1, 5.0))
         val spec = Chart(rows)(text(x = _.x, y = _.y, label = _ => "lbl", anchor = TextAnchor.End))
@@ -1198,8 +1198,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // Test 29 (plan leaf 4): text with gap y emits no text for that row (INV-021)
-    "text with gap y emits no Svg.Text for the gap row (INV-021)" in {
+    // text with gap y emits no text for that row
+    "text with gap y emits no Svg.Text for the gap row" in {
         case class Pt(x: Int, y: Maybe[Double])
         val rows = Chunk(Pt(1, Present(5.0)), Pt(2, Absent))
         // EncodingMaybe from gap accessor
@@ -1221,8 +1221,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(ts.size == 1, s"Expected exactly 1 Svg.Text (gap row skipped), got ${ts.size}")
     }
 
-    // Test 30 (plan leaf 20): text color/opacity encodings apply (INV-021)
-    "text color and opacity encodings apply (INV-021)" in {
+    // text color/opacity encodings apply
+    "text color and opacity encodings apply" in {
         case class Pt(x: Int, y: Double, g: String)
         val rows = Chunk(Pt(1, 5.0, "a"), Pt(2, 3.0, "b"))
         val spec = Chart(rows)(text(x = _.x, y = _.y, label = _.g, color = _.g, opacity = _ => 0.5))
@@ -1239,10 +1239,10 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
     }
 
-    // ---- Phase-4 tests: errorBar mark (INV-022) ----
+    // ---- errorBar mark ----
 
-    // Test 31 (plan leaf 5): errorBar renders vertical line, two caps, center marker (INV-022)
-    "errorBar renders a vertical line, two cap lines, and a center circle per row (INV-022)" in {
+    // errorBar renders vertical line, two caps, center marker
+    "errorBar renders a vertical line, two cap lines, and a center circle per row" in {
         case class EbRow(x: String, mean: Double, lo: Double, hi: Double)
         val rows = Chunk(EbRow("a", 6.0, 4.0, 8.0))
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi, capWidth = 6.0))
@@ -1256,8 +1256,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(cs.nonEmpty, "Expected at least 1 Svg.Circle as center marker")
     }
 
-    // Test 32 (plan leaf 6): errorBar emits no url(# / marker (INV-022)
-    "errorBar emits no url(# or <marker in the HTML output (INV-022)" in {
+    // errorBar emits no url(# or marker
+    "errorBar emits no url(# or <marker in the HTML output" in {
         case class EbRow(x: String, mean: Double, lo: Double, hi: Double)
         val rows = Chunk(EbRow("a", 6.0, 4.0, 8.0))
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi))
@@ -1270,8 +1270,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // Test 33 (plan leaf 7): errorBar low/high fold into y-extent (INV-022)
-    "errorBar low/high fold into the y-extent (INV-022)" in {
+    // errorBar low/high fold into y-extent
+    "errorBar low/high fold into the y-extent" in {
         case class EbRow(x: String, mean: Double, lo: Double, hi: Double)
         val rows = Chunk(EbRow("a", 6.0, 4.0, 8.0))
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi))
@@ -1283,8 +1283,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(ls.nonEmpty, "errorBar must emit lines when low/high fold correctly into y-extent")
     }
 
-    // Test 34 (plan leaf 8): errorBar gap row is skipped (INV-022)
-    "errorBar gap row is skipped when domain values are absent (INV-022)" in {
+    // errorBar gap row is skipped
+    "errorBar gap row is skipped when domain values are absent" in {
         case class EbRow(x: String, mean: Double, lo: Double, hi: Double)
         // Two rows: first valid, second has non-plottable category x that still provides domain.
         // Simplest gap test: provide a row with x that produces no domain if Plottable can't convert.
@@ -1301,8 +1301,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(ls2.size == 6, s"2 rows must produce 6 lines but got ${ls2.size}")
     }
 
-    // Test 35 (plan leaf 21): errorBar color applies to all parts (INV-022)
-    "errorBar color encoding applies the same stroke to line, caps, and marker (INV-022)" in {
+    // errorBar color applies to all parts
+    "errorBar color encoding applies the same stroke to line, caps, and marker" in {
         case class EbRow(x: String, mean: Double, lo: Double, hi: Double, g: String)
         val rows = Chunk(EbRow("a", 6.0, 4.0, 8.0, "grp"))
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi, color = _.g))
@@ -1319,8 +1319,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(withFill.nonEmpty, "Center marker circle must have fill set")
     }
 
-    // L21-A: errorBar on a Band x must be centered on the band, not at the left edge (GAP-ERRORBAR-BANDCENTER).
-    "errorBar on a Band x is centered (x1 == band-left + bandwidth/2), not at the left edge (L21)" in {
+    // errorBar on a Band x must be centered on the band, not at the left edge.
+    "errorBar on a Band x is centered (x1 == band-left + bandwidth/2), not at the left edge" in {
         // Band: n=2 ["a","b"], slot=280, bandW=252, pad=14.
         // apply("a") = 74.0 (left edge); center = 74.0 + 126.0 = 200.0.
         case class EbRow(cat: String, mean: Double, lo: Double, hi: Double)
@@ -1355,8 +1355,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assertClose(dbl(cs(0).svgAttrs.cx, "marker cx"), center, "marker cx for 'a'")
     }
 
-    // L21-B: continuous-x errorBar x position is unchanged (bandwidth == 0, no-op co-pin).
-    "errorBar on a continuous x is unaffected by the band-centering fix (bandwidth==0 co-pin) (L21)" in {
+    // continuous-x errorBar x position is unchanged (bandwidth == 0, no-op).
+    "errorBar on a continuous x is unaffected by the band-centering (bandwidth==0)" in {
         // 2 rows at x=2.0 and x=8.0. Linear x scale [0,10] -> [60,620].
         // pixel(2.0) = 60 + (2/10)*560 = 172.0; pixel(8.0) = 60 + (8/10)*560 = 508.0.
         case class EbRow(x: Double, mean: Double, lo: Double, hi: Double)
@@ -1380,8 +1380,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assertClose(dbl(ls(3).svgAttrs.x2, "vLine x2 x8"), px8, "vLine x2 continuous x=8")
     }
 
-    // Test 36 (plan leaf 3): text contributes to the extent fold (INV-021)
-    "text mark contributes its data coordinates to the extent fold (INV-021)" in {
+    // text contributes to the extent fold
+    "text mark contributes its data coordinates to the extent fold" in {
         // A chart whose only mark is text at y=100. The y-axis must include 100.
         case class Pt(x: Int, y: Double)
         val rows = Chunk(Pt(1, 100.0))
@@ -1394,7 +1394,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(ts.nonEmpty, "text mark must emit Svg.Text elements (extent fold required for scale)")
     }
 
-    // ================= Phase 05: legend position, color scales, interactivity =================
+    // ================= legend position, color scales, interactivity =================
 
     private def coordNum(c: Maybe[Coord]): Maybe[Double] = c match
         case Present(Coord.Num(v)) => Present(v)
@@ -1437,9 +1437,9 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     case class CatRow(x: String, y: Double, cat: String) derives CanEqual
     case class VRow(v: Double) derives CanEqual
 
-    // ---- Leaf 1 (INV-025): legend.right places swatches in the right margin ----
+    // ---- legend.right places swatches in the right margin ----
 
-    "legend.right places the legend swatches in the right margin (INV-025)" in {
+    "legend.right places the legend swatches in the right margin" in {
         val rows = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"), CatRow("r", 3.0, "c"))
         val spec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
             .legend(_.right)
@@ -1453,9 +1453,9 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(xs.forall(_ > 500.0), s"Expected all right-legend swatches in the right margin (x>500) but xs were: $xs")
     }
 
-    // ---- Leaf 2 (INV-025): legend.bottom places swatches below the plot baseline ----
+    // ---- legend.bottom places swatches below the plot baseline ----
 
-    "legend.bottom places the legend swatches below the plot baseline (INV-025)" in {
+    "legend.bottom places the legend swatches below the plot baseline" in {
         val rows = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"))
         val spec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
             .legend(_.bottom)
@@ -1470,9 +1470,9 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(ys.forall(_ >= 420.0), s"Expected all bottom-legend swatch y >= baseline 420 but ys were: $ys")
     }
 
-    // ---- Leaf 3 (INV-025): legend.left reserves the left column and stacks items vertically ----
+    // ---- legend.left reserves the left column and stacks items vertically ----
 
-    "legend.left reserves the left margin and stacks swatches vertically (INV-025)" in {
+    "legend.left reserves the left margin and stacks swatches vertically" in {
         val rows = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"), CatRow("r", 3.0, "c"))
         val spec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
             .legend(_.left)
@@ -1486,15 +1486,15 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             ys.sliding(2).forall { case Seq(a, b) => b > a },
             s"Expected strictly increasing swatch ys (vertical stack) but ys were: $ys"
         )
-        // The marks now start to the right of the reserved left column: the leftmost bar x exceeds the default
+        // The marks start to the right of the reserved left column: the leftmost bar x exceeds the default
         // MarginLeft (60) by the reserved LegendColumnW (80), so the plot starts at x >= 140.
         val barXs = rectsIn(root).map(r => coordNum(r.svgAttrs.x).getOrElse(0.0))
         assert(barXs.forall(_ >= 140.0), s"Expected bars to start right of the reserved left column (x>=140) but xs were: $barXs")
     }
 
-    // ---- Leaf 4 (INV-025): line series gets a line-stroke swatch; bar series gets a rect swatch ----
+    // ---- line series gets a line-stroke swatch; bar series gets a rect swatch ----
 
-    "a line series with a color encoding gets a line-stroke legend swatch, not a rect (INV-025)" in {
+    "a line series with a color encoding gets a line-stroke legend swatch, not a rect" in {
         case class LRow(x: Double, y: Double, series: String) derives CanEqual
         val rows = Chunk(LRow(0.0, 1.0, "s1"), LRow(1.0, 2.0, "s1"), LRow(0.0, 3.0, "s2"), LRow(1.0, 4.0, "s2"))
         val spec = Chart(rows)(line(x = _.x, y = _.y, color = _.series))
@@ -1513,7 +1513,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(shortStrokes.size == 2, s"Expected 2 line-stroke swatches (12px wide) for 2 series but got ${shortStrokes.size}")
     }
 
-    "a bar series with a color encoding gets a 12x12 rect legend swatch (INV-025)" in {
+    "a bar series with a color encoding gets a 12x12 rect legend swatch" in {
         val rows     = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"))
         val spec     = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
         val root     = (spec).lower
@@ -1525,9 +1525,9 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
     }
 
-    // ---- Leaf 13 (INV-028): sequential color maps low/high to interpolated colors ----
+    // ---- sequential color maps low/high to interpolated colors ----
 
-    "colorScaleSequential maps a low-magnitude row blue-ish and a high-magnitude row red-ish (INV-028)" in {
+    "colorScaleSequential maps a low-magnitude row blue-ish and a high-magnitude row red-ish" in {
         val rows = Chunk(VRow(0.1), VRow(0.9))
         val spec = Chart(rows)(point(x = _ => 0.0, y = _.v, color = _.v))
             .legend(_.colorScaleSequential(blueHi, redHi))
@@ -1543,9 +1543,9 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(rComponents.max - rComponents.min > 100, s"Expected a wide R-component spread blue->red but got: $rComponents")
     }
 
-    // ---- Leaf 14 (INV-028): degenerate domain (all-equal) yields a single color, no crash ----
+    // ---- degenerate domain (all-equal) yields a single color, no crash ----
 
-    "colorScaleSequential with all-equal values produces a single color and does not crash (INV-028)" in {
+    "colorScaleSequential with all-equal values produces a single color and does not crash" in {
         val rows = Chunk(VRow(5.0), VRow(5.0))
         val spec = Chart(rows)(point(x = _ => 0.0, y = _.v, color = _.v))
             .legend(_.colorScaleSequential(blueHi, redHi))
@@ -1562,9 +1562,9 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
     }
 
-    // ---- Leaf 15 (INV-028): sequential MARK fills are concrete colors, not url(#...) ----
+    // ---- sequential MARK fills are concrete colors, not url(#...) ----
 
-    "sequential mark fills are concrete colors, never url(#...) references (INV-028)" in {
+    "sequential mark fills are concrete colors, never url(#...) references" in {
         val rows = Chunk(VRow(0.1), VRow(0.5), VRow(0.9))
         val spec = Chart(rows)(point(x = _ => 0.0, y = _.v, color = _.v))
             .legend(_.hidden.colorScaleSequential(blueHi, redHi))
@@ -1573,9 +1573,9 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         yield assert(!html.contains("url(#"), s"sequential mark fills must be concrete colors, not url(#...):\n$html")
     }
 
-    // ---- Leaf 16 (INV-028, INV-003): sequential legend emits exactly one gradient under a per-chart id ----
+    // ---- sequential legend emits exactly one gradient under a per-chart id ----
 
-    "sequential legend emits exactly one linearGradient def with a kyo-chart- id (INV-028, INV-003)" in {
+    "sequential legend emits exactly one linearGradient def with a kyo-chart- id" in {
         val rows = Chunk(VRow(0.1), VRow(0.9))
         val spec = Chart(rows)(point(x = _ => 0.0, y = _.v, color = _.v))
             .legend(_.colorScaleSequential(blueHi, redHi))
@@ -1593,9 +1593,9 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- Leaf 17 / WARN-1 same-hash: two STRUCTURALLY-IDENTICAL charts get distinct gradient ids ----
+    // ---- two STRUCTURALLY-IDENTICAL charts get distinct gradient ids ----
 
-    "two structurally-identical sequential charts in one fragment get distinct gradient ids (INV-028, INV-003, WARN-1)" in {
+    "two structurally-identical sequential charts in one fragment get distinct gradient ids" in {
         // The two charts are lowered from the SAME spec, so spec1.## == spec2.## by construction (it is the
         // identical spec value): the structural-hash collision is forced, not dodged. The per-instance counter
         // must still give each lowered chart a distinct gradient def id, and within each chart the swatch fill
@@ -1629,9 +1629,9 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- Leaf 21 (INV-013, INV-025): point fills agree with their legend swatch colors ----
+    // ---- point fills agree with their legend swatch colors ----
 
-    "point fills match their categorical legend swatch colors (INV-013, INV-025)" in {
+    "point fills match their categorical legend swatch colors" in {
         val rows        = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"), CatRow("r", 3.0, "c"))
         val spec        = Chart(rows)(point(x = _ => 0.0, y = _.y, color = _.cat))
         val root        = (spec).lower
@@ -1649,9 +1649,9 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
     }
 
-    // ---- Leaf 22 (INV-002, INV-025): toString-colliding enum cases produce two distinct swatches ----
+    // ---- toString-colliding enum cases produce two distinct swatches ----
 
-    "two enum cases with an identical toString produce two distinct swatches (INV-002, INV-025)" in {
+    "two enum cases with an identical toString produce two distinct swatches" in {
         enum Tier derives CanEqual, Plottable:
             case Gold, Silver
             override def toString: String = "T"
@@ -1667,9 +1667,9 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(fills.size == 2, s"Expected 2 distinct swatch colors but got $fills")
     }
 
-    // ---- Leaf 23 (INV-003, INV-028): a plain bar chart emits no defs / linearGradient ----
+    // ---- a plain bar chart emits no defs or linearGradient ----
 
-    "a plain bar chart with no sequential color scale emits no defs or linearGradient (INV-003, INV-028)" in {
+    "a plain bar chart with no sequential color scale emits no defs or linearGradient" in {
         val rows = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"))
         val spec = Chart(rows)(bar(x = _.x, y = _.y))
         val root = (spec).lower
@@ -1680,9 +1680,9 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- Leaf 24 (INV-025): legend(_.hidden) suppresses the whole legend region ----
+    // ---- legend(_.hidden) suppresses the whole legend region ----
 
-    "legend(_.hidden) suppresses the legend swatches and labels (INV-025)" in {
+    "legend(_.hidden) suppresses the legend swatches and labels" in {
         val rows      = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"))
         val shownSpec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
         val hiddenSpec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
@@ -1705,11 +1705,10 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
     }
 
-    // ---- Phase 6 (INV-032): theme color overrides ----
+    // ---- theme color overrides ----
 
     private def themeRows: Chunk[Sale] = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
 
-    // Leaf 10
     "theme.background(c) sets the background rect fill to the override color" in {
         val custom = Style.Color.rgb(10, 20, 30)
         val spec   = Chart(themeRows)(bar(x = _.month, y = _.revenue)).theme(_.background(custom)).yAxis(_.grid)
@@ -1718,7 +1717,6 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(fillColorOf(bg.svgAttrs.fill) == custom, s"Expected background fill $custom but got ${fillColorOf(bg.svgAttrs.fill)}")
     }
 
-    // Leaf 11
     "theme.axisColor(c) sets the axis line / tick mark stroke color" in {
         val custom = Style.Color.rgb(200, 0, 0)
         val spec   = Chart(themeRows)(bar(x = _.month, y = _.revenue)).theme(_.axisColor(custom))
@@ -1732,7 +1730,6 @@ class ChartLowerTest extends kyo.test.Test[Any]:
                 case other                       => fail(s"Expected an axis stroke color but got $other")
     }
 
-    // Leaf 12
     "theme.gridColor(c) sets the gridline stroke color" in {
         val custom    = Style.Color.rgb(0, 200, 0)
         val spec      = Chart(themeRows)(bar(x = _.month, y = _.revenue)).theme(_.gridColor(custom)).yAxis(_.grid)
@@ -1745,7 +1742,6 @@ class ChartLowerTest extends kyo.test.Test[Any]:
                 case other                       => fail(s"Expected a gridline stroke color but got $other")
     }
 
-    // Leaf 13
     "an unset theme produces output identical to the explicit default theme (no regression)" in {
         val rows      = themeRows
         val unset     = Chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.grid)
@@ -1759,9 +1755,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- Phase-8 theme-palette consistency tests ----
+    // ---- theme-palette consistency tests ----
 
-    // Leaf 15: grouped bar under a custom theme.palette uses theme colors, not DefaultPalette
     "grouped bar uses theme.palette colors, not DefaultPalette, under a custom theme" in {
         // Two color groups via region encoding: NA (idx=0) and EU (idx=1).
         // Custom palette: first color #cc00cc (purple-ish), second color #00cccc (teal).
@@ -1780,24 +1775,23 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         yield
             assert(
                 html.contains("fill=\"#cc00cc\""),
-                s"leaf 15: expected custom first-group fill #cc00cc (purple):\n$html"
+                s"expected custom first-group fill #cc00cc (purple):\n$html"
             )
             assert(
                 html.contains("fill=\"#00cccc\""),
-                s"leaf 15: expected custom second-group fill #00cccc (teal):\n$html"
+                s"expected custom second-group fill #00cccc (teal):\n$html"
             )
             assert(
                 !html.contains("fill=\"#3b82f6\""),
-                s"leaf 15: DefaultPalette blue must not appear under a custom palette:\n$html"
+                s"DefaultPalette blue must not appear under a custom palette:\n$html"
             )
             assert(
                 !html.contains("fill=\"#f97316\""),
-                s"leaf 15: DefaultPalette orange must not appear under a custom palette:\n$html"
+                s"DefaultPalette orange must not appear under a custom palette:\n$html"
             )
         end for
     }
 
-    // Leaf 16: grouped bar with default theme uses DefaultPalette colors (byte-identical gate)
     "grouped bar with default theme uses DefaultPalette blue and orange (default-theme unchanged)" in {
         val rows = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
@@ -1810,16 +1804,15 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         yield
             assert(
                 html.contains("fill=\"#3b82f6\""),
-                s"leaf 16: default-theme grouped bar must use DefaultPalette blue (#3b82f6):\n$html"
+                s"default-theme grouped bar must use DefaultPalette blue (#3b82f6):\n$html"
             )
             assert(
                 html.contains("fill=\"#f97316\""),
-                s"leaf 16: default-theme grouped bar must use DefaultPalette orange (#f97316):\n$html"
+                s"default-theme grouped bar must use DefaultPalette orange (#f97316):\n$html"
             )
         end for
     }
 
-    // Leaf 17: text mark under a custom theme.palette uses theme colors, not DefaultPalette
     "text mark uses theme.palette colors, not DefaultPalette, under a custom theme" in {
         // Two color groups via region encoding: NA (idx=0) and EU (idx=1).
         // Custom palette: first color #cc00cc, second color #00cccc.
@@ -1838,24 +1831,23 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         yield
             assert(
                 html.contains("fill=\"#cc00cc\""),
-                s"leaf 17: expected custom first-group fill #cc00cc (purple) for text:\n$html"
+                s"expected custom first-group fill #cc00cc (purple) for text:\n$html"
             )
             assert(
                 html.contains("fill=\"#00cccc\""),
-                s"leaf 17: expected custom second-group fill #00cccc (teal) for text:\n$html"
+                s"expected custom second-group fill #00cccc (teal) for text:\n$html"
             )
             assert(
                 !html.contains("fill=\"#3b82f6\""),
-                s"leaf 17: DefaultPalette blue must not appear under a custom palette for text:\n$html"
+                s"DefaultPalette blue must not appear under a custom palette for text:\n$html"
             )
             assert(
                 !html.contains("fill=\"#f97316\""),
-                s"leaf 17: DefaultPalette orange must not appear under a custom palette for text:\n$html"
+                s"DefaultPalette orange must not appear under a custom palette for text:\n$html"
             )
         end for
     }
 
-    // Leaf 18: errorBar mark under a custom theme.palette uses theme colors, not DefaultPalette
     "errorBar mark uses theme.palette colors, not DefaultPalette, under a custom theme" in {
         // Two color groups via region encoding: NA (idx=0) and EU (idx=1).
         // Custom palette: first color #cc00cc, second color #00cccc.
@@ -1875,30 +1867,29 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         yield
             assert(
                 html.contains("stroke=\"#cc00cc\""),
-                s"leaf 18: expected custom first-group stroke #cc00cc (purple) for errorBar:\n$html"
+                s"expected custom first-group stroke #cc00cc (purple) for errorBar:\n$html"
             )
             assert(
                 html.contains("stroke=\"#00cccc\""),
-                s"leaf 18: expected custom second-group stroke #00cccc (teal) for errorBar:\n$html"
+                s"expected custom second-group stroke #00cccc (teal) for errorBar:\n$html"
             )
             assert(
                 !html.contains("stroke=\"#3b82f6\""),
-                s"leaf 18: DefaultPalette blue must not appear under a custom palette for errorBar:\n$html"
+                s"DefaultPalette blue must not appear under a custom palette for errorBar:\n$html"
             )
             assert(
                 !html.contains("stroke=\"#f97316\""),
-                s"leaf 18: DefaultPalette orange must not appear under a custom palette for errorBar:\n$html"
+                s"DefaultPalette orange must not appear under a custom palette for errorBar:\n$html"
             )
         end for
     }
 
-    // Leaf 14 (WARN-2): static colored line respects theme.palette
+    // static colored line respects theme.palette
     "static multi-series line uses theme.palette colors, not DefaultPalette, under a custom theme" in {
         // Two series via region encoding: NA (idx=0) and EU (idx=1).
         // Custom palette: first color magenta (#ff00ff), second color cyan (#00ffff).
         // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
-        // With the fix, lowerLine reads themePalette(spec.theme) and must use the custom colors.
-        // Without the fix it reads DefaultPalette and uses #3b82f6/#f97316, failing the assertion.
+        // lowerLine reads themePalette(spec.theme) and must use the custom colors.
         val magenta = Style.Color.hex("#ff00ff").getOrElse(fail("bad hex"))
         val cyan    = Style.Color.hex("#00ffff").getOrElse(fail("bad hex"))
         val rows = Chunk(
@@ -1916,31 +1907,31 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             // Both custom palette colors must appear as stroke attributes.
             assert(
                 html.contains("stroke=\"#ff00ff\""),
-                s"WARN-2 leaf 14: expected custom first-series stroke #ff00ff (magenta):\n$html"
+                s"expected custom first-series stroke #ff00ff (magenta):\n$html"
             )
             assert(
                 html.contains("stroke=\"#00ffff\""),
-                s"WARN-2 leaf 14: expected custom second-series stroke #00ffff (cyan):\n$html"
+                s"expected custom second-series stroke #00ffff (cyan):\n$html"
             )
             // DefaultPalette blue and orange must NOT appear as path strokes (only custom colors).
             assert(
                 !html.contains("stroke=\"#3b82f6\""),
-                s"WARN-2 leaf 14: DefaultPalette blue must not appear under a custom palette:\n$html"
+                s"DefaultPalette blue must not appear under a custom palette:\n$html"
             )
             assert(
                 !html.contains("stroke=\"#f97316\""),
-                s"WARN-2 leaf 14: DefaultPalette orange must not appear under a custom palette:\n$html"
+                s"DefaultPalette orange must not appear under a custom palette:\n$html"
             )
         end for
     }
 
-    // FIX B (reproduce-before-fix): a color-split line must honor an explicit categorical colorScale.
-    // Before the fix, lowerLine's color-split branch colored each series from themePalette(s.theme) by
-    // category index, ignoring spec.legendCfg.colorScale. So the line drew DefaultPalette blue/orange while
+    // a color-split line must honor an explicit categorical colorScale.
+    // Without this fix, lowerLine's color-split branch colored each series from themePalette(s.theme) by
+    // category index, ignoring spec.legendCfg.colorScale. The line drew DefaultPalette blue/orange while
     // the legend (which uses resolvePalette) showed the colorScale colors: legend and line disagreed.
-    // After the fix, lowerLine resolves colors via resolvePalette, so the "a" path is the colorScale cyan
+    // lowerLine resolves colors via resolvePalette, so the "a" path is the colorScale cyan
     // and the "b" path is the colorScale amber, matching the legend.
-    "a color-split line honors an explicit categorical colorScale (FIX B)" in {
+    "a color-split line honors an explicit categorical colorScale" in {
         case class SRow(x: Double, y: Double, series: String) derives CanEqual
         val cyan  = Style.Color.rgb(6, 182, 212)
         val amber = Style.Color.rgb(245, 158, 11)
@@ -1965,16 +1956,16 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val aStroke = strokeOf(paths(0))
         val bStroke = strokeOf(paths(1))
         // The "a" series path must carry the colorScale cyan, NOT DefaultPalette blue.
-        assert(aStroke == cyan, s"FIX B: series 'a' line must use colorScale cyan rgb(6,182,212) but got $aStroke")
+        assert(aStroke == cyan, s"series 'a' line must use colorScale cyan rgb(6,182,212) but got $aStroke")
         // The "b" series path must carry the colorScale amber, NOT DefaultPalette orange.
-        assert(bStroke == amber, s"FIX B: series 'b' line must use colorScale amber rgb(245,158,11) but got $bStroke")
-        assert(aStroke != Style.Color.blue, s"FIX B: series 'a' must not fall back to DefaultPalette blue: $aStroke")
-        assert(bStroke != Style.Color.orange, s"FIX B: series 'b' must not fall back to DefaultPalette orange: $bStroke")
+        assert(bStroke == amber, s"series 'b' line must use colorScale amber rgb(245,158,11) but got $bStroke")
+        assert(aStroke != Style.Color.blue, s"series 'a' must not fall back to DefaultPalette blue: $aStroke")
+        assert(bStroke != Style.Color.orange, s"series 'b' must not fall back to DefaultPalette orange: $bStroke")
     }
 
-    // Leaf 19 (fill fix): stacked-area bands carry a per-group palette fill, not colorless paths.
+    // stacked-area bands carry a per-group palette fill, not colorless paths.
     // Each group's band must be filled with its palette color (custom theme.palette here),
-    // mirroring the non-stacked area's color fill. Before the fix the band paths had no fill.
+    // mirroring the non-stacked area's color fill.
     "stacked area bands carry per-group theme.palette fills (custom theme)" in {
         // Two color groups via region encoding: NA (idx=0) and EU (idx=1).
         // Custom palette: first color #cc00cc (purple), second color #00cccc (teal).
@@ -1995,24 +1986,24 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         yield
             assert(
                 html.contains("fill=\"#cc00cc\""),
-                s"leaf 19: expected first-group band fill #cc00cc (purple):\n$html"
+                s"expected first-group band fill #cc00cc (purple):\n$html"
             )
             assert(
                 html.contains("fill=\"#00cccc\""),
-                s"leaf 19: expected second-group band fill #00cccc (teal):\n$html"
+                s"expected second-group band fill #00cccc (teal):\n$html"
             )
             assert(
                 !html.contains("fill=\"#3b82f6\""),
-                s"leaf 19: DefaultPalette blue must not appear under a custom palette:\n$html"
+                s"DefaultPalette blue must not appear under a custom palette:\n$html"
             )
             assert(
                 !html.contains("fill=\"#f97316\""),
-                s"leaf 19: DefaultPalette orange must not appear under a custom palette:\n$html"
+                s"DefaultPalette orange must not appear under a custom palette:\n$html"
             )
         end for
     }
 
-    // Leaf 20 (fill fix): under the default theme, stacked-area bands use DefaultPalette colors.
+    // under the default theme, stacked-area bands use DefaultPalette colors.
     "stacked area bands use DefaultPalette fills (default theme)" in {
         val rows = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
@@ -2027,18 +2018,18 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         yield
             assert(
                 html.contains("fill=\"#3b82f6\""),
-                s"leaf 20: default-theme stacked area must use DefaultPalette blue (#3b82f6):\n$html"
+                s"default-theme stacked area must use DefaultPalette blue (#3b82f6):\n$html"
             )
             assert(
                 html.contains("fill=\"#f97316\""),
-                s"leaf 20: default-theme stacked area must use DefaultPalette orange (#f97316):\n$html"
+                s"default-theme stacked area must use DefaultPalette orange (#f97316):\n$html"
             )
         end for
     }
 
-    // ---- INV-005: every Mark variant lowers to its expected element kind (behavioral exhaustiveness) ----
+    // ---- every Mark variant lowers to its expected element kind (behavioral exhaustiveness) ----
 
-    "INV-005: every Mark variant lowers to its signature element kind in the marks region" in {
+    "every Mark variant lowers to its signature element kind in the marks region" in {
         case class ErrRow(x: String, mean: Double, lo: Double, hi: Double)
         val erows = Chunk(ErrRow("a", 6.0, 4.0, 8.0))
         val rows  = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
@@ -2077,9 +2068,9 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assert(errG.children.exists { case _: Svg.Circle => true; case _ => false }, "errorBar must lower to a Svg.Circle center")
     }
 
-    // ---- INV-037: lowering is a pure synchronous Svg.Root projection with NO effect row ----
+    // ---- lowering is a pure synchronous Svg.Root projection with NO effect row ----
 
-    "INV-037: Chart lowers to a plain Svg.Root synchronously (no effect row)" in {
+    "Chart lowers to a plain Svg.Root synchronously (no effect row)" in {
         val rows = Chunk(Sale("Jan", Usd(1000)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
         // The Conversion yields a plain Svg.Root, not Svg.Root < S; the explicit annotation is the witness.
@@ -2204,11 +2195,10 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         assertClose(maxX, aprCentre, "rightmost area vertex must be the last band's centre (no empty wedge)")
     }
 
-    // ---- Phase P5 (GAP-COLOR-AREA-SIMPLE): non-stacked area color split ----
+    // ---- non-stacked area color split ----
 
-    // L9 + L4 (reproduce-before-fix): non-stacked area with color encoding emits one path per series.
-    // Fails today: lowerArea emits ONE path filled with defaultColor regardless of mark.color.
-    "non-stacked area with color=_.region emits one closed path per series at fill-opacity 0.7, each colored by colorScale (L4 + L9)" in {
+    // non-stacked area with color encoding emits one path per series.
+    "non-stacked area with color=_.region emits one closed path per series at fill-opacity 0.7, each colored by colorScale" in {
         // Use colors that differ from DefaultPalette(0)=blue so failure is unambiguous on the color assertions.
         // red and purple are not DefaultPalette(0) (blue) so the EU path having purple unambiguously fails
         // when the single-path bug produces blue.
@@ -2223,61 +2213,61 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             .legend(_.colorScale[Region](Region.NA -> naColor, Region.EU -> euColor))
         val root  = (spec).lower
         val marks = marksGroup(root)
-        // L9: exactly 2 distinct path elements in the marks group (one per Region)
+        // exactly 2 distinct path elements in the marks group (one per Region)
         val areaPaths = marks.children.collect { case p: Svg.Path => p }
         assert(
             areaPaths.size == 2,
-            s"L9: expected 2 per-series area paths but got ${areaPaths.size} (the single-path bug produces 1)"
+            s"expected 2 per-series area paths but got ${areaPaths.size}"
         )
-        // L9: each path is closed (the PathData ends with a Close command)
+        // each path is closed (the PathData ends with a Close command)
         areaPaths.zipWithIndex.foreach: (p, i) =>
             p.svgAttrs.d match
-                case Absent => fail(s"L9: area path $i has no d attribute")
+                case Absent => fail(s"area path $i has no d attribute")
                 case Present(pd) =>
                     val cmds = Svg.PathData.commands(pd)
                     assert(
                         cmds.toSeq.lastOption.exists { case Svg.PathCommand.Close => true; case _ => false },
-                        s"L9: area path $i must be closed (last command == Close) but last was ${cmds.toSeq.lastOption}"
+                        s"area path $i must be closed (last command == Close) but last was ${cmds.toSeq.lastOption}"
                     )
-        // L9: each path carries fill-opacity == 0.7
+        // each path carries fill-opacity == 0.7
         areaPaths.zipWithIndex.foreach: (p, i) =>
             assert(
                 p.svgAttrs.fillOpacity.exists(fo => math.abs(fo - 0.7) < 1e-9),
-                s"L9: area path $i must have fill-opacity=0.7 but got ${p.svgAttrs.fillOpacity}"
+                s"area path $i must have fill-opacity=0.7 but got ${p.svgAttrs.fillOpacity}"
             )
-        // L4: path fills match the colorScale colors (NA=red, EU=purple); encounter/ordinal order: NA(0) first.
+        // path fills match the colorScale colors (NA=red, EU=purple); encounter/ordinal order: NA(0) first.
         assert(
             fillColorOf(areaPaths(0).svgAttrs.fill) == naColor,
-            s"L4: first area path (NA) must be naColor but got ${areaPaths(0).svgAttrs.fill}"
+            s"first area path (NA) must be naColor but got ${areaPaths(0).svgAttrs.fill}"
         )
         assert(
             fillColorOf(areaPaths(1).svgAttrs.fill) == euColor,
-            s"L4: second area path (EU) must be euColor but got ${areaPaths(1).svgAttrs.fill}"
+            s"second area path (EU) must be euColor but got ${areaPaths(1).svgAttrs.fill}"
         )
-        // L4: legend swatches must agree with the mark fills.
+        // legend swatches must agree with the mark fills.
         // Area marks use line swatches (not rect swatches): find them by strokeWidth == 2.0 px among direct-child lines.
         val legendSwatchLines = root.children.collect:
             case l: Svg.Line if l.svgAttrs.strokeWidth.contains(Svg.SvgLength.px(2.0)) => l
         assert(
             legendSwatchLines.size >= 2,
-            s"L4: expected at least 2 legend line swatches but got ${legendSwatchLines.size} (area uses line swatches)"
+            s"expected at least 2 legend line swatches but got ${legendSwatchLines.size} (area uses line swatches)"
         )
         def strokeColorOf(l: Svg.Line): Style.Color = l.svgAttrs.stroke match
             case Present(Svg.Paint.Color(c)) => c
-            case other                       => fail(s"L4: expected Svg.Paint.Color stroke on legend swatch but got $other")
+            case other                       => fail(s"expected Svg.Paint.Color stroke on legend swatch but got $other")
         assert(
             strokeColorOf(legendSwatchLines(0)) == naColor,
-            s"L4: NA legend swatch must be naColor but got ${legendSwatchLines(0).svgAttrs.stroke}"
+            s"NA legend swatch must be naColor but got ${legendSwatchLines(0).svgAttrs.stroke}"
         )
         assert(
             strokeColorOf(legendSwatchLines(1)) == euColor,
-            s"L4: EU legend swatch must be euColor but got ${legendSwatchLines(1).svgAttrs.stroke}"
+            s"EU legend swatch must be euColor but got ${legendSwatchLines(1).svgAttrs.stroke}"
         )
     }
 
-    // L8 co-pin: non-stacked area WITHOUT a color encoding emits exactly 1 closed path,
-    // byte-identical to today. The buildSimpleAreaPath refactor must not change the Absent-color arm.
-    "non-stacked area with no color encoding still emits exactly one closed path (L8 co-pin, byte-identical)" in {
+    // non-stacked area WITHOUT a color encoding emits exactly 1 closed path.
+    // The buildSimpleAreaPath refactor must not change the Absent-color arm.
+    "non-stacked area with no color encoding still emits exactly one closed path (byte-identical)" in {
         case class SimpleRow(x: String, y: Int) derives CanEqual
         val rows = Chunk(SimpleRow("a", 100), SimpleRow("b", 200))
         val spec = Chart(rows)(area(x = _.x, y = _.y))
@@ -2285,29 +2275,29 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val paths = root.children.flatMap:
             case g: Svg.G => g.children.collect { case p: Svg.Path => p }
             case _        => Chunk.empty
-        assert(paths.size == 1, s"L8: mark.color=Absent area must emit exactly 1 path but got ${paths.size}")
+        assert(paths.size == 1, s"mark.color=Absent area must emit exactly 1 path but got ${paths.size}")
         assert(
             paths(0).svgAttrs.fillOpacity.exists(fo => math.abs(fo - 0.7) < 1e-9),
-            s"L8: the single area path must have fill-opacity=0.7 but got ${paths(0).svgAttrs.fillOpacity}"
+            s"the single area path must have fill-opacity=0.7 but got ${paths(0).svgAttrs.fillOpacity}"
         )
         paths(0).svgAttrs.d match
-            case Absent => fail("L8: area path must have a d attribute")
+            case Absent => fail("area path must have a d attribute")
             case Present(pd) =>
                 val cmds = Svg.PathData.commands(pd)
                 assert(
                     cmds.toSeq.lastOption.exists { case Svg.PathCommand.Close => true; case _ => false },
-                    s"L8: the single path must be closed; last command was ${cmds.toSeq.lastOption}"
+                    s"the single path must be closed; last command was ${cmds.toSeq.lastOption}"
                 )
         end match
     }
 
-    // ---- Leaf L2 (GAP-COLOR-TEXT): text mark with categorical colorScale uses the scale colors ----
-    // Before the fix, lowerText resolves palette by index from themePalette(theme) only, ignoring
+    // ---- text mark with categorical colorScale uses the scale colors ----
+    // Without this fix, lowerText resolves palette by index from themePalette(theme) only, ignoring
     // spec.legendCfg.colorScale. With no custom theme.palette this yields DefaultPalette colors
     // (#3b82f6 blue / #f97316 orange), not the colorScale colors. The fix adds spec: Maybe[Chart[A]]
     // and routes a Present colorScale through resolvePalette (mirroring lowerLine / lowerPoint).
 
-    "text mark with categorical colorScale uses the scale colors, not DefaultPalette (GAP-COLOR-TEXT)" in {
+    "text mark with categorical colorScale uses the scale colors, not DefaultPalette" in {
         val naColor = Style.Color.hex("#e63946").getOrElse(fail("bad hex naColor"))
         val euColor = Style.Color.hex("#2a9d8f").getOrElse(fail("bad hex euColor"))
         val rows = Chunk(
@@ -2324,42 +2314,42 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         // Use the marks group to exclude axis tick texts from the count.
         val marks = marksGroup(root)
         val texts = marks.children.collect { case t: Svg.Text => t }
-        assert(texts.size >= 2, s"L2: expected at least 2 text glyphs in marks group, got ${texts.size}")
+        assert(texts.size >= 2, s"expected at least 2 text glyphs in marks group, got ${texts.size}")
         // Sort by x to recover NA/EU encounter order (NA is at "Jan", EU at "Feb" on a band scale).
         val byX   = texts.toSeq.sortBy(t => numOf(t.svgAttrs.x))
         val fill0 = fillColorOf(byX(0).svgAttrs.fill)
         val fill1 = fillColorOf(byX(1).svgAttrs.fill)
-        assert(fill0 == naColor, s"L2: text glyph 0 (NA) must be naColor $naColor but got $fill0")
-        assert(fill1 == euColor, s"L2: text glyph 1 (EU) must be euColor $euColor but got $fill1")
+        assert(fill0 == naColor, s"text glyph 0 (NA) must be naColor $naColor but got $fill0")
+        assert(fill1 == euColor, s"text glyph 1 (EU) must be euColor $euColor but got $fill1")
         // Explicit guard: these must NOT be DefaultPalette fallback colors.
         assert(
             fill0 != Style.Color.blue && fill0 != Style.Color.orange,
-            s"L2: text fill 0 must not be DefaultPalette colors; got $fill0"
+            s"text fill 0 must not be DefaultPalette colors; got $fill0"
         )
         assert(
             fill1 != Style.Color.blue && fill1 != Style.Color.orange,
-            s"L2: text fill 1 must not be DefaultPalette colors; got $fill1"
+            s"text fill 1 must not be DefaultPalette colors; got $fill1"
         )
         // Legend swatch agreement: each region's swatch fill must equal its colorScale color.
         val swatches = legendSwatchRects(root)
-        assert(swatches.size == 2, s"L2: expected 2 legend swatches but got ${swatches.size}")
+        assert(swatches.size == 2, s"expected 2 legend swatches but got ${swatches.size}")
         val swatchesByY = swatches.toSeq.sortBy(s => coordNum(s.svgAttrs.y).getOrElse(0.0))
         assert(
             fillColorOf(swatchesByY(0).svgAttrs.fill) == naColor,
-            s"L2: swatch 0 must be naColor $naColor"
+            s"swatch 0 must be naColor $naColor"
         )
         assert(
             fillColorOf(swatchesByY(1).svgAttrs.fill) == euColor,
-            s"L2: swatch 1 must be euColor $euColor"
+            s"swatch 1 must be euColor $euColor"
         )
     }
 
-    // ---- Leaf L3 (GAP-COLOR-ERRORBAR): errorBar with categorical colorScale uses the scale colors ----
-    // Before the fix, lowerErrorBar resolves palette by index from themePalette(theme) only, ignoring
+    // ---- errorBar with categorical colorScale uses the scale colors ----
+    // Without this fix, lowerErrorBar resolves palette by index from themePalette(theme) only, ignoring
     // spec.legendCfg.colorScale. All three sub-shapes (vLine + caps + center marker) derive their
     // stroke/fill from that broken palette. The fix mirrors the lowerText fix.
 
-    "errorBar with categorical colorScale uses the scale colors, one stroke per row (GAP-COLOR-ERRORBAR)" in {
+    "errorBar with categorical colorScale uses the scale colors, one stroke per row" in {
         val naColor = Style.Color.hex("#e63946").getOrElse(fail("bad hex naColor"))
         val euColor = Style.Color.hex("#2a9d8f").getOrElse(fail("bad hex euColor"))
         case class EbSale(x: String, mean: Double, lo: Double, hi: Double, region: Region)
@@ -2380,18 +2370,18 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val lines   = marks.children.collect { case l: Svg.Line => l }
         val circles = marks.children.collect { case c: Svg.Circle => c }
         // 2 rows x 3 lines each (vLine + capLow + capHigh) = 6 lines total.
-        assert(lines.size == 6, s"L3: expected 6 lines (3 per row x 2 rows) but got ${lines.size}")
+        assert(lines.size == 6, s"expected 6 lines (3 per row x 2 rows) but got ${lines.size}")
         // 2 rows x 1 circle each (center marker) = 2 circles total.
-        assert(circles.size == 2, s"L3: expected 2 circles (1 per row x 2 rows) but got ${circles.size}")
+        assert(circles.size == 2, s"expected 2 circles (1 per row x 2 rows) but got ${circles.size}")
 
         def strokeOf(l: Svg.Line): Style.Color = l.svgAttrs.stroke match
             case Present(Svg.Paint.Color(c)) => c
-            case other                       => fail(s"L3: expected stroke Color but got $other")
+            case other                       => fail(s"expected stroke Color but got $other")
 
         // Helper: extract a Double from Maybe[Double] (line coordinates are not Coord-wrapped).
         def lineCoord(m: Maybe[Double], lbl: String): Double = m match
             case Present(v) => v
-            case Absent     => fail(s"L3: $lbl absent")
+            case Absent     => fail(s"$lbl absent")
 
         // Group lines by their center x pixel ((x1+x2)/2) so that all 3 sub-shapes of a row land
         // in the same group: the vLine has x1==x2==px, and each cap has x1=px-halfCap, x2=px+halfCap,
@@ -2401,7 +2391,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val byCenter = lines.toSeq.groupBy(l => math.round(centerX(l)).toInt)
         assert(
             byCenter.size == 2,
-            s"L3: expected 2 distinct center groups (one per row), got ${byCenter.keys.toSeq.sorted(using Ordering.Int)}"
+            s"expected 2 distinct center groups (one per row), got ${byCenter.keys.toSeq.sorted(using Ordering.Int)}"
         )
         val lineGroups = byCenter.values.toSeq.sortBy(_.map(centerX).min)
         val naGroup    = lineGroups(0) // smaller x -> category "a" = NA
@@ -2409,24 +2399,24 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         naGroup.foreach(l =>
             assert(
                 strokeOf(l) == naColor,
-                s"L3: NA line stroke must be naColor $naColor but got ${strokeOf(l)}"
+                s"NA line stroke must be naColor $naColor but got ${strokeOf(l)}"
             )
         )
         euGroup.foreach(l =>
             assert(
                 strokeOf(l) == euColor,
-                s"L3: EU line stroke must be euColor $euColor but got ${strokeOf(l)}"
+                s"EU line stroke must be euColor $euColor but got ${strokeOf(l)}"
             )
         )
 
         // Explicit guard: must NOT be DefaultPalette fallback colors.
         assert(
             naGroup.forall(l => strokeOf(l) != Style.Color.blue && strokeOf(l) != Style.Color.orange),
-            s"L3: NA lines must not use DefaultPalette colors"
+            s"NA lines must not use DefaultPalette colors"
         )
         assert(
             euGroup.forall(l => strokeOf(l) != Style.Color.blue && strokeOf(l) != Style.Color.orange),
-            s"L3: EU lines must not use DefaultPalette colors"
+            s"EU lines must not use DefaultPalette colors"
         )
 
         // Center marker circles: fill is set to the stroke color (lowerErrorBar uses fill(stroke)).
@@ -2434,39 +2424,38 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val circlesByX = circles.toSeq.sortBy(c => lineCoord(c.svgAttrs.cx, "cx"))
         val naCircleFill = circlesByX(0).svgAttrs.fill match
             case Present(Svg.Paint.Color(c)) => c
-            case other                       => fail(s"L3: expected circle fill Color but got $other")
+            case other                       => fail(s"expected circle fill Color but got $other")
         val euCircleFill = circlesByX(1).svgAttrs.fill match
             case Present(Svg.Paint.Color(c)) => c
-            case other                       => fail(s"L3: expected circle fill Color but got $other")
-        assert(naCircleFill == naColor, s"L3: NA marker fill must be naColor $naColor but got $naCircleFill")
-        assert(euCircleFill == euColor, s"L3: EU marker fill must be euColor $euColor but got $euCircleFill")
+            case other                       => fail(s"expected circle fill Color but got $other")
+        assert(naCircleFill == naColor, s"NA marker fill must be naColor $naColor but got $naCircleFill")
+        assert(euCircleFill == euColor, s"EU marker fill must be euColor $euColor but got $euCircleFill")
 
         // Legend swatch agreement.
         val swatches = legendSwatchRects(root)
-        assert(swatches.size == 2, s"L3: expected 2 legend swatches but got ${swatches.size}")
+        assert(swatches.size == 2, s"expected 2 legend swatches but got ${swatches.size}")
         val swatchesByY = swatches.toSeq.sortBy(s => coordNum(s.svgAttrs.y).getOrElse(0.0))
         assert(
             fillColorOf(swatchesByY(0).svgAttrs.fill) == naColor,
-            s"L3: swatch 0 must be naColor $naColor"
+            s"swatch 0 must be naColor $naColor"
         )
         assert(
             fillColorOf(swatchesByY(1).svgAttrs.fill) == euColor,
-            s"L3: swatch 1 must be euColor $euColor"
+            s"swatch 1 must be euColor $euColor"
         )
     }
 
-    // ---- Leaf L22 (GAP-LEGEND-MARGIN-TEXT-ERRORBAR): legend margin reserved for color-bearing text/errorBar ----
-    // Before the fix, buildLayout.hasLegend uses wildcard patterns for Mark.Text and Mark.ErrorBar that
-    // hardcode false regardless of a color encoding. So a chart whose ONLY color mark is text or errorBar
-    // does NOT reserve legend margin (topPad stays 0, plotY stays MarginTop=20). After the fix, those
+    // ---- legend margin reserved for color-bearing text/errorBar ----
+    // Without this fix, buildLayout.hasLegend uses wildcard patterns for Mark.Text and Mark.ErrorBar that
+    // hardcode false regardless of a color encoding. A chart whose ONLY color mark is text or errorBar
+    // does NOT reserve legend margin (topPad stays 0, plotY stays MarginTop=20). With the fix, those
     // cases check m.color.isDefined, matching the Bar/Line/Area/Point treatment. plotY becomes 40.0.
 
-    // L22a: text-only color mark reserves the top strip (legend margin reserved, plotY = 40.0).
-    "legend margin reserved for color-bearing text mark, plot shifted by LegendReservedH (GAP-LEGEND-MARGIN-TEXT-ERRORBAR)" in {
+    // text-only color mark reserves the top strip (legend margin reserved, plotY = 40.0).
+    "legend margin reserved for color-bearing text mark, plot shifted by LegendReservedH" in {
         // Use Sale rows with revenue=4000 at the top of yScale(linear(0,4000)).
         // With linear(0,4000): apply(4000) == plotY.
-        // After fix: plotY = MarginTop(20) + LegendReservedH(20) = 40.0.
-        // Before fix: plotY = MarginTop(20) = 20.0.
+        // With legend reserved: plotY = MarginTop(20) + LegendReservedH(20) = 40.0.
         val naColor = Style.Color.hex("#e63946").getOrElse(fail("bad hex naColor"))
         val euColor = Style.Color.hex("#2a9d8f").getOrElse(fail("bad hex euColor"))
         val rows = Chunk(
@@ -2479,18 +2468,17 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val root  = (spec).lower
         val marks = marksGroup(root)
         val texts = marks.children.collect { case t: Svg.Text => t }.toSeq
-        assert(texts.size >= 2, s"L22a: expected at least 2 text glyphs in marks group, got ${texts.size}")
+        assert(texts.size >= 2, s"expected at least 2 text glyphs in marks group, got ${texts.size}")
         // Sort by x to get Jan (NA, revenue=4000) first (band-left is "Jan").
         val byX       = texts.sortBy(t => numOf(t.svgAttrs.x))
         val topGlyphY = numOf(byX(0).svgAttrs.y)
-        // After fix: plotY = 40.0; before fix: plotY = 20.0.
-        assertClose(topGlyphY, 40.0, "L22a: top glyph y must equal reserved plotY=40 (hasLegend=true for text color mark)")
+        assertClose(topGlyphY, 40.0, "top glyph y must equal reserved plotY=40 (hasLegend=true for text color mark)")
     }
 
-    // L22b: errorBar-only color mark reserves the top strip (legend margin reserved, plotY = 40.0).
-    "legend margin reserved for color-bearing errorBar mark, plot shifted by LegendReservedH (GAP-LEGEND-MARGIN-TEXT-ERRORBAR)" in {
+    // errorBar-only color mark reserves the top strip (legend margin reserved, plotY = 40.0).
+    "legend margin reserved for color-bearing errorBar mark, plot shifted by LegendReservedH" in {
         // EbSale with hi=10.0 == top of yScale(linear(0,10)). apply(10.0) == plotY.
-        // After fix: plotY = 40.0; before fix: plotY = 20.0.
+        // With legend reserved: plotY = 40.0.
         val naColor = Style.Color.hex("#e63946").getOrElse(fail("bad hex naColor"))
         val euColor = Style.Color.hex("#2a9d8f").getOrElse(fail("bad hex euColor"))
         case class EbSale22(x: String, mean: Double, lo: Double, hi: Double, region: Region)
@@ -2508,18 +2496,17 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         // vLines have x1 == x2. lowerErrorBar sets y1=pyLow, y2=pyHigh.
         // pyHigh = ys.apply(hi) = plotY for hi=10.0 (top of scale). Minimum y2 across vLines = plotY.
         val vLines = lines.filter(l => l.svgAttrs.x1 == l.svgAttrs.x2)
-        assert(vLines.nonEmpty, "L22b: no vLines found in marks group")
+        assert(vLines.nonEmpty, "no vLines found in marks group")
         val topY = vLines.flatMap(l => l.svgAttrs.y2).min
-        // After fix: plotY = 40.0; before fix: plotY = 20.0.
         assertClose(
             topY,
             40.0,
-            "L22b: top vLine y2 (pyHigh for hi=10.0) must equal reserved plotY=40 (hasLegend=true for errorBar color mark)"
+            "top vLine y2 (pyHigh for hi=10.0) must equal reserved plotY=40 (hasLegend=true for errorBar color mark)"
         )
     }
 
-    // L22c (CO-PIN): no-color text mark keeps hasLegend==false, plotY unchanged at 20.0.
-    "no-color text mark keeps plotY=20 (hasLegend=false, topPad=0) after GAP-LEGEND-MARGIN fix (co-pin)" in {
+    // no-color text mark keeps hasLegend==false, plotY unchanged at 20.0.
+    "no-color text mark keeps plotY=20 (hasLegend=false, topPad=0) (byte-identical)" in {
         // text mark WITHOUT a color encoding: m.color.isDefined==false, hasLegend stays false.
         val rows = Chunk(
             Sale("Jan", Usd(4000)), // no region => Region.NA default, but no color encoding on mark
@@ -2530,22 +2517,22 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val root  = (spec).lower
         val marks = marksGroup(root)
         val texts = marks.children.collect { case t: Svg.Text => t }.toSeq
-        assert(texts.size >= 1, s"L22c: expected at least 1 text glyph in marks group, got ${texts.size}")
+        assert(texts.size >= 1, s"expected at least 1 text glyph in marks group, got ${texts.size}")
         val byX       = texts.sortBy(t => numOf(t.svgAttrs.x))
         val topGlyphY = numOf(byX(0).svgAttrs.y)
         // No legend reserved: plotY stays at MarginTop = 20.0.
-        assertClose(topGlyphY, 20.0, "L22c: no-color text mark must keep plotY=20 (hasLegend=false, no strip reserved)")
+        assertClose(topGlyphY, 20.0, "no-color text mark must keep plotY=20 (hasLegend=false, no strip reserved)")
         // Also: no legend swatches rendered.
-        assert(legendSwatchRects(root).isEmpty, "L22c: no legend swatches for no-color text mark")
+        assert(legendSwatchRects(root).isEmpty, "no legend swatches for no-color text mark")
     }
 
-    // ---- FIX 1 (P9b): animated non-stacked area with colorScale honors the scale colors ----
-    // Reproduce-before-fix: lowerAreaWithTransitions called lowerArea with spec=Absent, so the
+    // ---- animated non-stacked area with colorScale honors the scale colors ----
+    // Without this fix, lowerAreaWithTransitions called lowerArea with spec=Absent, so the
     // animated path resolved the palette from DefaultPalette by index (blue/orange), ignoring the
     // explicit colorScale. The fix forwards Present(spec) into both lowerArea calls inside
-    // lowerAreaWithTransitions, mirroring the lowerLineWithTransitions FIX B pattern.
+    // lowerAreaWithTransitions.
 
-    "animated non-stacked area with categorical colorScale honors the scale colors (FIX 1, P9b)" in {
+    "animated non-stacked area with categorical colorScale honors the scale colors" in {
         case class ARow(x: Double, y: Double, series: String) derives CanEqual
         val cyan  = Style.Color.rgb(6, 182, 212)
         val amber = Style.Color.rgb(245, 158, 11)
@@ -2579,44 +2566,44 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             )
             assert(
                 fills.size == 2,
-                s"FIX 1 (P9b): expected 2 area-path fills (one per series) but got ${fills.size}:\n$html"
+                s"expected 2 area-path fills (one per series) but got ${fills.size}:\n$html"
             )
             // Series "a" (seriesIdx 0) must carry the colorScale cyan, NOT DefaultPalette blue.
             val cyanCss  = "rgb(6, 182, 212)"
             val amberCss = "rgb(245, 158, 11)"
             assert(
                 fills(0) == cyanCss,
-                s"FIX 1 (P9b): animated area series 'a' must use colorScale cyan $cyanCss but got ${fills(0)}:\n$html"
+                s"animated area series 'a' must use colorScale cyan $cyanCss but got ${fills(0)}:\n$html"
             )
             // Series "b" (seriesIdx 1) must carry the colorScale amber, NOT DefaultPalette orange.
             assert(
                 fills(1) == amberCss,
-                s"FIX 1 (P9b): animated area series 'b' must use colorScale amber $amberCss but got ${fills(1)}:\n$html"
+                s"animated area series 'b' must use colorScale amber $amberCss but got ${fills(1)}:\n$html"
             )
             // DefaultPalette colours must not appear as area fills.
             assert(
                 !fills.exists(_ == blueCss),
-                s"FIX 1 (P9b): DefaultPalette blue $blueCss must not be an area fill under a colorScale:\n$html"
+                s"DefaultPalette blue $blueCss must not be an area fill under a colorScale:\n$html"
             )
             assert(
                 !fills.exists(_ == orangeCss),
-                s"FIX 1 (P9b): DefaultPalette orange $orangeCss must not be an area fill under a colorScale:\n$html"
+                s"DefaultPalette orange $orangeCss must not be an area fill under a colorScale:\n$html"
             )
         end for
     }
 
-    // ---- FIX 1b (P9c): animated STACKED area honors custom theme.palette and categorical colorScale ----
-    // The P9b addendum identified a second spec-drop locus: lowerAreaWithTransitions line ~3659 (the
-    // stacked fallthrough). lowerArea forwards spec into lowerAreaStacked, which uses resolvePalette
-    // when spec is Present. resolvePalette honors: (1) categorical colorScale; (2) sequential colorScale;
-    // (3) theme.palette when no colorScale; (4) DefaultPalette as final fallback.
-    // Before the fix, lowerAreaWithTransitions called lowerArea with spec=Absent at 3659, routing
+    // ---- animated STACKED area honors custom theme.palette and categorical colorScale ----
+    // A second spec-drop locus: lowerAreaWithTransitions (the stacked fallthrough). lowerArea forwards
+    // spec into lowerAreaStacked, which uses resolvePalette when spec is Present. resolvePalette honors:
+    // (1) categorical colorScale; (2) sequential colorScale; (3) theme.palette when no colorScale;
+    // (4) DefaultPalette as final fallback.
+    // Without this fix, lowerAreaWithTransitions called lowerArea with spec=Absent, routing
     // lowerAreaStacked to resolvePaletteFromCfg (DefaultPalette only), dropping BOTH colorScale AND
-    // custom theme.palette. After the fix, Present(spec) is forwarded and resolvePalette is used.
+    // custom theme.palette. Present(spec) is forwarded and resolvePalette is used.
     //
     // Test A: custom theme.palette (no colorScale). The animated stacked area must produce the same
-    // per-group fills as the static twin (leaf 19 above).
-    "animated stacked area honors custom theme.palette colors, matching the static twin (FIX 1b, P9c)" in {
+    // per-group fills as the static twin.
+    "animated stacked area honors custom theme.palette colors, matching the static twin" in {
         val purple = Style.Color.hex("#cc00cc").getOrElse(fail("bad hex"))
         val teal   = Style.Color.hex("#00cccc").getOrElse(fail("bad hex"))
         val rows = Chunk(
@@ -2637,26 +2624,26 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         yield
             assert(
                 html.contains("fill=\"#cc00cc\""),
-                s"FIX 1b (P9c): animated stacked area group 0 must use theme.palette purple #cc00cc:\n$html"
+                s"animated stacked area group 0 must use theme.palette purple #cc00cc:\n$html"
             )
             assert(
                 html.contains("fill=\"#00cccc\""),
-                s"FIX 1b (P9c): animated stacked area group 1 must use theme.palette teal #00cccc:\n$html"
+                s"animated stacked area group 1 must use theme.palette teal #00cccc:\n$html"
             )
             // DefaultPalette blue/orange must not appear: they are the resolvePaletteFromCfg (spec=Absent) fallback.
             assert(
                 !html.contains("fill=\"#3b82f6\""),
-                s"FIX 1b (P9c): DefaultPalette blue must not appear in animated stacked area under a custom theme:\n$html"
+                s"DefaultPalette blue must not appear in animated stacked area under a custom theme:\n$html"
             )
             assert(
                 !html.contains("fill=\"#f97316\""),
-                s"FIX 1b (P9c): DefaultPalette orange must not appear in animated stacked area under a custom theme:\n$html"
+                s"DefaultPalette orange must not appear in animated stacked area under a custom theme:\n$html"
             )
         end for
     }
 
     // Test B: categorical colorScale. resolvePalette honors it; resolvePaletteFromCfg ignores it.
-    "animated stacked area honors a categorical colorScale, not DefaultPalette (FIX 1b, P9c)" in {
+    "animated stacked area honors a categorical colorScale, not DefaultPalette" in {
         val crimson   = Style.Color.rgb(220, 38, 38)
         val indigo    = Style.Color.rgb(99, 102, 241)
         val blueCss   = "#3b82f6"
@@ -2683,31 +2670,31 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             val indigoCss  = "rgb(99, 102, 241)"
             assert(
                 html.contains(s"fill=\"$crimsonCss\""),
-                s"FIX 1b (P9c): animated stacked area NA group must use colorScale crimson $crimsonCss:\n$html"
+                s"animated stacked area NA group must use colorScale crimson $crimsonCss:\n$html"
             )
             assert(
                 html.contains(s"fill=\"$indigoCss\""),
-                s"FIX 1b (P9c): animated stacked area EU group must use colorScale indigo $indigoCss:\n$html"
+                s"animated stacked area EU group must use colorScale indigo $indigoCss:\n$html"
             )
             assert(
                 !html.contains(s"fill=\"$blueCss\""),
-                s"FIX 1b (P9c): DefaultPalette blue must not appear in animated stacked area under a colorScale:\n$html"
+                s"DefaultPalette blue must not appear in animated stacked area under a colorScale:\n$html"
             )
             assert(
                 !html.contains(s"fill=\"$orangeCss\""),
-                s"FIX 1b (P9c): DefaultPalette orange must not appear in animated stacked area under a colorScale:\n$html"
+                s"DefaultPalette orange must not appear in animated stacked area under a colorScale:\n$html"
             )
         end for
     }
 
-    // ---- L10 (P9b): Sequential colorScale arm regression guards ----
+    // ---- Sequential colorScale arm regression guards ----
     // These four tests lock the working Sequential branch in resolvePalette for each newly-fixed
     // color-split mark. Two rows at the domain endpoints [0.0, 100.0] map to exact low/high colors:
     //   value 0.0  -> t=0.0 -> lerpColor(black, white, 0.0) = rgb(0,0,0)
     //   value 100.0 -> t=1.0 -> lerpColor(black, white, 1.0) = rgb(255,255,255)
     // The auto-derived domain equals [0.0, 100.0] when data is exactly [0.0, 100.0].
 
-    "grouped bar with Sequential colorScale honors the scale colors (L10, P9b)" in {
+    "grouped bar with Sequential colorScale honors the scale colors" in {
         // Low=black(0,0,0), High=white(255,255,255); data values 0.0 and 100.0 are the domain endpoints.
         case class HeatRow(month: String, revenue: Double, level: Double) derives CanEqual
         val rows = Chunk(
@@ -2718,33 +2705,33 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
         val root  = (spec).lower
         val rects = rectsIn(root)
-        assert(rects.size == 2, s"L10 bar: expected 2 bar rects but got ${rects.size}")
+        assert(rects.size == 2, s"expected 2 bar rects but got ${rects.size}")
         val byX = rects.toSeq.sortBy(r => numOf(r.svgAttrs.x))
         def fillOf(r: Svg.Rect): Style.Color = r.svgAttrs.fill match
             case Present(Svg.Paint.Color(c)) => c
-            case other                       => fail(s"L10 bar: expected color fill but got $other")
+            case other                       => fail(s"expected color fill but got $other")
         val fills = byX.map(fillOf)
         // value 0.0 (first bar by x) maps to low=black; value 100.0 maps to high=white.
         assert(
             fills(0) == Style.Color.rgb(0, 0, 0),
-            s"L10 bar: low-value bar must be low color rgb(0,0,0) but got ${fills(0)}"
+            s"low-value bar must be low color rgb(0,0,0) but got ${fills(0)}"
         )
         assert(
             fills(1) == Style.Color.rgb(255, 255, 255),
-            s"L10 bar: high-value bar must be high color rgb(255,255,255) but got ${fills(1)}"
+            s"high-value bar must be high color rgb(255,255,255) but got ${fills(1)}"
         )
         // Both colors are distinct and concrete (neither equals a DefaultPalette entry).
         assert(
             fills(0) != fills(1),
-            s"L10 bar: low and high colors must differ but both were ${fills(0)}"
+            s"low and high colors must differ but both were ${fills(0)}"
         )
         assert(
             !fills.exists(c => c == Style.Color.blue || c == Style.Color.orange),
-            s"L10 bar: fills must not be DefaultPalette colors but got $fills"
+            s"fills must not be DefaultPalette colors but got $fills"
         )
     }
 
-    "non-stacked area with Sequential colorScale honors the scale colors (L10, P9b)" in {
+    "non-stacked area with Sequential colorScale honors the scale colors" in {
         // Low=black(0,0,0), High=white(255,255,255); data values 0.0 and 100.0 are domain endpoints.
         case class SeqRow(x: String, y: Double, level: Double) derives CanEqual
         val rows = Chunk(
@@ -2757,32 +2744,31 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val root      = (spec).lower
         val marks     = marksGroup(root)
         val areaPaths = marks.children.collect { case p: Svg.Path => p }
-        assert(areaPaths.size == 2, s"L10 area: expected 2 area paths but got ${areaPaths.size}")
+        assert(areaPaths.size == 2, s"expected 2 area paths but got ${areaPaths.size}")
         // Paths are emitted in category encounter order (level 0.0 first, then 100.0).
         val fills = areaPaths.map(p => fillColorOf(p.svgAttrs.fill))
         assert(
             fills(0) == Style.Color.rgb(0, 0, 0),
-            s"L10 area: low-value path must be low color rgb(0,0,0) but got ${fills(0)}"
+            s"low-value path must be low color rgb(0,0,0) but got ${fills(0)}"
         )
         assert(
             fills(1) == Style.Color.rgb(255, 255, 255),
-            s"L10 area: high-value path must be high color rgb(255,255,255) but got ${fills(1)}"
+            s"high-value path must be high color rgb(255,255,255) but got ${fills(1)}"
         )
         // Both colors are distinct and concrete.
         assert(
             fills(0) != fills(1),
-            s"L10 area: low and high colors must differ but both were ${fills(0)}"
+            s"low and high colors must differ but both were ${fills(0)}"
         )
         assert(
             !fills.exists(c => c == Style.Color.blue || c == Style.Color.orange),
-            s"L10 area: fills must not be DefaultPalette colors but got $fills"
+            s"fills must not be DefaultPalette colors but got $fills"
         )
         // Sequential legend renders a single continuous gradient swatch (not per-category line swatches).
-        // The L10 property is on the mark fills (two distinct concrete interpolated colors at the domain
-        // endpoints); the gradient swatch itself is covered by INV-028 Leaf 16.
+        // The mark fills verify two distinct concrete interpolated colors at the domain endpoints.
     }
 
-    "text mark with Sequential colorScale honors the scale colors (L10, P9b)" in {
+    "text mark with Sequential colorScale honors the scale colors" in {
         // Low=black(0,0,0), High=white(255,255,255); data values 0.0 and 100.0 are domain endpoints.
         case class TextSeqRow(x: String, y: Double, level: Double) derives CanEqual
         val rows = Chunk(
@@ -2795,38 +2781,37 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val root  = (spec).lower
         val marks = marksGroup(root)
         val texts = marks.children.collect { case t: Svg.Text => t }
-        assert(texts.size >= 2, s"L10 text: expected at least 2 text glyphs but got ${texts.size}")
+        assert(texts.size >= 2, s"expected at least 2 text glyphs but got ${texts.size}")
         val byX   = texts.toSeq.sortBy(t => numOf(t.svgAttrs.x))
         val fill0 = fillColorOf(byX(0).svgAttrs.fill)
         val fill1 = fillColorOf(byX(1).svgAttrs.fill)
         // Glyphs sorted by x: "a" at lower band-center (level=0.0, low color), "b" at higher (level=100.0, high color).
         assert(
             fill0 == Style.Color.rgb(0, 0, 0),
-            s"L10 text: glyph 'a' (level=0.0) must be low color rgb(0,0,0) but got $fill0"
+            s"glyph 'a' (level=0.0) must be low color rgb(0,0,0) but got $fill0"
         )
         assert(
             fill1 == Style.Color.rgb(255, 255, 255),
-            s"L10 text: glyph 'b' (level=100.0) must be high color rgb(255,255,255) but got $fill1"
+            s"glyph 'b' (level=100.0) must be high color rgb(255,255,255) but got $fill1"
         )
         // Distinct and concrete.
         assert(
             fill0 != fill1,
-            s"L10 text: low and high fills must differ but both were $fill0"
+            s"low and high fills must differ but both were $fill0"
         )
         assert(
             fill0 != Style.Color.blue && fill0 != Style.Color.orange,
-            s"L10 text: fill0 must not be DefaultPalette but got $fill0"
+            s"fill0 must not be DefaultPalette but got $fill0"
         )
         assert(
             fill1 != Style.Color.blue && fill1 != Style.Color.orange,
-            s"L10 text: fill1 must not be DefaultPalette but got $fill1"
+            s"fill1 must not be DefaultPalette but got $fill1"
         )
         // Sequential legend renders a single continuous gradient swatch (not per-category rect swatches).
-        // The L10 property is on the mark fills (two distinct concrete interpolated colors at the domain
-        // endpoints); the gradient swatch itself is covered by INV-028 Leaf 16.
+        // The mark fills verify two distinct concrete interpolated colors at the domain endpoints.
     }
 
-    "errorBar with Sequential colorScale honors the scale colors (L10, P9b)" in {
+    "errorBar with Sequential colorScale honors the scale colors" in {
         // Low=black(0,0,0), High=white(255,255,255); data values 0.0 and 100.0 are domain endpoints.
         case class EbSeqRow(x: String, mean: Double, lo: Double, hi: Double, level: Double) derives CanEqual
         val rows = Chunk(
@@ -2841,55 +2826,55 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val lines   = marks.children.collect { case l: Svg.Line => l }
         val circles = marks.children.collect { case c: Svg.Circle => c }
         // 2 rows x 3 lines each = 6 lines total.
-        assert(lines.size == 6, s"L10 errorBar: expected 6 lines (3 per row x 2 rows) but got ${lines.size}")
-        assert(circles.size == 2, s"L10 errorBar: expected 2 center marker circles but got ${circles.size}")
+        assert(lines.size == 6, s"expected 6 lines (3 per row x 2 rows) but got ${lines.size}")
+        assert(circles.size == 2, s"expected 2 center marker circles but got ${circles.size}")
         def strokeOf(l: Svg.Line): Style.Color = l.svgAttrs.stroke match
             case Present(Svg.Paint.Color(c)) => c
-            case other                       => fail(s"L10 errorBar: expected stroke Color but got $other")
+            case other                       => fail(s"expected stroke Color but got $other")
         // Group lines by center-x to separate the two rows.
         def lineCoord(m: Maybe[Double]): Double = m match
             case Present(v) => v
-            case Absent     => fail("L10 errorBar: coordinate absent")
+            case Absent     => fail("coordinate absent")
         def centerX(l: Svg.Line): Double =
             (lineCoord(l.svgAttrs.x1) + lineCoord(l.svgAttrs.x2)) / 2.0
         val byCenter = lines.toSeq.groupBy(l => math.round(centerX(l)).toInt)
-        assert(byCenter.size == 2, s"L10 errorBar: expected 2 center groups but got ${byCenter.size}")
+        assert(byCenter.size == 2, s"expected 2 center groups but got ${byCenter.size}")
         val groups = byCenter.values.toSeq.sortBy(_.map(centerX).min)
         val groupA = groups(0) // lower x -> row "a", level=0.0 -> low=black
         val groupB = groups(1) // higher x -> row "b", level=100.0 -> high=white
         groupA.foreach(l =>
             assert(
                 strokeOf(l) == Style.Color.rgb(0, 0, 0),
-                s"L10 errorBar: row 'a' (level=0.0) lines must be low color rgb(0,0,0) but got ${strokeOf(l)}"
+                s"row 'a' (level=0.0) lines must be low color rgb(0,0,0) but got ${strokeOf(l)}"
             )
         )
         groupB.foreach(l =>
             assert(
                 strokeOf(l) == Style.Color.rgb(255, 255, 255),
-                s"L10 errorBar: row 'b' (level=100.0) lines must be high color rgb(255,255,255) but got ${strokeOf(l)}"
+                s"row 'b' (level=100.0) lines must be high color rgb(255,255,255) but got ${strokeOf(l)}"
             )
         )
         // Center marker circle fills must match the row stroke.
         def circleCoord(m: Maybe[Double]): Double = m match
             case Present(v) => v
-            case Absent     => fail("L10 errorBar: circle coord absent")
+            case Absent     => fail("circle coord absent")
         val circlesByX = circles.toSeq.sortBy(c => circleCoord(c.svgAttrs.cx))
         val fillA = circlesByX(0).svgAttrs.fill match
             case Present(Svg.Paint.Color(c)) => c
-            case other                       => fail(s"L10 errorBar: circle fill expected Color but got $other")
+            case other                       => fail(s"circle fill expected Color but got $other")
         val fillB = circlesByX(1).svgAttrs.fill match
             case Present(Svg.Paint.Color(c)) => c
-            case other                       => fail(s"L10 errorBar: circle fill expected Color but got $other")
-        assert(fillA == Style.Color.rgb(0, 0, 0), s"L10 errorBar: row 'a' circle fill must be rgb(0,0,0) but got $fillA")
-        assert(fillB == Style.Color.rgb(255, 255, 255), s"L10 errorBar: row 'b' circle fill must be rgb(255,255,255) but got $fillB")
+            case other                       => fail(s"circle fill expected Color but got $other")
+        assert(fillA == Style.Color.rgb(0, 0, 0), s"row 'a' circle fill must be rgb(0,0,0) but got $fillA")
+        assert(fillB == Style.Color.rgb(255, 255, 255), s"row 'b' circle fill must be rgb(255,255,255) but got $fillB")
         // DefaultPalette guard.
         assert(
             groupA.forall(l => strokeOf(l) != Style.Color.blue && strokeOf(l) != Style.Color.orange),
-            "L10 errorBar: row 'a' lines must not use DefaultPalette colors"
+            "row 'a' lines must not use DefaultPalette colors"
         )
         assert(
             groupB.forall(l => strokeOf(l) != Style.Color.blue && strokeOf(l) != Style.Color.orange),
-            "L10 errorBar: row 'b' lines must not use DefaultPalette colors"
+            "row 'b' lines must not use DefaultPalette colors"
         )
     }
 

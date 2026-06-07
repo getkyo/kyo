@@ -6,7 +6,7 @@ import kyo.Style.*
 import kyo.UI.*
 import scala.language.implicitConversions
 
-/** Shows the REACTIVE and SCALE features this campaign added, captured across two frames so the morph is visible.
+/** Shows the REACTIVE and SCALE features, captured across two frames so the morph is visible.
   *
   * The page holds three charts:
   *

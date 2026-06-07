@@ -88,7 +88,7 @@ class AriaTest extends kyo.test.Test[Any]:
         }
     }
 
-    // ---- role (Q-008): the bare `role` HTML attribute, distinct from aria-role ----
+    // ---- role: the bare `role` HTML attribute, distinct from aria-role ----
 
     "role(v) renders the bare role attribute on div" in {
         val html = renderHtml(UI.div.role("button"))

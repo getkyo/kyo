@@ -7,7 +7,7 @@ import kyo.internal.ChartLower
 import kyo.internal.HtmlRenderer
 import scala.language.implicitConversions
 
-/** Phase 08 tests: LINE/AREA PATH-MORPH TWEEN (declarative SMIL on `d`).
+/** Tests for LINE/AREA PATH-MORPH TWEEN (declarative SMIL on `d`).
   *
   * The chart lowers to a pure `Svg.Root` via a `given Conversion`, which has NO effect context and
   * cannot launch an `Async` stepping fiber. SMIL can animate a path's `d` attribute declaratively
@@ -31,7 +31,7 @@ import scala.language.implicitConversions
   *   edge, so the lowering adds bandW/2 to centre:
   *   px_Jan = 60 + 0*280 + (280-252)/2 + 252/2 = 74 + 126 = 200
   *   px_Feb = 60 + 1*280 + (280-252)/2 + 252/2 = 354 + 126 = 480
-  *   (The old 74/354 were the band LEFT edge and encoded the off-by-half-band bug, now fixed.)
+  *   (The old 74/354 were the band LEFT edge and encoded the off-by-half-band bug; the centring fix uses bandW/2.)
   *
   * Y scale linear(0,4000), baseline=440, top=20: pixel(v) = 440 - v*0.105
   *   1000 -> 335,  2000 -> 230,  3000 -> 125,  500 -> 387.5
@@ -50,7 +50,7 @@ import scala.language.implicitConversions
   *   5. Double-pull idempotency (line): two renders of the same emission reproduce the same from/to.
   *   6. Double-pull idempotency (area): same discipline for area paths.
   *   7. No animate on the FIRST emission (no previous path stored yet).
-  *   8-14. INV-036 / INV-002 leaves (markIdx keying stability, CatKey dedup, area parity, gate check).
+  *   8-14. markIdx keying stability, CatKey dedup, area parity, gate check.
   */
 class ChartMorphTest extends kyo.test.Test[Any]:
 
@@ -67,13 +67,13 @@ class ChartMorphTest extends kyo.test.Test[Any]:
     case class Sale(month: String, revenue: Rev)
     given CanEqual[Sale, Sale] = CanEqual.derived
 
-    // Two-value record for multi-mark tests (INV-036 leaf 1 and leaf 6).
+    // Two-value record for multi-mark tests.
     // v2 is Maybe[Rev] so that rows with v2=Absent are skipped by line/area (gap rows).
-    // This lets leaf 1 / leaf 6 keep the line/area stable at 2 points while the bar gains a 3rd row.
+    // This lets the multi-mark tests keep the line/area stable at 2 points while the bar gains a 3rd row.
     case class MultiSale(month: String, v1: Rev, v2: Maybe[Rev])
     given CanEqual[MultiSale, MultiSale] = CanEqual.derived
 
-    // Enum with colliding toString for INV-002 / INV-036 leaf 5.
+    // Enum with colliding toString for the colliding-toString dedup test.
     // Both cases override toString to "color" so they collide under the old toString-keyed dedup.
     // distinctKeyed uses CatKey (class + value), keeping them distinct.
     enum Col derives CanEqual:
@@ -85,11 +85,11 @@ class ChartMorphTest extends kyo.test.Test[Any]:
     case class ColSale(month: String, revenue: Rev, col: Col)
     given CanEqual[ColSale, ColSale] = CanEqual.derived
 
-    // Row type for Bug A (gap/type-signature) tests: Maybe revenue for gap rows.
+    // Row type for gap/type-signature tests: Maybe revenue for gap rows.
     case class GapSale(month: String, rev: Maybe[Rev])
     given CanEqual[GapSale, GapSale] = CanEqual.derived
 
-    // Row type for Bug B (category-identity keying) tests: String color label.
+    // Row type for category-identity keying tests: String color label.
     case class NamedColorSale(month: String, rev: Rev, series: String)
     given CanEqual[NamedColorSale, NamedColorSale] = CanEqual.derived
 
@@ -368,7 +368,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- INV-036 Leaf 1: multi-mark pathKey stable when preceding bar's geom count changes ----
+    // ---- multi-mark pathKey stable when preceding bar's geom count changes ----
 
     "multi-mark: line pathKey is stable when a preceding bar's geom count changes" in {
         // mark-0: ungrouped bar (uses rowKey, content-based, not pathKey).
@@ -411,17 +411,17 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             // This proves the line's key was found in fromGeom despite the bar count change.
             assert(
                 html.contains("attributeName=\"d\""),
-                s"INV-036 leaf 1: line SMIL morph must fire when bar's geom count changes:\n$html"
+                s"line SMIL morph must fire when bar's geom count changes:\n$html"
             )
             // The from and to path strings must differ (real morph, not dead animation).
             assert(
                 html.contains("from=\"M") && html.contains("to=\"M"),
-                s"INV-036 leaf 1: expected from=M and to=M in d-animate:\n$html"
+                s"expected from=M and to=M in d-animate:\n$html"
             )
         end for
     }
 
-    // ---- INV-036 Leaf 3: new series added in second emission snaps in ----
+    // ---- new series added in second emission snaps in ----
 
     "new series added in second emission snaps in (no false morph from prior slot)" in {
         // Emission 1: one series ("Red" only), key "line-0-Red", stroke #3b82f6 (blue, idx=0).
@@ -470,25 +470,25 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             val pathSegs      = rawSegments.drop(1) // skip preamble
             val blueSegment   = pathSegs.find(_.contains("stroke=\"#3b82f6\""))
             val orangeSegment = pathSegs.find(_.contains("stroke=\"#f97316\""))
-            assert(blueSegment.isDefined, s"INV-036 leaf 3: expected a blue-stroked path (Red series):\n$html")
-            assert(orangeSegment.isDefined, s"INV-036 leaf 3: expected an orange-stroked path (Blue series):\n$html")
+            assert(blueSegment.isDefined, s"expected a blue-stroked path (Red series):\n$html")
+            assert(orangeSegment.isDefined, s"expected an orange-stroked path (Blue series):\n$html")
             // Existing Red series (line-0-Red) must MORPH: its path segment contains attributeName="d".
             assert(
                 blueSegment.get.contains("attributeName=\"d\""),
-                s"INV-036 leaf 3: existing Red series must morph (attributeName=d), segment:\n${blueSegment.get}"
+                s"existing Red series must morph (attributeName=d), segment:\n${blueSegment.get}"
             )
             // New Blue series (line-0-Blue) must SNAP: its path segment has no <animate at all.
             assert(
                 !orangeSegment.get.contains("<animate"),
-                s"INV-036 leaf 3: new Blue series must snap (no <animate>), segment:\n${orangeSegment.get}"
+                s"new Blue series must snap (no <animate>), segment:\n${orangeSegment.get}"
             )
             // Total animate count must be exactly 1 (only the morphing Red series).
             val animateCount = html.split("<animate").length - 1
-            assert(animateCount == 1, s"INV-036 leaf 3: expected exactly 1 <animate total, got $animateCount:\n$html")
+            assert(animateCount == 1, s"expected exactly 1 <animate total, got $animateCount:\n$html")
         end for
     }
 
-    // ---- INV-036 Leaf 4: removed series key absent in second emission ----
+    // ---- removed series key absent in second emission ----
 
     "removed series key absent in second emission, no stale morph" in {
         // Emission 1: line with no color encoding, key "line-0-0".
@@ -510,13 +510,13 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             // Command count changed (2 -> 1): structural gate fires, path snaps, no <animate>.
             assert(
                 !html.contains("<animate"),
-                s"INV-036 leaf 4: structural change (category removed) must snap, no animate:\n$html"
+                s"structural change (category removed) must snap, no animate:\n$html"
             )
-            assert(html.contains("<path"), s"INV-036 leaf 4: path must still be present:\n$html")
+            assert(html.contains("<path"), s"path must still be present:\n$html")
         end for
     }
 
-    // ---- INV-036 + INV-002 Leaf 5: toString collision stays as distinct pathKeys ----
+    // ---- toString collision stays as distinct pathKeys ----
 
     "two series with colliding toString stay as distinct pathKeys per CatKey seriesIdx" in {
         // Col.Red and Col.Blue both override toString to "color".
@@ -542,15 +542,15 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             val pathCount = html.split("<path").length - 1
             assert(
                 pathCount == 2,
-                s"INV-036/INV-002 leaf 5: two series with colliding toString must produce 2 paths, got $pathCount:\n$html"
+                s"two series with colliding toString must produce 2 paths, got $pathCount:\n$html"
             )
         end for
     }
 
-    // ---- INV-036 Leaf 6: area pathKey stable when preceding bar's geom count changes ----
+    // ---- area pathKey stable when preceding bar's geom count changes ----
 
     "area pathKey is stable when a preceding bar's geom count changes" in {
-        // Mirror of leaf 1 but mark-1 is an area mark.
+        // Mirror of the multi-mark test but mark-1 is an area mark.
         // mark-0: bar (2 bars -> 3 bars). mark-1: area with stable 2 points (Mar has v2=Absent).
         // v2=Absent makes the area treat Mar as a gap row, so the area stays 2-point.
         // The area key must be "area-1-0" on both emissions; morph fires on emission 2.
@@ -579,15 +579,15 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             // Area must morph: attributeName="d" present.
             assert(
                 html.contains("attributeName=\"d\""),
-                s"INV-036 leaf 6: area SMIL morph must fire when bar's geom count changes:\n$html"
+                s"area SMIL morph must fire when bar's geom count changes:\n$html"
             )
         end for
     }
 
-    // ---- INV-036 Leaf 7: structural gate preserved after markIdx fix ----
+    // ---- structural gate preserved after markIdx fix ----
 
     "line with changed point count snaps (structural gate unchanged after markIdx fix)" in {
-        // INV-036 states the prevCount==newCount gate is unchanged.
+        // The prevCount==newCount gate is unchanged.
         // 2 points -> 3 points = structural change -> no <animate>.
         // This mirrors test 2 but explicitly guards the gate under the new markIdx keying.
         val e1 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -605,15 +605,15 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             // Structural gate fires: command count differs -> no animate (path snaps).
             assert(
                 !html.contains("<animate"),
-                s"INV-036 leaf 7: structural gate must fire for 2->3 point change (no animate):\n$html"
+                s"structural gate must fire for 2->3 point change (no animate):\n$html"
             )
-            assert(html.contains("<path"), s"INV-036 leaf 7: path must still be present:\n$html")
+            assert(html.contains("<path"), s"path must still be present:\n$html")
         end for
     }
 
-    // ---- Bug A: same command COUNT but different command TYPES must snap, not morph ----
+    // ---- gap type-signature: same command COUNT but different command TYPES must snap, not morph ----
 
-    "BUG A (gap type-signature): gap change producing same command count but different types must snap" in {
+    "gap type-signature: gap change producing same command count but different types must snap" in {
         // Emission 1: 3 defined points -> one segment -> M L L (3 commands, types: MoveTo LineTo LineTo).
         // Emission 2: row 1 defined, row 2 absent (gap), rows 3+4 defined -> two segments ->
         //   segment1=(Jan only)->M, segment2=(Mar,Apr)->M L => total M M L (3 commands, types differ!).
@@ -654,15 +654,15 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             // A morph here would interpolate between structurally incompatible paths.
             assert(
                 !html.contains("<animate"),
-                s"BUG A: gap change with same command count but different types must snap (no <animate>), got:\n$html"
+                s"gap type-signature: gap change with same command count but different types must snap (no <animate>), got:\n$html"
             )
-            assert(html.contains("<path"), s"BUG A: path must still be present after snap:\n$html")
+            assert(html.contains("<path"), s"gap type-signature: path must still be present after snap:\n$html")
         end for
     }
 
-    // ---- Bug A area: type-signature gate applied to area (regression guard: normal morph still fires) ----
+    // ---- gap type-signature area: type-signature gate applied to area (regression guard: normal morph still fires) ----
 
-    "BUG A area (type-sig fix regression): area stable-structure morph still fires after type-sig fix" in {
+    "gap type-signature area: area stable-structure morph still fires" in {
         // Area paths use buildSimpleAreaPath which skips gap rows (Absent y -> skip, not MoveTo gap).
         // So area gap rows reduce the point count rather than inserting extra MoveTo commands.
         // The type-signature fix for area is therefore equivalent to the count gate for linear area
@@ -670,7 +670,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
         //
         // This test is a regression guard: verifies the type-sig fix does NOT over-snap a stable-
         // structure area morph. Emission 1 and emission 2 both have 3 defined area points, so the
-        // type signature is identical (M-L-L-L-L-Z) -> morph MUST fire (not snap after the fix).
+        // type signature is identical (M-L-L-L-L-Z) -> morph MUST fire (not snap).
         //
         // GapSale with Maybe[Rev]: area skips Absent rows, so emission 2 has 3 defined rows (Jan, Mar, Apr).
         // The x-scale adapts but both emissions have 3 area points -> same type sequence -> morph fires.
@@ -695,19 +695,19 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             _    <- ref.set(e2)
             html <- HtmlRenderer.render(root, Seq.empty)
         yield
-            // Same type structure (M-L-L-L-L-Z in both): type-sig fix must not over-snap.
-            // The morph must still fire after the fix.
+            // Same type structure (M-L-L-L-L-Z in both): the type-signature check must not over-snap.
+            // The morph must still fire.
             assert(
                 html.contains("attributeName=\"d\""),
-                s"BUG A area regression: stable-structure area morph must still fire after type-sig fix:\n$html"
+                s"stable-structure area morph must still fire:\n$html"
             )
-            assert(html.contains("<path"), s"BUG A area: path must still be present:\n$html")
+            assert(html.contains("<path"), s"gap type-signature area: path must still be present:\n$html")
         end for
     }
 
-    // ---- Bug B: surviving series must morph from its OWN prior geometry, not a removed series' path ----
+    // ---- series-identity keying line: surviving series must morph from its OWN prior geometry, not a removed series' path ----
 
-    "BUG B line (series-identity keying): Blue series morphs from Blue's own prior path, not Red's old path" in {
+    "series-identity keying line: Blue series morphs from Blue's own prior path, not Red's old path" in {
         // Emission 1: two series [Red, Blue].
         //   Red: Jan=1000 (py=340), Feb=2000 (py=240)  -> d = "M200 340 L480 240"
         //   Blue: Jan=3000 (py=140), Feb=1000 (py=340)  -> d = "M200 140 L480 340"
@@ -716,7 +716,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
         //   Blue (new): Jan=2000 (py=240), Feb=1500 (py=290) -> d = "M200 240 L480 290"
         //   Old (buggy) key lookup: Blue at seriesIdx=0 -> "line-0-0" -> finds Red's old path "M200 340 L480 240".
         //   Command count (2) matches (bug fires a morph from Red's path!), from="M200 340 L480 240" (WRONG).
-        //   After fix: key is "line-0-Blue" by label. Blue's own prior path "M200 140 L480 340" is found.
+        //   With series-identity keying: key is "line-0-Blue" by label. Blue's own prior path "M200 140 L480 340" is found.
         //   from="M200 140 L480 340" (CORRECT, Blue's OWN prior path).
         //
         // Band scale (Jan, Feb): px_Jan=200, px_Feb=480.
@@ -740,7 +740,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
             root = (spec).lower
-            // Emission 1: records Red at key "line-0-Red" and Blue at key "line-0-Blue" (after fix).
+            // Emission 1: records Red at key "line-0-Red" and Blue at key "line-0-Blue".
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Emission 2: only Blue series remains.
             _    <- ref.set(e2)
@@ -750,28 +750,28 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             // Blue's new path in emission 2 is "M200 240 L480 290".
             // The morph MUST use Blue's OWN prior path as from=, not Red's old path "M200 340 L480 240".
             //
-            // Before fix: Blue at positional seriesIdx=0 finds Red's old path -> from="M200 340 L480 240" (WRONG).
-            // After fix:  Blue at label "Blue" finds Blue's own path -> from="M200 140 L480 340" (CORRECT).
+            // Blue at positional seriesIdx=0 would wrongly find Red's old path -> from="M200 340 L480 240".
+            // With series-identity keying, Blue at label "Blue" finds Blue's own path -> from="M200 140 L480 340" (CORRECT).
             assert(
                 html.contains("from=\"M200 140 L480 340\""),
-                s"BUG B line: Blue series must morph from Blue's OWN prior path M200 140 L480 340, got:\n$html"
+                s"series-identity keying line: Blue series must morph from Blue's OWN prior path M200 140 L480 340, got:\n$html"
             )
             assert(
                 html.contains("to=\"M200 240 L480 290\""),
-                s"BUG B line: Blue series must morph to M200 240 L480 290, got:\n$html"
+                s"series-identity keying line: Blue series must morph to M200 240 L480 290, got:\n$html"
             )
-            // Must NOT morph from Red's old path (the buggy from= value).
+            // Must NOT morph from Red's old path (the positional-index bug symptom).
             assert(
                 !html.contains("from=\"M200 340 L480 240\""),
-                s"BUG B line: must NOT morph from Red's old path M200 340 L480 240, got:\n$html"
+                s"series-identity keying line: must NOT morph from Red's old path M200 340 L480 240, got:\n$html"
             )
         end for
     }
 
-    // ---- Bug B area: same discipline for area paths ----
+    // ---- series-identity keying area: same discipline for area paths ----
 
-    "BUG B area (series-identity keying): Blue area morphs from Blue's own prior path, not Red's old path" in {
-        // Same scenario as Bug B line, but with area marks.
+    "series-identity keying area: Blue area morphs from Blue's own prior path, not Red's old path" in {
+        // Same scenario as the series-identity keying line test, but with area marks.
         // Area path adds baseline returns (L..Z) commands after the top-edge path.
         // Emission 1:
         //   Red: Jan=1000, Feb=2000 -> top "M200 340 L480 240" -> area "M200 340 L480 240 L480 440 L200 440 Z"
@@ -780,7 +780,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
         // Emission 2 (Blue only with new values: Jan=2000, Feb=1500):
         //   Blue new area: "M200 240 L480 290 L480 440 L200 440 Z"
         //   Old (buggy) lookup: Blue at idx=0 -> "area-0-0" -> finds Red's area path (WRONG).
-        //   After fix: Blue at label "Blue" -> "area-0-Blue" -> finds Blue's own area path (CORRECT).
+        //   With series-identity keying: Blue at label "Blue" -> "area-0-Blue" -> finds Blue's own area path (CORRECT).
         //
         // Y scale linear(0, 4000), pixel(v) = 440 - v*0.1
         val e1 = Chunk(
@@ -805,31 +805,30 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             html <- HtmlRenderer.render(root, Seq.empty)
         yield
             // Blue's own prior area path from emission 1: "M200 140 L480 340 L480 440 L200 440 Z".
-            // Before fix: from="M200 340 L480 240 L480 440 L200 440 Z" (Red's area path - WRONG).
-            // After fix:  from="M200 140 L480 340 L480 440 L200 440 Z" (Blue's own - CORRECT).
+            // Positional index lookup would give Red's area path (WRONG); label-keyed lookup gives Blue's own (CORRECT).
             assert(
                 html.contains("from=\"M200 140 L480 340 L480 440 L200 440 Z\""),
-                s"BUG B area: Blue must morph from its OWN prior area path, got:\n$html"
+                s"series-identity keying area: Blue must morph from its OWN prior area path, got:\n$html"
             )
             assert(
                 html.contains("to=\"M200 240 L480 290 L480 440 L200 440 Z\""),
-                s"BUG B area: Blue must morph to new area path, got:\n$html"
+                s"series-identity keying area: Blue must morph to new area path, got:\n$html"
             )
             // Must NOT morph from Red's old area path.
             assert(
                 !html.contains("from=\"M200 340 L480 240 L480 440 L200 440 Z\""),
-                s"BUG B area: must NOT morph from Red's old area path, got:\n$html"
+                s"series-identity keying area: must NOT morph from Red's old area path, got:\n$html"
             )
         end for
     }
 
-    // ---- Colliding-toString transition tests (the residual Phase-8 bug) ----
+    // ---- Colliding-toString transition tests ----
     //
     // Col.Red and Col.Blue both override toString to "color". Under the old label-string keying
     // the transition geometry map stores both series under the same key "line-0-color" (or
     // "area-0-color"), so Red's geometry silently overwrites Blue's (or vice versa). On the
     // second emission each series looks up the wrong prior geometry and morphs from a crossed
-    // or merged path. After the fix (TransKey keyed by CatKey identity) the two series stay
+    // or merged path. With TransKey keyed by CatKey identity the two series stay
     // distinct and each morphs from its OWN prior path.
     //
     // Layout (color-encoding line/area: legend at Top, reserveTop=true adds LegendReservedH=20):
@@ -852,8 +851,8 @@ class ChartMorphTest extends kyo.test.Test[Any]:
         //   Blue: Jan=800 (py=360), Feb=1200 (py=320)  -> "M200 360 L480 320"
         //   Old bug: both look up key "line-0-color" -> find Blue's emission-1 path "M200 390 L480 290"
         //     -> Red morphs from Blue's path (WRONG), Blue morphs from itself only by accident.
-        //   After fix: Red looks up TransKey.Series(0, CatKey(ColTag, Red)) -> "M200 340 L480 240" (CORRECT).
-        //              Blue looks up TransKey.Series(0, CatKey(ColTag, Blue)) -> "M200 390 L480 290" (CORRECT).
+        //   With CatKey identity: Red looks up TransKey.Series(0, CatKey(ColTag, Red)) -> "M200 340 L480 240" (CORRECT).
+        //                         Blue looks up TransKey.Series(0, CatKey(ColTag, Blue)) -> "M200 390 L480 290" (CORRECT).
         val e1 = Chunk(
             ColSale("Jan", Rev(1000.0), Col.Red),
             ColSale("Feb", Rev(2000.0), Col.Red),
@@ -905,9 +904,9 @@ class ChartMorphTest extends kyo.test.Test[Any]:
                 html.contains("to=\"M200 360 L480 320\""),
                 s"colliding-toString LINE: Blue must morph to M200 360 L480 320, got:\n$html"
             )
-            // Red must NOT morph from Blue's prior path (the bug symptom).
-            // Before fix: both series use from="M200 390 L480 290" (Blue's path overwrote Red's).
-            // After fix: Red uses from="M200 340 L480 240", Blue uses from="M200 390 L480 290".
+            // Red must NOT morph from Blue's prior path (the colliding-key symptom).
+            // Without the CatKey fix: both series use from="M200 390 L480 290" (Blue's path overwrote Red's).
+            // With the fix: Red uses from="M200 340 L480 240", Blue uses from="M200 390 L480 290".
             val pathSegments = html.split("<path ").toSeq.drop(1)
             val redSeg       = pathSegments.find(_.contains("stroke=\"#3b82f6\""))
             assert(
@@ -928,7 +927,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
         //   Red: Jan=2000 (py=240), Feb=3000 (py=140) -> "M200 240 L480 140 L480 440 L200 440 Z"
         //   Blue: Jan=800 (py=360), Feb=1200 (py=320)  -> "M200 360 L480 320 L480 440 L200 440 Z"
         //   Old bug: Red morphs from Blue's E1 area path (WRONG).
-        //   After fix: Red morphs from Red's own E1 area path (CORRECT).
+        //   With CatKey identity keying: Red morphs from Red's own E1 area path (CORRECT).
         val e1 = Chunk(
             ColSale("Jan", Rev(1000.0), Col.Red),
             ColSale("Feb", Rev(2000.0), Col.Red),

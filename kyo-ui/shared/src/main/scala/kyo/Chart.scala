@@ -318,10 +318,10 @@ object Chart:
       * This is the only public constructor for `Grouping`. Pass the result to a mark's
       * `stack` parameter:
       *
-      * {{{
+      * ```scala
       * Chart.bar(x = _.month, y = _.revenue, stack = Chart.by(_.region))
       * Chart.bar(x = _.month, y = _.revenue, stack = Chart.by(_.region, normalize = true))
-      * }}}
+      * ```
       *
       * `normalize = true` produces a 100%-stacked bar; `false` (the default) stacks
       * absolute values.
@@ -550,12 +550,13 @@ object Chart:
           * `@targetName`) to avoid an erasure conflict with the `String => Style.Color` overload.
           *
           * Example:
-          * {{{
+          *
+          * ```scala
           * .legend(_.colorScale[Region](
           *   Region.NA -> Style.Color.blue,
           *   Region.EU -> Style.Color.green
           * ))
-          * }}}
+          * ```
           */
         @scala.annotation.targetName("colorScaleTyped")
         def colorScale[K](pairs: (K, Style.Color)*)(using CanEqual[K, K]): LegendConfig =
@@ -625,7 +626,7 @@ object Chart:
         gridColor: Maybe[Style.Color] = Absent,
         fontFamily: Maybe[String] = Absent,
         fontSize: Maybe[Double] = Absent
-    ):
+    ) derives CanEqual:
         def light: Theme = copy(isDark = false)
         def dark: Theme  = copy(isDark = true)
 
@@ -722,7 +723,7 @@ object Chart:
         right: Double,
         bottom: Double,
         left: Double
-    ):
+    ) derives CanEqual:
         def top(v: Double): Margins    = copy(top = v)
         def right(v: Double): Margins  = copy(right = v)
         def bottom(v: Double): Margins = copy(bottom = v)
@@ -746,7 +747,7 @@ object Chart:
         title: Maybe[String],
         desc: Maybe[String],
         ariaLabel: Maybe[String]
-    )
+    ) derives CanEqual
 
     object A11y:
         /** The default: no accessibility metadata. */
@@ -1088,7 +1089,7 @@ object Chart:
     object Scales:
 
         /** The inner plot rectangle in pixel coordinates. */
-        final case class Rect(x: Double, y: Double, width: Double, height: Double)
+        final case class Rect(x: Double, y: Double, width: Double, height: Double) derives CanEqual
 
         /** A single axis projection: maps domain values to pixels and back. */
         sealed trait Axis:
@@ -1350,10 +1351,10 @@ object Chart:
       * A `Grouping[A]` is produced exclusively by `Chart.by(...)`, so there is no way to
       * express a stack without a grouping accessor. The two `by` forms are:
       *
-      * {{{
+      * ```scala
       * stack = Chart.by(_.region)                        // stack by region
       * stack = Chart.by(_.region, normalize = true)      // 100% stacked
-      * }}}
+      * ```
       *
       * The `normalize` flag is a named parameter, not a chained method, which
       * preserves row-type inference (the appendix-validated design constraint).

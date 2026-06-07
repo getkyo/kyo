@@ -97,7 +97,7 @@ class ScaleTest extends kyo.test.Test[Any]:
     }
 
     "Scale.fit Linear clamps out-of-range values when clamp=true" in {
-        // Phase 6 (WARN-1): clamping is now opt-in via the clamp flag (d3 semantics).
+        // Clamping is opt-in via the clamp flag (d3 semantics).
         // The default (clamp=false) extrapolates; clamp=true pins out-of-range to the bounds.
         val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(0.0, 100.0), 0.0, 200.0, nice = false, clamp = true)
         // value above max should clamp to rangeHi
@@ -107,7 +107,7 @@ class ScaleTest extends kyo.test.Test[Any]:
     }
 
     "Scale.fit Linear extrapolates out-of-range values when clamp=false (default)" in {
-        // Phase 6 (WARN-1): default clamp=false extrapolates beyond the range.
+        // default clamp=false extrapolates beyond the range.
         val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(0.0, 100.0), 0.0, 200.0, nice = false)
         // value above max extrapolates past rangeHi (200): 200.0 -> 400.0
         assert(scale.apply(Domain.Continuous(200.0)) == 400.0)
@@ -150,19 +150,19 @@ class ScaleTest extends kyo.test.Test[Any]:
         assert(scale.apply(Domain.Category("purple")) == -1.0)
     }
 
-    // ---- Phase 2: Symlog (INV-008) ----
+    // ---- Symlog ----
 
-    // Test 1: symlog is finite and zero-centered at 0 (G9).
+    // symlog is finite and zero-centered at 0.
     // f(-100) = -log10(101) ~ -2.00432, f(100) = log10(101) ~ 2.00432.
     // apply(0) = 0 + (f(0)-fMin)/(fMax-fMin)*200 = (2.00432)/(4.00864)*200 = 100.0 exactly.
-    "INV-008: Symlog apply(Continuous(0.0)) is the range midpoint for symmetric domain" in {
+    "Symlog apply(Continuous(0.0)) is the range midpoint for symmetric domain" in {
         val s   = Scale.Symlog(-100.0, 100.0, 0.0, 200.0, clamp = false)
         val mid = s.apply(Domain.Continuous(0.0))
         assert(math.abs(mid - 100.0) < 1e-9, s"Expected 100.0 but got $mid")
     }
 
-    // Test 2: symlog is symmetric about the zero pixel.
-    "INV-008: Symlog apply(v) and apply(-v) are mirror-equidistant from the midpoint" in {
+    // symlog is symmetric about the zero pixel.
+    "Symlog apply(v) and apply(-v) are mirror-equidistant from the midpoint" in {
         val s   = Scale.Symlog(-100.0, 100.0, 0.0, 200.0, clamp = false)
         val mid = 100.0
         val v   = 37.0
@@ -171,8 +171,8 @@ class ScaleTest extends kyo.test.Test[Any]:
         assert(math.abs((pos - mid) - (mid - neg)) < 1e-9, s"pos=$pos neg=$neg not symmetric about $mid")
     }
 
-    // Test 3: symlog invert round-trips.
-    "INV-008: Symlog invert(apply(v)) recovers v within 1e-6" in {
+    // symlog invert round-trips.
+    "Symlog invert(apply(v)) recovers v within 1e-6" in {
         val s  = Scale.Symlog(-100.0, 100.0, 0.0, 200.0, clamp = false)
         val px = s.apply(Domain.Continuous(12.5))
         val back = s.invert(px) match
@@ -181,8 +181,8 @@ class ScaleTest extends kyo.test.Test[Any]:
         assert(math.abs(back - 12.5) < 1e-6, s"Expected 12.5 but got $back")
     }
 
-    // Test 4: symlog is monotone across a signed domain.
-    "INV-008: Symlog pixel positions are strictly increasing across -50,-1,0,1,50" in {
+    // symlog is monotone across a signed domain.
+    "Symlog pixel positions are strictly increasing across -50,-1,0,1,50" in {
         val s      = Scale.Symlog(-100.0, 100.0, 0.0, 200.0, clamp = false)
         val values = Chunk(-50.0, -1.0, 0.0, 1.0, 50.0)
         val pixels = values.map(v => s.apply(Domain.Continuous(v)))
@@ -191,10 +191,10 @@ class ScaleTest extends kyo.test.Test[Any]:
         assert(ok, s"Expected strictly increasing pixels but got: $pixels")
     }
 
-    // ---- Phase 2: Band/Ordinal stride ticks (INV-009) ----
+    // ---- Band/Ordinal stride ticks ----
 
-    // Test 5: band axis emits all 7 labels when maxTicks >= n.
-    "INV-009: Band ticks(7) over 7 keys produces 7 ticks including the last key" in {
+    // band axis emits all 7 labels when maxTicks >= n.
+    "Band ticks(7) over 7 keys produces 7 ticks including the last key" in {
         val keys  = Chunk("a", "b", "c", "d", "e", "f", "g")
         val scale = Scale.fit(Scale.Kind.Band, Extent.categories(keys), 0.0, 700.0)
         val ticks = scale.ticks(7)
@@ -202,8 +202,8 @@ class ScaleTest extends kyo.test.Test[Any]:
         assert(ticks(6).label == "g", s"Expected last label 'g' but got '${ticks(6).label}'")
     }
 
-    // Test 6: band axis uses stride so indices 0,3,6 (not first 3) are selected for 7 keys / maxTicks=3.
-    "INV-009: Band ticks(3) over 7 keys selects stride-3 indices 0,3,6 (first, fourth, seventh)" in {
+    // band axis uses stride so indices 0,3,6 (not first 3) are selected for 7 keys / maxTicks=3.
+    "Band ticks(3) over 7 keys selects stride-3 indices 0,3,6 (first, fourth, seventh)" in {
         val keys  = Chunk("a", "b", "c", "d", "e", "f", "g")
         val scale = Scale.fit(Scale.Kind.Band, Extent.categories(keys), 0.0, 700.0)
         val ticks = scale.ticks(3)
@@ -213,10 +213,10 @@ class ScaleTest extends kyo.test.Test[Any]:
         assert(ticks(2).label == "g", s"Expected third label 'g' (index 6) but got '${ticks(2).label}'")
     }
 
-    // ---- Phase 2: Log domain drops non-positive (INV-011) ----
+    // ---- Log domain drops non-positive ----
 
-    // Test 9: fitLog with a manually constructed extent starting at 10.0 does not floor to 1e-10.
-    "INV-011: fitLog over extent [10,1000] sets domainMin == 10.0, not the old 1e-10 floor" in {
+    // fitLog with a manually constructed extent starting at 10.0 does not floor to 1e-10.
+    "fitLog over extent [10,1000] sets domainMin == 10.0, not the old 1e-10 floor" in {
         val scale = Scale.fit(Scale.Kind.Log, Extent.continuous(10.0, 1000.0), 0.0, 300.0)
         scale match
             case Scale.Log(domainMin, _, _, _, _) =>
@@ -225,22 +225,22 @@ class ScaleTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // ---- Phase 2: Clamp (INV-012) ----
+    // ---- Clamp ----
 
-    // Test 10: Scale.Linear with clamp=true pins a value beyond domainMax to rangeHi.
-    "INV-012: Scale.Linear apply clamps a value beyond domainMax to rangeHi when clamp=true" in {
+    // Scale.Linear with clamp=true pins a value beyond domainMax to rangeHi.
+    "Scale.Linear apply clamps a value beyond domainMax to rangeHi when clamp=true" in {
         val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(0.0, 10.0), 0.0, 100.0, nice = false, clamp = true)
         assert(scale.apply(Domain.Continuous(20.0)) == 100.0, "Expected 100.0 (clamped to rangeHi)")
     }
 
-    // Test 10b: with clamp=false (default), the same value extrapolates beyond rangeHi.
-    "INV-012: Scale.Linear apply extrapolates a value beyond domainMax when clamp=false" in {
+    // with clamp=false (default), the same value extrapolates beyond rangeHi.
+    "Scale.Linear apply extrapolates a value beyond domainMax when clamp=false" in {
         val scale = Scale.fit(Scale.Kind.Linear, Extent.continuous(0.0, 10.0), 0.0, 100.0, nice = false)
         assert(scale.apply(Domain.Continuous(20.0)) == 200.0, "Expected 200.0 (extrapolated past rangeHi)")
     }
 
     // Symlog clamp=true: input 20.0 clamped to domainMax=10 before transform.
-    "INV-012: Symlog with clamp=true pins out-of-domain input to the domain boundary" in {
+    "Symlog with clamp=true pins out-of-domain input to the domain boundary" in {
         val s = Scale.Symlog(0.0, 10.0, 0.0, 100.0, clamp = true)
         // apply(20.0) with clamp=true should equal apply(10.0): both domainMax.
         val clamped = s.apply(Domain.Continuous(20.0))
@@ -248,12 +248,12 @@ class ScaleTest extends kyo.test.Test[Any]:
         assert(math.abs(clamped - atMax) < 1e-9, s"Clamped=$clamped should equal atMax=$atMax")
     }
 
-    // ---- Phase 11: L11a and L12b -- right-scale kind readback via Chart.Scales ----
+    // ---- right-scale kind readback via Chart.Scales ----
 
     case class ScRow(x: String, yL: Double, yR: Double)
     given CanEqual[ScRow, ScRow] = CanEqual.derived
 
-    "L11a: yScaleRight(_.log) resolves right scale as Log kind (kind readback via Chart.Scales, GAP-RIGHTY-SCALE)" in {
+    "yScaleRight(_.log) resolves right scale as Log kind (kind readback via Chart.Scales)" in {
         // Use lowerWithScales (via lowerWithScales) to read the resolved right scale kind.
         // The right scale should be Log after .yScaleRight(_.log).
         // Data: yR=[1.0, 100.0]; with log scale, domain is [1.0, 100.0].
@@ -268,13 +268,13 @@ class ScaleTest extends kyo.test.Test[Any]:
             case Present(ax) =>
                 ax.kind match
                     case ScaleKind.Log => succeed
-                    case other         => fail(s"L11a: Expected Log kind for right axis but got $other")
+                    case other         => fail(s"Expected Log kind for right axis but got $other")
             case Absent =>
-                fail("L11a: Expected a right axis (yRight is Present) but got Absent")
+                fail("Expected a right axis (yRight is Present) but got Absent")
         end match
     }
 
-    "L12b: no yScaleRight override -> right scale resolves as Linear (default byte-identity, CO-PIN)" in {
+    "no yScaleRight override -> right scale resolves as Linear (default byte-identity)" in {
         // Without yScaleRight, the right scale defaults to Linear+nice, matching the old hardcoded call.
         val rows = kyo.Chunk(ScRow("a", 100.0, 0.0), ScRow("b", 200.0, 20.0))
         val spec = Chart(rows)(
@@ -286,9 +286,9 @@ class ScaleTest extends kyo.test.Test[Any]:
             case Present(ax) =>
                 ax.kind match
                     case ScaleKind.Linear(_, _) => succeed
-                    case other                  => fail(s"L12b: Expected Linear kind for default right axis but got $other")
+                    case other                  => fail(s"Expected Linear kind for default right axis but got $other")
             case Absent =>
-                fail("L12b: Expected a right axis (yRight is Present) but got Absent")
+                fail("Expected a right axis (yRight is Present) but got Absent")
         end match
     }
 

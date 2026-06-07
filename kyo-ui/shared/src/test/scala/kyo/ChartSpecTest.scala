@@ -40,7 +40,6 @@ class ChartSpecTest extends kyo.test.Test[Any]:
             case other =>
                 fail(s"Expected Mark.Bar but got $other")
         end match
-        succeed
     }
 
     // ---- sentinel: bar without color yields Absent ----
@@ -62,8 +61,6 @@ class ChartSpecTest extends kyo.test.Test[Any]:
             case other =>
                 fail(s"Expected Mark.Bar but got $other")
         end match
-
-        succeed
     }
 
     // ---- grouping carrier: by(_.region) and normalize ----
@@ -89,7 +86,7 @@ class ChartSpecTest extends kyo.test.Test[Any]:
 
     "yAxis(_.grid.ticks(5)) sets showGrid true and tickCount 5" in {
         val spec = Chart(sales)(bar(x = _.month, y = _.revenue)).yAxis(_.grid.ticks(5))
-        // side field removed (dead/false knob per design §GAP-AXISCONFIG-SIDE)
+        // side field removed (dead/false knob: the field has no effect and always produced the default side)
         assert(spec.yAxisCfg.showGrid == true)
         assert(spec.yAxisCfg.tickCount == 5)
     }
@@ -162,6 +159,7 @@ class ChartSpecTest extends kyo.test.Test[Any]:
     }
 
     "positive typeCheck: Chart(chunk) infers Chart and Chart(signal) infers DataSource.Live at runtime" in {
+        // Signal inference is covered by the runtime "Chart(signal)(...) produces DataSource.Live" test.
         typeCheck("""
             import kyo.*
             import kyo.UI.*
@@ -172,8 +170,6 @@ class ChartSpecTest extends kyo.test.Test[Any]:
             val chunk: Chunk[Row] = Chunk.empty
             val specStatic: Chart[Row] = Chart(chunk)(bar(x = _.x, y = _.y))
         """)
-        // Signal inference is covered by the runtime "Chart(signal)(...) produces DataSource.Live" test.
-        succeed
     }
 
     // ---- compile gates: shouldNot typeCheck ----
@@ -250,7 +246,6 @@ class ChartSpecTest extends kyo.test.Test[Any]:
                 assert(defined == Absent)
             case other => fail(s"Expected Mark.Line but got $other")
         end match
-        succeed
     }
 
     // ---- point mark has size Present when supplied ----
@@ -265,7 +260,6 @@ class ChartSpecTest extends kyo.test.Test[Any]:
                 assert(symbol == Absent)
             case other => fail(s"Expected Mark.Point but got $other")
         end match
-        succeed
     }
 
     // ---- axis marker ----
@@ -277,7 +271,6 @@ class ChartSpecTest extends kyo.test.Test[Any]:
                 assert(axis == Axis.Right)
             case other => fail(s"Expected Mark.Line but got $other")
         end match
-        succeed
     }
 
     // ---- Chart converts to Svg.Root ----
@@ -285,13 +278,13 @@ class ChartSpecTest extends kyo.test.Test[Any]:
     "Chart[Sale] converts to Svg.Root via given Conversion" in {
         val spec: Chart[Sale] = Chart(sales)(bar(x = _.month, y = _.revenue))
         val root: Svg.Root    = (spec).lower
-        succeed
+        assert(root.children.nonEmpty, "Expected the converted Svg.Root to have children")
     }
 
-    // ---- Phase-4 tests: rule defaults and interaction config (INV-020, D23) ----
+    // ---- rule defaults and interaction config ----
 
-    // Test: rule(y=80.0) compiles via Conversion with no null (INV-020, plan leaf 9)
-    "rule(y=80.0) builds Mark.Rule with Const via implicit Conversion (INV-020)" in {
+    // rule(y=80.0) compiles via Conversion with no null
+    "rule(y=80.0) builds Mark.Rule with Const via implicit Conversion" in {
         val m = rule[Sale, Double](y = 80.0)
         m match
             case Mark.Rule(Absent, Present(RuleValue.Const(v, _)), Axis.Left) =>
@@ -302,8 +295,8 @@ class ChartSpecTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // Test: rule with both positions Unset is skipped at lowering (INV-020, plan leaf 10)
-    "rule() with both positions Unset emits no rule line while the sibling bar renders (INV-020)" in {
+    // rule with both positions Unset is skipped at lowering
+    "rule() with both positions Unset emits no rule line while the sibling bar renders" in {
         val m    = rule[Sale, Double]()
         val spec = Chart(sales)(bar(x = _.month, y = _.revenue), m)
         val root = (spec).lower
@@ -319,16 +312,16 @@ class ChartSpecTest extends kyo.test.Test[Any]:
         assert(marksLines.isEmpty, "a rule() with both positions Unset must emit NO Svg.Line (skipped at lowering)")
     }
 
-    // Test: no null.asInstanceOf remains in Chart.scala rule factory (INV-020, plan leaf 11)
-    "rule default produces a RuleValue.Unset sentinel that is matchable (INV-020)" in {
+    // no null.asInstanceOf remains in Chart.scala rule factory
+    "rule default produces a RuleValue.Unset sentinel that is matchable" in {
         val rv = RuleValue.unset[Double]
         // Must be the singleton Unset, not null. Check via isInstanceOf (type erasure means we cannot
         // pattern match RuleValue.Unset against RuleValue[Double] without a CanEqual widening).
         assert(rv.isInstanceOf[RuleValue.Unset.type], s"Expected RuleValue.Unset but got $rv")
     }
 
-    // Test: existing rule call sites with explicit RuleValue.Const still compile (INV-020, plan leaf 22)
-    "existing rule(y = RuleValue.Const(...)) call sites still produce the same Mark.Rule (INV-020)" in {
+    // existing rule call sites with explicit RuleValue.Const still compile
+    "existing rule(y = RuleValue.Const(...)) call sites still produce the same Mark.Rule" in {
         val rv1 = RuleValue.Const(Usd(1000), summon[Plottable[Usd]])
         val m1  = rule[Sale, Usd](y = rv1)
         m1 match
@@ -340,8 +333,8 @@ class ChartSpecTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // Test: Chart.InteractionConfig.default has all highlighting disabled (D23)
-    "Chart.InteractionConfig.default has all highlights disabled (D23)" in {
+    // Chart.InteractionConfig.default has all highlighting disabled
+    "Chart.InteractionConfig.default has all highlights disabled" in {
         val cfg = Chart.InteractionConfig.default
         assert(!cfg.hoverHighlight, "hoverHighlight must be false by default")
         assert(!cfg.selectHighlight, "selectHighlight must be false by default")
@@ -349,16 +342,16 @@ class ChartSpecTest extends kyo.test.Test[Any]:
         assert(cfg.selectStyle == Absent, "selectStyle must be Absent by default")
     }
 
-    // Test: interaction extension method updates interactionCfg (D23)
-    "interaction extension method updates interactionCfg (D23)" in {
+    // interaction extension method updates interactionCfg
+    "interaction extension method updates interactionCfg" in {
         val spec = Chart(sales)(bar(x = _.month, y = _.revenue))
             .interaction(_.highlightSelect)
         assert(spec.interactionCfg.selectHighlight, "highlightSelect must set selectHighlight=true")
         assert(!spec.interactionCfg.hoverHighlight, "hoverHighlight must remain false")
     }
 
-    // Test: text factory builds Mark.Text with correct fields (D9)
-    "text factory builds Mark.Text with label and anchor (D9)" in {
+    // text factory builds Mark.Text with correct fields
+    "text factory builds Mark.Text with label and anchor" in {
         val m = text[Sale, String, Usd](x = _.month, y = _.revenue, label = _.month, anchor = TextAnchor.End)
         m match
             case Mark.Text(_, _, lbl, color, anchor, _, Axis.Left) =>
@@ -370,8 +363,8 @@ class ChartSpecTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // Test: errorBar factory builds Mark.ErrorBar with correct fields (D10)
-    "errorBar factory builds Mark.ErrorBar with correct encodings (D10)" in {
+    // errorBar factory builds Mark.ErrorBar with correct fields
+    "errorBar factory builds Mark.ErrorBar with correct encodings" in {
         case class Eb(x: String, mean: Usd, lo: Usd, hi: Usd)
         val eb = Eb("a", Usd(6.0), Usd(4.0), Usd(8.0))
         val m  = errorBar[Eb, String, Usd](x = _.x, y = _.mean, low = _.lo, high = _.hi, capWidth = 10.0)
@@ -391,7 +384,7 @@ class ChartSpecTest extends kyo.test.Test[Any]:
     private def assertClose(actual: Double, expected: Double, msg: String)(using Frame, kyo.test.AssertScope): Unit =
         assert(math.abs(actual - expected) < 1e-9, s"$msg: expected $expected but got $actual")
 
-    // ---- Phase 6: a11y, responsive, margins ----
+    // ---- accessibility, responsive, margins ----
 
     private def rootOf[A](spec: Chart[A]): Svg.Root =
         (spec).lower
@@ -406,31 +399,26 @@ class ChartSpecTest extends kyo.test.Test[Any]:
             case d: Svg.Desc => Chunk(d.text)
             case _           => Chunk.empty
 
-    // Leaf 14
     "title(t) adds an Svg.Title child carrying the title text" in {
         val root = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)).title("Revenue by month"))
         assert(titleTextsIn(root).toSeq.contains("Revenue by month"), "Expected a <title> child with the text")
     }
 
-    // Leaf 15
     "title(t) sets role=img on the root svg" in {
         val root = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)).title("T"))
         assert(root.attrs.role == Present("img"), s"Expected role=img but got ${root.attrs.role}")
     }
 
-    // Leaf 16
     "desc(d) adds an Svg.Desc child carrying the description text" in {
         val root = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)).desc("Monthly totals"))
         assert(descTextsIn(root).toSeq.contains("Monthly totals"), "Expected a <desc> child with the text")
     }
 
-    // Leaf 17
     "ariaLabel(l) sets aria-label on the root svg" in {
         val root = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)).ariaLabel("chart"))
         assert(root.attrs.ariaAttrs.get("label") == Some("chart"), s"Expected aria-label=chart but got ${root.attrs.ariaAttrs}")
     }
 
-    // Leaf 18
     "no a11y configured -> no title, no desc, no role, no aria-label" in {
         val root = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)))
         assert(titleTextsIn(root).isEmpty, "Expected no <title>")
@@ -439,7 +427,6 @@ class ChartSpecTest extends kyo.test.Test[Any]:
         assert(!root.attrs.ariaAttrs.contains("label"), "Expected no aria-label")
     }
 
-    // Leaf 19
     "responsive uses width=100% and a viewBox with no fixed pixel height" in {
         val root = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)).size(400, 300).responsive)
         assert(
@@ -450,7 +437,6 @@ class ChartSpecTest extends kyo.test.Test[Any]:
         assert(root.svgAttrs.viewBox.isDefined, "Expected a viewBox")
     }
 
-    // Leaf 20
     "responsive(ratio) keeps width=100% and a viewBox and sets preserveAspectRatio" in {
         val root = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)).responsive(16.0 / 9.0))
         assert(root.svgAttrs.width == Present(Svg.Coord.Len(Svg.SvgLength.Pct(100.0))), "Expected width=100%")
@@ -458,7 +444,6 @@ class ChartSpecTest extends kyo.test.Test[Any]:
         assert(root.svgAttrs.preserveAspectRatio.isDefined, "Expected preserveAspectRatio for an explicit ratio")
     }
 
-    // Leaf 21
     "responsive and size are mutually exclusive with last-set-wins" in {
         // size after responsive -> fixed wins.
         val sizeWins = rootOf(Chart(sales)(bar(x = _.month, y = _.revenue)).responsive.size(400, 300))
@@ -473,7 +458,6 @@ class ChartSpecTest extends kyo.test.Test[Any]:
         assert(respWins.svgAttrs.height == Absent, "responsive-after-size must have no fixed height")
     }
 
-    // Leaf (margins)
     "margins(...) shifts the plot rectangle by the configured left/top margins" in {
         val base     = Chart(sales)(bar(x = _.month, y = _.revenue))
         val (_, sc0) = base.lowerWithScales

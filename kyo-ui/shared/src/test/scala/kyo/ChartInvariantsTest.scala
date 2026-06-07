@@ -10,19 +10,16 @@ import kyo.internal.HtmlRenderer
 import kyo.internal.Scale
 import scala.language.implicitConversions
 
-/** Smoke tests that pin the phase-1 foundation invariants.
+/** Smoke tests that pin the core foundation invariants.
   *
   * Each test is a focused "crash-if-violated" assertion rather than a full geometry
-  * regression. Heavy behavioral coverage rides Phases 3-8.
-  *
-  * Tests correspond to invariants INV-001 through INV-004 as defined in
-  * `design/04-invariants.md`.
+  * regression. Heavy behavioral coverage is in the axis, lower, and morph test suites.
   */
 class ChartInvariantsTest extends kyo.test.Test[Any]:
 
-    // ---- INV-001: NaN y does not poison ticks or coordinates ----
+    // ---- NaN y does not poison ticks or coordinates ----
 
-    "INV-001: NaN y value does not appear in lowered SVG HTML output" in {
+    "NaN y value does not appear in lowered SVG HTML output" in {
         case class Row(x: Int, y: Double)
         val rows = Chunk(Row(0, 1.0), Row(1, Double.NaN), Row(2, 3.0))
         val spec = Chart(rows)(bar(x = _.x, y = _.y))
@@ -34,9 +31,9 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // INV-001 (non-bar): NaN/Infinity must not appear in point/line chart SVG output (exercises Scale.apply directly)
+    // NaN/Infinity must not appear in point/line chart SVG output (exercises Scale.apply directly)
 
-    "INV-001: NaN y value does not appear in POINT chart SVG output" in {
+    "NaN y value does not appear in POINT chart SVG output" in {
         case class Row(x: Int, y: Double)
         val rows = Chunk(Row(0, 1.0), Row(1, Double.NaN), Row(2, Double.PositiveInfinity), Row(3, 3.0))
         val spec = Chart(rows)(point(x = _.x, y = _.y))
@@ -48,7 +45,7 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "INV-001: NaN y value does not appear in LINE chart SVG output" in {
+    "NaN y value does not appear in LINE chart SVG output" in {
         case class Row(x: Int, y: Double)
         val rows = Chunk(Row(0, 1.0), Row(1, Double.NaN), Row(2, Double.PositiveInfinity), Row(3, 3.0))
         val spec = Chart(rows)(line(x = _.x, y = _.y))
@@ -60,9 +57,9 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- INV-004: single-pass resolveAllScales is byte-identical to the baseline ----
+    // ---- single-pass resolveAllScales is byte-identical to the baseline ----
 
-    "INV-004: single-pass scale resolution produces a non-empty SVG matching the baseline" in {
+    "single-pass scale resolution produces a non-empty SVG matching the baseline" in {
         // A 3-mark chart (bar + line + point) with a right axis exercises all scale-resolution paths.
         case class Row(x: String, yL: Double, yR: Double)
         val rows = Chunk(
@@ -83,14 +80,14 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
             html1 <- HtmlRenderer.render(root1, Seq.empty)
             html2 <- HtmlRenderer.render(root2, Seq.empty)
         yield
-            assert(html1.nonEmpty, "SVG output must be non-empty (INV-004)")
-            assert(html1 == html2, "Two lowerings of the same spec must be byte-identical (INV-004)")
+            assert(html1.nonEmpty, "SVG output must be non-empty")
+            assert(html1 == html2, "Two lowerings of the same spec must be byte-identical")
         end for
     }
 
-    // ---- INV-004: golden full-SVG string pins the fused single-pass scale resolution ----
+    // ---- golden full-SVG string pins the fused single-pass scale resolution ----
 
-    "INV-004: golden SVG pins the fused single-pass scale resolution" in {
+    "golden SVG pins the fused single-pass scale resolution" in {
         // Same no-gradient 3-mark (bar + line + point) right-axis chart as the determinism test above.
         // It emits NO <linearGradient> (no sequential colorScale), so the AtomicInt gradient-id prefix
         // never appears and the rendered HTML is fully deterministic. A future refactor that perturbs the
@@ -111,13 +108,13 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
         yield
             assert(!html.contains("linearGradient"), "golden chart must emit no gradient (determinism guard)")
             assert(!html.contains("kyo-chart-"), "golden chart must carry no non-deterministic chart-id prefix")
-            assert(html == ChartInvariantsTest.expectedGolden, s"INV-004 golden SVG drift:\n$html")
+            assert(html == ChartInvariantsTest.expectedGolden, s"golden SVG drift:\n$html")
         end for
     }
 
-    // ---- Phase 2: INV-007: ScaleOverride.pad wins over AxisConfig.pad ----
+    // ---- ScaleOverride.pad wins over AxisConfig.pad ----
 
-    "INV-007: ScaleOverride.withPad(0.2) wins over AxisConfig.pad(0.05) for extent widening" in {
+    "ScaleOverride.withPad(0.2) wins over AxisConfig.pad(0.05) for extent widening" in {
         // The chart uses a linear x scale with known domain [0,10].
         // ScaleOverride.withPad(0.2) should widen by 20%: delta = 0.2*(10-0) = 2; domain -> [-2,12].
         // AxisConfig.pad(0.05) would widen by only 5%: delta = 0.5; domain -> [-0.5,10.5].
@@ -149,8 +146,8 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // INV-007: reversed=true via AxisConfig places first datum at the far range end.
-    "INV-007: AxisConfig.reverse flips pixel orientation (first datum at far range end)" in {
+    // reversed=true via AxisConfig places first datum at the far range end.
+    "AxisConfig.reverse flips pixel orientation (first datum at far range end)" in {
         case class Row(x: String, y: Double)
         val rows = Chunk(Row("a", 1.0), Row("b", 2.0), Row("c", 3.0))
         // Forward control (no reverse): the first category 'a' sits left of the last 'c'.
@@ -173,11 +170,11 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
         )
     }
 
-    // ---- Phase 4 smoke tests: INV-020..024 ----
+    // ---- interaction smoke tests ----
 
-    // INV-020: rule defaults to RuleValue.Unset; a both-Unset rule is skipped at lowering (empty Chunk)
+    // rule defaults to RuleValue.Unset; a both-Unset rule is skipped at lowering (empty Chunk)
     // so it emits NO Svg.Line, while a sibling bar still renders a rect.
-    "INV-020: rule() with both-Unset positions emits no rule line while the sibling bar renders" in {
+    "rule() with both-Unset positions emits no rule line while the sibling bar renders" in {
         case class Row(x: String, y: Double)
         val rows = Chunk(Row("a", 1.0))
         val spec = Chart(rows)(bar(x = _.x, y = _.y), rule[Row, Double]())
@@ -194,32 +191,32 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
         assert(marksLines.isEmpty, "a rule() with both positions Unset must emit NO Svg.Line (skipped at lowering)")
     }
 
-    // INV-021: text mark lowers to Svg.Text elements and contributes to extent.
-    "INV-021: text mark lowers to at least one Svg.Text element (crash-if-violated)" in {
+    // text mark lowers to Svg.Text elements and contributes to extent.
+    "text mark lowers to at least one Svg.Text element (crash-if-violated)" in {
         case class Row(x: String, y: Double)
         val rows = Chunk(Row("a", 5.0), Row("b", 3.0))
         val spec = Chart(rows)(text(x = _.x, y = _.y, label = _.x))
         val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
-        yield assert(html.nonEmpty, "text mark must produce non-empty SVG (INV-021)")
+        yield assert(html.nonEmpty, "text mark must produce non-empty SVG")
         end for
     }
 
-    // INV-022: errorBar lowers to plain SVG lines/circles with no url(#id).
-    "INV-022: errorBar lowers without url(# references (crash-if-violated)" in {
+    // errorBar lowers to plain SVG lines/circles with no url(#id).
+    "errorBar lowers without url(# references (crash-if-violated)" in {
         case class Row(x: String, mean: Double, lo: Double, hi: Double)
         val rows = Chunk(Row("a", 6.0, 4.0, 8.0))
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi))
         val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
-            assert(!html.contains("url(#"), "errorBar must not emit url(#...) references (INV-022)")
-            assert(html.nonEmpty, "errorBar must produce non-empty SVG (INV-022)")
+            assert(!html.contains("url(#"), "errorBar must not emit url(#...) references")
+            assert(html.nonEmpty, "errorBar must produce non-empty SVG")
         end for
     }
 
-    // INV-023: line mark with onSelect carries a click handler.
-    "INV-023: line mark with onSelect carries a Present onClick on the rendered path" in {
+    // line mark with onSelect carries a click handler.
+    "line mark with onSelect carries a Present onClick on the rendered path" in {
         case class Pt(x: String, y: Double)
         given CanEqual[Pt, Pt] = CanEqual.derived
         for
@@ -232,18 +229,27 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
                 case g: Svg.G => g.children.collect { case p: Svg.Path => p }
                 case _        => Chunk.empty
             interactivePaths = paths.toSeq.filter(p => p.attrs.onClick.isDefined)
-        yield assert(interactivePaths.nonEmpty, "line mark with onSelect must carry onClick on path (INV-023)")
+        yield assert(interactivePaths.nonEmpty, "line mark with onSelect must carry onClick on path")
         end for
     }
 
-    // INV-024: interaction(_.highlightSelect) with no onSelect is a no-op (no crash).
-    "INV-024: interaction(_.highlightSelect) with no onSelect ref is a no-op without crash" in {
+    // interaction(_.highlightSelect) with no onSelect is a no-op: the rendered HTML must be
+    // identical to the same spec without the interaction config.
+    "interaction(_.highlightSelect) with no onSelect ref is a no-op: renders identically to the plain spec" in {
         case class Row(x: String, y: Double)
-        val rows = Chunk(Row("a", 1.0))
-        val spec = Chart(rows)(bar(x = _.x, y = _.y))
-            .interaction(_.highlightSelect) // no onSelect configured
-        val root = (spec).lower
-        succeed
+        val rows        = Chunk(Row("a", 1.0))
+        val plain       = Chart(rows)(bar(x = _.x, y = _.y))
+        val withInt     = Chart(rows)(bar(x = _.x, y = _.y)).interaction(_.highlightSelect)
+        val rootPlain   = (plain).lower
+        val rootWithInt = (withInt).lower
+        for
+            htmlPlain   <- HtmlRenderer.render(rootPlain, Seq.empty)
+            htmlWithInt <- HtmlRenderer.render(rootWithInt, Seq.empty)
+        yield assert(
+            htmlPlain == htmlWithInt,
+            "interaction(_.highlightSelect) with no onSelect ref must be a no-op: rendered HTML must equal the plain spec"
+        )
+        end for
     }
 
 end ChartInvariantsTest

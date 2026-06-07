@@ -11,7 +11,7 @@ import kyo.internal.Domain
 import kyo.internal.Scale
 import scala.language.implicitConversions
 
-/** Phase 08 typed-values tests.
+/** Tests for typed category-value encoding.
   *
   * Covers:
   *   1. Opaque `Usd <: Double` with `Plottable.numeric`: bar selects a Linear y-scale; a row at `Usd(2500)` with
@@ -120,9 +120,9 @@ class ChartTypedValuesTest extends kyo.test.Test[Any]:
         assertClose(numOf(r.svgAttrs.height), 210.0, "barH for Usd(2500) on [0,5000] scale")
     }
 
-    // ---- Leaf 9 (INV-027): colorScale[K] pairs form resolves by value equality ----
+    // ---- colorScale[K] pairs form resolves by value equality ----
 
-    "colorScale[K] pairs form assigns the mapped color to each Region by value equality (INV-027)" in {
+    "colorScale[K] pairs form assigns the mapped color to each Region by value equality" in {
         // Pairs NA -> blue, EU -> green, APAC -> orange; each category is matched by `==`, not by toString.
         val rows = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
@@ -149,9 +149,9 @@ class ChartTypedValuesTest extends kyo.test.Test[Any]:
         )
     }
 
-    // ---- Leaf 10 (INV-027): an unmatched value falls back to the default color, no crash ----
+    // ---- an unmatched value falls back to the default color, no crash ----
 
-    "colorScale[K] with a partial pairs list assigns the fallback (blue) to the unmapped Region case (INV-027)" in {
+    "colorScale[K] with a partial pairs list assigns the fallback (blue) to the unmapped Region case" in {
         // Pairs only NA -> green, EU -> orange; APAC has no pair, so it falls back to Style.Color.blue
         // (the first default-palette color). The render must not crash on the unmapped case.
         val rows = Chunk(
@@ -176,9 +176,9 @@ class ChartTypedValuesTest extends kyo.test.Test[Any]:
         )
     }
 
-    // ---- Leaf 11 (INV-027): no ClassCastException is reachable (the cast-based path is gone) ----
+    // ---- no ClassCastException is reachable ----
 
-    "colorScale[K] pairs form keeps two enum cases distinct under a colliding toString, no CCE (INV-027)" in {
+    "colorScale[K] pairs form keeps two enum cases distinct under a colliding toString, no CCE" in {
         // Two cases whose toString collide must still map to two distinct colors: value-equality keys them,
         // so the legend has two swatches with the two mapped colors. No ClassCastException is reachable
         // because the pairs form matches by `==`, never by an unchecked element-type cast.
@@ -204,9 +204,9 @@ class ChartTypedValuesTest extends kyo.test.Test[Any]:
         assert(fills.contains(Style.Color.blue), s"Expected a blue (Silver) swatch but fills were: $fills")
     }
 
-    // ---- Leaf 12 (INV-027): the canonical colorScale(String => Color) form still works ----
+    // ---- the canonical colorScale(String => Color) form works ----
 
-    "colorScale(String => Color) label form assigns colors by label string (INV-027)" in {
+    "colorScale(String => Color) label form assigns colors by label string" in {
         val rows = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
             Sale("Feb", Usd(1200), Region.EU),

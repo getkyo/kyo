@@ -169,7 +169,15 @@ object LineChart extends KyoApp:
       * Values and labels are zipped into aligned pairs, so a mismatched-length input can never index past either one.
       */
     def renderLineChart(values: Chunk[Double], labels: Chunk[String])(using Frame): Svg.Root =
-        val pairs    = values.zip(labels)
+        val pairs = values.zip(labels)
+        if pairs.isEmpty then
+            // No data: return an empty canvas rather than indexing pts.head/pts.last on an empty path.
+            Svg.svg.width(W.toInt).height(H.toInt).viewBox(viewBox)()
+        else renderLineChartNonEmpty(pairs)
+        end if
+    end renderLineChart
+
+    private def renderLineChartNonEmpty(pairs: Chunk[(Double, String)])(using Frame): Svg.Root =
         val pLabels  = pairs.map(_._2)
         val pValues  = pairs.map(_._1)
         val maxVal   = maxOf(pValues)
@@ -217,7 +225,7 @@ object LineChart extends KyoApp:
         Svg.svg.width(W.toInt).height(H.toInt).viewBox(viewBox)(
             (yAxis +: xAxis +: area +: line +: markers)*
         )
-    end renderLineChart
+    end renderLineChartNonEmpty
 
     // ---- styles ----
 

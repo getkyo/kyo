@@ -6,11 +6,11 @@ import kyo.Svg.PathData
 import kyo.UI.*
 import kyo.internal.CurvePath
 
-/** Unit tests for CurvePath interpolation (INV-016, catalog #13/D3).
+/** Unit tests for CurvePath interpolation.
   *
-  * All tests are pure: no fibers, no signals, no timing (AF1 from prep.md).
+  * All tests are pure: no fibers, no signals, no timing.
   * PathData inspection uses `Svg.PathData.commands` (private[kyo], accessible here
-  * because this file is in `package kyo`; AF2/AF3 from prep.md).
+  * because this file is in `package kyo`).
   */
 class CurvePathTest extends kyo.test.Test[Any]:
 
@@ -42,7 +42,7 @@ class CurvePathTest extends kyo.test.Test[Any]:
         assert(!hasHLine(pd))
     }
 
-    "stepAfter over 3 points emits H then V staircases (test T2 from prep.md, INV-016)" in {
+    "stepAfter over 3 points emits H then V staircases" in {
         val pts = Chunk((1.0, 2.0), (2.0, 1.0))
         val pd  = CurvePath.append(Svg.PathData.from(0.0, 0.0), pts, Curve.stepAfter)
         assert(hasHLine(pd), "Expected HLineTo commands in stepAfter path")
@@ -56,7 +56,7 @@ class CurvePathTest extends kyo.test.Test[Any]:
         assert(cmds.head.isInstanceOf[PathCommand.HLineTo], s"First command after moveTo should be HLineTo, got ${cmds.head}")
     }
 
-    "stepBefore over 3 points emits V then H staircases (INV-016)" in {
+    "stepBefore over 3 points emits V then H staircases" in {
         val pts = Chunk((1.0, 2.0), (2.0, 1.0))
         val pd  = CurvePath.append(Svg.PathData.from(0.0, 0.0), pts, Curve.stepBefore)
         assert(hasVLine(pd), "Expected VLineTo commands in stepBefore path")
@@ -68,12 +68,12 @@ class CurvePathTest extends kyo.test.Test[Any]:
         assert(cmds.head.isInstanceOf[PathCommand.VLineTo], s"First command after moveTo should be VLineTo, got ${cmds.head}")
     }
 
-    "monotone over 3 points emits cubic commands and non-linear geometry (test T1 from prep.md, INV-016)" in {
+    "monotone over 3 points emits cubic commands and non-linear geometry" in {
         // Points: (0,0) -> (1,2) -> (2,1); moveTo is at (0,0) so append receives the tail.
         val pts = Chunk((1.0, 2.0), (2.0, 1.0))
         val pd  = CurvePath.append(Svg.PathData.from(0.0, 0.0), pts, Curve.monotone)
         assert(hasCubic(pd), "Expected CubicTo commands in monotone path")
-        // Verify non-linear geometry (AF6 from prep.md): the mid-point must differ from
+        // Verify non-linear geometry: the mid-point must differ from
         // the straight chord. The chord from (0,0) to (2,1) at x=1 has y=0.5.
         // A monotone cubic through (0,0),(1,2),(2,1) will have a different y at x=1.
         // We assert that the cubic is emitted (already checked) and that it has non-trivial
@@ -88,19 +88,19 @@ class CurvePathTest extends kyo.test.Test[Any]:
         assert(!(isLinearC1 && isLinearC2), "Control points should not all lie on the straight chord")
     }
 
-    "basis over 4 points emits cubic commands (test T3 from prep.md, INV-016)" in {
+    "basis over 4 points emits cubic commands" in {
         val pts = Chunk((1.0, 2.0), (2.0, 0.0), (3.0, 2.0))
         val pd  = CurvePath.append(Svg.PathData.from(0.0, 0.0), pts, Curve.basis)
         assert(hasCubic(pd), "Expected CubicTo commands in basis path")
     }
 
-    "catmullRom over 4 points emits cubic commands (INV-016)" in {
+    "catmullRom over 4 points emits cubic commands" in {
         val pts = Chunk((1.0, 2.0), (2.0, 0.0), (3.0, 2.0))
         val pd  = CurvePath.append(Svg.PathData.from(0.0, 0.0), pts, Curve.catmullRom)
         assert(hasCubic(pd), "Expected CubicTo commands in catmullRom path")
     }
 
-    "1-point degrade to single lineTo, no crash (test T4 from prep.md, INV-016)" in {
+    "1-point degrade to single lineTo, no crash" in {
         // With 1 remaining point, append degrades to a single lineTo.
         val pts    = Chunk((1.0, 2.0))
         val curves = Seq(Curve.basis, Curve.catmullRom, Curve.monotone, Curve.stepAfter, Curve.stepBefore)
@@ -115,7 +115,7 @@ class CurvePathTest extends kyo.test.Test[Any]:
         assert(results.forall(_._3), s"All curves with 1 point should emit at least one command: $results")
     }
 
-    "0-point degrade to no-op (empty pts, INV-016)" in {
+    "0-point degrade to no-op (empty pts)" in {
         val pts: Chunk[(Double, Double)] = Chunk.empty
         val pd0                          = Svg.PathData.from(0.0, 0.0)
         val pd                           = CurvePath.append(pd0, pts, Curve.basis)
@@ -123,7 +123,7 @@ class CurvePathTest extends kyo.test.Test[Any]:
         assert(Svg.PathData.commands(pd).size == Svg.PathData.commands(pd0).size)
     }
 
-    "monotone on 2 remaining points emits exactly 1 cubicTo (INV-016)" in {
+    "monotone on 2 remaining points emits exactly 1 cubicTo" in {
         // append receives pts (the remaining points after moveTo anchor).
         // With 2 remaining points, n=2, n-1=1 segment => 1 cubicTo.
         val pts = Chunk((1.0, 1.0), (2.0, 3.0))
@@ -134,7 +134,7 @@ class CurvePathTest extends kyo.test.Test[Any]:
         assert(cubics == 1, s"Expected exactly 1 cubicTo for 2-remaining-point monotone (1 segment), got $cubics")
     }
 
-    "basis loop anchors at first and last point (n-1 segments for n remaining points, INV-016)" in {
+    "basis loop anchors at first and last point (n-1 segments for n remaining points)" in {
         // With 3 remaining points: n=3, loop runs i=1 to i<3 => 2 cubicTo segments.
         val pts = Chunk((1.0, 0.0), (2.0, 0.0), (3.0, 0.0))
         val pd  = CurvePath.append(Svg.PathData.from(0.0, 0.0), pts, Curve.basis)

@@ -12,7 +12,7 @@ class TimeFormatTest extends kyo.test.Test[Any]:
     private val hourMs      = 3_600_000L
     private val yearMs      = 365L * dayMs * 2L // 2 years
 
-    // INV-010, test 7: day-span time labels are calendar dates
+    // day-span time labels are calendar dates
     "day-span epoch millis format to yyyy-MM-dd" in {
         val label1 = TimeFormat.epochMillisLabel(june1Millis, dayMs)
         val label2 = TimeFormat.epochMillisLabel(june3Millis, dayMs)
@@ -20,7 +20,7 @@ class TimeFormatTest extends kyo.test.Test[Any]:
         assert(label2 == "2024-06-03", s"Expected 2024-06-03, got: $label2")
     }
 
-    // INV-010, test 8: sub-day step uses HH:mm; year-scale step uses yyyy
+    // sub-day step uses HH:mm; year-scale step uses yyyy
     "sub-day step formats HH:mm and year-scale formats yyyy" in {
         val subDayLabel = TimeFormat.epochMillisLabel(june1Millis, hourMs)
         val yearLabel   = TimeFormat.epochMillisLabel(june1Millis, yearMs)

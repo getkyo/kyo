@@ -78,7 +78,7 @@ private[kyo] object Scale:
       * `tickFormat` function in `AxisConfig` receives, so formatters always see the domain quantity, not the
       * screen pixel.
       */
-    final case class Tick(value: Double, label: String, pixel: Double)
+    final case class Tick(value: Double, label: String, pixel: Double) derives CanEqual
 
     /** Construct a scale of `kind` over `extent`, mapping into `[rangeLo, rangeHi]` pixels.
       *
@@ -172,7 +172,7 @@ private[kyo] object Scale:
             // lands on domainMax with no overshoot, no recomputed-step disagreement, no crash).
             def emit(step: Double): Chunk[Tick] =
                 val count = math.max(0, math.round((domainMax - domainMin) / step).toInt)
-                Chunk.from(0 to count).map: i =>
+                Chunk.tabulate(count + 1): i =>
                     val v = domainMin + i.toDouble * step
                     Tick(v, NumberFormat.double(v), apply(Domain.Continuous(v)))
             end emit
@@ -329,10 +329,10 @@ private[kyo] object Scale:
             val n = keys.size
             // Use original key indices so pixel positions reflect actual band positions.
             val visible: Chunk[(String, Int)] =
-                if maxTicks >= n then keys.zipWithIndex.to(Chunk)
+                if maxTicks >= n then keys.zipWithIndex
                 else
                     val stride = math.max(1, math.ceil(n.toDouble / maxTicks).toInt)
-                    keys.zipWithIndex.collect { case (k, i) if i % stride == 0 => (k, i) }.to(Chunk)
+                    keys.zipWithIndex.collect { case (k, i) if i % stride == 0 => (k, i) }
             visible.map: (k, i) =>
                 val xOffset = i.toDouble * slot + (slot - bandW) / 2.0 + bandW / 2.0
                 Tick(i.toDouble, k, rangeLo + xOffset)
@@ -402,10 +402,10 @@ private[kyo] object Scale:
         def ticks(maxTicks: Int): Chunk[Tick] =
             val n = keys.size
             val visible: Chunk[(String, Int)] =
-                if maxTicks >= n then keys.zipWithIndex.to(Chunk)
+                if maxTicks >= n then keys.zipWithIndex
                 else
                     val stride = math.max(1, math.ceil(n.toDouble / maxTicks).toInt)
-                    keys.zipWithIndex.collect { case (k, i) if i % stride == 0 => (k, i) }.to(Chunk)
+                    keys.zipWithIndex.collect { case (k, i) if i % stride == 0 => (k, i) }
             visible.map: (k, i) =>
                 Tick(i.toDouble, k, i.toDouble)
         end ticks
@@ -426,10 +426,10 @@ private[kyo] object Scale:
             // ceil hi to the nearest multiple of the nice step so the endpoints ARE ticks. The
             // chosen step is STORED on the scale (niceStep) and reused by Linear.ticks to emit
             // ticks at exactly that step from domainMin to domainMax. This makes the top tick
-            // equal domainMax for ANY snapped domain. Previously ticks re-derived the step via
-            // niceTicks over the widened range, which could pick a larger step that overshoots
-            // domainMax (e.g. [10,210] snaps to [0,250] but niceTicks(0,250) steps by 100), so
-            // sharing the step removes the disagreement and the former assert/crash entirely.
+            // equal domainMax for ANY snapped domain. Sharing the step (rather than re-deriving
+            // it from niceTicks over the widened range) guarantees the top tick lands on
+            // domainMax without overshoot (e.g. [10,210] snaps to [0,250]; a re-derived
+            // niceTicks(0,250) would step by 100 and overshoot).
             // An already-aligned domain stays unchanged (floor/ceil are no-ops).
             if step > 0 then
                 val snappedLo = step * math.floor(lo / step)

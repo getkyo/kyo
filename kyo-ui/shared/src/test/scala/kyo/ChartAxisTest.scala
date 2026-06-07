@@ -10,7 +10,7 @@ import kyo.internal.ChartLower
 import kyo.internal.Scale
 import scala.language.implicitConversions
 
-/** Phase 04 tests: axes, legends, scale overrides, theme, two axes, and stacking.
+/** Tests for axes, legends, scale overrides, theme, two axes, and stacking.
   *
   * All concrete asserts use exact pixel values derived from the documented margin constants
   * and scale mathematics. Layout defaults: plotX=60, plotY=20, plotW=560, plotH=420,
@@ -305,7 +305,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         assert(leftTickLabels.nonEmpty, s"Expected left-axis tick labels left of plotX but found none")
     }
 
-    // ---- Test 6a (ISSUE 1): dual-axis chrome is color-coded to its single bound mark ----
+    // ---- dual-axis chrome is color-coded to its single bound mark ----
     // In a dual-axis combo (bar on left = mark 0, line on right = mark 1) the left axis chrome must take
     // the bar's palette color (palette(0) = blue) and the right axis chrome the line's palette color
     // (palette(1) = orange), so a reader can tell which y-axis each series uses. The x-axis stays neutral.
@@ -371,7 +371,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             assert(colorOf(t.svgAttrs.fill) == neutral, s"X-axis tick label should stay neutral ($neutral) but was ${t.svgAttrs.fill}")
     }
 
-    // ---- Test 6b (ISSUE 2): rotated axis labels sit at the outer margin edge, clear of tick numbers ----
+    // ---- rotated axis labels sit at the outer margin edge, clear of tick numbers ----
     // The dual-axis gallery cell is 360x240 with MarginLeft=60 and a right-axis margin (MarginRight=60).
     // The rotated "Revenue" label must sit near the left SVG edge (x in [12,16]) and the rotated
     // "Growth %" label near the right SVG edge, so neither overlaps the tick numbers, which sit
@@ -421,10 +421,10 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         // The labels must clear the tick numbers: left ticks are the End-anchored numeric texts (the rotated
         // axis labels are Middle-anchored, so anchor=End isolates the tick numbers). The Revenue label centre
         // at ~14 must be left of every tick-number anchor.
-        // NOTE: the defect-2 fix (visual-review #218) grows the left margin so the 5-digit "50000" tick label
-        // no longer clips the rotated title. The tick-number anchor therefore now sits at ~61 (plotX 70 minus
-        // TickLen+gap), not the old ~51 the pre-fix layout produced; the `< PlotX` (60) filter the old test used
-        // encoded the BUG (it assumed plotX stayed at the default 60), so it is replaced by an anchor-only filter.
+        // NOTE: a layout fix grows the left margin so the 5-digit "50000" tick label does not clip
+        // the rotated title. The tick-number anchor sits at ~61 (plotX 70 minus
+        // TickLen+gap); the `< PlotX` (60) filter from an older test
+        // assumed plotX stayed at the default 60, so it is replaced by an anchor-only filter.
         val leftTickLabels = texts.filter(t => t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
         assert(leftTickLabels.nonEmpty, "Expected left-axis tick numbers")
         leftTickLabels.foldLeft(()): (_, t) =>
@@ -450,7 +450,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         assert(colorOf(bg.svgAttrs.fill) == darkBg, s"Dark theme background should be $darkBg but got ${bg.svgAttrs.fill}")
     }
 
-    // ---- Test 8 (STACK carry-over): stacked bars accumulate y0/y1 per group ----
+    // ---- stacked bars accumulate y0/y1 per group ----
 
     "stacked bars: per-group rects accumulate (second group sits atop the first)" in {
         // Data: two groups A and B at x="Jan"
@@ -499,7 +499,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         assertClose(numOf(rB.svgAttrs.height), ys(300.0) - ys(1000.0), "Group B rect height (ys(300)-ys(1000))")
     }
 
-    // ---- Test 8b (LAYER FIX A): stacked bar derives a legend from the stack groups ----
+    // ---- stacked bar derives a legend from the stack groups ----
 
     "stacked bar with .legend(_.top): one swatch per stack category in the segment colors" in {
         // A stacked bar grouped by `group` (no separate `color` encoding) must derive its legend from the
@@ -549,7 +549,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         assert(legendLabels.size == 3, s"Expected 3 legend labels but got ${legendLabels.size}")
     }
 
-    // ---- Test 8c (LAYER FIX A): stacked bar legend honors an explicit colorScale ----
+    // ---- stacked bar legend honors an explicit colorScale ----
 
     "stacked bar legend + segments honor .colorScale (semantic colors)" in {
         // The stack legend and the segments must use the SAME explicit colorScale mapping, so monitoring
@@ -592,7 +592,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         assert(colorOf(segments(2).svgAttrs.fill) == Style.Color.red, "5xx segment red")
     }
 
-    // ---- Test 8d (DARK LEGEND FIX): legend label text uses the light theme chrome color on dark ----
+    // ---- legend label text uses the light theme chrome color on dark ----
 
     "dark theme legend labels use the light theme chrome color (not black), matching axis tick labels" in {
         // The dark-theme background panel (#1f2937) makes a black label invisible. The legend label text
@@ -647,7 +647,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         assert(colorOf(swatches(2).svgAttrs.fill) == Style.Color.red, "5xx swatch stays red")
     }
 
-    // ---- Test 10 (FIX 1 verification): tickFormat receives domain value, not pixel ----
+    // ---- tickFormat receives domain value, not pixel ----
 
     "tickFormat receives the domain value (e.g. 2000), not the pixel position" in {
         // Domain [0, 2000], ticks(3): niceTicks(0,2000,3) -> [0, 1000, 2000]
@@ -679,7 +679,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         assert(content == "$2000", s"Formatter received pixel instead of domain value; got '$content' expected '$$2000'")
     }
 
-    // ---- Test 9 (STACK carry-over): normalize=true -> fills full plot height ----
+    // ---- normalize=true -> fills full plot height ----
 
     "normalize=true stacked bars fill the full plot height (top group reaches plotY)" in {
         // Same data as Test 8: Jan A=300(30%), B=700(70%)
@@ -732,7 +732,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         )
     }
 
-    // ---- Test 11 (FIX 2): stacked area -- second group baseline equals first group top edge ----
+    // ---- stacked area -- second group baseline equals first group top edge ----
 
     "stacked area: second group baseline equals first group top edge at shared x" in {
         // Two groups A and B at x=1 and x=2; each x has A=300, B=700 (total=1000).
@@ -799,7 +799,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         )
     }
 
-    // ---- Test 12 (FIX 2): stacked area normalized -- top group reaches plotY ----
+    // ---- stacked area normalized -- top group reaches plotY ----
 
     "stacked area normalized: top group reaches plotY" in {
         // Same data: A=300, B=700 at each x; normalize=true
@@ -839,7 +839,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         )
     }
 
-    // ---- Test 13 (ISSUE 1): a GROUPED bar's y-axis chrome stays NEUTRAL, not palette(0) ----
+    // ---- a GROUPED bar's y-axis chrome stays NEUTRAL, not palette(0) ----
     // A grouped bar (a single bar mark WITH a color encoding) renders in multiple category colors, so painting
     // its y-axis a single palette color (blue) would misrepresent the series. The y-axis chrome must use the
     // neutral light-theme color instead. This tightens the iteration-2 rule, which color-coded any single
@@ -864,7 +864,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             assert(c != Style.Color.blue, s"Grouped-bar y-axis tick must NOT be palette(0) (blue) but was $c")
     }
 
-    // ---- Test 14 (ISSUE 1): a STACKED bar's y-axis chrome stays NEUTRAL, not palette(0) ----
+    // ---- a STACKED bar's y-axis chrome stays NEUTRAL, not palette(0) ----
     // A stacked bar (a single bar mark WITH a stack grouping) also renders in multiple category colors, so its
     // y-axis chrome must use the neutral color rather than a single palette color.
 
@@ -887,8 +887,8 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             assert(c != Style.Color.blue, s"Stacked-bar y-axis tick must NOT be palette(0) (blue) but was $c")
     }
 
-    // ---- Test 15 (ISSUE 1): a single-color line keeps its color-coded y-axis chrome ----
-    // A line mark with no color encoding renders as one solid color, so ISSUE 1 still color-codes its y-axis
+    // ---- a single-color line keeps its color-coded y-axis chrome ----
+    // A line mark with no color encoding renders as one solid color, so it still color-codes its y-axis
     // chrome (tick labels) to that mark's palette color (palette(0) = blue). This confirms the tightened rule
     // does not over-correct: solid-color marks remain color-coded.
 
@@ -908,7 +908,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             )
     }
 
-    // ---- Test 16 (ISSUE 2): gridlines are ALWAYS neutral, even when the axis chrome is color-coded ----
+    // ---- gridlines are ALWAYS neutral, even when the axis chrome is color-coded ----
     // Gridlines are a background reference, not axis identity. In a single-color line chart the y-axis tick
     // labels are color-coded to palette(0) (blue), but the gridlines must stay the neutral gridline color, not
     // inherit the color-coded chrome (no blue gridlines).
@@ -942,7 +942,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             assert(c != Style.Color.blue, s"Gridline must NOT be palette(0) (blue) but was $c")
     }
 
-    // ---- Phase 6 helpers ----
+    // ---- X-axis decoration helpers ----
 
     /** X-axis tick labels: bottom texts with the Hanging dominant baseline. */
     private def xTickLabelsIn(root: Svg.Root): Chunk[Svg.Text] =
@@ -964,7 +964,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
                     case _           => Chunk.empty
             case _ => Chunk.empty
 
-    // ---- Phase 6 Leaf 1 (INV-030): rotateTicks adds a rotate transform on x tick labels ----
+    // ---- rotateTicks adds a rotate transform on x tick labels ----
 
     "xAxis(_.rotateTicks(-45)) gives every x tick label a Rotate(-45) transform" in {
         val rows   = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
@@ -979,7 +979,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
                 case None    => fail(s"Expected a Rotate transform on tick label but got ${t.svgAttrs.transform}")
     }
 
-    // ---- Phase 6 Leaf 2 (INV-030): anchor sets the SVG text-anchor on x tick labels ----
+    // ---- anchor sets the SVG text-anchor on x tick labels ----
 
     "xAxis(_.anchor(TextAnchor.End)) sets text-anchor=end on x tick labels" in {
         val rows   = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
@@ -991,7 +991,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             assert(t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End), s"Expected text-anchor=end but got ${t.svgAttrs.textAnchor}")
     }
 
-    // ---- Phase 6 Leaf 3 (INV-030): x gridlines at each tick from plotY to plotBaseline ----
+    // ---- x gridlines at each tick from plotY to plotBaseline ----
 
     "xAxis(_.grid) emits vertical gridlines at each x tick from plotY to plotBaseline" in {
         val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)), Sale("Mar", Usd(1500)))
@@ -1006,7 +1006,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         assert(vGrid.size == 3, s"Expected 3 vertical gridlines but got ${vGrid.size}")
     }
 
-    // ---- Phase 6 Leaf 4 (INV-030): yAxis(_.reverse) places the first datum at the far pixel end ----
+    // ---- yAxis(_.reverse) places the first datum at the far pixel end ----
 
     "yAxis(_.reverse) swaps the y range so a small value sits near the top, not the baseline" in {
         // Without reverse, y=0 maps near baseline (440); with reverse, the range swaps so y=0 maps near top (20).
@@ -1022,7 +1022,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         assertClose(janFlipY, PlotY, "reversed zero datum sits at plot top")
     }
 
-    // ---- Phase 6 Leaf 5 (INV-030): xAxis(_.pad) widens the domain so the first datum is inset ----
+    // ---- xAxis(_.pad) widens the domain so the first datum is inset ----
 
     "xScale linear with pad insets the first datum from the plot edge (continuous x)" in {
         case class XRow(x: Double, y: Double)
@@ -1041,13 +1041,13 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         assert(padX > noPadX, s"Padded first-datum cx ($padX) should be inset past the un-padded cx ($noPadX)")
     }
 
-    // ---- FIX 1: an explicit linear x-domain is honored exactly (no nice-expansion) ----
+    // ---- an explicit linear x-domain is honored exactly (no nice-expansion) ----
 
     "xScale linear with an explicit domain honors it exactly and does not nice-expand it" in {
         // Data x spans 1..12; an explicit .xScale(_.linear(1.0, 12.0)) must resolve to [1,12].
-        // Before the fix the X path passed nice=true uniformly, so fitLinear nice-expanded
-        // [1,12] to [0,15] (data crammed into part of the plot). This mirrors the Y path,
-        // which already honors an explicit linear domain with nice=false.
+        // Without this fix the X path passed nice=true uniformly, so fitLinear would nice-expand
+        // [1,12] to [0,15] (data crammed into part of the plot). The Y path already honors an
+        // explicit linear domain with nice=false.
         case class XRow(x: Double, y: Double)
         val rows    = Chunk.from((1 to 12).map(m => XRow(m.toDouble, m.toDouble)))
         val spec    = Chart(rows)(point(x = _.x, y = _.y)).xScale(_.linear(1.0, 12.0))
@@ -1060,7 +1060,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // ---- Phase 6 Leaf 6 (INV-009): a 7-category band x-axis yields 7 tick labels ----
+    // ---- a 7-category band x-axis yields 7 tick labels ----
 
     "a 7-category band x-axis produces 7 tick labels" in {
         case class CRow(cat: String, y: Int)
@@ -1072,7 +1072,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         assert(labels.size == 7, s"Expected 7 band tick labels but got ${labels.size}")
     }
 
-    // ---- Phase 6 WARN-1a (INV-012): chart-level linear clamp ----
+    // ---- chart-level linear clamp ----
 
     "yScale linear withClamp(true) clamps an out-of-range datum to the range; withClamp(false) extrapolates" in {
         // Fixed domain [0,10]; a datum y=20 is out of range. Bars: barY for the datum.
@@ -1089,7 +1089,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         assert(yUnclamped < yClamped, s"Unclamped y ($yUnclamped) must extrapolate past the clamped top ($yClamped)")
     }
 
-    // ---- Phase 6 WARN-1b (INV-012): chart-level symlog clamp ----
+    // ---- chart-level symlog clamp ----
 
     "yScale symlog withClamp(true) pins an out-of-domain datum to the boundary; withClamp(false) extrapolates" in {
         // Symlog domain inferred from data [-5, 5]; add an out-of-domain datum 50.
@@ -1105,7 +1105,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         assert(extrap > atMax, s"symlog clamp=false ($extrap) must extrapolate past the domain max pixel ($atMax)")
     }
 
-    // ---- Phase 6 WARN-3 (INV-012): pad applied to an explicitly-overridden log scale ----
+    // ---- pad applied to an explicitly-overridden log scale ----
 
     "yScale log withPad widens the log domain so the smallest datum is inset from the baseline" in {
         // Data [10, 1000]; without pad, y=10 sits at the baseline. With pad, the log domain widens
@@ -1122,7 +1122,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         assert(yPadded < yNoPad, s"Padded log datum y ($yPadded) must be inset above the baseline ($yNoPad)")
     }
 
-    // ---- Visual-review defect fixes (#218) ----
+    // ---- Layout defect fixes ----
 
     /** All `Svg.Circle`s that are DIRECT children of root (frame chrome, e.g. size-legend sample bubbles),
       * not the per-point data circles which live inside the marks group.
@@ -1135,8 +1135,8 @@ class ChartAxisTest extends kyo.test.Test[Any]:
     case class WideRow(month: String, revenue: Double, growthPct: Double)
     given CanEqual[WideRow, WideRow] = CanEqual.derived
 
-    // DEFECT 2 (visual-review #218): wide left y-tick labels + a rotated left axis title must not clip at the
-    // left SVG edge. A 5-digit revenue domain forces a "50000"-class tick label; with a left axis title the
+    // Wide left y-tick labels with a rotated left axis title must not clip at the left SVG edge.
+    // A 5-digit revenue domain forces a "50000"-class tick label; with a left axis title the
     // left margin must grow so the leftmost tick label stays >= 0 and the plot is pushed right of the labels.
     "wide 5-digit left y-tick labels + a left axis title do not clip at the SVG edge (defect 2)" in {
         val rows = Chunk(
@@ -1189,9 +1189,9 @@ class ChartAxisTest extends kyo.test.Test[Any]:
     case class SizeRow(a: Double, b: Double, w: Double)
     given CanEqual[SizeRow, SizeRow] = CanEqual.derived
 
-    // DEFECT 4 (visual-review #218): a point chart with a size encoding must render its size legend as sample
-    // circles OUTSIDE the plot data area, not floating over a data bubble. The plot is shifted down to reserve
-    // a top legend strip; the sample bubbles sit entirely above plotY.
+    // A point chart with a size encoding must render its size legend as sample circles OUTSIDE the plot data
+    // area, not floating over a data bubble. The plot is shifted down to reserve a top legend strip; the
+    // sample bubbles sit entirely above plotY.
     "size-legend sample circles render outside the plot data area, above plotY (defect 4)" in {
         val rows = Chunk(
             SizeRow(1.2, 3.4, 8.0),
@@ -1223,9 +1223,9 @@ class ChartAxisTest extends kyo.test.Test[Any]:
     case class ComboRow(month: String, revenue: Double, growthPct: Double)
     given CanEqual[ComboRow, ComboRow] = CanEqual.derived
 
-    // DEFECT 3 (visual-review #218): GUARD. A bar+line combo lists bar THEN line, so spec order must place the
-    // line path AFTER all bar rects in the SVG so the line draws ON TOP of the bars. This was reported as a
-    // possible z-order bug; it is correct already, and this test guards that the spec-order layering holds.
+    // GUARD: a bar+line combo lists bar THEN line, so spec order must place the line path AFTER all bar rects
+    // in the SVG so the line draws ON TOP of the bars. This was reported as a possible z-order issue; it is
+    // correct already, and this test guards that the spec-order layering holds.
     "bar+line combo emits the line path after all bar rects (z-order guard, defect 3)" in {
         val rows = Chunk(
             ComboRow("Jan", 45000, 0.0),
@@ -1250,7 +1250,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- Phase 8 helpers ----
+    // ---- Dual-axis and font helpers ----
 
     /** Left y-axis tick labels: frame texts with TextAnchor.End (left of plotX). */
     private def leftYTickLabelsIn(root: Svg.Root): Chunk[Svg.Text] =
@@ -1262,11 +1262,9 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             t.svgAttrs.textAnchor.contains(Svg.TextAnchor.Start) &&
                 t.svgAttrs.x.exists { case Coord.Num(v) => v > PlotX + PlotWTwoAx; case _ => false }
 
-    // ---- Leaf L14 (GAP-YAXIS-ROTATION): yAxis rotateTicks gives every Y tick a Rotate transform ----
+    // ---- yAxis rotateTicks gives every Y tick a Rotate transform ----
 
-    "yAxis(_.rotateTicks(-45)) gives every Y tick label a Rotate(-45) transform (L14, GAP-YAXIS-ROTATION)" in {
-        // Before fix: buildYAxis inline Svg.text has no rotation; cfg.tickRotation is not read.
-        // After fix: tickLabel helper applies Svg.Transform.Rotate(tickRotation, px, py).
+    "yAxis(_.rotateTicks(-45)) gives every Y tick label a Rotate(-45) transform" in {
         val rows  = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val spec  = Chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.rotateTicks(-45.0))
         val root  = (spec).lower
@@ -1279,8 +1277,8 @@ class ChartAxisTest extends kyo.test.Test[Any]:
                 case None    => fail(s"Expected a Rotate transform on Y tick label but got ${t.svgAttrs.transform}")
     }
 
-    "yAxisRight(_.rotateTicks(30)) gives every right Y tick label a Rotate(30) transform (L14 right, GAP-YAXIS-ROTATION)" in {
-        // Both left and right Y axes go through buildYAxis; the fix applies to both.
+    "yAxisRight(_.rotateTicks(30)) gives every right Y tick label a Rotate(30) transform" in {
+        // Both left and right Y axes go through buildYAxis.
         val rows = Chunk(Row2Ax("Jan", Usd(1000), 5.0), Row2Ax("Feb", Usd(2000), 10.0))
         val spec = Chart(rows)(
             bar(x = _.month, y = _.revenue),
@@ -1296,15 +1294,13 @@ class ChartAxisTest extends kyo.test.Test[Any]:
                 case None    => fail(s"Expected a Rotate transform on right Y tick label but got ${t.svgAttrs.transform}")
     }
 
-    // ---- Leaf L15 (GAP-YAXIS-ROTATION): anchor sets Y tick text-anchor; side-default preserved when unset ----
+    // ---- anchor sets Y tick text-anchor; side-default preserved when unset ----
 
-    "yAxis(_.anchor(TextAnchor.Start)) sets text-anchor=start on left Y tick labels (L15, GAP-YAXIS-ROTATION)" in {
-        // Before fix: cfg.tickAnchor is never read; text-anchor is always the side-default (End for left).
-        // After fix: effAnchor = toSvgAnchor(cfg.tickAnchor) when cfg.tickAnchor != TextAnchor.Middle.
+    "yAxis(_.anchor(TextAnchor.Start)) sets text-anchor=start on left Y tick labels" in {
         val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.anchor(TextAnchor.Start))
         val root = (spec).lower
-        // After the fix the left Y ticks carry Start anchor (no longer filtered by TextAnchor.End).
+        // Left Y ticks carry Start anchor (not filtered by TextAnchor.End).
         // Use dominantBaseline.Middle to isolate Y ticks (not Hanging=X, not absent=rotated-title).
         val ticks = frameTextsIn(root).filter(_.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Middle))
         assert(ticks.nonEmpty, "Expected Y tick labels with DominantBaseline.Middle")
@@ -1315,7 +1311,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             )
     }
 
-    "left Y tick label keeps text-anchor=end when no anchor is set (L15 co-pin, R-9 byte-identity)" in {
+    "left Y tick label keeps text-anchor=end when no anchor is set (byte-identity)" in {
         // Side-default anchor (End for left, Start for right) must be preserved when cfg.tickAnchor is
         // the default TextAnchor.Middle. This is the byte-identity guard for the no-anchor case.
         val rows  = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
@@ -1330,12 +1326,9 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             )
     }
 
-    // ---- Leaf L16 (GAP-THEME-FONT): theme font applied to Y ticks, axis titles, legend text ----
+    // ---- theme font applied to Y ticks, axis titles, legend text ----
 
-    "theme font appears on Y tick, axis title, and legend label (L16, GAP-THEME-FONT)" in {
-        // Before fix: withFont is only called in buildXAxis tick labels (through tickLabel helper).
-        // Y ticks, axis titles, and legend labels have no font attrs even when theme sets them.
-        // After fix: withFont called at all six sites; each text carries font-family + font-size.
+    "theme font appears on Y tick, axis title, and legend label" in {
         val rows = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
             Sale("Feb", Usd(2000), Region.EU)
@@ -1389,7 +1382,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         )
     }
 
-    "default theme adds no font-family or font-size to Y tick, title, or legend (L16 co-pin, byte-identity)" in {
+    "default theme adds no font-family or font-size to Y tick, title, or legend (byte-identity)" in {
         // withFont is a no-op when theme.fontFamily and theme.fontSize are both Absent (the default).
         // No font attr must appear on any frame text when no theme font is set.
         val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
@@ -1400,14 +1393,14 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             assert(t.svgAttrs.fontSize.isEmpty, s"Default theme must NOT add font-size; got ${t.svgAttrs.fontSize}")
     }
 
-    // ---- Leaf L17 (CO-PIN): x tick-label chrome unchanged through shared helper ----
+    // ---- x tick-label chrome unchanged through shared helper ----
 
-    "x tick rotateTicks/anchor/font stay byte-identical after P8 (L17 co-pin)" in {
-        // P8 touches buildXAxis only to add withFont to the title block; the tickLabel helper call is
-        // unchanged (P2 already wired it). This test re-asserts the P2 baseline.
+    "x tick rotateTicks/anchor/font stay byte-identical" in {
+        // buildXAxis adds withFont to the title block; the tickLabel helper call is
+        // unchanged. This test re-asserts the baseline.
         val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
 
-        // Rotation (mirrors Phase 6 Leaf 1 at line 972):
+        // Rotation (mirrors the rotateTicks test at line 972):
         val rotSpec = Chart(rows)(bar(x = _.month, y = _.revenue)).xAxis(_.rotateTicks(-45.0))
         val rotRoot = (rotSpec).lower
         val xTicks  = xTickLabelsIn(rotRoot)
@@ -1415,24 +1408,24 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         xTicks.foldLeft(()): (_, t) =>
             val rot = t.svgAttrs.transform.toSeq.collectFirst { case r: Svg.Transform.Rotate => r }
             rot match
-                case Some(r) => assertClose(r.deg, -45.0, "x tick rotate (L17 co-pin)")
+                case Some(r) => assertClose(r.deg, -45.0, "x tick rotate")
                 case None    => fail(s"Expected Rotate on x tick but got ${t.svgAttrs.transform}")
 
-        // Anchor (mirrors Phase 6 Leaf 2 at line 987):
+        // Anchor (mirrors the anchor test at line 987):
         val ancSpec = Chart(rows)(bar(x = _.month, y = _.revenue)).xAxis(_.anchor(TextAnchor.End))
         val ancRoot = (ancSpec).lower
         xTickLabelsIn(ancRoot).foldLeft(()): (_, t) =>
-            assert(t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End), "x tick anchor (L17 co-pin)")
+            assert(t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End), "x tick anchor")
 
         // Font:
         val fntSpec = Chart(rows)(bar(x = _.month, y = _.revenue)).theme(_.font("monospace").fontSize(14))
         val fntRoot = (fntSpec).lower
         xTickLabelsIn(fntRoot).foldLeft(()): (_, t) =>
-            assert(t.svgAttrs.fontFamily.contains("monospace"), "x tick font-family (L17 co-pin)")
-            assert(t.svgAttrs.fontSize.exists(_.toString.contains("14")), "x tick font-size (L17 co-pin)")
+            assert(t.svgAttrs.fontFamily.contains("monospace"), "x tick font-family")
+            assert(t.svgAttrs.fontSize.exists(_.toString.contains("14")), "x tick font-size")
     }
 
-    // ---- Phase 11 helpers ----
+    // ---- Right-axis helpers ----
 
     /** Horizontal gridlines: Lines spanning plotX to plotX+plotW with strokeOpacity set. */
     private def hGridLinesIn(root: Svg.Root, plotW: Double = PlotW): Chunk[Svg.Line] =
@@ -1442,9 +1435,9 @@ class ChartAxisTest extends kyo.test.Test[Any]:
                 l.svgAttrs.y1 == l.svgAttrs.y2 &&
                 l.svgAttrs.strokeOpacity.isDefined
 
-    // ---- Leaf L11b (GAP-RIGHTY-SCALE): right-bound datum pixel matches log scale ----
+    // ---- right-bound datum pixel matches log scale ----
 
-    "L11b: yScaleRight(_.log) projects a right-bound datum at the log-scaled pixel, not linear (GAP-RIGHTY-SCALE)" in {
+    "yScaleRight(_.log) projects a right-bound datum at the log-scaled pixel, not linear" in {
         // Right axis: data=[1.0, 100.0], log scale.
         // Log scale: domain [1.0, 100.0], range [440, 20].
         //   apply(1.0)  = rangeLo = 440.0 (domain min maps to rangeLo for log scale)
@@ -1482,30 +1475,29 @@ class ChartAxisTest extends kyo.test.Test[Any]:
                         case _                        => Chunk.empty
                 case Absent => Chunk.empty
 
-        assert(allYPx.nonEmpty, s"L11b: Expected Y pixel values in line path commands but got none")
+        assert(allYPx.nonEmpty, s"Expected Y pixel values in line path commands but got none")
         // With log scale: apply(1.0)=440.0 (domain min -> rangeLo).
         // With linear scale: apply(1.0)≈435.8 (linear interpolation).
         // The key discriminator: does any y exactly match 440.0 (log for growthPct=1.0)?
         val hasLogBaseline = allYPx.exists(y => math.abs(y - 440.0) < 2.0)
-        assert(hasLogBaseline, s"L11b: Expected log-scaled y near 440.0 for growthPct=1.0 but got: $allYPx (GAP-RIGHTY-SCALE unfixed)")
+        assert(hasLogBaseline, s"Expected log-scaled y near 440.0 for growthPct=1.0 but got: $allYPx")
 
         // Confirm the linear fallback value is NOT present (linear would put 1.0 at ~435.8).
         val hasLinearFallback = allYPx.exists(y => y > 433.0 && y < 438.0)
-        assert(!hasLinearFallback, s"L11b: Found linear-scaled y near 435-438 (expected log scaling): $allYPx")
+        assert(!hasLinearFallback, s"Found linear-scaled y near 435-438 (expected log scaling): $allYPx")
     }
 
-    // ---- Leaf L12a (CO-PIN): existing dual-axis test pixel unchanged ----
-    // This test guards byte-identity: no yScaleRight + default right chrome => same pixel as today.
+    // ---- existing dual-axis test pixel unchanged (byte-identity) ----
 
-    "L12a (CO-PIN): dual-axis chart with no yScaleRight uses default Linear+nice right scale, right ticks exist (byte-identity)" in {
+    "dual-axis chart with no yScaleRight uses default Linear+nice right scale, right ticks exist (byte-identity)" in {
         // Right: growthPct=[10.0, 20.0]; yRightExtent = Continuous(10, 20).
         // niceTicks(10,20,5): step=5 -> snapped domain=[10,20].
         // Linear(10, 20, rangeLo=440, rangeHi=20, nice=true):
         //   apply(10) = 440 (domain min -> rangeLo=440)
         //   apply(15) = 440 + (15-10)/(20-10) * (20-440) = 440 + 0.5*(-420) = 230
         //   apply(20) = 20 (domain max -> rangeHi=20)
-        // This co-pin verifies byte-identity: the default (no yScaleRight) produces the same
-        // Linear+nice scale as the old hardcoded Scale.fit(Linear, rExt, plotBaseline, plotY, nice=true).
+        // This byte-identity check: the default (no yScaleRight) produces the same
+        // Linear+nice scale as the hardcoded Scale.fit(Linear, rExt, plotBaseline, plotY, nice=true).
         val rows = Chunk(
             Row2Ax("Jan", Usd(1000), 10.0),
             Row2Ax("Feb", Usd(2000), 20.0)
@@ -1521,7 +1513,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val rightTickLabels = allTexts.filter: t =>
             t.svgAttrs.textAnchor.contains(Svg.TextAnchor.Start) &&
                 t.svgAttrs.x.exists { case Coord.Num(v) => v > PlotX + PlotWTwoAx; case _ => false }
-        assert(rightTickLabels.nonEmpty, "L12a: Expected right-axis tick labels (co-pin)")
+        assert(rightTickLabels.nonEmpty, "Expected right-axis tick labels (byte-identity)")
 
         // The tick labeled "10" (domain min) should be at y=440 (rangeLo=plotBaseline).
         // niceTicks(10, 20, 5): step=5 -> ticks [10, 15, 20] (3 ticks); "10" is always present.
@@ -1529,9 +1521,9 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         tick10 match
             case Some(t) =>
                 val py = numOf(t.svgAttrs.y)
-                assertClose(py, 440.0, "L12a: right scale tick '10' (domain min) should be at y=440 (plotBaseline)")
+                assertClose(py, 440.0, "right scale tick '10' (domain min) should be at y=440 (plotBaseline)")
             case None =>
-                fail(s"L12a: tick '10' not found in right tick labels: ${rightTickLabels.map(_.children).toList}")
+                fail(s"tick '10' not found in right tick labels: ${rightTickLabels.map(_.children).toList}")
         end match
 
         // The tick labeled "20" (domain max) should be at y=20 (rangeHi=plotY).
@@ -1540,17 +1532,15 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         tick20 match
             case Some(t) =>
                 val py = numOf(t.svgAttrs.y)
-                assertClose(py, 20.0, "L12a: right scale tick '20' (domain max) should be at y=20 (plotY)")
+                assertClose(py, 20.0, "right scale tick '20' (domain max) should be at y=20 (plotY)")
             case None =>
-                fail(s"L12a: tick '20' not found in right tick labels: ${rightTickLabels.map(_.children).toList}")
+                fail(s"tick '20' not found in right tick labels: ${rightTickLabels.map(_.children).toList}")
         end match
     }
 
-    // ---- Leaf L13 (GAP-RIGHTY-GRID): right gridlines emitted; left-wins guard ----
+    // ---- right gridlines emitted; left-wins guard ----
 
-    "L13a: .yAxisRight(_.grid) with left grid OFF emits right horizontal gridlines (GAP-RIGHTY-GRID)" in {
-        // Before fix: buildYAxis gate `cfg.showGrid && !isRight` suppresses ALL right gridlines.
-        // After fix: drawGrid=true for right when right cfg has showGrid AND left does not.
+    ".yAxisRight(_.grid) with left grid OFF emits right horizontal gridlines" in {
         val rows = Chunk(Row2Ax("Jan", Usd(1000), 5.0), Row2Ax("Feb", Usd(2000), 20.0))
         val spec = Chart(rows)(
             bar(x = _.month, y = _.revenue),
@@ -1563,18 +1553,18 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val gridLines = hGridLinesIn(root, PlotWTwoAx)
         // Right axis domain: growthPct in [5.0, 20.0], default tickCount=5, nice=true.
         // niceTicks(5.0, 20.0, 5): step=5 -> ticks [5, 10, 15, 20] = 4 ticks.
-        // One gridline per right tick -> 4 gridlines, per invariant L13 (04-invariants).
+        // One gridline per right tick -> 4 gridlines.
         assert(
             gridLines.size == 4,
-            s"L13a: Expected 4 right horizontal gridlines (one per right tick: 5, 10, 15, 20) but got ${gridLines.size} (GAP-RIGHTY-GRID)"
+            s"Expected 4 right horizontal gridlines (one per right tick: 5, 10, 15, 20) but got ${gridLines.size}"
         )
-        // Gridline y-positions must match the right scale tick pixels (invariant L13).
+        // Gridline y-positions must match the right scale tick pixels.
         // Right scale: Linear(5.0, 20.0, rangeLo=440, rangeHi=20): apply(v) = 440 + (v-5)/(20-5)*(20-440).
         val expectedYs = Chunk(440.0, 300.0, 160.0, 20.0) // apply(5), apply(10), apply(15), apply(20)
         val actualYs   = gridLines.flatMap(l => l.svgAttrs.y1.map(_.toDouble)).sorted.reverse
         expectedYs.zip(actualYs).foldLeft(()): (_, pair) =>
             val (expected, actual) = pair
-            assertClose(actual, expected, s"L13a: gridline y-position mismatch (expected $expected, got $actual)")
+            assertClose(actual, expected, s"gridline y-position mismatch (expected $expected, got $actual)")
     }
 
     "L13b: .yAxis(_.grid) + .yAxisRight(_.grid) emits only LEFT tick count gridlines (left-wins guard)" in {
@@ -1589,18 +1579,18 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val root = (spec).lower
 
         val gridLines = hGridLinesIn(root, PlotWTwoAx)
-        assert(gridLines.nonEmpty, "L13b: Expected gridlines when yAxis(_.grid) is set")
+        assert(gridLines.nonEmpty, "Expected gridlines when yAxis(_.grid) is set")
         // All gridlines come from the left; count matches left tick count.
         // niceTicks(0,2000,5)=[0,500,1000,1500,2000] -> 5 ticks. gridLines.size should == 5.
         assert(
             gridLines.size == 5,
-            s"L13b: Expected exactly 5 gridlines (left tick count) but got ${gridLines.size} (right grid should be suppressed by left-wins)"
+            s"Expected exactly 5 gridlines (left tick count) but got ${gridLines.size} (right grid should be suppressed by left-wins)"
         )
     }
 
-    // ---- Leaf L19b (GAP-RIGHTY-SCALE independence): yScale(_.log) + yScaleRight(_.linear) ----
+    // ---- yScale(_.log) + yScaleRight(_.linear) independence ----
 
-    "L19b: .yScale(_.log).yScaleRight(_.linear(0,1)) leaves left log and right linear (independence)" in {
+    ".yScale(_.log).yScaleRight(_.linear(0,1)) leaves left log and right linear (independence)" in {
         // Left: bar revenue=[1000,2000], log scale.
         //   domain no-zero [1000,2000], range [440, 20+topHeadroom].
         //   apply(1000) = baseline = 440 (log bottom = domain min maps to rangeLo).
@@ -1624,8 +1614,8 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             t.svgAttrs.textAnchor.contains(Svg.TextAnchor.Start) &&
                 t.svgAttrs.x.exists { case Coord.Num(v) => v > PlotX + PlotWTwoAx; case _ => false }
 
-        assert(leftTicks.nonEmpty, "L19b: Expected left-axis tick labels")
-        assert(rightTicks.nonEmpty, "L19b: Expected right-axis tick labels")
+        assert(leftTicks.nonEmpty, "Expected left-axis tick labels")
+        assert(rightTicks.nonEmpty, "Expected right-axis tick labels")
 
         // Right scale is linear(0,1), domain fixed [0,1], nice=false, tickCount=5.
         // niceTicks(0.0, 1.0, 5): step=0.5 -> ticks [0.0, 0.5, 1.0] (3 ticks); "0.5" is always present.
@@ -1634,9 +1624,9 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         tick05 match
             case Some(t) =>
                 val py = numOf(t.svgAttrs.y)
-                assertClose(py, 230.0, "L19b: right linear(0,1) tick at 0.5 should be at y=230")
+                assertClose(py, 230.0, "right linear(0,1) tick at 0.5 should be at y=230")
             case None =>
-                fail(s"L19b: tick '0.5' not found in right tick labels: ${rightTicks.map(_.children).toList}")
+                fail(s"tick '0.5' not found in right tick labels: ${rightTicks.map(_.children).toList}")
         end match
     }
 

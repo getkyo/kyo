@@ -5,7 +5,7 @@ import kyo.Chart.*
 import kyo.Style.*
 import kyo.UI.*
 
-/** A light-theme gallery of the STATIC chart features this campaign added.
+/** A light-theme gallery of the STATIC chart features.
   *
   * Each cell isolates one feature over a small, readable dataset so the visual point is obvious:
   *

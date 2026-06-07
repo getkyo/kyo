@@ -2383,7 +2383,7 @@ private[kyo] object ChartLower:
                     case Absent     => Chunk.empty
                 withHighlight(tagged, highlight)
             case Present(colorEnc) =>
-                // FIX B: resolve per-series colors via resolvePalette (the same path the legend and stacked
+                // Resolve per-series colors via resolvePalette (the same path the legend and stacked
                 // bars use), so an explicit categorical/sequential colorScale is honored and the line agrees
                 // with the legend. resolvePalette falls back to theme.palette then DefaultPalette when no
                 // colorScale is set, so a line WITHOUT a colorScale keeps byte-identical colors to before.
@@ -2919,8 +2919,8 @@ private[kyo] object ChartLower:
                     val y1pts     = pts.map(t => (t._1, t._3))
                     val startPd   = Svg.PathData.from(y1pts(0)._1, y1pts(0)._2)
                     val forwardPd = CurvePath.append(startPd, y1pts.drop(1), mark.curve)
-                    // Backward along y0 edge, traversed in reverse order, curved per mark.curve too
-                    // (leaf 19): both band edges must reflect the curve, not just the forward y1 edge.
+                    // Backward along y0 edge, traversed in reverse order, curved per mark.curve too:
+                    // both band edges must reflect the curve, not just the forward y1 edge.
                     // The connecting edge from the last y1 vertex down to the last y0 vertex is a single
                     // lineTo; the remaining reversed y0 vertices feed CurvePath.append so the y0 edge curves.
                     val y0ptsRev    = Chunk.from(pts.reverse.map(t => (t._1, t._2)))
@@ -3077,7 +3077,7 @@ private[kyo] object ChartLower:
                             (bot, top)
                     Chunk((px, py0, py1))
 
-                // Skip groups that contribute nothing at every x (FIX 3a: no zero-height paths)
+                // Skip groups that contribute nothing at every x (no zero-height paths)
                 val hasContribution = xKeys.exists: xk =>
                     dataMap.getOrElse(xk, Map.empty).getOrElse(gck, 0.0) > 0.0
 
@@ -3791,7 +3791,7 @@ private[kyo] object ChartLower:
                 val path = lowerLineSeries(rows, mark, layout, xs, ys, defaultColor, Present(spec), internalHoverRef)
                 Chunk((path, TransKey.SingleSeries(markIdx), rows.headMaybe))
             case Present(colorEnc) =>
-                // FIX B (transitions path, mirrors lowerLine): resolve per-series colors via resolvePalette
+                // Transitions path, mirrors lowerLine: resolve per-series colors via resolvePalette
                 // (the same path the legend and the static line use) so an explicit categorical/sequential
                 // colorScale is honored and the animated line agrees with the legend. resolvePalette falls
                 // back to theme.palette then DefaultPalette when no colorScale is set, so an animated line
@@ -3899,9 +3899,9 @@ private[kyo] object ChartLower:
         else
             val animOk = spec.animateCfg.enabled
             val durStr = formatDur(spec.animateCfg.duration)
-            // FIX 1 (P9b): forward Present(spec) so the non-stacked color-encoding arm resolves the
+            // Forward Present(spec) so the non-stacked color-encoding arm resolves the
             // palette via resolvePalette (honoring an explicit colorScale) instead of defaulting to
-            // DefaultPalette. Mirrors the lowerLineWithTransitions FIX B pattern.
+            // DefaultPalette. Mirrors the lowerLineWithTransitions pattern.
             // Pass internalHoverRef so buildSimpleAreaPath attaches interaction attrs to each raw path.
             // Do NOT pass highlight here: lowerArea would call withHighlight internally, which wraps
             // paths in Reactive[Svg.G] nodes that are not Svg.Path and would be dropped by .collect.

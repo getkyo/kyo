@@ -5,7 +5,7 @@ import kyo.UI.*
 import kyo.UI.Ast.*
 import scala.language.implicitConversions
 
-/** Phase 06 tests for the `lowerWithScales` escape hatch and its read-only [[Chart.Scales]] projection (INV-035).
+/** Tests for the `lowerWithScales` escape hatch and its read-only [[Chart.Scales]] projection.
   *
   * Asserts that the projected pixel coordinates match the coordinates actually emitted in the SVG, that
   * category projection works for a band axis, and that the public surface never leaks the internal `Scale` type.
@@ -29,7 +29,7 @@ class ChartScalesTest extends kyo.test.Test[Any]:
     case class PRow(x: Double, y: Double)
     case class BRow(cat: String, y: Int)
 
-    // ---- Leaf 22: scales.x.toPixel(datumX) equals the cx of the corresponding circle ----
+    // ---- scales.x.toPixel(datumX) equals the cx of the corresponding circle ----
 
     "lowerWithScales: x.toPixel(datumX) equals the emitted circle cx" in {
         // Continuous x so the linear x-scale projection is directly comparable to cx.
@@ -54,7 +54,7 @@ class ChartScalesTest extends kyo.test.Test[Any]:
             case other                               => fail(s"Expected Continuous but got $other")
     }
 
-    // ---- Leaf 23: toPixelCategory returns Present for a band axis and Absent for a continuous axis ----
+    // ---- toPixelCategory returns Present for a band axis and Absent for a continuous axis ----
 
     "lowerWithScales: x.toPixelCategory returns Present for a known band key, Absent for an unknown key" in {
         val rows       = Chunk(BRow("a", 1), BRow("b", 2), BRow("c", 3))
@@ -75,7 +75,7 @@ class ChartScalesTest extends kyo.test.Test[Any]:
         assert(sc.y.toPixelCategory("b") == Absent, "Continuous axis must return Absent for category projection")
     }
 
-    // ---- Leaf 24: Chart.Scales is sealed and public accessors do not leak kyo.internal.Scale types ----
+    // ---- Chart.Scales is sealed and public accessors do not leak kyo.internal.Scale types ----
     // Type ascriptions below enforce at compile time that each accessor returns a public type.
     // If any accessor returned kyo.internal.Scale, the ascription would fail to compile.
 
@@ -110,7 +110,7 @@ class ChartScalesTest extends kyo.test.Test[Any]:
             case other                               => fail(s"Expected Continuous but got $other")
     }
 
-    // ---- Leaf 25: ScaleKind.Linear carries the actual fitted domain, not (0.0, 0.0) ----
+    // ---- ScaleKind.Linear carries the actual fitted domain, not (0.0, 0.0) ----
 
     "lowerWithScales: y-axis kind is ScaleKind.Linear with actual fitted domain, not (0.0, 0.0)" in {
         // y values span 10.0..90.0; nice-ticking over that range yields nLo=10.0, nHi=90.0.

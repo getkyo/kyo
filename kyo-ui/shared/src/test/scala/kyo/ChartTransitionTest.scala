@@ -8,7 +8,7 @@ import kyo.internal.ChartLower
 import kyo.internal.HtmlRenderer
 import scala.language.implicitConversions
 
-/** Phase 06 tests: keyed enter/update SMIL transitions, line path behavior, multi-pull idempotency, key function.
+/** Tests for keyed enter/update SMIL transitions, line path behavior, multi-pull idempotency, and key function.
   *
   * Layout defaults: plotX=60, plotY=20, plotW=560, plotH=420, baseline=440
   * (chart size 640x480, MarginL=60, MarginR=20, MarginT=20, MarginB=40).
@@ -28,7 +28,7 @@ import scala.language.implicitConversions
   *   2. ENTER: a new key emits `Svg.Animate` children with `from` at the baseline (height=0, y=baseline).
   *   3. `.animate(_.none)`: zero `animate` children on the emitted rect.
   *   4. LINE under `.animate(_.ease(...))`: lowers to `<path>` with no `<animate>` child (lines snap
-  *      in Phase 06; the bounded stepped-morph tween is implemented in Phase 08).
+  *      in the axis tests; the bounded stepped-morph tween is implemented in ChartMorphTest).
   *   5. Multi-pull idempotency: rendering the same emission twice (simulating the engine's double-pull)
   *      produces the same from/to animate pair on both pulls, not from==to (dead animation) on the second.
   *   6. Default key (x encoding) vs explicit `.key(...)` override: controls which rects update vs enter.
@@ -192,11 +192,11 @@ class ChartTransitionTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- Test 4: LINE under .animate(_.ease(...)) emits a SMIL <animate> on d (Phase 08 morph) ----
+    // ---- Test 4: LINE under .animate(_.ease(...)) emits a SMIL <animate> on d ----
 
     "LINE animate: stable-category update emits <animate attributeName=\"d\"> with from/to d strings" in {
-        // Phase 08: a line chart with animation enabled and stable categories (same command structure)
-        // now emits a SMIL `<animate attributeName="d" from=... to=...>` child on the path element.
+        // A line chart with animation enabled and stable categories (same command structure)
+        // emits a SMIL `<animate attributeName="d" from=... to=...>` child on the path element.
         // Jan and Feb are present in both emissions, so the Band scale produces the same x positions
         // and the command count is 2 (MoveTo + LineTo) before and after.
         //
@@ -306,7 +306,7 @@ class ChartTransitionTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- Test 6 (was Test 5): default key (x encoding) vs explicit .key(...) override ----
+    // ---- Test 6: default key (x encoding) vs explicit .key(...) override ----
 
     "key defaults to x encoding; .key(...) override controls update vs enter" in {
         // Without an explicit key override, the key is the x encoding value (month string).
@@ -352,11 +352,11 @@ class ChartTransitionTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- Leaf 8 (INV-036 + INV-016): curved-path morph with Curve.monotone ----
+    // ---- curved-path morph with Curve.monotone ----
 
     "curved line (Curve.monotone) morphs via SMIL when point count is stable" in {
-        // INV-016: curve=Curve.monotone produces cubic Bezier commands (C).
-        // INV-036: with stable point count the SMIL morph fires.
+        // curve=Curve.monotone produces cubic Bezier commands (C).
+        // With stable point count the SMIL morph fires.
         //
         // Band scale (Jan, Feb, Mar), plotX=60, plotW=560, n=3, padding=0.1:
         //   slot = 560/3 = 186.667
@@ -386,38 +386,38 @@ class ChartTransitionTest extends kyo.test.Test[Any]:
             html1 <- HtmlRenderer.render(root, Seq.empty)
         yield
             // Both renders must produce a path with cubic (C) commands from monotone interpolation.
-            assert(html0.contains("C"), s"INV-016 leaf 8: emission 1 path must contain C (cubic) commands:\n$html0")
-            assert(html1.contains("C"), s"INV-016 leaf 8: emission 2 path must contain C (cubic) commands:\n$html1")
+            assert(html0.contains("C"), s"emission 1 path must contain C (cubic) commands:\n$html0")
+            assert(html1.contains("C"), s"emission 2 path must contain C (cubic) commands:\n$html1")
             // First emission has no previous path: no animate.
-            assert(!html0.contains("<animate"), s"INV-036 leaf 8: no animate on first emission:\n$html0")
+            assert(!html0.contains("<animate"), s"no animate on first emission:\n$html0")
             // Second emission: SMIL morph must fire (stable command count, different y-values).
             assert(
                 html1.contains("attributeName=\"d\""),
-                s"INV-036/INV-016 leaf 8: curved line must morph via SMIL on stable-category update:\n$html1"
+                s"curved line must morph via SMIL on stable-category update:\n$html1"
             )
             // from and to both contain C (cubic path in both emissions).
             assert(
                 html1.contains("from=\"M") && html1.contains("C"),
-                s"INV-036 leaf 8: from path must start with M and contain C:\n$html1"
+                s"from path must start with M and contain C:\n$html1"
             )
             assert(
                 html1.contains("to=\"M"),
-                s"INV-036 leaf 8: to path must start with M:\n$html1"
+                s"to path must start with M:\n$html1"
             )
         end for
     }
 
-    // ---- FIX B (animated path): a color-split ANIMATED line honors an explicit categorical colorScale ----
+    // ---- animated path: a color-split ANIMATED line honors an explicit categorical colorScale ----
 
-    // Reproduce-before-fix. A chart with `.animate(...)` is lowered through `lowerLineWithTransitions`,
-    // NOT `lowerLine`. Before the fix, `lowerLineWithTransitions` colored each series from
+    // A chart with `.animate(...)` is lowered through `lowerLineWithTransitions`,
+    // not `lowerLine`. Without this fix `lowerLineWithTransitions` colored each series from
     // `themePalette(spec.theme)` by category index, ignoring `spec.legendCfg.colorScale`. So an animated
     // color-split line drew DefaultPalette blue/orange while the legend (which uses resolvePalette) showed
     // the colorScale cyan/amber: legend and line disagreed (e.g. the LiveDashboard latency chart).
-    // After the fix, `lowerLineWithTransitions` resolves colors via resolvePalette, so the "a" series path
+    // `lowerLineWithTransitions` now resolves colors via resolvePalette, so the "a" series path
     // carries the colorScale cyan and the "b" series path carries the colorScale amber, matching the legend
     // and the static (non-animated) line path.
-    "an animated color-split line honors an explicit categorical colorScale (FIX B, transitions path)" in {
+    "an animated color-split line honors an explicit categorical colorScale (transitions path)" in {
         case class SRow(x: Double, y: Double, series: String) derives CanEqual
         val cyan  = Style.Color.rgb(6, 182, 212)
         val amber = Style.Color.rgb(245, 158, 11)
@@ -456,28 +456,28 @@ class ChartTransitionTest extends kyo.test.Test[Any]:
             // Series "a" (seriesIdx 0) must carry the colorScale cyan, NOT DefaultPalette blue.
             assert(
                 strokes(0) == cyanCss,
-                s"FIX B (animated): series 'a' line must use colorScale cyan $cyanCss but got ${strokes(0)}:\n$html"
+                s"animated: series 'a' line must use colorScale cyan $cyanCss but got ${strokes(0)}:\n$html"
             )
             // Series "b" (seriesIdx 1) must carry the colorScale amber, NOT DefaultPalette orange.
             assert(
                 strokes(1) == amberCss,
-                s"FIX B (animated): series 'b' line must use colorScale amber $amberCss but got ${strokes(1)}:\n$html"
+                s"animated: series 'b' line must use colorScale amber $amberCss but got ${strokes(1)}:\n$html"
             )
             // DefaultPalette colours must not appear: the bug rendered these instead.
             assert(
                 !html.contains(s"stroke=\"$blueCss\""),
-                s"FIX B (animated): DefaultPalette blue $blueCss must not be a stroke under a colorScale:\n$html"
+                s"animated: DefaultPalette blue $blueCss must not be a stroke under a colorScale:\n$html"
             )
             assert(
                 !html.contains(s"stroke=\"$orangeCss\""),
-                s"FIX B (animated): DefaultPalette orange $orangeCss must not be a stroke under a colorScale:\n$html"
+                s"animated: DefaultPalette orange $orangeCss must not be a stroke under a colorScale:\n$html"
             )
         end for
     }
 
-    // ---- Leaf L18 (GAP-TRANS-BAR-ENCODINGS): animated bar emits opacity/label/tooltip encodings ----
+    // ---- animated bar emits opacity/label/tooltip encodings ----
 
-    "animated bar emits opacity/label/tooltip encodings matching the static path (L18, GAP-TRANS-BAR-ENCODINGS)" in {
+    "animated bar emits opacity/label/tooltip encodings matching the static path" in {
         // Static bar (no Signal ref): lowerBarSimple -> applyBarEncodings -> encodings applied.
         // Animated bar (Signal ref + .animate): lowerBarSimpleWithTransitions -> was missing applyBarEncodings.
         // Both must emit fill-opacity="0.5", a <title> tooltip child, and a sibling label <text>.
@@ -506,18 +506,18 @@ class ChartTransitionTest extends kyo.test.Test[Any]:
             // (a) fill-opacity encoding: the animated rect must carry fill-opacity="0.5".
             assert(
                 html.contains("fill-opacity=\"0.5\""),
-                s"Animated bar must carry fill-opacity=0.5 (opacity encoding dropped before fix):\n$html"
+                s"Animated bar must carry fill-opacity=0.5 (opacity encoding required):\n$html"
             )
             // (b) tooltip encoding: the animated rect must contain a <title ...>Jan</title> child.
             // The renderer emits data-kyo-path attributes, so match on the closing tag pattern.
             assert(
                 html.contains(">Jan</title>"),
-                s"Animated bar must contain >Jan</title> (tooltip encoding dropped before fix):\n$html"
+                s"Animated bar must contain >Jan</title> (tooltip encoding required):\n$html"
             )
             // (c) label encoding: a sibling label <text>Jan</text> must be present.
             assert(
                 html.contains(">Jan<"),
-                s"Animated bar must emit a label text >Jan< (label encoding dropped before fix):\n$html"
+                s"Animated bar must emit a label text >Jan< (label encoding required):\n$html"
             )
             // (d) SMIL animates still present (animation not disturbed): both <animate> children preserved.
             assert(
@@ -540,12 +540,12 @@ class ChartTransitionTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // ---- L18 co-pin: no-encoding animated bar is byte-identical to today (L8 co-pin arm for transitions) ----
+    // ---- no-encoding animated bar is byte-identical ----
 
-    "no-encoding animated bar is byte-identical through the fix (L18 co-pin)" in {
-        // A bar with NO opacity/label/tooltip encodings. After the fix, applyBarEncodings returns the rect
+    "no-encoding animated bar is byte-identical" in {
+        // A bar with NO opacity/label/tooltip encodings. applyBarEncodings returns the rect
         // unchanged (Absent arms for all three encodings) and an empty label Chunk. The SMIL animates are
-        // attached as before. Output must be byte-identical to the pre-fix animated bar.
+        // attached as before. Output must be byte-identical to the baseline animated bar.
         val rows = Chunk(Sale("Jan", Rev(1000.0)))
         for
             ref <- Signal.initRef[Seq[Sale]](rows)

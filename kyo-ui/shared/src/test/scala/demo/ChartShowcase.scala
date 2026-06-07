@@ -6,13 +6,13 @@ import kyo.Style.*
 import kyo.UI.*
 import scala.language.implicitConversions
 
-/** Animated + interactive showcase of chart features added this campaign.
+/** Animated + interactive showcase of chart features.
   *
-  * Four panels demonstrate the new API surface:
+  * Four panels demonstrate the API surface:
   *
   *   1. Animated dual-axis combo (`yScaleRight`): colored bars on the left axis and a growth-rate line on
   *      the independent right axis, both bound to a `Signal` and tweening via `.animate` when the one-shot
-  *      morph fires. Marquee panel for the new dual-axis independent-scale feature.
+  *      morph fires. Highlights the dual-axis independent-scale feature.
   *   2. Interactive highlight on a multi-series line chart: three categorical colored lines via
   *      `.legend(_.colorScale[Series](...))` + `.onSelect(ref)` + `.interaction(_.highlightSelect)`.
   *      A background fiber sets the ref to a chosen series after the first captured frame, so frame 2 shows

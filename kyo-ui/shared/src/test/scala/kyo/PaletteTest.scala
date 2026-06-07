@@ -5,7 +5,7 @@ import kyo.UI.*
 import kyo.UI.Ast.*
 import scala.language.implicitConversions
 
-/** Phase 06 tests for the named color [[Palette]] surface (INV-031).
+/** Tests for the named color [[Palette]] surface.
   *
   * Asserts the resolved color lists and that selecting a palette via `_.theme(_.palette(p))`
   * actually changes the per-mark fill color emitted in the lowered SVG.
@@ -31,7 +31,7 @@ class PaletteTest extends kyo.test.Test[Any]:
 
     case class Row(x: String, y: Int)
 
-    // ---- Leaf 7: Palette.Okabe resolves to exactly 8 colors ----
+    // ---- Palette.Okabe resolves to exactly 8 colors ----
 
     "Palette.Okabe resolves to exactly 8 colors" in {
         val cs = Palette.colors(Palette.Okabe)
@@ -41,7 +41,7 @@ class PaletteTest extends kyo.test.Test[Any]:
         assert(cs(1) == Style.Color.rgb(230, 159, 0), s"Okabe(1) should be the Okabe orange but got ${cs(1)}")
     }
 
-    // ---- Leaf 8: selecting a palette changes the mark fill color ----
+    // ---- selecting a palette changes the mark fill color ----
 
     "theme(_.palette(Palette.Okabe)) makes the first mark fill the first Okabe color, not the Default" in {
         val rows        = Chunk(Row("a", 1), Row("b", 2))
@@ -57,7 +57,7 @@ class PaletteTest extends kyo.test.Test[Any]:
         assert(okabeFill != defaultFill, s"Okabe fill ($okabeFill) must differ from Default fill ($defaultFill)")
     }
 
-    // ---- Leaf 9: Palette.Default equals the built-in DefaultPalette ----
+    // ---- Palette.Default equals the built-in DefaultPalette ----
 
     "Palette.Default returns the same chunk as the built-in DefaultPalette" in {
         assert(

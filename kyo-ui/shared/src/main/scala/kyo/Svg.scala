@@ -1095,8 +1095,16 @@ object Svg:
 
     // ---- SMIL animation: leaf elements placed inside a shape via ShapeChild ----
 
-    /** `<animate>`: animates a single attribute over time. Numeric `from`/`to` overloads
-      * format with the shared `NumberFormat.double` encoder (so `from(20.0)` is `"20"`).
+    /** `<animate>`: the SMIL element that animates a single attribute of its parent shape over time.
+      *
+      * Name the target attribute with `attributeName`, then describe the value trajectory. Use `from`/`to`
+      * for a two-point tween, or `values` for a multi-keyframe list. Numeric `from`/`to` overloads format
+      * with the shared `NumberFormat.double` encoder (so `from(20.0)` is `"20"`). Timing is set with `dur`,
+      * `begin`, and `repeatCount`.
+      *
+      * The interpolation curve is selected with `calcMode`; `CalcMode.Spline` is the mode that activates the
+      * `keySplines` control points, while `keyTimes` fixes when each keyframe value applies. This is a leaf
+      * child placed inside a shape via `ShapeChild`, not a standalone element.
       */
     final case class Animate(svgAttrs: SvgAttrs = SvgAttrs(), attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using
         val frame: Frame
@@ -1130,12 +1138,16 @@ object Svg:
         def keySplines(v: String): Animate = withSvg(svgAttrs.copy(animKeySplines = Present(v)))
     end Animate
 
-    /** `<animateTransform>`: animates a transform attribute on the parent element over time.
-      * The `type` setter selects the transform kind (`Translate`, `Scale`, `Rotate`,
-      * `SkewX`, or `SkewY`). The `from`/`to` values are tuples formatted as a
-      * space-separated string per the SVG spec (e.g., `"0 0"` for translate).
-      * Use `attributeName` to specify which transform attribute to animate (typically
-      * `"transform"`). Timing is controlled by `dur`, `begin`, and `repeatCount`.
+    /** `<animateTransform>`: the SMIL element that animates a transform attribute on its parent element over
+      * time.
+      *
+      * The `type` setter selects the transform kind (`Translate`, `Scale`, `Rotate`, `SkewX`, or `SkewY`).
+      * The `from`/`to` values are the transform arguments formatted as a space-separated string per the SVG
+      * spec (e.g., `"0 0"` for translate). Use `attributeName` to specify which transform attribute to
+      * animate (typically `"transform"`).
+      *
+      * Timing is controlled by `dur`, `begin`, and `repeatCount`. Like `Animate`, this is a leaf child placed
+      * inside a shape via `ShapeChild`.
       */
     final case class AnimateTransform(svgAttrs: SvgAttrs = SvgAttrs(), attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using
         val frame: Frame
@@ -1152,11 +1164,14 @@ object Svg:
         def begin(v: String): AnimateTransform         = withSvg(svgAttrs.copy(animBegin = Present(v)))
     end AnimateTransform
 
-    /** `<animateMotion>`: moves the parent element along a motion path over time.
-      * The `path` setter accepts a `PathData` value (the same `d` attribute used by
-      * `<path>`) describing the trajectory. Timing is controlled by `dur` and
-      * `repeatCount`. Unlike `Animate`, this element does not take `attributeName`
-      * because it always targets the implicit motion path transform.
+    /** `<animateMotion>`: the SMIL element that moves its parent element along a motion path over time.
+      *
+      * The `path` setter accepts a `PathData` value (the same `d` attribute used by `<path>`) describing the
+      * trajectory the element follows. Timing is controlled by `dur` and `repeatCount`.
+      *
+      * Unlike `Animate`, this element does not take `attributeName` because it always targets the implicit
+      * motion path transform of the parent. Like the other SMIL leaves, it is placed inside a shape via
+      * `ShapeChild`.
       */
     final case class AnimateMotion(svgAttrs: SvgAttrs = SvgAttrs(), attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using
         val frame: Frame
@@ -1169,8 +1184,14 @@ object Svg:
         def repeatCount(v: String): AnimateMotion = withSvg(svgAttrs.copy(animRepeatCount = Present(v)))
     end AnimateMotion
 
-    /** `<set>`: sets an attribute to a value at a time. Named `SetAnim` to avoid clashing
-      * with `scala.collection.Set`; the factory is `Svg.set`.
+    /** `<set>`: the SMIL element that sets an attribute of its parent shape to a single value at a given time.
+      *
+      * Name the target attribute with `attributeName`, supply the value with `to`, and schedule the change
+      * with `begin`. Unlike `Animate`, there is no interpolation: the attribute jumps to the value at the
+      * scheduled time and holds it. This is the discrete-change counterpart to the tweening SMIL elements.
+      *
+      * Named `SetAnim` to avoid clashing with `scala.collection.Set`; the factory is `Svg.set`. Like the
+      * other SMIL leaves, it is placed inside a shape via `ShapeChild`.
       */
     final case class SetAnim(svgAttrs: SvgAttrs = SvgAttrs(), attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using
         val frame: Frame
