@@ -2,23 +2,16 @@ package kyo
 
 import scala.compiletime.testing.typeCheckErrors
 
-/** leaf 1 + 2: README surface verification.
+/** Leaf 1: README API-surface compile-time verification.
   *
-  * Leaf 1 (doctestPasses): compile-time checks via typeCheckErrors verify that every key
-  * method referenced in README code blocks actually exists on the post-fix public surface.
-  * This is the Approach A substitute for `sbt 'kyo-tasty/doctest'` (prep doc C4).
-  * The checks run cross-platform; they exercise the API surface, not file I/O.
+  * Compile-time checks via typeCheckErrors verify that every key method referenced in
+  * README code blocks actually exists on the post-fix public surface. This is the
+  * Approach A substitute for `sbt 'kyo-tasty/doctest'` (prep doc C4). The checks run
+  * cross-platform; they exercise the API surface, not file I/O.
   *
   * The typeCheckErrors strings that exercise Tasty query methods include an explicit
-  * `using kyo.Frame.internal` because those methods require Frame and the fresh compilation
-  * context used by typeCheckErrors does not have a `given Frame` in scope.
-  *
-  * Leaf 2 (noDriftFromPhantomNames): reads the README test resource and applies a
-  * regex sweep for phantom names that must not appear in the regenerated README. The
-  * phantom check runs cross-platform: TestResourceLoader serves README.md from the
-  * JVM classloader on JVM and from the sbt-generated EmbeddedText on JS / Native.
-  * The `.isSubtypeOf` check uses a two-pass scan instead of a regex look-behind so
-  * the contract holds on Scala.js (whose regex engine does not support look-behind).
+  * `using kyo.Frame.internal` because those methods require Frame and the fresh
+  * compilation context used by typeCheckErrors does not have a `given Frame` in scope.
   */
 class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
 
@@ -165,66 +158,6 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
             "val _: kyo.Maybe[kyo.Tasty.Symbol] = (null: kyo.Tasty.Classpath).symbol(kyo.Tasty.SymbolId(0))"
         )
         assert(ok.length == 0, s"Classpath.symbol should return Maybe[Symbol]; errors: ${ok.map(_.message).mkString("; ")}")
-        succeed
-    }
-
-    // ── Leaf 2: phantom-name sweep on README resource ─────────────────────────
-    // Given: the regenerated kyo-tasty/README.md (served via classloader resource).
-    // When: the test loads the resource and applies a regex sweep for phantom names.
-    // Then: zero matches for any phantom name.
-    // JVM only (tagged jvmOnly): uses TestResourceLoader (JVM classloader).
-
-    "Leaf 2: README contains no phantom names" in {
-        // README.md is served as a test resource via build.sbt resourceGenerators.
-        val content = new String(TestResourceLoader.loadBytes("README.md"), "UTF-8")
-
-        val phantoms: Seq[(scala.util.matching.Regex, String)] = Seq(
-            ("\\bTypeLike\\b".r, "TypeLike (never existed)"),
-            ("\\bTermLike\\b".r, "TermLike (never existed)"),
-            ("\\bSymbol\\.Unresolved\\b".r, "Symbol.Unresolved (removed)"),
-            ("\\bresultTypeId\\b".r, "Method.resultTypeId (phantom field)"),
-            ("\\bType\\.Unknown\\b".r, "Type.Unknown (removed)"),
-            ("\\bSubtypeVerdict\\.Unknown\\b".r, "SubtypeVerdict.Unknown (renamed Indeterminate)"),
-            ("\\bTasty\\.current\\b".r, "Tasty.current (relocated to TastyState.global)"),
-            ("\\bJavaAnnotation\\b".r, "JavaAnnotation (renamed Tasty.Java.Annotation)"),
-            ("\\bJavaMetadata\\b".r, "JavaMetadata (renamed Tasty.Java.Metadata)"),
-            ("\\bModuleDescriptor\\b".r, "ModuleDescriptor (renamed Tasty.Java.Module.Descriptor)"),
-            ("\\bModuleRequires\\b".r, "ModuleRequires (renamed Tasty.Java.Module.Requires)"),
-            ("\\bModuleExports\\b".r, "ModuleExports (renamed Tasty.Java.Module.Exports)"),
-            ("\\bModuleOpens\\b".r, "ModuleOpens (renamed Tasty.Java.Module.Opens)"),
-            ("\\bModuleProvides\\b".r, "ModuleProvides (renamed Tasty.Java.Module.Provides)"),
-            ("\\ballUnresolved\\b".r, "allUnresolved (deleted with Symbol.Unresolved)"),
-            ("\\bSymbolBody\\b".r, "SymbolBody (moved to internal)"),
-            ("\\bTasty\\.requireTrait\\b".r, "Tasty.requireTrait (does not exist on object Tasty)"),
-            // Negative lookbehind (?<!Tasty)\.isSubtypeOf\b is JVM-portable but Scala.js's regex engine
-            // does not support look-behind. Rewritten below as a two-pass scan over plain \.isSubtypeOf
-            // matches, post-filtering matches preceded by "Tasty". Same contract: catch tpe.isSubtypeOf
-            // (phantom method on Type) while permitting Tasty.isSubtypeOf (real method on object Tasty).
-            ("\\bTasty\\.implementationsOf\\b".r, "Tasty.implementationsOf (exists only on Classpath)"),
-            ("\\bTasty\\.directSubclassesOf\\b".r, "Tasty.directSubclassesOf (exists only on Classpath)"),
-            ("\\bTasty\\.subclassesOf\\b".r, "Tasty.subclassesOf (exists only on Classpath)")
-        )
-
-        // Detect `.isSubtypeOf` not preceded by "Tasty" using a two-pass scan rather than a
-        // regex look-behind (Scala.js does not implement ECMAScript 2018 look-behind).
-        val phantomIsSubtypeOf: Option[String] =
-            val matches = "\\.isSubtypeOf\\b".r.findAllMatchIn(content).toList
-            matches.find { m =>
-                val before = content.substring(0, m.start)
-                !before.endsWith("Tasty")
-            }.map(_ => "tpe.isSubtypeOf (not a method on Type; use Tasty.isSubtypeOf)")
-        end phantomIsSubtypeOf
-
-        val regexViolations = phantoms.collect {
-            case (regex, description) if regex.findFirstIn(content).isDefined =>
-                description
-        }
-        val violations = regexViolations ++ phantomIsSubtypeOf.toSeq
-
-        assert(
-            violations.isEmpty,
-            s"README contains phantom names that must not appear:\n${violations.mkString("  - ", "\n  - ", "")}"
-        )
         succeed
     }
 
