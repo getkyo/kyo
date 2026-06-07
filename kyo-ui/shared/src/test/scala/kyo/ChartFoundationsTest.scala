@@ -114,7 +114,7 @@ class ChartFoundationsTest extends kyo.test.Test[Any]:
         case class Row(x: Int, y: Double)
         val rows = Chunk(Row(0, 1.0), Row(1, Double.NaN), Row(2, 3.0))
         val spec = Chart(rows)(bar(x = _.x, y = _.y))
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         // NaN-free: the full render pipeline must not emit "NaN" or "Infinity" (INV-001 core)
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield

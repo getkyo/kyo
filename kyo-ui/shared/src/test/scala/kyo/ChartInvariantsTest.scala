@@ -26,7 +26,7 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
         case class Row(x: Int, y: Double)
         val rows = Chunk(Row(0, 1.0), Row(1, Double.NaN), Row(2, 3.0))
         val spec = Chart(rows)(bar(x = _.x, y = _.y))
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(!html.contains("NaN"), s"SVG output must not contain 'NaN' but got: ${html.take(200)}")
@@ -40,7 +40,7 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
         case class Row(x: Int, y: Double)
         val rows = Chunk(Row(0, 1.0), Row(1, Double.NaN), Row(2, Double.PositiveInfinity), Row(3, 3.0))
         val spec = Chart(rows)(point(x = _.x, y = _.y))
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(!html.contains("NaN"), s"Point chart SVG must not contain 'NaN' but got: ${html.take(200)}")
@@ -52,7 +52,7 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
         case class Row(x: Int, y: Double)
         val rows = Chunk(Row(0, 1.0), Row(1, Double.NaN), Row(2, Double.PositiveInfinity), Row(3, 3.0))
         val spec = Chart(rows)(line(x = _.x, y = _.y))
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(!html.contains("NaN"), s"Line chart SVG must not contain 'NaN' but got: ${html.take(200)}")
@@ -76,8 +76,8 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
             point(x = _.x, y = _.yR, axis = Axis.Right)
         ).yAxisRight(identity)
 
-        val root1 = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
-        val root2 = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root1 = (spec).lower
+        val root2 = (spec).lower
 
         for
             html1 <- HtmlRenderer.render(root1, Seq.empty)
@@ -106,7 +106,7 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
             line(x = _.x, y = _.yL),
             point(x = _.x, y = _.yR, axis = Axis.Right)
         ).yAxisRight(identity)
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(!html.contains("linearGradient"), "golden chart must emit no gradient (determinism guard)")
@@ -181,7 +181,7 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
         case class Row(x: String, y: Double)
         val rows = Chunk(Row("a", 1.0))
         val spec = Chart(rows)(bar(x = _.x, y = _.y), rule[Row, Double]())
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         // In the static lowering the marks live in a single Svg.G; chrome (axis) lines are direct root
         // children (not inside a G). Scope the line check to the marks group so axis lines do not leak in.
         val marksGroups = root.children.collect { case g: Svg.G => g }.filter(g =>
@@ -199,7 +199,7 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
         case class Row(x: String, y: Double)
         val rows = Chunk(Row("a", 5.0), Row("b", 3.0))
         val spec = Chart(rows)(text(x = _.x, y = _.y, label = _.x))
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield assert(html.nonEmpty, "text mark must produce non-empty SVG (INV-021)")
         end for
@@ -210,7 +210,7 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
         case class Row(x: String, mean: Double, lo: Double, hi: Double)
         val rows = Chunk(Row("a", 6.0, 4.0, 8.0))
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi))
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(!html.contains("url(#"), "errorBar must not emit url(#...) references (INV-022)")
@@ -227,7 +227,7 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
             rows = Chunk(Pt("a", 1.0), Pt("b", 2.0))
             spec = Chart(rows)(line(x = _.x, y = _.y))
                 .onSelect(selectRef)
-            root = summon[Conversion[Chart.Spec[Pt], Svg.Root]](spec)
+            root = (spec).lower
             paths = root.children.flatMap:
                 case g: Svg.G => g.children.collect { case p: Svg.Path => p }
                 case _        => Chunk.empty
@@ -242,7 +242,7 @@ class ChartInvariantsTest extends kyo.test.Test[Any]:
         val rows = Chunk(Row("a", 1.0))
         val spec = Chart(rows)(bar(x = _.x, y = _.y))
             .interaction(_.highlightSelect) // no onSelect configured
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         succeed
     }
 

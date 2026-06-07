@@ -108,7 +108,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             spec = Chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             // First render records the initial path geometry.
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Update to new values with the same categories.
@@ -176,7 +176,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             spec = Chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             // First render: record 2-command path geometry.
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Structural change: 3 categories.
@@ -204,7 +204,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             spec = Chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.none)
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             html0 <- HtmlRenderer.render(root, Seq.empty)
             _     <- ref.set(updated)
             html1 <- HtmlRenderer.render(root, Seq.empty)
@@ -233,7 +233,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             spec = Chart(ref: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             // First render: record initial area path geometry.
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Update values (same categories, same structure).
@@ -273,7 +273,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             spec = Chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             // R1 pull 1: no previous path.
             html1a <- HtmlRenderer.render(root, Seq.empty)
             // R1 pull 2: repeat pull of same emission.
@@ -325,7 +325,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             spec = Chart(ref: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             html1a <- HtmlRenderer.render(root, Seq.empty)
             html1b <- HtmlRenderer.render(root, Seq.empty)
             _      <- ref.set(r2)
@@ -360,7 +360,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             spec = Chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(html.contains("<path"), s"Expected <path in first render:\n$html")
@@ -400,7 +400,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
                 line(x = _.month, y = _.v2)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[MultiSale], Svg.Root]](spec)
+            root = (spec).lower
             // Emission 1: records bar geom (2 entries) and line geom ("line-1-0" with M+L = 2 cmds).
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Emission 2: bar adds Mar (3 geom entries); line v2 still produces 2 points (Jan, Feb).
@@ -454,7 +454,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
                 line(x = _.month, y = _.rev, color = _.series)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[NamedColorSale], Svg.Root]](spec)
+            root = (spec).lower
             // Emission 1: record "line-0-Red" (Jan+Feb) in fromGeom.
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Emission 2: Red series stable (morphs); Blue series new (snaps).
@@ -502,7 +502,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             spec = Chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             _    <- HtmlRenderer.render(root, Seq.empty)
             _    <- ref.set(e2)
             html <- HtmlRenderer.render(root, Seq.empty)
@@ -535,7 +535,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
                 line(x = _.month, y = _.revenue, color = _.col)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[ColSale], Svg.Root]](spec)
+            root = (spec).lower
             html <- HtmlRenderer.render(root, Seq.empty)
         yield
             // Two distinct series must produce two <path> elements.
@@ -571,7 +571,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
                 area(x = _.month, y = _.v2)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[MultiSale], Svg.Root]](spec)
+            root = (spec).lower
             _    <- HtmlRenderer.render(root, Seq.empty)
             _    <- ref.set(e2)
             html <- HtmlRenderer.render(root, Seq.empty)
@@ -597,7 +597,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             spec = Chart(ref: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             _    <- HtmlRenderer.render(root, Seq.empty)
             _    <- ref.set(e2)
             html <- HtmlRenderer.render(root, Seq.empty)
@@ -643,7 +643,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             spec = Chart(ref: Signal[Seq[GapSale]])(line(x = _.month, y = _.rev))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[GapSale], Svg.Root]](spec)
+            root = (spec).lower
             // Emission 1: record "M L L" path geometry.
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Emission 2: gap in middle produces "M M L" (same count, different types).
@@ -690,7 +690,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
             spec = Chart(ref: Signal[Seq[GapSale]])(area(x = _.month, y = _.rev))
                 .yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[GapSale], Svg.Root]](spec)
+            root = (spec).lower
             _    <- HtmlRenderer.render(root, Seq.empty)
             _    <- ref.set(e2)
             html <- HtmlRenderer.render(root, Seq.empty)
@@ -739,7 +739,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
                 line(x = _.month, y = _.rev, color = _.series)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[NamedColorSale], Svg.Root]](spec)
+            root = (spec).lower
             // Emission 1: records Red at key "line-0-Red" and Blue at key "line-0-Blue" (after fix).
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Emission 2: only Blue series remains.
@@ -799,7 +799,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
                 area(x = _.month, y = _.rev, color = _.series)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[NamedColorSale], Svg.Root]](spec)
+            root = (spec).lower
             _    <- HtmlRenderer.render(root, Seq.empty)
             _    <- ref.set(e2)
             html <- HtmlRenderer.render(root, Seq.empty)
@@ -872,7 +872,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
                 line(x = _.month, y = _.revenue, color = _.col)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[ColSale], Svg.Root]](spec)
+            root = (spec).lower
             // Emission 1: store geometry for both series under CatKey-based keys.
             _ <- HtmlRenderer.render(root, Seq.empty)
             // Emission 2: each series must morph from its OWN prior path.
@@ -947,7 +947,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
                 area(x = _.month, y = _.revenue, color = _.col)
             ).yScale(_.linear(0.0, 4000.0))
                 .animate(_.ease(300.millis))
-            root = summon[Conversion[Chart.Spec[ColSale], Svg.Root]](spec)
+            root = (spec).lower
             _    <- HtmlRenderer.render(root, Seq.empty)
             _    <- ref.set(e2)
             html <- HtmlRenderer.render(root, Seq.empty)

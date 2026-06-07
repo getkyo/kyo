@@ -91,7 +91,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
             .yAxis(_.grid.ticks(3))
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Gridlines are Svg.Line elements spanning the full plot width with strokeOpacity=0.3
         // (distinct from the axis lines which have no strokeOpacity set)
@@ -124,7 +124,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val rows = Chunk(Sale("Jan", Usd(2500)), Sale("Feb", Usd(9999)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
             .yScale(_.linear(0.0, 5000.0))
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Extract the bar rects from the marks G (last child of root)
         val marksG: Svg.G = root.children.last match
@@ -157,7 +157,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val rows = Chunk(YearRow(2020, 100.0), YearRow(2021, 200.0), YearRow(2022, 300.0))
         val spec = Chart(rows)(bar(x = _.year, y = _.value))
             .xScale(_.band)
-        val root = summon[Conversion[Chart.Spec[YearRow], Svg.Root]](spec)
+        val root = (spec).lower
 
         val marksG: Svg.G = root.children.last match
             case g: Svg.G => g
@@ -191,7 +191,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val rows = Chunk(Sale("a", Usd(10)), Sale("b", Usd(100)), Sale("c", Usd(1000)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
             .yScale(_.log)
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Tick labels use TextAnchor.End for left axis
         val tickLabels = frameTextsIn(root).filter: t =>
@@ -229,7 +229,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
                     Region.APAC -> Style.Color.orange
                 )
             )
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Legend swatches are Svg.Rect elements in the frame (not in the marks G)
         // Frame rects: [0] = background rect, [1..] = legend swatches
@@ -279,7 +279,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             bar(x = _.month, y = _.revenue),
             line(x = _.month, y = _.growthPct, axis = Axis.Right)
         )
-        val root = summon[Conversion[Chart.Spec[Row2Ax], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Verify two independent y-scales by checking that the same value (10) maps to different pixels.
         // Left scale: Linear(0,2000,440,20) -> apply(10) ≈ 437.9
@@ -323,7 +323,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         )
             .yAxis(_.label("Revenue"))
             .yAxisRight(_.label("Growth %"))
-        val root  = summon[Conversion[Chart.Spec[Row2Ax], Svg.Root]](spec)
+        val root  = (spec).lower
         val texts = frameTextsIn(root)
 
         // Left axis tick labels: TextAnchor.End at x < plotX. Their fill must be palette(0) = blue.
@@ -390,7 +390,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             .yAxis(_.label("Revenue"))
             .yAxisRight(_.label("Growth %"))
             .size(360, 240)
-        val root  = summon[Conversion[Chart.Spec[Row2Ax], Svg.Root]](spec)
+        val root  = (spec).lower
         val texts = frameTextsIn(root)
 
         // The rotated axis labels are the texts carrying a Transform.Rotate.
@@ -440,7 +440,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val rows   = Chunk(Sale("Jan", Usd(1000)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
             .theme(_.dark)
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Background is the first frame Rect
         val frameRects = frameRectsIn(root)
@@ -474,7 +474,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             y = _.value,
             stack = by(_.group)
         )).legend(_.hidden)
-        val root = summon[Conversion[Chart.Spec[SRow], Svg.Root]](spec)
+        val root = (spec).lower
 
         val marksG: Svg.G = root.children.last match
             case g: Svg.G => g
@@ -516,7 +516,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             y = _.value,
             stack = by(_.group)
         )).legend(_.top)
-        val root = summon[Conversion[Chart.Spec[SRow], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Legend swatches are frame rects after the background rect ([0]=background, [1..]=swatches).
         val frameRects = frameRectsIn(root)
@@ -572,7 +572,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
                 case _     => Style.Color.red
             }
         )
-        val root = summon[Conversion[Chart.Spec[SRow], Svg.Root]](spec)
+        val root = (spec).lower
 
         val swatches = frameRectsIn(root).drop(1)
         assert(swatches.size == 3, s"Expected 3 legend swatches but got ${swatches.size}")
@@ -617,7 +617,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
                 case _     => Style.Color.red
             }
         )
-        val root = summon[Conversion[Chart.Spec[SRow], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Legend labels: frame texts with DominantBaseline.Middle and no textAnchor.
         val legendLabels = frameTextsIn(root).filter: t =>
@@ -656,7 +656,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
             .yAxis(_.ticks(3).format(v => s"$$${v.toInt}"))
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Left-axis tick labels have TextAnchor.End
         val tickLabels = frameTextsIn(root).filter: t =>
@@ -704,7 +704,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             y = _.value,
             stack = by(_.group, normalize = true)
         )).legend(_.hidden)
-        val root = summon[Conversion[Chart.Spec[SRow], Svg.Root]](spec)
+        val root = (spec).lower
 
         val marksG: Svg.G = root.children.last match
             case g: Svg.G => g
@@ -756,7 +756,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             y = _.value,
             stack = by(_.group)
         )).legend(_.hidden)
-        val root = summon[Conversion[Chart.Spec[ARow], Svg.Root]](spec)
+        val root = (spec).lower
 
         val marksG: Svg.G = root.children.last match
             case g: Svg.G => g
@@ -817,7 +817,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             y = _.value,
             stack = by(_.group, normalize = true)
         )).legend(_.hidden)
-        val root = summon[Conversion[Chart.Spec[ARow], Svg.Root]](spec)
+        val root = (spec).lower
 
         val marksG: Svg.G = root.children.last match
             case g: Svg.G => g
@@ -853,7 +853,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             Sale("Jan", Usd(1500), Region.APAC)
         )
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Left y-axis tick labels use TextAnchor.End. Their fill must be the neutral chrome, not blue.
         val leftTickLabels = frameTextsIn(root).filter(_.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
@@ -877,7 +877,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             SRow("Jan", "B", 700.0)
         )
         val spec = Chart(rows)(bar(x = _.x, y = _.value, stack = by(_.group)))
-        val root = summon[Conversion[Chart.Spec[SRow], Svg.Root]](spec)
+        val root = (spec).lower
 
         val leftTickLabels = frameTextsIn(root).filter(_.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
         assert(leftTickLabels.nonEmpty, "Expected left y-axis tick labels for the stacked bar")
@@ -897,7 +897,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         given CanEqual[LRow, LRow] = CanEqual.derived
         val rows                   = Chunk(LRow("Jan", 100.0), LRow("Feb", 200.0), LRow("Mar", 150.0))
         val spec                   = Chart(rows)(line(x = _.month, y = _.value)).yAxis(_.grid)
-        val root                   = summon[Conversion[Chart.Spec[LRow], Svg.Root]](spec)
+        val root                   = (spec).lower
 
         val leftTickLabels = frameTextsIn(root).filter(_.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
         assert(leftTickLabels.nonEmpty, "Expected left y-axis tick labels for the line chart")
@@ -919,7 +919,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         given CanEqual[LRow, LRow] = CanEqual.derived
         val rows                   = Chunk(LRow("Jan", 100.0), LRow("Feb", 200.0), LRow("Mar", 150.0))
         val spec                   = Chart(rows)(line(x = _.month, y = _.value)).yAxis(_.grid.ticks(3))
-        val root                   = summon[Conversion[Chart.Spec[LRow], Svg.Root]](spec)
+        val root                   = (spec).lower
 
         // Gridlines span the full plot width and carry a strokeOpacity (distinct from axis lines).
         val gridLines = frameLinesIn(root).filter: l =>
@@ -969,7 +969,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
     "xAxis(_.rotateTicks(-45)) gives every x tick label a Rotate(-45) transform" in {
         val rows   = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val spec   = Chart(rows)(bar(x = _.month, y = _.revenue)).xAxis(_.rotateTicks(-45.0))
-        val root   = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root   = (spec).lower
         val labels = xTickLabelsIn(root)
         assert(labels.nonEmpty, "Expected x tick labels")
         labels.foldLeft(()): (_, t) =>
@@ -984,7 +984,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
     "xAxis(_.anchor(TextAnchor.End)) sets text-anchor=end on x tick labels" in {
         val rows   = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val spec   = Chart(rows)(bar(x = _.month, y = _.revenue)).xAxis(_.anchor(TextAnchor.End))
-        val root   = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root   = (spec).lower
         val labels = xTickLabelsIn(root)
         assert(labels.nonEmpty, "Expected x tick labels")
         labels.foldLeft(()): (_, t) =>
@@ -996,7 +996,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
     "xAxis(_.grid) emits vertical gridlines at each x tick from plotY to plotBaseline" in {
         val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)), Sale("Mar", Usd(1500)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue)).xAxis(_.grid)
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
         // Vertical gridlines: x1==x2, y1==plotY, y2==plotBaseline, with a strokeOpacity.
         val vGrid = frameLinesIn(root).filter: l =>
             l.svgAttrs.x1 == l.svgAttrs.x2 &&
@@ -1013,8 +1013,8 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val rows    = Chunk(Sale("Jan", Usd(0)), Sale("Feb", Usd(2000)))
         val normal  = Chart(rows)(bar(x = _.month, y = _.revenue))
         val flipped = Chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.reverse)
-        val rNorm   = barsIn(summon[Conversion[Chart.Spec[Sale], Svg.Root]](normal))
-        val rFlip   = barsIn(summon[Conversion[Chart.Spec[Sale], Svg.Root]](flipped))
+        val rNorm   = barsIn((normal).lower)
+        val rFlip   = barsIn((flipped).lower)
         // The Jan bar (value 0): normal top y is at the baseline; reversed top y is at the plot top.
         val janNormalY = numOf(rNorm(0).svgAttrs.y)
         val janFlipY   = numOf(rFlip(0).svgAttrs.y)
@@ -1029,8 +1029,8 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val rows     = Chunk(XRow(0.0, 1.0), XRow(10.0, 2.0))
         val noPad    = Chart(rows)(point(x = _.x, y = _.y))
         val padded   = Chart(rows)(point(x = _.x, y = _.y)).xScale(_.withPad(0.1))
-        val cxNoPad  = circlesIn(summon[Conversion[Chart.Spec[XRow], Svg.Root]](noPad))(0).svgAttrs.cx
-        val cxPadded = circlesIn(summon[Conversion[Chart.Spec[XRow], Svg.Root]](padded))(0).svgAttrs.cx
+        val cxNoPad  = circlesIn((noPad).lower)(0).svgAttrs.cx
+        val cxPadded = circlesIn((padded).lower)(0).svgAttrs.cx
         val noPadX = cxNoPad match
             case Present(v) => v;
             case Absent     => fail("cx")
@@ -1067,7 +1067,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val cats   = Chunk("a", "b", "c", "d", "e", "f", "g")
         val rows   = cats.map(c => CRow(c, 1))
         val spec   = Chart(rows)(bar(x = _.cat, y = _.y)).xAxis(_.ticks(7))
-        val root   = summon[Conversion[Chart.Spec[CRow], Svg.Root]](spec)
+        val root   = (spec).lower
         val labels = xTickLabelsIn(root)
         assert(labels.size == 7, s"Expected 7 band tick labels but got ${labels.size}")
     }
@@ -1081,8 +1081,8 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val rows       = Chunk(Sale("Jan", Usd(20)))
         val clamped    = Chart(rows)(bar(x = _.month, y = _.revenue)).yScale(_.linear(0.0, 10.0).withClamp(true))
         val unclamped  = Chart(rows)(bar(x = _.month, y = _.revenue)).yScale(_.linear(0.0, 10.0).withClamp(false))
-        val yClamped   = numOf(barsIn(summon[Conversion[Chart.Spec[Sale], Svg.Root]](clamped))(0).svgAttrs.y)
-        val yUnclamped = numOf(barsIn(summon[Conversion[Chart.Spec[Sale], Svg.Root]](unclamped))(0).svgAttrs.y)
+        val yClamped   = numOf(barsIn((clamped).lower)(0).svgAttrs.y)
+        val yUnclamped = numOf(barsIn((unclamped).lower)(0).svgAttrs.y)
         // Clamped pins to the top of the plot (PlotY=20).
         assertClose(yClamped, PlotY, "clamped out-of-range datum pins to plot top")
         // Unclamped extrapolates ABOVE the plot top, i.e. a smaller (more negative) pixel.
@@ -1114,8 +1114,8 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val noPad  = Chart(rows)(bar(x = _.month, y = _.revenue)).yScale(_.log)
         val padded = Chart(rows)(bar(x = _.month, y = _.revenue)).yScale(_.log.withPad(0.1))
         // The y pixel of the smallest datum (10): the bar bottom is at baseline; compare the bar TOP y.
-        val yNoPad  = numOf(barsIn(summon[Conversion[Chart.Spec[Sale], Svg.Root]](noPad))(0).svgAttrs.y)
-        val yPadded = numOf(barsIn(summon[Conversion[Chart.Spec[Sale], Svg.Root]](padded))(0).svgAttrs.y)
+        val yNoPad  = numOf(barsIn((noPad).lower)(0).svgAttrs.y)
+        val yPadded = numOf(barsIn((padded).lower)(0).svgAttrs.y)
         // Without pad the smallest datum maps to the baseline (440). With pad the domain widens below 10,
         // so the datum maps ABOVE the baseline (a smaller y pixel).
         assertClose(yNoPad, Baseline, "un-padded smallest log datum at baseline")
@@ -1146,7 +1146,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
             .yAxis(_.label("Revenue"))
             .size(360, 240)
-        val root = summon[Conversion[Chart.Spec[WideRow], Svg.Root]](spec)
+        val root = (spec).lower
 
         // The left y-tick labels are right-anchored (TextAnchor.End). A 5-digit label "50000" must appear.
         val leftTickLabels = frameTextsIn(root).filter(_.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
@@ -1201,7 +1201,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(point(x = _.a, y = _.b, size = _.w))
             .yAxis(_.grid)
             .size(360, 240)
-        val root = summon[Conversion[Chart.Spec[SizeRow], Svg.Root]](spec)
+        val root = (spec).lower
 
         // plotY is where the left axis line starts (its top y). With the top strip reserved it is 40, not 20.
         val ys1   = frameLinesIn(root).map(_.svgAttrs.y1.getOrElse(0.0)).filter(_ > 0.0)
@@ -1239,7 +1239,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             .yAxis(_.label("Revenue"))
             .yAxisRight(_.label("Growth %"))
             .size(360, 240)
-        val root = summon[Conversion[Chart.Spec[ComboRow], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- kyo.internal.HtmlRenderer.render(root, Seq.empty)
         yield
             val lastRect  = html.lastIndexOf("<rect")
@@ -1269,7 +1269,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         // After fix: tickLabel helper applies Svg.Transform.Rotate(tickRotation, px, py).
         val rows  = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val spec  = Chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.rotateTicks(-45.0))
-        val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root  = (spec).lower
         val ticks = leftYTickLabelsIn(root)
         assert(ticks.nonEmpty, "Expected left Y tick labels")
         ticks.foldLeft(()): (_, t) =>
@@ -1286,7 +1286,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             bar(x = _.month, y = _.revenue),
             line(x = _.month, y = _.growthPct, axis = Axis.Right)
         ).yAxisRight(_.rotateTicks(30.0))
-        val root  = summon[Conversion[Chart.Spec[Row2Ax], Svg.Root]](spec)
+        val root  = (spec).lower
         val ticks = rightYTickLabelsIn(root)
         assert(ticks.nonEmpty, "Expected right Y tick labels")
         ticks.foldLeft(()): (_, t) =>
@@ -1303,7 +1303,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         // After fix: effAnchor = toSvgAnchor(cfg.tickAnchor) when cfg.tickAnchor != TextAnchor.Middle.
         val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.anchor(TextAnchor.Start))
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
         // After the fix the left Y ticks carry Start anchor (no longer filtered by TextAnchor.End).
         // Use dominantBaseline.Middle to isolate Y ticks (not Hanging=X, not absent=rotated-title).
         val ticks = frameTextsIn(root).filter(_.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Middle))
@@ -1320,7 +1320,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         // the default TextAnchor.Middle. This is the byte-identity guard for the no-anchor case.
         val rows  = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val spec  = Chart(rows)(bar(x = _.month, y = _.revenue))
-        val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root  = (spec).lower
         val ticks = leftYTickLabelsIn(root)
         assert(ticks.nonEmpty, "Expected left Y tick labels")
         ticks.foldLeft(()): (_, t) =>
@@ -1346,7 +1346,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             .yAxis(_.label("Revenue"))
             .theme(_.font("monospace").fontSize(14))
             .legend(_.colorScale[Region](Region.NA -> Style.Color.blue, Region.EU -> Style.Color.green))
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
 
         // A Y tick label: DominantBaseline.Middle + TextAnchor.End (left Y, default config).
         val yTick = frameTextsIn(root)
@@ -1394,7 +1394,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         // No font attr must appear on any frame text when no theme font is set.
         val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
         frameTextsIn(root).foldLeft(()): (_, t) =>
             assert(t.svgAttrs.fontFamily.isEmpty, s"Default theme must NOT add font-family; got ${t.svgAttrs.fontFamily}")
             assert(t.svgAttrs.fontSize.isEmpty, s"Default theme must NOT add font-size; got ${t.svgAttrs.fontSize}")
@@ -1409,7 +1409,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
 
         // Rotation (mirrors Phase 6 Leaf 1 at line 972):
         val rotSpec = Chart(rows)(bar(x = _.month, y = _.revenue)).xAxis(_.rotateTicks(-45.0))
-        val rotRoot = summon[Conversion[Chart.Spec[Sale], Svg.Root]](rotSpec)
+        val rotRoot = (rotSpec).lower
         val xTicks  = xTickLabelsIn(rotRoot)
         assert(xTicks.nonEmpty, "Expected x tick labels")
         xTicks.foldLeft(()): (_, t) =>
@@ -1420,13 +1420,13 @@ class ChartAxisTest extends kyo.test.Test[Any]:
 
         // Anchor (mirrors Phase 6 Leaf 2 at line 987):
         val ancSpec = Chart(rows)(bar(x = _.month, y = _.revenue)).xAxis(_.anchor(TextAnchor.End))
-        val ancRoot = summon[Conversion[Chart.Spec[Sale], Svg.Root]](ancSpec)
+        val ancRoot = (ancSpec).lower
         xTickLabelsIn(ancRoot).foldLeft(()): (_, t) =>
             assert(t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End), "x tick anchor (L17 co-pin)")
 
         // Font:
         val fntSpec = Chart(rows)(bar(x = _.month, y = _.revenue)).theme(_.font("monospace").fontSize(14))
-        val fntRoot = summon[Conversion[Chart.Spec[Sale], Svg.Root]](fntSpec)
+        val fntRoot = (fntSpec).lower
         xTickLabelsIn(fntRoot).foldLeft(()): (_, t) =>
             assert(t.svgAttrs.fontFamily.contains("monospace"), "x tick font-family (L17 co-pin)")
             assert(t.svgAttrs.fontSize.exists(_.toString.contains("14")), "x tick font-size (L17 co-pin)")
@@ -1457,7 +1457,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             bar(x = _.month, y = _.revenue),
             line(x = _.month, y = _.growthPct, axis = Axis.Right)
         ).yScaleRight(_.log)
-        val root = summon[Conversion[Chart.Spec[Row2Ax], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Extract the right-bound line path from the marks G (last child of root).
         val marksG: Svg.G = root.children.last match
@@ -1514,7 +1514,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             bar(x = _.month, y = _.revenue),
             line(x = _.month, y = _.growthPct, axis = Axis.Right)
         )
-        val root = summon[Conversion[Chart.Spec[Row2Ax], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Right axis tick labels appear on the right margin.
         val allTexts = frameTextsIn(root)
@@ -1557,7 +1557,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             line(x = _.month, y = _.growthPct, axis = Axis.Right)
         ).yAxisRight(_.grid)
         // Left grid is NOT set; right grid is set -> rightDrawGrid=true, leftDrawGrid=false.
-        val root = summon[Conversion[Chart.Spec[Row2Ax], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Horizontal gridlines span x1=plotX to x2=plotX+plotW_twoax with strokeOpacity set.
         val gridLines = hGridLinesIn(root, PlotWTwoAx)
@@ -1586,7 +1586,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             bar(x = _.month, y = _.revenue),
             line(x = _.month, y = _.growthPct, axis = Axis.Right)
         ).yAxis(_.grid).yAxisRight(_.grid)
-        val root = summon[Conversion[Chart.Spec[Row2Ax], Svg.Root]](spec)
+        val root = (spec).lower
 
         val gridLines = hGridLinesIn(root, PlotWTwoAx)
         assert(gridLines.nonEmpty, "L13b: Expected gridlines when yAxis(_.grid) is set")
@@ -1613,7 +1613,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             bar(x = _.month, y = _.revenue),
             line(x = _.month, y = _.growthPct, axis = Axis.Right)
         ).yScale(_.log).yScaleRight(_.linear(0.0, 1.0))
-        val root = summon[Conversion[Chart.Spec[Row2Ax], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Both axes should render tick labels (confirming both exist with different scale kinds).
         val allTexts = frameTextsIn(root)

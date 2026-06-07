@@ -112,7 +112,7 @@ class ChartTypedValuesTest extends kyo.test.Test[Any]:
         val rows = Chunk(Sale("Jan", Usd(2500)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
             .yScale(_.linear(0.0, 5000.0))
-        val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root  = (spec).lower
         val rects = marksRects(root)
         assert(rects.size == 1, s"Expected 1 bar rect but got ${rects.size}")
         val r = rects(0)
@@ -135,7 +135,7 @@ class ChartTypedValuesTest extends kyo.test.Test[Any]:
                 Region.EU   -> Style.Color.green,
                 Region.APAC -> Style.Color.orange
             ))
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Legend swatches: frame-level rects after the background rect, in enum-ordinal order (NA, EU, APAC).
         val fRects   = frameRects(root)
@@ -164,7 +164,7 @@ class ChartTypedValuesTest extends kyo.test.Test[Any]:
                 Region.NA -> Style.Color.green,
                 Region.EU -> Style.Color.orange
             ))
-        val root     = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root     = (spec).lower
         val swatches = frameRects(root).drop(1)
         assert(swatches.size == 3, s"Expected 3 legend swatches but got ${swatches.size}")
         assert(colorOf(swatches(0).svgAttrs.fill) == Style.Color.green, "NA swatch should be green")
@@ -196,7 +196,7 @@ class ChartTypedValuesTest extends kyo.test.Test[Any]:
                 Tier.Gold   -> Style.Color.red,
                 Tier.Silver -> Style.Color.blue
             ))
-        val root     = summon[Conversion[Chart.Spec[Item], Svg.Root]](spec)
+        val root     = (spec).lower
         val swatches = frameRects(root).drop(1)
         assert(swatches.size == 2, s"Expected 2 distinct swatches despite colliding toString but got ${swatches.size}")
         val fills = swatches.map(s => colorOf(s.svgAttrs.fill)).toSeq
@@ -218,7 +218,7 @@ class ChartTypedValuesTest extends kyo.test.Test[Any]:
                 case "EU" => Style.Color.green
                 case _    => Style.Color.orange
             })
-        val root     = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root     = (spec).lower
         val swatches = frameRects(root).drop(1)
         assert(swatches.size == 3, s"Expected 3 legend swatches but got ${swatches.size}")
         assert(colorOf(swatches(0).svgAttrs.fill) == Style.Color.blue, "NA swatch should be blue")
@@ -249,7 +249,7 @@ class ChartTypedValuesTest extends kyo.test.Test[Any]:
             rule[Sale, Usd](y = RuleValue.Const(Usd(1000.0), summon[Plottable[Usd]]))
         )
             .yScale(_.linear(0.0, 5000.0))
-        val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root  = (spec).lower
         val lines = marksLines(root)
         // The rule line spans the full plot width: x1=plotX, x2=plotX+plotW
         val ruleLines = lines.filter: l =>
@@ -277,7 +277,7 @@ class ChartTypedValuesTest extends kyo.test.Test[Any]:
             MaybeSale("Mar", Present(Usd(1500.0)))
         )
         val spec  = Chart(rows)(line(x = _.month, y = _.value))
-        val root  = summon[Conversion[Chart.Spec[MaybeSale], Svg.Root]](spec)
+        val root  = (spec).lower
         val paths = marksPaths(root)
         assert(paths.nonEmpty, "Expected at least one path for the line mark")
         val path     = paths(0)
@@ -309,7 +309,7 @@ class ChartTypedValuesTest extends kyo.test.Test[Any]:
             MaybeSale("Apr", Present(Usd(1500.0)))
         )
         val spec     = Chart(rows)(line(x = _.month, y = _.value))
-        val root     = summon[Conversion[Chart.Spec[MaybeSale], Svg.Root]](spec)
+        val root     = (spec).lower
         val paths    = marksPaths(root)
         val commands = Svg.PathData.commands(paths(0).svgAttrs.d.getOrElse(Svg.PathData.empty))
         val moveToCount = commands.count:

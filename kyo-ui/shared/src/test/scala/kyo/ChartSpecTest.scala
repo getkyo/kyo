@@ -29,9 +29,9 @@ class ChartSpecTest extends kyo.test.Test[Any]:
         Sale("Mar", Usd(1500), Region.APAC)
     )
 
-    // ---- inference: bar with color builds Chart.Spec[Sale] ----
+    // ---- inference: bar with color builds Chart[Sale] ----
 
-    "bar with color infers Chart.Spec[Sale] without annotations" in {
+    "bar with color infers Chart[Sale] without annotations" in {
         val spec = Chart(sales)(bar(x = _.month, y = _.revenue, color = _.region))
         assert(spec.marks.length == 1)
         spec.marks.head match
@@ -157,11 +157,11 @@ class ChartSpecTest extends kyo.test.Test[Any]:
             case class Sale2(month: String, revenue: Double, region: Region2)
             val sales: Chunk[Sale2] = Chunk.empty
             val spec = Chart(sales)(bar(x = _.month, y = _.revenue, color = _.region))
-            val _: Chart.Spec[Sale2] = spec
+            val _: Chart[Sale2] = spec
         """)
     }
 
-    "positive typeCheck: Chart(chunk) infers Chart.Spec and Chart(signal) infers DataSource.Live at runtime" in {
+    "positive typeCheck: Chart(chunk) infers Chart and Chart(signal) infers DataSource.Live at runtime" in {
         typeCheck("""
             import kyo.*
             import kyo.UI.*
@@ -170,7 +170,7 @@ class ChartSpecTest extends kyo.test.Test[Any]:
             case class Row(x: String, y: Int)
             given CanEqual[Row, Row] = CanEqual.derived
             val chunk: Chunk[Row] = Chunk.empty
-            val specStatic: Chart.Spec[Row] = Chart(chunk)(bar(x = _.x, y = _.y))
+            val specStatic: Chart[Row] = Chart(chunk)(bar(x = _.x, y = _.y))
         """)
         // Signal inference is covered by the runtime "Chart(signal)(...) produces DataSource.Live" test.
         succeed
@@ -280,11 +280,11 @@ class ChartSpecTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ---- Chart.Spec converts to Svg.Root ----
+    // ---- Chart converts to Svg.Root ----
 
-    "Chart.Spec[Sale] converts to Svg.Root via given Conversion" in {
-        val spec: Chart.Spec[Sale] = Chart(sales)(bar(x = _.month, y = _.revenue))
-        val root: Svg.Root         = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+    "Chart[Sale] converts to Svg.Root via given Conversion" in {
+        val spec: Chart[Sale] = Chart(sales)(bar(x = _.month, y = _.revenue))
+        val root: Svg.Root    = (spec).lower
         succeed
     }
 
@@ -306,7 +306,7 @@ class ChartSpecTest extends kyo.test.Test[Any]:
     "rule() with both positions Unset emits no rule line while the sibling bar renders (INV-020)" in {
         val m    = rule[Sale, Double]()
         val spec = Chart(sales)(bar(x = _.month, y = _.revenue), m)
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
         // The marks live in a single Svg.G (chrome axis lines are direct root children, not in a G).
         // Scope the line check to the marks group so axis lines do not leak into the assertion.
         val marksGroups = root.children.collect { case g: Svg.G => g }.filter(g =>
@@ -340,9 +340,9 @@ class ChartSpecTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // Test: Chart.Spec.InteractionConfig.default has all highlighting disabled (D23)
-    "Chart.Spec.InteractionConfig.default has all highlights disabled (D23)" in {
-        val cfg = Chart.Spec.InteractionConfig.default
+    // Test: Chart.InteractionConfig.default has all highlighting disabled (D23)
+    "Chart.InteractionConfig.default has all highlights disabled (D23)" in {
+        val cfg = Chart.InteractionConfig.default
         assert(!cfg.hoverHighlight, "hoverHighlight must be false by default")
         assert(!cfg.selectHighlight, "selectHighlight must be false by default")
         assert(cfg.hoverStyle == Absent, "hoverStyle must be Absent by default")
@@ -393,8 +393,8 @@ class ChartSpecTest extends kyo.test.Test[Any]:
 
     // ---- Phase 6: a11y, responsive, margins ----
 
-    private def rootOf[A](spec: Chart.Spec[A]): Svg.Root =
-        summon[Conversion[Chart.Spec[A], Svg.Root]](spec)
+    private def rootOf[A](spec: Chart[A]): Svg.Root =
+        (spec).lower
 
     private def titleTextsIn(root: Svg.Root): Chunk[String] =
         root.children.flatMap:

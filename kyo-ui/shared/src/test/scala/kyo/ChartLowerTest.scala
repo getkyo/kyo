@@ -95,7 +95,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         //   barY=20, barH=420
         val rows  = Chunk(Sale("Jan", Usd(1000)))
         val spec  = Chart(rows)(bar(x = _.month, y = _.revenue))
-        val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root  = (spec).lower
         val rects = rectsIn(root)
         assert(rects.size == 1, s"Expected 1 rect but got ${rects.size}")
         val r             = rects(0)
@@ -120,7 +120,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         case class Row(x: String, y: Int)
         val rows  = Chunk(Row("a", 100), Row("b", 200))
         val spec  = Chart(rows)(line(x = _.x, y = _.y))
-        val root  = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root  = (spec).lower
         val paths = pathsIn(root)
         assert(paths.size == 1, s"Expected 1 path but got ${paths.size}")
         val cmds = paths(0).svgAttrs.d match
@@ -163,7 +163,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         case class Row(x: String, y: Int)
         val rows  = Chunk(Row("a", 100), Row("b", 200))
         val spec  = Chart(rows)(area(x = _.x, y = _.y))
-        val root  = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root  = (spec).lower
         val paths = pathsIn(root)
         assert(paths.size == 1, s"Expected 1 path but got ${paths.size}")
         val cmds = paths(0).svgAttrs.d match
@@ -217,7 +217,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         case class Row(x: String, y: Int)
         val rows    = Chunk(Row("a", 0), Row("b", 100))
         val spec    = Chart(rows)(point(x = _.x, y = _.y))
-        val root    = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root    = (spec).lower
         val circles = circlesIn(root)
         assert(circles.size == 2, s"Expected 2 circles but got ${circles.size}")
         // Point glyphs sit at the band CENTRE (left edge + bandW/2), aligning with the centred x-tick labels.
@@ -247,7 +247,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         case class Row(x: String, y: Int)
         val rows    = Chunk(Row("a", 0), Row("b", 100))
         val spec    = Chart(rows)(point(x = _.x, y = _.y))
-        val root    = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root    = (spec).lower
         val circles = circlesIn(root)
         assert(circles.nonEmpty, s"Expected at least one circle but got ${circles.size}")
         circles.foldLeft(()): (_, c) =>
@@ -281,7 +281,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             bar(x = _.month, y = _.revenue),
             rule[Sale, Usd](y = rv)
         )
-        val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root  = (spec).lower
         val lines = linesIn(root)
         assert(lines.size == 1, s"Expected 1 rule line but got ${lines.size}")
         val l = lines(0)
@@ -316,7 +316,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         case class Row(x: String, y: Maybe[Int])
         val rows  = Chunk(Row("a", Present(100)), Row("b", Absent), Row("c", Present(200)))
         val spec  = Chart(rows)(line(x = _.x, y = _.y))
-        val root  = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root  = (spec).lower
         val paths = pathsIn(root)
         assert(paths.size == 1, s"Expected 1 path but got ${paths.size}")
         val cmds = paths(0).svgAttrs.d match
@@ -355,7 +355,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "empty data lowers to a valid Svg.Root with no mark shapes" in {
         val rows: Chunk[Sale] = Chunk.empty
         val spec              = Chart(rows)(bar(x = _.month, y = _.revenue))
-        val root              = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root              = (spec).lower
         assert(rectsIn(root).isEmpty, "Expected no rects for empty data")
         assert(pathsIn(root).isEmpty, "Expected no paths for empty data")
         assert(circlesIn(root).isEmpty, "Expected no circles for empty data")
@@ -380,7 +380,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             Sale("Jan", Usd(1500), Region.APAC)
         )
         val spec  = Chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
-        val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root  = (spec).lower
         val rects = rectsIn(root)
         // 3 rows * 1 x-band / 3 colors = 3 rects (one per color sub-band)
         assert(rects.size == 3, s"Expected 3 rects (one per color group) but got ${rects.size}")
@@ -419,7 +419,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             Cat("C", 1500.0)
         )
         val spec  = Chart(rows)(bar(x = _.label, y = _.value, color = _.label))
-        val root  = summon[Conversion[Chart.Spec[Cat], Svg.Root]](spec)
+        val root  = (spec).lower
         val rects = rectsIn(root)
         assert(rects.size == 3, s"Expected 3 rects (one per category) but got ${rects.size}")
 
@@ -460,7 +460,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue, color = _.level))
             .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
-        val root  = summon[Conversion[Chart.Spec[Heat], Svg.Root]](spec)
+        val root  = (spec).lower
         val rects = rectsIn(root)
         assert(rects.size == 3, s"Expected 3 bar rects but got ${rects.size}")
 
@@ -510,7 +510,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
                 Region.EU   -> euColor,
                 Region.APAC -> apacColor
             ))
-        val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root  = (spec).lower
         val rects = rectsIn(root)
         assert(rects.size == 3, s"Expected 3 bar rects (one per region) but got ${rects.size}")
 
@@ -554,7 +554,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         case class Row(x: String, y: Int)
         val rows = Chunk(Row("a", 100), Row("b", 200))
         val spec = Chart(rows)(line(x = _.x, y = _.y))
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         val ps   = pathsIn(root)
         assert(ps.size == 1, s"Expected 1 path but got ${ps.size}")
         val p = ps(0)
@@ -575,7 +575,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "bar mark lowers to a rect with a non-None fill color" in {
         val rows  = Chunk(Sale("Jan", Usd(1000)))
         val spec  = Chart(rows)(bar(x = _.month, y = _.revenue))
-        val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root  = (spec).lower
         val rects = rectsIn(root)
         assert(rects.size == 1, s"Expected 1 rect but got ${rects.size}")
         val r = rects(0)
@@ -592,7 +592,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "single-mark bar uses palette(0) (blue) as its default fill" in {
         val rows  = Chunk(Sale("Jan", Usd(1000)))
         val spec  = Chart(rows)(bar(x = _.month, y = _.revenue))
-        val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root  = (spec).lower
         val rects = rectsIn(root)
         assert(rects.size == 1, s"Expected 1 rect but got ${rects.size}")
         rects(0).svgAttrs.fill match
@@ -615,7 +615,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             bar(x = _.month, y = _.revenue),
             line(x = _.month, y = _.growth, axis = Axis.Right)
         )
-        val root = summon[Conversion[Chart.Spec[Combo], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Bar mark (index 0): fill must be palette(0) = blue.
         val rects = rectsIn(root)
@@ -644,7 +644,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "dark-theme bar uses a light fill color, not black" in {
         val rows  = Chunk(Sale("Jan", Usd(1000)))
         val spec  = Chart(rows)(bar(x = _.month, y = _.revenue)).theme(_.dark)
-        val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root  = (spec).lower
         val rects = rectsIn(root)
         assert(rects.size == 1, s"Expected 1 rect but got ${rects.size}")
         val r = rects(0)
@@ -674,7 +674,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             .yAxis(_.ticks(3))
             .xAxis(_.label("Month"))
             .theme(_.dark)
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
 
         // Frame texts (tick labels and the x-axis label) live directly under the root.
         val texts = root.children.flatMap:
@@ -716,7 +716,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "dark-theme background rect covers the whole SVG canvas" in {
         val rows = Chunk(Sale("Jan", Usd(1000)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue)).theme(_.dark).size(360, 240)
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
         val bg   = root.children.collectFirst { case r: Svg.Rect => r }.getOrElse(fail("Expected a background rect"))
         assertClose(numOf(bg.svgAttrs.x), 0.0, "background x")
         assertClose(numOf(bg.svgAttrs.y), 0.0, "background y")
@@ -802,7 +802,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "point color splits into per-group colors (INV-013)" in {
         val rows = Chunk(Row("a", 10.0, "g1"), Row("b", 20.0, "g2"))
         val spec = Chart(rows)(point(x = _.x, y = _.y, color = _.g))
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         val cs   = deepCirclesIn(root)
         assert(cs.size >= 2, s"Expected at least 2 circles, got ${cs.size}")
         val fills = cs.map(fillColorOf).toSeq.distinct
@@ -815,7 +815,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         given CanEqual[RawRow, RawRow] = CanEqual.derived
         val rows                       = Chunk(RawRow("a", 10.0, 1: Int), RawRow("b", 20.0, "1"))
         val spec                       = Chart(rows)(point(x = _.x, y = _.y, color = _.grp))
-        val root                       = summon[Conversion[Chart.Spec[RawRow], Svg.Root]](spec)
+        val root                       = (spec).lower
         val cs                         = deepCirclesIn(root)
         val fills                      = cs.map(fillColorOf).toSeq.distinct
         assert(fills.size == 2, s"Int 1 and String '1' must be distinct color groups, got $fills")
@@ -825,7 +825,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "point without color encoding: all circles have the same default fill (INV-013)" in {
         val rows = Chunk(Row("a", 10.0, "g1"), Row("b", 20.0, "g2"))
         val spec = Chart(rows)(point(x = _.x, y = _.y))
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         val cs   = deepCirclesIn(root)
         assert(cs.size >= 2, s"Expected at least 2 circles")
         val fills = cs.map(fillColorOf).toSeq.distinct
@@ -836,7 +836,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "symbol=square renders Svg.Path elements, not circles (INV-014)" in {
         val rows = Chunk(Row("a", 10.0, "g1"), Row("b", 20.0, "g2"))
         val spec = Chart(rows)(point(x = _.x, y = _.y, symbol = _ => Symbol.square))
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         val cs   = deepCirclesIn(root)
         val ps   = deepPathsIn(root).filter(p => p.svgAttrs.d.isDefined && p.svgAttrs.fill.isDefined)
         assert(cs.isEmpty, s"symbol=square must not emit Svg.Circle, but got ${cs.size}")
@@ -849,7 +849,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         // Triangle and diamond should produce Svg.Path.
         for sym <- Seq(Symbol.triangle, Symbol.diamond) do
             val spec = Chart(rows)(point(x = _.x, y = _.y, symbol = _ => sym))
-            val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+            val root = (spec).lower
             val ps   = deepPathsIn(root).filter(p => p.svgAttrs.d.isDefined)
             val cs   = deepCirclesIn(root)
             assert(ps.nonEmpty, s"$sym must emit Svg.Path")
@@ -857,11 +857,11 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         end for
         // Circle default.
         val specC = Chart(rows)(point(x = _.x, y = _.y))
-        val rootC = summon[Conversion[Chart.Spec[Row], Svg.Root]](specC)
+        val rootC = (specC).lower
         assert(deepCirclesIn(rootC).nonEmpty, "Default symbol (circle) must emit Svg.Circle")
         // Cross produces Svg.Line elements (two strokes).
         val specX = Chart(rows)(point(x = _.x, y = _.y, symbol = _ => Symbol.cross))
-        val rootX = summon[Conversion[Chart.Spec[Row], Svg.Root]](specX)
+        val rootX = (specX).lower
         val ls    = linesIn(rootX)
         assert(ls.nonEmpty, "Symbol.cross must emit Svg.Line strokes")
     }
@@ -872,7 +872,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         given CanEqual[Bubble, Bubble] = CanEqual.derived
         val rows                       = Chunk(Bubble(1.0, 1.0, 1.0), Bubble(2.0, 1.0, 100.0))
         val spec                       = Chart(rows)(point(x = _.x, y = _.y, size = _.mag))
-        val root                       = summon[Conversion[Chart.Spec[Bubble], Svg.Root]](spec)
+        val root                       = (spec).lower
         val cs                         = deepCirclesIn(root)
         assert(cs.size == 2, s"Expected 2 circles, got ${cs.size}")
         val rs = cs.map(c => c.svgAttrs.r).toSeq.collect:
@@ -890,7 +890,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         given CanEqual[Bubble, Bubble] = CanEqual.derived
         val rows                       = Chunk(Bubble(1.0, 1.0, 5.0), Bubble(2.0, 1.0, 5.0))
         val spec                       = Chart(rows)(point(x = _.x, y = _.y, size = _.mag))
-        val root                       = summon[Conversion[Chart.Spec[Bubble], Svg.Root]](spec)
+        val root                       = (spec).lower
         val cs                         = deepCirclesIn(root)
         assert(cs.size == 2, "Expected 2 circles")
         val badRadii = cs.toSeq.filter: c =>
@@ -904,7 +904,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         given CanEqual[Bubble, Bubble] = CanEqual.derived
         val rows                       = Chunk(Bubble(1.0, 1.0, 1.0), Bubble(2.0, 1.0, 100.0))
         val spec                       = Chart(rows)(point(x = _.x, y = _.y, size = _.mag))
-        val root                       = summon[Conversion[Chart.Spec[Bubble], Svg.Root]](spec)
+        val root                       = (spec).lower
         // The legend region should contain circle elements (size bubbles).
         val allCircles = root.children.flatMap:
             case g: Svg.G => g.children.flatMap:
@@ -930,7 +930,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         given CanEqual[Bubble, Bubble] = CanEqual.derived
         val rows                       = Chunk(Bubble(1.0, 1.0), Bubble(2.0, 2.0))
         val spec                       = Chart(rows)(point(x = _.x, y = _.y, sizePx = _ => 8.0))
-        val root                       = summon[Conversion[Chart.Spec[Bubble], Svg.Root]](spec)
+        val root                       = (spec).lower
         val cs                         = deepCirclesIn(root)
         assert(cs.size == 2, s"Expected 2 circles, got ${cs.size}")
         val badR = cs.toSeq.filter(c => c.svgAttrs.r.map(v => math.abs(v - 8.0) >= 1e-6).getOrElse(true))
@@ -949,7 +949,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "curve=stepAfter line emits HLineTo and VLineTo commands (INV-016)" in {
         val rows = Chunk(DRow(0.0, 0.0), DRow(1.0, 2.0), DRow(2.0, 1.0))
         val spec = Chart(rows)(line(x = _.x, y = _.y, curve = Curve.stepAfter))
-        val root = summon[Conversion[Chart.Spec[DRow], Svg.Root]](spec)
+        val root = (spec).lower
         val ps   = pathsIn(root)
         assert(ps.nonEmpty, "Expected at least one path for line mark")
         val hasH = ps.toSeq.exists(hasHLineCmd)
@@ -962,7 +962,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "curve=monotone line emits CubicTo commands (INV-016)" in {
         val rows = Chunk(DRow(0.0, 0.0), DRow(1.0, 2.0), DRow(2.0, 1.0))
         val spec = Chart(rows)(line(x = _.x, y = _.y, curve = Curve.monotone))
-        val root = summon[Conversion[Chart.Spec[DRow], Svg.Root]](spec)
+        val root = (spec).lower
         val ps   = pathsIn(root)
         assert(ps.nonEmpty, "Expected at least one path")
         assert(ps.toSeq.exists(hasCubicCmd), "monotone line must emit CubicTo commands")
@@ -973,8 +973,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows4   = Chunk(DRow(0.0, 0.0), DRow(1.0, 2.0), DRow(2.0, 0.0), DRow(3.0, 2.0))
         val basSpec = Chart(rows4)(line(x = _.x, y = _.y, curve = Curve.basis))
         val catSpec = Chart(rows4)(line(x = _.x, y = _.y, curve = Curve.catmullRom))
-        val basRoot = summon[Conversion[Chart.Spec[DRow], Svg.Root]](basSpec)
-        val catRoot = summon[Conversion[Chart.Spec[DRow], Svg.Root]](catSpec)
+        val basRoot = (basSpec).lower
+        val catRoot = (catSpec).lower
         assert(pathsIn(basRoot).toSeq.exists(hasCubicCmd), "basis line must emit CubicTo commands")
         assert(pathsIn(catRoot).toSeq.exists(hasCubicCmd), "catmullRom line must emit CubicTo commands")
     }
@@ -983,7 +983,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "curve=monotone with gap: path has two MoveTo segments (INV-016)" in {
         val rows = Chunk(DRowMaybe(0.0, Present(0.0)), DRowMaybe(1.0, Absent), DRowMaybe(2.0, Present(1.0)))
         val spec = Chart(rows)(line(x = _.x, y = _.y, curve = Curve.monotone))
-        val root = summon[Conversion[Chart.Spec[DRowMaybe], Svg.Root]](spec)
+        val root = (spec).lower
         val ps   = pathsIn(root)
         assert(ps.nonEmpty, "Expected at least one path")
         val moveTos = ps.flatMap: p =>
@@ -997,7 +997,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "curve=basis with 1 point: no cubic emitted (INV-016)" in {
         val rows = Chunk(DRow(1.0, 2.0))
         val spec = Chart(rows)(line(x = _.x, y = _.y, curve = Curve.basis))
-        val root = summon[Conversion[Chart.Spec[DRow], Svg.Root]](spec)
+        val root = (spec).lower
         val ps   = pathsIn(root)
         assert(!ps.toSeq.exists(hasCubicCmd), "1-point line must not emit cubics")
     }
@@ -1008,7 +1008,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         given CanEqual[Band, Band] = CanEqual.derived
         val rows                   = Chunk(Band(0.0, 0.0, 2.0), Band(1.0, 0.5, 2.5))
         val spec                   = Chart(rows)(area(x = _.t, y0 = _.lo, y1 = _.hi))
-        val root                   = summon[Conversion[Chart.Spec[Band], Svg.Root]](spec)
+        val root                   = (spec).lower
         val ps                     = deepPathsIn(root).filter(p => p.svgAttrs.d.isDefined && hasCloseCmd(p))
         // Exactly one closed ribbon path: the band form always produces a single continuous path.
         assert(ps.size == 1, s"area y0/y1 band must emit exactly 1 closed ribbon path but got ${ps.size}")
@@ -1021,7 +1021,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows                     = Chunk(Datum("a", 2.0, 1.0), Datum("b", 3.0, 2.0))
         // area with only y1 supplied: invalid combo -> empty mark.
         val spec = Chart(rows)(area(x = _.x, y1 = _.y1), bar(x = _.x, y = _.y))
-        val root = summon[Conversion[Chart.Spec[Datum], Svg.Root]](spec)
+        val root = (spec).lower
         val rs   = rectsIn(root)
         assert(rs.nonEmpty, "bar sibling must still render when area mark is invalid")
         // The invalid area mark must have emitted no path elements at all.
@@ -1034,7 +1034,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         given CanEqual[Band, Band] = CanEqual.derived
         val rows                   = Chunk(Band(0.0, 1.0, 0.0, 2.0), Band(1.0, 1.5, 0.5, 2.5))
         val spec                   = Chart(rows)(area(x = _.t, y = _.v, y0 = _.lo, y1 = _.hi))
-        val root                   = summon[Conversion[Chart.Spec[Band], Svg.Root]](spec)
+        val root                   = (spec).lower
         // When y is supplied, the factory sets yMaybe=Present, so area renders the single-y form.
         val ps = deepPathsIn(root).filter(_.svgAttrs.d.isDefined)
         // Exactly 1 path: the y encoding wins, so a single series path is emitted (not a y0/y1 ribbon).
@@ -1054,7 +1054,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         given CanEqual[Band, Band] = CanEqual.derived
         val rows                   = Chunk(Band(0.0, 0.0, 2.0), Band(1.0, 0.5, 2.5), Band(2.0, 0.2, 1.8), Band(3.0, 0.6, 2.2))
         val spec                   = Chart(rows)(area(x = _.t, y0 = _.lo, y1 = _.hi, curve = Curve.monotone))
-        val root                   = summon[Conversion[Chart.Spec[Band], Svg.Root]](spec)
+        val root                   = (spec).lower
         val ps                     = deepPathsIn(root).filter(p => p.svgAttrs.d.isDefined && hasCloseCmd(p))
         assert(ps.nonEmpty, "area y0/y1 with monotone curve must render a closed path")
         // Both the forward y1 edge AND the backward y0 edge must be curved. append emits one cubic per
@@ -1072,7 +1072,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "stacked bar with negative value has non-negative rect height (INV-018)" in {
         val rows = Chunk(Row("a", 10.0, "pos"), Row("a", -5.0, "neg"))
         val spec = Chart(rows)(bar(x = _.x, y = _.y, stack = by(_.g)))
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         val rs   = rectsIn(root)
         assert(rs.nonEmpty, "Expected stacked bar rects")
         val negH = rs.toSeq.filter: r =>
@@ -1086,7 +1086,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "stacked bar with mixed signs: positive and negative stacks both render (INV-018)" in {
         val rows = Chunk(Row("a", 10.0, "pos"), Row("a", -5.0, "neg"))
         val spec = Chart(rows)(bar(x = _.x, y = _.y, stack = by(_.g)))
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         val rs   = rectsIn(root)
         // Both positive and negative groups should emit a rect (non-zero rawY).
         assert(rs.size >= 2, s"Expected rects for both positive and negative groups, got ${rs.size}")
@@ -1096,7 +1096,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "all-positive stacked bar renders non-empty rects (INV-018 no-regression)" in {
         val rows = Chunk(Row("a", 10.0, "g1"), Row("a", 5.0, "g2"))
         val spec = Chart(rows)(bar(x = _.x, y = _.y, stack = by(_.g)))
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         val rs   = rectsIn(root)
         assert(rs.size == 2, s"Expected 2 rects for all-positive stack, got ${rs.size}")
         val badH = rs.toSeq.filter: r =>
@@ -1110,7 +1110,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "opacity encoding: bar fills are clamped to [0,1] fill-opacity (INV-019)" in {
         val rows = Chunk(Row("a", 10.0, "g", 1.0), Row("b", 20.0, "g", 1.0))
         val spec = Chart(rows)(bar(x = _.x, y = _.y, opacity = r => if r.x == "a" then 0.5 else 1.7))
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         val rs   = rectsIn(root)
         assert(rs.nonEmpty, "Expected rects")
         val opacities = rs.toSeq.flatMap(r => r.svgAttrs.fillOpacity.toOption)
@@ -1125,7 +1125,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "label encoding: bar emits per-datum Svg.Text elements (INV-019)" in {
         val rows = Chunk(Row("a", 10.0, "g"), Row("b", 20.0, "g"))
         val spec = Chart(rows)(bar(x = _.x, y = _.y, label = r => r.y.toString))
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         val ts   = deepTextsIn(root)
         assert(ts.nonEmpty, "label encoding must emit Svg.Text elements per bar")
         assert(ts.size >= 2, s"Expected at least 2 text labels for 2 bars, got ${ts.size}")
@@ -1135,7 +1135,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "tooltip encoding: point emits title children on circles (INV-019)" in {
         val rows = Chunk(Row("a", 10.0, "g", 1.0, "alpha"), Row("b", 20.0, "g", 1.0, "beta"))
         val spec = Chart(rows)(point(x = _.x, y = _.y, tooltip = _.name))
-        val root = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
+        val root = (spec).lower
         val cs   = deepCirclesIn(root)
         assert(cs.nonEmpty, "Expected circles")
         val withTitle = cs.toSeq.filter: c =>
@@ -1150,8 +1150,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows  = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val pSpec = Chart(rows)(point(x = _.month, y = _.revenue))
         val bSpec = Chart(rows)(bar(x = _.month, y = _.revenue))
-        val pRoot = summon[Conversion[Chart.Spec[Sale], Svg.Root]](pSpec)
-        val bRoot = summon[Conversion[Chart.Spec[Sale], Svg.Root]](bSpec)
+        val pRoot = (pSpec).lower
+        val bRoot = (bSpec).lower
         assert(deepCirclesIn(pRoot).nonEmpty, "point without new encodings must still emit circles")
         assert(rectsIn(bRoot).nonEmpty, "bar without new encodings must still emit rects")
     }
@@ -1164,7 +1164,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows = Chunk(Pt(1, 5.0, "peak"))
         val spec = Chart(rows)(text(x = _.x, y = _.y, label = _.note))
             .yScale(_.linear(0.0, 10.0))
-        val root = summon[Conversion[Chart.Spec[Pt], Svg.Root]](spec)
+        val root = (spec).lower
         val ts   = deepTextsIn(root)
         assert(ts.size >= 1, s"Expected at least 1 Svg.Text element, got ${ts.size}")
         val t = ts(0)
@@ -1188,7 +1188,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows = Chunk(Pt(1, 5.0))
         val spec = Chart(rows)(text(x = _.x, y = _.y, label = _ => "lbl", anchor = TextAnchor.End))
             .yScale(_.linear(0.0, 10.0))
-        val root = summon[Conversion[Chart.Spec[Pt], Svg.Root]](spec)
+        val root = (spec).lower
         val ts   = deepTextsIn(root)
         assert(ts.nonEmpty, "Expected at least one Svg.Text element")
         val t = ts(0)
@@ -1215,7 +1215,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
         val spec = Chart(rows)(m)
             .yScale(_.linear(0.0, 10.0))
-        val root = summon[Conversion[Chart.Spec[Pt], Svg.Root]](spec)
+        val root = (spec).lower
         val ts   = deepTextsIn(root)
         // Only the first row has a y value; the second is Absent and must not produce a text element.
         assert(ts.size == 1, s"Expected exactly 1 Svg.Text (gap row skipped), got ${ts.size}")
@@ -1227,7 +1227,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows = Chunk(Pt(1, 5.0, "a"), Pt(2, 3.0, "b"))
         val spec = Chart(rows)(text(x = _.x, y = _.y, label = _.g, color = _.g, opacity = _ => 0.5))
             .yScale(_.linear(0.0, 10.0))
-        val root = summon[Conversion[Chart.Spec[Pt], Svg.Root]](spec)
+        val root = (spec).lower
         val ts   = deepTextsIn(root)
         assert(ts.size >= 2, s"Expected 2 text elements, got ${ts.size}")
         // All text elements must have fillOpacity set to ~0.5 (the opacity encoding value).
@@ -1247,7 +1247,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows = Chunk(EbRow("a", 6.0, 4.0, 8.0))
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi, capWidth = 6.0))
             .yScale(_.linear(0.0, 10.0))
-        val root = summon[Conversion[Chart.Spec[EbRow], Svg.Root]](spec)
+        val root = (spec).lower
         val ls   = linesIn(root)
         val cs   = circlesIn(root)
         // Three lines: 1 vertical + 2 caps.
@@ -1262,7 +1262,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows = Chunk(EbRow("a", 6.0, 4.0, 8.0))
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi))
             .yScale(_.linear(0.0, 10.0))
-        val root = summon[Conversion[Chart.Spec[EbRow], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(!html.contains("url(#"), s"errorBar must not emit url(#...) references")
@@ -1275,7 +1275,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         case class EbRow(x: String, mean: Double, lo: Double, hi: Double)
         val rows = Chunk(EbRow("a", 6.0, 4.0, 8.0))
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi))
-        val root = summon[Conversion[Chart.Spec[EbRow], Svg.Root]](spec)
+        val root = (spec).lower
         // The y-extent must span at least [4, 8]. Verify by checking that `lo` maps to the plot baseline
         // area: with default ensureZero the domain includes 0, so axis spans [0, 8+].
         // We just check that rendering does not crash and produces lines (extent properly folded).
@@ -1294,8 +1294,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows2 = Chunk(EbRow("a", 6.0, 4.0, 8.0), EbRow("b", 3.0, 1.0, 5.0))
         val spec1 = Chart(rows1)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi))
         val spec2 = Chart(rows2)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi))
-        val ls1   = linesIn(summon[Conversion[Chart.Spec[EbRow], Svg.Root]](spec1))
-        val ls2   = linesIn(summon[Conversion[Chart.Spec[EbRow], Svg.Root]](spec2))
+        val ls1   = linesIn((spec1).lower)
+        val ls2   = linesIn((spec2).lower)
         // 1 row -> 3 lines; 2 rows -> 6 lines (no crash, no silent duplication).
         assert(ls1.size == 3, s"1 row must produce 3 lines but got ${ls1.size}")
         assert(ls2.size == 6, s"2 rows must produce 6 lines but got ${ls2.size}")
@@ -1307,7 +1307,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows = Chunk(EbRow("a", 6.0, 4.0, 8.0, "grp"))
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi, color = _.g))
             .yScale(_.linear(0.0, 10.0))
-        val root = summon[Conversion[Chart.Spec[EbRow], Svg.Root]](spec)
+        val root = (spec).lower
         val ls   = linesIn(root)
         val cs   = circlesIn(root)
         assert(ls.size == 3, s"Expected 3 lines, got ${ls.size}")
@@ -1327,7 +1327,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows = Chunk(EbRow("a", 5.0, 3.0, 7.0), EbRow("b", 5.0, 3.0, 7.0))
         val spec = Chart(rows)(errorBar(x = _.cat, y = _.mean, low = _.lo, high = _.hi, capWidth = 10.0))
             .yScale(_.linear(0.0, 10.0))
-        val root = summon[Conversion[Chart.Spec[EbRow], Svg.Root]](spec)
+        val root = (spec).lower
         val ls   = linesIn(root)
         // 2 rows * 3 lines each (vLine + capLow + capHigh) = 6 lines total.
         assert(ls.size == 6, s"Expected 6 lines (2 rows * 3 each) but got ${ls.size}")
@@ -1364,7 +1364,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi))
             .xScale(_.linear(0.0, 10.0))
             .yScale(_.linear(0.0, 10.0))
-        val root = summon[Conversion[Chart.Spec[EbRow], Svg.Root]](spec)
+        val root = (spec).lower
         val ls   = linesIn(root)
         assert(ls.size == 6, s"Expected 6 lines but got ${ls.size}")
         val px2 = PlotX + (2.0 / 10.0) * PlotW // 172.0
@@ -1386,7 +1386,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         case class Pt(x: Int, y: Double)
         val rows = Chunk(Pt(1, 100.0))
         val spec = Chart(rows)(text(x = _.x, y = _.y, label = _ => "lbl"))
-        val root = summon[Conversion[Chart.Spec[Pt], Svg.Root]](spec)
+        val root = (spec).lower
         // With y=100 the y scale includes 100. The pixel for y=100 at the top of the axis
         // would be at plotY=20. Without extent contribution, the scale would be degenerate and
         // y=100 would map to an undefined or baseline pixel. The chart must render a text element.
@@ -1444,7 +1444,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
             .legend(_.right)
             .size(640, 480)
-        val root     = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](spec)
+        val root     = (spec).lower
         val swatches = legendSwatchRects(root)
         assert(swatches.size == 3, s"Expected 3 swatches but got ${swatches.size}")
         // The right-legend column sits at plotX + plotW + 8. With LegendColumnW reserved on the right, plotW is
@@ -1460,7 +1460,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
             .legend(_.bottom)
             .size(640, 480)
-        val root     = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](spec)
+        val root     = (spec).lower
         val swatches = legendSwatchRects(root)
         assert(swatches.size == 2, s"Expected 2 swatches but got ${swatches.size}")
         // Bottom legend reserves LegendReservedH below the baseline; with a bottom legend the baseline is
@@ -1477,7 +1477,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
             .legend(_.left)
             .size(640, 480)
-        val root     = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](spec)
+        val root     = (spec).lower
         val swatches = legendSwatchRects(root)
         assert(swatches.size == 3, s"Expected 3 swatches but got ${swatches.size}")
         // Vertical layout: swatch y-coordinates strictly increasing (stacked down a column).
@@ -1498,7 +1498,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         case class LRow(x: Double, y: Double, series: String) derives CanEqual
         val rows = Chunk(LRow(0.0, 1.0, "s1"), LRow(1.0, 2.0, "s1"), LRow(0.0, 3.0, "s2"), LRow(1.0, 4.0, "s2"))
         val spec = Chart(rows)(line(x = _.x, y = _.y, color = _.series))
-        val root = summon[Conversion[Chart.Spec[LRow], Svg.Root]](spec)
+        val root = (spec).lower
         // Line-series legend uses line-stroke swatches: short horizontal Svg.Line (x1 != x2, y1 == y2) in the
         // frame, and NO 12x12 rect swatches.
         assert(legendSwatchRects(root).isEmpty, "line-series legend must not use rect swatches")
@@ -1516,7 +1516,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "a bar series with a color encoding gets a 12x12 rect legend swatch (INV-025)" in {
         val rows     = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"))
         val spec     = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
-        val root     = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](spec)
+        val root     = (spec).lower
         val swatches = legendSwatchRects(root)
         assert(swatches.size == 2, s"Expected 2 rect swatches (12x12) for the bar series but got ${swatches.size}")
         assert(
@@ -1531,7 +1531,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows = Chunk(VRow(0.1), VRow(0.9))
         val spec = Chart(rows)(point(x = _ => 0.0, y = _.v, color = _.v))
             .legend(_.colorScaleSequential(blueHi, redHi))
-        val root    = summon[Conversion[Chart.Spec[VRow], Svg.Root]](spec)
+        val root    = (spec).lower
         val circles = circlesIn(root)
         assert(circles.size == 2, s"Expected 2 circles but got ${circles.size}")
         val fills = circles.map(c => colorComponents(fillColorOf(c.svgAttrs.fill)))
@@ -1549,7 +1549,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows = Chunk(VRow(5.0), VRow(5.0))
         val spec = Chart(rows)(point(x = _ => 0.0, y = _.v, color = _.v))
             .legend(_.colorScaleSequential(blueHi, redHi))
-        val root    = summon[Conversion[Chart.Spec[VRow], Svg.Root]](spec)
+        val root    = (spec).lower
         val circles = circlesIn(root)
         assert(circles.nonEmpty, "expected at least one circle for the point mark")
         // domLo == domHi -> parameter 0 -> the `low` color for every point. With both rows equal there is one
@@ -1568,7 +1568,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows = Chunk(VRow(0.1), VRow(0.5), VRow(0.9))
         val spec = Chart(rows)(point(x = _ => 0.0, y = _.v, color = _.v))
             .legend(_.hidden.colorScaleSequential(blueHi, redHi))
-        val root = summon[Conversion[Chart.Spec[VRow], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield assert(!html.contains("url(#"), s"sequential mark fills must be concrete colors, not url(#...):\n$html")
     }
@@ -1579,7 +1579,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows = Chunk(VRow(0.1), VRow(0.9))
         val spec = Chart(rows)(point(x = _ => 0.0, y = _.v, color = _.v))
             .legend(_.colorScaleSequential(blueHi, redHi))
-        val root = summon[Conversion[Chart.Spec[VRow], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(html.contains("<linearGradient"), s"expected a linearGradient element:\n$html")
@@ -1608,8 +1608,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec2 = spec
         // The structural hashes are equal (it is one spec value lowered twice): the collision IS under test.
         assert(spec1.## == spec2.##, s"precondition: the two specs must share a structural hash (## ${spec1.##} vs ${spec2.##})")
-        val root1 = summon[Conversion[Chart.Spec[VRow], Svg.Root]](spec1)
-        val root2 = summon[Conversion[Chart.Spec[VRow], Svg.Root]](spec2)
+        val root1 = (spec1).lower
+        val root2 = (spec2).lower
         for
             html1 <- HtmlRenderer.render(root1, Seq.empty)
             html2 <- HtmlRenderer.render(root2, Seq.empty)
@@ -1634,7 +1634,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "point fills match their categorical legend swatch colors (INV-013, INV-025)" in {
         val rows        = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"), CatRow("r", 3.0, "c"))
         val spec        = Chart(rows)(point(x = _ => 0.0, y = _.y, color = _.cat))
-        val root        = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](spec)
+        val root        = (spec).lower
         val swatchFills = legendSwatchRects(root).map(s => fillColorOf(s.svgAttrs.fill)).toSeq
         val circleFills = circlesIn(root).map(c => fillColorOf(c.svgAttrs.fill)).toSeq
         assert(swatchFills.size == 3, s"Expected 3 swatch colors but got $swatchFills")
@@ -1659,7 +1659,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         given CanEqual[IRow, IRow] = CanEqual.derived
         val rows                   = Chunk(IRow("a", 1.0, Tier.Gold), IRow("b", 2.0, Tier.Silver))
         val spec                   = Chart(rows)(point(x = _ => 0.0, y = _.value, color = _.tier))
-        val root                   = summon[Conversion[Chart.Spec[IRow], Svg.Root]](spec)
+        val root                   = (spec).lower
         val swatches               = legendSwatchRects(root)
         // Despite the colliding toString, CatKey keeps the two enum cases distinct -> two swatches.
         assert(swatches.size == 2, s"Expected 2 distinct swatches despite colliding toString but got ${swatches.size}")
@@ -1672,7 +1672,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "a plain bar chart with no sequential color scale emits no defs or linearGradient (INV-003, INV-028)" in {
         val rows = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"))
         val spec = Chart(rows)(bar(x = _.x, y = _.y))
-        val root = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(!html.contains("<defs"), s"a plain bar chart must emit no defs block:\n$html")
@@ -1687,8 +1687,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val shownSpec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
         val hiddenSpec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
             .legend(_.hidden)
-        val shownRoot  = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](shownSpec)
-        val hiddenRoot = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](hiddenSpec)
+        val shownRoot  = (shownSpec).lower
+        val hiddenRoot = (hiddenSpec).lower
         // The shown chart has 2 swatch rects; the hidden chart has none.
         assert(
             legendSwatchRects(shownRoot).size == 2,
@@ -1713,7 +1713,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "theme.background(c) sets the background rect fill to the override color" in {
         val custom = Style.Color.rgb(10, 20, 30)
         val spec   = Chart(themeRows)(bar(x = _.month, y = _.revenue)).theme(_.background(custom)).yAxis(_.grid)
-        val root   = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root   = (spec).lower
         val bg     = root.children.collectFirst { case r: Svg.Rect => r }.getOrElse(fail("Expected a background rect"))
         assert(fillColorOf(bg.svgAttrs.fill) == custom, s"Expected background fill $custom but got ${fillColorOf(bg.svgAttrs.fill)}")
     }
@@ -1722,7 +1722,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "theme.axisColor(c) sets the axis line / tick mark stroke color" in {
         val custom = Style.Color.rgb(200, 0, 0)
         val spec   = Chart(themeRows)(bar(x = _.month, y = _.revenue)).theme(_.axisColor(custom))
-        val root   = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root   = (spec).lower
         // Axis lines / tick marks are frame lines WITHOUT a strokeOpacity (gridlines carry one).
         val axisLines = frameLines(root).filter(_.svgAttrs.strokeOpacity.isEmpty)
         assert(axisLines.nonEmpty, "Expected axis/tick lines")
@@ -1736,7 +1736,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "theme.gridColor(c) sets the gridline stroke color" in {
         val custom    = Style.Color.rgb(0, 200, 0)
         val spec      = Chart(themeRows)(bar(x = _.month, y = _.revenue)).theme(_.gridColor(custom)).yAxis(_.grid)
-        val root      = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root      = (spec).lower
         val gridLines = frameLines(root).filter(_.svgAttrs.strokeOpacity.isDefined)
         assert(gridLines.nonEmpty, "Expected gridlines")
         gridLines.foldLeft(()): (_, l) =>
@@ -1750,8 +1750,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows      = themeRows
         val unset     = Chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.grid)
         val explicit  = Chart(rows)(bar(x = _.month, y = _.revenue)).theme(_.light).yAxis(_.grid)
-        val rUnset    = summon[Conversion[Chart.Spec[Sale], Svg.Root]](unset)
-        val rExplicit = summon[Conversion[Chart.Spec[Sale], Svg.Root]](explicit)
+        val rUnset    = (unset).lower
+        val rExplicit = (explicit).lower
         for
             hUnset    <- HtmlRenderer.render(rUnset, Seq.empty)
             hExplicit <- HtmlRenderer.render(rExplicit, Seq.empty)
@@ -1775,7 +1775,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
             .yScale(_.linear(0.0, 4000.0))
             .theme(_.palette(Chunk(purple, teal)))
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(
@@ -1805,7 +1805,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue, color = _.region))
             .yScale(_.linear(0.0, 4000.0))
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(
@@ -1833,7 +1833,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(text(x = _.month, y = _.revenue, label = _.month, color = _.region))
             .yScale(_.linear(0.0, 4000.0))
             .theme(_.palette(Chunk(purple, teal)))
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(
@@ -1870,7 +1870,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi, color = _.region))
             .yScale(_.linear(0.0, 10.0))
             .theme(_.palette(Chunk(purple, teal)))
-        val root = summon[Conversion[Chart.Spec[EbSale], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(
@@ -1910,7 +1910,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(line(x = _.month, y = _.revenue, color = _.region))
             .yScale(_.linear(0.0, 4000.0))
             .theme(_.palette(Chunk(magenta, cyan)))
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             // Both custom palette colors must appear as stroke attributes.
@@ -1955,7 +1955,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
                 case "a" => cyan
                 case _   => amber
             })
-        val root  = summon[Conversion[Chart.Spec[SRow], Svg.Root]](spec)
+        val root  = (spec).lower
         val paths = pathsIn(root)
         assert(paths.size == 2, s"Expected 2 line paths (one per series) but got ${paths.size}")
         def strokeOf(p: Svg.Path): Style.Color =
@@ -1990,7 +1990,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(area(x = _.month, y = _.revenue, stack = by(_.region)))
             .yScale(_.linear(0.0, 6000.0))
             .theme(_.palette(Chunk(purple, teal)))
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(
@@ -2022,7 +2022,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
         val spec = Chart(rows)(area(x = _.month, y = _.revenue, stack = by(_.region)))
             .yScale(_.linear(0.0, 6000.0))
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(
@@ -2044,46 +2044,46 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows  = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
 
         // bar -> Svg.Rect
-        val barG = marksGroup(summon[Conversion[Chart.Spec[Sale], Svg.Root]](Chart(rows)(bar(x = _.month, y = _.revenue))))
+        val barG = marksGroup((Chart(rows)(bar(x = _.month, y = _.revenue))).lower)
         assert(barG.children.exists { case _: Svg.Rect => true; case _ => false }, "bar must lower to a Svg.Rect")
 
         // line -> Svg.Path
-        val lineG = marksGroup(summon[Conversion[Chart.Spec[Sale], Svg.Root]](Chart(rows)(line(x = _.month, y = _.revenue))))
+        val lineG = marksGroup((Chart(rows)(line(x = _.month, y = _.revenue))).lower)
         assert(lineG.children.exists { case _: Svg.Path => true; case _ => false }, "line must lower to a Svg.Path")
 
         // area -> Svg.Path
-        val areaG = marksGroup(summon[Conversion[Chart.Spec[Sale], Svg.Root]](Chart(rows)(area(x = _.month, y = _.revenue))))
+        val areaG = marksGroup((Chart(rows)(area(x = _.month, y = _.revenue))).lower)
         assert(areaG.children.exists { case _: Svg.Path => true; case _ => false }, "area must lower to a Svg.Path")
 
         // point -> Svg.Circle
-        val pointG = marksGroup(summon[Conversion[Chart.Spec[Sale], Svg.Root]](Chart(rows)(point(x = _.month, y = _.revenue))))
+        val pointG = marksGroup((Chart(rows)(point(x = _.month, y = _.revenue))).lower)
         assert(pointG.children.exists { case _: Svg.Circle => true; case _ => false }, "point must lower to a Svg.Circle")
 
         // rule(y=...) -> Svg.Line
-        val ruleG = marksGroup(summon[Conversion[Chart.Spec[Sale], Svg.Root]](Chart(rows)(rule[Sale, Double](y = 1500.0))))
+        val ruleG = marksGroup((Chart(rows)(rule[Sale, Double](y = 1500.0))).lower)
         assert(ruleG.children.exists { case _: Svg.Line => true; case _ => false }, "rule(y) must lower to a Svg.Line")
 
         // text -> Svg.Text
-        val textG = marksGroup(summon[Conversion[Chart.Spec[Sale], Svg.Root]](
+        val textG = marksGroup((
             Chart(rows)(text(x = _.month, y = _.revenue, label = _.month))
-        ))
+        ).lower)
         assert(textG.children.exists { case _: Svg.Text => true; case _ => false }, "text must lower to a Svg.Text")
 
         // errorBar -> Svg.Line (whiskers/caps) AND Svg.Circle (center marker)
-        val errG = marksGroup(summon[Conversion[Chart.Spec[ErrRow], Svg.Root]](
+        val errG = marksGroup((
             Chart(erows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi))
-        ))
+        ).lower)
         assert(errG.children.exists { case _: Svg.Line => true; case _ => false }, "errorBar must lower to Svg.Line whiskers")
         assert(errG.children.exists { case _: Svg.Circle => true; case _ => false }, "errorBar must lower to a Svg.Circle center")
     }
 
     // ---- INV-037: lowering is a pure synchronous Svg.Root projection with NO effect row ----
 
-    "INV-037: Chart.Spec lowers to a plain Svg.Root synchronously (no effect row)" in {
+    "INV-037: Chart lowers to a plain Svg.Root synchronously (no effect row)" in {
         val rows = Chunk(Sale("Jan", Usd(1000)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
         // The Conversion yields a plain Svg.Root, not Svg.Root < S; the explicit annotation is the witness.
-        val root: Svg.Root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root: Svg.Root = (spec).lower
         assert(root.children.nonEmpty, "the pure projection must produce a non-empty Svg.Root")
         // .lower likewise returns a bare Svg.Root with no Sync/Async row.
         val viaToSvg: Svg.Root = spec.lower
@@ -2104,7 +2104,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             bar(x = _.month, y = _.revenue),
             text(x = _.month, y = _.revenue, label = _ => "L", anchor = Chart.TextAnchor.Middle)
         )
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
         // The bar's centre x = barX + barW/2.
         val bar0 = rectsIn(root).find(_.svgAttrs.width.exists { case Coord.Num(w) => w == 504.0; case _ => false })
             .getOrElse(fail("expected the data bar rect"))
@@ -2126,7 +2126,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows             = Chunk(P(0.0, 0.0, 10.0), P(1.0, 1.0, 50.0), P(2.0, 2.0, 90.0))
         val spec = Chart(rows)(point(x = _.x, y = _.y, color = _.heat))
             .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
-        val root = summon[Conversion[Chart.Spec[P], Svg.Root]](spec)
+        val root = (spec).lower
         // Collect every text anywhere in the tree (legend labels are direct root children, not under a G).
         def allTexts(e: UI): Chunk[Svg.Text] = e match
             case t: Svg.Text => Chunk(t)
@@ -2183,7 +2183,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         // edge (which would leave a wedge of empty plot to the right of the area).
         val rows = Chunk(S("Jan", 60), S("Feb", 72), S("Mar", 80), S("Apr", 90))
         val spec = Chart(rows)(area(x = _.month, y = _.units, color = _.region, stack = by(_.region)))
-        val root = summon[Conversion[Chart.Spec[S], Svg.Root]](spec)
+        val root = (spec).lower
         // Band of 4 over [PlotX, PlotX+PlotW]: slot = PlotW/4 = 140, bandW = PlotW*0.9/4 = 126.
         val slot      = PlotW / 4.0
         val bandW     = PlotW * 0.9 / 4.0
@@ -2221,7 +2221,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(area(x = _.month, y = _.revenue, color = _.region))
             .yScale(_.linear(0.0, 4000.0))
             .legend(_.colorScale[Region](Region.NA -> naColor, Region.EU -> euColor))
-        val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root  = (spec).lower
         val marks = marksGroup(root)
         // L9: exactly 2 distinct path elements in the marks group (one per Region)
         val areaPaths = marks.children.collect { case p: Svg.Path => p }
@@ -2281,7 +2281,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         case class SimpleRow(x: String, y: Int) derives CanEqual
         val rows = Chunk(SimpleRow("a", 100), SimpleRow("b", 200))
         val spec = Chart(rows)(area(x = _.x, y = _.y))
-        val root = summon[Conversion[Chart.Spec[SimpleRow], Svg.Root]](spec)
+        val root = (spec).lower
         val paths = root.children.flatMap:
             case g: Svg.G => g.children.collect { case p: Svg.Path => p }
             case _        => Chunk.empty
@@ -2304,7 +2304,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     // ---- Leaf L2 (GAP-COLOR-TEXT): text mark with categorical colorScale uses the scale colors ----
     // Before the fix, lowerText resolves palette by index from themePalette(theme) only, ignoring
     // spec.legendCfg.colorScale. With no custom theme.palette this yields DefaultPalette colors
-    // (#3b82f6 blue / #f97316 orange), not the colorScale colors. The fix adds spec: Maybe[Chart.Spec[A]]
+    // (#3b82f6 blue / #f97316 orange), not the colorScale colors. The fix adds spec: Maybe[Chart[A]]
     // and routes a Present colorScale through resolvePalette (mirroring lowerLine / lowerPoint).
 
     "text mark with categorical colorScale uses the scale colors, not DefaultPalette (GAP-COLOR-TEXT)" in {
@@ -2320,7 +2320,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
                 Region.NA -> naColor,
                 Region.EU -> euColor
             ))
-        val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root = (spec).lower
         // Use the marks group to exclude axis tick texts from the count.
         val marks = marksGroup(root)
         val texts = marks.children.collect { case t: Svg.Text => t }
@@ -2374,7 +2374,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
                 Region.NA -> naColor,
                 Region.EU -> euColor
             ))
-        val root = summon[Conversion[Chart.Spec[EbSale], Svg.Root]](spec)
+        val root = (spec).lower
         // Restrict to the marks group to avoid axis gridlines and tick-mark lines.
         val marks   = marksGroup(root)
         val lines   = marks.children.collect { case l: Svg.Line => l }
@@ -2476,7 +2476,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(text(x = _.month, y = _.revenue, label = _.month, color = _.region))
             .yScale(_.linear(0.0, 4000.0))
             .legend(_.colorScale[Region](Region.NA -> naColor, Region.EU -> euColor))
-        val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root  = (spec).lower
         val marks = marksGroup(root)
         val texts = marks.children.collect { case t: Svg.Text => t }.toSeq
         assert(texts.size >= 2, s"L22a: expected at least 2 text glyphs in marks group, got ${texts.size}")
@@ -2502,7 +2502,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi, color = _.region))
             .yScale(_.linear(0.0, 10.0))
             .legend(_.colorScale[Region](Region.NA -> naColor, Region.EU -> euColor))
-        val root  = summon[Conversion[Chart.Spec[EbSale22], Svg.Root]](spec)
+        val root  = (spec).lower
         val marks = marksGroup(root)
         val lines = marks.children.collect { case l: Svg.Line => l }.toSeq
         // vLines have x1 == x2. lowerErrorBar sets y1=pyLow, y2=pyHigh.
@@ -2527,7 +2527,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
         val spec = Chart(rows)(text(x = _.month, y = _.revenue, label = _.month))
             .yScale(_.linear(0.0, 4000.0))
-        val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root  = (spec).lower
         val marks = marksGroup(root)
         val texts = marks.children.collect { case t: Svg.Text => t }.toSeq
         assert(texts.size >= 1, s"L22c: expected at least 1 text glyph in marks group, got ${texts.size}")
@@ -2567,7 +2567,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
                     case "a" => cyan
                     case _   => amber
                 })
-            root = summon[Conversion[Chart.Spec[ARow], Svg.Root]](spec)
+            root = (spec).lower
             html <- HtmlRenderer.render(root, Seq.empty)
         yield
             // Extract each <path ...> element's fill colour in document order.
@@ -2632,7 +2632,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
                 .yScale(_.linear(0.0, 6000.0))
                 .animate(_.ease(300.millis))
                 .theme(_.palette(Chunk(purple, teal)))
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             html <- HtmlRenderer.render(root, Seq.empty)
         yield
             assert(
@@ -2676,7 +2676,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
                     Region.NA -> crimson,
                     Region.EU -> indigo
                 ))
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             html <- HtmlRenderer.render(root, Seq.empty)
         yield
             val crimsonCss = "rgb(220, 38, 38)"
@@ -2716,7 +2716,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue, color = _.level))
             .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
-        val root  = summon[Conversion[Chart.Spec[HeatRow], Svg.Root]](spec)
+        val root  = (spec).lower
         val rects = rectsIn(root)
         assert(rects.size == 2, s"L10 bar: expected 2 bar rects but got ${rects.size}")
         val byX = rects.toSeq.sortBy(r => numOf(r.svgAttrs.x))
@@ -2754,7 +2754,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(area(x = _.x, y = _.y, color = _.level))
             .yScale(_.linear(0.0, 4.0))
             .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
-        val root      = summon[Conversion[Chart.Spec[SeqRow], Svg.Root]](spec)
+        val root      = (spec).lower
         val marks     = marksGroup(root)
         val areaPaths = marks.children.collect { case p: Svg.Path => p }
         assert(areaPaths.size == 2, s"L10 area: expected 2 area paths but got ${areaPaths.size}")
@@ -2792,7 +2792,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(text(x = _.x, y = _.y, label = _.x, color = _.level))
             .yScale(_.linear(0.0, 4.0))
             .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
-        val root  = summon[Conversion[Chart.Spec[TextSeqRow], Svg.Root]](spec)
+        val root  = (spec).lower
         val marks = marksGroup(root)
         val texts = marks.children.collect { case t: Svg.Text => t }
         assert(texts.size >= 2, s"L10 text: expected at least 2 text glyphs but got ${texts.size}")
@@ -2836,7 +2836,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi, color = _.level))
             .yScale(_.linear(0.0, 10.0))
             .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
-        val root    = summon[Conversion[Chart.Spec[EbSeqRow], Svg.Root]](spec)
+        val root    = (spec).lower
         val marks   = marksGroup(root)
         val lines   = marks.children.collect { case l: Svg.Line => l }
         val circles = marks.children.collect { case c: Svg.Circle => c }
@@ -2919,7 +2919,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             GrpRow("Jan", 30.0, GrpTag(2))
         )
         val spec  = Chart(rows)(bar(x = _.month, y = _.value, stack = by(_.grp)))
-        val root  = summon[Conversion[Chart.Spec[GrpRow], Svg.Root]](spec)
+        val root  = (spec).lower
         val rects = rectsIn(root)
 
         // Must have exactly 2 segments (one per distinct group).
@@ -2951,7 +2951,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             GrpRow("Jan", 30.0, GrpTag(2))
         )
         val spec = Chart(rows)(area(x = _.month, y = _.value, stack = by(_.grp)))
-        val root = summon[Conversion[Chart.Spec[GrpRow], Svg.Root]](spec)
+        val root = (spec).lower
         // The marks group holds area paths.
         val marks     = marksGroup(root)
         val areaPaths = marks.children.collect { case p: Svg.Path => p }
@@ -2995,7 +2995,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             GrpRow("Jan", 30.0, GrpTag(2))
         )
         val spec  = Chart(rows)(bar(x = _.month, y = _.value, color = _.grp))
-        val root  = summon[Conversion[Chart.Spec[GrpRow], Svg.Root]](spec)
+        val root  = (spec).lower
         val rects = rectsIn(root)
 
         // Must have exactly 2 bar rects (one per distinct group).
@@ -3040,7 +3040,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             GrpRow("Feb", 30.0, GrpTag(2))
         )
         val spec  = Chart(rows)(line(x = _.month, y = _.value, color = _.grp))
-        val root  = summon[Conversion[Chart.Spec[GrpRow], Svg.Root]](spec)
+        val root  = (spec).lower
         val paths = pathsIn(root)
         assert(paths.size == 2, s"L-bug-line-color: expected 2 series paths but got ${paths.size}")
         def lineToCount(p: Svg.Path): Int =
@@ -3064,7 +3064,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             GrpRow("Feb", 30.0, GrpTag(2))
         )
         val spec  = Chart(rows)(area(x = _.month, y = _.value, color = _.grp))
-        val root  = summon[Conversion[Chart.Spec[GrpRow], Svg.Root]](spec)
+        val root  = (spec).lower
         val paths = pathsIn(root)
         assert(paths.size == 2, s"L-bug-area-color: expected 2 series paths but got ${paths.size}")
         def lineToCount(p: Svg.Path): Int =
@@ -3088,7 +3088,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
         val spec = Chart(rows)(text(x = _.month, y = _.value, label = _.month, color = _.grp))
             .yScale(_.linear(0.0, 40.0))
-        val root  = summon[Conversion[Chart.Spec[GrpRow], Svg.Root]](spec)
+        val root  = (spec).lower
         val marks = marksGroup(root)
         val texts = marks.children.collect { case t: Svg.Text => t }
         assert(texts.size == 2, s"L-bug-text-color: expected 2 text glyphs but got ${texts.size}")
@@ -3108,7 +3108,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         )
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi, color = _.grp))
             .yScale(_.linear(0.0, 10.0))
-        val root    = summon[Conversion[Chart.Spec[EbGrp], Svg.Root]](spec)
+        val root    = (spec).lower
         val marks   = marksGroup(root)
         val circles = marks.children.collect { case c: Svg.Circle => c }
         assert(circles.size == 2, s"L-bug-errorbar-color: expected 2 center-marker circles but got ${circles.size}")

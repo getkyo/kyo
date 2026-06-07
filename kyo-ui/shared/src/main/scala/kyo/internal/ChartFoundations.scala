@@ -90,7 +90,7 @@ private[kyo] object ChartFoundations:
       * alias identical defs (benign). NOT `genId(Frame.internal)` (which collides
       * across all charts in a session).
       */
-    def chartIdPrefix(spec: Spec[?]): String =
+    def chartIdPrefix(spec: Chart[?]): String =
         "kyo-chart-" + Integer.toHexString(spec.##)
 
     /** Monotonic counter assigning each lowered chart a document-unique instance id.

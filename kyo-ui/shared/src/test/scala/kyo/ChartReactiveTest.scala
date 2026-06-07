@@ -65,7 +65,7 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
         val rows           = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val signal         = Signal.initConst[Seq[Sale]](rows)
         val spec           = Chart(signal)(bar(x = _.month, y = _.revenue))
-        val root: Svg.Root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root: Svg.Root = (spec).lower
 
         // The root children must include at least one Reactive node (the marks region).
         val hasReactive = root.children.exists:
@@ -106,7 +106,7 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
         for
             ref <- Signal.initRef[Seq[Sale]](initialRows)
             spec = Chart(ref: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             // Render with initial rows (max=200): tick labels are 0,50,100,150,200. "4000" absent.
             html0 <- HtmlRenderer.render(root, Seq.empty)
             // Drive new data with larger max (max=5000).
@@ -133,7 +133,7 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
         //   ticks(5): niceTicks(0, 5000, 5) = step=2000, ticks=[0, 2000, 4000]. Max label = "4000".
         val spec = Chart(signal)(bar(x = _.month, y = _.revenue))
             .yScale(_.linear(0.0, 5000.0))
-        val root: Svg.Root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root: Svg.Root = (spec).lower
 
         // With a fixed y-domain, the Reactive node wraps ONLY the marks Svg.G.
         // The y-axis ticks live as direct children of root (static), not inside the Reactive.
@@ -191,7 +191,7 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
             ref <- Signal.initRef[Seq[Sale]](initialRows)
             spec = Chart(ref: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
                 .yScale(_.linear(0.0, 4000.0))
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             // Render with initial rows: barH = 105.
             html0 <- HtmlRenderer.render(root, Seq.empty)
             // Drive updated rows with full-height revenue.
@@ -220,7 +220,7 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
         val rows           = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val signal         = Signal.initConst[Seq[Sale]](rows)
         val spec           = Chart(signal)(bar(x = _.month, y = _.revenue))
-        val root: Svg.Root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root: Svg.Root = (spec).lower
         for
             html <- HtmlRenderer.render(root, Seq.empty)
         yield
@@ -261,7 +261,7 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
                 )
                 .theme(_.dark)
                 .size(520, 240)
-            root = summon[Conversion[Chart.Spec[StatusRow], Svg.Root]](spec)
+            root = (spec).lower
             html <- HtmlRenderer.render(root, Seq.empty)
         yield
             // The three legend labels must be present (one per stack category).
@@ -287,7 +287,7 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
         for
             ref <- Signal.initRef[Seq[StatusRow]](Chunk(StatusRow("/x", "a", 5.0)))
             spec = Chart(ref: Signal[Seq[StatusRow]])(bar(x = _.name, y = _.count, color = _.code))
-            root = summon[Conversion[Chart.Spec[StatusRow], Svg.Root]](spec)
+            root = (spec).lower
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _          <- ref.set(Chunk(StatusRow("/x", "a", 5.0), StatusRow("/y", "b", 7.0)))
             htmlAfter  <- HtmlRenderer.render(root, Seq.empty)
@@ -308,7 +308,7 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
         for
             ref <- Signal.initRef[Seq[StatusRow]](Chunk(StatusRow("/x", "a", 5.0), StatusRow("/y", "b", 7.0)))
             spec = Chart(ref: Signal[Seq[StatusRow]])(bar(x = _.name, y = _.count, color = _.code))
-            root = summon[Conversion[Chart.Spec[StatusRow], Svg.Root]](spec)
+            root = (spec).lower
             html0 <- HtmlRenderer.render(root, Seq.empty)
             // New values, same two categories {a, b}.
             _     <- ref.set(Chunk(StatusRow("/x", "a", 50.0), StatusRow("/y", "b", 70.0)))
@@ -333,7 +333,7 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
         for
             ref <- Signal.initRef[Seq[StatusRow]](Chunk.empty[StatusRow])
             spec = Chart(ref: Signal[Seq[StatusRow]])(bar(x = _.name, y = _.count, color = _.code))
-            root = summon[Conversion[Chart.Spec[StatusRow], Svg.Root]](spec)
+            root = (spec).lower
             htmlEmpty <- HtmlRenderer.render(root, Seq.empty)
             _         <- ref.set(Chunk(StatusRow("/x", "a", 5.0)))
             htmlFull  <- HtmlRenderer.render(root, Seq.empty)

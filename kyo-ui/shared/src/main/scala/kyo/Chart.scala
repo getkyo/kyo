@@ -5,19 +5,41 @@ import scala.language.implicitConversions
 /** An authoring spec for a chart that lowers to an `Svg.Root`.
   *
   * A `Chart` is not a [[kyo.UI]] node: it is a pure authoring value that describes a data visualization and lowers to an `Svg.Root` via
-  * the `given Conversion[Chart.Spec[A], Svg.Root]`. Because the lowered result is `HtmlContent`, a chart spec drops into any HTML
-  * container exactly where an SVG root is expected.
+  * `.lower`. Because the lowered result is `HtmlContent`, a lowered chart drops into any HTML container exactly where an SVG root is
+  * expected.
   *
   * Build a chart with `Chart(data)(marks*)`: the first application fixes the row type `A`, the second supplies the marks and returns a
-  * [[kyo.Chart.Spec]]. Marks are produced by the factories `Chart.bar`, `Chart.line`, `Chart.area`, `Chart.point`, `Chart.text`,
-  * `Chart.errorBar`, and `Chart.rule`. The resulting spec is refined with the configuration methods (`.xAxis`, `.legend`, `.theme`, ...)
-  * and lowered with `.lower` (or implicitly).
+  * [[kyo.Chart]]. Marks are produced by the factories `Chart.bar`, `Chart.line`, `Chart.area`, `Chart.point`, `Chart.text`,
+  * `Chart.errorBar`, and `Chart.rule`. The resulting chart is refined with the configuration methods (`.xAxis`, `.legend`, `.theme`, ...)
+  * and lowered with `.lower`.
   *
   * @see
   *   [[kyo.Chart.apply]] for the chart entry point
-  * @see
-  *   [[kyo.Chart.Spec]] for the configured chart intermediate representation
   */
+final case class Chart[A] private[kyo] (
+    data: Chart.DataSource[A],
+    marks: Chunk[Chart.Mark[A]],
+    chartSize: (Int, Int),
+    xAxisCfg: Chart.AxisConfig,
+    yAxisCfg: Chart.AxisConfig,
+    yAxisRightCfg: Maybe[Chart.AxisConfig],
+    legendCfg: Chart.LegendConfig,
+    theme: Chart.Theme,
+    xScaleOverride: Maybe[Chart.ScaleOverride],
+    yScaleOverride: Maybe[Chart.ScaleOverride],
+    yScaleRightOverride: Maybe[Chart.ScaleOverride],
+    animateCfg: Chart.AnimateConfig,
+    key: Maybe[A => String],
+    onHover: Maybe[Signal.SignalRef[Maybe[A]]],
+    onSelect: Maybe[Signal.SignalRef[Maybe[A]]],
+    tooltip: Maybe[A => String],
+    interactionCfg: Chart.InteractionConfig = Chart.InteractionConfig.default,
+    a11y: Chart.A11y = Chart.A11y.default,
+    isResponsive: Boolean = false,
+    aspectRatio: Maybe[Double] = Absent,
+    marginsCfg: Chart.Margins = Chart.Margins.default
+)
+
 object Chart:
 
     // ---- Charts: sentinel ----
@@ -522,11 +544,11 @@ object Chart:
     /** Opens a chart over a static `Seq[A]`.
       *
       * `Chart(data)` fixes the row type `A`; the second application `(marks*)` supplies
-      * the marks and returns a `Chart.Spec[A]`. The two-stage application is what
+      * the marks and returns a `Chart[A]`. The two-stage application is what
       * makes row-type inference work: `A` is bound before the mark parameter lambdas are read,
-      * so `Chart.bar(x = _.month, y = _.revenue)` needs no annotations. A `Spec[A]`
-      * converts to `Svg.Root` automatically wherever one is expected (including `UI.div`
-      * children), via the `given Conversion`.
+      * so `Chart.bar(x = _.month, y = _.revenue)` needs no annotations. A `Chart[A]`
+      * lowers to `Svg.Root` via `.lower` wherever one is expected (including `UI.div`
+      * children).
       */
     def apply[A](data: Seq[A])(using Frame): Builder[A] =
         new Builder[A](DataSource.Static(Chunk.from(data)))
@@ -537,14 +559,14 @@ object Chart:
 
     /** Holds the data source and accepts the mark list.
       *
-      * The second application `(marks*)` is where the `Spec[A]` is built.
+      * The second application `(marks*)` is where the `Chart[A]` is built.
       * Keeping this as a two-step application ensures that `A` is bound to the data
       * element type before the mark parameter lambdas are read, which is the
       * inference boundary the named-parameter design relies on.
       */
     final class Builder[A] private[kyo] (data: DataSource[A]):
-        def apply(marks: Mark[A]*)(using Frame): Spec[A] =
-            Spec[A](
+        def apply(marks: Mark[A]*)(using Frame): Chart[A] =
+            new Chart[A](
                 data = data,
                 marks = Chunk.from(marks),
                 chartSize = (640, 480),
@@ -787,163 +809,119 @@ object Chart:
         case Static(rows: Chunk[A])
         case Live(rows: Signal[Chunk[A]])
 
-    // ---- Charts: Spec ----
+    // ---- Charts: configuration types ----
 
-    /** The fully-configured, not-yet-lowered chart intermediate representation.
+    /** Accessibility metadata emitted into the chart's root `<svg>`.
       *
-      * Built by `Chart(data)(marks*)` and then refined by the configuration methods.
-      * Every config method returns a copy with one field changed; the whole chain is
-      * pure and allocation-light (case class copy).
-      *
-      * `Spec[A]` converts to `Svg.Root` automatically via the `given Conversion`
-      * below; that conversion is the only path to a rendered chart. Until it is
-      * invoked the spec is just a value you can inspect and modify.
-      *
-      * Fields: `data` is either `DataSource.Static` (a `Chunk`) or `DataSource.Live`
-      * (a `Signal`). `marks` is the ordered list of mark layers. The `*Cfg` fields
-      * hold the configuration built by the builder lambdas. `key` / `onHover` /
-      * `onSelect` / `tooltip` drive reactivity and interaction.
+      * `title` becomes a `<title>` child and implies `role="img"` on the root so assistive
+      * technology announces the chart as a single image with that accessible name. `desc`
+      * becomes a `<desc>` child for a longer description. `ariaLabel` sets the `aria-label`
+      * attribute directly. All three default to `Absent`, in which case no a11y markup is
+      * emitted. Set them with `.title(s)`, `.desc(s)`, and `.ariaLabel(s)`.
       */
-    final case class Spec[A](
-        data: DataSource[A],
-        marks: Chunk[Mark[A]],
-        chartSize: (Int, Int),
-        xAxisCfg: AxisConfig,
-        yAxisCfg: AxisConfig,
-        yAxisRightCfg: Maybe[AxisConfig],
-        legendCfg: LegendConfig,
-        theme: Theme,
-        xScaleOverride: Maybe[ScaleOverride],
-        yScaleOverride: Maybe[ScaleOverride],
-        yScaleRightOverride: Maybe[ScaleOverride],
-        animateCfg: AnimateConfig,
-        key: Maybe[A => String],
-        onHover: Maybe[Signal.SignalRef[Maybe[A]]],
-        onSelect: Maybe[Signal.SignalRef[Maybe[A]]],
-        tooltip: Maybe[A => String],
-        interactionCfg: Spec.InteractionConfig = Spec.InteractionConfig.default,
-        a11y: Spec.A11y = Spec.A11y.default,
-        isResponsive: Boolean = false,
-        aspectRatio: Maybe[Double] = Absent,
-        marginsCfg: Spec.Margins = Spec.Margins.default
+    final case class A11y(
+        title: Maybe[String],
+        desc: Maybe[String],
+        ariaLabel: Maybe[String]
     )
 
-    /** Companion for `Spec`. Holds nested configuration types. */
-    object Spec:
+    object A11y:
+        /** The default: no accessibility metadata. */
+        val default: A11y = A11y(Absent, Absent, Absent)
+    end A11y
 
-        /** Accessibility metadata emitted into the chart's root `<svg>`.
-          *
-          * `title` becomes a `<title>` child and implies `role="img"` on the root so assistive
-          * technology announces the chart as a single image with that accessible name. `desc`
-          * becomes a `<desc>` child for a longer description. `ariaLabel` sets the `aria-label`
-          * attribute directly. All three default to `Absent`, in which case no a11y markup is
-          * emitted. Set them with `.title(s)`, `.desc(s)`, and `.ariaLabel(s)`.
-          */
-        final case class A11y(
-            title: Maybe[String],
-            desc: Maybe[String],
-            ariaLabel: Maybe[String]
-        )
+    /** Plot margins in pixels around the inner plot rectangle.
+      *
+      * `top`, `right`, `bottom`, and `left` reserve space for axis chrome and labels.
+      * The defaults (`20/20/40/60`) match the historical built-in constants; the larger
+      * bottom and left make room for the x-axis tick labels and the y-axis numbers. Set
+      * them with `.margins(t, r, b, l)` or `.margins(_.left(80))`.
+      */
+    final case class Margins(
+        top: Double,
+        right: Double,
+        bottom: Double,
+        left: Double
+    ):
+        def top(v: Double): Margins    = copy(top = v)
+        def right(v: Double): Margins  = copy(right = v)
+        def bottom(v: Double): Margins = copy(bottom = v)
+        def left(v: Double): Margins   = copy(left = v)
+    end Margins
 
-        object A11y:
-            /** The default: no accessibility metadata. */
-            val default: A11y = A11y(Absent, Absent, Absent)
-        end A11y
+    object Margins:
+        /** The default margins matching the historical built-in layout constants. */
+        val default: Margins = Margins(20.0, 20.0, 40.0, 60.0)
+    end Margins
 
-        /** Plot margins in pixels around the inner plot rectangle.
-          *
-          * `top`, `right`, `bottom`, and `left` reserve space for axis chrome and labels.
-          * The defaults (`20/20/40/60`) match the historical built-in constants; the larger
-          * bottom and left make room for the x-axis tick labels and the y-axis numbers. Set
-          * them with `.margins(t, r, b, l)` or `.margins(_.left(80))`.
-          */
-        final case class Margins(
-            top: Double,
-            right: Double,
-            bottom: Double,
-            left: Double
-        ):
-            def top(v: Double): Margins    = copy(top = v)
-            def right(v: Double): Margins  = copy(right = v)
-            def bottom(v: Double): Margins = copy(bottom = v)
-            def left(v: Double): Margins   = copy(left = v)
-        end Margins
+    /** Controls built-in visual highlight behavior when a hover or select ref is set.
+      *
+      * All fields default `false`/`Absent`. Set `hoverHighlight` or `selectHighlight` to opt into the
+      * built-in opacity boost on the active mark. `hoverStyle` and `selectStyle` let you supply a custom
+      * `Style` instead of the default boost. If the relevant ref (`onHover`/`onSelect`) is not configured
+      * on the chart, all highlight settings are no-ops.
+      *
+      * Build via the chaining methods: `_.highlightHover`, `_.highlightSelect`, `_.hoverStyle(s)`,
+      * `_.selectStyle(s)`.
+      */
+    final case class InteractionConfig(
+        hoverHighlight: Boolean = false,
+        selectHighlight: Boolean = false,
+        hoverStyle: Maybe[Style] = Absent,
+        selectStyle: Maybe[Style] = Absent
+    ):
+        /** Enable the built-in hover highlight (opacity boost on the hovered mark). */
+        def highlightHover: InteractionConfig = copy(hoverHighlight = true)
 
-        object Margins:
-            /** The default margins matching the historical built-in layout constants. */
-            val default: Margins = Margins(20.0, 20.0, 40.0, 60.0)
-        end Margins
+        /** Enable the built-in select highlight (opacity boost on the selected mark). */
+        def highlightSelect: InteractionConfig = copy(selectHighlight = true)
 
-        /** Controls built-in visual highlight behavior when a hover or select ref is set.
-          *
-          * All fields default `false`/`Absent`. Set `hoverHighlight` or `selectHighlight` to opt into the
-          * built-in opacity boost on the active mark. `hoverStyle` and `selectStyle` let you supply a custom
-          * `Style` instead of the default boost. If the relevant ref (`onHover`/`onSelect`) is not configured
-          * on the chart, all highlight settings are no-ops.
-          *
-          * Build via the chaining methods: `_.highlightHover`, `_.highlightSelect`, `_.hoverStyle(s)`,
-          * `_.selectStyle(s)`.
-          */
-        final case class InteractionConfig(
-            hoverHighlight: Boolean = false,
-            selectHighlight: Boolean = false,
-            hoverStyle: Maybe[Style] = Absent,
-            selectStyle: Maybe[Style] = Absent
-        ):
-            /** Enable the built-in hover highlight (opacity boost on the hovered mark). */
-            def highlightHover: InteractionConfig = copy(hoverHighlight = true)
+        /** Apply a custom style on hover (also enables hover highlight). */
+        def hoverStyle(s: Style): InteractionConfig = copy(hoverHighlight = true, hoverStyle = Present(s))
 
-            /** Enable the built-in select highlight (opacity boost on the selected mark). */
-            def highlightSelect: InteractionConfig = copy(selectHighlight = true)
+        /** Apply a custom style on select (also enables select highlight). */
+        def selectStyle(s: Style): InteractionConfig = copy(selectHighlight = true, selectStyle = Present(s))
+    end InteractionConfig
 
-            /** Apply a custom style on hover (also enables hover highlight). */
-            def hoverStyle(s: Style): InteractionConfig = copy(hoverHighlight = true, hoverStyle = Present(s))
+    object InteractionConfig:
+        /** The default config: all highlight features disabled. */
+        val default: InteractionConfig = InteractionConfig()
+    end InteractionConfig
 
-            /** Apply a custom style on select (also enables select highlight). */
-            def selectStyle(s: Style): InteractionConfig = copy(selectHighlight = true, selectStyle = Present(s))
-        end InteractionConfig
-
-        object InteractionConfig:
-            /** The default config: all highlight features disabled. */
-            val default: InteractionConfig = InteractionConfig()
-        end InteractionConfig
-
-    end Spec
-
-    extension [A](spec: Spec[A])
+    extension [A](chart: Chart[A])
 
         /** Configures the x-axis using a builder lambda. */
-        def xAxis(f: AxisConfig => AxisConfig): Spec[A] =
-            spec.copy(xAxisCfg = f(spec.xAxisCfg))
+        def xAxis(f: AxisConfig => AxisConfig): Chart[A] =
+            chart.copy(xAxisCfg = f(chart.xAxisCfg))
 
         /** Configures the left y-axis using a builder lambda. */
-        def yAxis(f: AxisConfig => AxisConfig): Spec[A] =
-            spec.copy(yAxisCfg = f(spec.yAxisCfg))
+        def yAxis(f: AxisConfig => AxisConfig): Chart[A] =
+            chart.copy(yAxisCfg = f(chart.yAxisCfg))
 
         /** Configures the right y-axis using a builder lambda. Creates it if absent. */
-        def yAxisRight(f: AxisConfig => AxisConfig): Spec[A] =
-            val base = spec.yAxisRightCfg.getOrElse(AxisConfig.default)
-            spec.copy(yAxisRightCfg = Present(f(base)))
+        def yAxisRight(f: AxisConfig => AxisConfig): Chart[A] =
+            val base = chart.yAxisRightCfg.getOrElse(AxisConfig.default)
+            chart.copy(yAxisRightCfg = Present(f(base)))
 
         /** Configures the legend using a builder lambda. */
-        def legend(f: LegendConfig => LegendConfig): Spec[A] =
-            spec.copy(legendCfg = f(spec.legendCfg))
+        def legend(f: LegendConfig => LegendConfig): Chart[A] =
+            chart.copy(legendCfg = f(chart.legendCfg))
 
         /** Configures the theme using a builder lambda. */
-        def theme(f: Theme => Theme): Spec[A] =
-            spec.copy(theme = f(spec.theme))
+        def theme(f: Theme => Theme): Chart[A] =
+            chart.copy(theme = f(chart.theme))
 
         /** Sets the chart width and height in user units. Disables responsive sizing (last-set wins). */
-        def size(w: Int, h: Int): Spec[A] =
-            spec.copy(chartSize = (w, h), isResponsive = false)
+        def size(w: Int, h: Int): Chart[A] =
+            chart.copy(chartSize = (w, h), isResponsive = false)
 
         /** Overrides the x-axis scale using a builder lambda. */
-        def xScale(f: ScaleOverride => ScaleOverride): Spec[A] =
-            spec.copy(xScaleOverride = Present(f(ScaleOverride.default)))
+        def xScale(f: ScaleOverride => ScaleOverride): Chart[A] =
+            chart.copy(xScaleOverride = Present(f(ScaleOverride.default)))
 
         /** Overrides the y-axis scale using a builder lambda. */
-        def yScale(f: ScaleOverride => ScaleOverride): Spec[A] =
-            spec.copy(yScaleOverride = Present(f(ScaleOverride.default)))
+        def yScale(f: ScaleOverride => ScaleOverride): Chart[A] =
+            chart.copy(yScaleOverride = Present(f(ScaleOverride.default)))
 
         /** Overrides the right y-axis scale using a builder lambda.
           *
@@ -961,73 +939,73 @@ object Chart:
           * Note: a right axis only exists when the chart has right-bound marks or `.yAxisRight(f)`
           * was called; on a single-axis chart this override is a no-op.
           */
-        def yScaleRight(f: ScaleOverride => ScaleOverride): Spec[A] =
-            spec.copy(yScaleRightOverride = Present(f(ScaleOverride.default)))
+        def yScaleRight(f: ScaleOverride => ScaleOverride): Chart[A] =
+            chart.copy(yScaleRightOverride = Present(f(ScaleOverride.default)))
 
         /** Configures animation using a builder lambda. */
-        def animate(f: AnimateConfig => AnimateConfig): Spec[A] =
-            spec.copy(animateCfg = f(spec.animateCfg))
+        def animate(f: AnimateConfig => AnimateConfig): Chart[A] =
+            chart.copy(animateCfg = f(chart.animateCfg))
 
         /** Sets the key extractor used for keyed transitions. */
-        def key(f: A => String): Spec[A] =
-            spec.copy(key = Present(f))
+        def key(f: A => String): Chart[A] =
+            chart.copy(key = Present(f))
 
         /** Publishes the hovered datum to `ref` on pointer enter/leave. */
-        def onHover(ref: Signal.SignalRef[Maybe[A]]): Spec[A] =
-            spec.copy(onHover = Present(ref))
+        def onHover(ref: Signal.SignalRef[Maybe[A]]): Chart[A] =
+            chart.copy(onHover = Present(ref))
 
         /** Publishes the selected datum to `ref` on click. */
-        def onSelect(ref: Signal.SignalRef[Maybe[A]]): Spec[A] =
-            spec.copy(onSelect = Present(ref))
+        def onSelect(ref: Signal.SignalRef[Maybe[A]]): Chart[A] =
+            chart.copy(onSelect = Present(ref))
 
         /** Attaches a default tooltip using `f` to format the hovered datum. */
-        def tooltip(f: A => String): Spec[A] =
-            spec.copy(tooltip = Present(f))
+        def tooltip(f: A => String): Chart[A] =
+            chart.copy(tooltip = Present(f))
 
         /** Configures built-in visual highlight behavior using a builder lambda.
           *
           * Example: `.interaction(_.highlightSelect)` enables the default opacity boost on the selected mark.
           * If no `onHover`/`onSelect` ref is configured, all highlight settings are no-ops.
           */
-        def interaction(f: Spec.InteractionConfig => Spec.InteractionConfig): Spec[A] =
-            spec.copy(interactionCfg = f(spec.interactionCfg))
+        def interaction(f: InteractionConfig => InteractionConfig): Chart[A] =
+            chart.copy(interactionCfg = f(chart.interactionCfg))
 
         /** Sets the accessible title (a `<title>` child); also implies `role="img"` on the root. */
-        def title(s: String): Spec[A] =
-            spec.copy(a11y = spec.a11y.copy(title = Present(s)))
+        def title(s: String): Chart[A] =
+            chart.copy(a11y = chart.a11y.copy(title = Present(s)))
 
         /** Sets the accessible long description (a `<desc>` child). */
-        def desc(s: String): Spec[A] =
-            spec.copy(a11y = spec.a11y.copy(desc = Present(s)))
+        def desc(s: String): Chart[A] =
+            chart.copy(a11y = chart.a11y.copy(desc = Present(s)))
 
         /** Sets the `aria-label` on the chart's root `<svg>`. */
-        def ariaLabel(s: String): Spec[A] =
-            spec.copy(a11y = spec.a11y.copy(ariaLabel = Present(s)))
+        def ariaLabel(s: String): Chart[A] =
+            chart.copy(a11y = chart.a11y.copy(ariaLabel = Present(s)))
 
         /** Makes the chart responsive: the root uses `width="100%"` and a `viewBox`, no fixed height. */
-        def responsive: Spec[A] =
-            spec.copy(isResponsive = true)
+        def responsive: Chart[A] =
+            chart.copy(isResponsive = true)
 
         /** Makes the chart responsive with the given aspect ratio (width / height). */
-        def responsive(aspectRatio: Double): Spec[A] =
-            spec.copy(isResponsive = true, aspectRatio = Present(aspectRatio))
+        def responsive(aspectRatio: Double): Chart[A] =
+            chart.copy(isResponsive = true, aspectRatio = Present(aspectRatio))
 
         /** Sets all four plot margins (top, right, bottom, left) in pixels. */
-        def margins(top: Double, right: Double, bottom: Double, left: Double): Spec[A] =
-            spec.copy(marginsCfg = Spec.Margins(top, right, bottom, left))
+        def margins(top: Double, right: Double, bottom: Double, left: Double): Chart[A] =
+            chart.copy(marginsCfg = Margins(top, right, bottom, left))
 
         /** Configures plot margins using a builder lambda: `.margins(_.left(80))`. */
-        def margins(f: Spec.Margins => Spec.Margins): Spec[A] =
-            spec.copy(marginsCfg = f(spec.marginsCfg))
+        def margins(f: Margins => Margins): Chart[A] =
+            chart.copy(marginsCfg = f(chart.marginsCfg))
 
-        /** Lowers this chart spec to an `Svg.Root`.
+        /** Lowers this chart to an `Svg.Root`.
           *
-          * Equivalent to `summon[Conversion[Spec[A], Svg.Root]](spec)`. Provided as an explicit
-          * method for callers that do not have `scala.language.implicitConversions` in scope.
+          * This is the explicit path from a `Chart[A]` to a rendered SVG root; embedding a chart in
+          * a UI tree requires calling it.
           */
-        def lower: Svg.Root = kyo.internal.ChartLower.lower(spec)
+        def lower: Svg.Root = kyo.internal.ChartLower.lower(chart)
 
-        /** Lowers this chart spec to an `Svg.Root` together with its resolved [[Scales]].
+        /** Lowers this chart to an `Svg.Root` together with its resolved [[Scales]].
           *
           * The returned `Scales` exposes the data-to-pixel projection for both axes and the
           * inner plot rectangle, so callers can build overlays, brush outlines, or annotations at
@@ -1036,16 +1014,9 @@ object Chart:
           * `lowerWithScales` is called again.
           */
         def lowerWithScales: (Svg.Root, Scales) =
-            kyo.internal.ChartLower.lowerWithScales(spec)
+            kyo.internal.ChartLower.lowerWithScales(chart)
 
     end extension
-
-    /** Converts a `Spec[A]` to an `Svg.Root` wherever one is expected.
-      *
-      * Delegates to `ChartLower.lower`. The lowering uses `Frame.internal` for SVG node construction,
-      * so the conversion itself requires no frame synthesis at the call site.
-      */
-    given [A]: Conversion[Spec[A], Svg.Root] = spec => kyo.internal.ChartLower.lower(spec)
 
     // ---- Charts: config types ----
 
@@ -1353,9 +1324,9 @@ object Chart:
                 )
     end Palette
 
-    /** Read-only projection of the resolved scale state after lowering a `Spec`.
+    /** Read-only projection of the resolved scale state after lowering a `Chart`.
       *
-      * Obtain one via `spec.lowerWithScales`. The accessors expose the data-to-pixel projection
+      * Obtain one via `chart.lowerWithScales`. The accessors expose the data-to-pixel projection
       * for both axes and the inner plot rectangle, while the internal `Scale`/`Layout` types stay
       * private. Use it as an escape hatch to build overlays, brush outlines, or custom annotations
       * at exact chart pixel coordinates. `x` and `y` are always present; `yRight` is `Present` only

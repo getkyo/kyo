@@ -850,7 +850,7 @@ val firstChart: Svg.Root =
 UI.div(UI.h2("Revenue by region"), firstChart)
 ```
 
-The `rule` mark's `y` takes a plain `Double` threshold; it also accepts a `Signal[Double]` for a threshold that tracks a signal, with no wrapper either way. `.lower` lowers the spec to an `Svg.Root` explicitly, but a chart also lowers automatically wherever an `Svg.Root` is expected, so `UI.div(UI.h2(...), chart)` embeds it without the call.
+The `rule` mark's `y` takes a plain `Double` threshold; it also accepts a `Signal[Double]` for a threshold that tracks a signal, with no wrapper either way. `.lower` lowers the `Chart` to an `Svg.Root`; a chart embeds into a UI tree via that explicit call, so `UI.div(UI.h2(...), chart.lower)` is the embedding form.
 
 ### Marks compose; there is no chart zoo
 

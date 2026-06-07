@@ -90,7 +90,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             spec = Chart(rows)(bar(x = _.month, y = _.revenue))
                 .onHover(hoverRef)
                 .onSelect(selectRef)
-            root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root  = (spec).lower
             rects = rectsIn(root)
         yield
             // Both bars should be present.
@@ -112,7 +112,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             rows = Chunk(Sale("Jan", Rev(1000.0)))
             spec = Chart(rows)(bar(x = _.month, y = _.revenue))
                 .onHover(hoverRef)
-            root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root  = (spec).lower
             rects = rectsIn(root)
             _     = assert(rects.size == 1, s"Expected 1 rect but got ${rects.size}")
             rect  = rects(0)
@@ -147,7 +147,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             rows = Chunk(Sale("Mar", Rev(3000.0)), Sale("Apr", Rev(4000.0)))
             spec = Chart(rows)(bar(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
-            root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root  = (spec).lower
             rects = rectsIn(root)
             _     = assert(rects.size == 2, s"Expected 2 rects but got ${rects.size}")
             // Click the second rect (Apr, Rev(4000)).
@@ -168,7 +168,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             rows = Chunk(Sale("May", Rev(500.0)))
             spec = Chart(rows)(bar(x = _.month, y = _.revenue))
                 .tooltip(s => s"${s.month}: ${s.revenue.toInt}")
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             // Locate the tooltip overlay: last Reactive child of root.
             topReactives = reactivesIn(root)
             _            = assert(topReactives.nonEmpty, "Expected at least one Reactive child (tooltip overlay)")
@@ -203,7 +203,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
                 bar(x = _.month, y = _.revenue),
                 rule(y = (threshold: Signal[Rev]))
             ).yScale(_.linear(0.0, 4000.0))
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             html0 <- HtmlRenderer.render(root, Seq.empty)
             // Update threshold and re-render.
             _     <- threshold.set(Rev(3000.0))
@@ -243,8 +243,8 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
                 bar(x = _.month, y = _.revenue),
                 rule(x = hovered.map[Maybe[String]](_.map(_.month)))
             )
-            rootA = summon[Conversion[Chart.Spec[Sale], Svg.Root]](specA)
-            rootB = summon[Conversion[Chart.Spec[Sale], Svg.Root]](specB)
+            rootA = (specA).lower
+            rootB = (specB).lower
             // Chart A: hover the "Jan" bar (index 0 in the chunk, first rect).
             rectsA  = rectsIn(rootA)
             _       = assert(rectsA.size == 3, s"Expected 3 rects in chart A but got ${rectsA.size}")
@@ -276,7 +276,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
         // must not have onHover or onClick attached, and the root must contain no tooltip Reactive.
         val rows  = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val spec  = Chart(rows)(bar(x = _.month, y = _.revenue))
-        val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root  = (spec).lower
         val rects = rectsIn(root)
         assert(rects.size == 2, s"Expected 2 rects but got ${rects.size}")
         // Each mark rect must have Absent onHover and Absent onClick: no spurious handler wiring.
@@ -313,7 +313,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
             spec = Chart(rows)(line(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
-            root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root  = (spec).lower
             paths = pathsIn(root)
             _     = assert(paths.nonEmpty, s"Expected at least one Svg.Path from line mark but got none")
             // The line path should carry a click handler (INV-023).
@@ -334,7 +334,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
             spec = Chart(rows)(area(x = _.month, y = _.revenue))
                 .onHover(hoverRef)
-            root     = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root     = (spec).lower
             paths    = pathsIn(root)
             _        = assert(paths.nonEmpty, s"Expected at least one Svg.Path from area mark but got none")
             areaPath = paths.toSeq.find(p => p.attrs.onHover.isDefined)
@@ -363,7 +363,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
                 stack = by(_.revenue.toInt.toString)
             ))
                 .onSelect(selectRef)
-            root             = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root             = (spec).lower
             paths            = pathsIn(root)
             interactivePaths = paths.toSeq.filter(p => p.attrs.onClick.isDefined)
             // 4 distinct revenue values -> 4 stack groups -> one interactive path per group segment.
@@ -381,7 +381,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
             spec = Chart(rows)(line(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
-            root             = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root             = (spec).lower
             paths            = pathsIn(root)
             interactivePaths = paths.toSeq.filter(p => p.attrs.onClick.isDefined)
         yield assert(
@@ -414,7 +414,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             spec = Chart(rows)(bar(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             // Before any selection: the ref is Absent, so no bar carries the highlight stroke.
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
@@ -449,7 +449,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             spec = Chart(rows)(bar(x = _.month, y = _.revenue))
                 .onHover(hoverRef)
                 .interaction(_.hoverStyle(Style.bg(Style.Color.purple)))
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             // Before hover: the custom fill is absent (the bar uses the default palette blue).
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
@@ -470,7 +470,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
         val rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
             .interaction(_.highlightSelect) // highlight configured, but no onSelect ref
-        val root      = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+        val root      = (spec).lower
         val rects     = rectsIn(root)
         val withClick = rects.toSeq.filter(r => r.attrs.onClick.isDefined)
         assert(rects.size == 2, s"Expected 2 rects but got ${rects.size}")
@@ -493,7 +493,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             spec = Chart(rows)(bar(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             // The highlight is realized as a Reactive region inside the marks group (no internal cell:
             // no tooltip is configured, so the ONLY reactive here is the highlight, and it is driven by
             // the user's selectRef directly).
@@ -535,7 +535,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             hidden <- Signal.initRef(Set.empty[String])
             spec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
                 .legend(_.interactive(hidden))
-            root = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](spec)
+            root = (spec).lower
             // The first swatch corresponds to catA (enum/encounter order). Its onClick toggles "catA".
             swatches = legendSwatches(root)
             _        = assert(swatches.size == 2, s"Expected 2 legend swatches but got ${swatches.size}")
@@ -564,8 +564,8 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             hidden <- Signal.initRef(Set("catA"))
             specFull = Chart(rowsFull)(bar(x = _.x, y = _.y, color = _.cat)).legend(_.interactive(none))
             specHid  = Chart(rowsFull)(bar(x = _.x, y = _.y, color = _.cat)).legend(_.interactive(hidden))
-            rootFull = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](specFull)
-            rootHid  = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](specHid)
+            rootFull = (specFull).lower
+            rootHid  = (specHid).lower
             html <- HtmlRenderer.render(rootHid, Seq.empty)
         yield
             val fullBars = markBars(rootFull)
@@ -594,7 +594,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             hidden <- Signal.initRef(Set("catB"))
             spec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
                 .legend(_.interactive(hidden))
-            root = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](spec)
+            root = (spec).lower
         yield
             // Visible marks are catA and catC. With catB filtered BEFORE color-splitting, the visible set is
             // {catA, catC}: catA -> palette(0)=blue, catC -> palette(1)=orange. (Not catC -> palette(2)=green,
@@ -625,7 +625,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             hidden <- Signal.initRef(Set("catA", "catB"))
             spec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
                 .legend(_.interactive(hidden))
-            root = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](spec)
+            root = (spec).lower
             html <- HtmlRenderer.render(root, Seq.empty)
         yield
             // No mark rects (all series hidden): only the 12x12 legend swatches remain among rects.
@@ -657,7 +657,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             spec = Chart(rows)(line(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
                 !htmlBefore.contains("stroke=\"#000000\""),
@@ -689,7 +689,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
                 .yScale(_.linear(0, 2000))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
                 !htmlBefore.contains("stroke=\"#000000\""),
@@ -721,7 +721,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
                 .yScale(_.linear(0, 2000))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
                 !htmlBefore.contains("stroke=\"#000000\""),
@@ -756,7 +756,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
                 .yScale(_.linear(0, 3000))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[Chart.Spec[EB], Svg.Root]](spec)
+            root = (spec).lower
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
                 !htmlBefore.contains("stroke=\"#000000\""),
@@ -795,7 +795,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             signal = Signal.initConst[Seq[Sale]](rows)
             spec = Chart(signal: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             html <- HtmlRenderer.render(root, Seq.empty)
         yield assert(
             html.contains("data-kyo-ev") && html.contains("click"),
@@ -814,7 +814,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             spec = Chart(signal: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
                 !htmlBefore.contains("stroke=\"#000000\""),
@@ -838,7 +838,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             signal = Signal.initConst[Seq[Sale]](rows)
             spec = Chart(signal: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             html <- HtmlRenderer.render(root, Seq.empty)
         yield assert(
             html.contains("data-kyo-ev") && html.contains("click"),
@@ -855,7 +855,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             spec = Chart(signal: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
                 !htmlBefore.contains("stroke=\"#000000\""),
@@ -879,7 +879,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             signal = Signal.initConst[Seq[Sale]](rows)
             spec = Chart(signal: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             html <- HtmlRenderer.render(root, Seq.empty)
         yield assert(
             html.contains("data-kyo-ev") && html.contains("click"),
@@ -897,7 +897,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
                 .yScale(_.linear(0, 2000))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
-            root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
+            root = (spec).lower
             htmlBefore <- HtmlRenderer.render(root, Seq.empty)
             _ = assert(
                 !htmlBefore.contains("stroke=\"#000000\""),

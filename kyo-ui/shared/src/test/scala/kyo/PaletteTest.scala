@@ -48,8 +48,8 @@ class PaletteTest extends kyo.test.Test[Any]:
         val defaultSpec = Chart(rows)(point(x = _.x, y = _.y))
         val okabeSpec   = Chart(rows)(point(x = _.x, y = _.y)).theme(_.palette(Palette.Okabe))
 
-        val defaultFill = firstFill(summon[Conversion[Chart.Spec[Row], Svg.Root]](defaultSpec))
-        val okabeFill   = firstFill(summon[Conversion[Chart.Spec[Row], Svg.Root]](okabeSpec))
+        val defaultFill = firstFill((defaultSpec).lower)
+        val okabeFill   = firstFill((okabeSpec).lower)
 
         // Default palette mark 0 is blue; Okabe mark 0 is black. They must differ, and Okabe must win.
         assert(defaultFill == Palette.colors(Palette.Default)(0), s"Default fill should be Default(0) but got $defaultFill")
