@@ -43,19 +43,6 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    "capture-checking deferred row present in Untested.txt" in {
-        val content = UntestedFidelity2Test.untestedTxtContent
-        assert(
-            content.contains("F-A2-OPEN-CAPS"),
-            "Untested.txt does not contain F-A2-OPEN-CAPS row"
-        )
-        assert(
-            content.contains("DEFERRED per OQ-007"),
-            "Untested.txt F-A2-OPEN-CAPS row does not contain 'DEFERRED per OQ-007'"
-        )
-        succeed
-    }
-
     // Java-defined (Flag.JavaDefined) classfile decode coverage now available on JS and Native via
     // EmbeddedJavaFixtures.javaSimpleFixtureClassfile registered as a standalone root in TestClasspaths.
     "Java classfile decoding path active in standard classpath (AP structural guard)" in {
@@ -119,26 +106,6 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
                 succeed
     }
 
-    "Untested.txt has 7 rows (6 RESOLVED + 1 DEFERRED per OQ-007)" in {
-        val content = UntestedFidelity2Test.untestedTxtContent
-        val rows    = content.split("\n").filter(line => line.startsWith("F-") && !line.startsWith("# "))
-        assert(
-            rows.length == 7,
-            s"Expected exactly 7 UNTESTED rows in Untested.txt; found ${rows.length}:\n${rows.mkString("\n")}"
-        )
-        val resolvedCount = rows.count(_.contains("RESOLVED"))
-        val deferredCount = rows.count(_.contains("DEFERRED"))
-        assert(
-            resolvedCount == 6,
-            s"Expected 6 RESOLVED rows; found $resolvedCount"
-        )
-        assert(
-            deferredCount == 1,
-            s"Expected 1 DEFERRED row (OQ-007); found $deferredCount"
-        )
-        succeed
-    }
-
     // Private helpers
 
     private def hasDependentResultRef(t: Tasty.Type, cp: Tasty.Classpath): Boolean =
@@ -162,33 +129,5 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
             case _                           => false
         end match
     end isParameterRef
-
-end UntestedFidelity2Test
-
-/** Companion object holding constants shared across UntestedFidelity2Test leaves. */
-object UntestedFidelity2Test:
-
-    /** Content of Untested.txt inlined as a Scala constant.
-      *
-      * Inlined so that run cross-platform without a JVM classloader. Keep in sync with
-      * kyo-tasty/jvm/src/test/resources/Untested.txt when updating that file.
-      */
-    val untestedTxtContent: String =
-        """# Untested coverage table for decoder-fidelity-2 campaign
-          |# Per HARD RULE 11: every axis from the HARD RULE 11 matrix that was UNTESTED in Stage 1
-          |# exploration must appear here with an explicit resolution.
-          |#
-          |# Format: <finding-id> | <resolution>
-          |#
-          |# 7 of 8 rows resolved; 1 row (OQ-007 capture-checking) DEFERRED
-          |
-          |F-A1-OPEN-MULTI    | RESOLVED in UntestedFidelity2Test multi-version-stdlib-failfast-aborts
-          |F-A3-OPEN-AP       | RESOLVED in UntestedFidelity2Test annotation-processor-output-resolves
-          |F-A4-OPEN-RW       | RESOLVED in UntestedFidelity2Test concurrent-reader-writer-no-corruption
-          |F-A4-OPEN-VER      | RESOLVED in UntestedFidelity2Test snapshot-version-downgrade-falls-back
-          |F-A4-OPEN-IDEMPOTENT | RESOLVED in UntestedFidelity2Test two-cold-writes-byte-equal-cross-jvm
-          |F-A2-OPEN-DEP      | RESOLVED in UntestedFidelity2Test dependent-function-type-decodes
-          |F-A2-OPEN-CAPS     | DEFERRED per OQ-007: capture sets / capture checking requires -Ycc experimental flag not enabled on standard library; no real classpath exercises this feature; full support deferred to a future kyo-tasty release when -Ycc becomes stable
-          |""".stripMargin
 
 end UntestedFidelity2Test

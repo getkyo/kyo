@@ -4,7 +4,7 @@ import java.nio.file.Files
 import java.nio.file.Paths
 import kyo.*
 
-/** Standalone cold-load profiling harness for kyo-tasty (W11).
+/** Standalone cold-load profiling harness for kyo-tasty.
   *
   * Opens the kyo-bench compiled TASTy directory via Tasty.Classpath.open, runs 5 warmup + 10 measurement iterations, and prints median/p95
   * to stdout. Designed to be run with async-profiler attached via -agentpath.
@@ -80,12 +80,12 @@ object ColdLoadProfile:
             .sum()
         val totalMB = totalBytes.toDouble / (1024 * 1024)
 
-        java.lang.System.out.println("=== ColdLoadProfile — W11 kyo-bench cold-load ===")
+        java.lang.System.out.println("=== ColdLoadProfile: kyo-bench cold-load ===")
         java.lang.System.out.println(s"Root: $root")
         java.lang.System.out.println(f"Files: $tastyFiles TASTy + $classFiles classfiles, ${totalMB}%.2f MB")
         java.lang.System.out.println()
 
-        val times = bench("W11 cold-load kyo-bench (enumerate top-level classes)", warmupIter, measureIter):
+        val times = bench("cold-load kyo-bench (enumerate top-level classes)", warmupIter, measureIter):
             val _ = runSync:
                 Tasty.withClasspath(Seq(root)):
                     Tasty.classpath.map(_.topLevelClasses.size)
@@ -94,7 +94,7 @@ object ColdLoadProfile:
 
         // Also run snapshot-write timing
         val tmpDir = Files.createTempDirectory("kyo-tasty-profile").toString
-        val snapshotTimes = bench("W11b cold-load kyo-bench + snapshot write", warmupIter, measureIter):
+        val snapshotTimes = bench("cold-load kyo-bench + snapshot write", warmupIter, measureIter):
             val _ = runSync:
                 Tasty.withClasspath(Seq(root), Maybe.Present(tmpDir)):
                     Tasty.classpath.map(_.topLevelClasses.size)
@@ -102,10 +102,10 @@ object ColdLoadProfile:
         java.lang.System.out.println()
         java.lang.System.out.println("=== Summary ===")
         java.lang.System.out.println(
-            f"W11  median=${times(measureIter / 2) / 1_000_000.0}%.2f ms  p95=${times((measureIter * 95 / 100).min(measureIter - 1)) / 1_000_000.0}%.2f ms"
+            f"cold-load           median=${times(measureIter / 2) / 1_000_000.0}%.2f ms  p95=${times((measureIter * 95 / 100).min(measureIter - 1)) / 1_000_000.0}%.2f ms"
         )
         java.lang.System.out.println(
-            f"W11b median=${snapshotTimes(measureIter / 2) / 1_000_000.0}%.2f ms  p95=${snapshotTimes((measureIter * 95 / 100).min(measureIter - 1)) / 1_000_000.0}%.2f ms"
+            f"cold-load+snapshot  median=${snapshotTimes(measureIter / 2) / 1_000_000.0}%.2f ms  p95=${snapshotTimes((measureIter * 95 / 100).min(measureIter - 1)) / 1_000_000.0}%.2f ms"
         )
         java.lang.System.out.println("=== done ===")
     end main

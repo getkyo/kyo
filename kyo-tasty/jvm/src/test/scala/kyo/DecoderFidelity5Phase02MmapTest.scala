@@ -108,7 +108,7 @@ class DecoderFidelity5Phase02MmapTest extends kyo.test.Test[Any]:
             )
     end syntheticCp
 
-    "P02.6 post-Scope decodeBody on mmap-loaded snapshot returns MalformedSection (body bytes not available)" in {
+    "6 post-Scope decodeBody on mmap-loaded snapshot returns MalformedSection (body bytes not available)" in {
         val fixtureSrc = MemSrc()
         fixtureSrc.add("root/Animal.tasty", kyo.fixtures.Embedded.animalTasty)
         fixtureSrc.add("root/Dog.tasty", kyo.fixtures.Embedded.dogTasty)
@@ -172,7 +172,7 @@ class DecoderFidelity5Phase02MmapTest extends kyo.test.Test[Any]:
                                 fail(s"Unexpected panic from post-Scope decodeBody: ${t.getMessage}")
     }
 
-    "P02.7 (mmap): subclassIndex and companionIndex populated on mmap warm load" in {
+    "7 (mmap): subclassIndex and companionIndex populated on mmap warm load" in {
         val digest  = Array[Byte](0x02, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
         val tmpDir  = java.io.File.createTempFile("kyo-df5-p02-mmap", "").getAbsolutePath
         val _       = new java.io.File(tmpDir).delete()

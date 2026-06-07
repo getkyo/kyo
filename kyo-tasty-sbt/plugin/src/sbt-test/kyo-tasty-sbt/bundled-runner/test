@@ -1,5 +1,5 @@
-# Leaf 1: bundled runner extracted on first invocation; task green.
-# Leaf 2: second invocation is idempotent; same runner.jar reused.
+# Verifies that the bundled runner is extracted on first invocation and reused
+# (idempotent) on the second.
 > compile
 > tastySnapshot
 > checkRunnerExtracted

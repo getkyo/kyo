@@ -11,8 +11,6 @@ import java.lang.annotation.ElementType;
  * Provides: RUNTIME-retained annotation, CLASS-retained annotation, SOURCE-retained
  * annotation (excluded from .class), a public field, a static method, and an inner class.
  * Used to exercise the Java decoder and annotation retention paths on JS/Native.
- *
- * Pins: F-A1-OPEN (Java decoder coverage), F-A3-OPEN-AP (annotation retention).
  */
 public class JavaSimpleFixture {
 

@@ -114,7 +114,7 @@ class MembersTest extends kyo.test.Test[Any]:
                 end match
     }
 
-    "SOURCE BREAK - findDeclaredMember is absent from Symbol" in {
+    "findDeclaredMember is absent from Symbol (compile-time check)" in {
         val __tcErrors1 = compiletime.testing.typeCheckErrors(
             "(null: kyo.Tasty.Symbol).findDeclaredMember(\"a\")"
         ).length

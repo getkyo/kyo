@@ -4,7 +4,7 @@ import java.nio.file.Files
 import java.nio.file.Paths
 import kyo.*
 
-/** Cold-load profiling harness — FULL kyo-bench classpath (121 jars + kyo-bench classes directory).
+/** Cold-load profiling harness for the FULL kyo-bench classpath (121 jars + kyo-bench classes directory).
   *
   * Reads the classpath from /tmp/kyo-bench-cp.txt (produced by: sbt 'show kyo-bench/fullClasspath' 2>&1 | grep -oE '/[^ ]*\.jar' | sort -u
   * > /tmp/kyo-bench-cp.txt ) and adds the kyo-bench compiled-classes directory as an additional root.
@@ -135,7 +135,7 @@ object ColdLoadFullBench:
 
         val totalMB = totalBytes.toDouble / (1024 * 1024)
 
-        java.lang.System.out.println("=== ColdLoadFullBench — FULL kyo-bench classpath ===")
+        java.lang.System.out.println("=== ColdLoadFullBench: FULL kyo-bench classpath ===")
         java.lang.System.out.println(s"Jars: ${jarPaths.size()}")
         java.lang.System.out.println(s"  + kyo-bench classes dir: $classesDir")
         java.lang.System.out.println(s"Total roots: ${allRoots.size}")
@@ -143,8 +143,8 @@ object ColdLoadFullBench:
         java.lang.System.out.println()
 
         // --- Uninstrumented baseline ---
-        java.lang.System.out.println("=== W11-full: cold-load full classpath (no snapshot) ===")
-        val times = bench("W11-full cold-load (full classpath)", warmupIter, measureIter):
+        java.lang.System.out.println("=== full: cold-load full classpath (no snapshot) ===")
+        val times = bench("full cold-load (full classpath)", warmupIter, measureIter):
             val _ = runSync:
                 Tasty.withClasspath(allRoots):
                     Tasty.classpath.map(_.topLevelClasses.size)
@@ -152,9 +152,9 @@ object ColdLoadFullBench:
         java.lang.System.out.println()
 
         // --- Snapshot path ---
-        java.lang.System.out.println("=== W11b-full: cold-load full classpath + snapshot cache ===")
+        java.lang.System.out.println("=== full+snapshot: cold-load full classpath + snapshot cache ===")
         val tmpDir = Files.createTempDirectory("kyo-tasty-full-profile").toString
-        val snapshotTimes = bench("W11b-full cold-load + snapshot (full classpath)", warmupIter, measureIter):
+        val snapshotTimes = bench("full+snapshot cold-load + snapshot (full classpath)", warmupIter, measureIter):
             val _ = runSync:
                 Tasty.withClasspath(allRoots, Maybe.Present(tmpDir)):
                     Tasty.classpath.map(_.topLevelClasses.size)
@@ -162,10 +162,10 @@ object ColdLoadFullBench:
         java.lang.System.out.println()
         java.lang.System.out.println("=== Summary ===")
         java.lang.System.out.println(
-            f"W11-full  median=${times(measureIter / 2) / 1_000_000.0}%.2f ms  p95=${times((measureIter * 95 / 100).min(measureIter - 1)) / 1_000_000.0}%.2f ms"
+            f"full  median=${times(measureIter / 2) / 1_000_000.0}%.2f ms  p95=${times((measureIter * 95 / 100).min(measureIter - 1)) / 1_000_000.0}%.2f ms"
         )
         java.lang.System.out.println(
-            f"W11b-full median=${snapshotTimes(measureIter / 2) / 1_000_000.0}%.2f ms  p95=${snapshotTimes((measureIter * 95 / 100).min(measureIter - 1)) / 1_000_000.0}%.2f ms"
+            f"full+snapshot median=${snapshotTimes(measureIter / 2) / 1_000_000.0}%.2f ms  p95=${snapshotTimes((measureIter * 95 / 100).min(measureIter - 1)) / 1_000_000.0}%.2f ms"
         )
         java.lang.System.out.println("=== done ===")
 

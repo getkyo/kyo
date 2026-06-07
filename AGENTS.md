@@ -6,7 +6,7 @@ This file helps AI coding agents work effectively on the Kyo codebase. Read [CON
 
 **Only complete and correct solutions are acceptable.**
 
-This is non-negotiable. It applies to every change at every scope ; a one-line fix, a refactor across a module, a campaign that touches three modules. The framework is the same:
+This is non-negotiable. It applies to every change at every scope ; a one-line fix, a refactor across a module, a multi-module change that touches several at once. The framework is the same:
 
 1. **Identify the correct fix.** Diagnose root cause. The correct fix is the one a reviewer with full context would call right. It is not the cheapest fix; it is not the fix that fits a time budget; it is not the smaller-scope alternative offered as a "pragmatic choice."
 
@@ -28,7 +28,7 @@ The phrase **"this is good enough for now"** has no place in a kyo change. Eithe
 
 ### The "pending issue" / "known issue" stop-pattern is banned
 
-If a campaign goal is "X works end-to-end" and validation surfaces multiple bugs, fixing 4 of 5 and writing the 5th up as a "known issue requiring deeper investigation" does NOT meet the goal. The campaign is half-done. The 5th bug IS the work.
+If the goal is "X works end-to-end" and validation surfaces multiple bugs, fixing 4 of 5 and writing the 5th up as a "known issue requiring deeper investigation" does NOT meet the goal. The work is half-done. The 5th bug IS the work.
 
 Forbidden phrasings, structurally — when you catch yourself drafting one, treat it as a flag that you are about to commit the anti-pattern:
 
@@ -41,7 +41,7 @@ Forbidden phrasings, structurally — when you catch yourself drafting one, trea
 
 Re-scope instead: the unfixed bug is the next concrete task. Pick the fix path, execute it. Validation isn't done when the diagnostic writeup is comprehensive; it is done when the demonstrable end-state is true (host connects, tool calls succeed, response shape matches the spec, …).
 
-The only legitimate stops within an in-flight campaign are:
+The only legitimate stops within in-flight work are:
 
 1. The user explicitly says stop / pivot / park.
 2. The next step requires a destructive or scope-affecting action that policy requires confirmation for (push, force-reset, schema-breaking change with downstream impact).
@@ -92,7 +92,7 @@ How to work on Kyo, not just what the code looks like. CONTRIBUTING.md carries t
 
 When you find a problem, it is yours to resolve, whether or not you caused it. A failing test, a compiler warning, a broken link, a flaky result, a latent bug noticed in passing: own it.
 
-- **"Pre-existing", "unrelated", "not my change", "flaky", and "out of scope" are not dismissals.** During any campaign (a CI-greening pass, a refactor, an audit, a test run), every red signal gets owned. A failure you did not introduce is still a failure you found, and walking past it ships it to the next person.
+- **"Pre-existing", "unrelated", "not my change", "flaky", and "out of scope" are not dismissals.** During any pass (a CI-greening pass, a refactor, an audit, a test run), every red signal gets owned. A failure you did not introduce is still a failure you found, and walking past it ships it to the next person.
 - **Compaction may have erased the context that proves an issue is yours.** When a long task is summarized to fit the context window, you can lose the memory that you introduced a failure, deleted the symbol it depends on, or already accepted ownership of it. So a gut feeling that something is "pre-existing", "not mine", "already broken", or "out of scope" is untrustworthy: it is far more often just missing context than a real fact. Never use those labels to walk past an issue. Treat every issue you observe as yours to fix. If you genuinely believe an issue predates your work, the bar is evidence (a clean reproduction on the base commit or `origin/main`), never memory or assumption.
 - **Route what genuinely crosses a boundary; never drop it.** If an issue belongs to another module or concern and truly cannot be fixed in place, surface it explicitly: call it out in your summary, leave a tracked note, or hand it off. Silently skipping it is the exact failure mode this rule exists to prevent.
 - **No deferral to a phase that never comes.** Fix issues in the current step or the immediately-next one. "Handle it later" and "cleanup phase" reliably resolve to "never"; deferred issues compound.

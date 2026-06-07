@@ -1,4 +1,4 @@
-# BLOCKER-1 idempotence: second extraction skips write when hash matches.
+# Verifies extractor idempotence: the second extraction skips the write when the hash matches.
 # First pass: extract runner.jar and record its mtime.
 > compile
 > recordRunnerMtime

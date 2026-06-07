@@ -30,9 +30,8 @@ object KyoTastyPlugin extends AutoPlugin {
 
     object autoImport {
 
-        /** Directory where the `.krfl` snapshot file was previously written.
-          * Retained for backward compatibility. After Phase 14 the snapshot is written to
-          * `(Compile / resourceManaged).value / META-INF / kyo-tasty / snapshot.krfl`.
+        /** Directory where the `.krfl` snapshot file was previously written. Retained for backward compatibility; the snapshot is now
+          * written to `(Compile / resourceManaged).value / META-INF / kyo-tasty / snapshot.krfl`.
           */
         val tastySnapshotDir: SettingKey[File] = settingKey[File](
             "Snapshot staging directory (retained for backward compat; snapshot now goes to resourceManaged)."
@@ -45,22 +44,19 @@ object KyoTastyPlugin extends AutoPlugin {
             "Generate a kyo-tasty snapshot of the project's compile classpath."
         )
 
-        /** Classpath entries (JARs and directories) for the forked SnapshotRunner JVM.
-          * Defaults to the bundled runner JAR extracted from the plugin classpath
-          * (item 23 / Q-026 / BIND-017). Override with `Seq.empty` to disable; the task
-          * then fails with a message directing users to either remove the override or supply
-          * a runner JAR.
+        /** Classpath entries (JARs and directories) for the forked SnapshotRunner JVM. Defaults to the bundled runner JAR extracted from
+          * the plugin classpath. Override with `Seq.empty` to disable; the task then fails with a message directing users to either remove
+          * the override or supply a runner JAR.
           */
         val tastyRunnerClasspath: SettingKey[Seq[File]] = settingKey[Seq[File]](
-            "Runner classpath; defaults to bundled runner JAR (item 23 / Q-026 BIND-017)."
+            "Runner classpath; defaults to bundled runner JAR."
         )
 
-        /** Toggle the auto-hook into `Compile / resourceGenerators` (item 24 / Q-011 RI-002).
-          * When true (default), `sbt package` automatically includes `META-INF/kyo-tasty/snapshot.krfl`
-          * in the output JAR. Set to false to opt out.
+        /** Toggle the auto-hook into `Compile / resourceGenerators`. When true (default), `sbt package` automatically includes
+          * `META-INF/kyo-tasty/snapshot.krfl` in the output JAR. Set to false to opt out.
           */
         val tastySnapshotEnabled: SettingKey[Boolean] = settingKey[Boolean](
-            "Toggle the auto-hook into Compile / resourceGenerators (item 24 / Q-011 RI-002). Defaults to true."
+            "Toggle the auto-hook into Compile / resourceGenerators. Defaults to true."
         )
     }
 
@@ -127,8 +123,8 @@ object KyoTastyPlugin extends AutoPlugin {
             // itself when tastySnapshotEnabled := true. dependencyClasspath excludes
             // resourceGenerators output and breaks the cycle.
             // Append classDirectory to restore the project's own compiled classes which
-            // dependencyClasspath omits (BLOCKER-2 / A11 fix): classDirectory does NOT
-            // depend on resourceGenerators, so it does not re-introduce the cycle.
+            // dependencyClasspath omits. classDirectory does NOT depend on resourceGenerators,
+            // so it does not re-introduce the cycle.
             val depRoots  = (Compile / dependencyClasspath).value.map(_.data.getAbsolutePath)
             val classDir  = (Compile / classDirectory).value.getAbsolutePath
             val roots     = depRoots :+ classDir
@@ -159,9 +155,8 @@ object KyoTastyPlugin extends AutoPlugin {
         }
     )
 
-    /** Fork the SnapshotRunner JVM. Passes the compile-classpath roots and a staging
-      * directory. After the fork completes, copies the produced `.krfl` file to the
-      * fixed `out` path (item 23 staging-then-rename approach, Decision 1).
+    /** Fork the SnapshotRunner JVM. Passes the compile-classpath roots and a staging directory. After the fork completes, copies the
+      * produced `.krfl` file to the fixed `out` path (staging-then-rename to give the consumer an atomic single-file view).
       */
     private def forkRunnerAndWrite(
         rc: Seq[File],

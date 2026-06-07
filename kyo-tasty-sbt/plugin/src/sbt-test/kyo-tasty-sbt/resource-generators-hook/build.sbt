@@ -11,9 +11,8 @@ def jarEntryExists(jarFile: java.io.File, entryName: String): Boolean = {
 }
 
 // tastySnapshotEnabled := true is the default; no explicit setting needed.
-// This fixture verifies that:
-//   Leaf 4: package emits META-INF/kyo-tasty/snapshot.krfl when enabled (default)
-//   Leaf 6: second package run short-circuits (FileFunction.cached)
+// This fixture verifies that `sbt package` emits META-INF/kyo-tasty/snapshot.krfl when
+// enabled, and that a second package run short-circuits via FileFunction.cached.
 lazy val root = (project in file("."))
     .enablePlugins(KyoTastyPlugin)
     .settings(

@@ -129,7 +129,7 @@ class TastyErrorRoundTripTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // minor version bumped to 12 (handoff-fixes campaign: PLISTS__ section).
+    // minor version bumped to 12 (added the PLISTS__ section).
     "minor version is 12 in freshly written snapshot" in {
         val snapshotBytes = snapshotBytesWithErrors(Chunk.empty)
         val minor         = snapshotBytes(5) & 0xff
@@ -185,7 +185,7 @@ class TastyErrorRoundTripTest extends kyo.test.Test[Any]:
             Tasty.Name("x"),
             Tasty.Type.Any
         )
-        val err    = TastyError.UnhandledSubtypingCase("Refinement", refinementType, Tasty.Type.Any, "W2.tasty")
+        val err    = TastyError.UnhandledSubtypingCase("Refinement", refinementType, Tasty.Type.Any, "sample.tasty")
         val errors = Chunk[TastyError](err)
 
         val snapshotBytes = snapshotBytesWithErrors(errors)
@@ -203,7 +203,7 @@ class TastyErrorRoundTripTest extends kyo.test.Test[Any]:
                 loaded(0) match
                     case TastyError.UnhandledSubtypingCase(shape, lhs, rhs, file) =>
                         assert(shape == "Refinement", s"shape mismatch: expected 'Refinement', got '$shape'")
-                        assert(file == "W2.tasty", s"file mismatch: expected 'W2.tasty', got '$file'")
+                        assert(file == "sample.tasty", s"file mismatch: expected 'sample.tasty', got '$file'")
                         // lhs (Refinement) goes through tag-255; reader falls back to Type.Nothing.
                         assert(
                             lhs == Tasty.Type.Nothing,

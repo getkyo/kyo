@@ -14,10 +14,10 @@ import kyo.internal.tasty.symbol.SymbolKind
 import scala.collection.mutable
 import scala.jdk.CollectionConverters.*
 
-/** Benchmark harness for kyo-tasty (DESIGN.md Section 20, G18).
+/** Benchmark harness for kyo-tasty.
   *
-  * Runs six workloads from DESIGN.md Section 20 against the fixture TASTy files. Each workload is measured with System.nanoTime, 5 warm-up
-  * iterations then 10 measurement iterations. Median and p95 are printed per workload.
+  * Runs nine workloads against the fixture TASTy files. Each workload is measured with System.nanoTime, 5 warm-up iterations then 10
+  * measurement iterations. Median and p95 are printed per workload.
   *
   * Fixture TASTy files are discovered at runtime by scanning all classpath entries from the JVM classloader for entries under kyo/fixtures
   * directory (suffix .tasty). This avoids any dependency on test-scope embedded byte arrays.
@@ -200,7 +200,7 @@ object TastyBench:
         val warmupIter  = 5
         val measureIter = 10
 
-        java.lang.System.out.println("=== kyo-tasty benchmark harness (DESIGN.md Section 20) ===")
+        java.lang.System.out.println("=== kyo-tasty benchmark harness ===")
         java.lang.System.out.println()
 
         val fixtureSrc = buildFixtureSource()
@@ -215,7 +215,7 @@ object TastyBench:
         java.lang.System.out.println()
 
         // Workload 1: cold-load fixture files, enumerate all top-level classes.
-        bench("W1 cold-load enumerate top-level classes", warmupIter, measureIter):
+        bench("cold-load enumerate top-level classes", warmupIter, measureIter):
             val _ = runSync:
                 Scope.run:
                     openClasspath(fixtureSrc).map: cp =>
@@ -224,7 +224,7 @@ object TastyBench:
         java.lang.System.out.println()
 
         // Workload 2: cold-load with snapshot cache miss (write snapshot on each run).
-        bench("W2 cold-load snapshot cache miss + write", warmupIter, measureIter):
+        bench("cold-load snapshot cache miss + write", warmupIter, measureIter):
             val _ = runSync:
                 val cacheSrc = new MemoryFileSource()
                 Scope.run:
@@ -239,7 +239,7 @@ object TastyBench:
                 Scope.run:
                     writeSnapshot(fixtureSrc, snapshotCacheSrc)
 
-        bench("W3 warm-load snapshot cache hit (heap read)", warmupIter, measureIter):
+        bench("warm-load snapshot cache hit (heap read)", warmupIter, measureIter):
             val _ = runSync:
                 Scope.run:
                     SnapshotReader.read(snapshotPath, snapshotCacheSrc).map(_.topLevelClasses.size)
@@ -259,7 +259,7 @@ object TastyBench:
             "kyo.fixtures.BaseClass"
         )
 
-        // Open a warm classpath that stays live across W4, W5, W8, W9, W10.
+        // Open a warm classpath that stays live across the remaining workloads.
         val warmCp: Tasty.Classpath =
             runSync:
                 Scope.run:
@@ -267,7 +267,7 @@ object TastyBench:
 
         given Tasty.Classpath = warmCp
 
-        bench("W4 per-FQN lookup warm cache", warmupIter, measureIter):
+        bench("per-FQN lookup warm cache", warmupIter, measureIter):
             var hits = 0
             for fqn <- fqnsToLookup do
                 warmCp.findClass(fqn) match
@@ -279,7 +279,7 @@ object TastyBench:
         java.lang.System.out.println()
 
         // Workload 5: declarations enumeration on a class with declared members.
-        bench("W5 declarations enumeration (PlainClass)", warmupIter, measureIter):
+        bench("declarations enumeration (PlainClass)", warmupIter, measureIter):
             val count = warmCp.findClass("kyo.fixtures.PlainClass") match
                 case Present(sym) => sym.declarationIds.flatMap(id => warmCp.symbol(id).toChunk).size
                 case Absent       => 0
@@ -288,7 +288,7 @@ object TastyBench:
         java.lang.System.out.println()
 
         // Workload 8: plain iteration over all top-level classes and their declarations.
-        bench("W8 plain iteration (pure accessor for-comp)", warmupIter, measureIter):
+        bench("plain iteration (pure accessor for-comp)", warmupIter, measureIter):
             val tops  = warmCp.topLevelClasses
             var total = 0
             for cls <- tops do
@@ -302,7 +302,7 @@ object TastyBench:
 
         // Workload 9: hover-shaped query (pure, sub-ms target).
         // Walk topLevelClasses, find the first Method symbol, return name + scaladoc + kind string.
-        bench("W9 hover-shaped query (pure accessors)", warmupIter, measureIter):
+        bench("hover-shaped query (pure accessors)", warmupIter, measureIter):
             val tops   = warmCp.topLevelClasses
             var result = ""
             var found  = false
@@ -323,7 +323,7 @@ object TastyBench:
         // Workload 10: find-references-shaped query.
         // For target name "apply", walk all Method symbols, decode each body, count tree nodes that
         // reference that name via Apply/Select/Ident. Uses Kyo.foreach to iterate body decodes.
-        bench("W10 find-references-shaped (body decode + tree walk)", warmupIter, measureIter):
+        bench("find-references-shaped (body decode + tree walk)", warmupIter, measureIter):
             val targetName = "apply"
             val total = runSync:
                 Tasty.withClasspath(warmCp):

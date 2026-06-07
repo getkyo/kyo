@@ -510,7 +510,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    "sym.typeParamIds for GenericBox[A] returns length 1 (phase-02 inline)" in {
+    "sym.typeParamIds for GenericBox[A] returns length 1" in {
         val src = MemoryFileSource()
         src.add("root/GenericBox.tasty", kyo.fixtures.Embedded.genericBoxTasty)
         Scope.run:

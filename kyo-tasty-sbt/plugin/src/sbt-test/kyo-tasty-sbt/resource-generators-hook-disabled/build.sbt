@@ -10,8 +10,8 @@ def jarEntryExists(jarFile: java.io.File, entryName: String): Boolean = {
     finally zf.close()
 }
 
-// Leaf 5: tastySnapshotEnabled := false opts out of the auto-hook.
-// resourceGenerators is populated at load time; false here means snapshot task is NOT appended.
+// tastySnapshotEnabled := false opts out of the auto-hook. resourceGenerators is populated
+// at load time; false here means the snapshot task is NOT appended.
 lazy val root = (project in file("."))
     .enablePlugins(KyoTastyPlugin)
     .settings(

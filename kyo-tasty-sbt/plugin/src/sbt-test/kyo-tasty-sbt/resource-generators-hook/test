@@ -1,5 +1,5 @@
-# Leaf 4: sbt package with tastySnapshotEnabled := true (default) emits META-INF/kyo-tasty/snapshot.krfl.
-# Leaf 6: second run short-circuits (FileFunction.cached).
+# sbt package with tastySnapshotEnabled := true (default) emits the snapshot entry. The
+# second run short-circuits via FileFunction.cached.
 > compile
 > checkJarContainsSnapshot
 # Second run: FileFunction.cached skips the fork; task still succeeds.

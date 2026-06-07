@@ -39,7 +39,7 @@ lazy val root = (project in file("."))
             if (current != recorded)
                 sys.error(
                     s"runner.jar mtime changed: recorded=$recorded current=$current " +
-                        s"(file was overwritten on second extraction - BLOCKER-1 not fixed)"
+                        s"(file was overwritten on second extraction; idempotence guard failed)"
                 )
             println(s"assertRunnerMtimeUnchanged OK: mtime=$current (unchanged after reload)")
         }

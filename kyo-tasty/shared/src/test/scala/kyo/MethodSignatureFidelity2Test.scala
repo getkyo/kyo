@@ -93,7 +93,7 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    "Phase-2.10 (HARD RULE 11): cp.allMethods.headOption.declaredType.show is non-empty on all platforms" in {
+    "cp.allMethods.headOption.declaredType.show is non-empty on all platforms" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             Tasty.withClasspath(cp):
                 cp.allMethods.headOption match

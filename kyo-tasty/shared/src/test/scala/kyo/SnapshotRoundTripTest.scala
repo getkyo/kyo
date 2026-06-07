@@ -812,7 +812,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                                     assert(ctx.bodyMemo.size() == 0, "bodyMemo must remain empty (no decode attempted)")
             ).map:
                 case Result.Success(r) => r
-                case Result.Failure(e) => fail(s"Unexpected failure in Leaf 4: $e")
+                case Result.Failure(e) => fail(s"Unexpected failure: $e")
                 case Result.Panic(t)   => throw t
     }
 

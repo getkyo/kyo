@@ -1,21 +1,15 @@
 package kyo.fixtures
 
-/** Phase 08 plan leaves 1-2: EmbeddedJavaFixtures byte integrity tests.
-  *
-  * Verifies that the embedded JavaSimpleFixture classfile bytes are non-empty and carry the
-  * classfile magic 0xCAFEBABE. Cross-platform: runs on JVM, JS, and Native.
-  *
-  * Pins: item 3 / F-A1-OPEN / F-A3-OPEN-AP.
+/** EmbeddedJavaFixtures byte integrity tests: the embedded JavaSimpleFixture classfile bytes are non-empty and carry the classfile magic
+  * 0xCAFEBABE. Runs on JVM, JS, and Native.
   */
 class EmbeddedJavaFixturesTest extends kyo.test.Test[Any]:
 
-    // Leaf 1: bytes are non-empty
     "javaSimpleFixtureClassfile is non-empty" in {
         val bytes = EmbeddedJavaFixtures.javaSimpleFixtureClassfile
         assert(bytes.length >= 100, s"classfile bytes must be non-empty (>= 100 bytes); got ${bytes.length}")
     }
 
-    // Leaf 2: bytes carry classfile magic 0xCAFEBABE
     "javaSimpleFixtureClassfile carries classfile magic 0xCAFEBABE" in {
         val bytes = EmbeddedJavaFixtures.javaSimpleFixtureClassfile
         assert(bytes.length >= 4, "classfile must be at least 4 bytes long")

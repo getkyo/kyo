@@ -131,7 +131,7 @@ class DecoderFidelity5Phase02Test extends kyo.test.Test[Any]:
                 (coldCp, warmCp)
     end roundTrip
 
-    "P02.1 subclassIndex populated on warm load matches cold load" in {
+    "1 subclassIndex populated on warm load matches cold load" in {
         Abort.run[TastyError]:
             syntheticCp.flatMap: cold =>
                 roundTrip(cold, 0x01).map: (cold, warm) =>
@@ -162,7 +162,7 @@ class DecoderFidelity5Phase02Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    "P02.2 companionIndex populated on warm load matches cold load" in {
+    "2 companionIndex populated on warm load matches cold load" in {
         Abort.run[TastyError]:
             syntheticCp.flatMap: cold =>
                 roundTrip(cold, 0x02).map: (cold, warm) =>
@@ -195,7 +195,7 @@ class DecoderFidelity5Phase02Test extends kyo.test.Test[Any]:
 
     // Symbol equality is id.value-based; two independent cold loads produce equal Symbols
     // and they serve as equivalent HashMap keys cross-classpath.
-    "P02.3: Symbol equality is id.value-based; two cold loads of same input produce equal Symbols" in {
+    "3: Symbol equality is id.value-based; two cold loads of same input produce equal Symbols" in {
         Scope.run:
             Abort.run[TastyError]:
                 // Load cp1
@@ -248,7 +248,7 @@ class DecoderFidelity5Phase02Test extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    "P02.4 cp.copy produces structurally equal classpath (bodyMemo moved to DecodeContext)" in {
+    "4 cp.copy produces structurally equal classpath (bodyMemo moved to DecodeContext)" in {
         Scope.run:
             Abort.run[TastyError]:
                 val src = MemSrc()
@@ -270,7 +270,7 @@ class DecoderFidelity5Phase02Test extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    "P02.5 transitive subclassesOf parity between cold and warm load" in {
+    "5 transitive subclassesOf parity between cold and warm load" in {
         Abort.run[TastyError]:
             syntheticCp.flatMap: cold =>
                 roundTrip(cold, 0x05).map: (cold, warm) =>

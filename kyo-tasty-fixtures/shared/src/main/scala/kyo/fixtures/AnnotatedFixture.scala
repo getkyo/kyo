@@ -5,7 +5,7 @@ import scala.annotation.tailrec
 /** Fixture classes for cross-platform annotation fidelity testing.
   *
   * Provides symbols with @deprecated, @tailrec, and custom annotations so that AnnotationFidelityTest can run on JS/Native without the real
-  * stdlib classpath. Added as part of Phase 2.12 corrective to ungate embedded-fixture-compatible leaves.
+  * stdlib classpath.
   */
 
 @deprecated("Use AnnotatedFixtureNew instead", "1.0")

@@ -2,9 +2,9 @@ ThisBuild / scalaVersion := "3.8.3"
 
 /** Assert the snapshot file contains the FQN of a class defined in the project's own sources.
   *
-  * BLOCKER-2 guard: tastySnapshot must include (Compile / classDirectory) so the runner indexes
-  * the project's own compiled classes, not only dependency JARs. Without the fix, MyProjectClass
-  * is absent from the snapshot even though it is compiled by the same project.
+  * tastySnapshot must include (Compile / classDirectory) so the runner indexes the project's own
+  * compiled classes, not only dependency JARs. Without that, MyProjectClass is absent from the
+  * snapshot even though it is compiled by the same project.
   *
   * Verification strategy: the KRFL NAMES section stores every string (including FQNs) as raw
   * UTF-8 bytes. Scanning the snapshot binary for the literal UTF-8 encoding of "MyProjectClass"
@@ -47,7 +47,7 @@ lazy val root = (project in file("."))
             if (!containsBytes(bytes, fqnUtf8))
                 sys.error(
                     s"Snapshot at ${snapshotFile.getAbsolutePath} does not contain '$fqn'. " +
-                        "classDirectory was not included in the snapshot scope (BLOCKER-2 not fixed)."
+                        "classDirectory was not included in the snapshot scope."
                 )
             println(s"checkProjectClassInSnapshot OK: '$fqn' found in ${snapshotFile.getName} (${bytes.length} bytes)")
         }

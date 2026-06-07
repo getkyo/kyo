@@ -2,16 +2,13 @@ package kyo.fixtures
 
 /** Cross-platform aggregator for the Java fixture classfile bytes.
   *
-  * The outer class bytes are compiled from `JavaSimpleFixture.java` (jvm/src/main/java, JVM-only dev-tool step per INV-006
-  * exception), then embedded here as a raw Array[Byte] for consumption by MemoryFileSource on JS and Native. On those platforms
+  * The outer class bytes are compiled from `JavaSimpleFixture.java` (jvm/src/main/java, the only JVM-only step in the fixture
+  * pipeline), then embedded here as a raw Array[Byte] for consumption by MemoryFileSource on JS and Native. On those platforms
   * there is no javac step; the embedded bytes are the sole source of Java-flagged symbols in the test classpath.
   *
   * Usage in TestClasspaths (JS/Native): add `"kyo/fixtures/JavaSimpleFixture.class"` as a standalone root alongside `"root"`.
-  * The `walkRoot` branch in ClasspathOrchestrator (line 338) discovers standalone `.class` roots; `classfilePathToFqn` yields
-  * `"kyo.fixtures.JavaSimpleFixture"`. See F-A1-OPEN, F-A3-OPEN-AP.
-  *
-  * INV-006 exception: `JavaSimpleFixture.java` is in `jvm/src/main/java/` (JVM-only). The bytes embedded here are the
-  * cross-platform delivery mechanism. Scaladoc: 8-35 lines.
+  * The `walkRoot` branch in ClasspathOrchestrator discovers standalone `.class` roots; `classfilePathToFqn` yields
+  * `"kyo.fixtures.JavaSimpleFixture"`.
   */
 object EmbeddedJavaFixtures:
 
