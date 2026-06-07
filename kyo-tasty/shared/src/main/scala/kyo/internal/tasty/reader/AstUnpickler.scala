@@ -344,6 +344,19 @@ object AstUnpickler:
                     bodyDataByAddr(sym.id.toLong) = (Math.toIntExact(payloadBody), Math.toIntExact(payloadEnd))
                     addrMap(nodeAddr) = sym
                     allSymbols += sym
+                    // Pre-scan the DEFDEF payload to record parameter-list boundaries. Dotty emits PARAM
+                    // nodes partitioned by EMPTYCLAUSE / SPLITCLAUSE markers; the partition shape encodes
+                    // the source-order parameter-list grouping. This pass records each PARAM node's absolute
+                    // byte address (nodeAddr). After walkStats assigns real symbol ids to those nodes via
+                    // addrMap, the addresses are resolved to symbol ids below.
+                    // Carrier decision: nodeAddr-keyed partition stored temporarily in sym.paramListIds as
+                    // a Chunk[Chunk[Int]] of raw addresses. The addrMap post-resolution step (after
+                    // walkStats) replaces each address with the assigned symbol id in a single pass.
+                    // This avoids mutating paramListIds during the PARAM arm walk and keeps the per-DEFDEF
+                    // logic entirely local to this arm. Runs single-fibered inside the existing AllowUnsafe
+                    // scope; no new INV-009 site needed.
+                    val partitionScan   = view.subView(payloadBody, payloadEnd)
+                    val paramAddrGroups = recordParamListPartitions(partitionScan, payloadEnd)
                     // Recurse into DEFDEF body to discover type params and value params.
                     // Use a forked sub-view of the payload body.
                     val innerView = view.subView(payloadBody, payloadEnd)
@@ -374,6 +387,18 @@ object AstUnpickler:
                     discard(ownerStack.removeLast())
                     discard(typeSession.ownerStack.removeLast())
                     discard(typeSession.ownerAddrStack.removeLast())
+                    // Resolve the pre-scanned PARAM nodeAddrs to symbol ids via addrMap. Each address was
+                    // recorded before walkStats; now addrMap has been populated by the PARAM arms inside
+                    // walkStats so each address resolves to the assigned LoadingSymbol.Materialising.
+                    // Type params do not appear in paramAddrGroups (they were skipped by
+                    // recordParamListPartitions), so no TypeParam ids enter paramListIds.
+                    if paramAddrGroups.nonEmpty then
+                        sym.paramListIds = paramAddrGroups.map: inner =>
+                            inner.flatMap: addr =>
+                                addrMap.get(addr) match
+                                    case Some(paramSym) => Chunk(paramSym.id)
+                                    case None           => Chunk.empty
+                    end if
                     if defAnns.nonEmpty then
                         val defAnnBuf = annotationsBySymbol.getOrElseUpdate(sym.id.toLong, new mutable.ArrayBuffer[Tasty.Annotation]())
                         defAnnBuf ++= defAnns
@@ -684,6 +709,70 @@ object AstUnpickler:
         catch
             case ex: Exception => Absent
     end readDefDefReturnType
+
+    /** Pre-scan a DEFDEF payload to record parameter-list partition boundaries.
+      *
+      * DEFDEF payload layout (per dotty TASTy emission): TYPEPARAM* (PARAM | EMPTYCLAUSE | SPLITCLAUSE)* returnType RHS?.
+      *
+      * TYPEPARAM children belong to typeParamIds (handled separately) and are skipped here. Each PARAM node's absolute
+      * byte address is appended to the current inner group. EMPTYCLAUSE or SPLITCLAUSE closes the current inner group and
+      * opens a new one. Scanning stops when any tag other than TYPEPARAM, PARAM, EMPTYCLAUSE, or SPLITCLAUSE is seen (the
+      * returnType or RHS region begins there).
+      *
+      * The returned Chunk[Chunk[Int]] contains absolute byte addresses (nodeAddrs) for each PARAM node, grouped by parameter
+      * list. The caller resolves these addresses to symbol ids via addrMap after walkStats populates it.
+      *
+      * Shape contract:
+      *   - No parameter lists at all (e.g. `def name: T`): Chunk.empty
+      *   - One empty clause `def foo(): T`: Chunk(Chunk.empty) with the empty inner from the EMPTYCLAUSE marker
+      *   - Multi-clause `def curry(a: Int)(b: Int)`: Chunk(Chunk(addrA), Chunk(addrB))
+      *
+      * Does not mutate addrMap, allSymbols, or any shared accumulator; reads tag bytes only.
+      */
+    private def recordParamListPartitions(
+        scanView: ByteView,
+        payloadEnd: Long
+    )(using AllowUnsafe): Chunk[Chunk[Int]] =
+        val outer      = new mutable.ArrayBuffer[Chunk[Int]]()
+        var inner      = new mutable.ArrayBuffer[Int]()
+        var inParamRgn = false
+        var done       = false
+        while !done && scanView.position < payloadEnd do
+            val tag = scanView.peekByte(scanView.position) & 0xff
+            tag match
+                case TastyFormat.TYPEPARAM =>
+                    // Skip; type params go into typeParamIds, not paramListIds.
+                    discard(scanView.readByte())
+                    val nodeEnd = scanView.readEnd()
+                    scanView.goto(nodeEnd)
+                case TastyFormat.PARAM =>
+                    val nodeAddr = scanView.positionInt
+                    inner += nodeAddr
+                    inParamRgn = true
+                    discard(scanView.readByte()) // consume PARAM tag
+                    val nodeEnd = scanView.readEnd()
+                    scanView.goto(nodeEnd)
+                case TastyFormat.EMPTYCLAUSE | TastyFormat.SPLITCLAUSE =>
+                    // Close the current inner group and open a new one.
+                    outer += Chunk.from(inner.toSeq)
+                    inner = new mutable.ArrayBuffer[Int]()
+                    inParamRgn = true
+                    discard(scanView.readByte()) // consume the single-byte marker (no length payload)
+                case _ =>
+                    // returnType or RHS reached; parameter-list region ends.
+                    done = true
+            end match
+        end while
+        // If we saw any param region content (PARAMs or clause markers), commit the final inner group
+        // (it covers the trailing params after the last SPLITCLAUSE, or the entire single-clause case
+        // where no SPLITCLAUSE was ever emitted).
+        if inParamRgn then
+            outer += Chunk.from(inner.toSeq)
+            Chunk.from(outer.toSeq)
+        else
+            Chunk.empty
+        end if
+    end recordParamListPartitions
 
     /** Scan the TEMPLATE body sub-view for parent_Type entries and call readTypeIntoSession on each.
       *

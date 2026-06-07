@@ -888,6 +888,24 @@ object ClasspathOrchestrator:
                         }
                     end for
 
+                    // Copy the Pass-1 parameter-list partition from each Method loading symbol into its
+                    // descriptor. The carrier is LoadingSymbol.Materialising.paramListIds (Chunk[Chunk[Int]])
+                    // populated by AstUnpickler.recordParamListPartitions (nodeAddr -> sym.id resolution in
+                    // the DEFDEF arm). Apply the same symbolIdMap.getOrElse(_, -1).filter(_ >= 0) mapping
+                    // used for typeParamIds / declarationIds. Parameters continue to appear in declarationIds
+                    // as well; the two views overlap intentionally (INV-H1 / Pass C contract).
+                    for fr <- fileResults do
+                        for sym <- fr.symbolsInOrder do
+                            if sym.kind == SymbolKind.Method && sym.paramListIds.nonEmpty then
+                                val idx = symbolIdMap.getOrElse(sym.id.toLong, -1)
+                                if idx >= 0 && idx < count then
+                                    descs(idx).paramListIds = sym.paramListIds.map: inner =>
+                                        inner.map(id => symbolIdMap.getOrElse(id.toLong, -1)).filter(_ >= 0)
+                                end if
+                            end if
+                        end for
+                    end for
+
                     var frIdx3 = 0
                     for fr <- fileResults do
                         val frRemap3 = fileRemaps(frIdx3)
@@ -1623,32 +1641,82 @@ object ClasspathOrchestrator:
         Dict.from(b.iterator.map((pid, buf) => pid -> Chunk.from(buf.toSeq)).toMap)
     end buildSubclassIndex
 
-    /** Build companionIndex: for each Class, look up its Object companion (FQN + "$") and vice versa. */
+    /** Build companionIndex: for each Class, look up its Object companion (FQN + "$") and vice versa.
+      *
+      * For OpaqueType symbols, the companion Object may be registered under a mangled FQN (e.g.
+      * `kyo.fixtures.FixtureClasses$package$.Meters$`) whose canonical source FQN (after Rule 1
+      * `$package$.` strip) is `kyo.fixtures.Meters`. There is NO `kyo.fixtures.Meters$` entry in
+      * fqnIndex; the simple `fqn + "$"` lookup would return Absent.
+      *
+      * The fix: build a secondary map from `canonicalSourceFqn(fqn)` -> SymbolId for all fqnIndex
+      * entries whose raw FQN ends with "$". For OpaqueType, look up `opaqueTypeFqn + "$"` (where
+      * `opaqueTypeFqn` is the OpaqueType's registered FQN, e.g. "kyo.fixtures.Meters") in this map.
+      * The entry for the companion Object is found via its canonical form.
+      *
+      * For Class / Trait / EnumCase / Object, the existing direct `fqn + "$"` / `fqn.dropRight(1)`
+      * lookup continues to work because TASTy-decoded Objects are always registered at the canonical
+      * FQN with the "$" suffix and fqnIndex has a direct entry.
+      */
     private def buildCompanionIndex(
         symbols: Chunk[Tasty.Symbol],
         fqnIndex: Dict[String, SymbolId]
     )(using AllowUnsafe): Dict[SymbolId, SymbolId] =
-        val b = DictBuilder.init[SymbolId, SymbolId]
-        // We need symbol FQNs. Build a quick index: SymbolId.value -> FQN from fqnIndex inverse.
+        val b       = DictBuilder.init[SymbolId, SymbolId]
         val idToFqn = new java.util.HashMap[Int, String](fqnIndex.size * 2)
-        fqnIndex.foreach((fqn, sid) => discard(idToFqn.put(sid.value, fqn)))
+        // For OpaqueType: map from `canonicalSourceFqn(fqn-with-dollar) + "$"` -> Int (sid.value).
+        // This covers companion Objects registered under mangled FQNs that Rule 1 normalizes
+        // to the OpaqueType's FQN. The key stored is `opaqueTypeFqn + "$"` (the lookup key).
+        // Uses Integer (boxed) so java.util.HashMap.get returns null for missing entries.
+        val canonDollarToSidValue = new java.util.HashMap[String, Integer](fqnIndex.size * 2)
+        fqnIndex.foreach: (fqn, sid) =>
+            discard(idToFqn.put(sid.value, fqn))
+            if fqn.endsWith("$") then
+                val canon = kyo.internal.tasty.symbol.FqnNormalizer.canonicalSourceFqn(fqn)
+                // canon is the OpaqueType's FQN (after stripping $package$. and trailing $).
+                // Store as "canonFqn + $" so OpaqueType can look up via its own fqn + "$".
+                if canon.nonEmpty && !canonDollarToSidValue.containsKey(canon + "$") then
+                    discard(canonDollarToSidValue.put(canon + "$", java.lang.Integer.valueOf(sid.value)))
+            end if
         var i = 0
         while i < symbols.length do
             val s   = symbols(i)
             val fqn = idToFqn.get(s.id.value)
             if fqn != null then
-                val companionFqn =
-                    if s.kind == SymbolKind.Class || s.kind == SymbolKind.Trait
-                        || s.kind == SymbolKind.EnumCase
-                    then
-                        fqn + "$"
-                    else if s.kind == SymbolKind.Object then
-                        if fqn.endsWith("$") then fqn.dropRight(1) else fqn
-                    else null
-                if companionFqn != null then
-                    fqnIndex.get(companionFqn) match
-                        case Maybe.Present(cid) => discard(b.add(s.id, cid))
-                        case Maybe.Absent       => ()
+                if s.kind == SymbolKind.OpaqueType then
+                    // For OpaqueType, normalize the fqn to its canonical form then look up the
+                    // companion via two approaches:
+                    // 1. Direct fqnIndex lookup: canonFqn + "$" (preferred; finds TASTy-decoded Objects
+                    //    registered at the canonical key, e.g. "kyo.Maybe$" -> Symbol.Object(Maybe)).
+                    // 2. Canonical-map fallback: for OpaqueTypes whose companion is only reachable via
+                    //    a mangled FQN (e.g. "kyo.fixtures.FixtureClasses$package$.Meters$" -> Meters
+                    //    companion), the direct lookup returns Absent and we fall back to
+                    //    canonDollarToSidValue which maps canonical_key -> SymbolId.
+                    val canonFqn    = kyo.internal.tasty.symbol.FqnNormalizer.canonicalSourceFqn(fqn)
+                    val directKey   = if canonFqn.nonEmpty then canonFqn + "$" else fqn + "$"
+                    val directMatch = fqnIndex.get(directKey)
+                    directMatch match
+                        case Maybe.Present(cid) =>
+                            // Direct match: TASTy-decoded companion at canonical "X$" key.
+                            discard(b.add(s.id, cid))
+                        case Maybe.Absent =>
+                            // Fallback: canonical-map lookup for mangled-FQN companions.
+                            val cidBoxed = canonDollarToSidValue.get(directKey)
+                            if cidBoxed != null then discard(b.add(s.id, SymbolId(cidBoxed.intValue())))
+                    end match
+                else
+                    val companionFqn =
+                        if s.kind == SymbolKind.Class || s.kind == SymbolKind.Trait
+                            || s.kind == SymbolKind.EnumCase
+                        then
+                            fqn + "$"
+                        else if s.kind == SymbolKind.Object then
+                            if fqn.endsWith("$") then fqn.dropRight(1) else fqn
+                        else null
+                    if companionFqn != null then
+                        fqnIndex.get(companionFqn) match
+                            case Maybe.Present(cid) => discard(b.add(s.id, cid))
+                            case Maybe.Absent       => ()
+                    end if
                 end if
             end if
             i += 1
