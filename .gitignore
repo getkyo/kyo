@@ -18,9 +18,6 @@ jmh-result.json
 test-output
 .DS_Store
 .jvmopts
-
-# Local /flow campaign workspaces (steering, prep, audit, reports).
-# Not source. Generated per-campaign; ignored everywhere.
 kyo-tasty/api-cleanup/
 kyo-tasty/api-usability/
 kyo-tasty/cross-platform-parity/
