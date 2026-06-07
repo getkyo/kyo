@@ -9,13 +9,14 @@ import kyo.internal.TestClasspaths2
 class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
 
     "allSymbols.count(isGiven) ~= 570 on standard classpath" in {
-        TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
+        TestClasspaths.withClasspath()(Tasty.classpath).map { cp =>
             val count = cp.symbols.count(_.isGiven)
             assert(
                 count >= 555 && count <= 585,
                 s"Expected ~570 given instances on standard classpath; found $count"
             )
             succeed
+        }
     }
 
     "two concurrent cold-init writers to same cacheDir produce one .krfl file" in {
@@ -24,7 +25,7 @@ class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
         Async.zip(
             Tasty.withClasspath(roots, Maybe.Present(cacheDir))(Tasty.classpath),
             Tasty.withClasspath(roots, Maybe.Present(cacheDir))(Tasty.classpath)
-        ).map: (cp1, cp2) =>
+        ).map { (cp1, cp2) =>
             val krflFiles = TestClasspaths2.listFilesWithSuffix(cacheDir, ".krfl")
             assert(
                 krflFiles.length == 1,
@@ -39,37 +40,45 @@ class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
                 s"Expected > 0 symbols after concurrent cold-init; got ${cp1.symbols.size}"
             )
             succeed
+        }
     }
 
     "standard 81,569-symbol classpath cold-init median < 5,000 ms" in {
         val roots = TestClasspaths2.standardRoots
-        def timedLoad: Long < (Async & Abort[TastyError]) =
-            val start = java.lang.System.nanoTime()
-            TestClasspaths.withClasspath(roots)(Tasty.classpath).map: cp =>
-                val elapsed = (java.lang.System.nanoTime() - start) / 1_000_000L
-                assert(cp.symbols.size >= 81000, s"Expected >= 81,000 symbols; got ${cp.symbols.size}")
-                elapsed
+        def timedLoad: Duration < (Async & Abort[TastyError]) =
+            Clock.nowMonotonic.map { start =>
+                TestClasspaths.withClasspath(roots)(Tasty.classpath).map { cp =>
+                    Clock.nowMonotonic.map { end =>
+                        assert(cp.symbols.size >= 81000, s"Expected >= 81,000 symbols; got ${cp.symbols.size}")
+                        end - start
+                    }
+                }
+            }
         end timedLoad
-        timedLoad.flatMap: t1 =>
-            timedLoad.flatMap: t2 =>
-                timedLoad.map: t3 =>
-                    val times  = Array(t1, t2, t3).sorted
+        timedLoad.map { t1 =>
+            timedLoad.map { t2 =>
+                timedLoad.map { t3 =>
+                    val times  = Chunk(t1, t2, t3).sortBy(_.toMillis)
                     val median = times(1)
                     assert(
-                        median < 5000,
-                        s"Expected cold-init median < 5,000 ms on standard classpath; got ${median} ms (runs: ${t1}, ${t2}, ${t3})"
+                        median < 5.seconds,
+                        s"Expected cold-init median < 5 seconds on standard classpath; got ${median.toMillis} ms (runs: ${t1.toMillis}, ${t2.toMillis}, ${t3.toMillis})"
                     )
                     succeed
+                }
+            }
+        }
     }
 
     "JPMS module count == 69 on platform-modules classpath" in {
-        TestClasspaths2.standardWithPlatformModules.map: cp =>
+        TestClasspaths2.standardWithPlatformModules.map { cp =>
             val count = cp.indices.modulesIndex.size
             assert(
                 count == 69,
                 s"Expected exactly 69 JPMS modules; got $count"
             )
             succeed
+        }
     }
 
 end StandardClasspathFidelityTest

@@ -14,34 +14,39 @@ import kyo.internal.tasty.query.PlatformFileSource
 class MultiVersionAndConcurrencyTest extends kyo.test.Test[Any]:
 
     "multi-version stdlib FailFast init aborts with FqnCollisionError" in {
-        val multiRoots  = TestClasspaths2.multiVersionStdlibRoots
-        val src         = PlatformFileSource.get
-        val concurrency = java.lang.Runtime.getRuntime.availableProcessors().max(1)
-        Scope.run(Abort.run[TastyError](
-            ClasspathOrchestrator.init(multiRoots, Tasty.ErrorMode.FailFast, src, concurrency)
-        )).map: result =>
-            result match
-                case Result.Failure(_: TastyError.FqnCollisionError) =>
-                    succeed
-                case Result.Success(_) =>
-                    fail(
-                        "Expected Abort.fail(FqnCollisionError) when loading two roots with same-FQN symbols under FailFast; init succeeded silently"
-                    )
-                case Result.Failure(other) =>
-                    fail(s"Expected FqnCollisionError; got different TastyError: $other")
-                case Result.Panic(t) =>
-                    fail(s"Unexpected panic: $t")
+        val multiRoots = TestClasspaths2.multiVersionStdlibRoots
+        val src        = PlatformFileSource.get
+        System.availableProcessors.map { concurrency =>
+            Scope.run(Abort.run[TastyError](
+                ClasspathOrchestrator.init(multiRoots, Tasty.ErrorMode.FailFast, src, concurrency)
+            )).map { result =>
+                result match
+                    case Result.Failure(_: TastyError.FqnCollisionError) =>
+                        succeed
+                    case Result.Success(_) =>
+                        fail(
+                            "Expected Abort.fail(FqnCollisionError) when loading two roots with same-FQN symbols under FailFast; init succeeded silently"
+                        )
+                    case Result.Failure(other) =>
+                        fail(s"Expected FqnCollisionError; got different TastyError: $other")
+                    case Result.Panic(t) =>
+                        fail(s"Unexpected panic: $t")
+            }
+        }
     }
 
     "concurrent snapshot reader+writer: reader sees pre- or post-write, not corrupt" in {
         val digest = Array[Byte](0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57)
-        TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
-            Sync.defer:
+        TestClasspaths.withClasspath()(Tasty.classpath).map { cp =>
+            Sync.defer {
                 TestClasspaths2.createTempDir("kyo-df2-rw-test")
-            .flatMap: tmpDir =>
-                TestClasspaths2.runConcurrentReaderWriterTest(cp, digest, tmpDir).map: ok =>
+            }.map { tmpDir =>
+                TestClasspaths2.runConcurrentReaderWriterTest(cp, digest, tmpDir).map { ok =>
                     assert(ok, "Panic during concurrent reader+writer test")
                     succeed
+                }
+            }
+        }
     }
 
 end MultiVersionAndConcurrencyTest
