@@ -633,14 +633,10 @@ final private[kyo] class HttpClientBackend[Handle] private (
             // Compute host header
             val isDefaultPort   = if url.ssl then url.port == 443 else url.port == 80
             val hostHeaderValue = if isDefaultPort || url.host.isEmpty then url.host else s"${url.host}:${url.port}"
-            // Build path with query string
-            val path = url.rawQuery match
-                case Present(q) => s"${url.path}?$q"
-                case Absent     => url.path
             // Send the HTTP request
             val responsePromise = http1.sendDirect(
                 method,
-                path,
+                url.pathWithQuery,
                 headers,
                 body,
                 hostHeaderValue,
@@ -707,9 +703,6 @@ final private[kyo] class HttpClientBackend[Handle] private (
         f: HttpWebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
         val transportStream = new ConnectionBackedStream(connection)
-        val path = url.rawQuery match
-            case Present(q) => s"${url.path}?$q"
-            case Absent     => url.path
         Sync.ensure {
             Sync.Unsafe.defer {
                 connection.close()
@@ -717,32 +710,55 @@ final private[kyo] class HttpClientBackend[Handle] private (
         } {
             val filter = HttpFilter.Factory.composedClient.andThen(clientFilter)
             if filter.eq(HttpFilter.noop) then
-                WebSocketCodec.requestUpgradeWith(transportStream, url.host, path, headers, config) { wsStream =>
+                WebSocketCodec.requestUpgradeWith(transportStream, url.host, url.pathWithQuery, headers, config) { wsStream =>
                     serveWebSocketWith(transportStream, wsStream, config)(f)
                 }
             else
                 val request = HttpRequest(HttpMethod.GET, url, headers, Record.empty)
-                filter[Any, "body" ~ A, HttpException](
-                    request,
-                    (filteredReq: HttpRequest[Any]) =>
-                        val filteredPath = filteredReq.url.rawQuery match
-                            case Present(q) => s"${filteredReq.url.path}?$q"
-                            case Absent     => filteredReq.url.path
-                        WebSocketCodec.requestUpgradeWith(
-                            transportStream,
-                            filteredReq.url.host,
-                            filteredPath,
-                            filteredReq.headers,
-                            config
-                        ) { wsStream =>
-                            serveWebSocketWith(transportStream, wsStream, config)(f).map { result =>
-                                HttpResponse(HttpStatus.SwitchingProtocols).addField("body", result)
-                            }
-                        }.asInstanceOf[HttpResponse["body" ~ A] < (Async & Abort[HttpException | HttpResponse.Halt])]
-                ).map(_.fields.body).asInstanceOf[A < (S & Async & Abort[HttpException])]
+                handleWebSocketFilterResult(
+                    url,
+                    filter[Any, "body" ~ A, HttpException](
+                        request,
+                        (filteredReq: HttpRequest[Any]) =>
+                            eraseWebSocketUserEffects(WebSocketCodec.requestUpgradeWith(
+                                transportStream,
+                                filteredReq.url.host,
+                                filteredReq.url.pathWithQuery,
+                                filteredReq.headers,
+                                config
+                            ) { wsStream =>
+                                serveWebSocketWith(transportStream, wsStream, config)(f).map { result =>
+                                    HttpResponse(HttpStatus.SwitchingProtocols).addField("body", result)
+                                }
+                            })
+                    ).map(_.fields.body)
+                )
             end if
         }
     end runWsSessionWith
+
+    private def eraseWebSocketUserEffects[A, S](
+        v: HttpResponse["body" ~ A] < (S & Async & Abort[HttpException | HttpResponse.Halt])
+    ): HttpResponse["body" ~ A] < (Async & Abort[HttpException | HttpResponse.Halt]) =
+        // HttpFilter continuations model Async and Abort only. WebSocket user code may carry an extra effect row S, but filters only
+        // forward the continuation result, they never inspect or handle S. The enclosing result restores S after the filtered response is
+        // unwrapped.
+        v.asInstanceOf[HttpResponse["body" ~ A] < (Async & Abort[HttpException | HttpResponse.Halt])]
+
+    private def handleWebSocketFilterResult[A, S](
+        url: HttpUrl,
+        v: A < (Async & Abort[HttpException | HttpResponse.Halt])
+    )(using Frame): A < (S & Async & Abort[HttpException]) =
+        val handled = Abort.run[HttpResponse.Halt](v).map {
+            case Result.Success(value) => value
+            case Result.Failure(halt) =>
+                Abort.fail(HttpStatusException(halt.response.status, HttpMethod.GET.name, url.baseUrl, halt.response.rawBody.getOrElse("")))
+            case Result.Panic(t) => throw t
+        }
+        // The filtered result has already handled filter-level Halt. The cast restores the user session effect row S, which was erased
+        // only because HttpFilter continuations cannot express extra effects on the downstream WebSocket session.
+        handled.asInstanceOf[A < (S & Async & Abort[HttpException])]
+    end handleWebSocketFilterResult
 
     /** Three concurrent fibers: read loop, write loop, user handler.
       *
@@ -856,8 +872,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
     def sendWithConfig[In, Out, A](
         route: HttpRoute[In, Out, Any],
         request: HttpRequest[In],
-        config: HttpClientConfig,
-        scopedFilter: HttpFilter.Passthrough[Nothing] = HttpFilter.noop
+        config: HttpClientConfig
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
@@ -865,21 +880,20 @@ final private[kyo] class HttpClientBackend[Handle] private (
             case Present(base) if request.url.scheme.isEmpty =>
                 request.copy(url = HttpUrl(base.scheme, base.host, base.port, request.url.path, request.url.rawQuery))
             case _ => request
-        retryWith(route, resolved, config, scopedFilter)(f)
+        retryWith(route, resolved, config)(f)
     end sendWithConfig
 
     private def retryWith[In, Out, A](
         route: HttpRoute[In, Out, Any],
         request: HttpRequest[In],
-        config: HttpClientConfig,
-        scopedFilter: HttpFilter.Passthrough[Nothing]
+        config: HttpClientConfig
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
         config.retrySchedule match
             case Present(schedule) =>
                 def loop(remaining: Schedule): A < (Async & Abort[HttpException]) =
-                    timeoutWith(route, request, config, scopedFilter) { res =>
+                    timeoutWith(route, request, config) { res =>
                         if !config.retryOn(res.status) then f(res)
                         else
                             Clock.nowWith { now =>
@@ -891,21 +905,20 @@ final private[kyo] class HttpClientBackend[Handle] private (
                     }
                 loop(schedule)
             case Absent =>
-                timeoutWith(route, request, config, scopedFilter)(f)
+                timeoutWith(route, request, config)(f)
     end retryWith
 
     private def timeoutWith[In, Out, A](
         route: HttpRoute[In, Out, Any],
         request: HttpRequest[In],
-        config: HttpClientConfig,
-        scopedFilter: HttpFilter.Passthrough[Nothing]
+        config: HttpClientConfig
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
         // Apply redirect-aware callback wrapping
         if config.followRedirects then
             def loop(req: HttpRequest[In], count: Int, chain: Chunk[String]): A < (Async & Abort[HttpException]) =
-                val inner = poolWith(route, req, config, scopedFilter) { res =>
+                val inner = poolWith(route, req, config) { res =>
                     if !res.status.isRedirect then f(res)
                     else if count >= config.maxRedirects then
                         Abort.fail(HttpRedirectLoopException(count, req.method.name, req.url.baseUrl, chain))
@@ -937,7 +950,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
             end loop
             loop(request, 0, Chunk.empty)
         else
-            val inner = poolWith(route, request, config, scopedFilter)(f)
+            val inner = poolWith(route, request, config)(f)
             if config.timeout == Duration.Infinity then inner
             else
                 Async.timeoutWithError(
@@ -1000,15 +1013,14 @@ final private[kyo] class HttpClientBackend[Handle] private (
     private def poolWith[In, Out, A](
         route: HttpRoute[In, Out, Any],
         request: HttpRequest[In],
-        config: HttpClientConfig,
-        scopedFilter: HttpFilter.Passthrough[Nothing]
+        config: HttpClientConfig
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
         // Client-side filters (e.g. basicAuth, bearerAuth) are Passthrough — they transform the request
         // and forward next's result unchanged.
         // Auto-discovered filters (e.g. W3C trace context from kyo-stats-otlp) are composed first.
-        val clientFilter = HttpFilter.Factory.composedClient.andThen(config.clientFilter).andThen(scopedFilter)
+        val clientFilter = HttpFilter.Factory.composedClient.andThen(config.clientFilter)
         val routeFilter  = route.filter
         if (clientFilter eq HttpFilter.noop) && (routeFilter eq HttpFilter.noop) then
             // Fast path: no filters configured — call impl directly without filter closure

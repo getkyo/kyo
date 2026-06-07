@@ -43,7 +43,7 @@ import kyo.*
   *   `HttpClientConfig` on [[HttpClient.init]].
   * @param clientFilter
   *   Programmatic client filter applied to outgoing HTTP requests and WebSocket upgrade handshakes after ServiceLoader filters and before
-  *   scoped or route filters.
+  *   route filters.
   *
   * @see
   *   [[kyo.HttpClient.withConfig]] Applies this config to a block of code
@@ -87,4 +87,6 @@ case class HttpClientConfig(
         copy(clientFilter = clientFilter.andThen(f))
     def filters(fs: Seq[HttpFilter.Passthrough[Nothing]]): HttpClientConfig =
         copy(clientFilter = fs.foldLeft(clientFilter)(_.andThen(_)))
+    def withoutFilters: HttpClientConfig =
+        copy(clientFilter = HttpFilter.noop)
 end HttpClientConfig

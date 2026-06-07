@@ -132,6 +132,26 @@ class HttpClientTest extends BaseHttpTest:
             assert(!config.clientFilter.eq(HttpFilter.noop))
         }
 
+        "withoutFilters resets clientFilter" in {
+            val config = HttpClientConfig()
+                .filter(HttpFilter.client.addHeader("X-Test", "1"))
+                .withoutFilters
+            assert(config.clientFilter.eq(HttpFilter.noop))
+        }
+
+        "current config and filter can be inspected" in {
+            HttpClient.withConfig(noTimeout.filter(HttpFilter.client.addHeader("X-Test", "1"))) {
+                HttpClient.useConfig { config =>
+                    assert(config.timeout == Duration.Infinity)
+                    assert(!config.clientFilter.eq(HttpFilter.noop))
+                }.andThen {
+                    HttpClient.useFilter { filter =>
+                        assert(!filter.eq(HttpFilter.noop))
+                    }
+                }
+            }
+        }
+
         "negative maxRedirects throws" in {
             interceptThrown[IllegalArgumentException] {
                 HttpClientConfig(maxRedirects = -1)
@@ -1971,6 +1991,38 @@ class HttpClientTest extends BaseHttpTest:
                     }.andThen {
                         HttpClient.getText(target).map { body =>
                             assert(body == "X-Custom=none")
+                        }
+                    }
+                }
+            }
+        }
+
+        "withoutFilters disables nested filters and restores outer scope" - {
+            val route = HttpRoute.getRaw("echo-header-values")
+                .response(_.bodyText)
+            val ep = route.handler { req =>
+                HttpResponse.ok(req.headers.getAll("X-Custom").mkString(","))
+            }
+            runServer(ep) { url =>
+                val target = s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/echo-header-values"
+                HttpClient.withConfig(noTimeout.filter(appendHeader("X-Custom", "from-config"))) {
+                    HttpClient.withFilter(appendHeader("X-Custom", "scoped")) {
+                        HttpClient.withoutFilters {
+                            HttpClient.useFilter { filter =>
+                                assert(filter.eq(HttpFilter.noop))
+                            }.andThen {
+                                HttpClient.getText(target).map { body =>
+                                    assert(body == "")
+                                }
+                            }
+                        }.andThen {
+                            HttpClient.useFilter { filter =>
+                                assert(!filter.eq(HttpFilter.noop))
+                            }.andThen {
+                                HttpClient.getText(target).map { body =>
+                                    assert(body == "from-config,scoped")
+                                }
+                            }
                         }
                     }
                 }

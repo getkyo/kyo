@@ -676,7 +676,7 @@ HttpClient.withConfig(
 ```
 
 ```scala
-// Temporary policy scoped to one computation
+// Temporary policy scoped to one computation, composed into the active HttpClientConfig
 HttpClient.withFilter(HttpFilter.client.addHeader("X-Request-Id", "request-123")) {
     HttpClient.postJson[User]("/users", CreateUser("Alice", "alice@example.com"))
 }
@@ -689,7 +689,10 @@ val route = HttpRoute
     .filter(HttpFilter.client.bearerAuth("secret-token"))
 ```
 
-The client-side composition order is ServiceLoader filters, config filters, scoped filters, then route filters. Built-in client filters:
+Scoped filters are stored in the active `HttpClientConfig`, so they can be inspected with `HttpClient.useConfig` or
+`HttpClient.useFilter`. Use `HttpClient.withoutFilters { ... }` to clear config and scoped client filters in a nested computation.
+
+The client-side composition order is ServiceLoader filters, config filters, then route filters. Built-in client filters:
 `bearerAuth(token)`, `basicAuth(username, password)`, `addHeader(name, value)`, and `logging`.
 
 Client filters also apply to WebSocket HTTP upgrade handshakes, so auth and tracing headers can be configured in the same place for HTTP
