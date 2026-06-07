@@ -1845,14 +1845,7 @@ private[kyo] object ChartLower:
         // cast only restates a subtype relation the type system already permits at the element level.
         val allShapes: Chunk[UI] = marks.zipWithIndex.flatMap: (mark, markIdx) =>
             val markColor = markDefaultColor(theme, markIdx)
-            val ys = mark match
-                case m: Mark.Bar[A, ?, ?]      => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                case m: Mark.Line[A, ?, ?]     => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                case m: Mark.Area[A, ?, ?]     => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                case m: Mark.Point[A, ?, ?]    => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                case m: Mark.Rule[A]           => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                case m: Mark.Text[A, ?, ?]     => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                case m: Mark.ErrorBar[A, ?, ?] => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+            val ys        = if markAxisOf(mark) == Axis.Right then ysR.getOrElse(ysL) else ysL
             mark match
                 case m: Mark.Bar[A, ?, ?] =>
                     spec match
@@ -1866,7 +1859,6 @@ private[kyo] object ChartLower:
                             lowerLine(
                                 rows,
                                 m,
-                                layout,
                                 xs,
                                 ys,
                                 markColor,
@@ -1874,7 +1866,7 @@ private[kyo] object ChartLower:
                                 internalHoverRef,
                                 resolveHighlight(Present(s))
                             ).asInstanceOf[Chunk[UI]]
-                        case Absent => lowerLine(rows, m, layout, xs, ys, markColor).asInstanceOf[Chunk[UI]]
+                        case Absent => lowerLine(rows, m, xs, ys, markColor).asInstanceOf[Chunk[UI]]
                 case m: Mark.Area[A, ?, ?] =>
                     // Thread spec/internalHoverRef into lowerArea so interaction fires for area marks.
                     // Pass resolveHighlight(spec) so the active series path gets the highlight stroke.
@@ -1943,13 +1935,12 @@ private[kyo] object ChartLower:
             case Absent =>
                 mark.color match
                     case Absent =>
-                        lowerBarSimple(rows, mark, layout, xs, ys, defaultColor, spec, internalHoverRef, highlight)
+                        lowerBarSimple(rows, mark, xs, ys, defaultColor, spec, internalHoverRef, highlight)
                     case Present(colorEnc) =>
                         lowerBarGrouped(
                             rows,
                             mark,
                             colorEnc.asInstanceOf[Encoding[A, Any]],
-                            layout,
                             xs,
                             ys,
                             spec,
@@ -1962,7 +1953,6 @@ private[kyo] object ChartLower:
     private def lowerBarSimple[A, X, Y](
         rows: Chunk[A],
         mark: Mark.Bar[A, X, Y],
-        layout: Layout,
         xs: Scale,
         ys: Scale,
         defaultFill: Style.Color,
@@ -1970,10 +1960,10 @@ private[kyo] object ChartLower:
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
         highlight: Maybe[Highlight[A]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
-        // Use ys.apply(0) as the zero-line baseline rather than layout.plotBaseline.
-        // For positive-only data, ensureZero makes 0 the domain minimum so ys.apply(0) ==
-        // layout.plotBaseline (byte-identical). For mixed positive/negative data the zero line
-        // is above the plot bottom; using min/abs below ensures non-negative rect heights.
+        // Use ys.apply(0) as the zero-line baseline. For positive-only data, ensureZero makes 0
+        // the domain minimum so ys.apply(0) == plotBaseline (byte-identical). For mixed
+        // positive/negative data the zero line is above the plot bottom; using min/abs below
+        // ensures non-negative rect heights.
         val baseline = ys.apply(Domain.Continuous(0.0))
         // A bar with no explicit color encoding uses the per-mark default fill (palette color by mark index),
         // not the browser default (black), so it is visible and distinct from other marks in a combo chart.
@@ -2067,7 +2057,6 @@ private[kyo] object ChartLower:
         rows: Chunk[A],
         mark: Mark.Bar[A, X, Y],
         colorEnc: Encoding[A, Any],
-        layout: Layout,
         xs: Scale,
         ys: Scale,
         spec: Maybe[Chart[A]] = Absent,
@@ -2103,8 +2092,7 @@ private[kyo] object ChartLower:
             case Absent =>
                 colorKeys.zipWithIndex.map: (_, i) =>
                     basePalette(i % basePalette.size)
-        // Use ys.apply(0) as the zero-line baseline for the same reason as lowerBarSimple:
-        // positive-only data is byte-identical (ys(0) == plotBaseline), mixed data is correct.
+        // Use ys.apply(0) as the zero-line baseline (same reason as lowerBarSimple).
         val baseline = ys.apply(Domain.Continuous(0.0))
 
         // Degenerate-grouping guard: a `color` encoding only DODGES (subdivides a band into sub-slots) when
@@ -2135,7 +2123,7 @@ private[kyo] object ChartLower:
                 bandColorSets.map: (xKey, catKeySet) =>
                     val indices = colorIdxByKey.collect:
                         case (catKey, idx) if catKeySet.contains(catKey) => idx
-                    xKey -> Chunk.from(indices.toSeq.sorted)
+                    xKey -> Chunk.from(indices).sorted
             else Map.empty[String, Chunk[Int]]
 
         @scala.annotation.tailrec
@@ -2398,7 +2386,6 @@ private[kyo] object ChartLower:
     private def lowerLine[A, X, Y](
         rows: Chunk[A],
         mark: Mark.Line[A, X, Y],
-        layout: Layout,
         xs: Scale,
         ys: Scale,
         defaultColor: Style.Color,
@@ -2411,7 +2398,7 @@ private[kyo] object ChartLower:
                 // No color encoding: single series whose stroke is the per-mark default color (palette by mark index).
                 // Pass spec/internalHoverRef so click/hover handlers are attached to the path.
                 // Tag the series path with the representative row (first row) and wrap via withHighlight.
-                val path   = lowerLineSeries(rows, mark, layout, xs, ys, defaultColor, spec, internalHoverRef)
+                val path   = lowerLineSeries(rows, mark, xs, ys, defaultColor, spec, internalHoverRef)
                 val repRow = rows.headMaybe
                 val tagged: Chunk[(A, Svg.SvgElement)] = repRow match
                     case Present(r) => Chunk((r, path))
@@ -2432,11 +2419,13 @@ private[kyo] object ChartLower:
                 // so cats[idx] aligns with the catKey filter at the same index.
                 val catKeys: Chunk[ChartFoundations.CatKey] =
                     cats.map { case (_, raw) => ChartFoundations.categoryKey(colorEnc.tag, raw) }
+                // Pre-build a single-pass groupBy so each catKey lookup is O(1) rather than O(N).
+                val rowsByKey = ChartFoundations.groupByKey(rows, r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r)))
                 val tagged: Chunk[(A, Svg.SvgElement)] = catKeys.zipWithIndex.flatMap: (catKey, idx) =>
-                    val seriesRows  = rows.filter(r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r)) == catKey)
+                    val seriesRows  = rowsByKey.getOrElse(catKey, Chunk.empty)
                     val strokeColor = palette(idx % palette.size)
                     // Thread interaction into each per-series path.
-                    val path = lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor, spec, internalHoverRef)
+                    val path = lowerLineSeries(seriesRows, mark, xs, ys, strokeColor, spec, internalHoverRef)
                     // The series-representative row is the first row of the series chunk.
                     seriesRows.headMaybe match
                         case Present(r) => Chunk((r, path))
@@ -2499,7 +2488,6 @@ private[kyo] object ChartLower:
     private def lowerLineSeries[A, X, Y](
         rows: Chunk[A],
         mark: Mark.Line[A, X, Y],
-        layout: Layout,
         xs: Scale,
         ys: Scale,
         strokeColor: Style.Color = Style.Color.blue,
@@ -2893,10 +2881,14 @@ private[kyo] object ChartLower:
                                 // by CatKey, so cats[idx] aligns with the catKey filter at the same index.
                                 val catKeys: Chunk[ChartFoundations.CatKey] =
                                     cats.map { case (_, raw) => ChartFoundations.categoryKey(colorEncAny.tag, raw) }
+                                // Pre-build a single-pass groupBy so each catKey lookup is O(1) rather than O(N).
+                                val rowsByKey = ChartFoundations.groupByKey(
+                                    rows,
+                                    r => ChartFoundations.categoryKey(colorEncAny.tag, colorEncAny.accessor(r))
+                                )
                                 val tagged: Chunk[(A, Svg.SvgElement)] = catKeys.zipWithIndex.flatMap: (catKey, idx) =>
-                                    val seriesRows =
-                                        rows.filter(r => ChartFoundations.categoryKey(colorEncAny.tag, colorEncAny.accessor(r)) == catKey)
-                                    val fillColor = palette(idx % palette.size)
+                                    val seriesRows = rowsByKey.getOrElse(catKey, Chunk.empty)
+                                    val fillColor  = palette(idx % palette.size)
                                     buildSimpleAreaPath(seriesRows, mark, layout, xs, ys, fillColor, spec, internalHoverRef) match
                                         case Absent => Chunk.empty
                                         case Present(path) =>
@@ -3686,6 +3678,39 @@ private[kyo] object ChartLower:
         Svg.PathData.commands(d).map(cmd).mkString(" ")
     end renderPathDataStr
 
+    /** Attach a SMIL path-morph animate to `rawPath` when the previous and new paths have the same
+      * command-type signature and animation is enabled; otherwise return `rawPath` unchanged.
+      *
+      * Used by both `lowerLineWithTransitions` and `lowerAreaWithTransitions` to avoid duplicating the
+      * prevSig/newSig comparison and smilAnimatePath call. `animOk` is checked first so callers do not
+      * need to guard the call themselves.
+      */
+    private def morphedPath(
+        rawPath: Svg.Path,
+        fromGeom: Map[TransKey, MarkGeom],
+        transKey: TransKey,
+        newPd: Svg.PathData,
+        animOk: Boolean,
+        durStr: String
+    )(using Frame): Svg.SvgElement =
+        if !animOk then rawPath
+        else
+            Maybe.fromOption(fromGeom.get(transKey)) match
+                case Present(MarkGeom.LinePath(prevPd)) =>
+                    // Compare command-type signatures (ordered ordinals), not just counts.
+                    // M-L-L and M-M-L both have 3 commands but different ordinals: the count
+                    // gate alone would wrongly morph between structurally incompatible paths.
+                    val prevSig = Svg.PathData.commands(prevPd).map(_.ordinal)
+                    val newSig  = Svg.PathData.commands(newPd).map(_.ordinal)
+                    if prevSig == newSig && prevSig.nonEmpty then
+                        val fromD = renderPathDataStr(prevPd)
+                        val toD   = renderPathDataStr(newPd)
+                        rawPath(smilAnimatePath(fromD, toD, durStr))
+                    else rawPath
+                    end if
+                case _ => rawPath
+    end morphedPath
+
     /** Lower a simple bar mark with keyed enter/update SMIL transitions.
       *
       * For each row:
@@ -3702,7 +3727,6 @@ private[kyo] object ChartLower:
     private def lowerBarSimpleWithTransitions[A, X, Y](
         rows: Chunk[A],
         mark: Mark.Bar[A, X, Y],
-        layout: Layout,
         xs: Scale,
         ys: Scale,
         defaultFill: Style.Color,
@@ -3712,8 +3736,7 @@ private[kyo] object ChartLower:
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
         highlight: Maybe[Highlight[A]] = Absent
     )(using Frame): (Chunk[Svg.SvgElement], Map[TransKey, MarkGeom]) =
-        // Use ys.apply(0) as the zero-line baseline for the same reason as lowerBarSimple.
-        // For positive-only data this equals layout.plotBaseline (byte-identical).
+        // Use ys.apply(0) as the zero-line baseline (same reason as lowerBarSimple).
         val baseline = ys.apply(Domain.Continuous(0.0))
         val durStr   = formatDur(spec.animateCfg.duration)
         val animOk   = spec.animateCfg.enabled
@@ -3804,7 +3827,6 @@ private[kyo] object ChartLower:
     private def lowerLineWithTransitions[A, X, Y](
         rows: Chunk[A],
         mark: Mark.Line[A, X, Y],
-        layout: Layout,
         xs: Scale,
         ys: Scale,
         defaultColor: Style.Color,
@@ -3827,7 +3849,7 @@ private[kyo] object ChartLower:
                 // No color encoding: single series. Use TransKey.SingleSeries(markIdx) as a stable key so
                 // it cannot collide with any color-encoding series key.
                 // Pass Present(spec) and internalHoverRef so interaction attrs are attached to the path.
-                val path = lowerLineSeries(rows, mark, layout, xs, ys, defaultColor, Present(spec), internalHoverRef)
+                val path = lowerLineSeries(rows, mark, xs, ys, defaultColor, Present(spec), internalHoverRef)
                 Chunk((path, TransKey.SingleSeries(markIdx), rows.headMaybe))
             case Present(colorEnc) =>
                 // Transitions path, mirrors lowerLine: resolve per-series colors via resolvePalette
@@ -3843,11 +3865,14 @@ private[kyo] object ChartLower:
                     rows,
                     r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r.asInstanceOf[A]))
                 )
+                // Pre-build a single-pass groupBy so each catKey lookup is O(1) rather than O(N).
+                val rowsByKey = ChartFoundations.groupByKey(
+                    rows,
+                    r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r.asInstanceOf[A]))
+                )
                 distinct.zipWithIndex.map:
                     case ((catKey, rep), seriesIdx) =>
-                        val seriesRows = rows.filter(r =>
-                            ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r.asInstanceOf[A])) == catKey
-                        )
+                        val seriesRows = rowsByKey.getOrElse(catKey, Chunk.empty)
                         val strokeColor =
                             if resolved.isEmpty then DefaultPalette(seriesIdx % DefaultPalette.size)
                             else resolved(seriesIdx                           % resolved.size)
@@ -3856,7 +3881,7 @@ private[kyo] object ChartLower:
                         // raw value with its compile-time ConcreteTag.
                         val transKey = TransKey.Series(markIdx, catKey)
                         // Pass Present(spec) and internalHoverRef so interaction attrs are attached.
-                        val path = lowerLineSeries(seriesRows, mark, layout, xs, ys, strokeColor, Present(spec), internalHoverRef)
+                        val path = lowerLineSeries(seriesRows, mark, xs, ys, strokeColor, Present(spec), internalHoverRef)
                         (path, transKey, seriesRows.headMaybe)
         // For each raw path: optionally attach a SMIL animate on `d`, then record the new PathData.
         // Also accumulate (repRow, emittedPath) pairs for withHighlight (mirrors lowerLine's tagged approach).
@@ -3866,33 +3891,9 @@ private[kyo] object ChartLower:
         // stay distinct because TransKey uses CatKey (tag + value), not the display label string.
         val (tagged, updatedGeom) = rawPathsWithKey.foldLeft((Chunk.empty[(A, Svg.SvgElement)], newGeom)):
             case ((accTagged, accGeom), (rawPath, transKey, repRowMaybe)) =>
-                val newPd    = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
-                val newGeom2 = accGeom.updated(transKey, MarkGeom.LinePath(newPd))
-                val emittedPath: Svg.SvgElement =
-                    if !animOk then rawPath
-                    else
-                        Maybe.fromOption(fromGeom.get(transKey)) match
-                            case Present(MarkGeom.LinePath(prevPd)) =>
-                                // Compare command-type signatures (ordered ordinals), not just counts.
-                                // M-L-L and M-M-L both have 3 commands but different ordinals: the count
-                                // gate alone would wrongly morph between structurally incompatible paths
-                                // (e.g. when a gap introduction converts one segment into two, keeping
-                                // the total command count equal while changing the MoveTo/LineTo sequence).
-                                val prevSig = Svg.PathData.commands(prevPd).map(_.ordinal)
-                                val newSig  = Svg.PathData.commands(newPd).map(_.ordinal)
-                                if prevSig == newSig && prevSig.nonEmpty then
-                                    // Type-signature match: identical command-type sequences -> SMIL morph.
-                                    val fromD = renderPathDataStr(prevPd)
-                                    val toD   = renderPathDataStr(newPd)
-                                    rawPath(smilAnimatePath(fromD, toD, durStr))
-                                else
-                                    // Type-signature change (gap introduced, category added/removed, etc.):
-                                    // path snaps, no animate.
-                                    rawPath
-                                end if
-                            case _ =>
-                                // No previous path for this slot (first emission or new series): snap.
-                                rawPath
+                val newPd       = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
+                val newGeom2    = accGeom.updated(transKey, MarkGeom.LinePath(newPd))
+                val emittedPath = morphedPath(rawPath, fromGeom, transKey, newPd, animOk, durStr)
                 val nextTagged = repRowMaybe match
                     case Present(r) => accTagged.append((r, emittedPath))
                     case Absent     => accTagged
@@ -3961,8 +3962,10 @@ private[kyo] object ChartLower:
                     val catKeys: Chunk[ChartFoundations.CatKey] =
                         cats.map { case (_, raw) => ChartFoundations.categoryKey(colorEncAny.tag, raw) }
                     val transKeys = catKeys.map(ck => TransKey.Series(markIdx, ck))
-                    val repRows = catKeys.map: catKey =>
-                        rows.filter(r => ChartFoundations.categoryKey(colorEncAny.tag, colorEncAny.accessor(r)) == catKey).headMaybe
+                    // Pre-build a single-pass groupBy so each catKey lookup is O(1) rather than O(N).
+                    val rowsByKey =
+                        ChartFoundations.groupByKey(rows, r => ChartFoundations.categoryKey(colorEncAny.tag, colorEncAny.accessor(r)))
+                    val repRows = catKeys.map(catKey => rowsByKey.getOrElse(catKey, Chunk.empty).headMaybe)
                     (transKeys, repRows)
             // TransKey is stable per (mark identity, series category identity): a prior mark's
             // geometry-count change does NOT shift this mark's key, and removing/reordering a color
@@ -3973,24 +3976,7 @@ private[kyo] object ChartLower:
                     val transKey = if seriesIdx < seriesTransKeys.size then seriesTransKeys(seriesIdx) else TransKey.SingleSeries(markIdx)
                     val newPd    = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
                     val newGeom2 = accGeom.updated(transKey, MarkGeom.LinePath(newPd))
-                    val emittedPath: Svg.SvgElement =
-                        if !animOk then rawPath
-                        else
-                            Maybe.fromOption(fromGeom.get(transKey)) match
-                                case Present(MarkGeom.LinePath(prevPd)) =>
-                                    // Compare command-type signatures (ordered ordinals), not just counts.
-                                    // Mirrors the type-signature check in lowerLineWithTransitions.
-                                    val prevSig = Svg.PathData.commands(prevPd).map(_.ordinal)
-                                    val newSig  = Svg.PathData.commands(newPd).map(_.ordinal)
-                                    if prevSig == newSig && prevSig.nonEmpty then
-                                        val fromD = renderPathDataStr(prevPd)
-                                        val toD   = renderPathDataStr(newPd)
-                                        rawPath(smilAnimatePath(fromD, toD, durStr))
-                                    else
-                                        rawPath
-                                    end if
-                                case _ =>
-                                    rawPath
+                    val emittedPath = morphedPath(rawPath, fromGeom, transKey, newPd, animOk, durStr)
                     val repRowMaybe = if seriesIdx < seriesRepRows.size then seriesRepRows(seriesIdx) else Absent
                     val nextTagged = repRowMaybe match
                         case Present(r) => accTagged.append((r, emittedPath))
@@ -4045,14 +4031,7 @@ private[kyo] object ChartLower:
         val (shapes, newGeom) = spec.marks.zipWithIndex.foldLeft((Chunk.empty[Svg.SvgElement], Map.empty[TransKey, MarkGeom])):
             case ((accElems, accGeom), (mark, markIdx)) =>
                 val markColor = markDefaultColor(spec.theme, markIdx)
-                val ys = mark match
-                    case m: Mark.Bar[A, ?, ?]      => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                    case m: Mark.Line[A, ?, ?]     => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                    case m: Mark.Area[A, ?, ?]     => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                    case m: Mark.Point[A, ?, ?]    => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                    case m: Mark.Rule[A]           => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                    case m: Mark.Text[A, ?, ?]     => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
-                    case m: Mark.ErrorBar[A, ?, ?] => if m.axis == Axis.Right then ysR.getOrElse(ysL) else ysL
+                val ys        = if markAxisOf(mark) == Axis.Right then ysR.getOrElse(ysL) else ysL
                 val highlight = resolveHighlight(Present(spec))
                 mark match
                     case m: Mark.Bar[A, ?, ?] if m.stack.group.isEmpty && m.color.isEmpty =>
@@ -4063,7 +4042,6 @@ private[kyo] object ChartLower:
                         val (elems, geom) = lowerBarSimpleWithTransitions(
                             rows,
                             m,
-                            layout,
                             xs,
                             ys,
                             markColor,
@@ -4081,7 +4059,6 @@ private[kyo] object ChartLower:
                         val (elems, geom) = lowerLineWithTransitions(
                             rows,
                             m,
-                            layout,
                             xs,
                             ys,
                             markColor,
@@ -4118,7 +4095,6 @@ private[kyo] object ChartLower:
                             accElems ++ lowerLine(
                                 rows,
                                 m,
-                                layout,
                                 xs,
                                 ys,
                                 markColor,

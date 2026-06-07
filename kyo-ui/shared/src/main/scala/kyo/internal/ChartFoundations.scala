@@ -85,6 +85,26 @@ private[kyo] object ChartFoundations:
                     else loop(i + 1, acc)
             loop(0, Chunk.empty)
 
+    /** Group `rows` by `key` in one pass, returning a map from each key to the rows with that key in
+      * encounter order within each group. Empty input fast-paths to an empty map. Does NOT sort by enum
+      * ordinal; callers that need ordinal order must sort the keys separately (e.g. via
+      * `collectColorCategoriesWithRaw`).
+      */
+    def groupByKey[A](rows: Chunk[A], key: A => CatKey): Map[CatKey, Chunk[A]] =
+        if rows.isEmpty then Map.empty
+        else
+            @scala.annotation.tailrec
+            def loop(i: Int, acc: Map[CatKey, Chunk[A]]): Map[CatKey, Chunk[A]] =
+                if i >= rows.size then acc
+                else
+                    val row = rows(i)
+                    val k   = key(row)
+                    val updated = acc.get(k) match
+                        case Some(existing) => acc.updated(k, existing.append(row))
+                        case None           => acc.updated(k, Chunk(row))
+                    loop(i + 1, updated)
+            loop(0, Map.empty)
+
     /** Per-chart deterministic id prefix for `url(#id)`-bearing defs.
       *
       * Content-derived from the spec structural hash so two distinct charts on

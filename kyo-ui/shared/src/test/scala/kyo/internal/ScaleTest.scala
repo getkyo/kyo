@@ -137,20 +137,6 @@ class ScaleTest extends kyo.test.Test[Any]:
         assert(scale.apply(b) + scale.bandwidth / 2.0 == 150.0)
     }
 
-    "Scale.fit Ordinal returns -1.0 for an unknown category (sentinel, does not collide with index 0)" in {
-        val scale = Scale.fit(
-            Scale.Kind.Ordinal,
-            Extent.categories(Chunk("red", "green", "blue")),
-            0.0,
-            300.0
-        )
-        // Known category returns its index.
-        assert(scale.apply(Domain.Category("red")) == 0.0)
-        assert(scale.apply(Domain.Category("green")) == 1.0)
-        // Unknown category must return -1.0 (not 0.0, which would collide with "red").
-        assert(scale.apply(Domain.Category("purple")) == -1.0)
-    }
-
     // ---- Symlog ----
 
     // symlog is finite and zero-centered at 0.
@@ -192,7 +178,7 @@ class ScaleTest extends kyo.test.Test[Any]:
         assert(ok, s"Expected strictly increasing pixels but got: $pixels")
     }
 
-    // ---- Band/Ordinal stride ticks ----
+    // ---- Band stride ticks ----
 
     // band axis emits all 7 labels when maxTicks >= n.
     "Band ticks(7) over 7 keys produces 7 ticks including the last key" in {

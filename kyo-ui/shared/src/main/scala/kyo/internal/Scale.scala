@@ -59,7 +59,7 @@ end Domain
 /** Companion object providing `Scale.Kind`, `Scale.Tick`, `Extent`, and the `fit` factory.
   *
   * `Scale.fit` is the single entry point: supply a `Kind`, the domain `Extent`, and the pixel range, and get back a
-  * fully resolved `Scale`. All seven concrete implementations (`Linear`, `Log`, `Band`, `Time`, `Ordinal`, `Point`,
+  * fully resolved `Scale`. All six concrete implementations (`Linear`, `Log`, `Band`, `Time`, `Point`,
   * `Symlog`) are produced exclusively through `fit`.
   *
   * `niceTicks` is exposed for direct use in tests and for axis tick generation at chart-build time.
@@ -68,7 +68,7 @@ private[kyo] object Scale:
 
     /** Selects the scale family for an encoding. */
     enum Kind derives CanEqual:
-        case Linear, Log, Band, Time, Ordinal, Point, Symlog
+        case Linear, Log, Band, Time, Point, Symlog
     end Kind
 
     /** A single tick: the domain value, a formatted label, and the pixel position on the range axis.
@@ -83,7 +83,7 @@ private[kyo] object Scale:
     /** Construct a scale of `kind` over `extent`, mapping into `[rangeLo, rangeHi]` pixels.
       *
       * For continuous kinds (`Linear`, `Log`, `Time`), the extent supplies a numeric `(min, max)` pair. For
-      * categorical kinds (`Band`, `Ordinal`), the extent supplies an ordered `Chunk[String]` of keys. The `nice`
+      * categorical kinds (`Band`, `Point`), the extent supplies an ordered `Chunk[String]` of keys. The `nice`
       * flag snaps continuous bounds to round values (the demos' niceTicks logic); it has no effect for categorical
       * extents.
       */
@@ -96,13 +96,12 @@ private[kyo] object Scale:
         clamp: Boolean = false
     ): Scale =
         kind match
-            case Kind.Linear  => fitLinear(extent, rangeLo, rangeHi, nice, clamp)
-            case Kind.Log     => fitLog(extent, rangeLo, rangeHi, clamp)
-            case Kind.Band    => fitBand(extent, rangeLo, rangeHi)
-            case Kind.Time    => fitTime(extent, rangeLo, rangeHi, nice)
-            case Kind.Ordinal => fitOrdinal(extent, rangeLo, rangeHi)
-            case Kind.Point   => fitPoint(extent, rangeLo, rangeHi)
-            case Kind.Symlog  => fitSymlog(extent, rangeLo, rangeHi, clamp)
+            case Kind.Linear => fitLinear(extent, rangeLo, rangeHi, nice, clamp)
+            case Kind.Log    => fitLog(extent, rangeLo, rangeHi, clamp)
+            case Kind.Band   => fitBand(extent, rangeLo, rangeHi)
+            case Kind.Time   => fitTime(extent, rangeLo, rangeHi, nice)
+            case Kind.Point  => fitPoint(extent, rangeLo, rangeHi)
+            case Kind.Symlog => fitSymlog(extent, rangeLo, rangeHi, clamp)
     end fit
 
     /** Produce at most `maxTicks` evenly-spaced tick values covering `[min, max]`, snapped to a nice step.
@@ -383,49 +382,6 @@ private[kyo] object Scale:
         def bandwidth: Double = 0.0
     end Time
 
-    /** An ordinal scale: maps category keys to palette indices in `[0, n)`.
-      *
-      * `apply` returns the zero-based index of a known key. For an UNKNOWN key it returns `-1.0`, a detectable
-      * sentinel that the legend and color layers can treat as "unmapped" without silently colliding with the
-      * first valid index (0). Callers that receive `-1.0` should render a fallback color or omit the mark.
-      */
-    final case class Ordinal(
-        keys: Chunk[String],
-        rangeLo: Double,
-        rangeHi: Double
-    ) extends Scale:
-
-        val n: Int = keys.size
-        private val keyIndex: Map[String, Int] = keys.zipWithIndex.foldLeft(Map.empty[String, Int]):
-            case (m, (k, i)) => m.updated(k, i)
-
-        def apply(d: Domain): Double = d match
-            case Domain.Category(key) =>
-                // Maybe.fromOption at the stdlib Map.get boundary; getOrElse on Kyo Maybe.
-                Maybe.fromOption(keyIndex.get(key)).map(_.toDouble).getOrElse(-1.0)
-            case Domain.Continuous(v) => v
-            case Domain.Temporal(ms)  => ms.toDouble
-
-        def invert(px: Double): Domain =
-            val i = px.toInt
-            if i >= 0 && i < n then Domain.Category(keys(i))
-            else Domain.Category(if keys.isEmpty then "" else keys(0))
-        end invert
-
-        def ticks(maxTicks: Int): Chunk[Tick] =
-            val n = keys.size
-            val visible: Chunk[(String, Int)] =
-                if maxTicks >= n then keys.zipWithIndex
-                else
-                    val stride = math.max(1, math.ceil(n.toDouble / maxTicks).toInt)
-                    keys.zipWithIndex.collect { case (k, i) if i % stride == 0 => (k, i) }
-            visible.map: (k, i) =>
-                Tick(i.toDouble, k, i.toDouble)
-        end ticks
-
-        def bandwidth: Double = 0.0
-    end Ordinal
-
     // ---- private fit helpers ----
 
     private def fitLinear(extent: Extent, rangeLo: Double, rangeHi: Double, nice: Boolean, clamp: Boolean): Scale =
@@ -479,16 +435,6 @@ private[kyo] object Scale:
             case Extent.Categories(_)      => (0L, 1L)
         Time(lo, hi, rangeLo, rangeHi)
     end fitTime
-
-    private def fitOrdinal(extent: Extent, rangeLo: Double, rangeHi: Double): Scale =
-        val keys = extent match
-            case Extent.Categories(ks) => ks
-            case Extent.Continuous(mn, mx) =>
-                val lo = mn.toInt
-                val hi = mx.toInt
-                Chunk.from(lo.to(hi).map(_.toString))
-        Ordinal(keys, rangeLo, rangeHi)
-    end fitOrdinal
 
     // Point scale: like Band but each band has zero inner width (marks placed at band centers).
     // Reuses Band internally with padding = 0.5 so each slot's band collapses to zero width.
