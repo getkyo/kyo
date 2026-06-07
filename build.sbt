@@ -713,10 +713,11 @@ def kyoTastyEmbeddedTextGenerator(platform: String): Def.Initialize[Task[Seq[Fil
     outDir.mkdirs()
     val outFile = outDir / "EmbeddedText.scala"
     val filesToEmbed = Seq(
-        "readme"      -> ("README.md",                                                         IO.read(base / "README.md")),
-        "tasty"       -> ("kyo/Tasty.scala",                                                   IO.read(srcBase / "kyo" / "Tasty.scala")),
-        "clsUnpickle" -> ("kyo/internal/tasty/classfile/ClassfileUnpickler.scala",             IO.read(srcBase / "kyo" / "internal" / "tasty" / "classfile" / "ClassfileUnpickler.scala")),
-        "constant"    -> ("kyo/internal/tasty/symbol/Constant.scala",                          IO.read(srcBase / "kyo" / "internal" / "tasty" / "symbol" / "Constant.scala"))
+        "readme"       -> ("README.md",                                                         IO.read(base / "README.md")),
+        "contributing" -> ("CONTRIBUTING.md",                                                   IO.read(base / "CONTRIBUTING.md")),
+        "tasty"        -> ("kyo/Tasty.scala",                                                   IO.read(srcBase / "kyo" / "Tasty.scala")),
+        "clsUnpickle"  -> ("kyo/internal/tasty/classfile/ClassfileUnpickler.scala",             IO.read(srcBase / "kyo" / "internal" / "tasty" / "classfile" / "ClassfileUnpickler.scala")),
+        "constant"     -> ("kyo/internal/tasty/symbol/Constant.scala",                          IO.read(srcBase / "kyo" / "internal" / "tasty" / "symbol" / "Constant.scala"))
     )
     val fields = filesToEmbed.map { case (varName, (_, content)) =>
         kyoTastyEmitVal(varName, content)

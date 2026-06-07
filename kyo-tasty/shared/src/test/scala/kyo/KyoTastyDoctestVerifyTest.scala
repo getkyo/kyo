@@ -14,8 +14,11 @@ import scala.compiletime.testing.typeCheckErrors
   * context used by typeCheckErrors does not have a `given Frame` in scope.
   *
   * Leaf 2 (noDriftFromPhantomNames): reads the README test resource and applies a
-  * regex sweep for phantom names that must not appear in the regenerated README. Tagged
-  * jvmOnly because it uses TestResourceLoader (JVM classloader).
+  * regex sweep for phantom names that must not appear in the regenerated README. The
+  * phantom check runs cross-platform: TestResourceLoader serves README.md from the
+  * JVM classloader on JVM and from the sbt-generated EmbeddedText on JS / Native.
+  * The `.isSubtypeOf` check uses a two-pass scan instead of a regex look-behind so
+  * the contract holds on Scala.js (whose regex engine does not support look-behind).
   */
 class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
 
@@ -171,7 +174,7 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
     // Then: zero matches for any phantom name.
     // JVM only (tagged jvmOnly): uses TestResourceLoader (JVM classloader).
 
-    "Leaf 2: README contains no phantom names".onlyJvm in {
+    "Leaf 2: README contains no phantom names" in {
         // README.md is served as a test resource via build.sbt resourceGenerators.
         val content = new String(TestResourceLoader.loadBytes("README.md"), "UTF-8")
 
@@ -192,17 +195,31 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
             ("\\bModuleProvides\\b".r, "ModuleProvides (renamed Tasty.Java.Module.Provides)"),
             ("\\ballUnresolved\\b".r, "allUnresolved (deleted with Symbol.Unresolved)"),
             ("\\bSymbolBody\\b".r, "SymbolBody (moved to internal)"),
-            ("(?<!Tasty)\\.isSubtypeOf\\b".r, "tpe.isSubtypeOf (not a method on Type; use Tasty.isSubtypeOf)"),
             ("\\bTasty\\.requireTrait\\b".r, "Tasty.requireTrait (does not exist on object Tasty)"),
+            // Negative lookbehind (?<!Tasty)\.isSubtypeOf\b is JVM-portable but Scala.js's regex engine
+            // does not support look-behind. Rewritten below as a two-pass scan over plain \.isSubtypeOf
+            // matches, post-filtering matches preceded by "Tasty". Same contract: catch tpe.isSubtypeOf
+            // (phantom method on Type) while permitting Tasty.isSubtypeOf (real method on object Tasty).
             ("\\bTasty\\.implementationsOf\\b".r, "Tasty.implementationsOf (exists only on Classpath)"),
             ("\\bTasty\\.directSubclassesOf\\b".r, "Tasty.directSubclassesOf (exists only on Classpath)"),
             ("\\bTasty\\.subclassesOf\\b".r, "Tasty.subclassesOf (exists only on Classpath)")
         )
 
-        val violations = phantoms.collect {
+        // Detect `.isSubtypeOf` not preceded by "Tasty" using a two-pass scan rather than a
+        // regex look-behind (Scala.js does not implement ECMAScript 2018 look-behind).
+        val phantomIsSubtypeOf: Option[String] =
+            val matches = "\\.isSubtypeOf\\b".r.findAllMatchIn(content).toList
+            matches.find { m =>
+                val before = content.substring(0, m.start)
+                !before.endsWith("Tasty")
+            }.map(_ => "tpe.isSubtypeOf (not a method on Type; use Tasty.isSubtypeOf)")
+        end phantomIsSubtypeOf
+
+        val regexViolations = phantoms.collect {
             case (regex, description) if regex.findFirstIn(content).isDefined =>
                 description
         }
+        val violations = regexViolations ++ phantomIsSubtypeOf.toSeq
 
         assert(
             violations.isEmpty,
