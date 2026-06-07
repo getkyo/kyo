@@ -1,6 +1,5 @@
 package kyo.internal.tasty.snapshot
 
-import java.io.ByteArrayOutputStream
 import kyo.*
 import kyo.Tasty.SymbolId
 import kyo.internal.tasty.query.FileSource
@@ -54,19 +53,27 @@ object SnapshotWriter:
         source: FileSource
     )(using Frame): Unit < (Sync & Abort[TastyError]) =
         val hexDigest = DigestComputer.toHexString(digest)
-        val unique    = java.lang.System.nanoTime() ^ scala.util.Random.nextLong()
-        val tmpName   = s"$cacheDir/$hexDigest-$unique.krfl"
-        val finalName = s"$cacheDir/$hexDigest.krfl"
-        Abort.run[TastyError](
-            Sync.defer(serialize(cp, digest)).flatMap: bytes =>
-                source.mkdirs(cacheDir).andThen:
-                    source.write(tmpName, bytes).andThen:
-                        source.rename(tmpName, finalName)
-        ).flatMap:
-            case Result.Success(_)                             => Kyo.unit
-            case Result.Failure(e: TastyError.SnapshotIoError) => Abort.fail(e)
-            case Result.Failure(e)                             => Abort.fail(TastyError.SnapshotIoError(e.toString))
-            case Result.Panic(t)                               => Abort.fail(TastyError.SnapshotIoError(t.getMessage))
+        Clock.nowMonotonic.map { d =>
+            Random.nextLong.map { r =>
+                val unique    = d.toNanos ^ r
+                val tmpName   = s"$cacheDir/$hexDigest-$unique.krfl"
+                val finalName = s"$cacheDir/$hexDigest.krfl"
+                Abort.run[TastyError](
+                    Sync.defer(serialize(cp, digest)).map { bytes =>
+                        source.mkdirs(cacheDir).map { _ =>
+                            source.write(tmpName, bytes).map { _ =>
+                                source.rename(tmpName, finalName)
+                            }
+                        }
+                    }
+                ).map {
+                    case Result.Success(_)                             => Kyo.unit
+                    case Result.Failure(e: TastyError.SnapshotIoError) => Abort.fail(e)
+                    case Result.Failure(e)                             => Abort.fail(TastyError.SnapshotIoError(e.toString))
+                    case Result.Panic(t)                               => Abort.fail(TastyError.SnapshotIoError(t.getMessage))
+                }
+            }
+        }
     end write
 
     /** Serialize a Classpath to KRFL bytes, embedding the given input digest in the file header. */
@@ -118,14 +125,15 @@ object SnapshotWriter:
         // used for lookups (all serialization functions iterate symbolList.zipWithIndex directly),
         //
         // hashing SymbolBody.sectionBytes on every insertion, causing a 60s timeout.
-        val symNames = Chunk.from(symbolList.map: sym =>
-            internName(nameToStr(sym.name)))
+        val symNames = Chunk.from(symbolList.map { sym =>
+            internName(nameToStr(sym.name))
+        })
 
-        val symFqns = Chunk.from(symbolList.map: sym =>
+        val symFqns = Chunk.from(symbolList.map { sym =>
             fqnBySymbol.get(sym.id.value) match
                 case Some(fqn) if fqn.nonEmpty => internName(fqn)
                 case _                         => internName(nameToStr(sym.name)) // fallback: simple name for non-indexed symbols
-        )
+        })
 
         // Body bytes are no longer serialised through Symbol fields.
         // Bodies are stored in DecodeContext.bodyStore (keyed by SymbolId) and reconstructed from
@@ -167,13 +175,15 @@ object SnapshotWriter:
             sym =>
                 (sym match
                     case c: Tasty.Symbol.ClassLike =>
-                        c.parentTypes.filter:
+                        c.parentTypes.filter {
                             case Tasty.Type.Named(id) => id.value != -1
                             case _                    => true
+                        }
                     case _ => Chunk.empty
-                ).map:
+                ).map {
                     case Tasty.Type.Named(id) => id.value
                     case _                    => -1
+                }
         )
 
         // MEMBERS section: for each symbol, store the symbol IDs of its declarations.
@@ -316,10 +326,11 @@ object SnapshotWriter:
 
         // Calculate section offsets
         var offset = headerSize.toLong
-        val sectionMeta = sections.map: (name, bytes) =>
+        val sectionMeta = sections.map { (name, bytes) =>
             val entry = (name, offset, bytes.length.toLong)
             offset += bytes.length
             entry
+        }
 
         val totalSize = offset.toInt
         val buf       = new Array[Byte](totalSize)
@@ -369,21 +380,17 @@ object SnapshotWriter:
 
     /** Serialize the name pool as: [4-byte count] followed by [4-byte len, UTF-8 bytes] per string. */
     private def serializeNamePool(names: Chunk[String]): Array[Byte] =
-        // Pre-size to 32 MB: profiling showed the name-pool output falls between 16 MB and 32 MB
-        // for a 5 949-symbol classpath (unique simple names + FQNs with 4-byte length prefix per
-        // entry). 32 MB fits the measured peak with no intermediate copies; default 32-byte
-        // capacity would double ~20 times to reach that size.
-        val baos = new ByteArrayOutputStream(32 * 1024 * 1024)
-        val tmp  = new Array[Byte](4)
+        val builder = ChunkBuilder.init[Byte]
+        val tmp     = new Array[Byte](4)
         SnapshotFormat.writeInt32LE(tmp, 0, names.length)
-        baos.write(tmp)
+        builder.addAll(tmp)
         for name <- names do
             val bytes = SnapshotFormat.encodeString(name)
             SnapshotFormat.writeInt32LE(tmp, 0, bytes.length)
-            baos.write(tmp)
-            baos.write(bytes)
+            builder.addAll(tmp)
+            builder.addAll(bytes)
         end for
-        baos.toByteArray
+        builder.result().toArray
     end serializeNamePool
 
     /** Serialize symbols as: [4-byte count] followed by fixed-size records.
@@ -446,27 +453,26 @@ object SnapshotWriter:
       * Int fields:    [4-byte Int32 LE].
       */
     private def serializeErrors(errors: Chunk[TastyError]): Array[Byte] =
-        // Pre-size to 4 KB: errors are rare (decode failures, file-not-found, etc.) and messages are short.
-        val baos = new ByteArrayOutputStream(4 * 1024)
-        val tmp4 = new Array[Byte](4)
-        val tmp8 = new Array[Byte](8)
+        val builder = ChunkBuilder.init[Byte]
+        val tmp4    = new Array[Byte](4)
+        val tmp8    = new Array[Byte](8)
         SnapshotFormat.writeInt32LE(tmp4, 0, errors.size)
-        baos.write(tmp4)
+        builder.addAll(tmp4)
 
         def writeStr(s: String): Unit =
             val bytes = SnapshotFormat.encodeString(s)
             SnapshotFormat.writeInt32LE(tmp4, 0, bytes.length)
-            baos.write(tmp4)
-            baos.write(bytes)
+            builder.addAll(tmp4)
+            builder.addAll(bytes)
         end writeStr
 
         def writeLong(v: Long): Unit =
             SnapshotFormat.writeInt64LE(tmp8, 0, v)
-            baos.write(tmp8)
+            builder.addAll(tmp8)
 
         def writeInt(v: Int): Unit =
             SnapshotFormat.writeInt32LE(tmp4, 0, v)
-            baos.write(tmp4)
+            builder.addAll(tmp4)
 
         def writeVersion(v: Tasty.Version): Unit =
             writeInt(v.major)
@@ -485,10 +491,10 @@ object SnapshotWriter:
                 val b = v & 0x7f
                 v = v >>> 7
                 if v != 0 then
-                    baos.write(b | 0x80)
+                    builder.addOne((b | 0x80).toByte)
                     true
                 else
-                    baos.write(b)
+                    builder.addOne(b.toByte)
                     false
                 end if
             do ()
@@ -512,52 +518,52 @@ object SnapshotWriter:
         //   255 = Opaque           : 4-byte string len + UTF-8 show string (catch-all; no round-trip semantic for complex types)
         def writeType(t: Tasty.Type): Unit = t match
             case Tasty.Type.Named(symId) =>
-                baos.write(0)
+                builder.addOne(0.toByte)
                 writeInt(symId.value)
             case Tasty.Type.Any =>
-                baos.write(1)
+                builder.addOne(1.toByte)
             case Tasty.Type.Nothing =>
-                baos.write(2)
+                builder.addOne(2.toByte)
             case Tasty.Type.Applied(base, args) =>
-                baos.write(3)
+                builder.addOne(3.toByte)
                 writeType(base)
                 writeVarint(args.size)
                 args.foreach(writeType)
             case Tasty.Type.TermRef(prefix, name) =>
-                baos.write(4)
+                builder.addOne(4.toByte)
                 writeType(prefix)
                 writeStr(name.asString)
             case Tasty.Type.TypeRef(qual, name) =>
-                baos.write(5)
+                builder.addOne(5.toByte)
                 writeType(qual)
                 writeStr(name.asString)
             case Tasty.Type.Tuple(elements) =>
-                baos.write(6)
+                builder.addOne(6.toByte)
                 writeVarint(elements.size)
                 elements.foreach(writeType)
             case Tasty.Type.Function(params, result) =>
-                baos.write(7)
+                builder.addOne(7.toByte)
                 writeVarint(params.size)
                 params.foreach(writeType)
                 writeType(result)
             case Tasty.Type.ContextFunction(params, result) =>
-                baos.write(8)
+                builder.addOne(8.toByte)
                 writeVarint(params.size)
                 params.foreach(writeType)
                 writeType(result)
             case Tasty.Type.ByName(underlying) =>
-                baos.write(9)
+                builder.addOne(9.toByte)
                 writeType(underlying)
             case Tasty.Type.Repeated(elem) =>
-                baos.write(10)
+                builder.addOne(10.toByte)
                 writeType(elem)
             case Tasty.Type.Array(elem) =>
-                baos.write(11)
+                builder.addOne(11.toByte)
                 writeType(elem)
             case other =>
                 // Catch-all: store the show string. No round-trip semantic for complex production types;
                 // preserves the text for diagnostics without crashing on types not covered by the encoder.
-                baos.write(255)
+                builder.addOne(255.toByte)
                 writeStr(other.toString)
         end writeType
 
@@ -565,7 +571,7 @@ object SnapshotWriter:
             val tag: String           = err.productPrefix
             val tagBytes: Array[Byte] = tag.getBytes(java.nio.charset.StandardCharsets.UTF_8)
             writeVarint(tagBytes.length)
-            baos.write(tagBytes)
+            builder.addAll(tagBytes)
             err match
                 case TastyError.FileNotFound(path)              => writeStr(path)
                 case TastyError.CorruptedFile(path, at, reason) => writeStr(path); writeLong(at); writeStr(reason)
@@ -597,7 +603,7 @@ object SnapshotWriter:
                     writeInt(symbolId.value); writeStr(file)
             end match
         end for
-        baos.toByteArray
+        builder.result().toArray
     end serializeErrors
 
     /** Serialize per-symbol integer-reference lists into a flat byte block.
@@ -611,25 +617,26 @@ object SnapshotWriter:
         refsOf: Tasty.Symbol => Chunk[Int]
     ): Array[Byte] =
         // parentTypes / declarationIds / typeParamIds are direct fields on Symbol.
-        val baos = new java.io.ByteArrayOutputStream(4 * 1024)
-        val tmp  = new Array[Byte](4)
+        val builder = ChunkBuilder.init[Byte]
+        val tmp     = new Array[Byte](4)
         // Collect valid entries: (symIdx, filteredRefs) where filteredRefs is non-empty.
-        val entries = symbols.zipWithIndex.flatMap: (sym, idx) =>
+        val entries = symbols.zipWithIndex.flatMap { (sym, idx) =>
             val refs = refsOf(sym).filter(_ >= 0)
             if refs.isEmpty then None else Some((idx, refs))
+        }
         SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
-        baos.write(tmp)
+        builder.addAll(tmp)
         for (symIdx, refs) <- entries do
             SnapshotFormat.writeInt32LE(tmp, 0, symIdx)
-            baos.write(tmp)
+            builder.addAll(tmp)
             SnapshotFormat.writeInt32LE(tmp, 0, refs.size)
-            baos.write(tmp)
+            builder.addAll(tmp)
             for r <- refs do
                 SnapshotFormat.writeInt32LE(tmp, 0, r)
-                baos.write(tmp)
+                builder.addAll(tmp)
             end for
         end for
-        baos.toByteArray
+        builder.result().toArray
     end serializeSymbolRelLists
 
     /** Serialize per-symbol annotation tycon FQN ids into a flat byte block.
@@ -649,11 +656,11 @@ object SnapshotWriter:
         unresolvedFqnByNegId: Dict[Tasty.SymbolId, String]
     ): Array[Byte] =
         import Tasty.Name.asString
-        val baos = new java.io.ByteArrayOutputStream(4 * 1024)
-        val tmp  = new Array[Byte](4)
+        val builder = ChunkBuilder.init[Byte]
+        val tmp     = new Array[Byte](4)
 
         // Collect valid entries: (symIdx, tyconIds) where tyconIds is non-empty.
-        val entries = symbols.zipWithIndex.flatMap: (sym, idx) =>
+        val entries = symbols.zipWithIndex.flatMap { (sym, idx) =>
             val annotations: Chunk[Tasty.Annotation] = sym match
                 case c: Tasty.Symbol.ClassLike     => c.annotations
                 case m: Tasty.Symbol.Method        => m.annotations
@@ -670,7 +677,7 @@ object SnapshotWriter:
             // For annotations with negative SymbolIds (unresolved external annotation
             // types like scala.deprecated on JS/Native), fall back to unresolvedFqnByNegId.
             // Unknown tycon forms produce an empty FQN and are omitted.
-            val tyconIds: Chunk[Int] = annotations.flatMap: ann =>
+            val tyconIds: Chunk[Int] = annotations.flatMap { ann =>
                 val fqn = ann.annotationType match
                     case Tasty.Type.Named(sid) if sid.value < -1 =>
                         // Negative ID: annotation type not on classpath. Look up in unresolvedFqnByNegId.
@@ -678,21 +685,23 @@ object SnapshotWriter:
                     case other =>
                         tyconFqn(other, symbolById, fqnBySymbol, unresolvedFqnByNegId)
                 if fqn.nonEmpty then Some(internFqn(fqn)) else None
+            }
             if tyconIds.isEmpty then None else Some((idx, tyconIds))
+        }
 
         SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
-        baos.write(tmp)
+        builder.addAll(tmp)
         for (symIdx, tyconIds) <- entries do
             SnapshotFormat.writeInt32LE(tmp, 0, symIdx)
-            baos.write(tmp)
+            builder.addAll(tmp)
             SnapshotFormat.writeInt32LE(tmp, 0, tyconIds.size)
-            baos.write(tmp)
+            builder.addAll(tmp)
             for tid <- tyconIds do
                 SnapshotFormat.writeInt32LE(tmp, 0, tid)
-                baos.write(tmp)
+                builder.addAll(tmp)
             end for
         end for
-        baos.toByteArray
+        builder.result().toArray
     end serializeAnnotations
 
     /** Serialize per-symbol javaMetadata accessFlags.
@@ -703,10 +712,10 @@ object SnapshotWriter:
     private def serializeJavaMetadata(
         symbols: Seq[Tasty.Symbol]
     ): Array[Byte] =
-        val baos = new java.io.ByteArrayOutputStream(4 * 1024)
-        val tmp  = new Array[Byte](4)
+        val builder = ChunkBuilder.init[Byte]
+        val tmp     = new Array[Byte](4)
 
-        val entries = symbols.zipWithIndex.flatMap: (sym, idx) =>
+        val entries = symbols.zipWithIndex.flatMap { (sym, idx) =>
             val metaOpt: kyo.Maybe[Tasty.Java.Metadata] = sym match
                 case c: Tasty.Symbol.ClassLike => c.javaMetadata
                 case f: Tasty.Symbol.Field     => f.javaMetadata
@@ -715,16 +724,17 @@ object SnapshotWriter:
             metaOpt match
                 case kyo.Maybe.Present(meta) => Some((idx, meta.accessFlags))
                 case kyo.Maybe.Absent        => None
+        }
 
         SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
-        baos.write(tmp)
+        builder.addAll(tmp)
         for (symIdx, accessFlags) <- entries do
             SnapshotFormat.writeInt32LE(tmp, 0, symIdx)
-            baos.write(tmp)
+            builder.addAll(tmp)
             SnapshotFormat.writeInt32LE(tmp, 0, accessFlags)
-            baos.write(tmp)
+            builder.addAll(tmp)
         end for
-        baos.toByteArray
+        builder.result().toArray
     end serializeJavaMetadata
 
     /** Serialize the full fqnIndex (all key->symIdx pairs) into a flat byte block.
@@ -744,8 +754,8 @@ object SnapshotWriter:
         symbolList: Seq[Tasty.Symbol],
         internName: String => Int
     ): Array[Byte] =
-        val baos = new java.io.ByteArrayOutputStream(64 * 1024)
-        val tmp  = new Array[Byte](4)
+        val builder = ChunkBuilder.init[Byte]
+        val tmp     = new Array[Byte](4)
         // Build SymbolId.value -> snapshot index mapping (snapshot index = position in symbolList).
         val symIdToIdx = new scala.collection.mutable.HashMap[Int, Int]()
         for (sym, idx) <- symbolList.zipWithIndex do
@@ -759,7 +769,7 @@ object SnapshotWriter:
         // This ensures EVERY entry in fqnIndex is serialized, eliminating the cold/warm size gap.
         // Sort by fqn before building entries so FQNIDX__ byte layout is stable
         // regardless of Dict iteration order.
-        val entries = fqnIndex.toMap.toSeq.sortBy(_._1).flatMap: (fqn, id) =>
+        val entries = fqnIndex.toMap.toSeq.sortBy(_._1).flatMap { (fqn, id) =>
             symIdToIdx.get(id.value) match
                 case Some(idx) => Some((internName(fqn), idx))
                 case None =>
@@ -773,15 +783,16 @@ object SnapshotWriter:
                             case Maybe.Absent => None
                     else None
                     end if
+        }
         SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
-        baos.write(tmp)
+        builder.addAll(tmp)
         for (nameId, idx) <- entries do
             SnapshotFormat.writeInt32LE(tmp, 0, nameId)
-            baos.write(tmp)
+            builder.addAll(tmp)
             SnapshotFormat.writeInt32LE(tmp, 0, idx)
-            baos.write(tmp)
+            builder.addAll(tmp)
         end for
-        baos.toByteArray
+        builder.result().toArray
     end serializeFqnIndex
 
     /** Serialize the unresolvedFqnByNegId map into a flat byte block.
@@ -795,19 +806,19 @@ object SnapshotWriter:
         internName: String => Int
     ): Array[Byte] =
         import kyo.Tasty.SymbolId
-        val baos = new java.io.ByteArrayOutputStream(4 * 1024)
-        val tmp  = new Array[Byte](4)
+        val builder = ChunkBuilder.init[Byte]
+        val tmp     = new Array[Byte](4)
         // Sort by negId value for deterministic output.
         val entries = unresolvedFqnByNegId.toMap.toSeq.sortBy(_._1.value).filter { case (_, fqn) => fqn.nonEmpty }
         SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
-        baos.write(tmp)
+        builder.addAll(tmp)
         for (negId, fqn) <- entries do
             SnapshotFormat.writeInt32LE(tmp, 0, negId.value)
-            baos.write(tmp)
+            builder.addAll(tmp)
             SnapshotFormat.writeInt32LE(tmp, 0, internName(fqn))
-            baos.write(tmp)
+            builder.addAll(tmp)
         end for
-        baos.toByteArray
+        builder.result().toArray
     end serializeFqnMap
 
     /** Serialize the subclassIndex map into a flat byte block.
@@ -823,28 +834,29 @@ object SnapshotWriter:
         symIdToIdx: scala.collection.mutable.HashMap[Int, Int]
     ): Array[Byte] =
         import kyo.Tasty.SymbolId
-        val baos = new java.io.ByteArrayOutputStream(4 * 1024)
-        val tmp  = new Array[Byte](4)
+        val builder = ChunkBuilder.init[Byte]
+        val tmp     = new Array[Byte](4)
         // Collect valid entries: (parentIdx, filteredChildren).
-        val entries = subclassIndex.toMap.toSeq.sortBy(_._1.value).flatMap: (parentId, children) =>
+        val entries = subclassIndex.toMap.toSeq.sortBy(_._1.value).flatMap { (parentId, children) =>
             symIdToIdx.get(parentId.value) match
                 case Some(parentIdx) =>
                     val childIdxs = children.toSeq.flatMap(cid => symIdToIdx.get(cid.value)).filter(_ >= 0)
                     if childIdxs.nonEmpty then Some((parentIdx, childIdxs)) else None
                 case None => None
+        }
         SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
-        baos.write(tmp)
+        builder.addAll(tmp)
         for (parentIdx, childIdxs) <- entries do
             SnapshotFormat.writeInt32LE(tmp, 0, parentIdx)
-            baos.write(tmp)
+            builder.addAll(tmp)
             SnapshotFormat.writeInt32LE(tmp, 0, childIdxs.size)
-            baos.write(tmp)
+            builder.addAll(tmp)
             for ci <- childIdxs do
                 SnapshotFormat.writeInt32LE(tmp, 0, ci)
-                baos.write(tmp)
+                builder.addAll(tmp)
             end for
         end for
-        baos.toByteArray
+        builder.result().toArray
     end serializeSubclassIndex
 
     /** Serialize the companionIndex map into a flat byte block.
@@ -858,22 +870,23 @@ object SnapshotWriter:
         symIdToIdx: scala.collection.mutable.HashMap[Int, Int]
     ): Array[Byte] =
         import kyo.Tasty.SymbolId
-        val baos = new java.io.ByteArrayOutputStream(4 * 1024)
-        val tmp  = new Array[Byte](4)
-        val entries = companionIndex.toMap.toSeq.sortBy(_._1.value).flatMap: (symId, companionId) =>
+        val builder = ChunkBuilder.init[Byte]
+        val tmp     = new Array[Byte](4)
+        val entries = companionIndex.toMap.toSeq.sortBy(_._1.value).flatMap { (symId, companionId) =>
             for
                 symIdx       <- symIdToIdx.get(symId.value)
                 companionIdx <- symIdToIdx.get(companionId.value)
             yield (symIdx, companionIdx)
+        }
         SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
-        baos.write(tmp)
+        builder.addAll(tmp)
         for (symIdx, companionIdx) <- entries do
             SnapshotFormat.writeInt32LE(tmp, 0, symIdx)
-            baos.write(tmp)
+            builder.addAll(tmp)
             SnapshotFormat.writeInt32LE(tmp, 0, companionIdx)
-            baos.write(tmp)
+            builder.addAll(tmp)
         end for
-        baos.toByteArray
+        builder.result().toArray
     end serializeCompanionIndex
 
     /** Serialize per-method paramListIds into the PLISTS__ section payload.
@@ -894,30 +907,31 @@ object SnapshotWriter:
       *       innerCount x [Int32-LE symbolId.value]
       */
     private def serializeParamLists(symbols: Seq[Tasty.Symbol]): Array[Byte] =
-        val baos = new java.io.ByteArrayOutputStream(4 * 1024)
-        val tmp  = new Array[Byte](4)
-        val entries = symbols.zipWithIndex.flatMap:
+        val builder = ChunkBuilder.init[Byte]
+        val tmp     = new Array[Byte](4)
+        val entries = symbols.zipWithIndex.flatMap {
             case (m: Tasty.Symbol.Method, idx) if m.paramListIds.nonEmpty =>
                 Some((idx, m.paramListIds))
             case _ =>
                 None
+        }
         SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
-        baos.write(tmp)
+        builder.addAll(tmp)
         for (symIdx, lists) <- entries do
             SnapshotFormat.writeInt32LE(tmp, 0, symIdx)
-            baos.write(tmp)
+            builder.addAll(tmp)
             SnapshotFormat.writeInt32LE(tmp, 0, lists.size)
-            baos.write(tmp)
+            builder.addAll(tmp)
             for inner <- lists do
                 SnapshotFormat.writeInt32LE(tmp, 0, inner.size)
-                baos.write(tmp)
+                builder.addAll(tmp)
                 for id <- inner do
                     SnapshotFormat.writeInt32LE(tmp, 0, id.value)
-                    baos.write(tmp)
+                    builder.addAll(tmp)
                 end for
             end for
         end for
-        baos.toByteArray
+        builder.result().toArray
     end serializeParamLists
 
     /** Convert a Name (opaque String alias) to a String. */
