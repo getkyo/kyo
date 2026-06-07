@@ -97,10 +97,6 @@ class PackageTypedAccessorsTest extends kyo.test.Test[Any]:
             (pkg, cp)
     end buildFixture
 
-    // ── Leaf 85: members-untyped ──────────────────────────────────────────────
-    // Given: pkg with 1 class + 1 trait + 1 object + 1 subpackage (total 4 memberIds)
-    // When: pkg.memberIds.flatMap(id => cp.symbol(id).toChunk)
-    // Then: Chunk[Symbol] size 4
     "members-untyped: Package.members returns Chunk[Symbol] with all 4 direct members" in {
         buildFixture.map: (pkg, cp) =>
             given Tasty.Classpath = cp
@@ -109,10 +105,6 @@ class PackageTypedAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 86: classes-typed ────────────────────────────────────────────────
-    // Given: same fixture
-    // When: pkg.memberIds.flatMap(id => cp.symbol(id).toChunk).collect { case c: Tasty.Symbol.Class => c }
-    // Then: Chunk[Symbol.Class] size 1
     "classes-typed: Package.classes returns Chunk[Class] size 1" in {
         buildFixture.map: (pkg, cp) =>
             given Tasty.Classpath = cp
@@ -123,10 +115,6 @@ class PackageTypedAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 87: traits-typed ─────────────────────────────────────────────────
-    // Given: same fixture
-    // When: pkg.memberIds.flatMap(id => cp.symbol(id).toChunk).collect { case t: Tasty.Symbol.Trait => t }
-    // Then: Chunk[Symbol.Trait] size 1
     "traits-typed: Package.traits returns Chunk[Trait] size 1" in {
         buildFixture.map: (pkg, cp) =>
             given Tasty.Classpath = cp
@@ -137,10 +125,6 @@ class PackageTypedAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 88: objects-typed ────────────────────────────────────────────────
-    // Given: same fixture
-    // When: pkg.memberIds.flatMap(id => cp.symbol(id).toChunk).collect { case o: Tasty.Symbol.Object => o }
-    // Then: Chunk[Symbol.Object] size 1
     "objects-typed: Package.objects returns Chunk[Object] size 1" in {
         buildFixture.map: (pkg, cp) =>
             given Tasty.Classpath = cp
@@ -151,10 +135,6 @@ class PackageTypedAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 89: classLike-typed ──────────────────────────────────────────────
-    // Given: same fixture (class + trait + object)
-    // When: pkg.memberIds.flatMap(id => cp.symbol(id).toChunk).collect { case cl: Tasty.Symbol.ClassLike => cl }
-    // Then: Chunk[Symbol.ClassLike] size 3
     "classLike-typed: Package.classLike returns Chunk[ClassLike] of size 3" in {
         buildFixture.map: (pkg, cp) =>
             given Tasty.Classpath = cp
@@ -163,10 +143,6 @@ class PackageTypedAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 90: subpackages-typed ────────────────────────────────────────────
-    // Given: same fixture (1 sub-Package)
-    // When: pkg.memberIds.flatMap(id => cp.symbol(id).toChunk).collect { case sp: Tasty.Symbol.Package => sp }
-    // Then: Chunk[Symbol.Package] size 1
     "subpackages-typed: Package.subpackages returns Chunk[Package] size 1" in {
         buildFixture.map: (pkg, cp) =>
             given Tasty.Classpath = cp

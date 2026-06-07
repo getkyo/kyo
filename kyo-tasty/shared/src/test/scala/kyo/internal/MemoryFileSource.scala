@@ -16,9 +16,7 @@ import scala.collection.mutable
   * source.exists(root) // must return true for "root" when "root/Foo.tasty" is present
   * }}}
   *
-  * Per prep.md edge-case note: omitting the directory check causes FileNotFound before any TASTy files are read.
-  *
-  * Scaladoc: 8-35 lines.
+  * Per the edge-case note: omitting the directory check causes FileNotFound before any TASTy files are read.
   */
 final class MemoryFileSource(
     files: mutable.HashMap[String, Array[Byte]] = mutable.HashMap.empty,

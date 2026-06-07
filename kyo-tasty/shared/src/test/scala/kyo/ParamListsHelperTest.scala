@@ -3,25 +3,11 @@ package kyo
 import kyo.Tasty.SymbolId
 import kyo.internal.TestClasspaths
 
-/** Tests for the Tasty.paramLists public helper (Phase 04).
+/** Tests for the Tasty.paramLists public helper.
   *
-  * The helper resolves a Symbol.Method's paramListIds into per-list-group Symbol.Parameter
-  * entries. These leaves pin INV-H3 (locked signature) and INV-H6 (positional receiver rule).
-  *
-  * Leaf summary:
-  *   6.  zero_arg_method: Tasty.paramLists on a no-arg accessor returns Chunk.empty.
-  *   7.  single_list_two_params: Tasty.paramLists on a 1-list 2-param method returns
-  *       Chunk(Chunk(p1, p2)).
-  *   8.  extension_receiver_positional: Tasty.paramLists on the Meters.value extension
-  *       returns a result where head.head is the receiver parameter (INV-H6 positional rule).
-  *   9.  broken_id_dropped: a broken SymbolId in paramListIds is dropped from the result
-  *       and an UnresolvedReference is recorded in cp.errors.
-  *   10. empty_clause_positional: a method modelled as def f()(a: A): Unit produces
-  *       Chunk(Chunk.empty, Chunk(a)) preserving the empty-clause shape.
-  *   11. typeParams_regression: typeParams and paramLists are independent; paramLists does
-  *       not consume typeParamIds.
-  *
-  * Pins: INV-H3 (Tasty.paramLists locked signature) and INV-H6 (positional receiver rule).
+  * Verifies that paramListIds are resolved correctly into per-list-group Symbol.Parameter entries,
+  * including edge cases: no-arg methods, multi-list methods, extension method receivers,
+  * broken ids, empty clauses, and independence from typeParamIds.
   */
 class ParamListsHelperTest extends kyo.test.Test[Any]:
 
@@ -72,11 +58,6 @@ class ParamListsHelperTest extends kyo.test.Test[Any]:
             Maybe.Absent
         )
 
-    // ── Leaf 6: zero_arg_method ───────────────────────────────────────────────
-    // Given: a Symbol.Method representing a no-arg accessor (no parameter lists).
-    // When: Tasty.paramLists(method) is called.
-    // Then: result equals Chunk.empty (.size == 0).
-    // Pins: INV-H3 helper signature behaviour on zero parameter lists.
     "Tasty.paramLists for no-arg method returns Chunk.empty (INV-H3)" in {
         val method = makeMethod(id = 0, name = "noArg", ownerId = 0, paramListIds = Chunk.empty)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(method)).flatMap: cp =>
@@ -86,13 +67,6 @@ class ParamListsHelperTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // ── Leaf 7: single_list_two_params ────────────────────────────────────────
-    // Given: a Symbol.Method with paramListIds = Chunk(Chunk(idA, idB)) where idA and idB
-    //        point to Symbol.Parameter entries named "a" and "b".
-    // When: Tasty.paramLists(method) is called.
-    // Then: result.size == 1 AND result.head.size == 2
-    //       AND result.head.map(_.name.asString) == Chunk("a", "b").
-    // Pins: INV-H3 helper signature on a single parameter list.
     "Tasty.paramLists for single-list method returns Chunk(Chunk(p1, p2)) (INV-H3)" in {
         import Tasty.Name.asString
         // cp.symbol(id) uses SymbolId as array index: paramA at 0, paramB at 1, method at 2
@@ -116,13 +90,6 @@ class ParamListsHelperTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // ── Leaf 8: extension_receiver_positional ─────────────────────────────────
-    // Given: embedded Meters fixture loaded via TestClasspaths.withClasspath; valueExt is
-    //        the Symbol.Method for def value: Double on kyo.fixtures.Meters.
-    // When: Tasty.paramLists(valueExt) is invoked.
-    // Then: result.head.head is a Symbol.Parameter whose declaredType resolves (via
-    //       Tasty.typeSymbol) to the Meters OpaqueType symbol.
-    // Pins: INV-H6 (positional receiver) and INV-H3 (helper result shape).
     "Tasty.paramLists for extension method: head.head resolves to receiver type (INV-H6)" in {
         import Tasty.Name.asString
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
@@ -167,15 +134,6 @@ class ParamListsHelperTest extends kyo.test.Test[Any]:
                     fail("kyo.fixtures.Meters not found; check fixture setup")
     }
 
-    // ── Leaf 9: broken_id_dropped ─────────────────────────────────────────────
-    // Given: a synthetic Symbol.Method with paramListIds = Chunk(Chunk(validId, SymbolId(-1)))
-    //        where -1 does not resolve in the classpath.
-    //        The classpath is constructed with a pre-existing UnresolvedReference in errors
-    //        to model the load-time error that a broken SymbolId would produce.
-    // When: Tasty.paramLists(method) is invoked.
-    // Then: result.head.size == 1 (the -1 was dropped from the inner chunk)
-    //       AND cp.errors.exists(_.isInstanceOf[TastyError.UnresolvedReference]).
-    // Pins: INV-H3 broken-reference drop semantics; references log through cp.errors.
     "Tasty.paramLists drops broken SymbolId and records UnresolvedReference (INV-H3)" in {
         import Tasty.Name.asString
         // paramA at index 0; method at index 1; SymbolId(-1) is out-of-range and resolves to Absent.
@@ -212,15 +170,6 @@ class ParamListsHelperTest extends kyo.test.Test[Any]:
                 succeed
     }
 
-    // ── Leaf 10: empty_clause_positional ──────────────────────────────────────
-    // Given: a synthetic Method modelling def f()(a: A): Unit with
-    //        paramListIds = Chunk(Chunk.empty, Chunk(idA)).
-    // When: Tasty.paramLists(method) is invoked.
-    // Then: result.size == 2
-    //       AND result.head == Chunk.empty (the explicit () clause is preserved positionally)
-    //       AND result.last.size == 1
-    //       AND result.last.head.name.asString == "a".
-    // Pins: INV-H3 empty-clause shape distinction preserved by the helper.
     "Tasty.paramLists preserves empty clause shape (INV-H3)" in {
         import Tasty.Name.asString
         // paramA at index 0; method at index 1
@@ -247,13 +196,6 @@ class ParamListsHelperTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // ── Leaf 11: typeParams_regression ────────────────────────────────────────
-    // Given: a type-parameterised method literal def map[B](self: A)(f: A => B): B with both
-    //        typeParamIds and paramListIds populated.
-    // When: Tasty.typeParams(method).size and Tasty.paramLists(method).size are read.
-    // Then: typeParams.size == 1 AND paramLists.size == 2
-    //       AND typeParams.head.name.asString == "B".
-    // Pins: regression guard that Tasty.paramLists does not consume the typeParamIds chain.
     "Tasty.typeParams and Tasty.paramLists are independent (regression guard)" in {
         import Tasty.Name.asString
         // typeParamB at 0, paramSelf at 1, paramF at 2, method at 3

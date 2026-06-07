@@ -1,8 +1,6 @@
 package kyo
 import kyo.internal.tasty.symbol.SymbolKind
 
-// phase-05; migrated from Symbol references to SymbolId in Named/TypeLambda.
-
 /** Tests for Subtype checking and type comparison.
   *
   * Plan tests 1-9 (original) + tests 10-13 (SubtypeVerdict).
@@ -64,8 +62,8 @@ class SubtypeTest extends kyo.test.Test[Any]:
 
     /** Build a test Classpath populated with the given symbols, indexed by their id.value.
       *
-      * phase-05; all symbols must have distinct non-negative id.value to be reachable via cp.symbol(id). Any gap in the id range is
-      * filled with a sentinel Unresolved symbol.
+      * All symbols must have distinct non-negative id.value to be reachable via cp.symbol(id). Any gap in the id range is
+      * filled with a sentinel Package symbol.
       */
     private def makeTestClasspath(syms: Chunk[Tasty.Symbol])(using Frame): Tasty.Classpath < Sync =
         val maxId = syms.foldLeft(-1)((m, s) => math.max(m, s.id.value))

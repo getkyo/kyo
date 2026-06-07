@@ -5,17 +5,14 @@ import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 
-/** Cross-platform facade for decoder-fidelity-2 test infrastructure.
+/** Cross-platform facade for fidelity test infrastructure.
   *
   * On JVM this delegates to `TestClasspaths2Platform` (provided by jvm/src/test) which wraps the real-classpath JVM implementation. On JS
   * and Native it delegates to platform-specific stubs that throw `UnsupportedOperationException` for JVM-only operations. All call sites
-  * that invoke JVM-only methods are guarded by the `jvmOnly` tag in `Fidelity2TestBase.coldWarmEquiv` or by explicit `- jvmOnly` in the
-  * test leaf, so the stubs are never reached at runtime on JS/Native.
+  * that invoke JVM-only methods are guarded by the `jvmOnly` tag or by explicit `- jvmOnly` in the test leaf, so the stubs are never
+  * reached at runtime on JS/Native.
   *
-  * The surface exposed here is the minimal subset required by the relocated Fidelity2 test files. Methods not used by shared tests are not
-  * exposed.
-  *
-  * Scaladoc: 8-35 lines.
+  * The surface exposed here is the minimal subset required by the shared fidelity test files.
   */
 private[kyo] object TestClasspaths2:
 

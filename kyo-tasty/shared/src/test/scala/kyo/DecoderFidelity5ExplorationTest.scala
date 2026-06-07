@@ -6,25 +6,15 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 
-/** Decoder-fidelity-5 adversarial edge-case probe: 15 leaves.
-  *
-  * Axes:
-  *   Adversarial bytes: truncated and bit-flipped TASTy files.
-  *   API edges: empty/long/null FQN and post-scope Classpath.
-  *   Snapshot adversarial: corrupt/truncated/random KRFL bytes.
-  *   Pathological structural: most methods, most type params, deepest declaredType nesting.
-  *
-  * All leaves use either embedded fixture bytes or in-memory MemoryFileSource; no JVM filesystem access required.
-  *
-  * Scaladoc: 8-35 lines.
+/** Adversarial edge-case probe for the decoder: truncated and bit-flipped TASTy files,
+  * empty/long/null FQN API edges, corrupt/truncated/random KRFL snapshot bytes, and
+  * pathological structural inputs. Uses embedded fixture bytes or MemoryFileSource only.
   */
 class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
     private val plainClassTasty: Array[Byte] = kyo.fixtures.Embedded.plainClassTasty
-
-    // helpers ---
 
     /** Load corrupt TASTy bytes via MemoryFileSource + ClasspathOrchestrator. */
     private def loadCorrupt(
@@ -42,10 +32,6 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
         else 1 + children.map(countTypeDepth).max
     end countTypeDepth
 
-    // Adversarial bytes
-
-    // Truncate PlainClass.tasty at size/4.
-    // Expect: no panic; cp.errors contains MalformedSection or CorruptedFile.
     "truncate at size/4 produces clean error, no panic" in {
         val bytes = plainClassTasty.take(plainClassTasty.length / 4)
         loadCorrupt("PlainClassTrunc4.tasty", bytes).map: cp =>
@@ -65,8 +51,6 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Truncate PlainClass.tasty at size/2.
-    // Expect: no panic; cp.errors contains MalformedSection or CorruptedFile.
     "truncate at size/2 produces clean error, no panic" in {
         val bytes = plainClassTasty.take(plainClassTasty.length / 2)
         loadCorrupt("PlainClassTrunc2.tasty", bytes).map: cp =>
@@ -83,8 +67,6 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Truncate PlainClass.tasty at size - 1.
-    // A one-byte truncation may or may not trigger an error; what matters is no panic.
     "truncate at size-1 produces clean result or clean error, no panic" in {
         val bytes = plainClassTasty.take(plainClassTasty.length - 1)
         loadCorrupt("PlainClassTrunc1.tasty", bytes).map: cp =>
@@ -100,8 +82,6 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Bit-flip the first byte of PlainClass.tasty (corrupts the magic).
-    // Expect: cp.errors contains CorruptedFile (bad magic) or MalformedSection; no panic.
     "bit-flip magic byte produces clean CorruptedFile error, no panic" in {
         val bytes = plainClassTasty.clone()
         bytes(0) = (bytes(0) ^ 0x01).toByte
@@ -121,8 +101,6 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Set the last 16 bytes of PlainClass.tasty to 0xFF.
-    // Expect: no panic; clean error or clean load if trailing bytes are padding.
     "corrupt last 16 bytes with 0xFF produces clean result or clean error" in {
         val bytes = plainClassTasty.clone()
         val start = math.max(0, bytes.length - 16)
@@ -140,9 +118,6 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // API edges
-
-    // cp.findClass("") on a embedded classpath returns Absent, no exception.
     "findClass empty string returns Absent, no exception" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val result = cp.findClass("")
@@ -153,7 +128,6 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // cp.findClass("a" * 1000) returns Absent, no exception.
     "findClass very-long FQN returns Absent, no exception" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val longFqn = "a" * 1000
@@ -165,7 +139,6 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // cp.findClass(null) is handled gracefully (Absent or specific error; NOT NPE).
     "findClass(null) returns Absent or specific error, no NPE" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var threw: Option[Throwable]          = None
@@ -187,8 +160,6 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // After Scope.run closes the scope, the Classpath value (immutable) is still
-    // safely readable without panic.
     "Classpath remains safely readable after enclosing Scope completes" in {
         Abort.run[TastyError](
             TestClasspaths.withClasspath()(Tasty.classpath)
@@ -217,10 +188,6 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
                         succeed
     }
 
-    // Snapshot adversarial
-
-    // Snapshot with wrong magic bytes (first 4 bytes not 'K','R','F','L').
-    // Expect: Abort.fail(TastyError.SnapshotFormatError) with reason about magic.
     "snapshot with wrong magic produces SnapshotFormatError, no panic" in {
         val badBytes = Array.fill[Byte](64)(0x42) // all 'B', wrong magic
         val snapPath = "mem/bad-magic.krfl"
@@ -241,8 +208,6 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
                 fail(s"Unexpected panic for wrong-magic snapshot: ${t.getMessage}")
     }
 
-    // Snapshot file truncated at size/2.
-    // Build a valid snapshot, truncate it, attempt to read: expect clean error.
     "truncated KRFL snapshot produces clean error, no panic" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             val digest    = Array[Byte](0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x44.toByte)
@@ -260,7 +225,6 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
                 case other                                                 => fail(s"Unexpected result for truncated KRFL: $other")
     }
 
-    // Snapshot read from 1024 bytes of seeded pseudo-random data.
     // RNG seeded for reproducibility: seed = 0xDF5CAFE5L.
     "snapshot from seeded random bytes produces clean error or clean parse, no panic" in {
         val rng   = new java.util.Random(0xdf5cafe5L)
@@ -279,10 +243,6 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
                 fail(s"Unexpected panic for random KRFL bytes: ${t.getMessage}")
     }
 
-    // Pathological structural
-
-    // Load the embedded classpath, find the Symbol.Class with the most methods.
-    // Verify all methods decode correctly: no Named(-1) in declaredType.
     "class with most methods decodes all methods without Named(-1)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             import kyo.Tasty.SymbolId.value as idVal
@@ -317,7 +277,6 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
             end match
     }
 
-    // Find the method with the most type parameters; verify all decode.
     "method with most type params decodes all type params without sentinel" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             import kyo.Tasty.SymbolId.value as idVal
@@ -339,8 +298,6 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
             end match
     }
 
-    // Find the method with the deepest declaredType nesting.
-    // Verify no StackOverflowError during depth measurement.
     "deepest declaredType nesting causes no StackOverflowError" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             import kyo.Tasty.SymbolId.value as idVal

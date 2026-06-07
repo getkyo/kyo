@@ -7,7 +7,6 @@ import kyo.internal.tasty.symbol.Flags as InternalFlags
   */
 class FlagsTest extends kyo.test.Test[Any]:
 
-    // Test 1: Flag.Inline is a single-bit flag (Flags(Flag.Inline) is non-empty and contains exactly Inline).
     "Flag.Inline encodes a non-empty single-flag Flags value" in {
         val f = Tasty.Flags(Tasty.Flag.Inline)
         // Stronger assertion than "non-empty": the Flags value must equal exactly the single-flag
@@ -18,13 +17,11 @@ class FlagsTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Test 2: Flags.empty does not contain Flag.Inline.
     "Flags.empty.contains(Flag.Inline) is false" in {
         assert(!Tasty.Flags.empty.contains(Tasty.Flag.Inline))
         succeed
     }
 
-    // Test 3: Flags constructed from multiple flags contains those flags.
     "Flags(Inline, Private) contains both Flag.Inline and Flag.Private" in {
         val flags = Tasty.Flags(Tasty.Flag.Inline, Tasty.Flag.Private)
         assert(flags.contains(Tasty.Flag.Private))
@@ -32,21 +29,18 @@ class FlagsTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Test 4: fromTastyModifierTag maps PRIVATE (tag 6) to a Flags containing Flag.Private.
     "fromTastyModifierTag(PRIVATE=6) maps to Flags containing Flag.Private" in {
         val flags = InternalFlags.fromTastyModifierTag(TastyFormat.PRIVATE)
         assert(flags.contains(Tasty.Flag.Private))
         succeed
     }
 
-    // Test 5: fromTastyModifierTag maps INLINE (tag 17) to a Flags containing Flag.Inline.
     "fromTastyModifierTag(INLINE=17) maps to Flags containing Flag.Inline" in {
         val flags = InternalFlags.fromTastyModifierTag(TastyFormat.INLINE)
         assert(flags.contains(Tasty.Flag.Inline))
         succeed
     }
 
-    // Test 6: all 45 declared Flag values are pairwise distinct (no two flags collapse to the same encoding).
     "all declared Flag values are pairwise distinct" in {
         val allFlags = List(
             Tasty.Flag.Inline,

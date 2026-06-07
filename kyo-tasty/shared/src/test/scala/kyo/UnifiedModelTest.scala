@@ -111,7 +111,6 @@ class UnifiedModelTest extends kyo.test.Test[Any]:
     }
 
     // Test 12: SymbolKind.Class for Java class and Scala class
-    // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK Object.class.
     "SymbolKind.Class appears for Java class and Scala class" in {
         readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map: javaResult =>
             assert(
@@ -127,7 +126,6 @@ class UnifiedModelTest extends kyo.test.Test[Any]:
     }
 
     // Test 13: SymbolKind.Trait for Java interface and Scala trait
-    // Cross-platform: uses inline synthetic interface bytes instead of JDK Runnable.class.
     "SymbolKind.Trait appears for Java interface and Scala trait" in {
         val clsName = "kyo/fixtures/SyntheticRunnable".getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val supName = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
@@ -160,7 +158,6 @@ class UnifiedModelTest extends kyo.test.Test[Any]:
     }
 
     // Test 14: SymbolKind.Object appears ONLY for Scala object; no Java symbol has Object kind
-    // Cross-platform: uses embedded fixtures instead of JDK Object.class + System.class.
     "SymbolKind.Object appears only for Scala object; no Java symbol has Object kind" in {
         readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map: javaObjectResult =>
             assert(
@@ -183,7 +180,6 @@ class UnifiedModelTest extends kyo.test.Test[Any]:
     }
 
     // Test 15: TypeAlias, OpaqueType, AbstractType appear only for TASTy-sourced symbols
-    // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK Object.class.
     "TypeAlias, OpaqueType, AbstractType appear only in TASTy-sourced symbols" in {
         readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map: javaResult =>
             val allJavaSyms    = javaResult.classSymbol :: javaResult.symbols.toList
@@ -255,7 +251,6 @@ class UnifiedModelTest extends kyo.test.Test[Any]:
     }
 
     // Test 18: Full SymbolKind matrix coverage (all 13 non-Unresolved kinds present)
-    // Cross-platform: uses Embedded fixture classfiles + inline synthetic bytes
     // instead of 5 JDK classfiles (Object, Runnable, System, String, AbstractStringBuilder).
     // Coverage:
     //   Class, Method: throwsFixtureClass

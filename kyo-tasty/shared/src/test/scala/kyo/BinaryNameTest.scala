@@ -2,22 +2,15 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Tests for BinaryName.compute.
+/** Tests for BinaryName.compute using synthetic Classpath fixtures.
   *
-  * Uses synthetic Classpath fixtures so results are deterministic and platform-independent. Package
-  * symbols use dotted FQN names (matching TASTy-decoded format), with ownerId=-1 (unresolvable
-  * sentinel) so the Maybe.Absent path handles the package-to-root boundary.
-  *
-  * All 5 leaves pin : JVM internal-name format with '/' for package segments, '$' for nested
-  * class segments, and trailing '$' for top-level objects.
+  * Verifies JVM internal-name format: '/' for package segments, '$' for nested class segments,
+  * and trailing '$' for top-level objects. Package symbols use dotted FQN names matching the
+  * TASTy-decoded format.
   */
 class BinaryNameTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Fixture builders
-    // ─────────────────────────────────────────────────────────────────────────
 
     /** Build a classpath for testing top-level symbols in package "example".
       *
@@ -256,13 +249,6 @@ class BinaryNameTest extends kyo.test.Test[Any]:
                 errors = Chunk.empty
             )
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // top-level class
-    // ─────────────────────────────────────────────────────────────────────────
-    // Given: synthetic classpath; class example.Top (ownerId -> Package "example")
-    // When: Tasty.binaryName(topSym)
-    // Then: result == "example/Top"
-    // Pins: (package prefix joined with '/', no trailing '$' for Class)
     "top-level class: example.Top maps to example/Top" in {
         buildTopLevelFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
@@ -274,13 +260,6 @@ class BinaryNameTest extends kyo.test.Test[Any]:
                     case Maybe.Absent => fail("example.Top must be present in top-level fixture")
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // top-level object
-    // ─────────────────────────────────────────────────────────────────────────
-    // Given: synthetic classpath; object example.MyObj (ownerId -> Package "example")
-    // When: Tasty.binaryName(myObjSym)
-    // Then: result == "example/MyObj$"
-    // Pins: (trailing '$' for Symbol.Object kind)
     "top-level object: example.MyObj maps to example/MyObj$" in {
         buildTopLevelFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
@@ -292,13 +271,6 @@ class BinaryNameTest extends kyo.test.Test[Any]:
                     case Maybe.Absent => fail("example.MyObj must be present in top-level fixture")
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // nested class
-    // ─────────────────────────────────────────────────────────────────────────
-    // Given: synthetic classpath; class example.Outer.Inner (Inner ownerId -> Outer, Outer ownerId -> Package)
-    // When: Tasty.binaryName(innerSym)
-    // Then: result == "example/Outer$Inner"
-    // Pins: ('$' between nested class segments, '/' after package)
     "nested class: example.Outer.Inner maps to example/Outer$Inner" in {
         buildNestedFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
@@ -310,13 +282,6 @@ class BinaryNameTest extends kyo.test.Test[Any]:
                     case Maybe.Absent => fail("example.Outer.Inner must be present in nested fixture")
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // nested object
-    // ─────────────────────────────────────────────────────────────────────────
-    // Given: synthetic classpath; object example.Outer.InnerObj (ownerId -> Outer)
-    // When: Tasty.binaryName(innerObjSym)
-    // Then: result == "example/Outer$InnerObj$"
-    // Pins: ('$' between nested segments AND trailing '$' for Object kind)
     "nested object: example.Outer.InnerObj maps to example/Outer$InnerObj$" in {
         buildNestedFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
@@ -331,13 +296,6 @@ class BinaryNameTest extends kyo.test.Test[Any]:
                     case Maybe.Absent => fail("example.Outer.InnerObj must be present in nested fixture")
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // deeper nesting with multi-segment package
-    // ─────────────────────────────────────────────────────────────────────────
-    // Given: synthetic classpath; class a.b.c.Outer.Mid.Inner; Package has dotted name "a.b.c"
-    // When: Tasty.binaryName(innerSym)
-    // Then: result == "a/b/c/Outer$Mid$Inner"
-    // Pins: (dots in package name replaced with '/', recursion walks every class-nesting level)
     "deeper nesting: a.b.c.Outer.Mid.Inner maps to a/b/c/Outer$Mid$Inner" in {
         buildDeepFixture.flatMap: cp =>
             Tasty.withClasspath(cp):

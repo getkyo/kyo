@@ -3,16 +3,8 @@ package kyo
 import kyo.internal.tasty.symbol.SymbolKind
 import scala.compiletime.testing.typeCheckErrors
 
-/** Tests for SubtypeVerdict.Unknown renamed to Indeterminate, and
-  * TastyError.UnhandledSubtypingCase new variant.
-  *
-  * Leaves:
-  *   1. indeterminateRenamedFromUnknown
-  *   2. budgetExhaustionYieldsIndeterminate
-  *   3. unhandledShapeRoutesToCpErrors
-  *   4. pureVerdictSignatureUnchanged
-  *   5. schemaRoundTripsSubtypeVerdict
-  *   6. unhandledSubtypingCaseIsClosedEnumVariant
+/** Tests for SubtypeVerdict and isSubtypeOf: Indeterminate, budget exhaustion,
+  * unhandled shapes routing to cp.errors, Schema round-trips, and CanEqual derivation.
   */
 class IsSubtypeOfTest extends kyo.test.Test[Any]:
 
@@ -61,14 +53,12 @@ class IsSubtypeOfTest extends kyo.test.Test[Any]:
         Tasty.Classpath.fromPicklesWithSymbols(Chunk.from(arr))
     end makeTestClasspath
 
-    // SubtypeVerdict.Unknown no longer exists (renamed to Indeterminate).
     "leaf-1: SubtypeVerdict.Unknown does not exist (compile-time probe)" in {
         val errors = typeCheckErrors("val _: kyo.Tasty.SubtypeVerdict = kyo.Tasty.SubtypeVerdict.Unknown")
         assert(errors.nonEmpty, "Expected compile error for SubtypeVerdict.Unknown but got none")
         succeed
     }
 
-    // Budget exhaustion yields Indeterminate (not Unknown).
     "leaf-2: budget exhaustion via 66-deep Rec chain yields Indeterminate" in {
         nextId = 0
         val leafSym          = makeSym("RecBudgetLeaf")
@@ -89,7 +79,6 @@ class IsSubtypeOfTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // Unhandled parent shape accumulates in cp.errors (binding).
     // Uses a Symbol.Class whose parentTypes contains a TermRef (not Named/Applied(Named)),
     // which is outside the matcher set in checkParents. After isSubtypeOf, calling
     // Tasty.classpath folds any accumulated decodeCtx.subtypingErrors into cp.errors.
@@ -133,8 +122,7 @@ class IsSubtypeOfTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // Signature of isSubtypeOf is SubtypeVerdict < Sync (no Abort[TastyError]).
-    // This helper method must compile for the test to pass; its return type annotation is the assertion.
+    // The helper method must compile; the return type annotation is the assertion.
     "leaf-4: isSubtypeOf return type is SubtypeVerdict < Sync (no Abort row)" in {
         def checkSignature(using Frame): Tasty.SubtypeVerdict < Sync =
             Tasty.withClasspath(Tasty.Classpath.empty):
@@ -142,7 +130,6 @@ class IsSubtypeOfTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Schema round-trips each SubtypeVerdict case via JSON.
     "leaf-5: Schema round-trips Sub, NotSub, Indeterminate" in {
         for verdict <- Seq(
                 Tasty.SubtypeVerdict.Sub,
@@ -163,10 +150,7 @@ class IsSubtypeOfTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // TastyError.UnhandledSubtypingCase is a closed-enum variant: constructable,
-    // matchable, and its omission from a match causes an exhaustiveness compile error.
     "leaf-6: UnhandledSubtypingCase is a reachable, closed-enum TastyError variant" in {
-        // Reachability: the variant can be constructed and matched.
         val e: TastyError = TastyError.UnhandledSubtypingCase(
             shape = "TermRef",
             lhs = Tasty.Type.Any,
@@ -183,10 +167,6 @@ class IsSubtypeOfTest extends kyo.test.Test[Any]:
                 fail(s"Expected UnhandledSubtypingCase but got $other")
         end match
 
-        // Closed-enum exhaustiveness: a match on TastyError that includes UnhandledSubtypingCase
-        // compiles cleanly; if the variant were removed, this match would produce a compile error.
-        // (The SealedAdtCompletenessTest Mirror guard enforces count at compile time; this arm
-        // confirms the variant is syntactically matchable and closes the positive pin.)
         val label: String = e match
             case TastyError.FileNotFound(_)                    => "FileNotFound"
             case TastyError.CorruptedFile(_, _, _)             => "CorruptedFile"

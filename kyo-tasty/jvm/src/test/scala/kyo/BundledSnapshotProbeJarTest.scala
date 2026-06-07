@@ -130,10 +130,6 @@ class BundledSnapshotProbeJarTest extends kyo.test.Test[Any]:
         tmp.getAbsolutePath
     end writeTempJarBytes
 
-    // jar with no snapshot returns Absent
-    // Given: fixture jar containing only.class entries (no snapshot entry)
-    // When: BundledSnapshotProbe.probe(jarPath)
-    // Then: returns Maybe.Absent
     "jar with no snapshot entry returns Maybe.Absent" in {
         val noSnapBytes = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val root        = "no-snap.jar"
@@ -143,8 +139,6 @@ class BundledSnapshotProbeJarTest extends kyo.test.Test[Any]:
                 assert(result == Maybe.Absent, s"expected Absent, got $result")
     }
 
-    // jar with valid snapshot returns Present
-    // Given: real jar on disk with KRFL snapshot; embedded digest matches JVM CEN walk digest.
     "jar with valid snapshot and matching digest returns Maybe.Present" in {
         val baseBytes     = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val basePath      = writeTempJarBytes(baseBytes)
@@ -163,8 +157,6 @@ class BundledSnapshotProbeJarTest extends kyo.test.Test[Any]:
                     case Maybe.Absent         => assert(false, "unreachable")
     }
 
-    // digest mismatch raises DigestMismatch
-    // Given: real jar on disk; snapshot embeds a wrong digest (0xdeadbeef).
     "digest mismatch raises TastyError.DigestMismatch" in {
         val baseBytes     = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val basePath      = writeTempJarBytes(baseBytes)
@@ -187,8 +179,6 @@ class BundledSnapshotProbeJarTest extends kyo.test.Test[Any]:
                     assert(false, s"expected DigestMismatch failure, got: $other")
     }
 
-    // probe is idempotent
-    // Given: same jar probed twice.
     "probe is idempotent; same bytes returned on two calls" in {
         val baseBytes      = buildZipBytes("Bar.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val basePath       = writeTempJarBytes(baseBytes)

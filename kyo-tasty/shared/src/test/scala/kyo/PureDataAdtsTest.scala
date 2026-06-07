@@ -3,17 +3,12 @@ package kyo
 import kyo.Tasty.SymbolId
 // typeCheckErrors is accessed via compiletime.testing.typeCheckErrors inline
 
-/** plan  and 13.
-  *
-  * every public ADT derives Schema (compile-time summon). Leaf 2: every public ADT derives CanEqual (compile-time summon). Leaf 3:
-  * removed HEAD Symbol methods are absent (compileErrors). Leaf 4: Symbol.EnumCase is a peer of Symbol.Class (compileErrors cross-cast).
-  * Tag[Symbol.EnumCase] summon succeeds.
+/** Verifies that every public ADT derives Schema and CanEqual, that removed Symbol methods are absent
+  * from the surface, and that Symbol.EnumCase is a peer of Symbol.Class (not a subtype).
   */
 class PureDataAdtsTest extends kyo.test.Test[Any]:
 
-    // ── Leaf 1: Schema[T] summon at file scope (compile-time check) ──────────
-    // All lines below are compile-time assertions: if Schema derivation is missing for any type
-    // the file will not compile and sbt reports a compilation error.
+    // Compile-time assertions: if Schema derivation is missing for any type the file will not compile.
 
     val _s01: Schema[Tasty.Symbol]              = summon[Schema[Tasty.Symbol]]
     val _s02: Schema[Tasty.Symbol.Class]        = summon[Schema[Tasty.Symbol.Class]]
@@ -30,7 +25,7 @@ class PureDataAdtsTest extends kyo.test.Test[Any]:
     val _s13: Schema[Tasty.Symbol.AbstractType] = summon[Schema[Tasty.Symbol.AbstractType]]
     val _s14: Schema[Tasty.Symbol.TypeParam]    = summon[Schema[Tasty.Symbol.TypeParam]]
     val _s15: Schema[Tasty.Symbol.Parameter]    = summon[Schema[Tasty.Symbol.Parameter]]
-    // _s16 was Schema[Symbol.Unresolved] -- removed in (Cat 19)
+    // _s16 was Schema[Symbol.Unresolved] -- now Schema[Symbol.Package] since Unresolved was removed
     val _s16: Schema[Tasty.Symbol.Package]         = summon[Schema[Tasty.Symbol.Package]]
     val _s17: Schema[Tasty.Type]                   = summon[Schema[Tasty.Type]]
     val _s18: Schema[Tasty.Tree]                   = summon[Schema[Tasty.Tree]]
@@ -47,8 +42,6 @@ class PureDataAdtsTest extends kyo.test.Test[Any]:
     val _s29: Schema[Tasty.Java.Metadata]          = summon[Schema[Tasty.Java.Metadata]]
     val _s30: Schema[Tasty.Java.Module.Descriptor] = summon[Schema[Tasty.Java.Module.Descriptor]]
     val _s31: Schema[Tasty.Pickle]                 = summon[Schema[Tasty.Pickle]]
-
-    // ── Leaf 2: CanEqual[T, T] summon at file scope (compile-time check) ─────
 
     val _c01: CanEqual[Tasty.Symbol, Tasty.Symbol]                   = summon[CanEqual[Tasty.Symbol, Tasty.Symbol]]
     val _c02: CanEqual[Tasty.Symbol.Class, Tasty.Symbol.Class]       = summon[CanEqual[Tasty.Symbol.Class, Tasty.Symbol.Class]]
@@ -70,9 +63,6 @@ class PureDataAdtsTest extends kyo.test.Test[Any]:
     val _c18: CanEqual[Tasty.Java.Metadata, Tasty.Java.Metadata]     = summon[CanEqual[Tasty.Java.Metadata, Tasty.Java.Metadata]]
     val _c19: CanEqual[Tasty.Pickle, Tasty.Pickle]                   = summon[CanEqual[Tasty.Pickle, Tasty.Pickle]]
 
-    // ── Leaf 3: removed HEAD Symbol methods absent (compileErrors) ───────────
-    // Each compileErrors call should return a non-empty string because the method no longer exists.
-
     "removed HEAD Symbol methods are off the surface" in {
         // typeCheckErrors takes a fully-qualified expression string; local vars are not in scope.
         // Use the null-cast idiom: (null: kyo.Tasty.Symbol).xxx -- if xxx is absent the typecheck fails.
@@ -92,8 +82,6 @@ class PureDataAdtsTest extends kyo.test.Test[Any]:
         // The four predicates above (isPackage, isClass, isMethod, isTrait) are sufficient.
         succeed
     }
-
-    // ── Leaf 4: Symbol.EnumCase is a peer of Symbol.Class (compileErrors) ────
 
     "Symbol.EnumCase is NOT a subtype of Symbol.Class" in {
         val ec: Tasty.Symbol.EnumCase = Tasty.Symbol.EnumCase(
@@ -127,8 +115,6 @@ class PureDataAdtsTest extends kyo.test.Test[Any]:
         assert(__tcErrors5 > 0, "Assigning EnumCase to Symbol.Class must be a type error (EnumCase is no longer a subtype of Class)")
         succeed
     }
-
-    // ── Leaf 13: Tag[Symbol.EnumCase] summon succeeds ─────────────────────────
 
     "Tag[Symbol.EnumCase] summon compiles and produces a valid tag" in {
         val tag = summon[Tag[Tasty.Symbol.EnumCase]]

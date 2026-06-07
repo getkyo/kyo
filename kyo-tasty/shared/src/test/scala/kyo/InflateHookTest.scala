@@ -3,13 +3,10 @@ package kyo
 import kyo.internal.tasty.scala2.InflateHook
 import kyo.internal.tasty.scala2.PortableInflate
 
-/** Tests for/20f: InflateHook real implementation on all platforms.
+/** Tests for InflateHook and PortableInflate on all platforms (JVM, JS via PortableInflate, Native).
   *
-  * wired JVM and Native. wired JS via PortableInflate. All three platforms now run the full test suite (jvmOnly tag
-  * removed).
-  *
-  * ZLIB envelope for "hello kyo" (9 bytes), pre-computed with java.util.zip.DeflaterOutputStream: 0x78 0x9c (ZLIB header, default
-  * compression) + deflate bitstream + 4-byte Adler-32 checksum. Total: 17 bytes.
+  * ZLIB envelope for "hello kyo" (9 bytes): 0x78 0x9c (ZLIB header, default compression)
+  * + deflate bitstream + 4-byte Adler-32 checksum. Total: 17 bytes.
   */
 class InflateHookTest extends kyo.test.Test[Any]:
 

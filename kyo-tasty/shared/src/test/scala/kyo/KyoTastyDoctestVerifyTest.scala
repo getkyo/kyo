@@ -2,23 +2,11 @@ package kyo
 
 import scala.compiletime.testing.typeCheckErrors
 
-/** Leaf 1: README API-surface compile-time verification.
-  *
-  * Compile-time checks via typeCheckErrors verify that every key method referenced in
-  * README code blocks actually exists on the public surface. This is the
-  * Approach A substitute for `sbt 'kyo-tasty/doctest'` (prep doc C4). The checks run
-  * cross-platform; they exercise the API surface, not file I/O.
-  *
-  * The typeCheckErrors strings that exercise Tasty query methods include an explicit
-  * `using kyo.Frame.internal` because those methods require Frame and the fresh
-  * compilation context used by typeCheckErrors does not have a `given Frame` in scope.
+/** Compile-time verification that every key method referenced in README code blocks exists
+  * on the public surface. Query method checks include an explicit `using kyo.Frame.internal`
+  * because typeCheckErrors does not have a `given Frame` in scope.
   */
 class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
-
-    // ── Leaf 1: compile-time surface checks ──────────────────────────────────
-    // Given: the public surface of object Tasty.
-    // When: typeCheckErrors is called for each key README entry-point reference.
-    // Then: every "ok" check produces empty errors (method exists); every "bad" check produces non-empty.
 
     "Tasty.findClass exists with correct return type" in {
         val ok = typeCheckErrors(

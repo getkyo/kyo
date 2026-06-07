@@ -9,9 +9,6 @@ package external
 class SymbolIdVisibilityTest extends kyo.test.Test[Any]:
 
     // no-public-construction compile pin.
-    // Given: caller code outside package kyo.
-    // When: attempts kyo.Tasty.SymbolId.apply(0).
-    // Then: compilation fails because apply is private[kyo].
     "SymbolId.apply is inaccessible from outside the kyo package" in {
         typeCheckFailure("kyo.Tasty.SymbolId(0)")("does not take parameters")
     }

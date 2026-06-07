@@ -5,9 +5,6 @@ import kyo.internal.tasty.classfile.ModuleInfoReader
 /** JVM-only tests for ModuleInfoReader that require the jrt:/ filesystem (JDK 9+). */
 class ModuleInfoJvmTest extends kyo.test.Test[Any]:
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Test 6 (jvmOnly): cp.findModule("java.base") on JVM returns Present with name == "java.base"
-    // ─────────────────────────────────────────────────────────────────────────
     "cp.findModule(java.base) on JVM classpath returns Present(desc) with name == java.base" in {
         val jrtBytes = loadJavaBaseModuleInfo()
         ModuleInfoReader.read(jrtBytes).map: desc =>

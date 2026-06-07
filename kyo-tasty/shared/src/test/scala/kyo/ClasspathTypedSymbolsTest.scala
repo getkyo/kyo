@@ -39,8 +39,6 @@ class ClasspathTypedSymbolsTest extends kyo.test.Test[Any]:
         src
     end fixtureWith
 
-    // orchestrator-returns-typed-Class
-    // Given: fixture jar pkg.A class; When: cp.findClass('pkg.A'); Then: instance of Symbol.Class
     "orchestrator-returns-typed-Class: findClass returns Symbol.Class" in {
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
@@ -56,10 +54,7 @@ class ClasspathTypedSymbolsTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // orchestrator-returns-typed-Trait
-    // Given: fixture trait pkg.T; When: find by name (findClassLike); Then: instance of Symbol.Trait.
-    // Note: this leaf used findClass before; findClass narrows to Symbol.Class, so a Trait can only be
-    // surfaced via findClassLike (whose return type Maybe[Symbol.ClassLike] admits Symbol.Trait).
+    // findClass narrows to Symbol.Class, so a Trait can only be surfaced via findClassLike.
     "orchestrator-returns-typed-Trait: findClassLike returns Symbol.Trait for trait" in {
         val src = fixtureWith("SomeTrait.tasty" -> kyo.fixtures.Embedded.someTraitTasty)
         Scope.run:
@@ -80,8 +75,6 @@ class ClasspathTypedSymbolsTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // orchestrator-returns-typed-Object
-    // Given: fixture object pkg.O; When: find by name; Then: instance of Symbol.Object
     "orchestrator-returns-typed-Object: findClass returns Symbol.Object for object" in {
         val src = fixtureWith("SomeObject.tasty" -> kyo.fixtures.Embedded.someObjectTasty)
         Scope.run:
@@ -100,8 +93,6 @@ class ClasspathTypedSymbolsTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // orchestrator-returns-typed-Method
-    // Given: fixture def foo(x: Int): Int; When: find foo; Then: Symbol.Method; paramListIds 1x1
     "orchestrator-returns-typed-Method: symbols contain Symbol.Method instances" in {
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
@@ -121,8 +112,6 @@ class ClasspathTypedSymbolsTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // orchestrator-returns-typed-Val
-    // Given: fixture val x: Int; When: find x; Then: Symbol.Val
     "orchestrator-returns-typed-Val: all Val-kind symbols are Symbol.Val instances" in {
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
@@ -155,8 +144,6 @@ class ClasspathTypedSymbolsTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // orchestrator-returns-typed-Field
-    // Given: Java classfile public static int F; When: find F; Then: Symbol.Field; javaMetadata Present
     "orchestrator-returns-typed-Field: all Field-kind symbols are Symbol.Field instances" in {
         val src = MemoryFileSource()
         // Use arrayRecordClass as a Java classfile source (it's a.class file, not.tasty)
@@ -223,8 +210,6 @@ class ClasspathTypedSymbolsTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // orchestrator-returns-typed-TypeParam
-    // Given: class C[+A]; When: find A; Then: Symbol.TypeParam; variance==Covariant
     "orchestrator-returns-typed-TypeParam: all TypeParam-kind symbols are Symbol.TypeParam instances" in {
         val src = fixtureWith("GenericBox.tasty" -> kyo.fixtures.Embedded.genericBoxTasty)
         Scope.run:
@@ -257,8 +242,6 @@ class ClasspathTypedSymbolsTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // orchestrator-returns-typed-Package
-    // Given: fixture pkg; When: findPackage('kyo.fixtures'); Then: Symbol.Package; memberIds nonEmpty
     "orchestrator-returns-typed-Package: findPackage returns Symbol.Package" in {
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:
@@ -276,10 +259,7 @@ class ClasspathTypedSymbolsTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // orchestrator-returns-typed-Unresolved-on-out-of-range
-    // Given: real cp; When: cp.symbol(SymbolId(999999)); Then: Maybe.Absent (out-of-range)
-    // cp.symbol now returns Maybe[Symbol]. An out-of-range id returns Absent.
-    // Previously the sentinel Symbol.Unresolved (now deleted) was returned for out-of-range ids.
+    // cp.symbol returns Maybe[Symbol]; an out-of-range id returns Absent.
     "orchestrator-returns-typed-Unresolved-on-out-of-range: sentinel is Symbol.Unresolved" in {
         val src = fixtureWith("PlainClass.tasty" -> kyo.fixtures.Embedded.plainClassTasty)
         Scope.run:

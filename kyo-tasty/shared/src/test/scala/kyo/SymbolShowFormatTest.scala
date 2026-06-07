@@ -121,10 +121,6 @@ class SymbolShowFormatTest extends kyo.test.Test[Any]:
                 errors = Chunk.empty
             )
 
-    // ── Leaf 151: show-FullyQualified ─────────────────────────────────────────
-    // Given: Symbol.Class List in scala.collection.
-    // When: c.show(ShowFormat.FullyQualified).
-    // Then: returns "scala.collection.List".
     "show(FullyQualified) returns dotted FQN" in {
         buildFixture.flatMap: cp =>
             val c = cp.findClass("scala.collection.List").get
@@ -134,10 +130,6 @@ class SymbolShowFormatTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // ── Leaf 152: show-Simple ─────────────────────────────────────────────────
-    // Given: same symbol.
-    // When: c.show(ShowFormat.Simple).
-    // Then: returns "List".
     "show(Simple) returns simple name" in {
         buildFixture.flatMap: cp =>
             val c = cp.findClass("scala.collection.List").get
@@ -147,10 +139,6 @@ class SymbolShowFormatTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // ── Leaf 153: show-Code-method ────────────────────────────────────────────
-    // Given: Symbol.Method "foo"(x:.) from def foo(x: List): String.
-    // When: m.show(ShowFormat.Code).
-    // Then: returns a string starting with "def foo" and containing "(x: ".
     "show(Code) for method starts with def name and has params" in {
         buildFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(4)).asInstanceOf[Tasty.Symbol.Method]
@@ -161,10 +149,6 @@ class SymbolShowFormatTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // ── Leaf 154: show-Code-classlike ─────────────────────────────────────────
-    // Given: Symbol.Class "List"[A] extends D.
-    // When: c.show(ShowFormat.Code).
-    // Then: returns string containing "class List", "[A]", and "extends D".
     "show(Code) for class contains kind, name, type params, and extends clause" in {
         buildFixture.flatMap: cp =>
             val c = cp.findClass("scala.collection.List").get

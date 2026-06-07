@@ -229,9 +229,6 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
     }
 
     // renderType renders Function as arrow
-    // Given: method def map[B](f: A => B): List[B]
-    // When: Tasty.signature(mapMethod)
-    // Then: exact string "def map[B](f: A => B): List[B]"
     "renderType renders Function as Scala arrow syntax in signature" in {
         import kyo.Tasty.SymbolId
         // id=0: TypeParam "A" (self-owned)
@@ -258,9 +255,6 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
     }
 
     // renderType renders Tuple return type
-    // Given: method def pair: (A, B)
-    // When: Tasty.signature(pairMethod)
-    // Then: exact string "def pair: (A, B)"
     "renderType renders Tuple return type in signature" in {
         import kyo.Tasty.SymbolId
         // id=0: TypeParam "A" (self-owned)
@@ -283,9 +277,6 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
     }
 
     // renderType renders Array param type
-    // Given: method def fill(xs: Array[Int]): Unit
-    // When: Tasty.signature(fillMethod)
-    // Then: exact string "def fill(xs: Array[Int]): Unit"
     "renderType renders Array param type in signature" in {
         import kyo.Tasty.SymbolId
         // id=0: Class "Int" (self-owned)
@@ -310,9 +301,6 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
     }
 
     // renderType renders multi-arg Function param type
-    // Given: method def combine(f: (A, B) => C): C
-    // When: Tasty.signature(combineMethod)
-    // Then: exact string "def combine(f: (A, B) => C): C"
     "renderType renders multi-arg Function param type in signature" in {
         import kyo.Tasty.SymbolId
         // id=0: TypeParam "A" (self-owned)
@@ -343,9 +331,6 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
     }
 
     // renderType renders ByName param type
-    // Given: method def eval(x: => Int): Int
-    // When: Tasty.signature(evalMethod)
-    // Then: exact string "def eval(x: => Int): Int"
     "renderType renders ByName param type in signature" in {
         import kyo.Tasty.SymbolId
         // id=0: Class "Int" (self-owned)

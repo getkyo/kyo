@@ -3,16 +3,12 @@ package kyo
 import kyo.Json
 import kyo.Tasty.SymbolId
 
-/** Tests for Cat 10 (isContext drop), Cat 14 (Unknown removal), Cat 16 (derives CanEqual), and Schema round-trips for all Type cases.
-  *
-  *  from the phase-05 plan. Leaf 4 (unknownDeleted) from phase-10 plan.
+/** Tests that removed Type ADT features (Type.Unknown, isContext argument, Unresolved kind)
+  * are absent from the surface, and that all Type cases derive CanEqual and round-trip via Schema.
   */
 class TypeAdtVariantCoverageTest extends kyo.test.Test[Any]:
 
     // unknownDeleted
-    // Given: a probe compiletime.testing.typeCheckErrors("kyo.Tasty.Type.Unknown")
-    // When: the test asserts
-    // Then: the returned list is non-empty (Type.Unknown was removed in Cat 14)
     "Type.Unknown no longer exists after Cat 14 elimination" in {
         val errCount = compiletime.testing.typeCheckErrors("kyo.Tasty.Type.Unknown").length
         assert(errCount > 0, "Expected compile error for Type.Unknown, but got none")
@@ -20,9 +16,6 @@ class TypeAdtVariantCoverageTest extends kyo.test.Test[Any]:
     }
 
     // functionDropsIsContext
-    // Given: a probe compileErrors('Type.Function(Chunk.empty, Type.Any, true)')
-    // When: the test asserts
-    // Then: the returned list is non-empty
     "Type.Function no longer accepts a third isContext argument" in {
         val errCount = compiletime.testing.typeCheckErrors(
             "kyo.Tasty.Type.Function(kyo.Chunk.empty, kyo.Tasty.Type.Any, true)"
@@ -32,9 +25,6 @@ class TypeAdtVariantCoverageTest extends kyo.test.Test[Any]:
     }
 
     // contextFunctionIsTheDedicatedArm
-    // Given: a fixture Type.ContextFunction(Chunk(Type.Any), Type.Nothing)
-    // When: the test pattern-matches against Type.ContextFunction(_, _)
-    // Then: the match arm fires; value reconstructable from its fields
     "Type.ContextFunction is the dedicated arm for context functions" in {
         val cf = Tasty.Type.ContextFunction(Chunk(Tasty.Type.Any), Tasty.Type.Nothing)
         cf match
@@ -48,9 +38,6 @@ class TypeAdtVariantCoverageTest extends kyo.test.Test[Any]:
     }
 
     // schemaRoundTripsEveryTypeCase
-    // Given: a fixture list with one instance of every post-Cat-10 Type case
-    // When: the test encodes via Json.encode (Schema-driven) and reads back via Json.decode
-    // Then: every decoded value equals its original (CanEqual)
     "Schema round-trips every Type case" in {
         val n   = Tasty.Type.Named(SymbolId(0))
         val id0 = SymbolId(0)

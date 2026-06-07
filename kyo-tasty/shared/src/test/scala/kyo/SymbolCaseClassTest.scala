@@ -2,15 +2,7 @@ package kyo
 import kyo.Tasty.SymbolId
 import kyo.internal.tasty.symbol.SymbolKind
 
-/** plan-mandated tests for the Symbol pure case class skeleton.
-  *
-  * Leaves:
-  *   1. Symbol case-class construction populates all 14 fields.
-  *   2. Symbol equality is structural over 14 constructor params.
-  *   3. Symbol copy produces independent instance.
-  *   4. private[kyo] constructor accessible from package kyo only.
-  *   5. no SingleAssign or OnceCell field survives on Symbol.
-  */
+/** Tests for Symbol case class construction, equality, copy semantics, and field visibility. */
 class SymbolCaseClassTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
@@ -42,11 +34,6 @@ class SymbolCaseClassTest extends kyo.test.Test[Any]:
             javaAnnotations = Chunk.empty
         )
 
-    // ── Leaf 1: construction populates all 14 fields ─────────────────────────
-
-    // Given: a fully-specified 14-field Symbol.Class.
-    // When: each field is read.
-    // Then: every field equals the value provided at construction; no field is at a wrong default.
     "Symbol case-class construction populates all 14 fields" in {
         val sym = makeTestSymbol(
             id = 7,
@@ -68,15 +55,9 @@ class SymbolCaseClassTest extends kyo.test.Test[Any]:
         assert(sym.typeParamIds.isEmpty, s"typeParamIds: ${sym.typeParamIds}")
         assert(sym.declarationIds.isEmpty, s"declarationIds: ${sym.declarationIds}")
         assert(sym.permittedSubclassIds.isEmpty, s"permittedSubclassIds: ${sym.permittedSubclassIds}")
-        // body field removed in (Cat 17 Option A)
         succeed
     }
 
-    // ── Leaf 2: equality is structural over 14 constructor params ─────────────
-
-    // Given: two Symbol.Class instances built with identical constructor arguments.
-    // When: compared via == and hashCode.
-    // Then: equal; hashCode matches.
     "Symbol equality is structural over 14 constructor params" in {
         val sym1 = makeTestSymbol(id = 5, name = "MyClass")
         val sym2 = makeTestSymbol(id = 5, name = "MyClass")
@@ -85,11 +66,6 @@ class SymbolCaseClassTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 3: copy produces independent instance ────────────────────────────
-
-    // Given: a Symbol.Class s1 with scaladoc = Present("a").
-    // When: s1.copy(scaladoc = Present("b")).
-    // Then: the new instance has scaladoc = Present("b") and is not eq to s1; other fields equal.
     "Symbol copy produces independent instance" in {
         val s1 = makeTestSymbol(id = 10, name = "CopyMe", scaladoc = Maybe("a"))
         val s2 = s1.copy(scaladoc = Maybe("b"))
@@ -101,22 +77,12 @@ class SymbolCaseClassTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 4: private[kyo] constructor accessible from package kyo ──────────
-
-    // Given: code in package kyo constructing Tasty.Symbol.Class directly.
-    // When: compiled.
-    // Then: compiles cleanly (private[kyo] allows this package).
     "private[kyo] constructor accessible from package kyo" in {
         val sym = makeTestSymbol(id = 99, name = "AccessTest")
         assert(sym.id == SymbolId(99), "Symbol was constructed via internal factory")
         succeed
     }
 
-    // ── Leaf 5: no SingleAssign or OnceCell field survives on Symbol ──────────
-
-    // Given: the Symbol.Class case class definition.
-    // When: its 14 constructor parameter types are statically examined.
-    // Then: all fields have pure-data types; no SingleAssign or OnceCell is accessible.
     "no SingleAssign or OnceCell field survives on Symbol" in {
         val sym = makeTestSymbol(id = 1, name = "Leaf5Test")
 

@@ -8,13 +8,11 @@ import kyo.internal.tasty.symbol.SymbolKind
 class DeclarationTableTest extends kyo.test.Test[Any]:
 
     private def makeSymbol(nameStr: String): Tasty.Symbol =
-        // phase-02 bridge; Symbol.make creates a partial Symbol with just kind/flags/name.
         import AllowUnsafe.embrace.danger
         Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name(nameStr), Tasty.Flags.empty, Tasty.SymbolId(-1), Chunk.empty)
     end makeSymbol
 
-    // Test 21: 4 members use flat-array Dict path; all retrievable by name.
-    // Verifies that small tables (size <= 8) use the flat-array internal representation.
+    // Small tables (size <= 8) use the flat-array internal representation.
     "class with 4 members uses flat-array Dict path: all members retrievable" in {
         import AllowUnsafe.embrace.danger
         val members = (1 to 4).map(i => Tasty.Name(s"member$i") -> makeSymbol(s"member$i"))
@@ -32,8 +30,7 @@ class DeclarationTableTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Test 22: 9 members (above threshold 8) use HashMap path; all retrievable.
-    // Verifies that larger tables (size > 8) use the HashMap internal representation.
+    // Larger tables (size > 8) use the HashMap internal representation.
     "class with 9 members (above threshold) uses HashMap path: all members retrievable" in {
         import AllowUnsafe.embrace.danger
         val members = (1 to 9).map(i => Tasty.Name(s"field$i") -> makeSymbol(s"field$i"))
@@ -51,10 +48,8 @@ class DeclarationTableTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Test 23: AtomicRef CAS-swap visibility: reader sees fully-populated dict after latch release.
-    // Writer: populate FIRST, then release latch. Reader: await latch, then read.
-    // Verifies that the AtomicRef CAS-swap in populate is visible to a fiber that starts reading
-    // after the latch is released.
+    // Writer populates FIRST, then releases latch; reader awaits latch, then reads.
+    // Verifies AtomicRef CAS-swap visibility across fibers.
     "AtomicRef CAS-swap visibility: reader sees either empty or fully-populated dict" in {
         import AllowUnsafe.embrace.danger
         Async.timeout(1.second) {

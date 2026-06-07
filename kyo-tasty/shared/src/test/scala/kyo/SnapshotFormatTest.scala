@@ -44,9 +44,6 @@ class SnapshotFormatTest extends kyo.test.Test[Any]:
     }
 
     // Test 5 (T2): magic bytes decoded as US-ASCII equal "KRFL".
-    // Given: SnapshotFormat.magic (4-byte Array).
-    // When: new String(magic, StandardCharsets.US_ASCII).
-    // Then: equals "KRFL".
     "SnapshotFormat.magic bytes decoded as US-ASCII equal KRFL" in {
         val decoded = new String(SnapshotFormat.magic, StandardCharsets.US_ASCII)
         assert(decoded == "KRFL", s"Expected magic to decode to KRFL but got: $decoded")

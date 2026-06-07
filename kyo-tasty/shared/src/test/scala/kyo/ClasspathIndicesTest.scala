@@ -5,13 +5,10 @@ import kyo.Schema
 import kyo.Tasty.Classpath
 import kyo.Tasty.SymbolId
 
-/** Cat 2: Dict round-trip and semantic equivalence tests for Classpath.Indices.
+/** Dict round-trip and semantic equivalence tests for Classpath.Indices.
   *
-  * Verifies that after converting Map -> Dict in Classpath.Indices, the Schema round-trip
-  * and lookup semantics are preserved.
-  *
-  * Leaf 3 (dictRoundTripOverSchema): Dict[String, SymbolId] fields round-trip through Schema.
-  * Leaf 4 (dictAggregationsBuilderPreservesIds): bySimpleName aggregation is correct.
+  * Verifies that Dict[String, SymbolId] fields round-trip through Schema and that
+  * bySimpleName aggregation is correct.
   */
 class ClasspathIndicesTest extends kyo.test.Test[Any]:
 
@@ -33,10 +30,6 @@ class ClasspathIndicesTest extends kyo.test.Test[Any]:
         )
 
     "dictRoundTripOverSchema" in {
-        // Given: a Classpath built via Classpath.make with a known FQN entry.
-        // When: encoded via Json.encode(cp) and decoded via Json.decode[Classpath].
-        // Then: the decoded indices.byFqn is a Dict[String, SymbolId] and
-        //       decoded.indices.byFqn.get(knownFqn) == cp.indices.byFqn.get(knownFqn).
         import AllowUnsafe.embrace.danger
         val cls0 = makeCls(0, "Foo")
         val cls1 = makeCls(1, "pkg")
@@ -69,10 +62,6 @@ class ClasspathIndicesTest extends kyo.test.Test[Any]:
     }
 
     "dictAggregationsBuilderPreservesIds" in {
-        // Given: a fixture classpath with three classes whose simple names are all "Bar"
-        //        (representing three classes "a.Bar", "b.Bar", "c.Bar" sharing the same simpleName).
-        // When: cp.indices.bySimpleName.get("Bar") is called.
-        // Then: the returned Chunk[SymbolId] has length 3 and contains all three ids.
         import AllowUnsafe.embrace.danger
         val cls0 = makeCls(0, "Bar")
         val cls1 = makeCls(1, "Bar")

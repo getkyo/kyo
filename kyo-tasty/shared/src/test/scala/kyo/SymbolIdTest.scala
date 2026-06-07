@@ -12,9 +12,6 @@ import kyo.Tasty.SymbolId
 class SymbolIdTest extends kyo.test.Test[Any]:
 
     // SymbolId identity equality.
-    // Given: two SymbolId.apply(7) calls.
-    // When: compared via == and via underlying value extension.
-    // Then: both return true; underlying Int is 7.
     "SymbolId identity equality: two apply(7) calls are equal" in {
         val a = SymbolId(7)
         val b = SymbolId(7)
@@ -24,9 +21,6 @@ class SymbolIdTest extends kyo.test.Test[Any]:
     }
 
     // SymbolId inequality.
-    // Given: SymbolId.apply(7) and SymbolId.apply(8).
-    // When: compared via ==.
-    // Then: returns false.
     "SymbolId inequality: apply(7) != apply(8)" in {
         val a = SymbolId(7)
         val b = SymbolId(8)
@@ -34,9 +28,6 @@ class SymbolIdTest extends kyo.test.Test[Any]:
     }
 
     // SymbolId pattern-binding.
-    // Given: a SymbolId produced from value 42.
-    // When: pattern-matched and the underlying Int extracted via value extension.
-    // Then: the extracted Int equals 42.
     "SymbolId pattern-binding: extract underlying Int via match" in {
         val s: SymbolId = SymbolId(42)
         val extracted = s match

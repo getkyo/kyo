@@ -76,7 +76,7 @@ object SnapshotWriter:
         // Build a reverse map SymbolId.value->fqn from the classpath's fqnIndex so snapshot FQNs are
         // the real registered FQNs (e.g. "test.Foo"), not just simple names ("Foo").
         // Symbols without an fqnIndex entry get an empty FQN (they will not be findClass-lookup-able).
-        // HARD RULE 10: store only the canonical source FQN per symbol. The fqnIndex contains dual-index
+        // Store only the canonical source FQN per symbol. The fqnIndex contains dual-index
         // entries (e.g. both "scala.Predef$" and "scala.Predef"), so we apply canonicalSourceFqn before
         // storing. Multiple binary FQNs that canonicalize to the same source form produce the same put,
         // which is deterministic and correct (the canonical source FQN is the user-facing name).

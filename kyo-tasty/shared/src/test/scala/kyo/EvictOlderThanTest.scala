@@ -13,10 +13,6 @@ import kyo.internal.MemoryFileSource
   */
 class EvictOlderThanTest extends kyo.test.Test[Any]:
 
-    // ── Leaf 9: evictOlderThan deletes files older than cutoff ───────────────
-    // Given: cacheDir with 3.krfl files: two mtime 30 days ago, one mtime 1 hour ago
-    // When: Tasty.Snapshot.evictOlderThanWithSource(cacheDir, 7 days, src)
-    // Then: the two old files are deleted; the recent file remains; returns Success
     "evictOlderThan deletes old .krfl files and keeps recent ones" in {
         val src    = MemoryFileSource()
         val now    = java.lang.System.currentTimeMillis()
@@ -49,8 +45,6 @@ class EvictOlderThanTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // ── Leaf 9b: verify old files are completely removed after eviction ───────
-    // after eviction via source.delete the.krfl namespace is clean.
     "evictOlderThan removes old files completely (no residual paths)" in {
         val src  = MemoryFileSource()
         val now  = java.lang.System.currentTimeMillis()
@@ -77,10 +71,6 @@ class EvictOlderThanTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // ── Leaf 9c: evictOlderThan removes bytes; no stale residue files appear
-    // Given: MemoryFileSource pre-loaded with old1, old2 (30 days old) and recent (1 hour old)
-    // When: evictOlderThanWithSource(cacheDir, 7 days, src) runs to completion
-    // Then: old paths are absent; recent path is present; no residue paths with ".deleting" suffix exist
     "evictOlderThan removes bytes from source; no stale residue paths appear" in {
         val src      = MemoryFileSource()
         val now      = java.lang.System.currentTimeMillis()
@@ -102,12 +92,9 @@ class EvictOlderThanTest extends kyo.test.Test[Any]:
         ).map:
             case Result.Success(_) =>
                 val paths = src.allPaths
-                // Old files must be completely gone (: source.delete removes them directly).
                 assert(paths.exists(_.contains("old1")) == false, s"old1 must be absent; paths: $paths")
                 assert(paths.exists(_.contains("old2")) == false, s"old2 must be absent; paths: $paths")
-                // Recent file must remain.
                 assert(paths.contains(recent) == true, s"recent must remain; paths: $paths")
-                // No stale residue from any prior rename-based approach.
                 // The suffix ".deleting" and the double-suffix form must not appear.
                 val deletingSuffix     = ".deleting"
                 val deletingGoneSuffix = deletingSuffix + ".gone"
@@ -126,17 +113,12 @@ class EvictOlderThanTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // ── Leaf 10: evictOlderThan on non-existent path returns Success cleanly ──
-    // Given: a path that does not exist in the MemoryFileSource
-    // When: Tasty.Snapshot.evictOlderThanWithSource(nonExistent, maxAgeMs, src)
-    // Then: returns Result.Success -- listing an empty/absent directory returns Chunk.empty
-    //       and there are no files to delete, so the operation is a no-op
+    // MemoryFileSource.list returns Chunk.empty for any dir with no matching keys, so
+    // evictOlderThan on a missing dir finds nothing to delete and returns Success.
     "evictOlderThan on non-existent directory is a no-op (Success)" in {
         val src         = MemoryFileSource()
         val nonExistent = "no-such-dir"
         val maxAgeMs    = 7L * 24 * 60 * 60 * 1000
-        // MemoryFileSource.list returns Chunk.empty for any dir with no matching keys.
-        // So evictOlderThan on a missing dir finds nothing to delete and returns Success.
         Abort.run[TastyError](
             Tasty.Snapshot.evictOlderThanWithSource(nonExistent, maxAgeMs, src)
         ).map:

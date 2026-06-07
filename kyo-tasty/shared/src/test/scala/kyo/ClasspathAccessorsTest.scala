@@ -2,19 +2,13 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Tests for Cat 19 Classpath.symbol and related accessors.
-  *
-  * Coverage:
-  *   cpSymbolReturnsMaybe: cp.symbol(SymbolId(-1)) returns Absent; cp.symbol(SymbolId(5)) returns Present.
-  *   sentinelUnresolvedDeleted: Classpath.sentinelUnresolved does not exist.
-  *   unresolvedCrossFileRefSurfacesAsTastyError: finalizeMerge accumulates UnresolvedReference in SoftFail mode.
-  *   ownerReturnsMaybe: Tasty.owner(rootPkg) returns Absent for a package with ownerId = SymbolId(-1).
+/** Tests for Classpath.symbol and related accessors: symbol returns Maybe, sentinelUnresolved
+  * does not exist, finalizeMerge accumulates UnresolvedReference in SoftFail mode, and
+  * Tasty.owner returns Absent for a root package.
   */
 class ClasspathAccessorsTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
-
-    // ── Fixture helpers ──────────────────────────────────────────────────────
 
     private def makePkg(id: Int, name: String): Tasty.Symbol.Package =
         Tasty.Symbol.Package(
@@ -60,11 +54,6 @@ class ClasspathAccessorsTest extends kyo.test.Test[Any]:
         )
     end makeFixtureCp
 
-    // ── Leaf 6: cpSymbolReturnsMaybe ─────────────────────────────────────────
-
-    // Given: a fixture classpath with rootSymbolId = SymbolId(5).
-    // When: cp.symbol(SymbolId(-1)) and cp.symbol(SymbolId(5)).
-    // Then: the first returns Maybe.Absent; the second returns Maybe.Present(_).
     "cpSymbolReturnsMaybe: cp.symbol returns Absent for out-of-range id and Present for valid id" in {
         val cp     = makeFixtureCp()
         val absent = cp.symbol(SymbolId(-1))
@@ -81,25 +70,14 @@ class ClasspathAccessorsTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 7: sentinelUnresolvedDeleted ────────────────────────────────────
-
-    // Given: a compileErrors probe for "Classpath.sentinelUnresolved".
-    // When: the test asserts.
-    // Then: the returned string is non-empty (the method no longer exists after Cat 19).
     "sentinelUnresolvedDeleted: Classpath.sentinelUnresolved does not exist" in {
         val errCount = compiletime.testing.typeCheckErrors(
             "(??? : kyo.Tasty.Classpath).sentinelUnresolved"
         ).length
-        assert(errCount > 0, "Classpath.sentinelUnresolved must not exist after ")
+        assert(errCount > 0, "Classpath.sentinelUnresolved must not exist")
         succeed
     }
 
-    // ── Leaf 8: unresolvedCrossFileRefSurfacesAsTastyError ───────────────────
-
-    // Given: a degenerate MergeState with a ghost FQN entry (FQN not backed by any allSyms entry)
-    //        loaded via triggerUnresolvedReferenceForTest which calls finalizeMerge with SoftFail.
-    // When: the resulting classpath's cp.errors is inspected.
-    // Then: cp.errors contains exactly one TastyError.UnresolvedReference with the ghost FQN name.
     "unresolvedCrossFileRefSurfacesAsTastyError: finalizeMerge emits UnresolvedReference in SoftFail mode" in {
         Abort.run[TastyError](
             kyo.internal.tasty.query.ClasspathOrchestrator.triggerUnresolvedReferenceForTest()
@@ -124,11 +102,6 @@ class ClasspathAccessorsTest extends kyo.test.Test[Any]:
                     fail(s"Unexpected panic: ${t.getMessage}")
     }
 
-    // ── Leaf 9: ownerReturnsMaybe ────────────────────────────────────────────
-
-    // Given: a fixture classpath where a package symbol has ownerId = SymbolId(-1).
-    // When: Tasty.owner(rootPkg).eval is called.
-    // Then: the result is Maybe.Absent (the root package has no owner).
     "ownerReturnsMaybe: Tasty.owner returns Absent for a package with ownerId = SymbolId(-1)" in {
         val rootPkg = makePkg(0, "root")
         val cp = Tasty.Classpath.make(

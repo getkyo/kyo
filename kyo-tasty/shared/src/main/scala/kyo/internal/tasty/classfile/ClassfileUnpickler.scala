@@ -1204,7 +1204,6 @@ object ClassfileUnpickler:
         // in buildResult when we detect pickle bytes and call mergePickleResult.
         //
         // For the fallback path (decode failure), we return the original result and accept that Flag.Scala2 is absent.
-        // Test 6 (corrupt ScalaSig) checks for CorruptedFile abort, not the fallback path.
         result
     end markScala2Flag
 

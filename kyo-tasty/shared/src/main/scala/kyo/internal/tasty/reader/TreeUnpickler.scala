@@ -888,7 +888,7 @@ object TreeUnpickler:
                 view.goto(end)
                 Tasty.Tree.Unknown(TastyFormat.HOLE, Math.toIntExact(end - startAddr))
 
-            // HARD RULE 2: no silent fallback for remaining cat-5 tags.
+            // No silent fallback for remaining cat-5 tags.
             case other if other >= TastyFormat.firstLengthTreeTag =>
                 val end = view.readEnd()
                 view.goto(end)

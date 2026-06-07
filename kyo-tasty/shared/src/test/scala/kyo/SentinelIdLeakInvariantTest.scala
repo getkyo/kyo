@@ -77,9 +77,6 @@ class SentinelIdLeakInvariantTest extends kyo.test.Test[Any]:
     end loadFixtureCp
 
     // noSentinelIdInParentTypes
-    // Given: a cold-loaded fixture classpath.
-    // When: every ClassLike symbol's parentTypes are inspected.
-    // Then: no Named(SymbolId(-1)) appears in any parent type (at any nesting depth).
     "noSentinelIdInParentTypes: no Named(SymbolId(-1)) in any symbol parentTypes after cold load" in {
         Scope.run:
             Abort.run[TastyError](loadFixtureCp.map: cp =>
@@ -101,9 +98,6 @@ class SentinelIdLeakInvariantTest extends kyo.test.Test[Any]:
     }
 
     // noSentinelIdInClassLikeAnnotations
-    // Given: a cold-loaded fixture classpath.
-    // When: every ClassLike symbol's annotations are inspected.
-    // Then: no Named(SymbolId(-1)) appears in any annotation's annotationType.
     "noSentinelIdInClassLikeAnnotations: no Named(SymbolId(-1)) in ClassLike annotation types after cold load" in {
         Scope.run:
             Abort.run[TastyError](loadFixtureCp.map: cp =>

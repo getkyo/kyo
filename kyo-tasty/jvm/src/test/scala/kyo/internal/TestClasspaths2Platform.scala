@@ -10,8 +10,6 @@ import kyo.*
   * This object is referenced by the shared `TestClasspaths2` facade. On JS and Native, a stub version of this object is provided that throws
   * UnsupportedOperationException for every method. All call sites in shared tests that invoke JVM-only operations are guarded by the
   * `jvmOnly` tag.
-  *
-  * Scaladoc: 8-35 lines.
   */
 private[kyo] object TestClasspaths2Platform:
 

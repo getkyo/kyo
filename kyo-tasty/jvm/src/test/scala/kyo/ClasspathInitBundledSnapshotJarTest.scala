@@ -129,7 +129,6 @@ class ClasspathInitBundledSnapshotJarTest extends kyo.test.Test[Any]:
                                     case None    => Maybe.Absent)
     end ZipMemoryFileSource
 
-    // end-to-end transparent bundled load (probe HIT)
     "end-to-end bundled load produces exact symbol count (probe HIT)" in {
         val baseBytes     = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val baseFile      = writeTempJar(baseBytes)
@@ -159,7 +158,6 @@ class ClasspathInitBundledSnapshotJarTest extends kyo.test.Test[Any]:
                 assert(!hasMismatch, s"unexpected DigestMismatch in errors: ${cp.errors}")
     }
 
-    // mixed-root merge (bundled HIT + cold jar)
     "mixed-root merge: bundled root contributes exact symbol count from snapshot" in {
         val bundledBase     = buildZipBytes("A.class" -> Array[Byte](0xca.toByte))
         val bundledBaseFile = writeTempJar(bundledBase)
@@ -192,7 +190,6 @@ class ClasspathInitBundledSnapshotJarTest extends kyo.test.Test[Any]:
                 assert(!hasMismatch, s"unexpected DigestMismatch: ${cp.errors}")
     }
 
-    // SoftFail falls back on digest mismatch
     "SoftFail on digest mismatch falls back to cold load without raising Abort" in {
         val staleJar = writeTempJar(buildZipBytes(
             "B.class"                              -> Array[Byte](0xca.toByte),
@@ -203,7 +200,6 @@ class ClasspathInitBundledSnapshotJarTest extends kyo.test.Test[Any]:
                 assert(cp.symbols.size >= 0, "symbol count must be non-negative after SoftFail fallback")
     }
 
-    // probe raises DigestMismatch on stale snapshot
     "probe raises DigestMismatch when embedded digest does not match recomputed digest" in {
         val baseBytes      = buildZipBytes("C.class" -> Array[Byte](0xca.toByte))
         val rootFile       = writeTempJar(baseBytes)

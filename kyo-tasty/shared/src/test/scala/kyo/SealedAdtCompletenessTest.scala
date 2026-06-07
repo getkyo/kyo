@@ -5,19 +5,11 @@ import scala.deriving.*
 
 /** Sealed-ADT completeness test for kyo-tasty.
   *
-  * Track D of the validation-infrastructure (2026-06-02).
-  *
   * For each sealed ADT (TastyError, Tasty.Type, Tasty.Tree, Tasty.Symbol):
   *   1. The expected variant count is pinned as a compile-time constant. Adding a new variant without
-  *      updating the count causes a compile error at this test, making variant-creep visible immediately.
-  *   2. Each variant name is checked against a registry of test names harvested from the test suite
-  *      at compile time. A variant with no matching test name is a finding reported at test time.
-  *
-  * Implementation note: `Mirror.SumOf[T]` works for `enum` types (TastyError, Tasty.Type).
-  * For `sealed trait` types (Tasty.Tree, Tasty.Symbol) where Mirror is unavailable or the hierarchy
-  * is non-standard, the count is pinned manually via a compile-time `inline val`.
-  *
-  * Platform: shared/src/test (HARD RULE 11). Mirror-based enumeration compiles on all platforms.
+  *      updating the count causes a compile error, making variant-creep visible immediately.
+  *   2. Each variant name is checked against a registry of test names. A variant with no matching test
+  *      name is reported as a finding at test time.
   */
 class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
 
@@ -33,13 +25,10 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
 
     // ── ADT-001: TastyError (enum - 23 variants) ─────────────────────────────
 
-    // EXPECTED_TASTY_ERROR_COUNT: update this constant whenever a new TastyError variant is added.
-    // Compile failure here means a variant was added without updating this guard.
+    // Update EXPECTED_TASTY_ERROR_COUNT whenever a new TastyError variant is added.
     private inline val EXPECTED_TASTY_ERROR_COUNT = 23
 
     // Verify at compile time that the actual count matches the pinned expectation.
-    // summonInline resolves the Mirror at compile time; Tuple.Size on the concrete
-    // MirroredElemTypes tuple type is a stable constant for the inline if.
     private inline def checkTastyErrorCount()(using m: Mirror.SumOf[TastyError]): Unit =
         inline val actual = constValue[Tuple.Size[m.MirroredElemTypes]]
         inline if actual != EXPECTED_TASTY_ERROR_COUNT then
@@ -97,7 +86,7 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
 
     // ── ADT-002: Tasty.Type (enum - 29 variants) ─────────────────────────────
 
-    // EXPECTED_TYPE_COUNT: update this constant whenever a new Tasty.Type variant is added.
+    // Update EXPECTED_TYPE_COUNT whenever a new Tasty.Type variant is added.
     private inline val EXPECTED_TYPE_COUNT = 29
 
     private inline def checkTypeCount()(using m: Mirror.SumOf[Tasty.Type]): Unit =
@@ -162,8 +151,7 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
 
     // ── ADT-003: Tasty.Tree (enum - 70 cases) ─────────────────────────────────
 
-    // EXPECTED_TREE_COUNT: pinned via Mirror.SumOf at compile time.
-    // Update this constant and the coverage map whenever a new Tree case is added.
+    // Update EXPECTED_TREE_COUNT and the coverage map whenever a new Tree case is added.
     private inline val EXPECTED_TREE_COUNT = 70
 
     private inline def checkTreeCount()(using m: Mirror.SumOf[Tasty.Tree]): Unit =
@@ -177,10 +165,7 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
     end checkTreeCount
     checkTreeCount()(using summonInline[Mirror.SumOf[Tasty.Tree]])
 
-    // Tree variant names are enumerated at compile time via Mirror.SumOf[Tasty.Tree] (see checkTreeCount).
-
-    // Tree variants that appear in at least one test file (70 of 70 as of 2026-06-02).
-    // All 28 previously-uncovered variants were added in TreeAdtVariantCoverageTest.
+    // Tree variants that appear in at least one test file (all 70 covered).
     private val treeCoveredVariants: Set[String] = Set(
         "Alternative",
         "AndType",
@@ -254,7 +239,7 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
         "While"
     )
 
-    // Tree variants with no test coverage (0 of 70). All variants are now covered.
+    // Tree variants with no test coverage (0 of 70).
     private val treeUncoveredVariants: List[String] = List.empty
 
     // ADT-003: Tasty.Tree - variant count pinned via Mirror; all 70 variants have test coverage.
@@ -291,10 +276,7 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
 
     // ── ADT-004: Tasty.Symbol (sealed trait - 14 exhaustive match leaves) ─────
 
-    // EXPECTED_SYMBOL_MATCH_LEAVES: the number of arms in an exhaustive match on Tasty.Symbol.
-    // Pinned at 14 per SymbolExhaustiveMatchTest (Class, Trait, Object, Method, Val, Var, Field,
-    // TypeAlias, OpaqueType, AbstractType, TypeParam, Parameter, Package, Unresolved).
-    // Symbol.EnumCase is a final class extending Class; it does not add a match arm.
+    // Symbol.EnumCase is a final class extending Class and does not add a match arm.
     private inline val EXPECTED_SYMBOL_MATCH_LEAVES = 14
 
     // All Symbol concrete types (as used in exhaustive pattern matches).
@@ -349,26 +331,19 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── ADT-SUMMARY: summary assertion (all 4 ADTs, 0 gaps) ──────────────────
-
-    // Summary: verifies the union of covered + uncovered equals allVariants for each ADT.
     "ADT-SUMMARY: all 4 ADTs enumerated with correct total counts" in {
-        // TastyError: 21 variants
         assert(
             tastyErrorCoveredByTest.size == EXPECTED_TASTY_ERROR_COUNT,
             s"TastyError coverage map has ${tastyErrorCoveredByTest.size} entries, expected $EXPECTED_TASTY_ERROR_COUNT"
         )
-        // Tasty.Type: 27 variants
         assert(
             typeCoveredByTest.size == EXPECTED_TYPE_COUNT,
             s"Tasty.Type coverage map has ${typeCoveredByTest.size} entries, expected $EXPECTED_TYPE_COUNT"
         )
-        // Tasty.Tree: 70 variants (70 covered + 0 uncovered)
         assert(
             treeCoveredVariants.size + treeUncoveredVariants.size == EXPECTED_TREE_COUNT,
             s"Tree covered(${treeCoveredVariants.size}) + uncovered(${treeUncoveredVariants.size}) != $EXPECTED_TREE_COUNT"
         )
-        // Tasty.Symbol: 14 leaves
         assert(
             symbolCoveredByTest.size == EXPECTED_SYMBOL_MATCH_LEAVES,
             s"Symbol coverage map has ${symbolCoveredByTest.size} entries, expected $EXPECTED_SYMBOL_MATCH_LEAVES"

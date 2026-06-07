@@ -8,12 +8,8 @@ import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 
-/** Pinning tests: Annotation.arguments eagerly decoded; failures accumulate in cp.errors.
-  *
-  * Annotation arguments are populated at open time. Accessing Annotation.arguments is a plain
-  * Chunk[Tree] field access with no effect row. A decode failure stores an empty Chunk and
-  * accumulates the error. There is no _decodeCtx field on Annotation; structural reflection
-  * confirms the pure case-class shape. Annotation case-class equality is structural.
+/** Pinning tests for Annotation.arguments: eagerly decoded at open time, decode failures
+  * accumulate as empty Chunk, and the case-class has no legacy fields.
   */
 class AnnotationEagerArgsTest extends kyo.test.Test[Any]:
 
@@ -43,9 +39,6 @@ class AnnotationEagerArgsTest extends kyo.test.Test[Any]:
         TypeUnpickler.readType(view, names, addrMap, arena, bytes, 0)
     end decodeType
 
-    // annotation arguments populated at open time.
-    // After Annotation.arguments is a plain Chunk[Tree] field. No effect row is needed to access it.
-    // A UNITconst annotation term eagerly decoded in ANNOTATEDtype produces arguments == Chunk(Literal(UnitConst)).
     "leaf 1: Annotation.arguments populated at open time as plain Chunk[Tree]" in {
         val sym        = makeSym("Int")
         val symAddr    = 3
@@ -71,10 +64,6 @@ class AnnotationEagerArgsTest extends kyo.test.Test[Any]:
         }
     }
 
-    // decode failure stores an empty arguments chunk and accumulates the error.
-    // A corrupt pickle (unknown tag below firstASTtag=60) causes a DecodeException.
-    // The ANNOTATEDtype branch catches this, stores arguments = Chunk.empty, and accumulates the error
-    // in DecodeSession.annotationDecodeErrors (which flows to cp.errors at file level).
     "leaf 2: decode failure produces an empty arguments chunk" in {
         val sym        = makeSym("Int")
         val symAddr    = 3
@@ -98,9 +87,6 @@ class AnnotationEagerArgsTest extends kyo.test.Test[Any]:
         }
     }
 
-    // no _decodeCtx field on Annotation.
-    // Verify at compile time that _decodeCtx, argsPickle, and the legacy args / argList do not exist.
-    // assertDoesNotCompile works on all three platforms (JVM, JS, Native).
     "leaf 3: Annotation case class has no _decodeCtx, argsPickle, args, or argList field" in {
         typeCheckFailure("val a: Tasty.Annotation = null.asInstanceOf[Tasty.Annotation]; a._decodeCtx")
         typeCheckFailure("val a: Tasty.Annotation = null.asInstanceOf[Tasty.Annotation]; a.argsPickle")
@@ -109,8 +95,6 @@ class AnnotationEagerArgsTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Annotation case-class equality is structural.
-    // Two Annotation values with equal annotationType and equal arguments compare equal via ==.
     "leaf 4: Annotation case-class equality is structural" in {
         val sym  = makeSym("Foo")
         val tpe  = Tasty.Type.Named(Tasty.SymbolId(sym.id))

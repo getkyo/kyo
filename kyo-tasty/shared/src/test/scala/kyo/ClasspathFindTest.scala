@@ -24,28 +24,24 @@ class ClasspathFindTest extends kyo.test.Test[Any]:
             )
     end emptyClasspath
 
-    // 3 -- findClass returns Maybe.Absent when missing
     "findClass returns Maybe.Absent for unknown FQN" in {
         emptyClasspath.map: cp =>
             assert(cp.findClass("p.Bar") == Maybe.Absent)
             succeed
     }
 
-    // 4 -- findPackage returns Maybe
     "findPackage returns Maybe.Absent for unknown package" in {
         emptyClasspath.map: cp =>
             assert(cp.findPackage("zzz") == Maybe.Absent)
             succeed
     }
 
-    // 5 -- findModule returns Maybe
     "findModule returns Maybe.Absent for unknown module" in {
         emptyClasspath.map: cp =>
             assert(cp.findModule("foo") == Maybe.Absent)
             succeed
     }
 
-    // 6 -- findClassByBinary handles dollar-encoded names
     "findClassByBinary translates slash and dollar to dot" in {
         import kyo.Tasty.SymbolId
         import kyo.internal.tasty.type_.TypeArena

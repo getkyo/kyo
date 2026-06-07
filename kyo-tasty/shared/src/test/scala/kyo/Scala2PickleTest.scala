@@ -131,7 +131,6 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
             assert(methods.nonEmpty, "Expected at least one Method symbol")
             val method = methods.head
             assert(method.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2")
-            // phase-02 inline; declaredType is now Maybe[Type]; Scala2PickleReader sets it to Absent.
             // declaredType for Method symbols was Type.Function(.) in old code; in it's Absent.
             (method match
                 case m: Tasty.Symbol.Method => m.declaredType;
@@ -159,7 +158,6 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
             val alias = aliases.head
             assert(alias.kind == SymbolKind.TypeAlias, s"Expected TypeAlias, got ${alias.kind}")
             assert(alias.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2")
-            // phase-05; Named(id) no longer carries a Symbol name directly; name check deferred to.
             (alias match
                 case ta: Tasty.Symbol.TypeAlias => kyo.Maybe(ta.body);
                 case _                          => kyo.Maybe.Absent
@@ -175,7 +173,6 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
 
     // Test 5: classfile without ScalaSig -> no Flag.Scala2
 
-    // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK Object.class.
     // Any Java classfile without ScalaSig works; the shape assertion (no Scala2 flag) is fixture-independent.
     "Java-only classfile (no ScalaSig attribute) -> Flag.Scala2 is absent" in {
         val result = ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena)
@@ -216,7 +213,6 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
         readPickleDirect(pickleBytes).map: result =>
             val parents = result.parents
             assert(parents.nonEmpty, "Expected at least one parent type for a Scala 2 class")
-            // phase-05; Named(id) no longer carries name directly; verify that a Named parent exists.
             // Name check (AnyRef) deferred to once cp.symbol(id).name is resolvable.
             val hasNamedParent = parents.exists:
                 case Tasty.Type.Named(_) => true

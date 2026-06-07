@@ -55,10 +55,6 @@ class ValVarBodyTreeTest extends kyo.test.Test[Any]:
         ClasspathOrchestrator.coldLoadBinding(Seq("root"), Tasty.ErrorMode.SoftFail, Maybe.Absent, src, 1)
     end openSomeObjectBinding
 
-    // ── Leaf 79: val-bodyTree ─────────────────────────────────────────────────
-    // Given: a loaded SomeObject classpath containing a Val with body bytes
-    // When: run Tasty.bodyTree(v)
-    // Then: Success(Maybe.Present(_))
     "val-bodyTree: Tasty.bodyTree(Val) returns Present(Tree) for a val with body" in {
         Scope.run:
             Abort.run[TastyError](
@@ -87,10 +83,6 @@ class ValVarBodyTreeTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 80: var-bodyTree ─────────────────────────────────────────────────
-    // Given: a loaded SomeObject classpath; find a Var with a body if present
-    // When: run Tasty.bodyTree(v)
-    // Then: Success(Maybe.Present(_)) or inconclusive if no Var with body found
     "var-bodyTree: Tasty.bodyTree(Var) returns Present(Tree) for a var with body" in {
         Scope.run:
             Abort.run[TastyError](
@@ -135,10 +127,6 @@ class ValVarBodyTreeTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 81b (companion to leaf 81): Tasty.bodyTree(Val) effect row ─────────────
-    // Given: val e: Maybe[Tree] < (Sync & Abort[TastyError]) = Tasty.bodyTree(v)
-    // When: compile inside bindingLocal.let(Present(Binding(cp, Present(ctx))))
-    // Then: compiles; no other effect; runtime result is Success
     "Tasty.bodyTree(Val) effect row is exactly (Sync & Abort[TastyError]) -- compile check" in {
         val valSym = Tasty.Symbol.Val(
             SymbolId(1),

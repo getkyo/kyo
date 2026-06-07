@@ -5,33 +5,18 @@ import kyo.internal.TestClasspaths2
 
 /** Fidelity tests for annotation wiring: cp.symbolsAnnotatedWith, sym.annotations, and annotation args.
   *
-  * Exercises `AstUnpickler.readModifiers` and `scanForwardAndCollectFlags` (which decode the
-  * ANNOTATION section) and the wiring of `Pass1Result.annotationsBySymbol` through `FileResult` into
-  * `ClasspathOrchestrator.finalizeMerge`.
+  * Exercises AstUnpickler.readModifiers and scanForwardAndCollectFlags (which decode the ANNOTATION
+  * section) and the wiring of Pass1Result.annotationsBySymbol through FileResult into
+  * ClasspathOrchestrator.finalizeMerge.
   *
-  * AnnotatedFixture (kyo-tasty-fixtures/shared) provides @deprecated and @scala.annotation.unused
-  * annotations in the embedded fixture set; the embedded count is 2.
-  *
-  * The @tailrec coverage remains jvmOnly: @tailrec is encoded in TASTy as TYPEREFsymbol (addr-based,
-  * external class reference), not TERMREFpkg (FQN-string); the FQN fallback in unresolvedFqnByNegId
-  * only covers the FQN-string paths. Fixing requires TYPEREFsymbol cross-file FQN tracking.
-  *
-  * The snapshot round-trip test verifies that symbolsAnnotatedWith("scala.deprecated") count is
-  * preserved cold == warm on JVM, JS, and Native.
+  * AnnotatedFixture provides @deprecated and @scala.annotation.unused annotations in the embedded
+  * fixture set. The snapshot round-trip test verifies symbolsAnnotatedWith count is preserved
+  * cold == warm on JVM, JS, and Native.
   */
 class AnnotationFidelityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    //   deprecated-found
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded AnnotatedFixture)
-    // When: calling cp.symbolsAnnotatedWith("scala.deprecated").size
-    // Then: size >= 1 (AnnotatedFixture has 2 @deprecated symbols; stdlib has many more);
-    //       before fix size == 0 because AstUnpickler.readModifiers consumed the ANNOTATION
-    //       payload via view.goto(annEnd) without decoding the tycon or attributing the annotation
-    //       to the owning symbol
-    // Cross-platform: threshold lowered from >= 5 to >= 1. The property is "deprecated symbols found";
-    //   embedded AnnotatedFixture provides 2 @deprecated symbols (AnnotatedFixtureDeprecated, deprecatedTopLevel).
     "cp.symbolsAnnotatedWith(scala.deprecated).size >= 1" in {
         TestClasspaths.withClasspath():
             Tasty.classpath.flatMap: classpath =>
@@ -45,12 +30,6 @@ class AnnotationFidelityTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    //   annotation-tycon-preserved
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded AnnotatedFixture)
-    // When: inspecting the annotations of any @deprecated symbol via sym.annotations
-    // Then: sym.annotations is non-empty and hasAnnotation("scala.deprecated") is true;
-    //       before fix sym.annotations was Chunk.empty
-    // Cross-platform: embedded AnnotatedFixture provides @deprecated symbols for JS/Native.
     "a @deprecated symbol carries annotation with correct tycon FQN" in {
         TestClasspaths.withClasspath():
             Tasty.classpath.flatMap: classpath =>
@@ -65,13 +44,6 @@ class AnnotationFidelityTest extends kyo.test.Test[Any]:
                         succeed
     }
 
-    //   inline-annotation-tree-decoded
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded AnnotatedFixture)
-    // When: checking that methods with annotations exist (verifying both readModifiers and
-    //       scanForwardAndCollectFlags annotation decode paths work)
-    // Then: at least one method carries annotations; count of all annotated methods >= 1;
-    //       before fix annotations was Chunk.empty on all methods
-    // Cross-platform: AnnotatedFixtureMethods.countDown (@tailrec) and annotatedWithUnused (@unused) are annotated.
     "an @inline method carries a decodable annotation args tree" in {
         TestClasspaths.withClasspath():
             Tasty.classpath.map: classpath =>
@@ -85,14 +57,6 @@ class AnnotationFidelityTest extends kyo.test.Test[Any]:
                 succeed
     }
 
-    // leaf 5 (decoder-fidelity-3): annotation-warm-load-cold-parity
-    // Given: a cold classpath and a warm classpath produced by an in-memory snapshot round-trip
-    // When: calling symbolsAnnotatedWith("scala.deprecated") on both
-    // Then: warm count == cold count (warm returned 0 when cold returned 1)
-    // Root cause documented in DF2 final-report.md : the ANNOTS_ section serializer stored FQNs
-    // as TermRef(Tuple(empty), Name(fqn)) which typeFqnString correctly unwraps to fqn. The test
-    // verifies end-to-end parity. Cold >= 1 is also asserted so a vacuous warm==cold==0 does not pass.
-    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory (no filesystem needed).
     "in-memory snapshot round-trip preserves symbolsAnnotatedWith count" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (cold, warm) =>
             for

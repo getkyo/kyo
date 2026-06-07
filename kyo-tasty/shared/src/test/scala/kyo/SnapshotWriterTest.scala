@@ -103,9 +103,6 @@ class SnapshotWriterTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // test 1: two independent cold serializations of the same classpath produce byte-equal output.
-    // Regression guard for (decoder-fidelity-2 carry-over).
-    // Cross-platform: uses embedded fixtures so it runs on JVM, JS, and Native.
     "two same-run serializations of the same classpath are byte-equal" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val digest = Array[Byte](0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67)
@@ -118,12 +115,6 @@ class SnapshotWriterTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // test 2: serialize cold, read back as warm, re-serialize warm: byte-equal to original.
-    // Regression guard for the warm-then-reserialize residual reproduced in decoder-fidelity-3 leaf 24.
-    // The IdentityHashMap lookup missed on warm-load symbols (fresh identity, same id.value) causing
-    // annotation FQN interning order to differ and producing a 13-byte divergence. Fixed by keying
-    // fqnBySymbol by SymbolId.value (Int) instead of Symbol object identity.
-    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory which works on JVM, JS, and Native.
     "warm-loaded classpath re-serializes byte-equal to the original snapshot" in {
         TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
             val digest = Array[Byte](0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77)

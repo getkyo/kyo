@@ -2,9 +2,9 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** typed Classpath require* throwing variants.
+/** Tests for typed Classpath require* variants.
   *
-  * Fixture layout: 0 -> Class "A" fqn "pkg.A" 1 -> Trait "T" fqn "pkg.T" 2 -> Object "O" fqn "pkg.O" 3 -> Package "pkg"
+  * Fixture: Class "A" (pkg.A), Trait "T" (pkg.T), Object "O" (pkg.O), Package "pkg".
   */
 class ClasspathTypedRequireTest extends kyo.test.Test[Any]:
 
@@ -82,10 +82,6 @@ class ClasspathTypedRequireTest extends kyo.test.Test[Any]:
                 errors = Chunk.empty
             )
 
-    // ── Leaf 110: requireClass-success ───────────────────────────────────────
-    // Given: fixture with pkg.A.
-    // When: Abort.run(cp.requireClass("pkg.A"))
-    // Then: Result.Success(c) where c is Symbol.Class
     "requireClass succeeds for an existing class FQN" in {
         buildFixture.flatMap: cp =>
             Abort.run[TastyError](cp.requireClass("pkg.A")).map:
@@ -97,10 +93,6 @@ class ClasspathTypedRequireTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // ── Leaf 111: requireClass-missing-fails ──────────────────────────────────
-    // Given: fixture with no "missing.X" symbol.
-    // When: Abort.run(cp.requireClass("missing.X"))
-    // Then: Result.Failure(TastyError.NotFound("missing.X"))
     "requireClass fails with NotFound for a missing FQN" in {
         buildFixture.flatMap: cp =>
             Abort.run[TastyError](cp.requireClass("missing.X")).map:
@@ -114,10 +106,6 @@ class ClasspathTypedRequireTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // ── Leaf 112: requireTrait-success ───────────────────────────────────────
-    // Given: fixture with pkg.T (Trait).
-    // When: Abort.run(cp.requireTrait("pkg.T"))
-    // Then: Result.Success(t) where t is Symbol.Trait
     "requireTrait succeeds for an existing trait FQN" in {
         buildFixture.flatMap: cp =>
             Abort.run[TastyError](cp.requireTrait("pkg.T")).map:
@@ -129,10 +117,6 @@ class ClasspathTypedRequireTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // ── Leaf 113: requireObject-success ──────────────────────────────────────
-    // Given: fixture with pkg.O (Object).
-    // When: Abort.run(cp.requireObject("pkg.O"))
-    // Then: Result.Success(o) where o is Symbol.Object
     "requireObject succeeds for an existing object FQN" in {
         buildFixture.flatMap: cp =>
             Abort.run[TastyError](cp.requireObject("pkg.O")).map:
@@ -144,10 +128,6 @@ class ClasspathTypedRequireTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // ── Leaf 114: requireClassLike-success ───────────────────────────────────
-    // Given: fixture with pkg.T (Trait).
-    // When: Abort.run(cp.requireClassLike("pkg.T"))
-    // Then: Result.Success(c) where c is Symbol.ClassLike
     "requireClassLike succeeds for a trait FQN" in {
         buildFixture.flatMap: cp =>
             Abort.run[TastyError](cp.requireClassLike("pkg.T")).map:
@@ -159,10 +139,6 @@ class ClasspathTypedRequireTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // ── Leaf 115: requirePackage-success ─────────────────────────────────────
-    // Given: fixture with "pkg" Package.
-    // When: Abort.run(cp.requirePackage("pkg"))
-    // Then: Result.Success(p) where p is Symbol.Package
     "requirePackage succeeds for an existing package FQN" in {
         buildFixture.flatMap: cp =>
             Abort.run[TastyError](cp.requirePackage("pkg")).map:
@@ -174,10 +150,6 @@ class ClasspathTypedRequireTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // ── Leaf 116: requireModule-not-found ────────────────────────────────────
-    // Given: fixture with no module descriptors.
-    // When: Abort.run(cp.requireModule("does.not.exist"))
-    // Then: Result.Failure(TastyError.NotFound)
     "requireModule fails with NotFound for a missing module name" in {
         buildFixture.flatMap: cp =>
             Abort.run[TastyError](cp.requireModule("does.not.exist")).map:
@@ -191,10 +163,6 @@ class ClasspathTypedRequireTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // ── Leaf 117: require-effect-row-is-abort-only ───────────────────────────
-    // Given: cp.requireClass("pkg.A") expression.
-    // When: compile-time type check.
-    // Then: type is Symbol.Class < Abort[TastyError] (no Sync in the row).
     "requireClass return type is Symbol.Class < Abort[TastyError] (compile-time check)" in {
         buildFixture.flatMap: cp =>
             val effect: Tasty.Symbol.Class < Abort[TastyError] = cp.requireClass("pkg.A")

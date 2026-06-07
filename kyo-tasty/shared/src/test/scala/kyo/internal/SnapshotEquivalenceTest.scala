@@ -15,10 +15,7 @@ class SnapshotEquivalenceTest extends kyo.test.Test[Any]:
     import AllowUnsafe.embrace.danger
 
     // size-divergence-reports-fqnIndex-axis
-    // Given: two synthetic Classpath values where cold.fqnIndex.size=110 and warm.fqnIndex.size=73
     //        with identical symbols (empty)
-    // When: invoking SnapshotEquivalence.warmColdEquivalent(cold, warm)
-    // Then: returns EquivResult.Diverged("fqnIndex.size", "110", "73") with isEqual == false
     "size-divergence-reports-fqnIndex-axis" in {
         Sync.defer:
             val coldFqn = Dict.from((1 to 110).map(i => s"a.B$i" -> InternalSymbolId(-1)).toMap)
@@ -42,10 +39,7 @@ class SnapshotEquivalenceTest extends kyo.test.Test[Any]:
     }
 
     // unresolved-divergence-reports-axis
-    // Given: cold has 635 reachable Named(-1) entries (via 635 symbols with parentTypes containing Named(-1))
     //        warm has 0, all other axes equal
-    // When: invoking SnapshotEquivalence.warmColdEquivalent(cold, warm)
-    // Then: returns Diverged("unresolvedRefs.size", "635", "0")
     "unresolved-divergence-reports-axis" in {
         Sync.defer:
             // Build 635 synthetic class symbols each with parentTypes = Chunk(Named(SymbolId(-1)))
@@ -83,9 +77,6 @@ class SnapshotEquivalenceTest extends kyo.test.Test[Any]:
     }
 
     // equal-classpaths-return-equal
-    // Given: two identical synthetic Classpath values (empty symbols, empty fqnIndex)
-    // When: invoking SnapshotEquivalence.warmColdEquivalent(cold, warm)
-    // Then: returns EquivResult.Equal with isEqual == true
     "equal-classpaths-return-equal" in {
         Sync.defer:
             val cp     = makeSyntheticCp()

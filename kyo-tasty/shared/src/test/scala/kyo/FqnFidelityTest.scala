@@ -19,13 +19,6 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    //   no-doubled-segments
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
-    // When: scanning every key of cp.indices.byFqn
-    // Then: zero keys contain the substring "scala.scala" or "kyo.kyo";
-    //       zero keys begin with "<empty>.";
-    //       before fix keys like "scala.scala.collection.scala.collection.immutable.List" appear
-    // Cross-platform: invariant "no doubled segments" holds for any classpath after the fix; passes on embedded fixtures.
     "fqnIndex contains no doubled-package-segment keys" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val doubled = cp.indices.byFqn.toMap.keys.filter: k =>
@@ -37,11 +30,6 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    //   plainclass-resolves-at-canonical-fqn
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
-    // When: calling cp.findClassLike("kyo.fixtures.PlainClass")
-    // Then: returns Present(_: Symbol.ClassLike) whose simple name is "PlainClass"
-    // Cross-platform: kyo.fixtures.PlainClass is in the embedded fixture set on all platforms.
     "cp.findClassLike(kyo.fixtures.PlainClass) returns Present" in {
         import Tasty.Name.asString
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
@@ -64,11 +52,6 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
                     )
     }
 
-    //   fixture-classes-resolve-at-canonical-fqn
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
-    // When: calling cp.findClassLike("kyo.fixtures.SomeCaseClass") and cp.findClassLike("kyo.fixtures.SomeTrait")
-    // Then: both return Present
-    // Cross-platform: both fixture classes are in the embedded fixture set on all platforms.
     "cp.findClassLike(kyo.fixtures.SomeCaseClass) and cp.findClassLike(kyo.fixtures.SomeTrait) return Present" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val caseClassResult = cp.findClassLike("kyo.fixtures.SomeCaseClass")
@@ -86,17 +69,9 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    //   typerefin-preserves-same-name-duplication
-    // Given: a TYPEREFin decode session where the qual's FQN equals the selected simpleName ("Map.Map" scenario)
-    // When: decoding the TYPEREFin via TypeUnpickler.readTypeIntoSession
-    // Then: the FQN registered in unresolvedIdToFqn is "Map.Map" (outer + "." + inner)
-    // Cross-platform: purely algorithmic, no filesystem or classpath access.
+    // TYPEREFin must concatenate even when qual FQN and simpleName are the same (Map.Map scenario).
     "TYPEREFin preserves legitimate same-name qualifications (Map.Map)" in {
-        // Part A: real-classpath regression guard (JVM-only; gated via the full leaf above).
-        // Leaf 4 tests only Part B: the direct unit verification of the TYPEREFin same-name-collapse fix.
         // Build a synthetic TYPEREFin where the qual FQN and simpleName both equal "Map".
-        // Pre-fix: fullFqn = "Map" (guard `qualFqn != simpleName` drops the qualifier)
-        // Post-fix: fullFqn = "Map.Map" (only the nonEmpty guard remains)
         // Nat encoding: value n < 128 -> (n | 0x80).toByte (last byte with stop-bit set).
         def encNat(n: Int): Array[Byte] =
             if n < 128 then Array((n | 0x80).toByte)
@@ -123,9 +98,7 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
                         )
                         assert(
                             fqn == "Map.Map",
-                            s"TYPEREFin collapse bug: expected FQN 'Map.Map' but got '$fqn'. " +
-                                s"Before fix the guard 'qualFqn != simpleName' dropped the qualifier " +
-                                s"when both were 'Map', producing FQN 'Map' instead of 'Map.Map'."
+                            s"Expected FQN 'Map.Map' but got '$fqn'."
                         )
                     case other =>
                         fail(s"Expected Named type from TYPEREFin decode but got: $other")
@@ -136,11 +109,6 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    //   source-fqn-resolves
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
-    // When: cp.findSymbol("kyo.fixtures.SomeObject") -- source FQN without trailing `$`
-    // Then: returns Present(_: Symbol.Object)
-    // Cross-platform: kyo.fixtures.SomeObject is in the embedded fixture set on all platforms.
     "cp.findSymbol(kyo.fixtures.SomeObject) returns Present(Symbol.Object)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findSymbol("kyo.fixtures.SomeObject") match
@@ -163,11 +131,6 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
                     )
     }
 
-    //   binary-fqn-still-resolves
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
-    // When: cp.findSymbol("kyo.fixtures.SomeObject$") -- binary FQN with trailing `$`
-    // Then: Present(_) both before and after fix (primary binary key preserved; layered compat)
-    // Cross-platform: kyo.fixtures.SomeObject is in the embedded fixture set on all platforms.
     "cp.findSymbol(kyo.fixtures.SomeObject$) still returns Present (binary key preserved)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findSymbol("kyo.fixtures.SomeObject$") match
@@ -180,11 +143,6 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
                     )
     }
 
-    //   both-fqns-same-symbol
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
-    // When: cp.findSymbol("kyo.fixtures.SomeObject") and cp.findSymbol("kyo.fixtures.SomeObject$")
-    // Then: both Present(s) with same s.id
-    // Cross-platform: kyo.fixtures.SomeObject is in the embedded fixture set on all platforms.
     "kyo.fixtures.SomeObject and kyo.fixtures.SomeObject$ resolve to the same Symbol id" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val sourceLookup = cp.findSymbol("kyo.fixtures.SomeObject")
@@ -210,18 +168,13 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
                 case (_, Absent) =>
                     fail(
                         s"cp.findSymbol(kyo.fixtures.SomeObject$$) returned Absent; the primary binary key " +
-                            s"must remain indexed (HARD RULE 4)."
+                            s"must remain indexed."
                     )
                 case (_, _) =>
                     fail(s"Unexpected match: sourceLookup=$sourceLookup binaryLookup=$binaryLookup")
             end match
     }
 
-    //   non-existent-still-absent
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
-    // When: cp.findSymbol("nonexistent.Type") and cp.findSymbol("nonexistent.Type$")
-    // Then: both Absent; the dual-index does not fabricate entries for non-existent keys
-    // Cross-platform: "nonexistent.Type Absent" holds for any classpath; negative assertion is universal.
     "cp.findSymbol(nonexistent.Type) and cp.findSymbol(nonexistent.Type$) return Absent" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val r1 = cp.findSymbol("nonexistent.Type")

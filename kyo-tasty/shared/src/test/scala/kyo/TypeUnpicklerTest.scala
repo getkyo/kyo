@@ -480,9 +480,7 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test M7-1: unknown category-5 tag (250) produces TastyError.UnknownTagInPosition.
-    // The old behavior was to warn + return Named(-1); the new behavior is to fail loudly with a structured error.
-    // Pins, M7; updated for HARD RULE 13.
+    // Unknown category-5 tags produce TastyError.UnknownTagInPosition instead of silently returning Named(-1).
     "unknown category-5 TASTy type tag produces TastyError.UnknownTagInPosition" in {
         // cat5 encoding: tag byte + length Nat + payload. Length = 0 -> Nat(0) = (0 | 0x80).toByte = 0x80.
         val bytes = Array(250.toByte, 0x80.toByte)

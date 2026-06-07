@@ -6,10 +6,6 @@ import kyo.Tasty.SymbolId as InternalSymbolId
   */
 class SymbolIdReexportTest extends kyo.test.Test[Any]:
 
-    // ── Leaf 172: symbolid-reexport-compiles ──────────────────────────────────
-    // Given: an in-test binding val id: Tasty.SymbolId = kyo.Tasty.SymbolId(5)
-    // When: compile
-    // Then: compiles cleanly; binding structurally equal to the un-re-exported form
     "Tasty.SymbolId type re-export resolves and is the same as the internal SymbolId" in {
         val id: Tasty.SymbolId           = InternalSymbolId(5)
         val idInternal: InternalSymbolId = InternalSymbolId(5)

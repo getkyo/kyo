@@ -12,9 +12,6 @@ class SymbolIdFidelityTest extends kyo.test.Test[Any]:
     import AllowUnsafe.embrace.danger
 
     // Sentinel-count leaf 1: sentinel-count-phase04
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
-    // When: computing cp.symbols.filter(_.id.value == -1).map(_.name.asString).toSet.size
-    // Then: size is strictly less than the old pre-consolidation baseline (11);
     //       embedded fixtures have 0, which satisfies < 11 trivially.
     "partial : SymbolId(-1) sentinel name-set size decreased from pre-consolidation baseline" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
@@ -31,10 +28,6 @@ class SymbolIdFidelityTest extends kyo.test.Test[Any]:
     }
 
     // Sentinel-count leaf 2: sentinel-count-bounded
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
-    // When: computing cp.symbols.filter(_.id.value == -1).map(_.name.asString).toSet.size
-    // Then: size <= 3 (one per failure category: unresolved, rec-placeholder, unknown-tag)
-    // Cross-platform: invariant "count <= 3" holds for any classpath; embedded fixtures have 0 which satisfies <= 3.
     "SymbolId(-1) sentinel name-set size <= 3 on real classpath" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString
@@ -49,10 +42,6 @@ class SymbolIdFidelityTest extends kyo.test.Test[Any]:
     }
 
     // no-rec-placeholder-names-final
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
-    // When: scanning cp.symbols.map(_.name.asString)
-    // Then: zero names start with "rec@", "rec-placeholder@", "typeref@", or "termref@"
-    // Cross-platform: invariant "no fabricated names" holds for any classpath; passes trivially on embedded fixtures too.
     "no fabricated type-decode placeholder names remain in cp.symbols" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString
@@ -75,10 +64,6 @@ class SymbolIdFidelityTest extends kyo.test.Test[Any]:
     }
 
     // Cross-file TYPEREFsymbol resolution leaf
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
-    // When: checking cp.unresolvedTypeReferenceCount
-    // Then: count is bounded; structural correctness check.
-    // Cross-platform: "count >= 0" is a non-negative structural guard that trivially holds on any classpath.
     "cp.unresolvedTypeReferenceCount is bounded (cross-file resolution reduces sentinel count)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val count = cp.unresolvedTypeReferenceCount

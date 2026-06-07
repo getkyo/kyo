@@ -51,10 +51,6 @@ class ClasspathIndexImmutabilityTest extends kyo.test.Test[Any]:
         src
     end fixtureSource
 
-    // fqnIndex is built once and never mutated.
-    // Given: a Classpath cp from Classpath.init.
-    // When: cp.indices.byFqn is captured before and after an arbitrary read operation.
-    // Then: both captures are the same Map reference.
     "fqnIndex is built once and never mutated (val semantics)" in {
         Scope.run:
             Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
@@ -78,12 +74,8 @@ class ClasspathIndexImmutabilityTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // subclassIndex is a non-null immutable Map constructed during Pass C.
-    // builds subclassIndex by inverting parentTypes. Parent types derived from same-file
-    // TYPEREFdirect/TYPEREFsymbol ARE indexed. Cross-file parents (encoded as APPLY(NEW(type).) in
-    // TASTy) resolve to Named(SymbolId(-1)) in; full cross-file parent indexing requires
-    // the TASTy APPLY-tree descent added in.
-    // This test pins: subclassIndex is constructed as an immutable Map after Pass C.
+    // subclassIndex is built by inverting parentTypes during Pass C; same-file TYPEREFdirect/
+    // TYPEREFsymbol parents are indexed. This test pins: subclassIndex is immutable after Pass C.
     "subclassIndex is a non-null immutable Map after Pass C" in {
         Scope.run:
             Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
@@ -105,18 +97,16 @@ class ClasspathIndexImmutabilityTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // grep-based deletion checks are in ClasspathIndexGrepTest (JVM-only, kyo-tasty/jvm/src/test).
-    // They verify that SingleAssign, ClasspathRef, UnresolvedRef do not appear in production sources.
     "SingleAssign deletion check delegates to ClasspathIndexGrepTest (JVM)" in {
-        succeed // JVM-only grep in ClasspathIndexGrepTest
+        succeed
     }
 
     "ClasspathRef deletion check delegates to ClasspathIndexGrepTest (JVM)" in {
-        succeed // JVM-only grep in ClasspathIndexGrepTest
+        succeed
     }
 
     "UnresolvedRef deletion check delegates to ClasspathIndexGrepTest (JVM)" in {
-        succeed // JVM-only grep in ClasspathIndexGrepTest
+        succeed
     }
 
 end ClasspathIndexImmutabilityTest

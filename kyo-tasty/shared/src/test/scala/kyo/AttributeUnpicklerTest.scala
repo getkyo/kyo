@@ -7,7 +7,6 @@ import kyo.internal.tasty.reader.TastyFormat
 
 class AttributeUnpicklerTest extends kyo.test.Test[Any]:
 
-    // Test 12: a TASTy file with no Attributes section returns FileAttributes.default with all flags false.
     "absent Attributes section returns FileAttributes.default (all flags false)" in {
         // Empty view = no attributes section payload.
         val view   = ByteView(Array.empty[Byte])
@@ -29,7 +28,6 @@ class AttributeUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 13: a synthesized Attributes section with isJava = true is parsed correctly.
     "synthesized Attributes section with JAVAattr sets isJava=true" in {
         // JAVAattr = tag 5 (no payload)
         // EXPLICITNULLSattr = tag 2 (no payload)
@@ -54,7 +52,6 @@ class AttributeUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 14: a synthesized Attributes section with explicitNulls = true sets that flag.
     "synthesized Attributes section with EXPLICITNULLSattr sets explicitNulls=true" in {
         val attrs = Array[Byte](TastyFormat.EXPLICITNULLSattr.toByte)
         val view  = ByteView(attrs)
@@ -73,7 +70,6 @@ class AttributeUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 15: sourceFile attribute is decoded as Present("Foo.scala") when present, Absent otherwise.
     "SOURCEFILEattr decodes to Present(sourceFileName) when present" in {
         import AllowUnsafe.embrace.danger
         // Build a names array with "Foo.scala" at index 0.

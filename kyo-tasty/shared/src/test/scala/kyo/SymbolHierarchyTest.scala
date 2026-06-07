@@ -6,14 +6,9 @@ import kyo.Tasty.SymbolId
 /** Tests for the sealed-trait Symbol hierarchy. */
 class SymbolHierarchyTest extends kyo.test.Test[Any]:
 
-    // ── Leaf 1: subtype-construction-Class ──────────────────────────────────
-
-    // Given: a Symbol.Class literal with id=SymbolId(7), name=Name("Foo"), flags=Flags.empty,
     //   ownerId=SymbolId(0), Maybe.Absent for scaladoc/sourcePosition/javaMetadata,
     //   empty parentTypes/typeParamIds/declarationIds, Maybe.Absent for permittedSubclassIds,
     //   empty annotations/javaAnnotations, Maybe.Absent body.
-    // When: read id, name, flags, isClass, isClassLike, isTrait.
-    // Then: id==SymbolId(7); name.asString=="Foo"; flags==Flags.empty; isClass==true;
     //   isClassLike==true; isTrait==false.
     "Symbol.Class constructs correctly and isClass/isClassLike are true" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Class(
@@ -41,11 +36,6 @@ class SymbolHierarchyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 2: subtype-construction-Trait-sealed ────────────────────────────
-
-    // Given: a Symbol.Trait literal with flags=Flags(Flag.Sealed).
-    // When: read isSealed and openLevel.
-    // Then: isSealed==true; openLevel==OpenLevel.Sealed; isTrait==true; isClassLike==true.
     "Symbol.Trait with Sealed flag: isSealed and openLevel correct" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Trait(
             id = SymbolId(1),
@@ -69,12 +59,7 @@ class SymbolHierarchyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 3: subtype-construction-Method ────────────────────────────────
-
-    // Given: a Symbol.Method literal with name=Name("foo"), paramListIds=Chunk(Chunk(SymbolId(10),
     //   SymbolId(11))), typeParamIds=Chunk(SymbolId(12)).
-    // When: read isMethod, isTerm, isClassLike, paramListIds.size, paramListIds(0).size.
-    // Then: isMethod==true; isTerm==true; isClassLike==false; paramListIds.size==1;
     //   paramListIds(0).size==2.
     "Symbol.Method constructs correctly with paramListIds" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Method(
@@ -101,11 +86,6 @@ class SymbolHierarchyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 4: subtype-construction-Val-lazy ────────────────────────────────
-
-    // Given: a Symbol.Val literal with flags=Flags(Flag.Lazy), declaredType=Maybe.Absent.
-    // When: read isVal, isLazy, isTerm, isMethod.
-    // Then: isVal==true; isLazy==true; isTerm==true; isMethod==false.
     "Symbol.Val with Lazy flag: isVal/isLazy/isTerm true; isMethod false" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Val(
             id = SymbolId(3),
@@ -126,11 +106,6 @@ class SymbolHierarchyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 5: subtype-construction-TypeAlias-body-is-Type ─────────────────
-
-    // Given: a Symbol.TypeAlias literal with body=Type.Named(SymbolId(50)), typeParamIds=Chunk.empty.
-    // When: read body, isTypeAlias, isTypeLike.
-    // Then: body==Type.Named(SymbolId(50)); isTypeAlias==true; isTypeLike==true.
     "Symbol.TypeAlias body is a Type value; isTypeAlias and isTypeLike are true" in {
         val sym: Tasty.Symbol = Tasty.Symbol.TypeAlias(
             id = SymbolId(4),
@@ -152,12 +127,7 @@ class SymbolHierarchyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 6: subtype-construction-OpaqueType ─────────────────────────────
-
-    // Given: a Symbol.OpaqueType literal with body=Type.Named(SymbolId(60)),
     //   bounds=TypeBounds(Type.Nothing, Type.Any).
-    // When: read body, bounds.lower, bounds.upper, isOpaqueType.
-    // Then: body==Type.Named(SymbolId(60)); bounds.lower==Type.Nothing;
     //   bounds.upper==Type.Any; isOpaqueType==true.
     "Symbol.OpaqueType has correct body and bounds sentinels" in {
         val sym: Tasty.Symbol = Tasty.Symbol.OpaqueType(
@@ -180,12 +150,7 @@ class SymbolHierarchyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 7: subtype-construction-TypeParam-variance ─────────────────────
-
-    // Given: three Symbol.TypeParam literals with Variance.Covariant, Variance.Contravariant,
     //   Variance.Invariant.
-    // When: read each.variance.
-    // Then: returns the matching Variance enum case.
     "Symbol.TypeParam variance is preserved for Co/Contra/Invariant" in {
         val co = Tasty.Symbol.TypeParam(
             id = SymbolId(10),
@@ -220,12 +185,7 @@ class SymbolHierarchyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 8: subtype-construction-Parameter ───────────────────────────────
-
-    // Given: a Symbol.Parameter literal with declaredType=Type.Named(SymbolId(70)),
     //   defaultArgId=Maybe.Present(SymbolId(71)).
-    // When: read declaredType, defaultArgId, isParameter, isTerm.
-    // Then: declaredType==Type.Named(SymbolId(70)); defaultArgId==Maybe.Present(SymbolId(71));
     //   isParameter==true; isTerm==true.
     "Symbol.Parameter declaredType and defaultArgId are preserved" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Parameter(
@@ -248,12 +208,7 @@ class SymbolHierarchyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 9: subtype-construction-Package ─────────────────────────────────
-
-    // Given: a Symbol.Package literal with name=Name("scala"), memberIds=Chunk(SymbolId(100),
     //   SymbolId(101)).
-    // When: read memberIds.size, isPackage, scaladoc, sourcePosition.
-    // Then: memberIds.size==2; isPackage==true; scaladoc==Maybe.Absent;
     //   sourcePosition==Maybe.Absent.
     "Symbol.Package memberIds and constant abstract fields are correct" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Package(
@@ -271,12 +226,7 @@ class SymbolHierarchyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 10: subtype-construction-Unresolved ─────────────────────────────
-
-    // Given: a Symbol.Unresolved literal with id=SymbolId(-1), name=Name("<unresolved>"),
     //   ownerId=SymbolId(-1).
-    // When: read flags, scaladoc, sourcePosition, isUnresolved.
-    // Then: flags==Flags.empty; scaladoc==Maybe.Absent; sourcePosition==Maybe.Absent;
     //   isUnresolved==true.
     "Symbol.Unresolved has empty flags and Absent accessors" in {
         val sym: Tasty.Symbol = Tasty.Symbol.Package(
@@ -293,11 +243,6 @@ class SymbolHierarchyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 11: equals-by-id ────────────────────────────────────────────────
-
-    // Given: two Symbol.Class literals with the same id=SymbolId(5) but different names "A"/"B".
-    // When: compare with ==.
-    // Then: returns true (id-based equality preserved).
     "two Symbol.Class with same non-negative id compare equal (id-based equality)" in {
         val a: Tasty.Symbol = Tasty.Symbol.Class(
             id = SymbolId(5),
@@ -335,11 +280,6 @@ class SymbolHierarchyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 12: sentinel-id-not-equal ──────────────────────────────────────
-
-    // Given: two Symbol.Package instances with sentinel id=-1 and identical fields.
-    // When: compare with ==.
-    // Then: returns false (sentinel guard: id.value == -1 means NOT equal, never equal to any symbol).
     "two symbols with sentinel id=-1 are not equal (sentinel guard)" in {
         val x: Tasty.Symbol = Tasty.Symbol.Package(SymbolId(-1), Tasty.Name("u"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
         val y: Tasty.Symbol = Tasty.Symbol.Package(SymbolId(-1), Tasty.Name("u"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)

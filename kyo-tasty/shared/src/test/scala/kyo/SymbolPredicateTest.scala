@@ -41,11 +41,6 @@ class SymbolPredicateTest extends kyo.test.Test[Any]:
     private def flagsOf(flags: Tasty.Flag*): Tasty.Flags =
         flags.foldLeft(Tasty.Flags.empty)((acc, f) => acc.union(Tasty.Flags(f)))
 
-    // ── Leaf 1: every flag predicate reflects flags.contains ─────────────────
-
-    // Given: a Symbol with Flag.Final set.
-    // When: isFinal is called.
-    // Then: returns true; isAbstract returns false; every predicate matches the underlying bit.
     "every flag predicate reflects flags.contains" in {
         val finalSym = makeSymbol(flags = flagsOf(Tasty.Flag.Final))
         assert(finalSym.isFinal, "isFinal must be true when Flag.Final is set")
@@ -154,11 +149,6 @@ class SymbolPredicateTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 2: single-kind discriminator equality ───────────────────────────
-
-    // Given: a Symbol with kind = SymbolKind.Trait.
-    // When: isTrait and isClass are called.
-    // Then: isTrait = true, isClass = false, isClassLike = true (composite includes trait).
     "single-kind discriminator equality" in {
         val traitSym = makeSymbol(kind = SymbolKind.Trait)
         assert(traitSym.isInstanceOf[Tasty.Symbol.Trait], "isTrait must be true for SymbolKind.Trait")
@@ -194,11 +184,6 @@ class SymbolPredicateTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 3: composite kind predicates compose correctly ──────────────────
-
-    // Given: a Symbol with kind = SymbolKind.Class and Flag.Case set.
-    // When: isCaseClass is called.
-    // Then: returns true.
     "composite kind predicates compose correctly" in {
         val caseSym = makeSymbol(kind = SymbolKind.Class, flags = flagsOf(Tasty.Flag.Case))
         assert(

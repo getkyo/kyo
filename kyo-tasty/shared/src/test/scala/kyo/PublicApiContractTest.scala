@@ -2,27 +2,15 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Cross-cutting public-API contract gate.
+/** Cross-cutting public-API contract tests with concrete-equality assertions.
   *
-  * Each test pins a concrete-equality assertion for a public API that the bug audit flagged as weakly tested.
-  * One file consolidates the aggregation contracts rather than scattering them across per-area test files.
-  *
-  *   A: hasAnnotation / findAnnotation positive case (was: only negative / empty-fixture assertions)
-  *   B: show(Symbol, Code) concrete equality for a Class symbol (was: only.nonEmpty)
-  *   C: typeShow(Named) concrete simple-name equality (was: only.nonEmpty)
-  *   D: typeShow(Function / Tuple / Nothing / Any) concrete equality (was: only.nonEmpty)
-  *   E: treeShow(Literal(IntConst)) and treeShow(Literal(StringConst)) concrete equality (was: only.nonEmpty)
-  *   F: members(pkg, All) cross-check reference leaf (already strengthened in Phases 04/09; one anchor leaf here)
+  * Covers: hasAnnotation/findAnnotation, show(Symbol, Code), typeShow, treeShow, and members(pkg, All).
   */
 class PublicApiContractTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // ── Shared fixtures ──────────────────────────────────────────────────────
-
-    // Minimal classpath: two Package symbols, no annotations.
-    // pkg (id=0) root with memberIds = Chunk(id=1)
-    // child (id=1) owned by pkg
+    // Minimal classpath: pkg (id=0) root with memberIds = Chunk(id=1), child (id=1) owned by pkg.
     private val pkg = Tasty.Symbol.Package(
         SymbolId(0),
         Tasty.Name("root"),
@@ -47,11 +35,7 @@ class PublicApiContractTest extends kyo.test.Test[Any]:
         rootSymbolId = SymbolId(0)
     )
 
-    // Annotation fixture: a classpath with a scala.deprecated annotation class and a method carrying it.
-    // Layout:
-    //   id=0: Package "scala" (FQN "scala")
-    //   id=1: Class "deprecated" owned by id=0 (FQN "scala.deprecated")
-    //   id=2: Method "doWork" carrying @scala.deprecated
+    // Annotation fixture: Package "scala" (id=0), Class "deprecated" (id=1), Method "doWork" carrying @deprecated (id=2).
     private def buildAnnotationFixture(using Frame): Tasty.Classpath < Sync =
         Sync.defer:
             val scalaPkg = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("scala"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
@@ -98,7 +82,6 @@ class PublicApiContractTest extends kyo.test.Test[Any]:
             )
 
     // Single-symbol classpath: self-owned class "Foo" at id=0.
-    // Used for show(Symbol) and typeShow(Named) leaves.
     private def buildClassFixture(using Frame): Tasty.Classpath < Sync =
         Sync.defer:
             val fooClass = Tasty.Symbol.Class(
@@ -118,10 +101,6 @@ class PublicApiContractTest extends kyo.test.Test[Any]:
             )
             Tasty.Classpath.fromPicklesWithSymbols(Chunk(fooClass))
 
-    // ── Leaf A1: hasAnnotation positive case ─────────────────────────────────
-    // Given: Symbol.Method carrying @scala.deprecated in its annotations.
-    // When: hasAnnotation(method, "scala.deprecated").
-    // Then: returns true (concrete Boolean equality).
     "hasAnnotation returns true for method carrying the annotation" in {
         buildAnnotationFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(2)).asInstanceOf[Tasty.Symbol.Method]
@@ -131,10 +110,6 @@ class PublicApiContractTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // ── Leaf A2: findAnnotation positive case ────────────────────────────────
-    // Given: same Symbol.Method carrying @scala.deprecated.
-    // When: findAnnotation(method, "scala.deprecated").
-    // Then: returns Present with annotationType == Type.Named(SymbolId(1)).
     "findAnnotation returns Present with correct annotationType" in {
         buildAnnotationFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(2)).asInstanceOf[Tasty.Symbol.Method]
@@ -148,10 +123,6 @@ class PublicApiContractTest extends kyo.test.Test[Any]:
                         fail(s"Expected Present(Tasty.Annotation) but got $other")
     }
 
-    // ── Leaf A3: findAnnotation absent case (no annotation) ──────────────────
-    // Given: same Symbol.Method carrying @scala.deprecated.
-    // When: findAnnotation(method, "scala.inline").
-    // Then: returns Absent (isEmpty == true is the concrete assertion; == on union Maybe is not supported).
     "findAnnotation returns Absent when fqn does not match" in {
         buildAnnotationFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(2)).asInstanceOf[Tasty.Symbol.Method]
@@ -161,10 +132,6 @@ class PublicApiContractTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // ── Leaf B: show(Symbol, Code) concrete equality for Class ───────────────
-    // Given: self-owned Class "Foo" at id=0.
-    // When: show(fooSym, ShowFormat.Code).
-    // Then: exactly "class Foo".
     "show(Class, Code) returns concrete signature string" in {
         buildClassFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
@@ -174,11 +141,6 @@ class PublicApiContractTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // ── Leaf C: typeShow(Named) concrete simple-name equality ────────────────
-    // Given: classpath containing Class "Foo" at id=0 (self-owned, so fullName resolves to "Foo").
-    //        typeShow uses cp.symbol(id).map(_.name.asString) -- simple name only.
-    // When: typeShow(Type.Named(SymbolId(0))).
-    // Then: exactly "Foo".
     "typeShow(Named) returns simple name string" in {
         buildClassFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
@@ -187,10 +149,6 @@ class PublicApiContractTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // ── Leaf D1: typeShow(Nothing) and typeShow(Any) sentinels ───────────────
-    // Given: any classpath.
-    // When: typeShow(Type.Nothing) and typeShow(Type.Any).
-    // Then: "Nothing" and "Any" respectively.
     "typeShow(Nothing) returns \"Nothing\" and typeShow(Any) returns \"Any\"" in {
         Tasty.withClasspath(minimalCp):
             for
@@ -202,10 +160,6 @@ class PublicApiContractTest extends kyo.test.Test[Any]:
                 succeed
     }
 
-    // ── Leaf D2: typeShow(Function) concrete equality ────────────────────────
-    // Given: any classpath.
-    // When: typeShow(Type.Function(Chunk(Type.Nothing), Type.Any)).
-    // Then: "(Nothing) => Any" (the single-arg case wraps in parens because typeShow uses "(ps.map.) => r").
     "typeShow(Function) returns arrow syntax with parens" in {
         Tasty.withClasspath(minimalCp):
             Tasty.typeShow(Tasty.Type.Function(Chunk(Tasty.Type.Nothing), Tasty.Type.Any)).map: result =>
@@ -213,10 +167,6 @@ class PublicApiContractTest extends kyo.test.Test[Any]:
                 succeed
     }
 
-    // ── Leaf D3: typeShow(Tuple) concrete equality ───────────────────────────
-    // Given: any classpath.
-    // When: typeShow(Type.Tuple(Chunk(Type.Nothing, Type.Any))).
-    // Then: "(Nothing, Any)".
     "typeShow(Tuple) returns parenthesised comma-separated elements" in {
         Tasty.withClasspath(minimalCp):
             Tasty.typeShow(Tasty.Type.Tuple(Chunk(Tasty.Type.Nothing, Tasty.Type.Any))).map: result =>
@@ -224,10 +174,6 @@ class PublicApiContractTest extends kyo.test.Test[Any]:
                 succeed
     }
 
-    // ── Leaf E1: treeShow(Literal(IntConst(42))) concrete equality ───────────
-    // Given: any classpath.
-    // When: treeShow(Tree.Literal(Constant.IntConst(42))).
-    // Then: "42" (delegates to Constant.show, which renders IntConst as its decimal value).
     "treeShow(Literal(IntConst(42))) returns \"42\"" in {
         Tasty.withClasspath(minimalCp):
             Tasty.treeShow(Tasty.Tree.Literal(Tasty.Constant.IntConst(42))).map: result =>
@@ -235,11 +181,6 @@ class PublicApiContractTest extends kyo.test.Test[Any]:
                 succeed
     }
 
-    // ── Leaf E2: treeShow(Literal(StringConst("hi"))) concrete equality ──────
-    // Given: any classpath.
-    // When: treeShow(Tree.Literal(Constant.StringConst("hi"))).
-    // Then: "\"hi\"" (delegates to Constant.show which adds surrounding double-quotes).
-    // Pins: escape semantics round-trip through treeShow.
     "treeShow(Literal(StringConst(\"hi\"))) returns quoted string" in {
         Tasty.withClasspath(minimalCp):
             Tasty.treeShow(Tasty.Tree.Literal(Tasty.Constant.StringConst("hi"))).map: result =>
@@ -247,13 +188,6 @@ class PublicApiContractTest extends kyo.test.Test[Any]:
                 succeed
     }
 
-    // ── Leaf F: members(pkg, All) cross-check reference ──────────────────────
-    // This leaf consolidates the public-API contract already enforced by Inv009BehavioralTest Leaf 5
-    // and MembersTest. Having one anchor leaf here confirms the fix is visible via the
-    // public-API-focused test file per.
-    // Given: minimalCp with pkg (id=0) having memberIds = Chunk(id=1, child package "root.child").
-    // When: members(pkg, All) and members(pkg, Declared) and members(pkg, Inherited).
-    // Then: All == Declared == Chunk containing "root.child"; Inherited == Chunk.empty.
     "members(pkg, All) equals members(pkg, Declared) for Package" in {
         Tasty.withClasspath(minimalCp):
             for

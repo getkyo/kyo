@@ -2,16 +2,12 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** typed Classpath subclass queries.
+/** Tests for typed Classpath subclass queries: directSubclassesOf and implementationsOf
+  * with typed arguments and typed returns.
   *
-  * Tests cover directSubclassesOf and implementationsOf with typed arguments and typed returns.
-  *
-  * Leaf 129 fixture (directSubclassesOf): 0 -> Class "A" (abstract, root) 1 -> Class "B" (concrete, direct subclass of A) subclassIndex:
-  * A(0) -> [B(1)]
-  *
-  * Leaf 130 fixture (implementationsOf): 0 -> Trait "T" (sealed, root) 1 -> Class "B" (concrete, subclass of T) 2 -> Class "C" (concrete,
-  * subclass of T) 3 -> Class "AbsA" (abstract, subclass of T -- must be excluded) 4 -> Class "CFromA" (concrete, subclass of AbsA -- must
-  * be included transitively) subclassIndex: T(0) -> [B(1), C(2), AbsA(3)], AbsA(3) -> [CFromA(4)]
+  * directSubclassesOf fixture: class A (abstract) with direct subclass B.
+  * implementationsOf fixture: sealed trait T with concrete B, C, abstract AbsA (excluded),
+  * and transitive concrete CFromA (via AbsA).
   */
 class ClasspathSubclassTypedTest extends kyo.test.Test[Any]:
 
@@ -95,10 +91,6 @@ class ClasspathSubclassTypedTest extends kyo.test.Test[Any]:
                 errors = Chunk.empty
             )
 
-    // ── Leaf 129: directSubclassesOf-typed ───────────────────────────────────
-    // Given: class A and class B extends A; subclassIndex: A -> [B].
-    // When: cp.directSubclassesOf(a) where a: Symbol.ClassLike (actually Symbol.Class)
-    // Then: Chunk[ClassLike] size 1; element is Class B
     "directSubclassesOf returns Chunk[ClassLike] with direct subclasses" in {
         directSubclassFixture.map: cp =>
             cp.findClass("A") match
@@ -120,11 +112,6 @@ class ClasspathSubclassTypedTest extends kyo.test.Test[Any]:
                     fail("Expected to find class A in fixture")
     }
 
-    // ── Leaf 130: implementationsOf-class-only-typed ──────────────────────────
-    // Given: sealed T, concrete B extends T, concrete C extends T, abstract AbsA extends T,
-    //        concrete CFromA extends AbsA.
-    // When: cp.implementationsOf(t)
-    // Then: Chunk[Class] containing B, C, CFromA; excludes abstract AbsA and trait T itself.
     "implementationsOf returns only concrete Class instances transitively" in {
         implementationsFixture.map: cp =>
             cp.findClassLike("T") match

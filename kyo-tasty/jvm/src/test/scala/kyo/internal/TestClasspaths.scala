@@ -7,7 +7,7 @@ import kyo.*
 /** Shared classpath fixtures for kyo-tasty real-classpath fidelity tests.
   *
   * Every fidelity test that loads a real classpath MUST call `withClasspath` or one of the subset helpers. This is the canonical discovery
-  * point for sbt-managed test jars and class dirs (HARD RULE 1: real classpath, not synthetic fixtures).
+  * point for sbt-managed test jars and class dirs.
   *
   * Discovery uses `java.class.path` as the source of truth. The sbt test runner populates that property with the full transitive
   * test-classpath before launching the test JVM, so every jar and class dir needed by the tests is reachable.
@@ -83,7 +83,7 @@ private[kyo] object TestClasspaths:
       *
       * kyo-tasty-fixtures provides the cross-platform fixture TASTy files (PlainClass, SomeCaseClass, Animal, Vehicle, etc.) that mirror the
       * embedded fixture set used by JS/Native TestClasspaths. Including it in standard ensures JVM fidelity tests have access to the same
-      * fixture classes that JS/Native sees via the embedded bytes, enabling cross-platform parity (HARD RULE 14).
+      * fixture classes that JS/Native sees via the embedded bytes.
       */
     lazy val kyoTastyFixtures: Seq[String] =
         all.filter: p =>

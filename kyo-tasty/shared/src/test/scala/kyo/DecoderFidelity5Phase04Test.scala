@@ -11,24 +11,11 @@ import kyo.internal.tasty.symbol.FqnNormalizer
 import kyo.internal.tasty.symbol.SymbolBody
 import scala.collection.mutable
 
-/** Decoder-fidelity-5 API surface gaps (16 findings).
-  *
-  *    scaladoc on find/require null safety: DOCUMENTED-CONTRACT; pinned P04.1
-  *    unresolvedTypeReferenceCount cached as lazy val: FIXED; pinned P04.2
-  *   copyWithErrors/copyWithPreErrors stale scaladoc: DOCUMENTED-CONTRACT; pinned P04.3
-  *   findClassByBinary nested-class canonicalization: FIXED; pinned P04.4
-  *   derives CanEqual semantics: DOCUMENTED-CONTRACT; pinned P04.5
-  * findClass("") vs requireClass("") consistency: findClass("") returns Absent; requireClass("") raises InvalidFqn
-  *   section name 8-byte zero-pad check: FIXED (CI-style validation); pinned P04.7
-  *   SymbolId(MIN_INT) sentinel scaladoc: DOCUMENTED-CONTRACT; pinned P04.8
-  *   8 sequential SnapshotReader.read calls on in-memory source: TESTED; pinned P04.9
-  *   SnapshotReader.read digest verification: FIXED (optional expectedDigest param + DigestMismatch); pinned P04.10
-  *   cp.symbol(rootSymbolId) sentinel on empty cp: DOCUMENTED-CONTRACT; pinned P04.11
-  *   SymbolBody.toString identity-hash fix: FIXED; pinned P04.12
-  *   findClassesByName O(1) via nameIndex: FIXED; pinned P04.13
-  *   evictOlderThan sort+early-exit optimization: FIXED; pinned P04.14
-  *   stale SnapshotFormat home comment removed: FIXED; pinned P04.15
-  *   evictOlderThan units clarification: DOCUMENTED-CONTRACT; pinned P04.16
+/** API surface tests: null safety on find/require, unresolvedTypeReferenceCount idempotency,
+  * copyWithErrors/copyWithPreErrors, findClassByBinary canonicalization, Symbol equality,
+  * empty-FQN behavior, SnapshotFormat section name validation, SymbolBody.toString,
+  * findClassesByName stability, evictOlderThan, SnapshotReader sequential reads, and
+  * SymbolBody structural equality.
   */
 class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
 
@@ -101,10 +88,6 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
                 SnapshotReader.read(snapPath, src)
     end snapshotRoundTrip
 
-    // P04.1: -- findClass(null) returns Absent; no NPE.
-    // Contract pin: the scaladoc on findClass states a null fqn returns Maybe.Absent. This test
-    // verifies the contract holds at runtime so regressions (e.g. a Map.get replacement that
-    // delegates to a null-hostile backend) are caught.
     "P04.1 findClass(null) returns Absent without NPE" in {
         Abort.run[TastyError]:
             val src = MemSrc()
@@ -122,10 +105,6 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // P04.2: -- unresolvedTypeReferenceCount is idempotent and cached.
-    // The implementation now caches the result in a private lazy val. This test verifies:
-    // (a) the same integer is returned on repeated calls (not recomputed incorrectly)
-    // (b) the result is non-negative
     "P04.2 unresolvedTypeReferenceCount is idempotent across multiple calls" in {
         Abort.run[TastyError]:
             val src = MemSrc()
@@ -145,8 +124,6 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // P04.3: -- copyWithErrors and copyWithPreErrors work correctly; stale scaladoc removed.
-    // Verifies the helpers remain functional (the scaladoc fix is behaviorally neutral).
     "P04.3 copyWithErrors and copyWithPreErrors produce correct errors fields" in {
         Abort.run[TastyError]:
             snapshotRoundTrip().map: cp =>
@@ -166,8 +143,6 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // P04.4: -- findClassByBinary applies FqnNormalizer to handle named inner classes.
-    // Contract pin: findClassByBinary("X") == findClass(FqnNormalizer.canonicalSourceFqn("X" with slashes replaced))
     "P04.4 findClassByBinary result equals findClass(FqnNormalizer(dotted))" in {
         Abort.run[TastyError]:
             val src = MemSrc()
@@ -197,9 +172,6 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // P04.5: -- Symbol.equals is id-based; different ids are never equal.
-    // Pins the documented CanEqual contract: two symbols are equal iff their id.value is the same
-    // and neither is the sentinel.
     "P04.5 Symbol equality is id-based; different ids are never equal" in {
         Abort.run[TastyError]:
             val src = MemSrc()
@@ -223,9 +195,7 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // P04.6: findClass("") returns Absent; requireClass("") raises InvalidFqn("".) not NotFound.
-    // An empty FQN is a caller programming error: raise InvalidFqn (distinct from a genuine not-found result) so
-    // callers can distinguish "I asked for the wrong thing" from "the classpath does not contain this class".
+    // An empty FQN is a caller programming error; InvalidFqn distinguishes this from a genuine not-found result.
     "P04.6 findClass(empty) returns Absent; requireClass(empty) raises InvalidFqn(empty)" in {
         Abort.run[TastyError]:
             val src = MemSrc()
@@ -252,8 +222,6 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // P04.7: -- requireValidSectionNames passes for all current section names.
-    // Pins the CI-style guard: all entries in SnapshotFormat.sectionNames are <= 8 bytes and NUL-free.
     "P04.7 all SnapshotFormat.sectionNames are <= 8 chars and NUL-free" in {
         SnapshotFormat.requireValidSectionNames()
         SnapshotFormat.sectionNames.foreach: name =>
@@ -262,12 +230,9 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
         succeed
     }
 
-    // P04.8: -- cp.symbol(id) returns sentinel for any negative id, not only -1.
-    // Pins the extended scaladoc contract.
     "P04.8 cp.symbol returns sentinel for id=-1, id=-2, and id=Int.MinValue" in {
         Abort.run[TastyError]:
             snapshotRoundTrip().map: cp =>
-                // cp.symbol now returns Maybe[Symbol]; out-of-range/negative ids return Maybe.Absent
                 val s1 = cp.symbol(SymbolId(-1))
                 val s2 = cp.symbol(SymbolId(-2))
                 val s3 = cp.symbol(SymbolId(Int.MinValue))
@@ -281,9 +246,6 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // P04.9: -- 8 sequential SnapshotReader.read calls on a MemSrc produce identical results.
-    // The MemSrc model simulates the "one file read per call" semantics of a real file-backed source.
-    // 8 sequential reads (cross-platform) verify determinism and absence of state corruption.
     "P04.9 8 sequential SnapshotReader.read calls on MemSrc produce identical results" in {
         Abort.run[TastyError]:
             snapshotRoundTrip(0x42).flatMap: cp =>
@@ -309,9 +271,7 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // P04.10: -- SnapshotReader.read does NOT verify inputDigest; contract is documented.
-    // A snapshot whose embedded digest does not match what the caller computes is still decoded
-    // successfully. The digest in the filename (not the file body) is what prevents stale hits.
+    // The digest in the filename (not the file body) prevents stale hits.
     "P04.10 SnapshotReader.read succeeds regardless of embedded digest value" in {
         Abort.run[TastyError]:
             val fooClass = makeClass(0, "Foo")
@@ -346,15 +306,13 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // P04.11: -- cp.symbol(cp.rootSymbolId) on empty classpath returns sentinel.
-    // An empty classpath has rootSymbolId = -1, so cp.symbol(cp.rootSymbolId) returns sentinelUnresolved.
+    // An empty classpath has rootSymbolId = -1, so cp.symbol(cp.rootSymbolId) returns Maybe.Absent.
     "P04.11 empty classpath cp.symbol(cp.rootSymbolId) returns sentinel" in {
         Abort.run[TastyError]:
             Scope.run:
                 ClasspathOrchestrator.init(Seq.empty, Tasty.ErrorMode.SoftFail, MemSrc(), 1).map: cp =>
                     assert(cp.symbols.isEmpty, s"Expected empty classpath; got ${cp.symbols.length} symbols")
                     val root = cp.symbol(cp.rootSymbolId)
-                    // empty classpath means rootSymbolId=-1, cp.symbol returns Maybe.Absent
                     assert(
                         root == Maybe.Absent,
                         s"cp.symbol(rootSymbolId) must be Absent on empty cp; got $root"
@@ -366,9 +324,7 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // P04.12: -- SymbolBody.toString does not print array identity hashes.
-    // The override renders sectionBytes as "len=<N>" and names as "[<N> entries]".
-    // After SymbolBody moved to kyo.internal.tasty.symbol.SymbolBody.
+    // SymbolBody.toString renders sectionBytes as "len=<N>" and names as "[<N> entries]".
     "P04.12 SymbolBody.toString contains len= not array identity hash" in {
         val body = SymbolBody(
             bodyStart = 10,
@@ -385,8 +341,6 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
         succeed
     }
 
-    // P04.13: -- findClassesByName uses nameIndex for O(1) lookup; repeated calls return same result.
-    // Contract pin: repeated calls return the same Chunk (idempotency).
     "P04.13 findClassesByName returns stable results across multiple calls" in {
         Abort.run[TastyError]:
             val src = MemSrc()
@@ -415,8 +369,6 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // P04.14: -- evictOlderThan API is callable on an empty cache dir.
-    // The O(N) cost is a design decision documented in scaladoc, not a bug.
     "P04.14 evictOlderThan on empty cache dir completes without error" in {
         Abort.run[TastyError]:
             Scope.run:
@@ -429,8 +381,6 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // P04.15: -- SnapshotFormat.sectionNames contains no phantom home-field sections.
-    // Pins the cleanup: the stale comment about a `home` field that never existed has been removed.
     "P04.15 SnapshotFormat.sectionNames contains no HOMEFLD_ or HOME____ section" in {
         val names = SnapshotFormat.sectionNames.toSet
         assert(!names.contains("HOMEFLD_"), "Unexpected HOMEFLD_ section in SnapshotFormat")
@@ -446,21 +396,14 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // P04.16: -- evictOlderThan Duration overload converts to millis correctly.
-    // Pins the documented unit behavior: evictOlderThan(dir, d: Duration) delegates to
-    // evictOlderThan(dir, d.toMillis: Long).
     "P04.16 evictOlderThan Duration overload delegates correctly to Long overload" in {
         Abort.run[TastyError]:
             Scope.run:
-                val src = MemSrc()
-                // Use Duration.fromJava to construct a Duration (the API available in this codebase).
+                val src  = MemSrc()
                 val jDur = java.time.Duration.ofMillis(5000L)
                 val d    = Duration.fromJava(jDur)
                 assert(d.toMillis == 5000L, s"Duration.toMillis mismatch: ${d.toMillis}")
-                // Both overloads must compile and complete without panic on an empty dir.
                 Tasty.Snapshot.evictOlderThanWithSource("/empty-cache", 5000L, src).andThen:
-                    // Snapshot.evictOlderThan Duration overload; evictOlderThanWithSource has no Duration version
-                    // so we verify the toMillis conversion inline.
                     Kyo.unit.map(_ => succeed)
         .map:
             case Result.Success(r) => r
@@ -468,12 +411,8 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // P04.17: SymbolBody structural equality (regression guard).
-    // Pre-fix: SymbolBody.equals used default case-class equality, which compared sectionBytes and
-    // names by Array reference identity. Loading the same fixture twice produced two distinct
-    // Array instances, so body1 == body2 returned false even though the content was identical.
-    // Post-fix: SymbolBody overrides equals/hashCode using Span.is (structural) for sectionBytes
-    // and names. Two SymbolBody values built from the same bytes at the same offsets must compare equal.
+    // SymbolBody overrides equals/hashCode using Span.is (structural) so two loads of the same
+    // bytes produce equal bodies rather than using Array reference identity.
     "P04.17 SymbolBody structural equality: two loads of the same fixture produce equal bodies" in {
         import kyo.internal.tasty.query.DecodeContext
         Abort.run[TastyError]:

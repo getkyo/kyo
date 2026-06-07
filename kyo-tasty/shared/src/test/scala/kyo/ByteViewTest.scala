@@ -4,7 +4,6 @@ import kyo.internal.tasty.binary.ByteView
 
 class ByteViewTest extends kyo.test.Test[Any]:
 
-    // Test 1: peekByte reads at offset without advancing position
     "peekByte reads byte at offset without advancing position" in {
         val bytes = Array[Byte](10, 20, 30, 40)
         val view  = ByteView(bytes)
@@ -13,9 +12,7 @@ class ByteViewTest extends kyo.test.Test[Any]:
         assert(view.position == 0)
     }
 
-    // Test 2: readByte advances position by 1 and returns correct byte
     "readByte advances position by 1 and returns correct byte" in {
-        // §839 case 3; direct ByteView cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = Array[Byte](0x5c.toByte, 0xa1.toByte, 0xab.toByte)
         val view  = ByteView(bytes)
@@ -27,9 +24,7 @@ class ByteViewTest extends kyo.test.Test[Any]:
         assert(view.position == 2)
     }
 
-    // Test 3: readByte at end produces ArrayIndexOutOfBoundsException (or a wrapping Error on Scala.js)
     "readByte at end produces ArrayIndexOutOfBoundsException" in {
-        // §839 case 3; direct ByteView cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = Array[Byte](0x80.toByte)
         val view  = ByteView(bytes)
@@ -45,7 +40,6 @@ class ByteViewTest extends kyo.test.Test[Any]:
         end try
     }
 
-    // Test 4: subView shares underlying array, has correct start/end/position
     "subView shares underlying array with correct bounds" in {
         val bytes = Array[Byte](1, 2, 3, 4, 5)
         val view  = ByteView(bytes)
@@ -57,9 +51,7 @@ class ByteViewTest extends kyo.test.Test[Any]:
         assert(sub.bytes eq bytes)
     }
 
-    // Test 5: goto sets position to addr
     "goto sets position to given address" in {
-        // §839 case 3; direct ByteView cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = Array[Byte](0, 1, 2, 3, 4, 5)
         val view  = ByteView(bytes)
@@ -70,9 +62,7 @@ class ByteViewTest extends kyo.test.Test[Any]:
         assert(view.position == 4)
     }
 
-    // Test 6: remaining returns end - position
     "remaining returns end minus current position" in {
-        // §839 case 3; direct ByteView cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         val bytes = Array[Byte](10, 20, 30, 40, 50)
         val view  = ByteView(bytes)

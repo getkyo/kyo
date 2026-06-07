@@ -20,7 +20,6 @@ class EmbeddedClassfilesTest extends kyo.test.Test[Any]:
         h
     end fnv1a64
 
-    // javaUtilArrayListClass decodes to a non-empty classfile
     "javaUtilArrayListClass decodes to a non-empty classfile with CAFEBABE magic" in {
         val bytes = EmbeddedClassfiles.javaUtilArrayListClass
         assert(bytes.length > 0, "ArrayList bytes must be non-empty")
@@ -30,9 +29,8 @@ class EmbeddedClassfilesTest extends kyo.test.Test[Any]:
         assert(bytes(3) == 0xbe.toByte, "byte 3 must be 0xBE")
     }
 
-    // byte-equality with HEAD literals via FNV-1a 64-bit hash
+    // Expected FNV-1a 64-bit hashes verified against HEAD literal bytes (JDK 25.0.3).
     "byte equality with HEAD literals for all 8 classes via FNV-1a hash" in {
-        // Expected FNV-1a 64-bit hashes verified against HEAD literal bytes (JDK 25.0.3).
         val expected: List[(String, Array[Byte], Int, Long)] = List(
             ("java/util/ArrayList.class", EmbeddedClassfiles.javaUtilArrayListClass, 19356, 3965872221081036403L),
             ("java/io/FileInputStream.class", EmbeddedClassfiles.javaIoFileInputStreamClass, 7555, 6504141863715071781L),
@@ -62,7 +60,6 @@ class EmbeddedClassfilesTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // loadJdkClass dispatch parity
     "loadJdkClass dispatch returns the same array as each dedicated accessor" in {
         assert(EmbeddedClassfiles.loadJdkClass("java/util/ArrayList.class") eq EmbeddedClassfiles.javaUtilArrayListClass)
         assert(EmbeddedClassfiles.loadJdkClass("java/io/FileInputStream.class") eq EmbeddedClassfiles.javaIoFileInputStreamClass)
@@ -76,19 +73,13 @@ class EmbeddedClassfilesTest extends kyo.test.Test[Any]:
         assert(EmbeddedClassfiles.loadJdkClass("java/lang/Deprecated.class") eq EmbeddedClassfiles.javaLangDeprecatedClass)
     }
 
-    // lazy decode runs at most once per JVM lifetime per entry
-    // The lazy val is initialized at most once (Scala lazy val semantics); reference equality
-    // proves the same backing array is returned on every call without re-decoding.
-    // Same approach: ref-equality for lazy-val proof.
+    // The lazy val is initialized at most once; reference equality proves the same backing array.
     "lazy decode runs at most once: accessor returns same array instance on repeated access" in {
         val first  = EmbeddedClassfiles.javaUtilArrayListClass
         val second = EmbeddedClassfiles.javaUtilArrayListClass
         assert(first eq second, "lazy val must return the same Array[Byte] instance on repeated access")
     }
 
-    // cross-platform decode on JS / Native
-    // File is in shared/src/test so it runs on all three platforms.
-    // Verify every accessor returns a non-empty classfile array with CAFEBABE magic.
     "cross-platform: every accessor returns a non-empty classfile with CAFEBABE magic" in {
         val allAccessors: List[(String, Array[Byte])] = List(
             ("javaUtilArrayListClass", EmbeddedClassfiles.javaUtilArrayListClass),

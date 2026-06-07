@@ -6,8 +6,6 @@ import kyo.*
   *
   * Every method throws UnsupportedOperationException because all JVM-only operations are guarded by the `jvmOnly` tag in the shared test
   * leaves. The stubs are present to satisfy the Scala compiler's need for the `TestClasspaths2Platform` object on every platform.
-  *
-  * Scaladoc: 8-35 lines.
   */
 private[kyo] object TestClasspaths2Platform:
 

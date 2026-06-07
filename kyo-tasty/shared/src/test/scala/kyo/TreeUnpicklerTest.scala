@@ -158,7 +158,6 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
                             s"No 'value' Val symbol in SomeObject. Symbols: ${pass1.symbols.map(s => s"${s.name.asString}:${s.kind}").mkString(", ")}"
                         )
                     case Some(sym) =>
-                        // phase-02 bridge; use symbolBody(sym, pass1) instead of sym.origin match.
                         symbolBody(sym, pass1) match
                             case Present(body) =>
                                 val tree = TreeUnpickler.decodeSync(body, toFinalSym(sym), dummyLookup)
@@ -319,7 +318,6 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
                     case None =>
                         succeed
                     case Some(sym) =>
-                        // phase-02 bridge; use symbolBody + truncated body.
                         symbolBody(sym, pass1) match
                             case Present(body) =>
                                 val truncated = body.copy(bodyEnd = body.bodyStart + 1)
@@ -350,7 +348,6 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
                     case None =>
                         succeed
                     case Some(sym) =>
-                        // phase-02 bridge; use decodeSync twice to verify identical output (not memoized via OnceCell).
                         symbolBody(sym, pass1) match
                             case Present(body) =>
                                 val tree1 = TreeUnpickler.decodeSync(body, toFinalSym(sym), dummyLookup)
@@ -641,9 +638,6 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
     // ── Tests (category-5 complete coverage) ────────────────────────
 
     // Test 18e-1: VALDEF body from a real fixture decodes to Tree.ValDef with non-null sym/tpt/rhs fields.
-    // Given: the 'value' Val symbol from SomeObject.tasty has a body slice.
-    // When: TreeUnpickler.decodeSync is called.
-    // Then: returns Tree.ValDef(sym, tpt, _) where sym is non-null, tpt is a non-null Tasty.Type,
     //       and the body is either Absent or Present(non-null tree).
     "VALDEF body from SomeObject.value decodes to Tree.ValDef with non-null fields" in {
         Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.someObjectTasty)).map:
@@ -654,7 +648,6 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
                     case None =>
                         succeed
                     case Some(sym) =>
-                        // phase-02 bridge; use symbolBody instead of sym.origin.
                         symbolBody(sym, pass1) match
                             case Present(body) =>
                                 val tree = TreeUnpickler.decodeSync(body, toFinalSym(sym), dummyLookup)
@@ -721,10 +714,7 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
 
     // Test 18e-3: zero-Unknown sweep: all symbol bodies decoded from someObjectTasty and
     // plainClassTasty contain zero Tree.Unknown nodes with tag >= 128 (category-5 unhandled nodes).
-    // Given: embedded fixture bytes for SomeObject.tasty and PlainClass.tasty.
-    // When: all symbol bodies are decoded via AstUnpickler.readPass1 + TreeUnpickler.decodeSync
     //       and the resulting trees are walked recursively.
-    // Then: countCat5Unknown across all decoded trees == 0, demonstrating.
     "zero-Unknown sweep: no category-5 Unknown nodes in someObjectTasty or plainClassTasty bodies" in {
         def countCat5Unknown(tree: Tasty.Tree): Int =
             tree match
@@ -795,7 +785,6 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
                 import AllowUnsafe.embrace.danger
                 var total = 0
                 pass1.symbols.foreach: sym =>
-                    // phase-02 bridge; use symbolBody instead of sym.origin.
                     symbolBody(sym, pass1) match
                         case Present(body) =>
                             val tree = TreeUnpickler.decodeSync(body, toFinalSym(sym), dummyLookup)

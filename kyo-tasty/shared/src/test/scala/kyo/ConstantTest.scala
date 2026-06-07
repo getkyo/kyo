@@ -48,10 +48,6 @@ class ConstantTest extends kyo.test.Test[Any]:
         new TypeUnpickler.DecodeSession(names, addrMap, arena)
     end makeSession
 
-    // Test 1 (T2, Constant): STRINGconst decodes via name table.
-    // Given: bytes [STRINGconst tag, Nat(2)] with names(2) = Name("hello").
-    // When: Constant.fromTastyTag(STRINGconst, view, session).
-    // Then: returns Constant.StringConst("hello").
     "Constant STRINGconst decodes name table entry to StringConst" in {
         val names = Array(
             Tasty.Name("dummy0"),
@@ -74,10 +70,7 @@ class ConstantTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Test 2 (T2, Constant): NULLconst returns canonical NullConst.
-    // Given: zero bytes after tag (NULLconst is category 1: tag only, already consumed by caller).
-    // When: Constant.fromTastyTag(NULLconst, emptyView, session).
-    // Then: returns Constant.NullConst.
+    // NULLconst is category 1: tag only, already consumed by the caller.
     "Constant NULLconst returns NullConst with empty view" in {
         val session = makeSession(Array.empty)
         val bytes   = Array.empty[Byte]
@@ -93,10 +86,7 @@ class ConstantTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Test 3: BYTEconst decodes Nat payload to ByteConst.
     // BYTEconst (67) is category 2: tag + readNat, result cast to Byte.
-    // Value 42: encodeNat(42) = Array(42 | 0x80) = Array(0xAA).
-    // Decoded via Constant.fromTastyTag(BYTEconst, view, session) -> ByteConst(42.toByte).
     "Constant BYTEconst decodes Nat payload to ByteConst(42)" in {
         val session = makeSession(Array.empty)
         val bytes   = encodeNat(42)
@@ -112,10 +102,7 @@ class ConstantTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Test 4: SHORTconst decodes Nat payload to ShortConst.
     // SHORTconst (68) is category 2: tag + readNat, result cast to Short.
-    // Value 1000: encodeNat(1000) = Array(7, 1000 & 0x7f | 0x80) = Array(0x07, 0xE8).
-    // Decoded via Constant.fromTastyTag(SHORTconst, view, session) -> ShortConst(1000.toShort).
     "Constant SHORTconst decodes Nat payload to ShortConst(1000)" in {
         val session = makeSession(Array.empty)
         val bytes   = encodeNat(1000)
@@ -131,10 +118,7 @@ class ConstantTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Test 5: CHARconst decodes Nat payload to CharConst.
     // CHARconst (69) is category 2: tag + readNat, result cast to Char.
-    // Value 'A' (65): encodeNat(65) = Array(65 | 0x80) = Array(0xC1).
-    // Decoded via Constant.fromTastyTag(CHARconst, view, session) -> CharConst('A').
     "Constant CHARconst decodes Nat payload to CharConst('A')" in {
         val session = makeSession(Array.empty)
         val bytes   = encodeNat('A'.toInt)
@@ -150,10 +134,7 @@ class ConstantTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Test 6: LONGconst decodes LongNat payload to LongConst.
-    // LONGconst (71) is category 2: tag + readLongNat.
-    // Value 999999999999L: encoded as multi-byte LongNat.
-    // Decoded via Constant.fromTastyTag(LONGconst, view, session) -> LongConst(999999999999L).
+    // LONGconst (71) is category 2: tag + readLongNat, encoded as multi-byte LongNat.
     "Constant LONGconst decodes LongNat payload to LongConst(999999999999L)" in {
         val session   = makeSession(Array.empty)
         val longValue = 999999999999L
@@ -170,10 +151,7 @@ class ConstantTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Test 7: FLOATconst decodes Nat payload (raw int bits) to FloatConst.
     // FLOATconst (72) is category 2: tag + readNat interpreted via Float.intBitsToFloat.
-    // Uses 3.14f (raw bits 0x4048F5C3 = 1078523331) so the multi-byte Nat encode +
-    // intBitsToFloat reconstruction is exercised, not the trivially-empty all-zero pattern.
     "Constant FLOATconst decodes raw-int-bits Nat payload to FloatConst(3.14f)" in {
         val session   = makeSession(Array.empty)
         val floatBits = java.lang.Float.floatToRawIntBits(3.14f)
@@ -190,10 +168,7 @@ class ConstantTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Test 8: DOUBLEconst decodes LongNat payload (raw long bits) to DoubleConst.
     // DOUBLEconst (73) is category 2: tag + readLongNat interpreted via Double.longBitsToDouble.
-    // Uses -2.718281828 so a multi-byte LongNat encode with the sign bit set + longBitsToDouble
-    // reconstruction is exercised, not the trivially-empty all-zero pattern.
     "Constant DOUBLEconst decodes raw-long-bits LongNat payload to DoubleConst(-2.718281828)" in {
         val session    = makeSession(Array.empty)
         val value      = -2.718281828

@@ -3,14 +3,8 @@ package kyo
 import kyo.Tasty.ShowFormat
 import kyo.Tasty.SymbolId
 
-/** Cat 21: Sync.defer removal verification.
-  *
-  * Verifies that the three Sync.defer wrappers removed from Tasty.scala (:3345, :3520, :3524)
-  * do not affect observable behavior. The public effect rows are unchanged (still `< Sync`);
-  * the Sync.defer was removed because the expressions were already pure.
-  *
-  * Leaf 5 (showRendersSimpleNameWithoutSyncDefer): show with ShowFormat.Simple still works.
-  * Leaf 6 (typeShowReturnsAbsentWithoutSyncDefer): bodyTree for a symbol with no body returns Absent.
+/** Verifies that removing Sync.defer from pure expressions in Tasty.scala does not affect
+  * observable behavior: effect rows are unchanged, show and bodyTree still work correctly.
   */
 class TastySyncDeferRemovalTest extends kyo.test.Test[Any]:
 
@@ -31,9 +25,6 @@ class TastySyncDeferRemovalTest extends kyo.test.Test[Any]:
     )
 
     "showRendersSimpleNameWithoutSyncDefer" in {
-        // Given: a Classpath with a Symbol.Class named "Foo".
-        // When: Tasty.show(cls, ShowFormat.Simple).eval is called.
-        // Then: the result is "Foo" (the simple name).
         val cp = Tasty.Classpath.fromPicklesWithSymbols(Chunk(cls))
         cp.flatMap: cp =>
             Tasty.withClasspath(cp):
@@ -43,9 +34,6 @@ class TastySyncDeferRemovalTest extends kyo.test.Test[Any]:
     }
 
     "typeShowReturnsAbsentWithoutSyncDefer" in {
-        // Given: a Classpath containing cls which has no body (Maybe.Absent).
-        // When: Tasty.bodyTree(cls).eval is called.
-        // Then: the result is Maybe.Absent (no body available) without throwing or hanging.
         val cp = Tasty.Classpath.fromPicklesWithSymbols(Chunk(cls))
         cp.flatMap: cp =>
             Tasty.withClasspath(cp):

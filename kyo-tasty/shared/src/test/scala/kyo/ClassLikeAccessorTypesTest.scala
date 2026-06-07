@@ -2,9 +2,8 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** compile-time type-shape verification for ClassLike typed accessors.
+/** Compile-time type-shape verification for ClassLike typed accessors.
   *
-  * After the Symbol methods (methods, vals, typeParams, declarations) are removed.
   * The equivalents are on object Tasty.*: Tasty.declarations(sym), Tasty.typeParams(sym), etc.
   */
 class ClassLikeAccessorTypesTest extends kyo.test.Test[Any]:
@@ -56,10 +55,6 @@ class ClassLikeAccessorTypesTest extends kyo.test.Test[Any]:
             Chunk.empty
         )
 
-    // typed-return-types-compile
-    // Given: Symbol.Class c with some declarations
-    // When: 5 bindings on c using Tasty.* free functions
-    // Then: every binding compiles cleanly
     "typed-return-types-compile: five typed bindings on ClassLike all compile" in {
         val classSym  = makeClass(id = 0, name = "Foo")
         val method1   = makeMethod(id = 1, name = "foo")
@@ -85,10 +80,6 @@ class ClassLikeAccessorTypesTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // typed-return-preserves-method-specific-access
-    // Given: Symbol.Class c with method declaration
-    // When: get methods via Tasty.declarations + filter
-    // Then: returns the method correctly
     "typed-return-preserves-method-specific-access: methods via Tasty.declarations filter compiles cleanly" in {
         val classSym  = makeClass(id = 0, name = "Foo")
         val method1   = makeMethod(id = 1, name = "foo")
@@ -102,10 +93,6 @@ class ClassLikeAccessorTypesTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // layered-preservation-base-symbol-caller
-    // Given: sym: Tasty.Symbol (upcast of Symbol.Class)
-    // When: val decls: Chunk[Symbol] < Sync = Tasty.declarations(sym)
-    // Then: compiles
     "layered-preservation-base-symbol-caller: Tasty.declarations(sym) compiles from flat-Symbol caller" in {
         val classSym  = makeClass(id = 0, name = "Foo")
         val method1   = makeMethod(id = 1, name = "foo")
@@ -118,10 +105,6 @@ class ClassLikeAccessorTypesTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // declarations-returns-untyped-symbol
-    // Given: Symbol.Class c with declarations
-    // When: val ds: Chunk[Symbol] < Sync = Tasty.declarations(c)
-    // Then: compiles (declarations return type is Chunk[Symbol] < Sync)
     "declarations-returns-untyped-symbol: Tasty.declarations(c) returns Chunk[Symbol]" in {
         val classSym  = makeClass(id = 0, name = "Foo")
         val method1   = makeMethod(id = 1, name = "foo")

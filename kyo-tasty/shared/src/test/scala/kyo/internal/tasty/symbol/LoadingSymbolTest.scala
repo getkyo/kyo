@@ -12,9 +12,6 @@ import kyo.*
 class LoadingSymbolTest extends kyo.test.Test[Any]:
 
     // loadingSymbolInaccessibleFromUserCode
-    // Given: a compileErrors probe that LoadingSymbol is NOT accessible through kyo.Tasty.
-    // When: the test asserts.
-    // Then: the type does not appear on the public Tasty surface; LoadingSymbol is an
     //       internal type (private[kyo]) not re-exported from object Tasty.
     "loadingSymbolInaccessibleFromUserCode: LoadingSymbol is not accessible through the public Tasty API" in {
         // kyo.Tasty does not expose LoadingSymbol: accessing it via Tasty.LoadingSymbol fails.
@@ -26,9 +23,6 @@ class LoadingSymbolTest extends kyo.test.Test[Any]:
     }
 
     // materialisingHoldsId
-    // Given: a `LoadingSymbol.Materialising(id = 42, kind = SymbolKind.Class, flags = Flags.empty, name = Name("X"))`.
-    // When: the test reads `m.id`.
-    // Then: the value is 42; structural equality on two Materialising values with the same id holds.
     "materialisingHoldsId: Materialising.id holds the assigned value" in {
         import AllowUnsafe.embrace.danger
         val m1 = LoadingSymbol.Materialising(
@@ -57,9 +51,6 @@ class LoadingSymbolTest extends kyo.test.Test[Any]:
     }
 
     // placeholderDeleted
-    // Given: the LoadingSymbol ADT after.
-    // When: user code tries to reference LoadingSymbol.Placeholder.
-    // Then: the type does not exist; compile-time probe returns non-empty errors.
     "placeholderDeleted: LoadingSymbol.Placeholder no longer exists" in {
         val noPlaceholder = compiletime.testing.typeCheckErrors(
             "(??? : kyo.internal.tasty.symbol.LoadingSymbol.Placeholder)"

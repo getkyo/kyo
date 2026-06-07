@@ -12,10 +12,12 @@ import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import scala.collection.mutable
 
-/** Post-Scope decodeBody behavior on mmap-loaded classpaths. The mmap path sets sectionBytes = Array.empty for body-bearing symbols;
-  * decodeBody detects this and returns TastyError.MalformedSection("body bytes not available") rather than ClasspathClosed.
-  * An IllegalStateException from the arena would only fire if view-backed bytes were accessed after close, but they are not accessed at
-  * all when sectionBytes is empty.
+/** Verifies post-Scope decodeBody behavior on mmap-loaded classpaths.
+  *
+  * The mmap path sets sectionBytes = Array.empty for body-bearing symbols; decodeBody detects this and
+  * returns TastyError.MalformedSection("body bytes not available") rather than ClasspathClosed.
+  * An IllegalStateException from the arena would only fire if view-backed bytes were accessed after close,
+  * but they are not accessed at all when sectionBytes is empty.
   */
 class DecoderFidelity5Phase02MmapTest extends kyo.test.Test[Any]:
 
@@ -106,12 +108,6 @@ class DecoderFidelity5Phase02MmapTest extends kyo.test.Test[Any]:
             )
     end syntheticCp
 
-    // P02.6 (JVM-only): -- post-Scope decodeBody behavior on mmap-loaded snapshot.
-    // Given: a snapshot loaded via readMapped inside a Scope; the Scope exits (arena closes)
-    // When: decodeBody is called on a symbol that had body bytes stored via mmap
-    // Then: returns TastyError.MalformedSection("body bytes not available") because the mmap path
-    //       sets sectionBytes = Array.empty intentionally; ClasspathClosed would only fire if
-    //       the view-backed arena bytes were directly accessed after close.
     "P02.6 post-Scope decodeBody on mmap-loaded snapshot returns MalformedSection (body bytes not available)" in {
         val fixtureSrc = MemSrc()
         fixtureSrc.add("root/Animal.tasty", kyo.fixtures.Embedded.animalTasty)
@@ -176,10 +172,6 @@ class DecoderFidelity5Phase02MmapTest extends kyo.test.Test[Any]:
                                 fail(s"Unexpected panic from post-Scope decodeBody: ${t.getMessage}")
     }
 
-    // P02.7 (JVM-only): /31 via mmap -- subclassIndex and companionIndex populated on mmap warm load
-    // Given: synthetic cp with explicit subclassIndex and companionIndex; snapshot written to real filesystem
-    // When: loaded via readMapped (mmap path)
-    // Then: warm subclassIndex.size == cold subclassIndex.size AND warm companionIndex.size == cold companionIndex.size
     "P02.7 (mmap): subclassIndex and companionIndex populated on mmap warm load" in {
         val digest  = Array[Byte](0x02, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
         val tmpDir  = java.io.File.createTempFile("kyo-df5-p02-mmap", "").getAbsolutePath

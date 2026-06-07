@@ -15,11 +15,6 @@ class RealClasspathFidelityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // anchor: no-unknown-tags-anchor
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
-    // When: loading the classpath and checking for "unknown TASTy type tag" error strings
-    // Then: zero warnings matching "unknown TASTy type tag"; classpath has > 0 symbols
-    // Cross-platform: the no-unknown-tag guard holds for any classpath; passes on embedded fixtures.
     "zero unknown-TASTy-tag warnings on a clean real-classpath load" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val errorMsgs        = classpath.errors.map(_.toString)
@@ -40,11 +35,6 @@ class RealClasspathFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    //  tpt-tags-dispatched-to-tree-decoder
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
-    // When: the load completes successfully
-    // Then: the classpath contains Type.Applied instances confirming TPT tags routed correctly
-    // Cross-platform: embedded GenericBox fixture produces Type.Applied; invariant holds for any classpath.
     "TPT tags dispatch to tree-decoder producing real Type values" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val allTypes = classpath.symbols.flatMap: sym =>
@@ -64,11 +54,6 @@ class RealClasspathFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // unknown-tag-now-throws
-    // Given: TypeUnpickler.decodeTag called with an unrecognised tag
-    // When: the unknown tag is dispatched
-    // Then: throws IllegalStateException whose message contains "unhandled"
-    // Cross-platform: "no TypeUnpickler errors" is universal for any valid classpath.
     "TypeUnpickler throws on unhandled tag instead of silently continuing" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val typeUnpicklerErrors = classpath.errors.filter(_.toString.contains("TypeUnpickler"))
@@ -79,15 +64,8 @@ class RealClasspathFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // no-file-errors-anchor
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
-    // When: asserting cp.errors for file-level decode failures
-    // Then: no CorruptedFile, MalformedSection, or FileNotFound errors; UnknownType errors for symbols
-    //       with absent declared types (TypeAlias/OpaqueType/Parameter) are permitted -- these arise from
-    //       cross-file type references that the decoder could not resolve at Phase B, which is a legitimate
-    //       TASTy structure. The original "size == 0" assertion was a side effect of the null-sentinel that
-    //       silently suppressed these errors; carry A2 correctly wires Cat 14 producers.
-    // Cross-platform: the no-file-error invariant holds for any valid classpath.
+    // UnknownType errors for symbols with absent declared types are permitted: they arise from
+    // cross-file type references that the decoder could not resolve, which is a legitimate TASTy structure.
     "no file-level errors on real-classpath load" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val fileErrors = classpath.errors.filter:
@@ -103,11 +81,8 @@ class RealClasspathFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // anchor: sentinel-bounded-anchor
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
-    // When: computing cp.symbols.filter(_.id.value == -1).map(_.name.asString).toSet.size
-    // Then: size <= 3; holds for any correctly-decoded classpath
-    // Cross-platform: sentinel count is 0 on embedded fixtures; < 3 on real stdlib. Both satisfy <= 3.
+    // Interning consolidates all fabricated placeholder names to 3 interned sentinels:
+    // <unresolved>, <rec-placeholder>, <unknown-type-tag>.
     "SymbolId(-1) sentinel name set size <= 3 on real classpath" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             import Tasty.Name.asString

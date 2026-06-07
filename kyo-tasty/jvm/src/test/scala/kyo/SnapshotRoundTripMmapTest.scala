@@ -72,10 +72,6 @@ class SnapshotRoundTripMmapTest extends kyo.test.Test[Any]:
     private def openClasspath(src: FileSource)(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
 
-    // Test G16a: mmap-loaded snapshot has same FQN set as cold-loaded classpath (jvmOnly).
-    // Uses PlatformFileSource (real filesystem) to write the snapshot to a temp file, then
-    // loads it via readMapped. Verifies that the mmap path loads successfully and the FQN set matches
-    // the cold-loaded classpath, confirming no TASTy re-decode happened.
     "mmap-loaded snapshot has same FQN set as cold-loaded classpath" in {
         val fixtSrc = fixtureSource()
         val digest  = Array[Byte](0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57)

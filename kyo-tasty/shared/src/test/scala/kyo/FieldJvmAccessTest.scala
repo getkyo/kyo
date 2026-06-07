@@ -2,11 +2,8 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Field JVM accessor predicates.
-  *
-  * Field is Java-classfile-level (no Scala body). The isJvmPublic / isJvmPrivate / isJvmProtected / isJvmStatic / isJvmFinal predicates
-  * read the JVM access flags from JavaMetadata.accessFlags. Leaf 82 tests isJvmPublic with a real javaMetadata value. Leaf 83 tests
-  * isJvmStatic returning false when javaMetadata is Absent.
+/** Tests for Field JVM accessor predicates (isJvmPublic, isJvmPrivate, isJvmProtected,
+  * isJvmStatic, isJvmFinal) reading accessFlags from JavaMetadata.
   */
 class FieldJvmAccessTest extends kyo.test.Test[Any]:
 
@@ -54,10 +51,6 @@ class FieldJvmAccessTest extends kyo.test.Test[Any]:
             Chunk.empty
         )
 
-    // ── Leaf 82: isJvmPublic ──────────────────────────────────────────────────
-    // Given: Field with javaMetadata.accessFlags = ACC_PUBLIC (0x0001)
-    // When: f.isJvmPublic
-    // Then: true
     "isJvmPublic: returns true when ACC_PUBLIC bit is set in accessFlags" in {
         val field = makeFieldWithAccess(id = 1, name = "F", accessFlags = 0x0001)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>
@@ -84,10 +77,6 @@ class FieldJvmAccessTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 83: isJvmStatic-absent-javaMetadata ─────────────────────────────
-    // Given: Field with javaMetadata=Maybe.Absent
-    // When: f.isJvmStatic
-    // Then: false
     "isJvmStatic-absent-javaMetadata: returns false when javaMetadata is Absent" in {
         val field = makeFieldNoMeta(id = 1, name = "G")
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>
@@ -113,8 +102,6 @@ class FieldJvmAccessTest extends kyo.test.Test[Any]:
             )
             succeed
     }
-
-    // ── Additional coverage: all five predicates across multiple flag combinations ──
 
     "Field JVM access flags: private static final combination" in {
         // ACC_PRIVATE=0x0002, ACC_STATIC=0x0008, ACC_FINAL=0x0010

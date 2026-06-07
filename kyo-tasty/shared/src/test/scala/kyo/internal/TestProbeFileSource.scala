@@ -3,16 +3,11 @@ package kyo.internal
 import kyo.*
 import kyo.internal.tasty.query.FileSource
 
-/** IO-isolation verification probe. A FileSource that throws on every IO method,
-  * carrying a probe sentinel message. Used by Inv009BehavioralTest to prove that
-  * pure Tasty.* query methods perform zero IO and that the named effectful sites
-  * are the ONLY surfaces that read/write the probe.
+/** IO-isolation verification probe: a FileSource that throws on every IO method.
   *
-  * Every method raises a RuntimeException (not Abort.fail) so the sentinel
-  * surfaces as Result.Panic at effect boundaries, bypassing any Abort.run
-  * wrappers inside ClasspathOrchestrator that catch TastyError failures.
-  *
-  * Scaladoc: 8-35 lines.
+  * Used to prove that pure Tasty.* query methods perform zero IO. Every method raises a
+  * RuntimeException (not Abort.fail) so the sentinel surfaces as Result.Panic at effect
+  * boundaries, bypassing any Abort.run wrappers inside ClasspathOrchestrator.
   */
 final private[kyo] class TestProbeFileSource extends FileSource:
 

@@ -3,13 +3,10 @@ package kyo
 import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.query.ClasspathOrchestrator
 
-/** HARD RULE 7 enforcement: Symbol case classes are pure data after load.
+/** Verifies that Symbol case classes are pure data: accessors are idempotent, structural fields
+  * are stable across aliasing reads, and equality is reflexive.
   *
-  * Verifies that every accessor on a Symbol returns the same value when called twice, that structural fields are stable across aliasing
-  * reads, and that equality is structural. Catches any future `var` addition to a Symbol subclass at PR time rather than silently
-  * propagating mutation bugs downstream.
-  *
-  * Runs on JVM/JS/Native via the embedded TASTy fixture classpath (cross-platform, no filesystem dependency).
+  * Runs cross-platform via the embedded TASTy fixture classpath.
   */
 class PureDataInvariantTest extends kyo.test.Test[Any]:
 
@@ -30,10 +27,6 @@ class PureDataInvariantTest extends kyo.test.Test[Any]:
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end openFixtureClasspath
 
-    // accessor idempotency
-    // Given: a classpath loaded from the embedded fixtures
-    // When: calling each accessor on a sample of symbols twice in succession
-    // Then: both calls return structurally equal results (no hidden mutation, no cache artifact)
     "Symbol accessors are idempotent (same value on second call)" in {
         openFixtureClasspath.map: cp =>
             given Tasty.Classpath = cp
@@ -55,10 +48,6 @@ class PureDataInvariantTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // structural field stability on ClassLike symbols
-    // Given: ClassLike symbols accessed twice
-    // When: comparing parentTypes and annotations Chunk references
-    // Then: both references compare equal structurally
     "ClassLike parentTypes and annotations are stable across aliasing reads" in {
         openFixtureClasspath.map: cp =>
             given Tasty.Classpath = cp
@@ -77,10 +66,6 @@ class PureDataInvariantTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // equality is reflexive (same instance equals itself under id-and-kind contract after)
-    // Given: the same Symbol instance retrieved twice (materialized symbols have non-sentinel ids)
-    // When: comparing with ==
-    // Then: equal; hashCode also matches (: id-and-kind equality is reflexive for non-sentinel ids)
     "Symbol equality is reflexive (same instance equals itself)" in {
         openFixtureClasspath.map: cp =>
             val sample = cp.symbols.take(20)

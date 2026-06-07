@@ -92,10 +92,6 @@ class SteeringTargetUseCaseTest extends kyo.test.Test[Any]:
                 errors = Chunk.empty
             )
 
-    // ── Leaf 175: target-use-case-compiles-and-runs ───────────────────────────
-    // Given: fixture with pkg.A having method foo, val x, parent B
-    // When: run the steering snippet
-    // Then: cls is Present(c); c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method]) includes "foo"; c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Val]) includes "x"; c.parents includes "pkg.B"
     "steering target use case runs end-to-end" in {
         buildFixture.flatMap: cp =>
             val cls = cp.findClass("pkg.A")
@@ -130,10 +126,6 @@ class SteeringTargetUseCaseTest extends kyo.test.Test[Any]:
             end match
     }
 
-    // ── Leaf 176: fluent-Methods-typed ────────────────────────────────────────
-    // Given: same fixture
-    // When: bind val ms: Chunk[Tasty.Symbol.Method] = c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method])
-    // Then: compiles; ms.size == 1 (buildFixture declares exactly one method "foo" in class A)
     "c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method]) returns Chunk[Symbol.Method] with size == 1" in {
         buildFixture.map: cp =>
             cp.findClass("pkg.A") match
@@ -142,18 +134,14 @@ class SteeringTargetUseCaseTest extends kyo.test.Test[Any]:
                         c.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(
                             _.isInstanceOf[Tasty.Symbol.Method]
                         ).asInstanceOf[Chunk[Tasty.Symbol.Method]]
-                    // Exact: buildFixture declares pkg.A with declarationIds=[SymbolId(2)=foo, SymbolId(3)=x].
-                    // Filtering for Method yields exactly [foo]. Measured structurally 2026-06-04.
+                    // buildFixture declares pkg.A with declarationIds=[SymbolId(2)=foo, SymbolId(3)=x].
+                    // Filtering for Method yields exactly [foo].
                     assert(ms.length == 1, s"Expected exactly 1 method (foo), got ${ms.length}")
                     succeed
                 case Maybe.Absent => fail("pkg.A must be Present")
             end match
     }
 
-    // ── Leaf 177: prior-flag-predicates-end-to-end ────────────────────────────
-    // Given: same fixture loaded
-    // When: walk cp.symbols and invoke every predicate from the 40-set on each symbol
-    // Then: no NoSuchMethodError; every invocation returns a Boolean
     "all 40 flag predicates invoke without error on every symbol in the fixture" in {
         buildFixture.map: cp =>
             cp.symbols.foreach: sym =>
@@ -169,10 +157,6 @@ class SteeringTargetUseCaseTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 178: cp-symbols-still-flat ──────────────────────────────────────
-    // Given: same fixture
-    // When: cp.symbols.size
-    // Then: returns count of all loaded symbols; static type is Chunk[Tasty.Symbol]
     "cp.symbols returns a Chunk[Tasty.Symbol] with the expected count" in {
         buildFixture.map: cp =>
             val all: Chunk[Tasty.Symbol] = cp.symbols

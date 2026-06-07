@@ -4,11 +4,10 @@ import AllowUnsafe.embrace.danger
 import kyo.Tasty.SymbolId
 import kyo.internal.tasty.type_.TypeArena
 
-/** Tests for TypeArena intern and Phase C merge.
+/** Tests for TypeArena intern and merge operations.
   *
-  *   *
-  * phase-05; Named(id) carries SymbolId; makeSym assigns unique ids so that Named types created from different symbols are distinct
-  * (id equality, not reference equality).
+  * Named(id) carries SymbolId; makeSym assigns unique ids so that Named types created from different
+  * symbols are distinct (id equality, not reference equality).
   */
 class TypeArenaTest extends kyo.test.Test[Any]:
 

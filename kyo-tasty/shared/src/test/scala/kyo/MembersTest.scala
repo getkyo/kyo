@@ -3,16 +3,13 @@ package kyo
 import kyo.Tasty.Name.asString
 import kyo.Tasty.SymbolId
 
-/** Tasty.members(sym, scope) and findMember.
-  *
-  * leaves (package scope): members(pkg, All) == members(pkg, Declared); Inherited empty.
-  */
+/** Tasty.members(sym, scope) and findMember: verifies package scope semantics and edge cases. */
 class MembersTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
     // Build a synthetic classpath with a class hierarchy for member scope testing.
-    // Base: declares 'a' and 'b'; Child: extends Base, declares 'c'.
+    // Base declares 'a' and 'b'; Child extends Base and declares 'c'.
     private def buildHierarchy(using Frame): Tasty.Classpath < Sync =
         val baseId  = SymbolId(0)
         val aId     = SymbolId(1)
@@ -117,7 +114,6 @@ class MembersTest extends kyo.test.Test[Any]:
                 end match
     }
 
-    // SOURCE BREAK - findDeclaredMember not on surface
     "SOURCE BREAK - findDeclaredMember is absent from Symbol" in {
         val __tcErrors1 = compiletime.testing.typeCheckErrors(
             "(null: kyo.Tasty.Symbol).findDeclaredMember(\"a\")"
@@ -125,8 +121,6 @@ class MembersTest extends kyo.test.Test[Any]:
 
         assert(__tcErrors1 > 0, "findDeclaredMember must be absent from Symbol (it was removed from the public API)")
     }
-
-    // ── Package scope leaves ────────────────────────────────────────────
 
     // Build a synthetic classpath: package "examplepkg" with one child class "Child".
     // Index layout (id.value == array index):
@@ -160,8 +154,6 @@ class MembersTest extends kyo.test.Test[Any]:
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(childClass, pkg))
     end buildPkgFixture
 
-    // Leaf: members(pkg, All) returns memberIds (same as Declared for packages).
-    // Pins (Package All == Declared).
     "members(pkg, All) returns memberIds (same as members(pkg, Declared))" in {
         buildPkgFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
@@ -189,8 +181,6 @@ class MembersTest extends kyo.test.Test[Any]:
                 end match
     }
 
-    // Leaf: members(pkg, Inherited) returns empty for packages.
-    // Pins (packages do not inherit).
     "members(pkg, Inherited) returns Chunk.empty for packages" in {
         buildPkgFixture.flatMap: cp =>
             Tasty.withClasspath(cp):
@@ -207,8 +197,6 @@ class MembersTest extends kyo.test.Test[Any]:
                 end match
     }
 
-    // Leaf: members(emptyPkg, All) returns Chunk.empty (edge case: empty memberIds).
-    // Pins (empty memberIds yields empty result).
     "members(emptyPkg, All) returns Chunk.empty for package with no members" in {
         val emptyPkg = Tasty.Symbol.Package(
             SymbolId(0),

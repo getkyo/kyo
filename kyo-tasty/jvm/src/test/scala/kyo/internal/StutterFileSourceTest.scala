@@ -12,10 +12,6 @@ class StutterFileSourceTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // wrapping-suspends-read-until-latch-released
-    // Given: (stutter, semaphore) = StutterFileSource.wrapping(JvmFileSource)
-    // When: Async-launched read held at semaphore.acquire; after 50ms read incomplete; semaphore.release releases it
-    // Then: post-release read completes; before release fiber is in pending state (not done)
     "StutterFileSource.wrapping blocks read until semaphore is released" in {
         // Write a temp file to read
         val tmpDir  = java.nio.file.Files.createTempDirectory("kyo-stutter-test")

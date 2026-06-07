@@ -4,12 +4,10 @@ import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.symbol.SymbolKind
 import scala.collection.mutable
 
-/** Tests for streaming pipeline via Channels.
+/** Tests for the streaming pipeline via Channels using an in-memory FileSource.
   *
-  * T1-T8 as specified in execution-plan-perf.md test contract. Uses an in-memory FileSource for cross-platform compatibility.
-  *
-  * T6 and T8 assert successful completion within a wall-clock budget rather than observing exact queue depth or decoder-thread count. Exact
-  * observation is deferred to a future work item.
+  * Pipeline correctness, FQN index parity, arena determinism, soft-fail and strict-fail error
+  * handling, channel backpressure with 100+ entries, ordering independence, and concurrency.
   */
 class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
 
@@ -70,9 +68,6 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
         ClasspathOrchestrator.init(roots, mode, src, concurrency)
     end openFixtureClasspath
 
-    // T1: pipeline-produced Classpath contains known FQNs from the fixture.
-    // Asserts that the new pipeline implementation produces a correct symbol set on a known fixture:
-    // kyo.fixtures.PlainClass, kyo.fixtures, and related symbols must be present.
     "pipeline produces correct symbol set for fixture classpath" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).map: cp =>
@@ -86,7 +81,6 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // T2: pipeline-produced FQN index: classByFqn for a known FQN returns a present symbol.
     "FQN index parity - classByFqn returns symbol for known FQN" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -104,7 +98,6 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // T3: arena determinism - opening the same fixture twice produces the same FQN key set and allSymbols size.
     "opening same fixture twice produces same FQN key set and symbol count" in {
         Scope.run:
             Abort.run[TastyError](
@@ -123,8 +116,6 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // T4: soft-fail file error - a corrupted.tasty file in a directory root appends to cp.errors
-    // and the classpath is otherwise valid (other symbols still accessible).
     "soft-fail on corrupted tasty file appends to cp.errors without aborting load" in {
         val src = MemFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
@@ -140,8 +131,6 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // T5: strict-fail file error - open with strict=true and a corrupted.tasty raises Abort[TastyError].
-    // The call must NOT hang.
     "strict mode raises Abort[TastyError] for corrupted tasty file without hanging" in {
         val src = MemFileSource()
         src.add("root/Corrupt.tasty", Array[Byte](0, 1, 2, 3, 4, 5)) // garbage bytes
@@ -155,8 +144,6 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // T6: channel backpressure - large input (100+ entries) with concurrency=2 completes successfully.
-    // Simpler path: assert successful completion. Exact queue-depth observation deferred to re-profiling.
     "pipeline completes successfully with 100+ entries at concurrency=2" in {
         val src   = MemFileSource()
         val bytes = kyo.fixtures.Embedded.plainClassTasty
@@ -175,8 +162,6 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // T7: ordering independence - two pipeline runs on identical inputs produce the same FQN key set.
-    // Explicitly tests the ordering-independence invariant (T3 covers the size aspect; T7 checks FQN keys).
     "two pipeline runs on identical inputs produce the same FQN key set" in {
         Scope.run:
             Abort.run[TastyError](
@@ -196,9 +181,6 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // T8: decoder concurrency respected - with concurrency=2 and 100+ entries, pipeline completes.
-    // Simpler path: assert successful completion within a reasonable budget. Exact thread-count observation
-    // deferred to re-profiling per plan's guidance.
     "pipeline with concurrency=2 and 100+ entries completes successfully" in {
         val src   = MemFileSource()
         val bytes = kyo.fixtures.Embedded.plainClassTasty

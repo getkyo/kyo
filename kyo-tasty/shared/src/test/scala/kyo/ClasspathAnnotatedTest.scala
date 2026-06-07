@@ -2,18 +2,11 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Classpath.symbolsAnnotatedWith.
+/** Tests for Classpath.symbolsAnnotatedWith using a fixture with both annotated and non-annotated symbols.
   *
-  * Anti-reward-hacking: fixture includes BOTH annotated and non-annotated symbols. The test asserts that ONLY the annotated ones are
-  * returned; a vacuous "if nonEmpty succeed" pattern would not verify correctness.
-  *
-  * Fixture layout: 0 -> Class "deprecated" fqn "scala.deprecated" (the annotation class itself, no annotation) 1 -> Method "m1" annotated
-  * with scala.deprecated (id 0) 2 -> Val "v1" annotated with scala.deprecated (id 0) 3 -> Class "PlainA" NOT annotated 4 -> Method "m2" NOT
-  * annotated
-  *
-  * fqnIndex: "scala.deprecated" -> SymbolId(0)
-  *
-  * After calling symbolsAnnotatedWith("scala.deprecated"), only symbols at id 1 and 2 must be returned.
+  * Fixture: Class "deprecated" (fqn "scala.deprecated"; not annotated), Method "m1" annotated with
+  * @deprecated, Val "v1" annotated with @deprecated, Class "PlainA" (not annotated), Method "m2" (not annotated).
+  * Only m1 and v1 must be returned.
   */
 class ClasspathAnnotatedTest extends kyo.test.Test[Any]:
 
@@ -139,10 +132,6 @@ class ClasspathAnnotatedTest extends kyo.test.Test[Any]:
                 errors = Chunk.empty
             )
 
-    // ── Leaf 128: symbolsAnnotatedWith ────────────────────────────────────────
-    // Given: fixture with @deprecated def m1 and @deprecated val v1, plus unannotated PlainA and m2.
-    // When: cp.symbolsAnnotatedWith("scala.deprecated")
-    // Then: Chunk[Symbol] of size 2; contains m1 and v1; excludes PlainA, deprecatedClass, and m2.
     "symbolsAnnotatedWith returns only symbols bearing the given annotation" in {
         buildFixture.flatMap: cp =>
             cp.symbolsAnnotatedWith("scala.deprecated").map: annotated =>

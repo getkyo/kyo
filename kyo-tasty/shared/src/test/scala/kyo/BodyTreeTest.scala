@@ -93,20 +93,12 @@ class BodyTreeTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // noBodyFieldOnAnyClassLike
-    // Given: a probe accessing.body on Symbol.Class
-    // When: compileErrors is invoked
-    // Then: non-empty string (body is not a member of Symbol.Class after)
     "accessing .body on ClassLike is a compile error" in {
         val classErrors = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Class).body").length
         assert(classErrors > 0, "Expected compile error for Symbol.Class.body (body field removed)")
         succeed
     }
 
-    // noBodyFieldOnMethodValVar
-    // Given: probes accessing.body on Symbol.Method, Symbol.Val, Symbol.Var
-    // When: compileErrors is invoked for each
-    // Then: every probe returns a non-empty string
     "accessing .body on Method/Val/Var is a compile error" in {
         val methodErrors = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Method).body").length
         val valErrors    = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Val).body").length
@@ -117,10 +109,6 @@ class BodyTreeTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // schemaRoundTripFaithfulPostBodyRemoval
-    // Given: a classpath cp built via coldLoadBinding; encoded via Json/Schema; decoded back
-    // When: the test reads fields of the round-tripped cp
-    // Then: every field equals the original;.body is not callable (compile check)
     "Schema round-trip is faithful after body field removal" in {
         val src = MemoryFileSource()
         src.add("root/SomeObject.tasty", kyo.fixtures.Embedded.someObjectTasty)
@@ -137,7 +125,6 @@ class BodyTreeTest extends kyo.test.Test[Any]:
                                 cp2.symbols.length == 0 || cp2.symbols.head.flags == cp.symbols.head.flags,
                                 "Flags must match after round-trip"
                             )
-                            // body is not callable (confirmed by Leaf 3 and 4)
                             succeed
                         case Result.Failure(e) =>
                             fail(s"Json decode failed: $e")

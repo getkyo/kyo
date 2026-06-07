@@ -8,8 +8,6 @@ class FlagPredicatePreservationTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // 40-predicates-on-class
-    // Given: Symbol.Class final case class fixture; When: invoke all 40 predicates; Then: isFinal/isCase/isClass true; 37 others false
     "40-predicates-on-class: isFinal/isCase/isClass true; 37 others false" in {
         val flags = Tasty.Flags(Tasty.Flag.Final, Tasty.Flag.Case)
         val sym = Tasty.Symbol.Class(
@@ -40,8 +38,6 @@ class FlagPredicatePreservationTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // 40-predicates-on-method
-    // Given: Symbol.Method inline given def; When: invoke all 40 predicates; Then: isInline/isGiven/isMethod true; 37 others false
     "40-predicates-on-method: isInline/isGiven/isMethod true" in {
         val flags = Tasty.Flags(Tasty.Flag.Inline, Tasty.Flag.Given)
         val sym = Tasty.Symbol.Method(
@@ -67,8 +63,6 @@ class FlagPredicatePreservationTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // 40-predicates-on-package
-    // Given: Symbol.Package fixture; When: invoke all 40 predicates; Then: isPackage true; 39 others false
     "40-predicates-on-package: isPackage true; isClass/isMethod/isVal false" in {
         val sym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("pkg"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         assert(sym.isInstanceOf[Tasty.Symbol.Package], "isPackage must be true")

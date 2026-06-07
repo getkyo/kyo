@@ -2,15 +2,11 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** followup for W-06-02: exercises the Java-annotation path (`javaAnnotations`) of `Classpath.symbolsAnnotatedWith`.
+/** Tests for the Java-annotation path of Classpath.symbolsAnnotatedWith via the javaAnnotations field.
   *
-  * The existing `ClasspathAnnotatedTest` (leaf 128) only covers the Scala-annotation path. This test covers the Java annotation branch of
-  * `symbolsAnnotatedWith` at Tasty.scala:annotationFqnMatches is not exercised for Java; the Java path is tested here.
-  *
-  * Fixture layout: 0 -> Symbol.Class "Deprecated" (the Java annotation class itself; no annotations; fqn "java.lang.Deprecated") 1 ->
-  * Symbol.Class "A" with a JavaAnnotation pointing to symbol 0 2 -> Symbol.Class "B" with no JavaAnnotation
-  *
-  * After calling symbolsAnnotatedWith("java.lang.Deprecated"), only symbol 1 ("A") must be returned.
+  * Fixture layout: symbol 0 = Deprecated (the annotation class itself; no annotations),
+  * symbol 1 = class "A" carrying a JavaAnnotation to symbol 0, symbol 2 = class "B" with none.
+  * Only symbol 1 ("A") must be returned by symbolsAnnotatedWith("java.lang.Deprecated").
   */
 class ClasspathAnnotatedJavaTest extends kyo.test.Test[Any]:
 
@@ -87,9 +83,6 @@ class ClasspathAnnotatedJavaTest extends kyo.test.Test[Any]:
                 errors = Chunk.empty
             )
 
-    // Given: fixture with class A carrying JavaAnnotation(Deprecated, _) and class B with no annotation
-    // When: symbolsAnnotatedWith("java.lang.Deprecated")
-    // Then: returns exactly class A (the Java-annotation path is exercised)
     "ClasspathAnnotatedJavaTest: symbolsAnnotatedWith returns class A via Java annotation path" in {
         buildFixture.flatMap: cp =>
             cp.symbolsAnnotatedWith("java.lang.Deprecated").map: result =>

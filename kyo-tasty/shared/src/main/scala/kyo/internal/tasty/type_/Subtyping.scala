@@ -245,7 +245,7 @@ object Subtyping:
                             else NotSub
                         end if
                 case other =>
-                    // Cat 7: unhandled parent shape. Record diagnostic if accumulator is present.
+                    // Unhandled parent shape. Record diagnostic if accumulator is present.
                     if errAcc != null then
                         errAcc += TastyError.UnhandledSubtypingCase(
                             shape = shapeName(other),

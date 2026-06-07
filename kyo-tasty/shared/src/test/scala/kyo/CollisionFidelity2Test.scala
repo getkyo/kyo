@@ -6,25 +6,12 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 
-/** Fidelity tests for same-FQN collision detection and FqnCollision diagnostics .
+/** Fidelity tests for same-FQN collision detection and FqnCollision diagnostics.
   *
-  * Previously, loading two roots that both define the same FQN produced 0 collision diagnostics. `cp.collisionReport` returned
-  * `Chunk.empty` regardless of how many duplicate symbols existed. Under `ErrorMode.FailFast`, the init succeeded silently instead of raising
-  * `TastyError.InconsistentClasspath`.
-  *
-  * Fixes:
-  *   `mergeOneInto` records each FQN where a new structural symbol overwrites a different structural symbol; the bucket is
-  *     converted to `FqnCollision` diagnostics in `finalizeMerge`.
-  *   OQ-001 (InconsistentClasspath wiring): under `ErrorMode.FailFast`, the first collision raises
-  *     `TastyError.InconsistentClasspath(fqn, zeroUUID, zeroUUID)`.
-  *   OQ-006 (collisionReport visibility): `cp.collisionReport` returns a non-empty `Chunk` when collisions occurred under SoftFail.
-  *
-  * Collision fixture: the same embedded TASTy bytes loaded under two separate roots ("root1/" and "root2/"). Each root decodes the same
-  * tasty content and creates fresh symbol objects; the merger detects the second object as a duplicate for the same FQN.
-  *
-  * Cross-platform: uses MemoryFileSource and ClasspathOrchestrator.init directly. No JVM filesystem required.
-  *
-  * Invariant produced: -DF2.
+  * Collision fixture: the same embedded TASTy bytes loaded under two separate roots ("root1/" and
+  * "root2/"), producing duplicate FQN entries. Tests verify that mergeOneInto records collisions
+  * as FqnCollision diagnostics, FailFast mode raises TastyError.FqnCollisionError, and
+  * collisionReport is non-empty under SoftFail. Uses MemoryFileSource; no JVM filesystem required.
   */
 class CollisionFidelity2Test extends Fidelity2TestBase:
 
@@ -85,10 +72,6 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end withCleanClasspath
 
-    // same-fqn-collision-emits-diagnostic
-    // Given: embedded fixtures loaded under two roots (same-FQN collision scenario)
-    // When: inspecting cp.collisionReport
-    // Then: returns non-empty Chunk of FqnCollision entries; each has ids.size >= 2
     "same-FQN collision produces non-empty collisionReport" in {
         withCollisionClasspath.map: cp =>
             val report = cp.collisionReport
@@ -106,10 +89,7 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // findsymbol-collision-deterministic
-    // Given: same collision setup
-    // When: invoking cp.findSymbol for a colliding FQN
-    // Then: returns a deterministic Present(_) -- last-write-wins per HARD RULE 4
+    // findSymbol uses last-write-wins for determinism under collision.
     "findSymbol returns deterministic Present on collision FQN" in {
         withCollisionClasspath.map: cp =>
             val report = cp.collisionReport
@@ -129,10 +109,6 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // failfast-raises-fqn-collision-error
-    // Given: same collision setup but ErrorMode.FailFast
-    // When: Classpath.init(collisionRoots, FailFast)
-    // Then: aborts with TastyError.FqnCollisionError(fqn)
     "FailFast collision raises TastyError.FqnCollisionError" in {
         Abort.run[TastyError](withCollisionClasspathFailFast).map: result =>
             result match
@@ -153,10 +129,6 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
                     fail(s"Unexpected panic: ${t.getMessage}")
     }
 
-    // collisionreport-empty-on-clean-classpath
-    // Given: standard classpath (no duplicates)
-    // When: cp.collisionReport
-    // Then: returns Chunk.empty
     "collisionReport is empty on a clean standard classpath" in {
         withCleanClasspath.map: cp =>
             assert(
@@ -167,10 +139,6 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // multi-version-stdlib-collision-with-different-decode
-    // Given: same-content-twice fixture (proxy for multi-version collision scenario)
-    // When: counting FqnCollisions with ids.size >= 2
-    // Then: count > 0
     "collisionReport contains entries with ids.size >= 2" in {
         withCollisionClasspath.map: cp =>
             val multiIdCount = cp.collisionReport.count(_.ids.size >= 2)
@@ -182,10 +150,6 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // softfail-accumulates-fqncollision-via-errors-field-bridge
-    // Given: collision setup with SoftFail
-    // When: counting cp.indices.diagnostics.collect{case _:FqnCollision => 1}.size
-    // Then: >= 1; cp.errors does NOT contain a stringified collision message
     "SoftFail collisions appear in cp.indices.diagnostics not cp.errors" in {
         withCollisionClasspath.map: cp =>
             val collisionDiagCount = cp.indices.diagnostics.collect:
@@ -208,10 +172,7 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // cold/warm parity for collision detection
-    // Given: clean classpath (SoftFail)
-    // When: round-trip via in-memory snapshot
-    // Then: warm has empty collisionReport (collisions are build-time; not serialized to KRFL)
+    // Collision diagnostics are build-time observations and are not serialized to KRFL.
     "warm classpath has empty collisionReport (not serialized)" in {
         withCleanClasspath.flatMap: coldCp =>
             Sync.defer:
@@ -235,10 +196,6 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
                     succeed
     }
 
-    // diagnostics type check
-    // Given: clean standard classpath
-    // When: checking diagnostics type
-    // Then: diagnostics is Chunk[Tasty.Classpath.Diagnostic] and collisionReport is Chunk[Tasty.Classpath.FqnCollision]
     "diagnostics and collisionReport types are correct on clean classpath" in {
         withCleanClasspath.map: cp =>
             val diags: Chunk[Tasty.Classpath.Diagnostic]  = cp.indices.diagnostics

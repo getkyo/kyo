@@ -21,11 +21,8 @@ class TastyErrorTest extends kyo.test.Test[Any]:
     end encodeNat
 
     // Test 1: MalformedSection carries byte offset
-    // Given: a SectionIndex input where nameRef=99 is out of range for names.length==3.
     //        The nameRef Nat encodes as one byte at position 0. After reading it,
     //        view.position == 1. The MalformedSection is raised with byteOffset = 1.
-    // When: SectionIndex.read runs via Abort.run.
-    // Then: Result.Failure(TastyError.MalformedSection(_, _, off)) where off != 0L.
     "MalformedSection carries non-zero byte offset when cursor has advanced" in {
         val names = Array(makeName("a"), makeName("b"), makeName("c"))
         val bytes = encodeNat(99) ++ encodeNat(0)
@@ -40,15 +37,11 @@ class TastyErrorTest extends kyo.test.Test[Any]:
     }
 
     // Test 2: ClassfileFormatError captures decode position
-    // Given: ConstantPool.read expects to be called with a view positioned at the
     //        cp_count field (not at the classfile header). We feed:
     //          cp_count = 2 (2 bytes: 0x00 0x02)
     //          idx=1 tag = 0xFF (1 byte: unknown tag)
     //        ConstantPool.read reads: count (2 bytes) -> position 2, then tag (1 byte)
     //        > position 3. Unknown tag fires: errorOffset = view.position = 3L.
-    // When: ConstantPool.read runs via Abort.run.
-    // Then: Result.Failure(TastyError.ClassfileFormatError(_, _, 3L)).
-    //        Exact offset 3L documented in phase-14a-decisions.md.
     "ClassfileFormatError captures constant-pool decode position" in {
         val bytes: Array[Byte] = Array(
             0x00.toByte,
@@ -67,13 +60,8 @@ class TastyErrorTest extends kyo.test.Test[Any]:
     }
 
     // Test 3: SnapshotFormatError carries byte position field
-    // Given: SnapshotFormatError is constructed with byteOffset = 0L. The "wrong magic"
     //        detection path in SnapshotReader has no stream cursor available (it checks
     //        array bytes before any cursor-based read), so byteOffset = 0L is the sentinel.
-    //        The test verifies the byteOffset field EXISTS and is readable, satisfying.
-    //        See phase-14a-decisions.md for rationale on why 0L is correct here.
-    // When: A SnapshotFormatError is constructed and destructured.
-    // Then: The byteOffset field is present and equals 0L.
     "SnapshotFormatError carries byteOffset field (0L sentinel for no-cursor path)" in {
         val err: TastyError = TastyError.SnapshotFormatError("<test>", "wrong magic, expected KRFL", 0L)
         err match
@@ -87,14 +75,6 @@ class TastyErrorTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // Test 4: SymbolNotFound carries FQN
-    // Given: TastyError.SymbolNotFound("missing.X") constructed directly (no call sites
-    //        in core library; see phase-14b-decisions.md D1).
-    //        Also: an empty classpath via Tasty.Classpath.fromPickles(Seq.empty).
-    // When: (a) fqn field is read from the constructed value.
-    //        (b) lookupClass("missing.X") is called on the empty classpath.
-    // Then: (a) fqn == "missing.X".
-    //        (b) Result.Success(Maybe.Absent) -- missing symbol is a soft-fail, not SymbolNotFound.
     "SymbolNotFound carries fqn field and empty classpath lookup returns Absent" in {
         val err: TastyError.SymbolNotFound = TastyError.SymbolNotFound("missing.X")
         assert(err.fqn == "missing.X", s"Expected fqn 'missing.X' but got: ${err.fqn}")
@@ -109,9 +89,6 @@ class TastyErrorTest extends kyo.test.Test[Any]:
     }
 
     // Test 5: requireClass("") raises InvalidFqn, not NotFound
-    // Given: an empty classpath.
-    // When: requireClass("") is called.
-    // Then: Result.Failure(TastyError.InvalidFqn("", "fqn must be non-empty")).
     //        This distinguishes a caller programming error (empty input) from a genuine not-found result.
     "requireClass empty string raises InvalidFqn not NotFound" in {
         Tasty.withPickles(Chunk.empty)(Tasty.classpath).flatMap: cp =>

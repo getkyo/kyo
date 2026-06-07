@@ -6,23 +6,13 @@ import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.SymbolKind
 import scala.collection.immutable.IntMap
 
-/** Tests for the Position redesign (Cat 8).
-  *
-  * Leaves:
-  *   1. positionSourceFileRejectsAbsent: Position constructor requires a String sourceFile; Maybe.Absent does not compile.
-  *   2. absentSourceFileSkipsPositions: absent SOURCEFILE silently skips position production (no error emitted).
-  *   3. presentSourceFileBuildsPosition: a present SOURCEFILE produces a Position with the correct sourceFile string.
-  *   4. everySymbolSubtypeCarriesSourcePosition: covered in SymbolAdtVariantCoverageTest.
+/** Tests for the Position type: sourceFile is a String (not Maybe), absent SOURCEFILE skips
+  * position production, and a present SOURCEFILE builds a Position with the correct fields.
   */
 class PositionTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // ── Leaf 1: positionSourceFileRejectsAbsent ──────────────────────────────
-
-    // Given: a probe compileErrors("Position(Maybe.Absent, 10, 20)")
-    // When: the test asserts
-    // Then: the returned string is non-empty (sourceFile: String, cannot accept Maybe.Absent)
     "Position(Maybe.Absent, ...) does not compile -- sourceFile is now String not Maybe[String]" in {
         val errs = compiletime.testing.typeCheckErrors(
             "kyo.Tasty.Position(kyo.Maybe.Absent, 10, 20)"
@@ -31,13 +21,9 @@ class PositionTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 2: absentSourceFileSkipsPositions ───────────────────────────────
-
-    // Given: a PositionsUnpickler.read call with a non-empty Positions payload but sourceFile = Absent.
-    // When: the read returns.
-    // Then: the result map is empty, no error is emitted. Pre-Scala-3.3 TASTy files and files compiled
-    //       without the Attributes SOURCEFILE attribute have their source path only in SOURCE entries inside
-    //       the Positions stream; kyo-tasty does not resolve those. Symbols stay with sourcePosition == Absent.
+    // Files compiled without the Attributes SOURCEFILE attribute have their source path only in SOURCE
+    // entries inside the Positions stream; kyo-tasty does not resolve those. Symbols stay with
+    // sourcePosition == Absent.
     "Positions section with absent SOURCEFILE silently skips positions -- no error emitted" in {
         // Minimal non-empty Positions payload: numLines=1, line sizes=[10], one Assoc entry.
         // header = (1<<3)|4 = 12, start_delta = 0.
@@ -68,11 +54,6 @@ class PositionTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // ── Leaf 3: presentSourceFileBuildsPosition ──────────────────────────────
-
-    // Given: a PositionsUnpickler.read call with a non-empty Positions payload and sourceFile = Present("Foo.scala").
-    // When: the read succeeds.
-    // Then: the result map contains the symbol with sourceFile == "Foo.scala".
     "present SOURCEFILE produces Position with the correct sourceFile string" in {
         // Payload: numLines=1, line sizes=[10], one entry at addrDelta=1, start_delta=0 => line 1, col 1.
         val payload = Array[Byte](

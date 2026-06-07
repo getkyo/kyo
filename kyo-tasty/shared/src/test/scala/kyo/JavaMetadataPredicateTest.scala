@@ -19,10 +19,6 @@ class JavaMetadataPredicateTest extends kyo.test.Test[Any]:
         runtimeTypeAnnotations = Chunk.empty
     )
 
-    // ── Leaf 170: isJvmPublic ─────────────────────────────────────────────────
-    // Given: JavaMetadata(access = 0x0001 | 0x0008) (public static)
-    // When: invoke isJvmPublic, isJvmStatic, isJvmFinal
-    // Then: true, true, false
     "isJvmPublic and isJvmStatic true for 0x0009; isJvmFinal false" in {
         val m = meta(0x0001 | 0x0008)
         assert((m.accessFlags & 0x0001) != 0, "isJvmPublic must be true for 0x0001")
@@ -33,10 +29,6 @@ class JavaMetadataPredicateTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 171: isJvmPrivate ────────────────────────────────────────────────
-    // Given: JavaMetadata(access = 0x0002)
-    // When: invoke all 5 predicates
-    // Then: isJvmPrivate == true; others false
     "isJvmPrivate true for 0x0002; others false" in {
         val m = meta(0x0002)
         assert((m.accessFlags & 0x0002) != 0, "isJvmPrivate must be true for 0x0002")
@@ -47,7 +39,6 @@ class JavaMetadataPredicateTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Additional: isJvmFinal
     "isJvmFinal true for 0x0010; others false" in {
         val m = meta(0x0010)
         assert((m.accessFlags & 0x0010) != 0, "isJvmFinal must be true for 0x0010")
@@ -58,7 +49,6 @@ class JavaMetadataPredicateTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Additional: isJvmProtected
     "isJvmProtected true for 0x0004" in {
         val m = meta(0x0004)
         assert((m.accessFlags & 0x0004) != 0, "isJvmProtected must be true for 0x0004")

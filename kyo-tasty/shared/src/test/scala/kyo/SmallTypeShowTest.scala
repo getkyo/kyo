@@ -7,10 +7,6 @@ import kyo.Tasty.SymbolId
   */
 class SmallTypeShowTest extends kyo.test.Test[Any]:
 
-    // ── Leaf 165: position-show ───────────────────────────────────────────────
-    // Given: Position("Foo.scala", 10, 5)
-    // When: p.show
-    // Then: returns "Foo.scala:10:5"
     "Position.show returns file:line:column" in {
         val p = Tasty.Position("Foo.scala", 10, 5)
         assert(p.show == "Foo.scala:10:5", s"Expected 'Foo.scala:10:5', got '${p.show}'")
@@ -25,20 +21,12 @@ class SmallTypeShowTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 166: pickle-show ─────────────────────────────────────────────────
-    // Given: Pickle("uuid-1", Version(0, 0, 0), Chunk(1.toByte, 2.toByte))
-    // When: pk.show
-    // Then: returns "Pickle(uuid-1 v0.0.0 2B)"
     "Pickle.show returns Pickle(<uuid> v<version> <n>B)" in {
         val pk = Tasty.Pickle("uuid-1", Tasty.Version(0, 0, 0), Span.from(Array[Byte](1, 2)))
         assert(pk.show == "Pickle(uuid-1 v0.0.0 2B)", s"Expected 'Pickle(uuid-1 v0.0.0 2B)', got '${pk.show}'")
         succeed
     }
 
-    // ── Leaf 167: flag-show-name ──────────────────────────────────────────────
-    // Given: Flag.Final
-    // When: f.show
-    // Then: returns "Final"
     "Flag.show returns the flag name" in {
         assert(Tasty.Flag.Final.show == "Final", s"Expected 'Final', got '${Tasty.Flag.Final.show}'")
         assert(Tasty.Flag.Sealed.show == "Sealed")
@@ -46,20 +34,12 @@ class SmallTypeShowTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 168: flags-empty ─────────────────────────────────────────────────
-    // Given: Flags.empty and Flags(Flag.Final)
-    // When:.isEmpty on each
-    // Then: true and false respectively
     "Flags.isEmpty returns true for empty and false for non-empty" in {
         assert(Tasty.Flags.empty.isEmpty, "Flags.empty.isEmpty must be true")
         assert(!Tasty.Flags(Tasty.Flag.Final).isEmpty, "Flags(Flag.Final).isEmpty must be false")
         succeed
     }
 
-    // ── Leaf 169: name-isEmpty ────────────────────────────────────────────────
-    // Given: Name("") and Name("Foo")
-    // When:.isEmpty on each
-    // Then: true and false respectively
     "Name.isEmpty returns true for empty and false for non-empty" in {
         val emptyName = Tasty.Name("")
         val fooName   = Tasty.Name("Foo")

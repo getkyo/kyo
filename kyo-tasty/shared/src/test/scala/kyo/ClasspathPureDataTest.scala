@@ -118,17 +118,13 @@ class ClasspathPureDataTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Binding is accessible from within package kyo (private[kyo]) and wraps Classpath.empty.
-    // Per C5 resolution (b): from within package kyo, private[kyo] IS accessible. We verify the
-    // behavioral invariant: Binding.empty returns an empty Classpath and Absent decodeCtx.
+    // Binding.empty is accessible from within package kyo (private[kyo]); verifies behavioral
+    // invariant: Binding.empty returns an empty Classpath and Absent decodeCtx.
     "Binding.empty wraps Classpath.empty and has Absent decodeCtx" in {
         val b = Binding.empty
         assert(b.cp == Classpath.empty, s"Binding.empty.cp should equal Classpath.empty")
         assert(b.decodeCtx == Maybe.Absent, s"Binding.empty.decodeCtx should be Absent")
         succeed
     }
-
-    // cross-platform JVM JS Native -- the above leaves cover all platforms by
-    // being placed in shared/src/test/scala. No per-platform assertions needed.
 
 end ClasspathPureDataTest

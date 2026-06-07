@@ -8,12 +8,8 @@ import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.TastyState
 import scala.collection.mutable
 
-/** plan-mandated tests pinning the Classpath bodyMemo contract.
-  *
-  * Leaves:
-  *   2. bodyMemo excluded from equality.
-  *   3. cp.copy produces fresh empty bodyMemo.
-  *   4. decodeBody memoizes within a single Classpath (+).
+/** Tests for the Classpath bodyMemo contract: excluded from equality, each withClasspath
+  * invocation produces a fresh empty DecodeContext, and decodeBody memoizes within a single context.
   */
 class ClasspathBodyMemoTest extends kyo.test.Test[Any]:
 
@@ -65,17 +61,8 @@ class ClasspathBodyMemoTest extends kyo.test.Test[Any]:
         )
     end openSomeObjectBinding
 
-    // ── Leaf 2: bodyMemo excluded from equality ───────────────────────────────
-
-    // Given: a Classpath cp that has memoized at least one body decode.
-    // When: cp is compared against itself (identity equality implies structural equality).
-    // Then: cp == cp holds (reflexivity), and the bodyMemo state has no effect on the comparison.
-    // The key invariant: case-class equality is governed ONLY by the 11 constructor params.
-    // bodyMemo is a class body member (private lazy val), NOT a constructor param, so it is
-    // excluded from auto-generated equals/hashCode. This is verified by checking that:
-    // (a) cp == cp (reflexivity - always true for case classes)
-    // (b) cp.hashCode == cp.hashCode (hashCode is stable regardless of bodyMemo state)
-    // (c) A cp.copy that produces an otherwise-identical Classpath (same 11 fields) compares equal.
+    // bodyMemo is a class body member, NOT a constructor param, so it is excluded from
+    // auto-generated equals/hashCode. Verified by reflexivity and stable hashCode after memoization.
     "bodyMemo excluded from case-class equality" in {
         Scope.run:
             Abort.run[TastyError](
@@ -110,12 +97,6 @@ class ClasspathBodyMemoTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 3: each withClasspath invocation produces a fresh empty DecodeContext ─
-
-    // Given: a Classpath cp inside a withClasspath scope; call Tasty.bodyTree on some symbol.
-    // When: a second fresh Binding is created with DecodeContext.fresh.
-    // Then: the second DecodeContext's bodyMemo starts at size 0 (independent of the first).
-    //   creates a fresh DecodeContext with an empty memo).
     "each withClasspath invocation produces a fresh empty DecodeContext bodyMemo" in {
         Scope.run:
             Abort.run[TastyError](
@@ -148,14 +129,7 @@ class ClasspathBodyMemoTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 4: decodeBody memoizes within a single Classpath ─────────────────
-
-    // Given: a Symbol sym with a non-empty body in cp.
-    // When: cp.bodyTree(sym) is called twice.
-    // Then: both calls return the SAME Tree instance (reference equality via bodyMemo).
-    //       TreeUnpickler.decodeSync is invoked only once (verified indirectly: if the second call
-    //       returned a fresh decode, it would be a DIFFERENT Tree instance since Symbol instances
-    //       with id=-1 use identity equality).
+    // Both calls on the same symbol must return the SAME Tree instance (reference equality via bodyMemo).
     "Tasty.bodyTree memoizes within a single DecodeContext (reference equality)" in {
         Scope.run:
             Abort.run[TastyError](

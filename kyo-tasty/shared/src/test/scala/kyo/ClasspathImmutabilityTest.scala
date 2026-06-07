@@ -5,10 +5,8 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
 import scala.collection.mutable
 
-/** plan-mandated tests pinning the Classpath immutability contract.
-  *
-  * Leaves:
-  *   1. Classpath constructor fields are immutable.
+/** Tests pinning the Classpath immutability contract: constructor fields have val semantics
+  * and return reference-equal values on repeated access.
   */
 class ClasspathImmutabilityTest extends kyo.test.Test[Any]:
 
@@ -44,11 +42,6 @@ class ClasspathImmutabilityTest extends kyo.test.Test[Any]:
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end openFixtureClasspath
 
-    // ── Leaf 1: Classpath constructor fields are immutable ───────────────────
-
-    // Given: a Classpath cp returned from Classpath.init.
-    // When: any cp field is accessed twice.
-    // Then: both accesses return the same reference (val semantics); no reassignment is possible.
     "Classpath constructor fields are immutable (val semantics)" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
@@ -64,7 +57,6 @@ class ClasspathImmutabilityTest extends kyo.test.Test[Any]:
                     val top2  = cp.indices.topLevelClassIds
                     val root1 = cp.rootSymbolId
                     val root2 = cp.rootSymbolId
-                    // canonical field removed in Classpath is now pure data with no TypeArena.
                     // byFqn is Dict (opaque type); structural sameness checked via same case class field access.
                     val fqnSameRef = java.lang.System.identityHashCode(fqn1.asInstanceOf[AnyRef]) ==
                         java.lang.System.identityHashCode(fqn2.asInstanceOf[AnyRef])

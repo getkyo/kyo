@@ -6,16 +6,14 @@ import kyo.*
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.PlatformFileSource
 
-/** JVM-only classpath fixtures for kyo-tasty decoder-fidelity-2 tests.
+/** JVM-only classpath fixtures for kyo-tasty decoder fidelity tests.
   *
-  * Contains the full JVM implementation of the decoder-fidelity-2 test infrastructure: real-classpath loading, warning-capture sink, snapshot
+  * Contains the full JVM implementation of the decoder fidelity test infrastructure: real-classpath loading, warning-capture sink, snapshot
   * round-trip helpers, platform-module loading, and synthetic fixture construction. All methods rely on JVM filesystem and JVM-specific APIs
   * (java.nio.file, JvmFileSource, jrt:/).
   *
   * This object is the backing implementation for `TestClasspaths2Platform` (JVM version), which is referenced by the shared
   * `TestClasspaths2` facade. Shared tests never call this object directly; they go through the facade.
-  *
-  * Per HARD RULE 1: real-classpath fixtures only; no synthetic data in this file.
   */
 private[kyo] object TestClasspaths2Jvm:
 

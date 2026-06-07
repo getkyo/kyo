@@ -8,23 +8,16 @@ import kyo.internal.tasty.snapshot.SnapshotFormat
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 
-/** Decoder-fidelity-5 Wave 2: QA-mindset deeper probe.
-  *
-  * Wave 1 (15 leaves) found one bug (truncated-snapshot AIOOBE) and patched it with catch-and-convert defense in `SnapshotReader.readBytes`.
-  * Wave 2 probes a wider matrix of QA-mindset categories: boundaries, negative tests, resource exhaustion, races, half-load state, error
-  * variants, idempotency, equality/hash, real-world synthetics, structural defense, error messages, API gaps.
-  *
-  * Cross-platform: uses MemoryFileSource and TestClasspaths.withClasspath (embedded fixtures). No JVM filesystem required.
-  *
-  * Leaves are numbered W2.N for traceability with the exploration document.
+/** Decoder-fidelity deeper probe: boundary values, negative tests, resource exhaustion, races,
+  * half-load state, TastyError variants, idempotency, equality/hash, real-world synthetics,
+  * structural defense, error messages, and API surface gaps. Uses MemoryFileSource and embedded
+  * fixtures; no JVM filesystem required.
   */
 class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
     private val plainClassTasty: Array[Byte] = kyo.fixtures.Embedded.plainClassTasty
-
-    // Helpers ---------------------------------------------------------------
 
     private def loadCorrupt(
         name: String,
@@ -41,11 +34,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             val digest = Array.fill[Byte](8)(0x42.toByte)
             (SnapshotWriter.serializeToBytes(cp, digest), cp)
 
-    // =========================================================================
-    // CATEGORY 1: BOUNDARY VALUES
-    // =========================================================================
-
-    // W2.1: findClass with very short strings (1, 2 chars) returns Absent cleanly.
     "W2.1: findClass with 1-char and 2-char FQNs returns Absent cleanly" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             assert(cp.findClass("X") == Maybe.Absent)
@@ -58,7 +46,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // W2.2: findClass with strings holding unicode and embedded null bytes
     "W2.2: findClass tolerates unicode and embedded NUL in FQN" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             assert(cp.findClass("中文类") == Maybe.Absent)
@@ -67,7 +54,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // W2.3: empty roots Seq returns a valid empty classpath, no panic.
     "W2.3: Classpath.init with empty roots returns empty classpath cleanly" in {
         val src = MemoryFileSource()
         ClasspathOrchestrator.init(Seq.empty, Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
@@ -77,7 +63,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // W2.4: Classpath.symbol with extreme SymbolId values does not panic.
     "W2.4: cp.symbol with -1, MAX_INT, and MIN_INT SymbolIds returns sentinel" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             import kyo.Tasty.SymbolId
@@ -86,7 +71,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             val c = cp.symbol(SymbolId(Int.MinValue))
             val d = cp.symbol(SymbolId(cp.symbols.length))
             val e = cp.symbol(SymbolId(cp.symbols.length - 1))
-            // cp.symbol now returns Maybe[Symbol]; out-of-range/negative ids return Maybe.Absent
             assert(a == Maybe.Absent, "id=-1 should return Absent")
             assert(b == Maybe.Absent, "id=MAX_INT should return Absent")
             assert(c == Maybe.Absent, "id=MIN_INT should return Absent")
@@ -95,7 +79,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // W2.5: Symbol depth-64 cycle guard in fullName tolerates pathological owner chains.
     "W2.5: fullName tolerates non-degenerate symbol owner chains within budget" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             import Tasty.Name.asString
@@ -123,7 +106,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                 succeed
     }
 
-    // W2.6: snapshot truncation at every 256-byte boundary up to first KB never panics.
     "W2.6: snapshot truncated at each 256-byte boundary in first KB never panics" in {
         buildSnapshot().flatMap: (full, _) =>
             val mem     = MemoryFileSource()
@@ -143,12 +125,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                 succeed
     }
 
-    // =========================================================================
-    // CATEGORY 2: NEGATIVE TESTING (invariant-violation attempts)
-    // =========================================================================
-
-    // W2.7: HARD RULE 7 -- Classpath case class fields immutable after init.
-    "W2.7: HARD RULE 7 Classpath fields are immutable post-init (case class semantics)" in {
+    "W2.7: Classpath fields are immutable post-init (case class semantics)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val syms1 = cp.symbols
             val syms2 = cp.symbols
@@ -167,7 +144,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // W2.8: concurrent findClass from many fibers returns the same Symbol object.
     "W2.8: concurrent findClass from many fibers is deterministic" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val anyFqn  = cp.indices.byFqn.toMap.keys.headOption.getOrElse("nonexistent")
@@ -177,11 +153,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // =========================================================================
-    // CATEGORY 3: RESOURCE EXHAUSTION + CLEANUP
-    // =========================================================================
-
-    // W2.9: repeated Classpath init in nested scopes releases resources cleanly.
     "W2.9: repeated Classpath.init in nested scopes releases resources cleanly" in {
         def oneRound(i: Int): Int < (Sync & Async & Abort[TastyError]) =
             Scope.run(TestClasspaths.withClasspath()(Tasty.classpath)).map(_.symbols.length)
@@ -191,7 +162,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // W2.10: snapshot write failure produces SnapshotIoError.
     "W2.10: snapshot write failure produces SnapshotIoError, no leaked tmp" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val digest = Array.fill[Byte](8)(0x33.toByte)
@@ -215,11 +185,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                 case Result.Panic(t)                               => fail(s"SnapshotWriter panicked: ${t.getMessage}")
     }
 
-    // =========================================================================
-    // CATEGORY 4: RACES + TOCTOU
-    // =========================================================================
-
-    // W2.11: concurrent SnapshotReader.read from 8 fibers on same bytes -> same Classpath shape.
     "W2.11: concurrent SnapshotReader.read produces identical classpath shape" in {
         buildSnapshot().flatMap: (full, cpOrig) =>
             val mem  = MemoryFileSource()
@@ -234,7 +199,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                 succeed
     }
 
-    // W2.12: concurrent decodeBody from many fibers on the same symbol is deterministic.
     "W2.12: concurrent decodeBody returns identical Maybe[Tree] across fibers" in {
         // Must use the callback form so Tasty.bodyTree runs inside the binding scope.
         TestClasspaths.withClasspath():
@@ -259,11 +223,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                     end match
     }
 
-    // =========================================================================
-    // CATEGORY 5: HALF-LOADED STATE OBSERVABILITY
-    // =========================================================================
-
-    // W2.13: An interrupted snapshot read (truncated) does not produce a partially-built Classpath.
     "W2.13: failed snapshot read produces Abort.fail, never a partial cp" in {
         buildSnapshot().map: (full, _) =>
             val mem  = MemoryFileSource()
@@ -280,11 +239,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                 case Result.Panic(t) => fail(s"unexpected panic: ${t.getMessage}")
     }
 
-    // =========================================================================
-    // CATEGORY 6: EVERY TastyError VARIANT
-    // =========================================================================
-
-    // W2.14: SnapshotFormatError (wrong magic) is reachable and self-describing.
     "W2.14: SnapshotFormatError on wrong magic is reachable and has clean message" in {
         val bad  = Array.fill[Byte](64)(0x42)
         val mem  = MemoryFileSource()
@@ -299,7 +253,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             case other => fail(s"expected SnapshotFormatError: $other")
     }
 
-    // W2.15: SnapshotVersionMismatch is reachable by writing a bad version.
     "W2.15: SnapshotVersionMismatch is reachable and well-formed" in {
         val mem  = MemoryFileSource()
         val path = "mem/badversion.krfl"
@@ -317,7 +270,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             case other => fail(s"expected SnapshotVersionMismatch got: $other")
     }
 
-    // W2.16: NotFound is reachable by requireClass on missing FQN.
     "W2.16: requireClass on missing FQN raises TastyError.NotFound" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             Abort.run[TastyError](cp.requireClass("kyo.DoesNotExistAtAll")).map:
@@ -327,8 +279,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                 case other => fail(s"expected NotFound: $other")
     }
 
-    // W2.17: NotFound is reachable by requireSymbol on missing FQN (Pass 2A unified the absent
-    // channel: requireSymbol no longer raises a separate SymbolNotFound variant).
     "W2.17: requireSymbol on missing FQN raises TastyError.NotFound" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             Abort.run[TastyError](cp.requireSymbol("nothing.like.this.exists")).map:
@@ -338,11 +288,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                 case other => fail(s"expected NotFound: $other")
     }
 
-    // =========================================================================
-    // CATEGORY 7: IDEMPOTENCY
-    // =========================================================================
-
-    // W2.18: findClass on the same FQN 100 times returns the same result.
     "W2.18: findClass 100x on the same FQN returns the same result" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val sample = cp.indices.byFqn.toMap.keys.take(3).toList
@@ -352,7 +297,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // W2.19: serializeToBytes 100 times on the same Classpath produces byte-equal output.
     "W2.19: SnapshotWriter.serializeToBytes is byte-deterministic within same JVM" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val digest = Array.fill[Byte](8)(0x55.toByte)
@@ -363,7 +307,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // W2.20: cp.errors is stable across accesses.
     "W2.20: cp.errors is stable Chunk across accesses" in {
         loadCorrupt("PlainClassW2_20.tasty", plainClassTasty.take(plainClassTasty.length / 2)).map: cp =>
             val a       = cp.errors
@@ -373,11 +316,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // =========================================================================
-    // CATEGORY 8: SYMBOL EQUALITY + HASHCODE
-    // =========================================================================
-
-    // W2.21: Same Symbol fetched twice via findSymbol is equal+hashEqual.
     "W2.21: same Symbol fetched twice is equal and has equal hashCode" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val fqnOpt = cp.indices.byFqn.toMap.keys.headOption
@@ -392,10 +330,8 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             end match
     }
 
-    // W2.22: Symbol used as HashMap key resolves to itself.
-    // Symbol equality is id-based with a kind discriminant; the `final override def equals`
-    // on Tasty.Symbol compares `(id.value, kind)`. The decoder relies on `id`-based equality through
-    // this override; case-class auto-derivation is shadowed by the trait-body override.
+    // Symbol equality is id-based with a kind discriminant; `final override def equals`
+    // on Tasty.Symbol compares `(id.value, kind)`.
     "W2.22: Symbol usable as HashMap key (equals/hashCode contract)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val syms = cp.symbols.take(50).toList
@@ -406,11 +342,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // =========================================================================
-    // CATEGORY 9: REAL-WORLD SYNTHETICS
-    // =========================================================================
-
-    // W2.23: Default-argument accessor methods (foo$default$1) are decoded and findable.
     "W2.23: default-arg accessor methods are present on the classpath" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             import Tasty.Name.asString
@@ -422,7 +353,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // W2.24: Java synthetic bridges and $VALUES fields (if any) are loadable, no panic.
     "W2.24: Java enum $VALUES synthetics scan does not panic" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             import Tasty.Name.asString
@@ -431,11 +361,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // =========================================================================
-    // CATEGORY 10: STRUCTURAL DEFENSE (Wave 1 follow-up)
-    // =========================================================================
-
-    // W2.25: section-index out-of-bounds offset+length still produces clean error (Wave 1 patch holds).
     "W2.25: section-index out-of-bounds offset+length still produces clean error (Wave 1 patch holds)" in {
         buildSnapshot().map: (full, _) =>
             val mem          = MemoryFileSource()
@@ -465,7 +390,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                 case other => succeed
     }
 
-    // W2.26: section-index entry with negative offset survives without panic.
     "W2.26: section-index entry with negative offset produces structured error, no panic" in {
         buildSnapshot().map: (full, _) =>
             val mem  = MemoryFileSource()
@@ -480,7 +404,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                     fail(s"BUG: negative section offset panics: ${t.getClass.getName}: ${t.getMessage}")
     }
 
-    // W2.27: section index claims 1 billion sections -> structured error.
     "W2.27: section index with absurd section count produces structured error, no panic" in {
         buildSnapshot().map: (full, _) =>
             val mem  = MemoryFileSource()
@@ -495,11 +418,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                     fail(s"BUG: section count=1B panics: ${t.getClass.getName}: ${t.getMessage}")
     }
 
-    // =========================================================================
-    // CATEGORY 11: ERROR MESSAGE QUALITY
-    // =========================================================================
-
-    // W2.28: every TastyError.toString contains its variant tag.
     "W2.28: TastyError toString messages contain identifying tag and inputs" in {
         val cases: Seq[(String, TastyError)] = Seq(
             "FileNotFound"         -> TastyError.FileNotFound("/tmp/x"),
@@ -523,11 +441,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // =========================================================================
-    // CATEGORY 12: API SURFACE GAPS
-    // =========================================================================
-
-    // W2.29: requireClass on an FQN that resolves to a Trait (not Class) raises NotFound.
     "W2.29: requireClass on Trait FQN raises NotFound (narrow-kind semantics)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             cp.allTraits.headOption match
@@ -544,8 +457,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                         end if
     }
 
-    // bodyMemo lives in DecodeContext, not Classpath. cp.copy produces a structurally equal Classpath.
-    // The bodyMemo in the active DecodeContext accumulates entries across bodyTree calls.
     "bodyMemo accumulates in DecodeContext after bodyTree decode" in {
         // Must use the full callback form so Tasty.bodyTree and TastyState.bindingLocal run inside the binding scope.
         TestClasspaths.withClasspath():
@@ -562,14 +473,12 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                         case None => succeed
                         case Some(sym) =>
                             Tasty.bodyTree(sym).flatMap: _ =>
-                                // bodyMemo now lives in DecodeContext, accessible via bindingLocal.
                                 TastyState.bindingLocal.use: mbind2 =>
                                     val ctx = mbind2.flatMap(_.decodeCtx)
                                     if ctx.isEmpty then Sync.defer(succeed)
                                     else
                                         val memoSize = ctx.get.bodyMemo.size()
                                         assert(memoSize >= 1, s"Expected at least 1 bodyMemo entry after decode, got $memoSize")
-                                        // cp.copy produces a structurally equal Classpath (bodyMemo not in Classpath).
                                         val cp2 = Tasty.Classpath.copyWithErrors(cp, cp.errors)
                                         assert(cp2 == cp, "cp.copy with same errors must produce a structurally equal Classpath")
                                         succeed
@@ -577,8 +486,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                     end match
     }
 
-    // W2.31: classFqn[A] yields the bare class FQN, stripping type parameters so the result is
-    // directly usable as a key into Classpath.findClass / findClassLike / findSymbol.
     "W2.31: classFqn returns the bare dotted class FQN" in {
         Sync.defer:
             assert(Tasty.classFqn[Int] == "scala.Int")
@@ -588,7 +495,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // W2.32: Maybe-returning getters can be chained with Maybe combinators without exception.
     "W2.32: chained Maybe combinators across cp API never throw" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val r1 = cp.findClass("does.not.exist").map(_.simpleName)
@@ -600,11 +506,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // =========================================================================
-    // b REGRESSION: bounds-check before arraycopy (SnapshotReader level)
-    // =========================================================================
-
-    // section-index entry with offset+length > snapshot length produces MalformedSection.
     "section-index OOB entry: OOB section-index entry produces MalformedSection, not an unstructured panic" in {
         buildSnapshot().map: (full, _) =>
             val mem          = MemoryFileSource()
@@ -633,7 +534,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                 case other => succeed
     }
 
-    // section-index entry with negative offset produces structured error, no panic.
     "section-index negative-offset: negative section offset produces structured error, not a panic" in {
         buildSnapshot().map: (full, _) =>
             val mem  = MemoryFileSource()
@@ -648,7 +548,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                 case Result.Success(_) => succeed
     }
 
-    // a well-formed snapshot round-trips without triggering any OOB guard.
     "section-index valid-snapshot: valid snapshot with no OOB entries loads cleanly" in {
         buildSnapshot().map: (full, _) =>
             val mem  = MemoryFileSource()
@@ -659,11 +558,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                 case _               => succeed
     }
 
-    // =========================================================================
-    // b REGRESSION: IllegalStateException -> ClasspathClosed
-    // =========================================================================
-
-    // decodeBody on a symbol whose blob.read throws IllegalStateException produces ClasspathClosed.
     "decode-body: decodeBody produces ClasspathClosed when body read throws IllegalStateException" in {
         TestClasspaths.withClasspath():
             Tasty.classpath.flatMap: cp =>
@@ -684,11 +578,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                     end match
     }
 
-    // =========================================================================
-    // b REGRESSION: fromPickles actually decodes input pickles
-    // =========================================================================
-
-    // fromPickles(Seq.empty) returns an empty classpath.
     "withPickles-empty: withPickles(Chunk.empty) returns empty classpath" in {
         Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
             assert(cp.symbols.length == 0, s"expected empty symbols, got ${cp.symbols.length}")
@@ -697,22 +586,16 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // withPickles with a real TASTy pickle returns a non-empty classpath.
     "withPickles-real-bytes: withPickles with real TASTy bytes decodes at least 1 symbol" in {
         val pickle =
             Tasty.Pickle(uuid = "test-uuid-plain-class", version = Tasty.Version(28, 3, 0), bytes = Span.from(plainClassTasty))
         import Tasty.Name.asString
         Tasty.withPickles(Chunk(pickle))(Tasty.classpath).map: cp =>
-            // PlainClass.tasty must produce the PlainClass class-like plus its enclosing scala/kyo packages
-            // and at least one member; assert the class is discoverable by FQN rather than relying on a
-            // raw count check.
             val plainClass = cp.findClassLike("kyo.fixtures.PlainClass")
             assert(
                 plainClass.isDefined,
                 s"Expected kyo.fixtures.PlainClass to be findable after withPickles; got ${cp.symbols.length} symbols"
             )
-            // Sanity bound: a single TASTy pickle for a non-trivial class yields at least the class plus
-            // its declared members (typically >= 5 symbols including package owner chain).
             assert(
                 cp.symbols.length >= 5,
                 s"Expected >= 5 symbols from PlainClass pickle but got ${cp.symbols.length}"
@@ -720,11 +603,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             succeed
     }
 
-    // =========================================================================
-    // b REGRESSION: ERRORS round-trip (typed format)
-    // =========================================================================
-
-    // every TastyError variant round-trips losslessly through write/read.
     "error-roundtrip: all TastyError variants round-trip through snapshot ERRORS section" in {
         val zeroUUID = new java.util.UUID(0L, 0L)
         val v1       = Tasty.Version(1, 2, 0)
@@ -774,11 +652,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                     case Result.Panic(t) => fail(s"snapshot round-trip panicked: ${t.getMessage}")
     }
 
-    // =========================================================================
-    // b REGRESSION: sectionCount bound
-    // =========================================================================
-
-    // snapshot with sectionCount=Int.MaxValue produces SnapshotFormatError, not OOM or panic.
     "corrupt-sectionCount-maxval: sectionCount=Int.MaxValue produces SnapshotFormatError, not OOM or panic" in {
         buildSnapshot().map: (full, _) =>
             val mem  = MemoryFileSource()
@@ -794,7 +667,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                 case Result.Success(_) => fail("expected failure for corrupt sectionCount")
     }
 
-    // snapshot with sectionCount=256 (at cap) does not panic.
     "corrupt-sectionCount-at-cap: sectionCount exactly at cap (256) does not panic" in {
         buildSnapshot().map: (full, _) =>
             val mem  = MemoryFileSource()
@@ -808,7 +680,6 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                 case _ => succeed
     }
 
-    // snapshot with sectionCount=0 (at floor) loads cleanly.
     "sectionCount-zero: sectionCount=0 produces an empty classpath, not a panic" in {
         buildSnapshot().map: (full, _) =>
             val mem  = MemoryFileSource()

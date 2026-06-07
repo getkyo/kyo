@@ -2,13 +2,10 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** typed Classpath find* lookups.
+/** Tests for typed Classpath find* lookups.
   *
-  * Fixture layout (index == id.value): 0 -> Class "A" in pkg "pkg.A" 1 -> Trait "T" in pkg "pkg.T" 2 -> Object "O" in pkg "pkg.O" 3 ->
-  * Package "sub" in pkg "pkg.sub" 4 -> Package "pkg" 5 -> Class "A" in pkg "pkg.sub.A" (same simple name, different package)
-  *
-  * fqnIndex: "pkg.A" -> 0, "pkg.T" -> 1, "pkg.O" -> 2 packageIndex: "pkg" -> 4, "pkg.sub" -> 3 subclassIndex: empty (these tests do not
-  * exercise subclass queries)
+  * Fixture: Class "A" (pkg.A), Trait "T" (pkg.T), Object "O" (pkg.O), Package "sub" (pkg.sub),
+  * Package "pkg", and a second Class "A" in pkg.sub.A (same simple name, different package).
   */
 class ClasspathTypedFindTest extends kyo.test.Test[Any]:
 
@@ -93,10 +90,6 @@ class ClasspathTypedFindTest extends kyo.test.Test[Any]:
                 errors = Chunk.empty
             )
 
-    // ── Leaf 101: findClass-class-fqn ─────────────────────────────────────────
-    // Given: fixture cp with "pkg.A" (a Class).
-    // When: cp.findClass("pkg.A")
-    // Then: Maybe.Present(c) where c.isInstanceOf[Symbol.Class]
     "findClass returns Present[Class] for a class FQN" in {
         buildFixture.map: cp =>
             cp.findClass("pkg.A") match
@@ -106,20 +99,12 @@ class ClasspathTypedFindTest extends kyo.test.Test[Any]:
                     fail("Expected Present for pkg.A but got Absent")
     }
 
-    // ── Leaf 102: findClass-trait-returns-absent ──────────────────────────────
-    // Given: fixture with "pkg.T" (a Trait).
-    // When: cp.findClass("pkg.T")
-    // Then: Maybe.Absent (trait does not satisfy the Class filter)
     "findClass returns Absent for a trait FQN" in {
         buildFixture.map: cp =>
             val result = cp.findClass("pkg.T")
             assert(result == Maybe.Absent, s"Expected Absent for trait pkg.T but got $result")
     }
 
-    // ── Leaf 103: findTrait-trait ─────────────────────────────────────────────
-    // Given: fixture with "pkg.T" (a Trait).
-    // When: cp.findTrait("pkg.T")
-    // Then: Present[Trait]
     "findTrait returns Present[Trait] for a trait FQN" in {
         buildFixture.map: cp =>
             cp.findTrait("pkg.T") match
@@ -129,10 +114,6 @@ class ClasspathTypedFindTest extends kyo.test.Test[Any]:
                     fail("Expected Present for pkg.T but got Absent")
     }
 
-    // ── Leaf 104: findObject-object ───────────────────────────────────────────
-    // Given: fixture with "pkg.O" (an Object).
-    // When: cp.findObject("pkg.O")
-    // Then: Present[Object]
     "findObject returns Present[Object] for an object FQN" in {
         buildFixture.map: cp =>
             cp.findObject("pkg.O") match
@@ -142,10 +123,6 @@ class ClasspathTypedFindTest extends kyo.test.Test[Any]:
                     fail("Expected Present for pkg.O but got Absent")
     }
 
-    // ── Leaf 105: findClassLike-class-trait-object ────────────────────────────
-    // Given: fixture pkg.A (Class), pkg.T (Trait), pkg.O (Object).
-    // When: findClassLike on each FQN
-    // Then: each returns Present with matching subtype
     "findClassLike returns Present[ClassLike] for class, trait, and object FQNs" in {
         buildFixture.map: cp =>
             cp.findClassLike("pkg.A") match
@@ -168,10 +145,6 @@ class ClasspathTypedFindTest extends kyo.test.Test[Any]:
             end match
     }
 
-    // ── Leaf 106: findPackage-typed ───────────────────────────────────────────
-    // Given: fixture with "pkg" package.
-    // When: cp.findPackage("pkg")
-    // Then: Present[Package]
     "findPackage returns Present[Package] for a package FQN" in {
         buildFixture.map: cp =>
             cp.findPackage("pkg") match
@@ -181,10 +154,6 @@ class ClasspathTypedFindTest extends kyo.test.Test[Any]:
                     fail("Expected Present for pkg but got Absent")
     }
 
-    // ── Leaf 107: findClassesByName-typed ──────────────────────────────────────
-    // Given: fixture with "pkg.A" (id 0) and "pkg.sub.A" (id 5), both named "A".
-    // When: cp.findClassesByName("A")
-    // Then: Chunk[Symbol.Class] of size 2
     "findClassesByName returns all Class instances with the given simple name" in {
         buildFixture.map: cp =>
             val result = cp.findClassesByName("A")
@@ -195,10 +164,6 @@ class ClasspathTypedFindTest extends kyo.test.Test[Any]:
             assert(result.forall(_.name.asString == "A"), s"All results must be named 'A' but got: ${result.map(_.name.asString)}")
     }
 
-    // ── Leaf 108: findClassByBinary-typed ────────────────────────────────────
-    // Given: fixture with "pkg.A" in fqnIndex.
-    // When: cp.findClassByBinary("pkg/A")
-    // Then: Present[Class]
     "findClassByBinary returns Present[Class] for a binary name" in {
         buildFixture.map: cp =>
             cp.findClassByBinary("pkg/A") match
@@ -208,10 +173,6 @@ class ClasspathTypedFindTest extends kyo.test.Test[Any]:
                     fail("Expected Present for pkg/A but got Absent")
     }
 
-    // ── Leaf 109: findClass-missing-fqn-absent ────────────────────────────────
-    // Given: fixture with no "does.not.exist" symbol.
-    // When: cp.findClass("does.not.exist")
-    // Then: Maybe.Absent
     "findClass returns Absent for a missing FQN" in {
         buildFixture.map: cp =>
             val result = cp.findClass("does.not.exist")

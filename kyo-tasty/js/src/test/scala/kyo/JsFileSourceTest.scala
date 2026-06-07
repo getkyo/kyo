@@ -4,10 +4,10 @@ import kyo.internal.tasty.query.JsFileSource
 import scala.scalajs.js.Dynamic.global as jsGlobal
 import scala.scalajs.js as sjs
 
-/** T5 parity test for JsFileSource on JS.
+/** Tests for JsFileSource on JS (Node.js path).
   *
   * Constructs a 100-byte file via Node.js fs.writeFileSync, then reads it back via JsFileSource.read(path) and verifies the returned bytes
-  * equal the original. Pins T5 (JS-only path).
+  * equal the original.
   *
   * Must live in js/src/test because it imports scala.scalajs.js.
   */

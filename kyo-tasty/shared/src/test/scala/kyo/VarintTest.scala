@@ -221,9 +221,6 @@ class VarintTest extends kyo.test.Test[Any]:
         assert(Varint.readNat(view) == Long.MaxValue.toInt)
     }
 
-    // varint-cross-platform-parity
-    // The same synthetic 6-byte stream decoded on JVM, JS, and Native returns the same value.
-    // This test lives in shared/src/test so it runs on all three platforms per HARD RULE 3.
     "readNat 6-byte non-minimal decoding is consistent across platforms" in {
         // §839 case 3; cross-platform parity test, single-threaded, no suspension.
         // 6-byte non-minimal encoding of value 1:

@@ -532,8 +532,7 @@ object ClasspathOrchestrator:
                         case _ => ()
                     end match
                     if shouldStore then state.fqnIndex(indexKey) = sym
-                    // HARD RULE 8 / HARD RULE 10: unified source-FQN dual-index via FqnNormalizer.
-                    // Replaces the 3 separate opaque / $-suffix / $. blocks from Phases 06/09.
+                    // Unified source-FQN dual-index via FqnNormalizer.
                     // canonicalSourceFqn handles all 4 mangling patterns in order; if the result
                     // differs from indexKey, register the source FQN as an additional key.
                     // Synthetic names (anonfun, proxy, etc.) are not registered in user-facing indexes.
@@ -1140,7 +1139,7 @@ object ClasspathOrchestrator:
                       * module val FQN (scala.None). We detect this by checking if the resolved symbol
                       * is a Val kind (module val), then resolve to the module class FQN (scala.None$).
                       *
-                      * Returns -1 if unresolvable (entry skipped per HARD RULE 2).
+                      * Returns -1 if unresolvable (entry skipped).
                       */
                     /** Resolve a qualifier SymbolId to its FQN string, or null if unresolvable. */
                     def qualIdToFqn(qualId: Int): String | Null =
@@ -1255,7 +1254,7 @@ object ClasspathOrchestrator:
                     // Build a global addr -> finalIdx map from all per-file addrToFinal maps.
                     // Any Named(PHASE_B_ADDR_OFFSET + addr) that was left unresolved by the per-file
                     // remapType pass (because the addr belongs to a different file) is resolved here.
-                    // HARD RULE 7: runs before materializeSymbols.
+                    // Runs before materializeSymbols.
                     val globalAddrToFinal = new java.util.HashMap[Int, Int](count * 2)
                     var xfFrIdx           = 0
                     for fr <- fileResults do
@@ -1335,7 +1334,7 @@ object ClasspathOrchestrator:
                     // For classes/traits/enum-cases with empty parentTypes after cross-file resolution,
                     // inject a synthetic default parent. Run AFTER cross-file resolution so cross-file
                     // resolved parents are visible before deciding whether to inject.
-                    // HARD RULE 7: runs before materializeSymbols.
+                    // Runs before materializeSymbols.
 
                     def lookupFqnFinalId(fqn: String): Int =
                         state.fqnIndex.get(fqn) match
@@ -1571,7 +1570,7 @@ object ClasspathOrchestrator:
                     // fqnIdIdx for negative ids (unresolved entries are no longer inserted into the index).
                     val brokenFqnCount = fqnUnresolvedCount
 
-                    // OQ-001 FailFast wiring:
+                    // FailFast error selection:
                     //   - If SymbolMaterializationError was caught during materializeSymbols -> that error.
                     //   - If collisions exist under FailFast -> FqnCollisionError (first colliding FQN).
                     //   - If broken fqnIndex entries exist under FailFast -> ClasspathBuilding.
@@ -2017,7 +2016,7 @@ object ClasspathOrchestrator:
     /** Test helper: trigger a `TastyError.ClasspathBuilding` abort via a synthetic degenerate MergeState.
       *
       * Constructs a `MergeState` where one entry in `fqnIndex` maps to a partial symbol that is NOT present in `allSyms`. As a result,
-      * `finalizeMerge` cannot resolve the symbol via `symbolIdMap` (direct lookup returns -1) and the OQ-003 canonical-FQN fallback also
+      * `finalizeMerge` cannot resolve the symbol via `symbolIdMap` (direct lookup returns -1) and the canonical-FQN fallback also
       * fails (no alias form exists). Under `ErrorMode.FailFast`, `finalizeMerge` raises `TastyError.ClasspathBuilding`.
       *
       * This method is `private[kyo]` so it is reachable from tests in `kyo.internal.*` test packages but invisible to API consumers.
@@ -2037,7 +2036,7 @@ object ClasspathOrchestrator:
         )
         state.fqnIndex("test.GhostClass") = ghost
         // allSyms intentionally left empty so symbolIdMap.getOrElse(ghost.id.toLong, -1) == -1.
-        // canonicalSourceFqn("test.GhostClass") == "test.GhostClass" (no mangling), so OQ-003
+        // canonicalSourceFqn("test.GhostClass") == "test.GhostClass" (no mangling), so the canonical-FQN
         // fallback also returns -1. Both checks fail -> ClasspathBuilding fires under FailFast.
         val platSrc = kyo.internal.tasty.query.PlatformFileSource.get
         finalizeMerge(state, platSrc, Tasty.ErrorMode.FailFast)

@@ -3,14 +3,9 @@ package kyo
 import AllowUnsafe.embrace.danger
 import kyo.Tasty.SymbolId
 
-/** Annotation.arguments.
-  */
+/** Tests for Annotation.arguments field access and correctness. */
 class AnnotationArgListTest extends kyo.test.Test[Any]:
 
-    // ── Leaf 164: arguments is the eager Chunk of arg trees ───────────────────
-    // Given: an Annotation built with the args expanded from Tree.Apply(_, Chunk(Literal("hi")))
-    // When: a.arguments
-    // Then: returns Chunk(Literal("hi"))
     "arguments is the decoded arg chunk" in {
         val tpe    = Tasty.Type.Named(SymbolId(0))
         val lit    = Tasty.Tree.Literal(Tasty.Constant.StringConst("hi"))

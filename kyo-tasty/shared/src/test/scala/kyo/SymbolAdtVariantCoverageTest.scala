@@ -2,13 +2,7 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** Tests for Leaf 4: every Symbol subtype carries sourcePosition as a Maybe[Position].
-  *
-  * everySymbolSubtypeCarriesSourcePosition.
-  * Given: one instance of each Symbol subtype.
-  * When: the test reads sym.sourcePosition for each.
-  * Then: every value is a Maybe[Position]; pattern matches against Maybe.Present(p) and Maybe.Absent are exhaustive.
-  */
+/** Verifies that every Symbol subtype carries sourcePosition as a Maybe[Position]. */
 class SymbolAdtVariantCoverageTest extends kyo.test.Test[Any]:
 
     // ── Fixture helpers ──────────────────────────────────────────────────────
@@ -23,11 +17,6 @@ class SymbolAdtVariantCoverageTest extends kyo.test.Test[Any]:
     private val classLikeChunkFields =
         (Chunk.empty[Tasty.Type], Chunk.empty[SymbolId], Chunk.empty[SymbolId], Maybe.Absent: Maybe[Chunk[SymbolId]])
 
-    // ── Leaf 4: everySymbolSubtypeCarriesSourcePosition ──────────────────────
-
-    // Given: one instance of each of the 15 Symbol subtypes.
-    // When: the test reads sym.sourcePosition.
-    // Then: all values are Maybe[Position]; Present and Absent arms exhaustively cover the type.
     "every Symbol subtype carries sourcePosition as Maybe[Position]" in {
         val present: Maybe[Tasty.Position] = Maybe.Present(pos)
         val absent: Maybe[Tasty.Position]  = Maybe.Absent
@@ -234,7 +223,6 @@ class SymbolAdtVariantCoverageTest extends kyo.test.Test[Any]:
 
     // ── body field removed from all Symbol subtypes ────────────────
 
-    // Confirms that ClassLike subtypes no longer carry a body field (Cat 17 Option A).
     "Symbol.Class has no body field (ClassLike.body accessor removed)" in {
         val __tcErrors1 = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Class).body").length
 
@@ -245,7 +233,6 @@ class SymbolAdtVariantCoverageTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Confirms that Method, Val, Var no longer carry a body field (Cat 17 Option A).
     "Symbol.Method, Val, Var have no body field" in {
         val __tcErrors3 = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Method).body").length
 
@@ -261,7 +248,6 @@ class SymbolAdtVariantCoverageTest extends kyo.test.Test[Any]:
 
     // ── unresolvedCaseDeleted ───────────────────────────────
 
-    // Confirms that Symbol.Unresolved is not a valid symbol subtype (Cat 19 deletion).
     "unresolvedCaseDeleted: Symbol.Unresolved is not part of the ADT" in {
         // Symbol.Unresolved was deleted in. A compileErrors probe must return non-empty.
         val __tcErrors6 = compiletime.testing.typeCheckErrors("(??? : kyo.Tasty.Symbol.Unresolved)").length
@@ -272,7 +258,6 @@ class SymbolAdtVariantCoverageTest extends kyo.test.Test[Any]:
 
     // ── makePlaceholderDeleted ───────────────────────────────
 
-    // Confirms that Symbol.makePlaceholder is not a valid method (Cat 19 deletion).
     "makePlaceholderDeleted: Symbol.makePlaceholder is not available" in {
         // Symbol.makePlaceholder was deleted in. A compileErrors probe must return non-empty.
         val __tcErrors7 = compiletime.testing.typeCheckErrors("kyo.Tasty.Symbol.makePlaceholder(???, ???, ???)").length

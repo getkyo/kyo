@@ -222,8 +222,6 @@ class SymbolResolutionTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // ── Plan-mandated tests ──────────────────────────
-
     import kyo.Tasty.SymbolId
 
     private def makeClassSym9(id: Int, name: String, ownerId: Int): Tasty.Symbol.Class =

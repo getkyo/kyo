@@ -519,8 +519,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 1: sym.parentTypes for PlainClass returns a non-empty Chunk[Type].
-    // phase-02 update; sym.parents is renamed to sym.parentTypes (direct field, no effect row).
     "sym.parentTypes for PlainClass returns a non-empty Chunk[Type]" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -538,9 +536,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 2: sym.typeParamIds for GenericBox[A] returns a Chunk of length 1.
-    // phase-02 update; sym.typeParamIds.flatMap(id => cp.symbol(id).toChunk) (Chunk[Symbol]) becomes sym.typeParamIds (Chunk[SymbolId]).
-    // Resolve SymbolId to Symbol via allSymbols for name check.
     "sym.typeParamIds for GenericBox[A] returns length 1 (phase-02 inline)" in {
         val src = MemoryFileSource()
         src.add("root/GenericBox.tasty", kyo.fixtures.Embedded.genericBoxTasty)
@@ -612,7 +607,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                 throw t
             case Result.Success(sym) =>
                 // Scope has exited; classpath is now closed. sym.parentTypes is a direct field, always valid.
-                // phase-02 inline; sym.parents renamed to sym.parentTypes.
                 val parents = symParentTypes(sym)
                 assert(
                     parents.nonEmpty,
@@ -620,12 +614,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                 )
     }
 
-    // Test 5: for ArrayRecord.class (Java record), sym.parents includes
-    // java.lang.Record; sym.typeParamIds.flatMap(id => cp.symbol(id).toChunk) is empty (non-generic); sym.declarationIds.flatMap(id => cp.symbol(id).toChunk) is non-empty.
-    // Note: this test uses ClassfileUnpickler directly (pre-finalizeMerge). The relational fields
-    // (parentTypes/typeParamIds/declarationIds) on the partial classSymbol are empty at this stage;
-    // we read the pre-merge ClassfileResult fields (cr.parents, cr.typeParamIds.flatMap(id => cp.symbol(id).toChunk), cr.symbols) directly.
-    // sym.parents/typeParams/declarations are sym.parents/typeParams/declarations member methods accessible post-finalizeMerge.
     "Java classfile symbol parents, typeParams, declarations are accessible" in {
         val bytes = kyo.fixtures.Embedded.arrayRecordClass
         Abort.run[TastyError]:
@@ -789,10 +777,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 2: sym.declaredType for SomeTrait.compute returns a type (return-type-only
-    // per anti-thrash rule; not a full Type.Function). The returned type is Named (proxy resolved
-    // after Phase C). We assert that declaredType is populated and returns a Tasty.Type value.
-    // phase-02 update; declarations->declarationIds; declaredType->Maybe[Type].
     "sym.declaredType for SomeTrait.compute (def compute: Int) returns a type" in {
         val src = MemoryFileSource()
         src.add("root/SomeTrait.tasty", kyo.fixtures.Embedded.someTraitTasty)
@@ -820,10 +804,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 3: sym.declaredType for type alias `type StringList = List[String]` returns
-    // a non-Named applied or named type (the alias body). StringList is a top-level type alias in
-    // FixtureClasses$package.tasty.
-    // phase-02 update; declaredType->Maybe[Type].
     "sym.declaredType for type StringList returns a type (alias body)" in {
         val src = MemoryFileSource()
         src.add("root/FixtureClasses$package.tasty", kyo.fixtures.Embedded.fixtureClassesPackageTasty)
@@ -856,7 +836,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     case None =>
                         fail(s"No 'values' member in ArrayRecord. Members: ${cr.symbols.map(_.name.asString).mkString(", ")}")
                     case Some(valuesSym) =>
-                        // phase-02 update; declaredType is now Maybe[Type].
                         Abort.run[TastyError](Kyo.lift(symDeclaredType(valuesSym))).map:
                             case Result.Success(tpeMaybe) =>
                                 tpeMaybe match
@@ -879,9 +858,6 @@ class QueryApiTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Test 5: sym.declaredType after classpath close returns the pre-populated type.
-    // declaredType is a plain Maybe[Type] field on the case class; it remains valid after close.
-    // phase-02 update; declarationIds used; declaredType is Maybe[Type].
     "sym.declaredType after classpath close returns pre-populated type (no failure)" in {
         // x is a constructor parameter; find it via paramListIds of the <init> method
         val captureResult: Result[TastyError, Tasty.Symbol] < Async =

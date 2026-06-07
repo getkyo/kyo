@@ -50,10 +50,6 @@ class SymbolConvenienceTest extends kyo.test.Test[Any]:
     private def makePackage(id: Int, name: String, ownerId: Int, members: Chunk[SymbolId]): Tasty.Symbol.Package =
         Tasty.Symbol.Package(SymbolId(id), Tasty.Name(name), Tasty.Flags.empty, SymbolId(ownerId), members)
 
-    // ── Leaf 131: fullNameString-dotted ──────────────────────────────────────
-    // Given: Symbol.Class named "List" owned by package "scala.collection".
-    // When: c.fullNameString.
-    // Then: returns "scala.collection.List".
     "fullNameString returns dotted FQN" in {
         Sync.defer {
             val pkg = makePackage(0, "scala.collection", ownerId = -1, Chunk(SymbolId(1)))
@@ -76,20 +72,12 @@ class SymbolConvenienceTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 132: simpleName-asString ─────────────────────────────────────────
-    // Given: any Symbol whose name.asString == "Foo".
-    // When: s.simpleName.
-    // Then: returns "Foo".
     "simpleName returns the symbol's simple name" in {
         val sym = makeClass(0, "Foo", ownerId = -1)
         assert(sym.simpleName == "Foo")
         succeed
     }
 
-    // ── Leaf 133: ownersChain-depth-bounded ───────────────────────────────────
-    // Given: a 5-deep nested fixture pkg.A.B.C.D.
-    // When: d.ownersChain.map(_.simpleName).
-    // Then: returns Chunk("D", "C", "B", "A", "pkg").
     "ownersChain returns self-first chain" in {
         val pkg  = makePackage(0, "pkg", ownerId = -1, Chunk(SymbolId(1)))
         val clsA = makeClass(1, "A", ownerId = 0, Chunk(SymbolId(2)))
@@ -114,10 +102,6 @@ class SymbolConvenienceTest extends kyo.test.Test[Any]:
                 succeed
     }
 
-    // ── Leaf 134: ownersChain-self-cycle-stops ────────────────────────────────
-    // Given: a synthetic fixture where ownerId == id (self-loop).
-    // When: s.ownersChain.size.
-    // Then: returns 1 (the cycle guard stops the walk).
     "ownersChain stops on self-loop" in {
         val pkg = makePackage(5, "root", ownerId = 5, Chunk.empty)
         val cp = Tasty.Classpath.make(
@@ -138,10 +122,6 @@ class SymbolConvenienceTest extends kyo.test.Test[Any]:
                 succeed
     }
 
-    // ── Leaf 135: owner-present ───────────────────────────────────────────────
-    // Given: Symbol.Method declared in Symbol.Class A.
-    // When: Tasty.owner(m).
-    // Then: returns Maybe.Present(a) where a.simpleName == "A".
     "owner returns Present for method with owner" in {
         Sync.defer {
             val cls = makeClass(0, "A", ownerId = -1)
@@ -168,10 +148,6 @@ class SymbolConvenienceTest extends kyo.test.Test[Any]:
         }
     }
 
-    // ── Leaf 136: owner-root-is-absent ────────────────────────────────────────
-    // Given: a symbol with ownerId == SymbolId(-1).
-    // When: Tasty.owner(s).
-    // Then: returns Maybe.Absent.
     "owner returns Absent for root symbol" in {
         val sym = makeClass(0, "Root", ownerId = -1)
         import AllowUnsafe.embrace.danger

@@ -1,14 +1,10 @@
 package kyo
 
-/** Tests for case class consistency of Position, ModuleDescriptor, Pickle, Version .
-  *
-  * 17, partial of 16. Pins: Steering rule on case classes for pure data.
-  */
+/** Tests for case class consistency of Position, ModuleDescriptor, Pickle, and Version. */
 class CaseClassConsistencyTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // 17 -- Position, ModuleDescriptor, Pickle, Version are case classes
     "Version is a case class with copy and show" in {
         val v1 = Tasty.Version(28, 8, 0)
         val v2 = v1.copy(minor = 9)
@@ -53,7 +49,6 @@ class CaseClassConsistencyTest extends kyo.test.Test[Any]:
         assert(md2.name == "java.lang")
     }
 
-    // 16 partial -- directSubclassesOf / Constant.show / Annotation.arguments synchronous Chunk
     "Constant.show is pure (no Classpath needed)" in {
         val c = Tasty.Constant.StringConst("test")
         val s = c.show

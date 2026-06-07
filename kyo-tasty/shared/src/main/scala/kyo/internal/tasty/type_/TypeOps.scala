@@ -73,7 +73,7 @@ object TypeOps:
             else if fqn.startsWith(ContextFunctionPrefix) && isDigitSuffix(fqn, ContextFunctionPrefix.length) then
                 // ContextFunctionN decodes to ContextFunction, not Function.
                 // This keeps context-function and plain-function types structurally distinct so callers
-                // can pattern-match on the dedicated case, per OQ-005 resolution.
+                // can pattern-match on the dedicated case.
                 if args.nonEmpty then Tasty.Type.ContextFunction(args.dropRight(1), args.last)
                 else Tasty.Type.Applied(base, args)
             else if fqn.startsWith(TuplePrefix) && isDigitSuffix(fqn, TuplePrefix.length) then

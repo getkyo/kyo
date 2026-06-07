@@ -1,17 +1,10 @@
 package kyo
 
-/** Tests for ErrorMode enum .
-  *
-  * Leaves: enum identity and CanEqual derivation.
-  */
+/** Tests for ErrorMode enum: identity, equality, and CanEqual derivation. */
 class ErrorModeTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // 2 -- ErrorMode enum replaces strict: Boolean
-    // Given: Classpath.init signatures
-    // When: overloads are exercised
-    // Then: no overload takes `strict: Boolean`; mode-aware overload accepts ErrorMode
     "ErrorMode.SoftFail and ErrorMode.FailFast are distinct enum cases" in {
         assert(Tasty.ErrorMode.SoftFail != Tasty.ErrorMode.FailFast)
         assert(Tasty.ErrorMode.SoftFail == Tasty.ErrorMode.SoftFail)

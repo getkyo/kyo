@@ -7,11 +7,7 @@ import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.query.TastyState
 import scala.collection.mutable
 
-/** plan-mandated tests pinning the effect-row contract for Symbol.
-  *
-  * Leaves:
-  *   6. Symbol.body delegates to cp.decodeBody (structural equality).
-  */
+/** Tests pinning the effect-row contract for Tasty.bodyTree. */
 class TastyEffectRowTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
@@ -60,14 +56,8 @@ class TastyEffectRowTest extends kyo.test.Test[Any]:
         ClasspathOrchestrator.coldLoadBinding(Seq("root"), Tasty.ErrorMode.SoftFail, Maybe.Absent, src, 1)
     end openSomeObjectCp
 
-    // ── Leaf 6: Symbol.body delegates to cp.decodeBody (reference equality via memoization) ─
-
-    // Given: a Symbol sym with a non-empty body in a loaded Classpath cp.
-    // When: sym.body(using cp, frame) and cp.bodyTree(sym) are both evaluated.
-    // Then: both calls return the SAME Tree instance (reference-equal via bodyMemo memoization).
-    // restores the reference-equality assertion deferred in D-02. The bodyMemo
-    // ConcurrentHashMap guarantees that the first decode result is stored and returned on all
-    // subsequent calls, producing the same object reference.
+    // The bodyMemo ConcurrentHashMap guarantees the first decode result is stored and returned
+    // on all subsequent calls, producing reference-equal Tree instances.
     "Symbol.body and Tasty.bodyTree return the same Tree instance via bodyMemo" in {
         Scope.run:
             Abort.run[TastyError](

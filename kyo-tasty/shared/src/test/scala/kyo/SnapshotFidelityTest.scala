@@ -22,10 +22,6 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
     import AllowUnsafe.embrace.danger
 
     // roundtrip-fidelity via in-memory snapshot
-    // Given: a cold + warm classpath from embedded fixtures via withSnapshotInMemory
-    // When: comparing symbolsAnnotatedWith("scala.deprecated").size and permittedSubclassIds
-    // Then: warm count >= cold count; permittedSubclassIds sizes match for any sealed class
-    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly via withRoundTrip (real stdlib); now uses embedded fixtures.
     "snapshot warm-load preserves annotations and permittedSubclassIds" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
@@ -66,10 +62,6 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
     }
 
     //   permits-roundtrip via in-memory snapshot
-    // Given: a cold + warm classpath from embedded fixtures via withSnapshotInMemory
-    // When: comparing permittedSubclassIds for any sealed class found in both
-    // Then: sizes match for any class that has permittedSubclassIds in cold
-    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly via withRoundTrip; now uses embedded fixtures.
     "permittedSubclassIds survives in-memory snapshot round-trip" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
@@ -98,10 +90,6 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
     }
 
     //   annotations-roundtrip via in-memory snapshot
-    // Given: a cold + warm classpath from embedded fixtures via withSnapshotInMemory
-    // When: comparing symbolsAnnotatedWith("scala.deprecated").size between cold and warm
-    // Then: warm count >= cold count (annotations survive in-memory snapshot round-trip)
-    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly with `>= 5` lower bound on real stdlib; now uses embedded fixtures (bound removed).
     "symbolsAnnotatedWith count survives in-memory snapshot round-trip" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
@@ -119,10 +107,6 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
     }
 
     //   javametadata-roundtrip via in-memory snapshot
-    // Given: a cold + warm classpath from embedded fixtures via withSnapshotInMemory
-    // When: finding any ClassLike with javaMetadata in cold; checking warm for same symbol
-    // Then: javaMetadata Present in warm (if any javaMetadata symbol exists in fixtures); fields match
-    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     // Migration: was jvmOnly (required real stdlib.class files); embedded fixtures suffice for shape assertion.
     "javaMetadata survives in-memory snapshot round-trip" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
@@ -159,11 +143,7 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
     }
 
     // Wire-format leaf 5: format-version-bumped
-    // Given: a snapshot file written with the code
-    // When: reading the format version constant
-    // Then: version is 12 (bumped for PLISTS__ section, handoff-fixes campaign)
     // History: set 6,b set 7, set 8, set 9, prior set 10, set 11, this set 12.
-    // Cross-platform: SnapshotFormat.minorVersion is a compile-time constant, no filesystem needed.
     "SnapshotFormat.FORMAT_VERSION reflects current minor version" in {
         assert(
             SnapshotFormat.minorVersion == 12,
@@ -172,10 +152,6 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
     }
 
     // New leaf: in-memory-roundtrip-preserves-symbols
-    // Given: a cold classpath from embedded fixtures and a warm in-memory snapshot round-trip
-    // When: comparing symbols.size between cold and warm
-    // Then: symbol count is preserved end-to-end via MemoryFileSource (no disk needed)
-    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; works on JVM, JS, Native.
     "in-memory snapshot round-trip preserves symbols count" in {
         TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
             assert(
@@ -186,10 +162,6 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
     }
 
     // old-snapshot-triggers-cold-decode
-    // Given: a synthetic snapshot byte stream with magic KRFL, major=1, minor=3 (old format)
-    // When: writing it to a MemoryFileSource and calling SnapshotReader.read
-    // Then: result is Failure(TastyError.SnapshotVersionMismatch) where found.minor == 3 and supported.minor == current
-    // Cross-platform: migrated from jvmOnly to use MemoryFileSource.
     "old-snapshot-triggers-cold-decode" in {
         Sync.defer:
             val fakeOld = new Array[Byte](36)

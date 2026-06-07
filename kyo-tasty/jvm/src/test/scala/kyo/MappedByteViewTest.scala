@@ -34,11 +34,7 @@ class MappedByteViewTest extends kyo.test.Test[Any]:
     end makeView
 
     "MappedByteViewTest: position is Long-typed after goto with cursor beyond Int.MaxValue".onlyJvm in {
-        // §839 case 3; direct MappedByteView cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
-        // Given: MappedByteView with logical end=5_000_000_000L, cursor positioned at 3_000_000_000L via goto.
-        // When: view.position is read.
-        // Then: equals 3_000_000_000L (Long return type preserved with no truncation).
         val (view, cleanup) = makeView(5_000_000_000L, 3_000_000_000L)
         try
             assert(view.position == 3_000_000_000L)
@@ -46,11 +42,7 @@ class MappedByteViewTest extends kyo.test.Test[Any]:
     }
 
     "MappedByteViewTest: readByte past Int.MaxValue raises IllegalStateException with mmap segment overflow".onlyJvm in {
-        // §839 case 3; direct MappedByteView overflow test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
-        // Given: MappedByteView with cursor at Int.MaxValue + 1L.
-        // When: readByte is called.
-        // Then: IllegalStateException is thrown with message containing "mmap segment overflow".
         val (view, cleanup) = makeView(Int.MaxValue.toLong + 2L, Int.MaxValue.toLong + 1L)
         try
             val ex = intercept[IllegalStateException](view.readByte())

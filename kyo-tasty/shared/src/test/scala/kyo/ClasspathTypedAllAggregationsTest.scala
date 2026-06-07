@@ -2,12 +2,12 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** typed Classpath all* aggregation accessors.
+/** Tests for typed Classpath all* aggregation accessors.
   *
-  * Fixture layout (all as a flat Chunk[Symbol], index == id.value): 0-2 -> 3 Class symbols (A, B, C) 3-4 -> 2 Trait symbols (T1, T2) 5 -> 1
-  * Object symbol (O) 6-10 -> 5 Method symbols (m1.m5) 11-12 -> 2 Val symbols (v1, v2) 13 -> 1 Var symbol (w1) 14 -> 1 TypeAlias symbol
-  * (ta1) 15 -> 1 OpaqueType symbol (ot1) 16 -> 1 AbstractType symbol (at1) 17 -> 1 TypeParam symbol (tp1) -- part of class A 18 -> 1
-  * Parameter symbol (p1) -- part of m1 19-20 -> 2 Package symbols (pkg, pkg.sub)
+  * Fixture has: 3 Class symbols (A, B, C), 2 Traits (T1, T2), 1 Object (O),
+  * 5 Methods (m1-m5), 2 Vals (v1, v2), 1 Var (w1), 1 TypeAlias (ta1),
+  * 1 OpaqueType (ot1), 1 AbstractType (at1), 1 TypeParam (tp1),
+  * 1 Parameter (p1), 2 Packages (pkg, pkg.sub).
   */
 class ClasspathTypedAllAggregationsTest extends kyo.test.Test[Any]:
 
@@ -205,11 +205,6 @@ class ClasspathTypedAllAggregationsTest extends kyo.test.Test[Any]:
                 errors = Chunk.empty
             )
 
-    // ── Leaf 118: allClassLike-typed ──────────────────────────────────────────
-    // Given: fixture with 3 classes, 2 traits, 1 object.
-    // When: cp.allClassLike
-    // Then: Chunk[Symbol.ClassLike] including Class, Trait, Object -- size 6 (3+2+1)
-    //   fix: allClassLike returns Chunk[Symbol.ClassLike] covering Class, Trait, Object, EnumCase.
     "allClassLike returns Chunk[ClassLike] of size 6 (3 Class + 2 Trait + 1 Object)" in {
         buildFixture.map: cp =>
             val cs: Chunk[Tasty.Symbol.ClassLike] = cp.allClassLike
@@ -217,10 +212,6 @@ class ClasspathTypedAllAggregationsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 119: allTraits-typed ─────────────────────────────────────────────
-    // Given: fixture with 2 traits.
-    // When: cp.allTraits
-    // Then: Chunk[Symbol.Trait] size 2
     "allTraits returns Chunk[Trait] of size 2" in {
         buildFixture.map: cp =>
             val ts: Chunk[Tasty.Symbol.Trait] = cp.allTraits
@@ -228,10 +219,6 @@ class ClasspathTypedAllAggregationsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 120: allObjects-typed ────────────────────────────────────────────
-    // Given: fixture with 1 object.
-    // When: cp.allObjects
-    // Then: Chunk[Symbol.Object] size 1
     "allObjects returns Chunk[Object] of size 1" in {
         buildFixture.map: cp =>
             val os: Chunk[Tasty.Symbol.Object] = cp.allObjects
@@ -239,10 +226,6 @@ class ClasspathTypedAllAggregationsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 121: allClassLike-equals-sum ─────────────────────────────────────
-    // Given: fixture with 3 classes + 2 traits + 1 object.
-    // When: cp.allClassLike.size
-    // Then: 6
     "allClassLike size equals sum of classes + traits + objects" in {
         buildFixture.map: cp =>
             val cl: Chunk[Tasty.Symbol.ClassLike] = cp.allClassLike
@@ -250,10 +233,6 @@ class ClasspathTypedAllAggregationsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 122: allMethods-typed ────────────────────────────────────────────
-    // Given: fixture with 5 methods.
-    // When: cp.allMethods
-    // Then: Chunk[Method] size 5
     "allMethods returns Chunk[Method] of size 5" in {
         buildFixture.map: cp =>
             val ms: Chunk[Tasty.Symbol.Method] = cp.allMethods
@@ -261,10 +240,6 @@ class ClasspathTypedAllAggregationsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 123: allVals-allVars-allFields ───────────────────────────────────
-    // Given: fixture with 2 vals, 1 var, 0 fields.
-    // When: invoke 3 accessors
-    // Then: sizes 2, 1, 0; typed returns
     "allVals=2, allVars=1, allFields=0" in {
         buildFixture.map: cp =>
             val vs: Chunk[Tasty.Symbol.Val]   = cp.allVals
@@ -276,10 +251,6 @@ class ClasspathTypedAllAggregationsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 124: allTypeAliases-allOpaqueTypes-allAbstractTypes ─────────────
-    // Given: fixture with 1 each.
-    // When: invoke 3 accessors
-    // Then: sizes 1, 1, 1; typed returns
     "allTypeAliases=1, allOpaqueTypes=1, allAbstractTypes=1" in {
         buildFixture.map: cp =>
             val tas: Chunk[Tasty.Symbol.TypeAlias]    = cp.allTypeAliases
@@ -291,10 +262,6 @@ class ClasspathTypedAllAggregationsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 125: allTypeParams-allParameters ─────────────────────────────────
-    // Given: fixture with 1 TypeParam and 1 Parameter.
-    // When: invoke 2 accessors
-    // Then: sizes 1, 1; typed returns
     "allTypeParams=1, allParameters=1" in {
         buildFixture.map: cp =>
             val tps: Chunk[Tasty.Symbol.TypeParam] = cp.allTypeParams
@@ -304,10 +271,6 @@ class ClasspathTypedAllAggregationsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 126: allPackages-typed ───────────────────────────────────────────
-    // Given: fixture with 2 packages (pkg and pkg.sub).
-    // When: cp.allPackages.size
-    // Then: 2; typed return
     "allPackages returns Chunk[Package] of size 2" in {
         buildFixture.map: cp =>
             val ps: Chunk[Tasty.Symbol.Package] = cp.allPackages
@@ -315,9 +278,7 @@ class ClasspathTypedAllAggregationsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 127: allUnresolved removed ────────────────────────────
-    // allUnresolved was deleted in (Cat 19). Symbol.Unresolved no longer exists.
-    // The test is replaced with a compile-time check that allUnresolved does not exist.
+    // Symbol.Unresolved no longer exists; compile-time check confirms it.
     "allUnresolved and Symbol.Unresolved are gone" in {
         val __tcErrors1 = compiletime.testing.typeCheckErrors("val _: kyo.Chunk[kyo.Tasty.Symbol.Unresolved] = ???").length
 

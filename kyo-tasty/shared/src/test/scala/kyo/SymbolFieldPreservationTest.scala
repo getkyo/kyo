@@ -6,11 +6,6 @@ import kyo.Tasty.SymbolId
 /** Confirms that every prior flat-Symbol field is reachable on the matching typed subtype. */
 class SymbolFieldPreservationTest extends kyo.test.Test[Any]:
 
-    // ── Leaf 15: id-on-every-subtype ─────────────────────────────────────────
-
-    // Given: one literal per subtype constructed at distinct deterministic ids.
-    // When: read.id on each.
-    // Then: every read returns the constructed id.
     ".id is accessible and correct on all 14 subtypes" in {
         val syms: Seq[(Int, Tasty.Symbol)] = Seq(
             1 -> Tasty.Symbol.Class(
@@ -168,11 +163,6 @@ class SymbolFieldPreservationTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 16: flags-on-every-subtype ──────────────────────────────────────
-
-    // Given: one literal per subtype with Flags(Flag.Synthetic) set.
-    // When: read.flags.contains(Flag.Synthetic).
-    // Then: returns true on all 14 subtypes.
     "Flags(Flag.Synthetic) is preserved on all 14 subtypes" in {
         val sf = Tasty.Flags(Tasty.Flag.Synthetic)
         val syms: Seq[Tasty.Symbol] = Seq(
@@ -330,11 +320,6 @@ class SymbolFieldPreservationTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 17: declaredType-on-term-subtypes ───────────────────────────────
-
-    // Given: literals for Method, Val, Var, Field, Parameter with declaredType=Maybe.Present(Type.Named(SymbolId(1))).
-    // When: read.declaredType.
-    // Then: all return Maybe.Present(Type.Named(SymbolId(1))).
     "declaredType is accessible on Method/Val/Var/Field/Parameter" in {
         val namedType = Tasty.Type.Named(SymbolId(1))
         val method = Tasty.Symbol.Method(
@@ -399,12 +384,7 @@ class SymbolFieldPreservationTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 18: parentTypes-on-classlike ────────────────────────────────────
-
-    // Given: Symbol.Class, Symbol.Trait, Symbol.Object literals with
     //   parentTypes=Chunk(Type.Named(SymbolId(2))).
-    // When: read.parentTypes.
-    // Then: returns Chunk(Type.Named(SymbolId(2))) on all three.
     "parentTypes is accessible on Class/Trait/Object and carries constructed value" in {
         val pt = Chunk(Tasty.Type.Named(SymbolId(2)))
         val cls = Tasty.Symbol.Class(
@@ -457,12 +437,7 @@ class SymbolFieldPreservationTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 19: permittedSubclassIds-on-class-and-trait ────────────────────
-
-    // Given: Symbol.Class and Symbol.Trait literals with
     //   permittedSubclassIds=Maybe.Present(Chunk(SymbolId(3))).
-    // When: read.permittedSubclassIds.
-    // Then: returns Maybe.Present(Chunk(SymbolId(3))) on both.
     "permittedSubclassIds is accessible on Class and Trait with correct value" in {
         val psi = Maybe(Chunk(SymbolId(3)))
         val cls = Tasty.Symbol.Class(

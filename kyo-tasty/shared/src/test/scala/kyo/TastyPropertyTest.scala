@@ -2,13 +2,8 @@ package kyo
 
 /** Property tests: every .tasty file in the embedded fixture set decodes without sentinels or unknown tags.
   *
-  * Probes:
-  *   Zero unknown tags: no `TastyError.UnknownTagInPosition` in cp.errors.
-  *   Zero Named(-1): no method declaredType reachable from cp.allMethods carries SymbolId(-1).
-  *
-  * Cross-platform: uses the embedded fixture set via TestClasspaths.withClasspath. No JVM filesystem required.
-  *
-  * Proposal 5 of-strict (HARD RULE 13).
+  * Verifies zero UnknownTagInPosition errors in cp.errors and zero Named(-1) sentinels in allMethods
+  * declaredTypes. Cross-platform via the embedded fixture set.
   */
 class TastyPropertyTest extends kyo.test.Test[Any]:
 

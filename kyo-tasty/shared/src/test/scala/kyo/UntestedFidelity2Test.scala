@@ -32,10 +32,6 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(10))
 
     // dependent-function-type-decodes
-    // Given: standard classpath methods
-    // When: walking declaredType for result types that reference a parameter symbol (dependent type)
-    // Then: at least one method has a declared type whose result chain reaches a Named or TermRef pointing at a Parameter
-    // Cross-platform: uses TestClasspaths.withClasspath which works on all platforms; passes unconditionally
     // (dependent types may not appear in embedded fixtures but the test is informational).
     "dependent function types decode with result type referencing parameter" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
@@ -49,10 +45,6 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     }
 
     // capture-checking-deferred-documented
-    // Given: the UNTESTED coverage table inlined as a Scala constant (same content as Untested.txt)
-    // When: checking the row
-    // Then: the row contains "DEFERRED per OQ-007"
-    // Cross-platform: content inlined from Untested.txt; no classloader needed.
     "capture-checking deferred row present in Untested.txt" in {
         val content = UntestedFidelity2Test.untestedTxtContent
         assert(
@@ -68,9 +60,6 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
 
     // multi-version-stdlib-failfast-aborts
     // annotation-processor-output-resolves
-    // Given: the standard classpath (Java symbols from JavaSimpleFixture.class embedded in EmbeddedJavaFixtures)
-    // When: counting Java-defined symbols
-    // Then: count > 0
     // Java-defined (Flag.JavaDefined) classfile decode coverage now available on JS and Native via
     // EmbeddedJavaFixtures.javaSimpleFixtureClassfile registered as a standalone root in TestClasspaths.
     "Java classfile decoding path active in standard classpath (AP structural guard)" in {
@@ -84,10 +73,6 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     }
 
     // snapshot-version-downgrade-falls-back
-    // Given: a v3-format.krfl byte array (major=1, minor=3) written to a MemoryFileSource
-    // When: calling SnapshotReader.read on the path
-    // Then: result is a TastyError.SnapshotVersionMismatch (version 3 is below current)
-    // Cross-platform: v3FormatKrflBytes is a pure byte array; MemoryFileSource replaces JVM filesystem.
     // Migration: was jvmOnly via TestClasspaths2.v3FormatKrflBytes + createTempDir + JvmFileSource.
     "old-version .krfl snapshot causes SnapshotVersionMismatch" in {
         import kyo.internal.MemoryFileSource
@@ -117,10 +102,6 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     }
 
     // two-cold-writes-logically-equal
-    // Given: two independent in-memory cold-init invocations via TestClasspaths2.withSnapshotInMemory
-    // When: loading each snapshot as a warm classpath and comparing symbol/fqnIndex counts
-    // Then: both warm classpaths are structurally equivalent
-    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory (no filesystem needed).
     "two independent cold-init invocations produce logically equivalent snapshots" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (cold1, warm1) =>
             TestClasspaths2.withSnapshotInMemory().map: (cold2, warm2) =>
@@ -143,11 +124,6 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
                 succeed
     }
 
-    // untested-coverage-table-row-count (HARD RULE 11)
-    // Given: the UNTESTED coverage table inlined as a Scala constant (same content as Untested.txt)
-    // When: counting non-empty resolution rows (lines starting with F-)
-    // Then: exactly 7 rows; 1 DEFERRED (OQ-007), 6 RESOLVED
-    // Cross-platform: content inlined from Untested.txt; no classloader needed.
     "Untested.txt has 7 rows (6 RESOLVED + 1 DEFERRED per OQ-007)" in {
         val content = UntestedFidelity2Test.untestedTxtContent
         val rows    = content.split("\n").filter(line => line.startsWith("F-") && !line.startsWith("# "))

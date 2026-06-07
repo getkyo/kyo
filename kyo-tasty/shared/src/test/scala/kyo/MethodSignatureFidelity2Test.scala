@@ -5,27 +5,16 @@ import kyo.internal.TestClasspaths
 
 /** Fidelity tests for Method.declaredType correctness.
   *
-  * The routing fix eliminates the 78,501 warning-induced Named(-1)s from parentTypes, and the
-  * TYPEREFdirect tracked-ID fix eliminates the remaining Named(-1)s in declaredType (including
-  * scala.Tuple.splitAt and scala.Tuple.++).
+  * Verifies that no Named(-1) sentinels appear in method declaredTypes, that Type.Applied instances
+  * are decoded correctly, and that declaredType.show produces a non-empty result on all platforms.
   *
-  * All core assertions use TestClasspaths.withClasspath which works on JS/Native via embedded
-  * fixtures. On JS/Native the scala.Tuple symbol is not present (no stdlib), so those checks
+  * On JS/Native the scala.Tuple symbol is not present (no stdlib), so those checks
   * produce succeed (symbol Absent). The all-stdlib-methods case exercises the embedded fixture set.
-  *
-  * The ADT-shape parity check verifies that
-  * cp.allMethods.headOption.map(_.declaredType.show) produces the same string on every platform
-  * for the same embedded fixture set.
   */
 class MethodSignatureFidelity2Test extends Fidelity2TestBase:
 
     import AllowUnsafe.embrace.danger
 
-    // tuple-splitAt-no-sentinel
-    // Given: cp.findSymbol("scala.Tuple").Maybe.fromOption(get.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "splitAt")).get.asInstanceOf[Symbol.Method].declaredType
-    // When: traversing every Named inside the type recursively
-    // Then: no Named(sym).symbolId.value == -1 is found; before fix second Applied arg was Named(-1)
-    // On JS/Native: scala.Tuple is not in the embedded fixture set; the leaf produces succeed (Absent branch).
     "scala.Tuple.splitAt declaredType contains no Named(-1)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findSymbol("scala.Tuple") match
@@ -54,11 +43,6 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
             end match
     }
 
-    // tuple-plusplus-no-sentinel
-    // Given: scala.Tuple.++ decoded the same way
-    // When: traversing the declaredType recursively
-    // Then: no Named(-1) found; before fix (probe-001.log line 39873) second Applied arg was Named(-1)
-    // On JS/Native: scala.Tuple is not in the embedded fixture set; the leaf produces succeed (Absent branch).
     "scala.Tuple.++ declaredType contains no Named(-1)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findSymbol("scala.Tuple") match
@@ -87,12 +71,6 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
             end match
     }
 
-    // all-stdlib-methods-no-applied-arg-sentinels
-    // Given: cp.allMethods
-    // When: walking every method's declaredType recursively using Type.foreach
-    // Then: the count of Named(id) where id.value == -1 reachable from any method's declaredType is 0;
-    //       before fix at least 2 (probe-001.log) and likely dozens
-    // On JS/Native: allMethods from embedded fixtures is a small set; the sentinel count must still be 0.
     "all-stdlib-methods have zero Named(-1) in declaredType" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var sentinelCount   = 0
@@ -115,12 +93,6 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // ADT-shape-identical-across-platforms
-    // Given: each platform's cp.allMethods.headOption.map(_.declaredType)
-    // When: serializing via Type.show on each (using the embedded fixture set's first method)
-    // Then: every platform produces a non-empty string for the same embedded fixture set
-    // Note: exact byte-equality across platforms is a property of the TASTy decoder + embedded bytes being identical;
-    //   this leaf verifies the show function works without panicking and produces a deterministic non-empty result.
     "Phase-2.10 (HARD RULE 11): cp.allMethods.headOption.declaredType.show is non-empty on all platforms" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             Tasty.withClasspath(cp):
@@ -134,22 +106,5 @@ class MethodSignatureFidelity2Test extends Fidelity2TestBase:
                                 assert(shown.nonEmpty, s"Expected non-empty show string for declaredType variant of method ${m.name}")
                         .andThen(succeed)
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // 2.11 backlog: RESOLVED 2026-06-02.
-    // All 9 PENDING leaves removed after verifying coverage. Each F-id is exercised by an active assertion
-    // in the cited test file (verdict C: already-covered).
-    // Coverage map:
-    //                          ConfirmationFidelity2Test (empty-classpath-zero-symbols-zero-errors)
-    //                          ConfirmationFidelity2Test (givens-enumeration-baseline) +
-    //                                   TypeAdtFidelity2Test (OrType reachable from allMethods)
-    //   UntestedFidelity2Test (dependent-function-type-decodes)
-    //   UntestedFidelity2Test (DEFERRED per OQ-007: capture sets need -Ycc)
-    //   UntestedFidelity2Test (multi-version-stdlib-failfast-aborts)
-    //   UntestedFidelity2Test (annotation-processor-output-resolves)
-    //   UntestedFidelity2Test (concurrent-reader-writer-no-corruption)
-    //   UntestedFidelity2Test (snapshot-version-downgrade-falls-back)
-    //   SnapshotFidelity2Test (two in-memory cold-inits equivalent)
-    // ─────────────────────────────────────────────────────────────────────────
 
 end MethodSignatureFidelity2Test

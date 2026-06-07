@@ -14,7 +14,6 @@ import kyo.internal.tasty.snapshot.DigestComputer.JarDigestEntry
   */
 class DigestComputerJarTest extends kyo.test.Test[Any]:
 
-    // digestForRoot for byte-identical JARs with different mtimes returns equal values.
     "digestForRoot stable across mtime-only copy of real JAR" in {
         val dir     = Files.createTempDirectory("kyo-dct-leaf1").toAbsolutePath.toString
         val jarA    = s"$dir/A.jar"
@@ -35,7 +34,6 @@ class DigestComputerJarTest extends kyo.test.Test[Any]:
         assert(dA == dB, s"mtime-only copy must produce same CEN-CRC digest: $dA vs $dB")
     }
 
-    // digestForRoot changes when class bytes differ (CRC32 in CEN changes).
     "digestForRoot changes when class bytes change (CEN CRC32 differs)" in {
         val dir    = Files.createTempDirectory("kyo-dct-leaf2").toAbsolutePath.toString
         val jarA   = s"$dir/A.jar"
@@ -47,7 +45,6 @@ class DigestComputerJarTest extends kyo.test.Test[Any]:
         assert(dA != dM, s"byte-content change must produce different digestForRoot: $dA vs $dM")
     }
 
-    // jrt:/ compute returns a stable non-empty 8-byte result.
     "jrt:/ compute returns a stable 8-byte result" in {
         import kyo.internal.tasty.query.PlatformFileSource
         val src = PlatformFileSource.get

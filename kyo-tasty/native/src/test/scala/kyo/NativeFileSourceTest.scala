@@ -2,13 +2,11 @@ package kyo
 
 import kyo.internal.tasty.query.NativeFileSource
 
-/** T5 Native parity test for NativeFileSource POSIX file read.
+/** Tests for NativeFileSource POSIX file read.
   *
   * Writes a 100-byte file via NativeFileSource.write, then reads it back via NativeFileSource.read and verifies the returned bytes equal
   * the original. Must live in native/src/test because it references NativeFileSource directly (a Scala Native object with POSIX FFI
   * bindings).
-  *
-  * Native-only path.
   */
 class NativeFileSourceTest extends kyo.test.Test[Any]:
 

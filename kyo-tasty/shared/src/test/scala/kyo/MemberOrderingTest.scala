@@ -1,20 +1,10 @@
 package kyo
 
-/** Cat 5 member ordering per CONTRIBUTING.md.
-  *
-  * Leaf 1 (noPublicSymbolRemoved): compile-time probe confirming every public entry point on
-  *   object Tasty that was re-ordered in still resolves after the reorder.
-  *
-  * Leaf 2 (withClasspathPrecedesClasspathAccess): behavioral test confirming the re-order does not
-  *   change call-time semantics: withClasspath (suspend/create) wraps classpath (access) and
-  *   the scope-open -> accessor -> close path produces a valid Classpath.
+/** Tests for member ordering on object Tasty: verifies that re-ordering public entry points does not
+  * remove them or change call-time semantics.
   */
 class MemberOrderingTest extends kyo.test.Test[Any]:
 
-    // ── Leaf 1: noPublicSymbolRemoved ────────────────────────────────────────
-    // Given: every public entry point on object Tasty that was touched by.
-    // When: compile-time typeCheckErrors probes for each name.
-    // Then: every probe is free of "not found" errors (the path still resolves).
     "noPublicSymbolRemoved -- every reordered entry point still resolves" in {
         // withClasspath (roots overload)
         val e1 = compiletime.testing.typeCheckErrors(
@@ -67,11 +57,6 @@ class MemberOrderingTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 2: withClasspathPrecedesClasspathAccess ─────────────────────────
-    // Given: an empty roots list (SoftFail; produces an empty-but-valid Classpath).
-    // When: Tasty.withClasspath(Seq.empty)(Tasty.classpath) is executed.
-    // Then: the result is a Classpath; symbols.size >= 0; no exception or abort.
-    //       This exercises the full scope-open -> accessor -> close path after the reorder.
     "withClasspathPrecedesClasspathAccess -- re-order does not change call-time semantics" in {
         Tasty.withClasspath(Seq.empty[String])(Tasty.classpath).map: cp =>
             assert(cp.symbols.size >= 0, s"Classpath.symbols.size must be non-negative; got ${cp.symbols.size}")

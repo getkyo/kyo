@@ -21,9 +21,7 @@ import kyo.internal.tasty.query.TastyState
   *     (fixture additions for extended coverage).
   *
   *   The `roots` parameter mirrors the JVM surface but is ignored; embedded fixtures are always loaded.
-  *   HARD RULE 7: the MemoryFileSource is internal to the loading call; it is not exposed to callers.
-  *
-  * Scaladoc: 8-35 lines.
+  *   The MemoryFileSource is internal to the loading call; it is not exposed to callers.
   */
 private[kyo] object TestClasspaths:
 

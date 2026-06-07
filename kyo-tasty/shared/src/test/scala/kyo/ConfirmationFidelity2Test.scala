@@ -5,12 +5,8 @@ import kyo.internal.TestClasspaths
 import kyo.internal.TestClasspaths2
 import kyo.internal.tasty.query.TastyState
 
-/** Confirmation pins for second-round decoder fidelity, exercised cross-platform via MemoryFileSource and ClasspathOrchestrator.init:
-  *   - empty classpath has zero symbols and zero errors
-  *   - truncated snapshot bytes fail with a sealed TastyError
-  *   - bit-flipped magic bytes produce a sealed TastyError, not a panic
-  *   - mid-stream truncation under SoftFail yields zero symbols
-  *   - Java symbols from embedded JavaSimpleFixture round-trip via MemoryFileSource
+/** Confirmation tests for decoder fidelity using MemoryFileSource and ClasspathOrchestrator.init:
+  * empty classpath, truncated snapshot, bit-flipped magic, mid-stream truncation, and Java symbols.
   */
 class ConfirmationFidelity2Test extends Fidelity2TestBase:
 
@@ -23,11 +19,6 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // truncated-snapshot-rejected-via-MemoryFileSource
-    // Given: a truncated KRFL byte array written to a MemoryFileSource
-    // When: calling SnapshotReader.read on the truncated path
-    // Then: result is a TastyError failure (truncated file rejected)
-    // Cross-platform: uses MemoryFileSource; no filesystem needed.
     "truncated .krfl snapshot fails with TastyError via in-memory reader" in {
         import kyo.internal.MemoryFileSource
         import kyo.internal.tasty.snapshot.SnapshotReader
@@ -48,11 +39,6 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
                         throw t
     }
 
-    // bit-flipped-magic-produces-structured-error
-    // Given: a.tasty file with bit-flipped magic byte constructed in memory
-    // When: loading via Tasty.Classpath.init with the MemoryFileSource root
-    // Then: cp.errors.head pattern-matches as a sealed TastyError variant
-    // Cross-platform: uses MemoryFileSource; no filesystem needed.
     "cp.errors entries pattern-match as sealed TastyError variants via in-memory source" in {
         import kyo.internal.MemoryFileSource
         import kyo.internal.tasty.query.ClasspathOrchestrator
@@ -83,11 +69,6 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
                 succeed
     }
 
-    // mid-stream-truncated-produces-0-symbols
-    // Given: a.tasty file truncated mid-stream (valid magic + version header, then truncated) in memory
-    // When: loading via ClasspathOrchestrator.init with SoftFail
-    // Then: cp.errors.nonEmpty and cp.symbols.size == 0 (file-level isolation, no partial symbols)
-    // Cross-platform: uses MemoryFileSource; no filesystem needed.
     "SoftFail mid-stream malformed section produces 0 symbols via in-memory source" in {
         import kyo.internal.MemoryFileSource
         import kyo.internal.tasty.query.ClasspathOrchestrator
@@ -111,10 +92,6 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
                 succeed
     }
 
-    // java-symbols-present-in-standard-classpath (: Java symbols confirmation)
-    // Given: the standard classpath loaded via TestClasspaths.withClasspath (includes EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
-    // When: counting cp.symbols.count(_.isJava)
-    // Then: count > 0 (Java symbols from JavaSimpleFixture.class embedded cross-platform)
     "Java-defined symbols present in standard classpath (java interop guard)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val javaCount = cp.symbols.count(_.isJava)
@@ -125,10 +102,6 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // round-trip findClass on embedded Java fixture via MemoryFileSource
-    // Given: a MemoryFileSource with JavaSimpleFixture.class registered as a standalone root
-    // When: Tasty.findClass("kyo.fixtures.JavaSimpleFixture")
-    // Then: Maybe.Present(c) where c.isJava == true
     "findClass(kyo.fixtures.JavaSimpleFixture) returns Present with isJava via MemoryFileSource" in {
         import kyo.internal.MemoryFileSource
         import kyo.internal.tasty.query.Binding

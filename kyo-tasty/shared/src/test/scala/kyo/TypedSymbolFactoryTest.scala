@@ -5,10 +5,7 @@ import kyo.internal.tasty.symbol.SymbolDescriptor
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.symbol.TypedSymbolFactory
 
-/** Plan-mandated tests for TypedSymbolFactory.
-  *
-  * Verifies that TypedSymbolFactory.from dispatches on SymbolKind and produces the correct typed Symbol subtype.
-  */
+/** Verifies that TypedSymbolFactory.from dispatches on SymbolKind and produces the correct typed Symbol subtype. */
 class TypedSymbolFactoryTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
@@ -38,9 +35,6 @@ class TypedSymbolFactoryTest extends kyo.test.Test[Any]:
         )
 
     // dispatch-on-kind-class
-    // Given: SymbolDescriptor d.kind=Class
-    // When: TypedSymbolFactory.from(d)
-    // Then: Symbol.Class id=1
     "dispatch-on-kind-class: from(d) with kind=Class returns Symbol.Class with id=1" in {
         val d   = makeDesc(id = 1, kind = SymbolKind.Class, name = "Foo")
         val sym = TypedSymbolFactory.from(d)
@@ -54,9 +48,6 @@ class TypedSymbolFactoryTest extends kyo.test.Test[Any]:
     }
 
     // dispatch-on-kind-method-paramlists
-    // Given: SymbolDescriptor d.kind=Method d.paramListIds Chunk x1x2
-    // When: from(d) read paramListIds
-    // Then: Symbol.Method; paramListIds==Chunk(Chunk(SymbolId(10), SymbolId(11)))
     "dispatch-on-kind-method-paramlists: paramListIds propagated correctly" in {
         val d = makeDesc(id = 5, kind = SymbolKind.Method, name = "foo")
         d.paramListIds = Chunk(Chunk(10, 11))
@@ -72,9 +63,6 @@ class TypedSymbolFactoryTest extends kyo.test.Test[Any]:
     }
 
     // dispatch-on-kind-typeparam-variance
-    // Given: SymbolDescriptor d.kind=TypeParam d.flags=CoVariant
-    // When: from(d) read variance
-    // Then: Symbol.TypeParam; variance==Covariant
     "dispatch-on-kind-typeparam-variance: Covariant flag produces Variance.Covariant" in {
         val coFlags = Tasty.Flags(Tasty.Flag.CoVariant)
         val d       = makeDesc(id = 7, kind = SymbolKind.TypeParam, flags = coFlags, name = "A")
@@ -87,9 +75,6 @@ class TypedSymbolFactoryTest extends kyo.test.Test[Any]:
     }
 
     // dispatch-on-kind-package
-    // Given: SymbolDescriptor d.kind=Package d.declarationIds Seq(1,2,3)
-    // When: from(d) read memberIds
-    // Then: Symbol.Package; memberIds==Chunk(SymbolId(1), SymbolId(2), SymbolId(3))
     "dispatch-on-kind-package: declarationIds become memberIds" in {
         val d = makeDesc(id = 0, kind = SymbolKind.Package, name = "p")
         d.declarationIds = Chunk(1, 2, 3)
@@ -102,9 +87,6 @@ class TypedSymbolFactoryTest extends kyo.test.Test[Any]:
     }
 
     // dispatch-on-kind-unresolved-id-minus-one
-    // Given: SymbolDescriptor d.kind=Unresolved d.id=-1
-    // When: from(d)
-    // Then: Symbol.Unresolved id=SymbolId(-1)
     "dispatch-on-kind-unresolved-id-minus-one: Symbol.Unresolved id=SymbolId(-1)" in {
         val d   = makeDesc(id = -1, kind = SymbolKind.Package, name = "<unresolved>")
         val sym = TypedSymbolFactory.from(d)

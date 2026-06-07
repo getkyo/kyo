@@ -69,13 +69,9 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
                 case None => Abort.fail(TastyError.FileNotFound(path))
     end MemoryFileSource
 
-    // ── Leaf 1: roundtrip_meters_extension_methods_preserve_paramListIds ──────
-    // Given: cross-platform classpath loaded from embedded fixtures (Meters opaque type).
     //   On JVM: TestClasspaths.kyoTastyFixtures (minimal; only the fixture classes needed
     //           for kyo.fixtures.Meters; avoids loading scala-library which takes 2+ minutes).
     //   On JS/Native: TestClasspaths.withClasspath() uses the embedded MemoryFileSource.
-    // When: SnapshotWriter.write + SnapshotReader.read round-trip.
-    // Then: the Meters value extension method has identical paramListIds shape after reload;
     //       assert inner-Chunk sizes match and outer-Chunk size matches.
     // Pins: INV-H2 (snapshot round-trip preserves paramListIds shape).
     "roundtrip_meters_extension_methods_preserve_paramListIds" in {
@@ -142,10 +138,6 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
                         throw t
     }
 
-    // ── Leaf 2: roundtrip_empty_paramListIds_for_noarg_method ─────────────────
-    // Given: a synthetic Method with paramListIds = Chunk(Chunk.empty) (empty clause).
-    // When: SnapshotWriter.serializeToBytes + SnapshotReader.readFromBytes round-trip.
-    // Then: the warm-loaded method has paramListIds == Chunk(Chunk.empty) (not Chunk.empty).
     // Pins: INV-H2 (empty-clause preserved; distinct from no-parameter-lists).
     "roundtrip_empty_paramListIds_for_noarg_method" in {
         val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
@@ -207,10 +199,6 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 3: minor_11_snapshot_rejected_with_version_mismatch ─────────────
-    // Given: a synthesised KRFL byte array with major=1, minor=11, valid header, sectionCount=0.
-    // When: SnapshotReader.readFromBytes is invoked.
-    // Then: result is Failure(TastyError.SnapshotVersionMismatch) with found.minor==11
     //       and supported.minor==12.
     // Pins: INV-H5 (REJECT-old policy; no synthesis for minor < 12).
     "minor_11_snapshot_rejected_with_version_mismatch" in {
@@ -247,10 +235,6 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // ── Leaf 4: plists_section_present_in_minor_12_writer_output ─────────────
-    // Given: a minimal synthetic classpath written by SnapshotWriter.serializeToBytes.
-    // When: the raw bytes are scanned for the 8-char tag "PLISTS__" in the section index.
-    // Then: the tag is found (presence check; confirms the writer always emits the section).
     // Pins: writer always emits PLISTS__ unconditionally (even when count=0).
     "plists_section_present_in_minor_12_writer_output" in {
         val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
@@ -289,7 +273,6 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 5: multi_list_method_roundtrip ───────────────────────────────────
     // No multi-parameter-list method exists in the current fixture set.
     // The fixture (FixtureClasses.scala) only defines single-list and no-arg methods.
     // This leaf is .ignore per plan instruction: document the gap and skip rather than silently drop.

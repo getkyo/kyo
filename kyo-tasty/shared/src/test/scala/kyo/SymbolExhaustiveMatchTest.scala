@@ -6,11 +6,6 @@ import kyo.Tasty.SymbolId
 /** Confirms exhaustive match on the Symbol hierarchy under -Xfatal-warnings. */
 class SymbolExhaustiveMatchTest extends kyo.test.Test[Any]:
 
-    // ── Leaf 13: exhaustive-match-14-cases-compiles ──────────────────────────
-
-    // Given: a 14-branch match on Symbol with no wildcard.
-    // When: the test file compiles under -Xfatal-warnings.
-    // Then: compiles cleanly (no "match may not be exhaustive" warning).
     "exhaustive 14-case match on Symbol compiles cleanly" in {
         def kindLabel(s: Tasty.Symbol): String = s match
             case _: Tasty.Symbol.Class        => "Class"
@@ -32,11 +27,6 @@ class SymbolExhaustiveMatchTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 14: exhaustive-classlike-3-cases ────────────────────────────────
-
-    // Given: a 3-branch match on Symbol.ClassLike with no wildcard.
-    // When: the test file compiles under -Xfatal-warnings.
-    // Then: compiles cleanly.
     "exhaustive 3-case match on Symbol.ClassLike compiles cleanly" in {
         def cl(c: Tasty.Symbol.ClassLike): String = c match
             case _: Tasty.Symbol.Class  => "C"

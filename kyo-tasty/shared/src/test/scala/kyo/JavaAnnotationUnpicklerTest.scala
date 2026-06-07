@@ -38,21 +38,13 @@ class JavaAnnotationUnpicklerTest extends kyo.test.Test[Any]:
         buf
     end buildUtf8OnlyPool
 
-    // Test 1: @Deprecated (no element-value pairs).
-    // Pool: [1]=Utf8("Ljava/lang/Deprecated;")
-    // readAnnotations body: u2 num_annotations=1,
-    //   annotation: u2 type_index=1, u2 num_pairs=0
-    // Assert: result is Chunk of one JavaAnnotation; annotationClass.name.asString == "java.lang.Deprecated";
-    //         values map is empty.
     "readAnnotations decodes @Deprecated (no pairs) into JavaAnnotation with name java.lang.Deprecated" in {
         val poolBytes = buildUtf8OnlyPool("Ljava/lang/Deprecated;")
         val poolView  = ByteView(poolBytes)
         Abort.run(ConstantPool.read(poolView, "<test>")).map:
-            case Result.Failure(err)  => fail(s"Pool read failed: $err")
-            case Result.Panic(ex)     => fail(s"Pool read panicked: $ex")
+            case Result.Failure(err) => fail(s"Pool read failed: $err")
+            case Result.Panic(ex)    => fail(s"Pool read panicked: $ex")
             case Result.Success(pool) =>
-                // Annotation attribute body: u2 num_annotations=1,
-                //   annotation: u2 type_index=1, u2 num_pairs=0
                 val annBytes = Array[Byte](
                     0x00, 0x01, // num_annotations = 1
                     0x00, 0x01, // type_index = 1 (Utf8 "Ljava/lang/Deprecated;")
@@ -73,31 +65,13 @@ class JavaAnnotationUnpicklerTest extends kyo.test.Test[Any]:
                         assert(ann.values.isEmpty, s"Expected empty values map, got ${ann.values}")
     }
 
-    // Test 2: @Foo({"a", "b"}) -- single pair named "value" with array of two strings.
-    // Pool: [1]=Utf8("LFoo;"), [2]=Utf8("value"), [3]=Utf8("a"), [4]=Utf8("b")
-    // readAnnotations body: u2 num_annotations=1,
-    //   annotation: u2 type_index=1, u2 num_pairs=1,
-    //     pair: u2 name_index=2, element_value: u1 tag='[', u2 num_values=2,
-    //       element_value: u1 tag='s', u2 const_index=3
-    //       element_value: u1 tag='s', u2 const_index=4
-    // Assert: values == Map(Name("value") -> ArrayVal(Chunk(StringVal("a"), StringVal("b"))))
     "readAnnotations decodes @Foo(value={\"a\",\"b\"}) into ArrayVal(StringVal,StringVal)" in {
         val poolBytes = buildUtf8OnlyPool("LFoo;", "value", "a", "b")
         val poolView  = ByteView(poolBytes)
         Abort.run(ConstantPool.read(poolView, "<test>")).map:
-            case Result.Failure(err)  => fail(s"Pool read failed: $err")
-            case Result.Panic(ex)     => fail(s"Pool read panicked: $ex")
+            case Result.Failure(err) => fail(s"Pool read failed: $err")
+            case Result.Panic(ex)    => fail(s"Pool read panicked: $ex")
             case Result.Success(pool) =>
-                // Annotation attribute body:
-                //   u2 num_annotations=1
-                //   annotation:
-                //     u2 type_index=1 ("LFoo;")
-                //     u2 num_pairs=1
-                //     pair:
-                //       u2 name_index=2 ("value")
-                //       element_value: u1 '[', u2 num_values=2,
-                //         u1 's', u2 3 ("a")
-                //         u1 's', u2 4 ("b")
                 val annBytes = Array[Byte](
                     0x00,
                     0x01, // num_annotations = 1

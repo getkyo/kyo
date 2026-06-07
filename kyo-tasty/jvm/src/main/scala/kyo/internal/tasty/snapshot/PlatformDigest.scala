@@ -12,8 +12,6 @@ import kyo.internal.tasty.query.JarCentralDirectory
   * On missing or corrupt jars, JarCentralDirectory.read propagates IOException rather than returning Chunk.empty;
   * silent Chunk.empty would yield digest 0L causing false-positive cache hits. The IOException surfaces as a Kyo Panic in any
   * Sync.defer context, making the failure loud and observable.
-  *
-  * Scaladoc: 8-35 lines.
   */
 private[kyo] object PlatformDigest:
 

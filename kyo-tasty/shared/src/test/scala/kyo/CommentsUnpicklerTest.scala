@@ -11,8 +11,6 @@ import scala.collection.immutable.IntMap
 
 /** Tests for CommentsUnpickler.read and Tasty.Symbol.scaladoc.
   *
-  * Plan G3 tests 1-6.
-  *
   * The Comments section format (from dotty CommentUnpickler.scala):
   * {{{
   * Entry = Addr Utf8 LongInt
@@ -27,8 +25,6 @@ import scala.collection.immutable.IntMap
 class CommentsUnpicklerTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
-
-    // ── Encoding helpers ─────────────────────────────────────────────────────
 
     /** Encode a small Nat (0-127) as a single TASTy byte. */
     private def encNat(n: Int): Array[Byte] =
@@ -69,10 +65,6 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
         )
     end makeTestSymbol
 
-    // ── Test 1: documented class produces entry containing the scaladoc text ─
-
-    // Test 1: a TASTy Comments section with a documented class produces a result with an
-    // entry for that symbol containing the documented text.
     "CommentsUnpickler: documented class entry produces result with comment text" in {
         val sym     = makeTestSymbol("Foo")
         val addrMap = IntMap(10 -> sym) // addr 10 -> sym
@@ -91,10 +83,6 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // ── Test 2: no Comments section payload returns empty map ────────────────
-
-    // Test 2: an empty Comments section (zero-length payload) returns an empty map without
-    // error.
     "CommentsUnpickler: empty payload returns empty map without error" in {
         val view = ByteView(Array.empty[Byte])
         Abort.run[TastyError](CommentsUnpickler.read(view, IntMap.empty)).map:
@@ -106,10 +94,6 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // ── Test 3: malformed section (truncated mid-entry) fails with MalformedSection ─
-
-    // Test 3: a Comments section truncated mid-entry produces
-    // Abort.fail(TastyError.MalformedSection("Comments".)).
     "CommentsUnpickler: truncated section produces MalformedSection error" in {
         // Write addr Nat(5) = 0x85, then start a Utf8: Nat(20) = 0x94, then only 3 bytes of a
         // 20-byte string. ArrayIndexOutOfBoundsException triggers MalformedSection.
@@ -135,9 +119,6 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // ── Test 4: symbol with no comment has no map entry; with comment has an entry ─
-
-    // Test 4 : CommentsUnpickler returns a LongMap keyed by sym.id.
     // A symbol at an addr that has a comment entry appears in the map; one without does not.
     "CommentsUnpickler: symbol with comment appears in returned map; symbol without does not" in {
         val symWithDoc    = makeTestSymbol("WithDoc")
@@ -167,10 +148,6 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // ── Test 5: two sibling definitions are independently accessible ─────────
-
-    // Test 5: comments from two sibling definitions in the same file are independently
-    // accessible with no cross-contamination between addresses.
     "CommentsUnpickler: two sibling definitions have independent scaladoc entries" in {
         val symAlpha = makeTestSymbol("Alpha")
         val symBeta  = makeTestSymbol("Beta")
@@ -206,11 +183,7 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // ── Test 6: Java classfile symbol always has scaladoc == Absent ──────────
-
-    // Test 6: a Java-sourced classfile symbol always has scaladoc == Absent because
-    // classfiles have no Comments section; ClassfileUnpickler sets _scaladoc to Absent for all
-    // classfile symbols.
+    // Java classfiles have no Comments section; ClassfileUnpickler sets scaladoc to Absent.
     "CommentsUnpickler: Java classfile symbol always has scaladoc == Absent" in {
         val classBytes = kyo.fixtures.Embedded.arrayRecordClass
         val arena      = new TypeArena

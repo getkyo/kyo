@@ -8,10 +8,6 @@ import scala.collection.mutable.ArrayBuffer
   */
 class TypePolishTest extends kyo.test.Test[Any]:
 
-    // ── Leaf 155: symbol-named ───────────────────────────────────────────
-    // Given: Type.Named(SymbolId(5)) in a cp where SymbolId(5) is a Symbol.Class.
-    // When: Tasty.typeSymbol(t)
-    // Then: returns Maybe.Present(c) where c.id == SymbolId(5)
     "symbol returns Present(sym) for Type.Named" in {
         val classSym = Tasty.Symbol.Class(
             SymbolId(5),
@@ -44,10 +40,6 @@ class TypePolishTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // ── Leaf 156: symbol-non-named ──────────────────────────────────────
-    // Given: Type.Function(Chunk.empty, Type.Named(SymbolId(5)))
-    // When: Tasty.typeSymbol(t)
-    // Then: returns Maybe.Absent (head is not Named)
     "symbol returns Absent for non-Named types" in {
         Tasty.withPickles(Chunk.empty):
             val t = Tasty.Type.Function(Chunk.empty, Tasty.Type.Named(SymbolId(5)))
@@ -56,10 +48,6 @@ class TypePolishTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // ── Leaf 157: children-function ───────────────────────────────────────────
-    // Given: Type.Function(Chunk(Named(1), Named(2)), Named(3))
-    // When: t.children
-    // Then: returns Chunk(Named(1), Named(2), Named(3))
     "children of Function includes params and result" in {
         val p1 = Tasty.Type.Named(SymbolId(1))
         val p2 = Tasty.Type.Named(SymbolId(2))
@@ -73,10 +61,6 @@ class TypePolishTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 158: children-applied ────────────────────────────────────────────
-    // Given: Type.Applied(Named(1), Chunk(Named(2)))
-    // When: t.children
-    // Then: returns Chunk(Named(1), Named(2))
     "children of Applied includes base and args" in {
         val base = Tasty.Type.Named(SymbolId(1))
         val arg  = Tasty.Type.Named(SymbolId(2))
@@ -88,10 +72,6 @@ class TypePolishTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 159: foreach-preorder ────────────────────────────────────────────
-    // Given: Applied(Named(1), Chunk(Named(2)))
-    // When: collect via foreach
-    // Then: buf == [Applied, Named(1), Named(2)] (3 entries, self-first)
     "foreach visits nodes in pre-order" in {
         val n1      = Tasty.Type.Named(SymbolId(1))
         val n2      = Tasty.Type.Named(SymbolId(2))
@@ -105,10 +85,6 @@ class TypePolishTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── Leaf 160: show-covers-all-cases ──────────────────────────────────────
-    // Given: one literal per Type case
-    // When: Tasty.typeShow(t)
-    // Then: every case returns a non-empty String (no MatchError)
     "show returns non-empty String for every Type case" in {
         val n = Tasty.Type.Named(SymbolId(0))
         val classSym = Tasty.Symbol.Class(

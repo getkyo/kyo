@@ -1,16 +1,6 @@
 package kyo
 
-/** real-world classpath alphabetical iteration.
-  *
-  * Akka actor classpath loads without error (BIND-018, Akka).
-  * Cats Effect classpath loads without error (BIND-018, Cats Effect).
-  * Doobie classpath loads without error; Scala 2.13-only jar, no TASTy files (BIND-018, Doobie).
-  * Http4s classpath loads without error (BIND-018, Http4s).
-  * Pekko actor classpath loads without error (BIND-018, Pekko).
-  * Play classpath loads without error (BIND-018, Play).
-  * Spark classpath loads without error; Scala 2.13-only jar, no TASTy files (BIND-018, Spark).
-  * Spire classpath loads without error (BIND-018, Spire).
-  * ZIO classpath loads without error (BIND-018, ZIO).
+/** Verifies that several popular Scala ecosystem jars load without file-level errors.
   *
   * All leaves are JVM-only (java.class.path discovery requires JVM) and tagged `slow` so they
   * are excluded from the default test run but can be included with `-- -n slow`.
@@ -19,11 +9,9 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
 
     /** Filter cp.errors to only file-level failures (CorruptedFile, MalformedSection, FileNotFound).
       *
-      * Carry A2 refinement: UnknownType errors for TypeAlias/OpaqueType/Parameter symbols with absent
-      * declared types are now correctly propagated by the wired Cat 14 producers. These are not file-level
-      * failures; they arise when AstUnpickler.readTypeIntoSession catches a decode exception and returns
-      * Absent for a cross-file type reference. The real-world classpath invariant asserts no FILE-level
-      * errors; per-symbol absent-type errors are informational and do not indicate a broken classpath.
+      * UnknownType errors for TypeAlias/OpaqueType/Parameter symbols with absent declared types are not
+      * file-level failures; they arise when AstUnpickler.readTypeIntoSession catches a decode exception
+      * and returns Absent for a cross-file type reference.
       */
     private def fileLevelErrors(errors: Chunk[TastyError]): Chunk[TastyError] =
         errors.filter:
@@ -32,11 +20,6 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
             case _: TastyError.FileNotFound     => true
             case _                              => false
 
-    // ── Leaf 1: Akka actor classpath loads without error ─────────────────────
-    // Given: akka-actor_3-2.6.20.jar on java.class.path via build.sbt % Test intransitive dep
-    // When: Tasty.withClasspath(Seq(akkaJar)) { Tasty.classpath.map(_.errors) } under Abort.run
-    // Then: Result.Success(errors) AND errors.isEmpty
-    // JVM-only: java.class.path discovery requires JVM; jar path extraction uses java.io.File.
     "Akka classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("akka-actor_3")
         Abort.run[TastyError](
@@ -53,10 +36,6 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 2: Cats Effect classpath loads without error ─────────────────────
-    // Given: cats-effect_3-3.7.0.jar on java.class.path via build.sbt % Test intransitive dep
-    // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
-    // Then: Result.Success(errors) AND errors.isEmpty
     "Cats Effect classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("cats-effect_3")
         Abort.run[TastyError](
@@ -73,12 +52,6 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 3: Doobie classpath loads without error ──────────────────────────
-    // Given: doobie-core_2.13-1.0.0-RC2.jar on java.class.path via build.sbt % Test intransitive dep
-    // Note: Doobie 1.x is Scala 2.13 only; the jar contains.class files but no.tasty files.
-    // Loading it produces cp.symbols.isEmpty && cp.errors.isEmpty (no TASTy decoding occurs).
-    // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
-    // Then: Result.Success(errors) AND errors.isEmpty
     "Doobie classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("doobie-core_2.13")
         Abort.run[TastyError](
@@ -95,10 +68,6 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 4: Http4s classpath loads without error ──────────────────────────
-    // Given: http4s-core_3-0.23.28.jar on java.class.path via build.sbt % Test intransitive dep
-    // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
-    // Then: Result.Success(errors) AND errors.isEmpty
     "Http4s classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("http4s-core_3")
         Abort.run[TastyError](
@@ -115,10 +84,6 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 5: Pekko actor classpath loads without error ─────────────────────
-    // Given: pekko-actor_3-1.1.3.jar on java.class.path via build.sbt % Test intransitive dep
-    // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
-    // Then: Result.Success(errors) AND errors.isEmpty
     "Pekko classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("pekko-actor_3")
         Abort.run[TastyError](
@@ -135,11 +100,6 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 6: Play classpath loads without error ────────────────────────────
-    // Given: play_3-3.0.2.jar on java.class.path via build.sbt % Test intransitive dep
-    // Note: Play 3.x moved to org.playframework groupId.
-    // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
-    // Then: Result.Success(errors) AND errors.isEmpty
     "Play classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("play_3")
         Abort.run[TastyError](
@@ -156,12 +116,6 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 7: Spark classpath loads without error ───────────────────────────
-    // Given: spark-core_2.13-3.5.1.jar on java.class.path via build.sbt % Test intransitive dep
-    // Note: Spark 3.x is Scala 2.13 only; the jar contains.class files but no.tasty files.
-    // Loading it produces cp.symbols.isEmpty && cp.errors.isEmpty (no TASTy decoding occurs).
-    // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
-    // Then: Result.Success(errors) AND errors.isEmpty
     "Spark classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("spark-core_2.13")
         Abort.run[TastyError](
@@ -178,10 +132,6 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 8: Spire classpath loads without error ───────────────────────────
-    // Given: spire_3-0.18.0.jar on java.class.path via build.sbt % Test intransitive dep
-    // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
-    // Then: Result.Success(errors) AND errors.isEmpty
     "Spire classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("spire_3")
         Abort.run[TastyError](
@@ -198,10 +148,6 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 9: ZIO classpath loads without error ─────────────────────────────
-    // Given: zio_3-2.0.15.jar on java.class.path via build.sbt % Test intransitive dep
-    // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
-    // Then: Result.Success(errors) AND errors.isEmpty
     "ZIO classpath loads without error".onlyJvm.tagged("slow") in {
         val jar = findJar("zio_3")
         Abort.run[TastyError](
@@ -218,11 +164,6 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // Finds the first jar on java.class.path whose path contains the given fragment.
-    // Calls fail immediately if no match, producing a red leaf with a clear message
-    // rather than silently skipping (which would mask real failures).
-    // Must be inside runJVM {. } because java.lang.System.getProperty and
-    // java.io.File.pathSeparatorChar are JVM-only.
     private def findJar(nameFragment: String)(using kyo.test.AssertScope, Frame): String =
         java.lang.System.getProperty("java.class.path", "")
             .split(java.io.File.pathSeparatorChar)

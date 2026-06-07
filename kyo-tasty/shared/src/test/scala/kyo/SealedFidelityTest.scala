@@ -16,10 +16,6 @@ class SealedFidelityTest extends kyo.test.Test[Any]:
     import AllowUnsafe.embrace.danger
 
     //   animal-permitted-subclasses
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
-    // When: calling cp.findClass("kyo.fixtures.Animal").get.permittedSubclassIds.map(_.flatMap(id => cp.symbol(id).toChunk)).getOrElse(Chunk.empty) and resolving FQNs
-    // Then: the FQN set contains "kyo.fixtures.Dog" and "kyo.fixtures.Cat"
-    // Cross-platform: kyo.fixtures.Animal is in the embedded fixture set on all platforms.
     "kyo.fixtures.Animal.permittedSubclassIds.map(_.flatMap(id => cp.symbol(id).toChunk)).getOrElse(Chunk.empty) contains Dog and Cat" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             cp.findClassLike("kyo.fixtures.Animal") match
@@ -53,10 +49,6 @@ class SealedFidelityTest extends kyo.test.Test[Any]:
     }
 
     //   vehicle-permitted-subclasses
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
-    // When: calling cp.findClassLike("kyo.fixtures.Vehicle").permittedSubclasses(using cp) and resolving FQNs
-    // Then: the FQN set contains names ending with "Car" and "Bike"
-    // Cross-platform: kyo.fixtures.Vehicle is in the embedded fixture set on all platforms.
     "kyo.fixtures.Vehicle.permittedSubclassIds.map(_.flatMap(id => cp.symbol(id).toChunk)).getOrElse(Chunk.empty) contains Car and Bike" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             cp.findClassLike("kyo.fixtures.Vehicle") match
@@ -90,12 +82,8 @@ class SealedFidelityTest extends kyo.test.Test[Any]:
     }
 
     // every-sealed-class-has-permits
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
-    // When: filtering cp.allClassLike.filter(_.isSealed) and checking permittedSubclasses.nonEmpty
-    // Then: >= 85% of sealed classes have permittedSubclasses populated. measured 96.64% on JVM standard
     // classpath (115/119 sealed classes). Embedded fixtures (JS/Native) are 100%: all fixture sealed hierarchies
     // (Animal, Vehicle, SealedBase, Color, Shape) have permits. The 85% floor holds on all three platforms.
-    // Cross-platform: embedded fixtures include Animal, Vehicle, SealedBase, Color, Shape; all sealed and have permits.
     ">= 85% of sealed classes have permittedSubclasses populated" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val sealedClasses = cp.allClassLike.filter(_.isSealed)
@@ -116,10 +104,6 @@ class SealedFidelityTest extends kyo.test.Test[Any]:
     }
 
     //   non-sealed-class-returns-empty
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
-    // When: finding kyo.fixtures.NonSealedMarker (explicitly non-sealed) and calling permittedSubclasses
-    // Then: returns Chunk.empty
-    // Cross-platform: kyo.fixtures.NonSealedMarker is in the embedded fixture set on all platforms.
     "non-sealed class permittedSubclasses returns empty Chunk" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
             cp.findClass("kyo.fixtures.NonSealedMarker") match
@@ -143,10 +127,6 @@ class SealedFidelityTest extends kyo.test.Test[Any]:
     }
 
     //   enum-case symbols pattern-match as Symbol.EnumCase
-    // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded Color/Shape)
-    // When: finding enum-case symbols (SymbolKind.EnumCase) and checking their runtime type
-    // Then: they are Symbol.EnumCase instances, not only Symbol.Class; passes trivially when empty
-    // Cross-platform: embedded Color (Red/Green/Blue value-form) and Shape (Circle/Square/Rectangle class-form)
     //   provide EnumCase symbols on JS/Native. The leaf succeeds vacuously when enumCases.isEmpty.
     "enum-case symbols pattern-match as Symbol.EnumCase" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>

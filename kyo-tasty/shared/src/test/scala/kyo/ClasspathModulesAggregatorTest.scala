@@ -2,11 +2,7 @@ package kyo
 
 import kyo.Tasty.SymbolId
 
-/** followup for W-06-03: exercises `Classpath.modules` bulk aggregator.
-  *
-  * W-06-03 noted that §Classpath typed-accessors lists `def modules: Chunk[ModuleDescriptor]` but only landed
-  * `findModule` and `requireModule`. This test validates the new `modules` aggregator added in.
-  */
+/** Tests for Classpath.modules bulk aggregator: returns all loaded ModuleDescriptors. */
 class ClasspathModulesAggregatorTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
@@ -41,9 +37,6 @@ class ClasspathModulesAggregatorTest extends kyo.test.Test[Any]:
                 errors = Chunk.empty
             )
 
-    // Given: a classpath with 3 module descriptors in moduleIndex
-    // When: cp.modules
-    // Then: returns Chunk of size 3 with the expected names
     "ClasspathModulesAggregatorTest: modules returns all loaded ModuleDescriptors" in {
         buildFixture.map: cp =>
             val mods = cp.modules
@@ -55,9 +48,6 @@ class ClasspathModulesAggregatorTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Given: a classpath with 0 modules
-    // When: cp.modules
-    // Then: returns an empty Chunk
     "ClasspathModulesAggregatorTest: modules returns empty Chunk when no modules are loaded" in {
         Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
             assert(cp.modules.isEmpty, s"Expected empty modules but got ${cp.modules.length}")

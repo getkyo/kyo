@@ -4,12 +4,7 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
 import scala.collection.mutable
 
-/** Tests for Tasty.Classpath pure accessors post.
-  *
-  * The internal Classpath state machine (Building/Ready/Closed) was deleted in. All tests here verify the public Tasty.Classpath
-  * case class accessors behave correctly. The internal pureClass/purePackage/allSymbols methods are gone; the equivalents are findClass,
-  * findPackage, and symbols on Tasty.Classpath.
-  */
+/** Tests for Tasty.Classpath pure accessors: findClass, symbols, topLevelClasses, and post-Scope access. */
 class ClasspathPureAccessorTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
@@ -55,10 +50,6 @@ class ClasspathPureAccessorTest extends kyo.test.Test[Any]:
         src
     end fixtureSource
 
-    // Test 1: findClass returns Present on an open classpath.
-    // Given: fixture classpath containing PlainClass.tasty.
-    // When: cp.findClass("kyo.fixtures.PlainClass").
-    // Then: result is Maybe.Present(sym) with sym.name.asString == "PlainClass".
     "findClass returns Present for a known FQN" in {
         Scope.run:
             Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
@@ -76,10 +67,6 @@ class ClasspathPureAccessorTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 2: symbols is non-empty after open.
-    // Given: fixture classpath.
-    // When: cp.symbols.
-    // Then: non-empty.
     "symbols is non-empty after open" in {
         Scope.run:
             Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
@@ -92,10 +79,6 @@ class ClasspathPureAccessorTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 3: Tasty.Classpath has no Closed state; the case class is accessible after Scope exits.
-    // Given: classpath opened inside a Scope.
-    // When: Scope exits (cleanup runs).
-    // Then: the Tasty.Classpath case class is still accessible (immutable value).
     "Tasty.Classpath is accessible after Scope exits (no Closed state)" in {
         var capturedCp: Tasty.Classpath = null
         Abort.run[TastyError]:
@@ -113,10 +96,6 @@ class ClasspathPureAccessorTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Test 4: topLevelClasses is non-empty.
-    // Given: fixture classpath.
-    // When: cp.topLevelClasses.
-    // Then: non-empty.
     "topLevelClasses is non-empty after open" in {
         Scope.run:
             Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>

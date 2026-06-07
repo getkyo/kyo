@@ -498,7 +498,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                                 allGood = false
                                 failMsg = s"Warm classpath missing symbol $coldFqn"
                             case Some(warmSym) =>
-                                // phase-02 inline; declarationIds replaces declarations.
                                 // We check declarationIds.length as a proxy.
                                 val coldDeclNames = (coldSym match
                                     case c: Tasty.Symbol.ClassLike => c.declarationIds;
@@ -514,7 +513,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                         end match
                     end for
                     assert(allGood, failMsg)
-                    // phase-02 inline; parentTypes is always set (Chunk.empty by default).
                     for warmSym <- warmClasses do
                         val parentsChunk = warmSym match
                             case c: Tasty.Symbol.ClassLike => c.parentTypes;
@@ -529,11 +527,8 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
     }
 
     // Test P1: snapshot round-trip preserves a local Named parent.
-    // Given: a synthetic classpath with two symbols: test.Bar (Class, no parents) and test.Foo
     //        (Class, parents=[Named(barSym)]). Both symbols are local so the SnapshotWriter assigns
     //        barSym a local symbolId and writes it in the PARENTS section.
-    // When: snapshot write + read.
-    // Then: the warm-loaded test.Foo symbol's parents is non-empty and contains a Named type whose
     //       fullName equals "test.Bar".
     "snapshot round-trip: local Named parent is preserved in Foo.parents" in {
         val cacheSrc = MemoryFileSource()
@@ -610,7 +605,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         .map:
             case Result.Success(parents) =>
                 assert(parents.nonEmpty, "Foo.parents must be non-empty after snapshot round-trip with local Named parent")
-                // phase-05; Named(id) carries SymbolId(2) for Bar (id assigned during fixture construction).
                 // Name check deferred to; verify that a Named parent with the Bar id is present.
                 val hasBar = parents.toSeq.exists:
                     case Tasty.Type.Named(_) => true
@@ -732,11 +726,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // section-index byte-level walk.
-    // Parses the raw bytes of a new-writer snapshot; asserts all 18 expected section names are
-    // present (10 pre-Phase-12 + 3 Phase-12 additions: PERMITS2, ANNOTS_, JAVAMETA + 1 dual-FQN: FQNIDX__ +
-    // 1 Phase-2.13 addition: FQNMAP__ for unresolvedFqnByNegId persistence + SUBCIDX_ + COMPIDX_ + PLISTS__)
-    // and that section offsets are monotone increasing.
     "new snapshot section-index: all 18 sections present and offsets monotone increasing" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0xc0.toByte, 0xc1.toByte, 0xc2.toByte, 0xc3.toByte, 0xc4.toByte, 0xc5.toByte, 0xc6.toByte, 0xc7.toByte)

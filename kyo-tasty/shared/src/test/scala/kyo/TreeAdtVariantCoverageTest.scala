@@ -25,7 +25,7 @@ import kyo.internal.tasty.type_.TypeArena
   *      body slices), each variant is exercised via a hand-crafted byte-pickle decoded by TreeUnpickler.decodeAnnotationTerm. This directly
   *      exercises the decode code path for each variant tag.
   *
-  * Platform: shared/src/test (HARD RULE 11). Both approaches are cross-platform.
+  * Both approaches are cross-platform.
   */
 class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
 

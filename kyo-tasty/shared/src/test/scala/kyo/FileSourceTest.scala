@@ -3,12 +3,8 @@ package kyo
 import kyo.internal.tasty.query.FileSource
 import scala.collection.mutable
 
-/** Tests for FileSource.list(dir, suffixes: Chunk[String]) multi-suffix API.
-  *
-  * Tests F1-F4 per execution-plan-perf.md.
-  *
-  * Uses an in-memory FileSource to remain cross-platform. The multi-suffix variant is tested for correctness and consistency with the
-  * single-suffix delegate.
+/** Tests for FileSource.list(dir, suffixes: Chunk[String]) multi-suffix API using an in-memory
+  * FileSource. Covers correctness and consistency of the multi-suffix filter.
   */
 class FileSourceTest extends kyo.test.Test[Any]:
 
@@ -59,7 +55,6 @@ class FileSourceTest extends kyo.test.Test[Any]:
 
     private val emptyBytes: Array[Byte] = Array.emptyByteArray
 
-    // F1: list(dir, Chunk(".tasty", ".class")) returns merged results in deterministic order
     "F1: list with multiple suffixes returns merged results in deterministic order" in {
         val src = MultiSuffixMemorySource()
         src.add("root/kyo/Foo.tasty", emptyBytes)
@@ -89,7 +84,6 @@ class FileSourceTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // F2: list(dir, Chunk.empty) returns Chunk.empty
     "F2: list with empty suffix list returns Chunk.empty" in {
         val src = MultiSuffixMemorySource()
         src.add("root/kyo/Foo.tasty", emptyBytes)
@@ -105,7 +99,6 @@ class FileSourceTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // F3: list(dir, Chunk(".tasty")) matches existing single-suffix list(dir, ".tasty") behavior
     "F3: list with single-element Chunk matches single-suffix list behavior" in {
         val src = MultiSuffixMemorySource()
         src.add("root/kyo/Foo.tasty", emptyBytes)
@@ -131,7 +124,6 @@ class FileSourceTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // F4: ordering of returned paths is deterministic across two consecutive calls on the same root
     "F4: result ordering is deterministic across two consecutive calls on the same root" in {
         val src = MultiSuffixMemorySource()
         src.add("root/kyo/Alpha.tasty", emptyBytes)

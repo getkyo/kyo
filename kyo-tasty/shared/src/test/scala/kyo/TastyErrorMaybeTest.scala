@@ -213,15 +213,6 @@ class TastyErrorMaybeTest extends kyo.test.Test[Any]:
             Abort.fail(TastyError.FileNotFound(path))
     end MemoryFileSource
 
-    // ── Leaf 1: NotImplemented usage audit ─────────────────────────────────
-    // states that NotImplemented is only used in forward-compat deserialisation.
-    // This test pins the contract by verifying that:
-    // (a) A recognized error string prefix ("FileNotFound(.)") round-trips to the
-    //     correct TastyError variant and NOT to NotImplemented.
-    // (b) An unrecognized error string prefix ("FutureError(.)") produces NotImplemented.
-    // This distinguishes the two call sites in SnapshotReader.parseErrorString from
-    // any hypothetical misuse.
-
     "leaf-1: recognized error prefix round-trips without NotImplemented; unrecognized yields NotImplemented" in {
         val recognized = TastyError.FileNotFound("/some/path.tasty")
         // Forward-compat (string-tag format): an unknown tag string maps to NotImplemented.
@@ -272,15 +263,8 @@ class TastyErrorMaybeTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 2: TreeUnpickler unrecognized-tag returns Tree.Unknown (not NotImplemented) ─
-    // The plan anticipated that TreeUnpickler would return NotImplemented for unrecognized tags.
-    // Audit shows TreeUnpickler does NOT use NotImplemented at all: unknown category-2-4 tags
-    // produce Tree.Unknown for graceful degradation. This test pins the ACTUAL contract.
-    // Setup: build a SymbolBody whose slice contains tag 77 (a category-2 gap in the
-    // [60,89] range; not assigned in TastyFormat). decodeSync dispatches through
-    // decodeSymBody -> readTree -> decodeTreeTag -> "Unknown category 2-4" arm -> Tree.Unknown(77, 0).
-    // The Unresolved kind is used so decodeSymBody falls into the generic readTree path.
-
+    // Tag 77 is in the category-2 range [60, 89] and is not assigned in TastyFormat.
+    // TreeUnpickler produces Tree.Unknown for graceful degradation; it never uses NotImplemented.
     "leaf-2: TreeUnpickler unknown category-2 tag produces Tree.Unknown not TastyError.NotImplemented" in {
         // Tag 77 is in the category-2 range (60-89) and is not assigned in TastyFormat.
         // Category-2 tag body is: [tag][Nat]. Nat 0x80 encodes value 0 in TASTy Nat encoding.
@@ -331,11 +315,6 @@ class TastyErrorMaybeTest extends kyo.test.Test[Any]:
             end match
     }
 
-    // ── Leaf 3: Snapshot ERRORS section with fully-unrecognized prefix returns NotImplemented ─
-    // Forward-compatibility scenario: a snapshot written by a future kyo-tasty version may contain
-    // TastyError variants not known to this reader. The SnapshotReader.parseErrorString fallback
-    // returns NotImplemented so that callers can inspect accumulated errors without losing them.
-
     "leaf-3: ERRORS section with unrecognized error string produces TastyError.NotImplemented" in {
         // Forward-compat scenario (string-tag format): a future kyo-tasty version adds a new
         // TastyError variant with an unknown tag string. The current reader maps it to NotImplemented.
@@ -366,14 +345,6 @@ class TastyErrorMaybeTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // ── Leaf 4: UnresolvedReference is emitted by finalizeMerge ─────────────
-    // TastyError.UnresolvedReference is produced by ClasspathOrchestrator.finalizeMerge when
-    // a partial symbol in the fqnIndex cannot be resolved to a final SymbolId. Under SoftFail
-    // mode the error is accumulated in cp.errors.
-    // This test verifies the end-to-end production path: a degenerate MergeState with a ghost
-    // FQN produces exactly one UnresolvedReference in cp.errors, whose name matches the ghost FQN.
-    // Replaces the prior vacuous field-roundtrip probe per B-5 carry fix.
-
     "leaf-4: TastyError.UnresolvedReference is emitted by finalizeMerge for unresolvable FQN entries" in {
         Abort.run[TastyError](
             kyo.internal.tasty.query.ClasspathOrchestrator.triggerUnresolvedReferenceForTest()
@@ -400,12 +371,6 @@ class TastyErrorMaybeTest extends kyo.test.Test[Any]:
                     fail(s"Unexpected panic: ${t.getMessage}")
     }
 
-    // unknownTypeAndMissingDeclaredTypeExhaustiveMatch
-    // Given: TastyError enum with UnknownType and MissingDeclaredType variants
-    // When: matching on both variants by pattern
-    // Then: patterns compile correctly; values are reachable TastyError instances
-    // Note: Scala 3 sealed enum non-exhaustive warnings are not errors by default,
-    //   so we verify reachability via construction and pattern-match rather than typeCheckErrors.
     "TastyError.UnknownType and MissingDeclaredType are reachable closed-enum variants" in {
         // Verify UnknownType is constructable and matches as TastyError
         val ut: TastyError = TastyError.UnknownType("f.tasty", 0L, "reason")

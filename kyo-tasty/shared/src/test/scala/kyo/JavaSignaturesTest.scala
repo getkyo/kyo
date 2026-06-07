@@ -5,21 +5,17 @@ import kyo.internal.tasty.classfile.JavaSignatures
 
 /** Tests for the JVM generic signature parser (JVMS §4.7.9.1).
   *
-  * These tests are cross-platform (JVM, JS, Native) because they exercise pure string parsing.
-  *
-  * phase-05; Named(id) no longer carries a Symbol directly. Tests verify structural shape (Applied/Named/Wildcard/Array) without
-  * accessing symbol names or kinds. restores name-verification once cp.symbol(id).name is available in resolution methods.
+  * Cross-platform (JVM, JS, Native) pure string parsing. Tests verify structural shape
+  * (Applied/Named/Wildcard/Array); Named(id) carries a stub SymbolId.
   */
 class JavaSignaturesTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // Test 13: parameterized type
     "parseFieldSignature of List<String> produces Applied(Named, Chunk(Named))" in {
         JavaSignatures.parseFieldSignature("Ljava/util/List<Ljava/lang/String;>;").map: tpe =>
             tpe match
                 case Tasty.Type.Applied(Tasty.Type.Named(_), args) =>
-                    // phase-05; name check deferred to.
                     assert(args.length == 1, s"Expected 1 arg, got ${args.length}")
                     args(0) match
                         case Tasty.Type.Named(innerId) =>
@@ -31,7 +27,6 @@ class JavaSignaturesTest extends kyo.test.Test[Any]:
                     fail(s"Expected Applied for List<String>, got $other")
     }
 
-    // Test 14: primitive array
     "parseFieldSignature of [I produces Array(Named(intSym))" in {
         JavaSignatures.parseFieldSignature("[I").map: tpe =>
             tpe match
@@ -41,7 +36,6 @@ class JavaSignaturesTest extends kyo.test.Test[Any]:
                     fail(s"Expected Array(Named(intSym)), got $other")
     }
 
-    // Test 15: nested array of String
     "parseFieldSignature of [[Ljava/lang/String; produces Array(Array(Named))" in {
         JavaSignatures.parseFieldSignature("[[Ljava/lang/String;").map: tpe =>
             tpe match
@@ -51,7 +45,6 @@ class JavaSignaturesTest extends kyo.test.Test[Any]:
                     fail(s"Expected Array(Array(Named)), got $other")
     }
 
-    // Test 16: covariant upper-bounded wildcard
     "parseFieldSignature of List<+Number> produces Applied with Wildcard(Nothing, Named(Number))" in {
         JavaSignatures.parseFieldSignature("Ljava/util/List<+Ljava/lang/Number;>;").map: tpe =>
             tpe match
@@ -66,7 +59,6 @@ class JavaSignaturesTest extends kyo.test.Test[Any]:
                     fail(s"Expected Applied with one arg, got $other")
     }
 
-    // Test 17: contravariant lower-bounded wildcard
     "parseFieldSignature of List<-Number> produces Applied with Wildcard(Named(Number), Object)" in {
         JavaSignatures.parseFieldSignature("Ljava/util/List<-Ljava/lang/Number;>;").map: tpe =>
             tpe match
@@ -81,7 +73,6 @@ class JavaSignaturesTest extends kyo.test.Test[Any]:
                     fail(s"Expected Applied with one arg, got $other")
     }
 
-    // Test 18: raw type (no angle brackets => Named, not Applied)
     "parseFieldSignature of raw Ljava/util/List; produces Named (not Applied)" in {
         JavaSignatures.parseFieldSignature("Ljava/util/List;").map: tpe =>
             tpe match
@@ -91,13 +82,10 @@ class JavaSignaturesTest extends kyo.test.Test[Any]:
                     fail(s"Expected Named for raw type, got $other")
     }
 
-    // Test 19: method signature with type parameter T
     "parseMethodSignature with type param T produces Function with TypeParam for T" in {
         JavaSignatures.parseMethodSignature(
             "<T:Ljava/lang/Object;>(Ljava/util/List<TT;>;)TT;"
         ).map: fnTpe =>
-            // Result is Function. Check there is one param of type Applied(List, Chunk(Named(typeParam))).
-            // phase-05; name and kind checks deferred to (Named carries SymbolId, not Symbol).
             assert(fnTpe.params.length == 1, s"Expected 1 param, got ${fnTpe.params.length}")
             fnTpe.params(0) match
                 case Tasty.Type.Applied(Tasty.Type.Named(_), args) if args.length == 1 =>
@@ -112,7 +100,6 @@ class JavaSignaturesTest extends kyo.test.Test[Any]:
             end match
     }
 
-    // Test 20: corrupt signature => ClassfileFormatError
     "parseFieldSignature with unclosed < produces ClassfileFormatError" in {
         Abort.run(JavaSignatures.parseFieldSignature("Ljava/util/List<Ljava/lang/String;")).map: result =>
             result match
