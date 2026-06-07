@@ -18,12 +18,3 @@ jmh-result.json
 test-output
 .DS_Store
 .jvmopts
-kyo-tasty/api-cleanup/
-kyo-tasty/api-usability/
-kyo-tasty/cross-platform-parity/
-kyo-tasty/decoder-fidelity/
-kyo-tasty/decoder-fidelity-2/
-kyo-tasty/decoder-fidelity-3/
-kyo-tasty/decoder-fidelity-4/
-kyo-tasty/decoder-fidelity-5/
-kyo-tasty/validation-infrastructure/
