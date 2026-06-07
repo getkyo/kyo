@@ -784,4 +784,119 @@ class SignalTest extends kyo.test.Test[Any]:
 
     }
 
+    private def pollUntil(cond: Boolean < Async, maxTries: Int = 3000)(using Frame): Boolean < Async =
+        Loop.indexed { i =>
+            if i >= maxTries then Loop.done(false)
+            else cond.map(c => if c then Loop.done(true) else Async.sleep(1.millis).andThen(Loop.continue))
+        }
+
+    private def recordValue[A](seen: AtomicRef[Chunk[A]], v: A)(using Frame): Unit < Async =
+        seen.updateAndGet(_.append(v)).unit
+
+    private def awaitValue(ref: AtomicRef[String], target: String, maxTries: Int)(using Frame): Boolean < Async =
+        Loop.indexed { i =>
+            if i >= maxTries then Loop.done(false)
+            else ref.get.map(v => if v == target then Loop.done(true) else Async.sleep(1.millis).andThen(Loop.continue))
+        }
+
+    private def observeExactnessLost(useMap: Boolean, iterations: Int)(using Frame): Int < Async =
+        for
+            ref <- Signal.initRef("")
+            sig = if useMap then ref.map(v => v) else ref
+            lastSeen <- AtomicRef.init("")
+            fiber    <- Fiber.initUnscoped(sig.observe(lastSeen.set(_)))
+            misses <- Kyo.foreach(Chunk.from(1 to iterations)) { i =>
+                val a = s"a$i"
+                val b = s"b$i"
+                for
+                    _   <- ref.set(a)
+                    _   <- ref.set(b)
+                    got <- awaitValue(lastSeen, b, 300)
+                yield if got then 0 else 1
+                end for
+            }
+            _ <- fiber.interrupt
+        yield misses.foldLeft(0)(_ + _)
+
+    "observe" - {
+        "emits the current value on subscription" in {
+            for
+                ref    <- Signal.initRef("init")
+                seen   <- AtomicRef.init(Chunk.empty[String])
+                fiber  <- Fiber.initUnscoped(ref.observe(recordValue(seen, _)))
+                ok     <- pollUntil(seen.get.map(_.nonEmpty))
+                result <- seen.get
+                _      <- fiber.interrupt
+            yield assert(ok && result == Chunk("init"))
+        }
+
+        "emits each distinct change in order" in {
+            for
+                ref    <- Signal.initRef(0)
+                seen   <- AtomicRef.init(Chunk.empty[Int])
+                fiber  <- Fiber.initUnscoped(ref.observe(recordValue(seen, _)))
+                _      <- pollUntil(seen.get.map(_ == Chunk(0)))
+                _      <- ref.set(1)
+                _      <- pollUntil(seen.get.map(_.contains(1)))
+                _      <- ref.set(2)
+                _      <- pollUntil(seen.get.map(_.contains(2)))
+                result <- seen.get
+                _      <- fiber.interrupt
+            yield assert(result == Chunk(0, 1, 2))
+        }
+
+        "does not re-emit on a same-value set" in {
+            for
+                ref    <- Signal.initRef(0)
+                seen   <- AtomicRef.init(Chunk.empty[Int])
+                fiber  <- Fiber.initUnscoped(ref.observe(recordValue(seen, _)))
+                _      <- pollUntil(seen.get.map(_ == Chunk(0)))
+                _      <- ref.set(0) // same value: SignalRef does not notify
+                _      <- Async.sleep(30.millis)
+                _      <- ref.set(1)
+                _      <- pollUntil(seen.get.map(_.contains(1)))
+                result <- seen.get
+                _      <- fiber.interrupt
+            yield assert(result == Chunk(0, 1))
+        }
+
+        "stops after interruption" in {
+            for
+                ref    <- Signal.initRef(0)
+                seen   <- AtomicRef.init(Chunk.empty[Int])
+                fiber  <- Fiber.initUnscoped(ref.observe(recordValue(seen, _)))
+                _      <- pollUntil(seen.get.map(_ == Chunk(0)))
+                _      <- fiber.interrupt
+                _      <- ref.set(1)
+                _      <- Async.sleep(50.millis)
+                result <- seen.get
+            yield assert(result == Chunk(0)) // the post-interrupt change is not observed
+        }
+
+        "never loses the final value under back-to-back writes (SignalRef leaf)" in {
+            observeExactnessLost(useMap = false, iterations = 5000).map(lost => assert(lost == 0, s"SignalRef lost $lost / 5000"))
+        }
+
+        "never loses the final value under back-to-back writes (map delegates to leaf)" in {
+            observeExactnessLost(useMap = true, iterations = 5000).map(lost => assert(lost == 0, s"map lost $lost / 5000"))
+        }
+
+        "reconciles a missed wakeup within repairInterval on a non-exact signal" in {
+            for
+                state <- AtomicRef.init(0)
+                sig = Signal.initRaw[Int](
+                    currentWith = [B, S] => f => state.get.map(f),
+                    nextWith = [B, S] => (_: Int => B < S) => Async.never[B] // never fires: every change is a "missed wakeup"
+                )
+                seen   <- AtomicRef.init(Chunk.empty[Int])
+                fiber  <- Fiber.initUnscoped(sig.observe(40.millis)(recordValue(seen, _)))
+                _      <- pollUntil(seen.get.map(_.contains(0)))
+                _      <- state.set(1)
+                ok     <- pollUntil(seen.get.map(_.contains(1)))
+                result <- seen.get
+                _      <- fiber.interrupt
+            yield assert(ok && result.contains(0) && result.contains(1))
+        }
+    }
+
 end SignalTest

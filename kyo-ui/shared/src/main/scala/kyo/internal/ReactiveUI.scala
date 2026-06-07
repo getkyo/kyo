@@ -603,11 +603,10 @@ private[kyo] object ReactiveUI:
                 childFibersRef <- AtomicRef.init(Seq.empty[Fiber[Unit, Any]])
                 selfFiber <- Fiber.initUnscoped {
                     Abort.run[Throwable] {
-                        val emitAndResubscribe: Unit < Async =
+                        def emitAndResubscribe(current: UI): Unit < Async =
                             for
                                 now          <- Clock.now
                                 _            <- signalChangeTime.set(now)
-                                current      <- rui.signal.current
                                 _            <- exchange.onChange(rui.path, current)
                                 (newKids, _) <- walkStatic(current, rui.path, rui.svgContext)
                                 oldFibers    <- childFibersRef.get
@@ -615,20 +614,13 @@ private[kyo] object ReactiveUI:
                                 newFibers    <- Kyo.foreach(newKids)(subscribeNode(_, exchange, signalChangeTime))
                                 _            <- childFibersRef.set(newFibers.flatten)
                             yield ()
-                        // Fork the next-change wait BEFORE emitting, then await it. Signal conflates
-                        // intermediate values (latest-wins by design), so the loop only needs to be
-                        // woken once and re-read `current`. The hazard is a lost wakeup of the final
-                        // change: if a change lands after `current` is read but before the waiter is
-                        // registered, it completes a waiterless promise and, when it is the last
-                        // change, the region never re-renders. Forking `next` ahead of `emit`
-                        // registers the waiter first, closing that window.
-                        Loop.forever {
-                            for
-                                nextFiber <- Fiber.initUnscoped(rui.signal.next)
-                                _         <- emitAndResubscribe
-                                _         <- nextFiber.get
-                            yield Loop.continue(())
-                        }
+                        // `observe` drives the region with register-before-read semantics: it captures the
+                        // next-change promise BEFORE reading the value, so a change racing the read still
+                        // completes a promise the loop holds, and the final change is never lost. A boundary
+                        // signal is a `map` over a `SignalRef`, so it delegates down to the leaf's exact loop
+                        // (the default repair interval is unused on that path). This replaces the previous
+                        // fork-the-wait-before-emit loop, whose forked waiter registered too late under races.
+                        rui.signal.observe(emitAndResubscribe(_))
                     }.map { result =>
                         result.foldError(
                             _ => (),
