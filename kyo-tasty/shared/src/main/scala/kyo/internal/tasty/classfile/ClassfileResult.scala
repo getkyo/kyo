@@ -26,11 +26,10 @@ final case class ClassfileResult(
     symbols: Chunk[LoadingSymbol.Materialising],
     typeParams: Chunk[LoadingSymbol.Materialising],
     arena: TypeArena,
-    // F-009 / INV-011: 4th AT-RISK Map[LoadingSymbol.Materialising, *] site converted to
     // mutable.LongMap[Tasty.Type] keyed by sym.id. Eliminates fragile mutable-case-class key
     // (LoadingSymbol.Materialising has var id; structural equality breaks if id mutates after
     // insertion). Consistent with the CommentsUnpickler, PositionsUnpickler, and
-    // ClasspathOrchestrator.FileResult rotations in Phase 06 (Q-001 sites 1-3).
+    // ClasspathOrchestrator.FileResult rotations.
     memberTypes: mutable.LongMap[Tasty.Type],
     /** Raw binary class names of parent types (e.g. "java/lang/Object", "java/io/Serializable").
       *

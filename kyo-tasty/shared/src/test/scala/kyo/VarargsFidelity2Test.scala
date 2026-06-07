@@ -14,16 +14,16 @@ import kyo.internal.TestClasspaths
   * via embedded fixtures. The embedded fixture set is extended with `VarargFixture.tasty` (kyo.fixtures.VarargFixture.concat: String*)
   * to ensure that JS/Native have at least one varargs parameter to exercise the Type.Repeated path.
   *
-  * Invariant produced: INV-105-DF2 (Repeated half).
+  * Invariant produced: -DF2 (Repeated half).
   */
 class VarargsFidelity2Test extends Fidelity2TestBase:
 
     import AllowUnsafe.embrace.danger
 
-    // Leaf 1 : list-apply-first-param-is-repeated
+    // list-apply-first-param-is-repeated
     // Given: standard classpath (on JVM: scala.List$.apply; on JS/Native: kyo.fixtures.VarargFixture.concat)
     // When: finding a method whose name is "apply" or "concat" with a repeated parameter type
-    // Then: post-fix at least one such parameter exists with Type.Repeated declaredType
+    // Then: at least one such parameter exists with Type.Repeated declaredType
     "at least one apply or concat method parameter has Type.Repeated type" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             given Tasty.Classpath = cp
@@ -43,7 +43,7 @@ class VarargsFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 2 : seq-apply-first-param-is-repeated
+    // seq-apply-first-param-is-repeated
     // Given: standard classpath
     // When: searching for varargs parameters in any methods
     // Then: at least one method with a Type.Repeated parameter
@@ -61,7 +61,7 @@ class VarargsFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 3 : set-apply-first-param-is-repeated (generalized to stdlib coverage)
+    // set-apply-first-param-is-repeated (generalized to stdlib coverage)
     // Given: standard classpath
     // When: counting total repeated parameters
     // Then: count > 0; before fix == 0 (probe-001.log line 39897 baseline: 0)
@@ -77,10 +77,10 @@ class VarargsFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 4 : stdlib-repeated-parameter-count-positive
+    // stdlib-repeated-parameter-count-positive
     // Given: standard classpath
     // When: counting cp.allParameters.filter((p: Tasty.Symbol.Parameter) => p.declaredType.isInstanceOf[Tasty.Type.Repeated])
-    // Then: post-fix count > 0; before fix exactly 0 (probe-001.log line 39897: repeatedParameters.count : 0)
+    // Then: count > 0; before fix exactly 0 (probe-001.log line 39897: repeatedParameters.count : 0)
     "repeated-parameter count > 0 (cold path)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val repeatedCount = cp.allParameters.count((p: Tasty.Symbol.Parameter) => p.declaredType.isInstanceOf[Tasty.Type.Repeated])
@@ -93,7 +93,7 @@ class VarargsFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 5 : parameter-isRepeated-flag-matches-type-shape
+    // parameter-isRepeated-flag-matches-type-shape
     // Given: every Parameter in the classpath
     // When: checking that isRepeated implies declaredType.isInstanceOf[Type.Repeated]
     // Then: zero divergence (flag and type shape are consistent)

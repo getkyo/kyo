@@ -39,7 +39,7 @@ class SnapshotTypedRoundTripTest extends kyo.test.Test[Any]:
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end openFixtureCp
 
-    // Leaf 39: write-load-roundtrip-preserves-subtypes
+    // write-load-roundtrip-preserves-subtypes
     // Given: fixture loaded cp; When: write snapshot reload iterate pairs; Then: each pair matches getClass/id/name/flags
     "write-load-roundtrip-preserves-subtypes: typed subtypes survive snapshot round-trip" in {
         val cacheSrc = MemoryFileSource()
@@ -78,7 +78,7 @@ class SnapshotTypedRoundTripTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // Leaf 40: byte-format-unchanged
+    // byte-format-unchanged
     // Given: same fixture; When: reader reads pre-Phase-02 snapshot; Then: symbols round-trip
     "byte-format-unchanged: snapshot written by a previous version can be re-read by same reader" in {
         val cacheSrc = MemoryFileSource()

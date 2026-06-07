@@ -73,7 +73,7 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
     // T1: pipeline-produced Classpath contains known FQNs from the fixture.
     // Asserts that the new pipeline implementation produces a correct symbol set on a known fixture:
     // kyo.fixtures.PlainClass, kyo.fixtures, and related symbols must be present.
-    "T1: pipeline produces correct symbol set for fixture classpath" in {
+    "pipeline produces correct symbol set for fixture classpath" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).map: cp =>
                 import Tasty.Name.asString
@@ -87,7 +87,7 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
     }
 
     // T2: pipeline-produced FQN index: classByFqn for a known FQN returns a present symbol.
-    "T2: FQN index parity - classByFqn returns symbol for known FQN" in {
+    "FQN index parity - classByFqn returns symbol for known FQN" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass")).map:
@@ -105,7 +105,7 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
     }
 
     // T3: arena determinism - opening the same fixture twice produces the same FQN key set and allSymbols size.
-    "T3: opening same fixture twice produces same FQN key set and symbol count" in {
+    "opening same fixture twice produces same FQN key set and symbol count" in {
         Scope.run:
             Abort.run[TastyError](
                 openFixtureClasspath(fixtureSource()).flatMap: cp1 =>
@@ -123,9 +123,9 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // T4: soft-fail file error - a corrupted .tasty file in a directory root appends to cp.errors
+    // T4: soft-fail file error - a corrupted.tasty file in a directory root appends to cp.errors
     // and the classpath is otherwise valid (other symbols still accessible).
-    "T4: soft-fail on corrupted tasty file appends to cp.errors without aborting load" in {
+    "soft-fail on corrupted tasty file appends to cp.errors without aborting load" in {
         val src = MemFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
         src.add("root/Corrupt.tasty", Array[Byte](0, 1, 2, 3, 4, 5)) // garbage bytes, invalid TASTy header
@@ -140,9 +140,9 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // T5: strict-fail file error - open with strict=true and a corrupted .tasty raises Abort[TastyError].
+    // T5: strict-fail file error - open with strict=true and a corrupted.tasty raises Abort[TastyError].
     // The call must NOT hang.
-    "T5: strict mode raises Abort[TastyError] for corrupted tasty file without hanging" in {
+    "strict mode raises Abort[TastyError] for corrupted tasty file without hanging" in {
         val src = MemFileSource()
         src.add("root/Corrupt.tasty", Array[Byte](0, 1, 2, 3, 4, 5)) // garbage bytes
         Scope.run:
@@ -157,10 +157,10 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
 
     // T6: channel backpressure - large input (100+ entries) with concurrency=2 completes successfully.
     // Simpler path: assert successful completion. Exact queue-depth observation deferred to re-profiling.
-    "T6: pipeline completes successfully with 100+ entries at concurrency=2" in {
+    "pipeline completes successfully with 100+ entries at concurrency=2" in {
         val src   = MemFileSource()
         val bytes = kyo.fixtures.Embedded.plainClassTasty
-        // Add 110 .tasty entries to a directory root to trigger channel backpressure
+        // Add 110.tasty entries to a directory root to trigger channel backpressure
         for i <- 1 to 110 do
             src.add(s"root/File$i.tasty", bytes)
         Scope.run:
@@ -177,7 +177,7 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
 
     // T7: ordering independence - two pipeline runs on identical inputs produce the same FQN key set.
     // Explicitly tests the ordering-independence invariant (T3 covers the size aspect; T7 checks FQN keys).
-    "T7: two pipeline runs on identical inputs produce the same FQN key set" in {
+    "two pipeline runs on identical inputs produce the same FQN key set" in {
         Scope.run:
             Abort.run[TastyError](
                 openFixtureClasspath(fixtureSource()).flatMap: cp1 =>
@@ -199,7 +199,7 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
     // T8: decoder concurrency respected - with concurrency=2 and 100+ entries, pipeline completes.
     // Simpler path: assert successful completion within a reasonable budget. Exact thread-count observation
     // deferred to re-profiling per plan's guidance.
-    "T8: pipeline with concurrency=2 and 100+ entries completes successfully" in {
+    "pipeline with concurrency=2 and 100+ entries completes successfully" in {
         val src   = MemFileSource()
         val bytes = kyo.fixtures.Embedded.plainClassTasty
         for i <- 1 to 100 do
@@ -215,9 +215,9 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // - T8 Test 2: classpath close during pending body decode.
+    // T8 Test 2: classpath close during pending body decode.
     // Resolved 2026-06-02 (verdict C: already-covered). deleted the Closed state from
-    // Tasty.Classpath (now a pure immutable case class with no close() method, see
+    // Tasty.Classpath (now a pure immutable case class with no close method, see
     // JvmFileSourceTest.scala:530 "P24b-T3"). ClasspathClosed now fires only via the mmap arena
     // IllegalStateException path after Scope exit (jvm-only), exercised by
     // DecoderFidelity5Phase02JvmTest "P02.6". The original "explicit close" precondition

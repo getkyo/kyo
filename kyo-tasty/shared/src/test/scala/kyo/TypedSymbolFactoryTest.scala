@@ -5,7 +5,7 @@ import kyo.internal.tasty.symbol.SymbolDescriptor
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.symbol.TypedSymbolFactory
 
-/** Plan-mandated tests for TypedSymbolFactory (leaves 47-51).
+/** Plan-mandated tests for TypedSymbolFactory.
   *
   * Verifies that TypedSymbolFactory.from dispatches on SymbolKind and produces the correct typed Symbol subtype.
   */
@@ -37,7 +37,7 @@ class TypedSymbolFactoryTest extends kyo.test.Test[Any]:
             body = Maybe.Absent
         )
 
-    // Leaf 47: dispatch-on-kind-class
+    // dispatch-on-kind-class
     // Given: SymbolDescriptor d.kind=Class
     // When: TypedSymbolFactory.from(d)
     // Then: Symbol.Class id=1
@@ -53,7 +53,7 @@ class TypedSymbolFactoryTest extends kyo.test.Test[Any]:
         assert(sym.kind == SymbolKind.Class, s"Expected kind=Class but got ${sym.kind}")
     }
 
-    // Leaf 48: dispatch-on-kind-method-paramlists
+    // dispatch-on-kind-method-paramlists
     // Given: SymbolDescriptor d.kind=Method d.paramListIds Chunk x1x2
     // When: from(d) read paramListIds
     // Then: Symbol.Method; paramListIds==Chunk(Chunk(SymbolId(10), SymbolId(11)))
@@ -71,7 +71,7 @@ class TypedSymbolFactoryTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // Leaf 49: dispatch-on-kind-typeparam-variance
+    // dispatch-on-kind-typeparam-variance
     // Given: SymbolDescriptor d.kind=TypeParam d.flags=CoVariant
     // When: from(d) read variance
     // Then: Symbol.TypeParam; variance==Covariant
@@ -86,7 +86,7 @@ class TypedSymbolFactoryTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // Leaf 50: dispatch-on-kind-package
+    // dispatch-on-kind-package
     // Given: SymbolDescriptor d.kind=Package d.declarationIds Seq(1,2,3)
     // When: from(d) read memberIds
     // Then: Symbol.Package; memberIds==Chunk(SymbolId(1), SymbolId(2), SymbolId(3))
@@ -101,7 +101,7 @@ class TypedSymbolFactoryTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // Leaf 51: dispatch-on-kind-unresolved-id-minus-one
+    // dispatch-on-kind-unresolved-id-minus-one
     // Given: SymbolDescriptor d.kind=Unresolved d.id=-1
     // When: from(d)
     // Then: Symbol.Unresolved id=SymbolId(-1)

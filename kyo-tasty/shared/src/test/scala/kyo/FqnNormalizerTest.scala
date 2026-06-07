@@ -4,8 +4,8 @@ import kyo.internal.tasty.symbol.FqnNormalizer
 
 /** Unit tests for FqnNormalizer.canonicalSourceFqn and FqnNormalizer.isSyntheticName.
   *
-  * Pins HARD RULE 10 (full compiler-mangling normalization coverage). One leaf per mangling pattern,
-  * one leaf per synthetic-name pattern. Cross-platform: pure string operations.
+  * Full compiler-mangling normalization coverage: one case per mangling pattern, one case per
+  * synthetic-name pattern. Cross-platform: pure string operations.
   */
 class FqnNormalizerTest extends kyo.test.Test[Any]:
 
@@ -22,14 +22,14 @@ class FqnNormalizerTest extends kyo.test.Test[Any]:
         assert(FqnNormalizer.canonicalSourceFqn("scala.Some$") == "scala.Some")
     }
 
-    // canonicalSourceFqn: pattern 3 - object-nested member $. to .
+    // canonicalSourceFqn: pattern 3 - object-nested member $. to.
     "FqnNormalizer: pattern 3 object-nested $. replaced by ." in {
         assert(FqnNormalizer.canonicalSourceFqn("kyo.Tasty$.Symbol") == "kyo.Tasty.Symbol")
         assert(FqnNormalizer.canonicalSourceFqn("kyo.Tasty$.Symbol.Class") == "kyo.Tasty.Symbol.Class")
         assert(FqnNormalizer.canonicalSourceFqn("kyo.Tasty$.Type$.Named") == "kyo.Tasty.Type.Named")
     }
 
-    // canonicalSourceFqn: pattern 4 - inner-class $ to .
+    // canonicalSourceFqn: pattern 4 - inner-class $ to.
     "FqnNormalizer: pattern 4 inner-class $ separator replaced by ." in {
         assert(FqnNormalizer.canonicalSourceFqn("kyo.Foo$Bar") == "kyo.Foo.Bar")
         assert(FqnNormalizer.canonicalSourceFqn("kyo.Foo$Bar$Baz") == "kyo.Foo.Bar.Baz")
@@ -97,32 +97,31 @@ class FqnNormalizerTest extends kyo.test.Test[Any]:
         assert(!FqnNormalizer.isSyntheticName("kyo.Maybe$package$.Maybe"))
     }
 
-    // F-014 boundary checks: leading $ at index 0 is NOT replaced
-    "FqnNormalizer: F-014 leading dollar at index 0 is preserved" in {
+    // boundary checks: leading $ at index 0 is NOT replaced
+    "FqnNormalizer: leading dollar at index 0 is preserved" in {
         // atStart == true, so the leading $ is left as-is by replaceInnerDollar;
         // no other rule strips a leading $.
         assert(FqnNormalizer.canonicalSourceFqn("$foo.bar") == "$foo.bar")
     }
 
-    // F-014 boundary checks: trailing $ is stripped by rule 2, inner $ by rule 4
-    "FqnNormalizer: F-014 trailing dollar stripped, inner dollar replaced" in {
+    // boundary checks: trailing $ is stripped by rule 2, inner $ by rule 4
+    "FqnNormalizer: trailing dollar stripped, inner dollar replaced" in {
         // Rule 2 strips the trailing $: "a$b$" -> "a$b"
         // Rule 4 then replaces the inner $: "a$b" -> "a.b"
         val result = FqnNormalizer.canonicalSourceFqn("a$b$")
         assert(result == "a.b", s"Expected a.b but got $result")
     }
 
-    // F-014 pathological: space adjacent to $ does NOT block replacement
-    "FqnNormalizer: F-014 space adjacent to dollar does not block replacement" in {
-        // Pre-fix: the ' \0' sentinel would have treated the space as a boundary,
-        // leaving the $ unreplaced.
-        // Post-fix: only index checks determine boundaries; spaces are ordinary chars.
+    // pathological: space adjacent to $ does NOT block replacement
+    "FqnNormalizer: space adjacent to dollar does not block replacement" in {
+        // A ' \0' sentinel approach would treat the space as a boundary, leaving the $ unreplaced.
+        // The implementation uses index checks instead, so spaces are ordinary chars.
         val result = FqnNormalizer.canonicalSourceFqn("foo bar$baz")
         assert(result == "foo bar.baz", s"Expected 'foo bar.baz' but got '$result'")
     }
 
-    // F-014 adjacent dollars: $$ pattern is preserved (both chars adjacent to another $)
-    "FqnNormalizer: F-014 double dollar is preserved" in {
+    // adjacent dollars: $$ pattern is preserved (both chars adjacent to another $)
+    "FqnNormalizer: double dollar is preserved" in {
         val expected = "a$$b"
         val result   = FqnNormalizer.canonicalSourceFqn("a$$b")
         assert(result == expected, s"Expected $expected but got $result")

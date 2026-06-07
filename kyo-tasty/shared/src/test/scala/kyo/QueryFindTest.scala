@@ -3,7 +3,7 @@ package kyo
 import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.query.ClasspathOrchestrator
 
-/** plan leaves 5-8: Tasty.findClass, findClassLike, findObject, findSymbol, findPackage,
+/** Tasty.findClass, findClassLike, findObject, findSymbol, findPackage,
   * requireClass, requireClassLike, requireObject, requireSymbol, requirePackage, requireMethod.
   *
   * Uses embedded PlainClass/SomeObject/SomeTrait fixtures for cross-platform coverage.
@@ -37,8 +37,8 @@ class QueryFindTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // Leaf 7: requireClass aborts on missing FQN
-    "Leaf 7: Tasty.requireClass aborts with TastyError.NotFound for missing FQN" in {
+    // requireClass aborts on missing FQN
+    "Tasty.requireClass aborts with TastyError.NotFound for missing FQN" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Tasty.withClasspath(cp):
@@ -64,8 +64,8 @@ class QueryFindTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // Leaf 10: aggregators on empty Classpath return Chunk.empty
-    "Leaf 10: aggregators on empty Classpath return Chunk.empty" in {
+    // aggregators on empty Classpath return Chunk.empty
+    "aggregators on empty Classpath return Chunk.empty" in {
         Tasty.withPickles(Chunk.empty):
             for
                 acl <- Tasty.allClassLike

@@ -1,17 +1,17 @@
 package kyo
 
-/** Tests for F-006: Symbol id-and-kind equality override on the sealed trait.
+/** Tests for Symbol id-and-kind equality override on the sealed trait.
   *
-  * All 5 leaves pin INV-002: Symbol equality compares (id.value, kind) via the `final override def equals`
-  * on the sealed-trait body. Structural fields (scaladoc, parentTypes, etc.) do not affect equality.
-  * The sentinel guard (id.value == -1) prevents two sentinel symbols from comparing equal.
+  * Symbol equality compares (id.value, kind) via the `final override def equals` on the sealed-trait
+  * body. Structural fields (scaladoc, parentTypes, etc.) do not affect equality. The sentinel guard
+  * (id.value == -1) prevents two sentinel symbols from comparing equal.
   *
-  * Leaves:
-  *   1. same-id-different-fields-equal: non-id fields do not affect equality (INV-002 id discriminant).
-  *   2. different-ids-same-fields-not-equal: id is the equality key (INV-002 id discriminant).
-  *   3. class-vs-trait-at-same-id-not-equal: kind discriminant prevents cross-kind collisions (INV-002).
-  *   4. sentinel-id-not-equal: sentinel id (-1) is never equal to itself or any other symbol (INV-002 guard).
-  *   5. hashcode-consistency: equal symbols have equal hashCodes; different-kind symbols at same id differ (INV-002).
+  * Cases:
+  *   1. same-id-different-fields-equal: non-id fields do not affect equality (id discriminant).
+  *   2. different-ids-same-fields-not-equal: id is the equality key (id discriminant).
+  *   3. class-vs-trait-at-same-id-not-equal: kind discriminant prevents cross-kind collisions.
+  *   4. sentinel-id-not-equal: sentinel id (-1) is never equal to itself or any other symbol (guard).
+  *   5. hashcode-consistency: equal symbols have equal hashCodes; different-kind symbols at same id differ.
   */
 class SymbolEqualityTest extends kyo.test.Test[Any]:
 
@@ -55,7 +55,7 @@ class SymbolEqualityTest extends kyo.test.Test[Any]:
             javaAnnotations = Chunk.empty
         )
 
-    // Leaf 1: same id, different non-id fields -> equal (INV-002: id-and-kind equality; non-id fields ignored).
+    // same id, different non-id fields -> equal (: id-and-kind equality; non-id fields ignored).
     "leaf-1: same id different fields equal" in {
         val a: Tasty.Symbol = makeClass(7, scaladocText = Maybe("doc A"), parentTypes = Chunk.empty)
         val b: Tasty.Symbol = makeClass(7, scaladocText = Maybe("doc B"), parentTypes = Chunk(Tasty.Type.Any))
@@ -63,7 +63,7 @@ class SymbolEqualityTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 2: different ids, otherwise identical fields -> not equal (INV-002: id is the equality key).
+    // different ids, otherwise identical fields -> not equal (: id is the equality key).
     "leaf-2: different ids same fields not equal" in {
         val a: Tasty.Symbol = makeClass(7)
         val b: Tasty.Symbol = makeClass(8)
@@ -71,7 +71,7 @@ class SymbolEqualityTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 3: Symbol.Class vs Symbol.Trait at same id -> not equal (INV-002: kind discriminant).
+    // Symbol.Class vs Symbol.Trait at same id -> not equal (: kind discriminant).
     "leaf-3: Class vs Trait at same id not equal" in {
         val klass: Tasty.Symbol = makeClass(7)
         val trt: Tasty.Symbol   = makeTrait(7)
@@ -79,7 +79,7 @@ class SymbolEqualityTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 4: sentinel id (-1) is never equal to anything, including itself (INV-002 sentinel guard).
+    // sentinel id (-1) is never equal to anything, including itself (sentinel guard).
     "leaf-4: sentinel id not equal to self or peer" in {
         val s1: Tasty.Symbol = makeClass(-1)
         val s2: Tasty.Symbol = makeClass(-1)
@@ -88,7 +88,7 @@ class SymbolEqualityTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 5: hashCode consistency (INV-002: equal symbols have equal hashCodes; kind-separated symbols at same id differ).
+    // hashCode consistency (: equal symbols have equal hashCodes; kind-separated symbols at same id differ).
     "leaf-5: hashCode consistency with equality" in {
         val a: Tasty.Symbol = makeClass(42)
         val b: Tasty.Symbol = makeClass(42)
@@ -100,7 +100,7 @@ class SymbolEqualityTest extends kyo.test.Test[Any]:
         // Different id -> different hashCode (with overwhelming probability for small id values).
         assert(a.hashCode != c.hashCode, s"different ids should produce different hashCodes: ${a.hashCode} == ${c.hashCode}")
         // Different kind at same id -> different hashCode (kind is not part of hashCode, but id is, so equal id means equal hash).
-        // After F-006 hashCode is id.value only, so Class(42) and Trait(42) have the SAME hashCode but are not equal.
+        // After hashCode is id.value only, so Class(42) and Trait(42) have the SAME hashCode but are not equal.
         // This is acceptable: hash collision does not break correctness, only performance.
         // We verify the hash is id-based (not structural) by checking it equals the raw id value.
         assert(a.hashCode == 42, s"hashCode should be id.value (42) not a structural hash, got ${a.hashCode}")

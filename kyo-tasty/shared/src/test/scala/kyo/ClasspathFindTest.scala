@@ -2,10 +2,7 @@ package kyo
 
 import scala.concurrent.Future
 
-/** Tests for Classpath find methods .
-  *
-  * Leaf ids: 3, 4, 5, 6. Pins: INV-007.
-  */
+/** Tests for Classpath find methods. */
 class ClasspathFindTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
@@ -27,28 +24,28 @@ class ClasspathFindTest extends kyo.test.Test[Any]:
             )
     end emptyClasspath
 
-    // Leaf id:3 -- findClass returns Maybe.Absent when missing
+    // 3 -- findClass returns Maybe.Absent when missing
     "findClass returns Maybe.Absent for unknown FQN" in {
         emptyClasspath.map: cp =>
             assert(cp.findClass("p.Bar") == Maybe.Absent)
             succeed
     }
 
-    // Leaf id:4 -- findPackage returns Maybe
+    // 4 -- findPackage returns Maybe
     "findPackage returns Maybe.Absent for unknown package" in {
         emptyClasspath.map: cp =>
             assert(cp.findPackage("zzz") == Maybe.Absent)
             succeed
     }
 
-    // Leaf id:5 -- findModule returns Maybe
+    // 5 -- findModule returns Maybe
     "findModule returns Maybe.Absent for unknown module" in {
         emptyClasspath.map: cp =>
             assert(cp.findModule("foo") == Maybe.Absent)
             succeed
     }
 
-    // Leaf id:6 -- findClassByBinary handles dollar-encoded names
+    // 6 -- findClassByBinary handles dollar-encoded names
     "findClassByBinary translates slash and dollar to dot" in {
         import kyo.Tasty.SymbolId
         import kyo.internal.tasty.type_.TypeArena

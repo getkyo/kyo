@@ -65,12 +65,10 @@ class TastyEffectRowTest extends kyo.test.Test[Any]:
     // Given: a Symbol sym with a non-empty body in a loaded Classpath cp.
     // When: sym.body(using cp, frame) and cp.bodyTree(sym) are both evaluated.
     // Then: both calls return the SAME Tree instance (reference-equal via bodyMemo memoization).
-    //
     // restores the reference-equality assertion deferred in D-02. The bodyMemo
     // ConcurrentHashMap guarantees that the first decode result is stored and returned on all
     // subsequent calls, producing the same object reference.
-    //
-    "Leaf 6: Symbol.body and Tasty.bodyTree return the same Tree instance via bodyMemo" in {
+    "Symbol.body and Tasty.bodyTree return the same Tree instance via bodyMemo" in {
         Scope.run:
             Abort.run[TastyError](
                 openSomeObjectCp.flatMap: binding =>

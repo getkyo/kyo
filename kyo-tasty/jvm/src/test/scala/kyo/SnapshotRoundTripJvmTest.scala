@@ -15,7 +15,7 @@ import scala.collection.mutable
   * `shared/src/test/scala/kyo/SnapshotRoundTripTest.scala` since sym.body will be cross-platform when implements it.
   *
   * Remaining leaf:
-  *   - G16a: writes a snapshot to a real temp file and reads it back via mmap (`PlatformMmapReader.readMapped`). Tests the mmap path itself,
+  *   G16a: writes a snapshot to a real temp file and reads it back via mmap (`PlatformMmapReader.readMapped`). Tests the mmap path itself,
   *     which is a JVM `FileChannel.map` concern; no cross-platform analog.
   */
 class SnapshotRoundTripJvmTest extends kyo.test.Test[Any]:

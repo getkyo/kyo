@@ -13,8 +13,6 @@ import kyo.internal.tasty.snapshot.SnapshotWriter
 import scala.collection.mutable
 
 /** Tests for KRFL snapshot round-trip, digest determinism, and openCached behavior.
-  *
-  * Plan tests 22-30.
   */
 class SnapshotRoundTripTest extends kyo.test.Test[Any]:
 
@@ -55,7 +53,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                     Abort.fail(TastyError.SnapshotIoError(s"rename: $from not found"))
 
         override def delete(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
-            // F-001: override trait-body default so delete operates on the in-memory map
+            // override trait-body default so delete operates on the in-memory map
             // instead of attempting a real filesystem call via kyo.Path.remove.
             Sync.defer:
                 val _ = files.remove(path)
@@ -311,7 +309,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
             Tasty.Snapshot.evictOlderThanWithSource("cache", 0L, evictSrc)
         ).map:
             case Result.Success(_) =>
-                // F-001: evictOlderThanWithSource calls source.delete(path) for each stale .krfl file.
+                // evictOlderThanWithSource calls source.delete(path) for each stale.krfl file.
                 // After deletion the path is completely absent; the fix removes the prior rename-based approach.
                 val remainingKrfl = evictSrc.keys.filter(k => k.startsWith("cache/") && k.endsWith(".krfl"))
                 assert(
@@ -500,7 +498,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                                 allGood = false
                                 failMsg = s"Warm classpath missing symbol $coldFqn"
                             case Some(warmSym) =>
-                                // plan: phase-02 inline; declarationIds replaces declarations.
+                                // phase-02 inline; declarationIds replaces declarations.
                                 // We check declarationIds.length as a proxy.
                                 val coldDeclNames = (coldSym match
                                     case c: Tasty.Symbol.ClassLike => c.declarationIds;
@@ -516,7 +514,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                         end match
                     end for
                     assert(allGood, failMsg)
-                    // plan: phase-02 inline; parentTypes is always set (Chunk.empty by default).
+                    // phase-02 inline; parentTypes is always set (Chunk.empty by default).
                     for warmSym <- warmClasses do
                         val parentsChunk = warmSym match
                             case c: Tasty.Symbol.ClassLike => c.parentTypes;
@@ -531,7 +529,6 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
     }
 
     // Test P1: snapshot round-trip preserves a local Named parent.
-    //
     // Given: a synthetic classpath with two symbols: test.Bar (Class, no parents) and test.Foo
     //        (Class, parents=[Named(barSym)]). Both symbols are local so the SnapshotWriter assigns
     //        barSym a local symbolId and writes it in the PARENTS section.
@@ -613,7 +610,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         .map:
             case Result.Success(parents) =>
                 assert(parents.nonEmpty, "Foo.parents must be non-empty after snapshot round-trip with local Named parent")
-                // plan: phase-05; Named(id) carries SymbolId(2) for Bar (id assigned during fixture construction).
+                // phase-05; Named(id) carries SymbolId(2) for Bar (id assigned during fixture construction).
                 // Name check deferred to; verify that a Named parent with the Bar id is present.
                 val hasBar = parents.toSeq.exists:
                     case Tasty.Type.Named(_) => true
@@ -668,10 +665,10 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // a synthetic pre-campaign snapshot (written inline with minimal
+    // a synthetic snapshot (written inline with minimal
     // Classpath.make fields) is readable by the current SnapshotReader without error.
     // This replaces the missing committed binary fixture: the synthetic Classpath exercises the
-    // same wire-format contract as a pre-campaign snapshot.
+    // same wire-format contract as a snapshot.
     "legacy snapshot reads with the new reader (synthetic inline fixture)" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0xb0.toByte, 0xb1.toByte, 0xb2.toByte, 0xb3.toByte, 0xb4.toByte, 0xb5.toByte, 0xb6.toByte, 0xb7.toByte)
@@ -840,7 +837,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
     }
 
     // T-J1-im: in-memory root digest is deterministic across two calls (mirrors T-J1 in SnapshotRoundTripJvmTest)
-    // Given: a MemoryFileSource with a single .tasty file
+    // Given: a MemoryFileSource with a single.tasty file
     // When: DigestComputer.compute called twice on the same root
     // Then: both digests are equal (deterministic for in-memory sources)
     // Cross-platform: MemoryFileSource stat is stable.

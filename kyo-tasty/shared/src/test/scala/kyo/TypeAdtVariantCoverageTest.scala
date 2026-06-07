@@ -5,7 +5,7 @@ import kyo.Tasty.SymbolId
 
 /** Tests for Cat 10 (isContext drop), Cat 14 (Unknown removal), Cat 16 (derives CanEqual), and Schema round-trips for all Type cases.
   *
-  * Leaves 1-3 from the phase-05 plan. Leaf 4 (unknownDeleted) from phase-10 plan.
+  *  from the phase-05 plan. Leaf 4 (unknownDeleted) from phase-10 plan.
   */
 class TypeAdtVariantCoverageTest extends kyo.test.Test[Any]:
 
@@ -19,7 +19,7 @@ class TypeAdtVariantCoverageTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 1: functionDropsIsContext
+    // functionDropsIsContext
     // Given: a probe compileErrors('Type.Function(Chunk.empty, Type.Any, true)')
     // When: the test asserts
     // Then: the returned list is non-empty
@@ -31,7 +31,7 @@ class TypeAdtVariantCoverageTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 2: contextFunctionIsTheDedicatedArm
+    // contextFunctionIsTheDedicatedArm
     // Given: a fixture Type.ContextFunction(Chunk(Type.Any), Type.Nothing)
     // When: the test pattern-matches against Type.ContextFunction(_, _)
     // Then: the match arm fires; value reconstructable from its fields
@@ -47,7 +47,7 @@ class TypeAdtVariantCoverageTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 3: schemaRoundTripsEveryTypeCase
+    // schemaRoundTripsEveryTypeCase
     // Given: a fixture list with one instance of every post-Cat-10 Type case
     // When: the test encodes via Json.encode (Schema-driven) and reads back via Json.decode
     // Then: every decoded value equals its original (CanEqual)

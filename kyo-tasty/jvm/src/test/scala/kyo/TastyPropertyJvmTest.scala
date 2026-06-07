@@ -19,14 +19,14 @@ import scala.jdk.CollectionConverters.*
   */
 class TastyPropertyJvmTest extends kyo.test.Test[Any]:
 
-    // Allow a longer timeout: loading many individual .tasty files takes time on slow machines.
+    // Allow a longer timeout: loading many individual.tasty files takes time on slow machines.
     override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(5))
 
     import AllowUnsafe.embrace.danger
 
-    // Leaf 3: sampled kyo-* classpath directories decode without UnknownTagInPosition
+    // sampled kyo-* classpath directories decode without UnknownTagInPosition
     // Walk all kyo-* classpath directories; load each as an independent classpath; assert no unknown tags.
-    "PROP-003: sampled kyo-* classpath directories decode without UnknownTagInPosition" in {
+    "sampled kyo-* classpath directories decode without UnknownTagInPosition" in {
         val roots = discoverKyoClasspathRoots
         val src   = PlatformFileSource.get
         def go(remaining: List[String], violations: List[String]): List[String] < (Async & Scope & Abort[TastyError]) =

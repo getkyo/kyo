@@ -8,7 +8,7 @@ import kyo.internal.tasty.query.NativeFileSource
   * the original. Must live in native/src/test because it references NativeFileSource directly (a Scala Native object with POSIX FFI
   * bindings).
   *
-  * Pins T5 (Native-only path).
+  * Native-only path.
   */
 class NativeFileSourceTest extends kyo.test.Test[Any]:
 

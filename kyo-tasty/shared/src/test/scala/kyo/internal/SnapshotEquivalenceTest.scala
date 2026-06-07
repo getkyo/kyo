@@ -8,13 +8,13 @@ import kyo.Tasty.SymbolId as InternalSymbolId
   * All tests use synthetic Classpath values constructed with Tasty.Classpath.make (private[kyo]). The tests verify the helper's correctness
   * against edge cases before SnapshotFidelity2Test uses it with a real classpath pair.
   *
-  * Covers plan leaves 1-3 (SnapshotEquivalenceTest group).
+  * Covers plan (SnapshotEquivalenceTest group).
   */
 class SnapshotEquivalenceTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // Leaf 1: size-divergence-reports-fqnIndex-axis
+    // size-divergence-reports-fqnIndex-axis
     // Given: two synthetic Classpath values where cold.fqnIndex.size=110 and warm.fqnIndex.size=73
     //        with identical symbols (empty)
     // When: invoking SnapshotEquivalence.warmColdEquivalent(cold, warm)
@@ -41,7 +41,7 @@ class SnapshotEquivalenceTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 2: unresolved-divergence-reports-axis
+    // unresolved-divergence-reports-axis
     // Given: cold has 635 reachable Named(-1) entries (via 635 symbols with parentTypes containing Named(-1))
     //        warm has 0, all other axes equal
     // When: invoking SnapshotEquivalence.warmColdEquivalent(cold, warm)
@@ -82,7 +82,7 @@ class SnapshotEquivalenceTest extends kyo.test.Test[Any]:
                 case other                                                                   => fail(s"Unexpected result $other")
     }
 
-    // Leaf 3: equal-classpaths-return-equal
+    // equal-classpaths-return-equal
     // Given: two identical synthetic Classpath values (empty symbols, empty fqnIndex)
     // When: invoking SnapshotEquivalence.warmColdEquivalent(cold, warm)
     // Then: returns EquivResult.Equal with isEqual == true

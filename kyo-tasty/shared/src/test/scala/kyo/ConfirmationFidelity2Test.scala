@@ -5,26 +5,26 @@ import kyo.internal.TestClasspaths
 import kyo.internal.TestClasspaths2
 import kyo.internal.tasty.query.TastyState
 
-/** Confirmation pin tests for decoder-fidelity-2 campaign.
+/** Confirmation pin tests for second-round decoder fidelity.
   *
-  * Pins the baseline behavior of findings addressed in earlier phases plus several cross-phase confirmation leaves:
-  *   -  : empty classpath (0 symbols, 0 errors)
-  *   -  : givens enumeration baseline (478 givens from probe-001.log)
-  *   -  : concurrent writers to same snapshot cacheDir (one .krfl, both warm-loads equivalent)
-  *   -  : truncated snapshot falls back to fresh cold-init
-  *   -  : cp.errors pattern-matches to sealed TastyError variant
-  *   -  : error path does not leak partial symbols past malformed offset
-  *   -  : large classpath perf guard (cold-init < 5,000 ms median on 3 runs)
-  *   -  : JPMS module count == 69 (confirmation from)
-  *   - java-only-jar: Java classfile-only directory loads correctly
+  * Pins the baseline behavior plus several cross-cutting confirmation checks:
+  *   empty classpath (0 symbols, 0 errors)
+  *   givens enumeration baseline (478 givens from probe-001.log)
+  *   concurrent writers to same snapshot cacheDir (one.krfl, both warm-loads equivalent)
+  *   truncated snapshot falls back to fresh cold-init
+  *   cp.errors pattern-matches to sealed TastyError variant
+  *   error path does not leak partial symbols past malformed offset
+  *   large classpath perf guard (cold-init < 5,000 ms median on 3 runs)
+  *   JPMS module count == 69 (confirmation from)
+  *   java-only-jar: Java classfile-only directory loads correctly
   *
-  * Invariants consumed: all prior campaign invariants.
+  * Invariants consumed: all prior invariants.
   *
   * relocated from jvm/src/test to shared/src/test. All 9 original leaves are gated jvmOnly because they use java.nio.file,
   * TestClasspaths2 JVM-only methods (standardRoots, standardWithPlatformModules, bitFlippedMagicTastyPath, corruptedMidStreamTastyPath,
   * multiVersionStdlibRoots, v3FormatKrflBytes), or the real stdlib classpath (givens baseline ~478, Java symbols assertion).
   *
-  * adds 3 cross-platform in-memory companions for  ,  ,   using MemoryFileSource and
+  * adds 3 cross-platform in-memory companions for, using MemoryFileSource and
   * ClasspathOrchestrator.init directly. These do not require the JVM filesystem.
   */
 class ConfirmationFidelity2Test extends Fidelity2TestBase:
@@ -34,7 +34,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // Allow extra time: large-classpath perf leaf runs 3 cold-inits
     override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(10))
 
-    // Leaf 1: empty-classpath-zero-symbols-zero-errors
+    // empty-classpath-zero-symbols-zero-errors
     // Given: Tasty.Classpath.init(Seq.empty)
     // When: checking symbols and errors
     // Then: 0 symbols, 0 errors
@@ -46,11 +46,11 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 2: givens-enumeration-baseline
+    // givens-enumeration-baseline
     // Given: the real classpath loaded via TestClasspaths.withClasspath
     // When: counting allSymbols.count(isGiven)
     // Then: count is within +/-15 of the 570 baseline (re-measured 2026-06-05 after Cat 18
-    //       fill-in; Cat 18 added derives Schema to RecordComponent, ParamGroup, EnclosingMethod, and
+    //       fill-in; Cat 18 added derives Schema to RecordComponent, ParamGroup, EnclosingMethod
     //       all four Module sub-records (Requires, Exports, Opens, Provides), plus two explicit
     //       canEqual givens for Annotation and Annotation.Value; these 21 new given symbols raised the
     //       count from 549 to 570. The 549 baseline was set after; the 549-based assertion
@@ -69,10 +69,10 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 3: concurrent-writers-single-krfl
+    // concurrent-writers-single-krfl
     // Given: two concurrent Tasty.Classpath.initCached calls to same cacheDir
     // When: awaiting both
-    // Then: at most one .krfl file exists; both warm-loaded classpaths have the same symbol count
+    // Then: at most one.krfl file exists; both warm-loaded classpaths have the same symbol count
     // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): Tasty.Classpath.initCached
     //   takes a real filesystem cacheDir and uses java.nio.file atomic-rename for one-writer-wins. MemoryFileSource
     //   has no atomic-rename or concurrent-write semantics, so it cannot exercise the JVM rename-collision path
@@ -126,7 +126,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     }
 
     // bit-flipped-magic-produces-structured-error
-    // Given: a .tasty file with bit-flipped magic byte constructed in memory
+    // Given: a.tasty file with bit-flipped magic byte constructed in memory
     // When: loading via Tasty.Classpath.init with the MemoryFileSource root
     // Then: cp.errors.head pattern-matches as a sealed TastyError variant
     // Cross-platform: uses MemoryFileSource; no filesystem needed.
@@ -161,7 +161,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     }
 
     // mid-stream-truncated-produces-0-symbols
-    // Given: a .tasty file truncated mid-stream (valid magic + version header, then truncated) in memory
+    // Given: a.tasty file truncated mid-stream (valid magic + version header, then truncated) in memory
     // When: loading via ClasspathOrchestrator.init with SoftFail
     // Then: cp.errors.nonEmpty and cp.symbols.size == 0 (file-level isolation, no partial symbols)
     // Cross-platform: uses MemoryFileSource; no filesystem needed.
@@ -188,7 +188,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
                 succeed
     }
 
-    // Leaf 7: very-large-classpath-perf
+    // very-large-classpath-perf
     // Given: the standard 79,567-symbol classpath
     // When: running 3 cold-init loads and computing the median time
     // Then: median < 5,000 ms
@@ -201,7 +201,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
             val start = java.lang.System.nanoTime()
             TestClasspaths.withClasspath(roots)(Tasty.classpath).map: cp =>
                 val elapsed = (java.lang.System.nanoTime() - start) / 1_000_000L
-                assert(cp.symbols.size >= 81000, s"Expected >= 81,000 symbols (RI-008 measured 81569); got ${cp.symbols.size}")
+                assert(cp.symbols.size >= 81000, s"Expected >= 81,000 symbols (measured 81569); got ${cp.symbols.size}")
                 elapsed
         end timedLoad
         timedLoad.flatMap: t1 =>
@@ -216,7 +216,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
                     succeed
     }
 
-    // Leaf 8: jpms-modules-count-69
+    // jpms-modules-count-69
     // Given: the platform-modules classpath (jrt:/)
     // When: counting cp.indices.modulesIndex.size
     // Then: count == 69 (probe-001.log baseline)
@@ -232,11 +232,11 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 9: java-symbols-present-in-standard-classpath (F-A1-OPEN: Java symbols confirmation)
+    // java-symbols-present-in-standard-classpath (: Java symbols confirmation)
     // Given: the standard classpath loaded via TestClasspaths.withClasspath (includes EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
     // When: counting cp.symbols.count(_.isJava)
     // Then: count > 0 (Java symbols from JavaSimpleFixture.class embedded cross-platform)
-    "F-A1-OPEN leaf 9 : Java-defined symbols present in standard classpath (java interop guard)" in {
+    "Java-defined symbols present in standard classpath (java interop guard)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val javaCount = cp.symbols.count(_.isJava)
             assert(
@@ -246,7 +246,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 10: round-trip findClass on embedded Java fixture via MemoryFileSource
+    // round-trip findClass on embedded Java fixture via MemoryFileSource
     // Given: a MemoryFileSource with JavaSimpleFixture.class registered as a standalone root
     // When: Tasty.findClass("kyo.fixtures.JavaSimpleFixture")
     // Then: Maybe.Present(c) where c.isJava == true

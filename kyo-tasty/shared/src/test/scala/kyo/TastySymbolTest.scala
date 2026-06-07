@@ -5,10 +5,10 @@ import kyo.internal.tasty.query.FileSource
 import kyo.internal.tasty.symbol.SymbolKind
 import scala.collection.mutable
 
-/** Tests for Symbol accessors after (INV-001).
+/** Tests for Symbol accessors after.
   *
   * Verifies that Symbol.fullName, Symbol.parents, and Symbol.companion return expected values when the caller provides (using AllowUnsafe).
-  * Uses the fixture classpath to stay cross-platform (jvm, js, native) while exercising the same INV-001 invariants.
+  * Uses the fixture classpath to stay cross-platform (jvm, js, native) while exercising the same invariants.
   */
 class TastySymbolTest extends kyo.test.Test[Any]:
 
@@ -76,9 +76,9 @@ class TastySymbolTest extends kyo.test.Test[Any]:
         src
     end someCaseClassSource
 
-    // ── Tests (INV-001) ───────────────────────────────────────────────────────
+    // ── Tests ───────────────────────────────────────────────────────
 
-    // Test 3 (INV-001, Symbol.fullName): fullName.asString returns the dotted FQN.
+    // Test 3 (, Symbol.fullName): fullName.asString returns the dotted FQN.
     // Given: fixture classpath containing PlainClass.tasty; AllowUnsafe in scope.
     // When: cp.findClass("kyo.fixtures.PlainClass").get; sym.fullName.asString evaluated.
     // Then: returns String "kyo.fixtures.PlainClass".
@@ -101,12 +101,12 @@ class TastySymbolTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 4 (INV-001, Symbol.parents): parents accessor returns a non-empty Chunk[Type] for PlainClass.
+    // Test 4 (, Symbol.parents): parents accessor returns a non-empty Chunk[Type] for PlainClass.
     // PlainClass has AnyRef as its TASTy TEMPLATE parent (java.lang.Object via AnyRef placeholder).
     // Given: fixture classpath containing PlainClass.tasty; AllowUnsafe in scope.
     // When: cp.findClass("kyo.fixtures.PlainClass").get; sym.parents evaluated.
     // Then: returned Chunk is non-empty (AnyRef/Object placeholder present).
-    // plan: phase-02 update; sym.parents renamed to sym.parentTypes (direct field, no effect row).
+    // phase-02 update; sym.parents renamed to sym.parentTypes (direct field, no effect row).
     "Symbol.parentTypes for PlainClass returns a non-empty Chunk" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
@@ -126,7 +126,7 @@ class TastySymbolTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Test 5 (INV-001, Symbol.companion): class-Symbol's companion returns Module Symbol.
+    // Test 5 (, Symbol.companion): class-Symbol's companion returns Module Symbol.
     // Given: fixture classpath with SomeCaseClass.tasty; AllowUnsafe in scope.
     // When: classSym.companion evaluated.
     // Then: result is Maybe.Present(modSym) with modSym.kind == SymbolKind.Object.
@@ -153,7 +153,7 @@ class TastySymbolTest extends kyo.test.Test[Any]:
 
     // Helpers for synthetic-symbol tests (no classpath I/O, cross-platform).
 
-    // plan: phase-02 bridge; helpers use Symbol.make(kind, flags, name) - owner no longer stored on Symbol.
+    // phase-02 bridge; helpers use Symbol.make(kind, flags, name) - owner no longer stored on Symbol.
     private def makeRoot(): Tasty.Symbol =
         Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name(""), Tasty.Flags.empty, Tasty.SymbolId(-1), Chunk.empty)
 
@@ -241,7 +241,7 @@ class TastySymbolTest extends kyo.test.Test[Any]:
             )
     }
 
-    // plan: phase-02 update; isPackageObject was a Symbol method; now use flags.contains(Module) && name == "package"
+    // phase-02 update; isPackageObject was a Symbol method; now use flags.contains(Module) && name == "package"
     "Symbol flags.Module && name package: true for Module named package" in {
         val pkgObj = makeModule("package", makeRoot())
         assert(
@@ -259,10 +259,10 @@ class TastySymbolTest extends kyo.test.Test[Any]:
     }
 
     // Test 5 (T2, Symbol.make): Symbol.make produces Symbol with correct kind, name, and owner.
-    // Given: root sentinel Package; sym = Symbol.make(SymbolKind.Class, Flags.empty, Name("Foo"), root, ...).
+    // Given: root sentinel Package; sym = Symbol.make(SymbolKind.Class, Flags.empty, Name("Foo"), root.).
     // When: read sym.kind, sym.name.asString, sym.owner.
     // Then: kind == SymbolKind.Class; name.asString == "Foo"; owner eq root.
-    // plan: phase-02 update; Symbol.make now takes (kind, flags, name) only. sym.owner removed.
+    // phase-02 update; Symbol.make now takes (kind, flags, name) only. sym.owner removed.
     "Symbol.make produces Symbol with correct kind and name" in {
         // Symbol.makePlaceholder deleted; use Symbol.Class directly.
         val sym = Tasty.Symbol.Class(
@@ -288,7 +288,7 @@ class TastySymbolTest extends kyo.test.Test[Any]:
     // Given: synthetic Package symbol.
     // When: sym.declaredType (using AllowUnsafe).
     // Then: throws IllegalArgumentException (documented in Symbol.declaredType scaladoc).
-    // plan: phase-02 update; declaredType is now Maybe[Type], returns Absent for Package (no exception).
+    // phase-02 update; declaredType is now Maybe[Type], returns Absent for Package (no exception).
     "Symbol.declaredType returns Absent for Package symbols" in {
         val pkg = makePkg("scala", makeRoot())
         assert(
@@ -302,15 +302,15 @@ class TastySymbolTest extends kyo.test.Test[Any]:
 
     // T1 gap: declarations returns empty Chunk for a fresh synthetic symbol (no classpath).
     // Given: synthetic Class symbol; _declarations slot never assigned.
-    // When: sym.declarations is read while _declarations.isSet == false... however declarations calls
-    // _declarations.get() directly (no isSet guard), so accessing an unset slot throws ISE.
+    // When: sym.declarations is read while _declarations.isSet == false. however declarations calls
+    // _declarations.get directly (no isSet guard), so accessing an unset slot throws ISE.
     // This test documents the behavior: unset slot throws ISE, which is the correct protocol --
     // production callers only read declarations after classpath open assigns the slot.
     // We verify via the fixture classpath instead so we get a real (empty) value.
     // Given: fixture classpath containing PlainClass.tasty; look up PlainClass symbol.
     // When: sym.declarations.
     // Then: returns a Chunk (possibly empty or containing synthetic members).
-    // plan: phase-02 update; sym.declarations -> sym.declarationIds (Chunk[SymbolId]).
+    // phase-02 update; sym.declarations -> sym.declarationIds (Chunk[SymbolId]).
     "Symbol.declarationIds returns Chunk for fixture class" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(plainClassSource()).flatMap: cp =>
@@ -364,7 +364,7 @@ class TastySymbolTest extends kyo.test.Test[Any]:
     // Given: synthetic Class symbol built without a classpath.
     // When: sym.position (using AllowUnsafe).
     // Then: returns Absent (no position data on a synthetic symbol; _position slot is unset).
-    // plan: phase-02 update; sym.position renamed to sym.sourcePosition.
+    // phase-02 update; sym.position renamed to sym.sourcePosition.
     "Symbol.sourcePosition returns Absent for synthetic symbol" in {
         val sym = makeClass("SyntheticFoo", makeRoot())
         sym.sourcePosition match
@@ -390,7 +390,7 @@ class TastySymbolTest extends kyo.test.Test[Any]:
     }
 
     // Test (T4, root-owned FQN): root sentinel Symbol where ownerId == id returns just its own name.
-    "T4: root sentinel Symbol fullName returns its own name" in {
+    "root sentinel Symbol fullName returns its own name" in {
         import kyo.Tasty.SymbolId
         val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(rootSym)).flatMap: cp =>
@@ -399,7 +399,7 @@ class TastySymbolTest extends kyo.test.Test[Any]:
                 assert(fqn.isEmpty || fqn == "", s"Expected empty fullName for root sentinel but got '$fqn'")
     }
 
-    "T4: deeply nested inner class binaryName contains dollar separators" in {
+    "deeply nested inner class binaryName contains dollar separators" in {
         import kyo.Tasty.SymbolId
         val syms: Seq[Tasty.Symbol] = (0 to 5).map: i =>
             val ownerId = if i == 0 then 0 else i - 1

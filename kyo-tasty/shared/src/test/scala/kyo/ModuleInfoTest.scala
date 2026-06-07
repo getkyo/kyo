@@ -148,7 +148,7 @@ class ModuleInfoTest extends kyo.test.Test[Any]:
         uses: Seq[String],                        // binary class names with '/'
         provides: Seq[(String, Seq[String])]      // (serviceClass, impls)
     ): Array[Byte] =
-        // Step 1: build the constant pool
+        // build the constant pool
         val pool    = new ArrayBuffer[Byte]()
         val counter = ArrayBuffer(1) // starts at index 1
 
@@ -213,7 +213,7 @@ class ModuleInfoTest extends kyo.test.Test[Any]:
                         addClass(pool, counter, iUtf8Idx)
                 (svcClassIdx, implIdxs)
 
-        // Step 2: build Module attribute payload
+        // build Module attribute payload
         val modulePayload = buildModuleAttributePayload(
             modulePoolIdx,
             moduleVerPoolIdx,
@@ -224,7 +224,7 @@ class ModuleInfoTest extends kyo.test.Test[Any]:
             providesEncoded
         )
 
-        // Step 3: assemble the classfile
+        // assemble the classfile
         val buf         = new ArrayBuffer[Byte]()
         val poolCount   = counter(0) // one past the last index used
         val attrPayload = modulePayload

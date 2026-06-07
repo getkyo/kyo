@@ -7,17 +7,17 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.DecodeContext
 import kyo.internal.tasty.query.TastyState
 
-/** plan leaves 22-23: Tasty.bodyTree.
+/** Tasty.bodyTree.
   *
-  * Leaf 22: Tasty.bodyTree returns Present under withClasspath(roots) (decode context attached).
-  * Leaf 23: Tasty.bodyTree returns Absent under withClasspath(cp) (no decode context).
+  * Tasty.bodyTree returns Present under withClasspath(roots) (decode context attached).
+  * Tasty.bodyTree returns Absent under withClasspath(cp) (no decode context).
   */
 class BodyTreeTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // Leaf 22: bodyTree returns Present under a binding with a populated bodyStore
-    "Leaf 22: Tasty.bodyTree returns Maybe.Present for method with body under live classpath" in {
+    // bodyTree returns Present under a binding with a populated bodyStore
+    "Tasty.bodyTree returns Maybe.Present for method with body under live classpath" in {
         val src = MemoryFileSource()
         src.add("root/SomeObject.tasty", kyo.fixtures.Embedded.someObjectTasty)
         Scope.run:
@@ -54,8 +54,8 @@ class BodyTreeTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // Leaf 23: bodyTree returns Absent under withClasspath(cp) (no decode context)
-    "Leaf 23: Tasty.bodyTree returns Maybe.Absent under withClasspath(cp) (no decode context)" in {
+    // bodyTree returns Absent under withClasspath(cp) (no decode context)
+    "Tasty.bodyTree returns Maybe.Absent under withClasspath(cp) (no decode context)" in {
         // withClasspath(cp) installs Binding(cp, Maybe.Absent): no DecodeContext.
         // Tasty.bodyTree checks the DecodeContext first; Absent DecodeContext -> Absent result.
         // We use a synthetic method to confirm that Tasty.bodyTree (not the field) returns Absent.
@@ -93,8 +93,8 @@ class BodyTreeTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Leaf 3: noBodyFieldOnAnyClassLike
-    // Given: a probe accessing .body on Symbol.Class
+    // noBodyFieldOnAnyClassLike
+    // Given: a probe accessing.body on Symbol.Class
     // When: compileErrors is invoked
     // Then: non-empty string (body is not a member of Symbol.Class after)
     "accessing .body on ClassLike is a compile error" in {
@@ -103,8 +103,8 @@ class BodyTreeTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 4: noBodyFieldOnMethodValVar
-    // Given: probes accessing .body on Symbol.Method, Symbol.Val, Symbol.Var
+    // noBodyFieldOnMethodValVar
+    // Given: probes accessing.body on Symbol.Method, Symbol.Val, Symbol.Var
     // When: compileErrors is invoked for each
     // Then: every probe returns a non-empty string
     "accessing .body on Method/Val/Var is a compile error" in {
@@ -117,10 +117,10 @@ class BodyTreeTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 5: schemaRoundTripFaithfulPostBodyRemoval
+    // schemaRoundTripFaithfulPostBodyRemoval
     // Given: a classpath cp built via coldLoadBinding; encoded via Json/Schema; decoded back
     // When: the test reads fields of the round-tripped cp
-    // Then: every field equals the original; .body is not callable (compile check)
+    // Then: every field equals the original;.body is not callable (compile check)
     "Schema round-trip is faithful after body field removal" in {
         val src = MemoryFileSource()
         src.add("root/SomeObject.tasty", kyo.fixtures.Embedded.someObjectTasty)

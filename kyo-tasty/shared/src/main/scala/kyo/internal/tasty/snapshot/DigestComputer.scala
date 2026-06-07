@@ -6,7 +6,7 @@ import kyo.internal.tasty.query.FileSource
 /** xxh64-based custom 64-bit content hash for classpath cache invalidation.
   *
   * Replaces the prior FNV-1a 64-bit mtime+size computation with an xxh64-custom walk over the JAR central directory (CEN) CRC32
-  * values. This makes the digest stable across machine boundaries and mtime-only copies (INV-003).
+  * values. This makes the digest stable across machine boundaries and mtime-only copies.
   *
   * Algorithm note: the implementation uses xxh64 prime constants (0x9E3779B185EBCA87, etc.) with a bespoke per-entry mix loop.
   * This is NOT the full xxh3 streaming algorithm; it is a custom 64-bit hash built from xxh64 primes. Future improvement: replace
@@ -26,7 +26,7 @@ object DigestComputer:
     /** Minimal descriptor of a JAR central-directory entry used for content-addressed digest computation.
       *
       * Cross-platform: this type lives in shared/ so that digestForJar is callable on all platforms, even when JarCentralDirectory (JVM-only)
-      * is absent. Tests construct JarDigestEntry instances directly for cross-platform digest correctness tests (INV-006).
+      * is absent. Tests construct JarDigestEntry instances directly for cross-platform digest correctness tests.
       *
       * @param name
       *   entry name as decoded from the CEN (UTF-8 or CP437)
@@ -83,7 +83,7 @@ object DigestComputer:
       * Dispatches to the platform-specific PlatformDigest.digestForJarRoot for jar roots (JVM: CEN walk; JS/Native: path-hash fallback).
       * For non-jar roots this method returns 0L; callers that need non-jar digests should use compute(roots, source) instead.
       *
-      * Called by BundledSnapshotProbe to verify the embedded per-jar snapshot digest (INV-003).
+      * Called by BundledSnapshotProbe to verify the embedded per-jar snapshot digest.
       */
     def digestForRoot(root: String): Long =
         if root.toLowerCase.endsWith(".jar") then
@@ -112,7 +112,7 @@ object DigestComputer:
 
     /** Compute a 64-bit digest of sorted (path, digestValue, 0L) tuples from the given roots.
       *
-      * For jar roots on JVM, hashes the JAR CEN entries (name, CRC32) via PlatformDigest.digestForJarRoot (content-addressed; INV-003). For
+      * For jar roots on JVM, hashes the JAR CEN entries (name, CRC32) via PlatformDigest.digestForJarRoot (content-addressed). For
       * jar roots on JS/Native, falls back to a path-only hash (not content-addressed for in-place jar mutation). For `jrt:/` roots and
       * directory roots, retains the per-file enumeration via `source.list` and `source.stat` (mtime + size).
       *
@@ -184,7 +184,7 @@ object DigestComputer:
                 collectStats(Seq(root), source)
             else if root.toLowerCase.endsWith(".jar") then
                 // IOException from PlatformDigest.digestForJarRoot (JVM: missing/corrupt jar) is
-                // converted to TastyError.MalformedSection to prevent silent 0L digest (BLOCKER-1 fix).
+                // converted to TastyError.MalformedSection to prevent silent 0L digest.
                 Sync.defer:
                     try
                         val jarDigest = PlatformDigest.digestForJarRoot(root)

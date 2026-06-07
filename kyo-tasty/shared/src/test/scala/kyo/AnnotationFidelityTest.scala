@@ -5,28 +5,28 @@ import kyo.internal.TestClasspaths2
 
 /** Fidelity tests for annotation wiring: cp.symbolsAnnotatedWith, sym.annotations, and annotation args.
   *
-  * Pins findings   and   un-pends all four leaves by fixing `AstUnpickler.readModifiers` and
-  * `scanForwardAndCollectFlags` (replacing the ANNOTATION skip with real decode) and wiring
-  * `Pass1Result.annotationsBySymbol` through `FileResult` into `ClasspathOrchestrator.finalizeMerge`.
+  * Exercises `AstUnpickler.readModifiers` and `scanForwardAndCollectFlags` (which decode the
+  * ANNOTATION section) and the wiring of `Pass1Result.annotationsBySymbol` through `FileResult` into
+  * `ClasspathOrchestrator.finalizeMerge`.
   *
-  * leaves 1, 3, 4 ungated. AnnotatedFixture (kyo-tasty-fixtures/shared) provides @deprecated and
-  * @scala.annotation.unused annotations in the embedded fixture set. Leaf 1 threshold lowered from >= 5 to >= 1; the
-  * property is "deprecated symbols found" and the embedded set has 2. Leaf 2 remains jvmOnly: @tailrec is encoded in
-  * TASTy as TYPEREFsymbol (addr-based, external class reference), not TERMREFpkg (FQN-string); the FQN fallback in
-  * unresolvedFqnByNegId only covers the FQN-string paths. Fixing requires TYPEREFsymbol cross-file FQN tracking.
+  * AnnotatedFixture (kyo-tasty-fixtures/shared) provides @deprecated and @scala.annotation.unused
+  * annotations in the embedded fixture set; the embedded count is 2.
   *
-  * Decoder-fidelity-3 (CARRY-3): adds leaf 5 to verify that the in-memory snapshot round-trip preserves
-  * symbolsAnnotatedWith("scala.deprecated") count. Verifies cold == warm on JVM, JS, and Native, closing the
-  * cold=1 warm=0 regression documented in the DF2 final-report.md CARRY-3 entry.
+  * The @tailrec coverage remains jvmOnly: @tailrec is encoded in TASTy as TYPEREFsymbol (addr-based,
+  * external class reference), not TERMREFpkg (FQN-string); the FQN fallback in unresolvedFqnByNegId
+  * only covers the FQN-string paths. Fixing requires TYPEREFsymbol cross-file FQN tracking.
+  *
+  * The snapshot round-trip test verifies that symbolsAnnotatedWith("scala.deprecated") count is
+  * preserved cold == warm on JVM, JS, and Native.
   */
 class AnnotationFidelityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    //   / leaf 1: deprecated-found
+    //   deprecated-found
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded AnnotatedFixture)
     // When: calling cp.symbolsAnnotatedWith("scala.deprecated").size
-    // Then: post-fix size >= 1 (AnnotatedFixture has 2 @deprecated symbols; stdlib has many more);
+    // Then: size >= 1 (AnnotatedFixture has 2 @deprecated symbols; stdlib has many more);
     //       before fix size == 0 because AstUnpickler.readModifiers consumed the ANNOTATION
     //       payload via view.goto(annEnd) without decoding the tycon or attributing the annotation
     //       to the owning symbol
@@ -45,10 +45,10 @@ class AnnotationFidelityTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    //   leaf 2: tailrec-found
+    //   tailrec-found
     // Given: the real classpath loaded via TestClasspaths.withClasspath
     // When: calling cp.symbolsAnnotatedWith("scala.annotation.tailrec").size
-    // Then: post-fix >= 1 (scala stdlib has multiple @tailrec methods);
+    // Then: >= 1 (scala stdlib has multiple @tailrec methods);
     //       before fix size == 0 (same root cause as deprecated-found)
     // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): the @tailrec annotation
     //   tycon is encoded in TASTy as TYPEREFsymbol (addr-based reference to the external class), not TERMREFpkg
@@ -68,10 +68,10 @@ class AnnotationFidelityTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    //   leaf 3: annotation-tycon-preserved
+    //   annotation-tycon-preserved
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded AnnotatedFixture)
     // When: inspecting the annotations of any @deprecated symbol via sym.annotations
-    // Then: post-fix sym.annotations is non-empty and hasAnnotation("scala.deprecated") is true;
+    // Then: sym.annotations is non-empty and hasAnnotation("scala.deprecated") is true;
     //       before fix sym.annotations was Chunk.empty
     // Cross-platform: embedded AnnotatedFixture provides @deprecated symbols for JS/Native.
     "a @deprecated symbol carries annotation with correct tycon FQN" in {
@@ -88,11 +88,11 @@ class AnnotationFidelityTest extends kyo.test.Test[Any]:
                         succeed
     }
 
-    //   /   leaf 4: inline-annotation-tree-decoded
+    //   inline-annotation-tree-decoded
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded AnnotatedFixture)
     // When: checking that methods with annotations exist (verifying both readModifiers and
     //       scanForwardAndCollectFlags annotation decode paths work)
-    // Then: post-fix at least one method carries annotations; count of all annotated methods >= 1;
+    // Then: at least one method carries annotations; count of all annotated methods >= 1;
     //       before fix annotations was Chunk.empty on all methods
     // Cross-platform: AnnotatedFixtureMethods.countDown (@tailrec) and annotatedWithUnused (@unused) are annotated.
     "an @inline method carries a decodable annotation args tree" in {
@@ -108,15 +108,15 @@ class AnnotationFidelityTest extends kyo.test.Test[Any]:
                 succeed
     }
 
-    // CARRY-3 leaf 5 (decoder-fidelity-3): annotation-warm-load-cold-parity
+    // leaf 5 (decoder-fidelity-3): annotation-warm-load-cold-parity
     // Given: a cold classpath and a warm classpath produced by an in-memory snapshot round-trip
     // When: calling symbolsAnnotatedWith("scala.deprecated") on both
-    // Then: warm count == cold count (pre-fix warm returned 0 when cold returned 1)
-    // Root cause documented in DF2 final-report.md CARRY-3: the ANNOTS_ section serializer stored FQNs
+    // Then: warm count == cold count (warm returned 0 when cold returned 1)
+    // Root cause documented in DF2 final-report.md : the ANNOTS_ section serializer stored FQNs
     // as TermRef(Tuple(empty), Name(fqn)) which typeFqnString correctly unwraps to fqn. The test
     // verifies end-to-end parity. Cold >= 1 is also asserted so a vacuous warm==cold==0 does not pass.
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory (no filesystem needed).
-    "CARRY-3 : in-memory snapshot round-trip preserves symbolsAnnotatedWith count" in {
+    "in-memory snapshot round-trip preserves symbolsAnnotatedWith count" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (cold, warm) =>
             for
                 coldA <- cold.symbolsAnnotatedWith("scala.deprecated")
@@ -126,12 +126,12 @@ class AnnotationFidelityTest extends kyo.test.Test[Any]:
                 val warmCount = warmA.size
                 assert(
                     coldCount >= 1,
-                    s"CARRY-3: cold classpath must have >= 1 @deprecated symbol; got $coldCount. " +
+                    s"cold classpath must have >= 1 @deprecated symbol; got $coldCount. " +
                         s"Embedded AnnotatedFixture has 2 @deprecated symbols."
                 )
                 assert(
                     warmCount == coldCount,
-                    s"CARRY-3: warm symbolsAnnotatedWith count ($warmCount) != cold ($coldCount). " +
+                    s"warm symbolsAnnotatedWith count ($warmCount) != cold ($coldCount). " +
                         s"Annotation FQN round-trip through ANNOTS_ section failed."
                 )
                 succeed

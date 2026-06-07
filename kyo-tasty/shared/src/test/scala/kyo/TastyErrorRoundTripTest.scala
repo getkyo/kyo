@@ -7,9 +7,9 @@ import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import scala.collection.mutable
 
-/** Tests for round-trip encoding of TastyError variants added in.
+/** Tests for round-trip encoding of new TastyError variants.
   *
-  * Covers 4 plan-driven test leaves:
+  * Coverage:
   *   1. Round-trip TastyError.UnhandledSubtypingCase with Type.Any and Type.Nothing.
   *   2. Round-trip TastyError.UnresolvedReference, TastyError.UnknownType, TastyError.MissingDeclaredType.
   *   3. Minor version is 11 in freshly written snapshot.
@@ -189,13 +189,12 @@ class TastyErrorRoundTripTest extends kyo.test.Test[Any]:
     // any unknown tag including 255. This is a known semantic limitation documented in the
     // writer comments; the critical invariant is that the bytes are consumed cleanly without
     // crashing or corrupting the stream so the rest of the snapshot remains readable.
-    //
     // Given: a TastyError.UnhandledSubtypingCase whose lhs is a Type.Refinement (tag-255 path)
     //   and rhs is Type.Any (tag-1; decoded faithfully).
     // When: written via SnapshotWriter and read back via SnapshotReader.
     // Then: (a) no exception is raised during read; (b) the error round-trips with rhs == Type.Any;
     //   (c) lhs decodes to Type.Nothing (the documented opaque-tag fallback, not data corruption).
-    "W2 carry: tag-255 opaque catch-all round-trips cleanly; lhs falls back to Type.Nothing" in {
+    "tag-255 opaque catch-all round-trips cleanly; lhs falls back to Type.Nothing" in {
         val refinementType: Tasty.Type = Tasty.Type.Refinement(
             Tasty.Type.Named(Tasty.SymbolId(0)),
             Tasty.Name("x"),

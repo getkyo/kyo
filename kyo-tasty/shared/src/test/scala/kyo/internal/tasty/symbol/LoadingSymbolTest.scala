@@ -5,14 +5,13 @@ import kyo.*
 /** Tests for `LoadingSymbol` ADT: the internal loading-phase symbol representation.
   *
   * Covers:
-  *   - loadingSymbolInaccessibleFromUserCode: LoadingSymbol is private[kyo]; user code cannot access it.
-  *   - materialisingHoldsId: Materialising.id holds the assigned value; structural equality on id.
-  *   - placeholderDeleted: LoadingSymbol.Placeholder no longer exists (deleted in Phase 18).
+  *   loadingSymbolInaccessibleFromUserCode: LoadingSymbol is private[kyo]; user code cannot access it.
+  *   materialisingHoldsId: Materialising.id holds the assigned value; structural equality on id.
+  *   placeholderDeleted: LoadingSymbol.Placeholder no longer exists (deleted in).
   */
 class LoadingSymbolTest extends kyo.test.Test[Any]:
 
     // loadingSymbolInaccessibleFromUserCode
-    //
     // Given: a compileErrors probe that LoadingSymbol is NOT accessible through kyo.Tasty.
     // When: the test asserts.
     // Then: the type does not appear on the public Tasty surface; LoadingSymbol is an
@@ -27,7 +26,6 @@ class LoadingSymbolTest extends kyo.test.Test[Any]:
     }
 
     // materialisingHoldsId
-    //
     // Given: a `LoadingSymbol.Materialising(id = 42, kind = SymbolKind.Class, flags = Flags.empty, name = Name("X"))`.
     // When: the test reads `m.id`.
     // Then: the value is 42; structural equality on two Materialising values with the same id holds.
@@ -59,15 +57,14 @@ class LoadingSymbolTest extends kyo.test.Test[Any]:
     }
 
     // placeholderDeleted
-    //
-    // Given: the LoadingSymbol ADT after Phase 18.
+    // Given: the LoadingSymbol ADT after.
     // When: user code tries to reference LoadingSymbol.Placeholder.
     // Then: the type does not exist; compile-time probe returns non-empty errors.
-    "placeholderDeleted: LoadingSymbol.Placeholder no longer exists after Phase 18" in {
+    "placeholderDeleted: LoadingSymbol.Placeholder no longer exists" in {
         val noPlaceholder = compiletime.testing.typeCheckErrors(
             "(??? : kyo.internal.tasty.symbol.LoadingSymbol.Placeholder)"
         )
-        assert(noPlaceholder.nonEmpty, "LoadingSymbol.Placeholder must not exist after Phase 18 deletion")
+        assert(noPlaceholder.nonEmpty, "LoadingSymbol.Placeholder must not exist")
         succeed
     }
 

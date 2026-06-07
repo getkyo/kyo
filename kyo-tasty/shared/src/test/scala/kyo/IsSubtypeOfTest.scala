@@ -61,14 +61,14 @@ class IsSubtypeOfTest extends kyo.test.Test[Any]:
         Tasty.Classpath.fromPicklesWithSymbols(Chunk.from(arr))
     end makeTestClasspath
 
-    // Leaf 1: SubtypeVerdict.Unknown no longer exists (renamed to Indeterminate).
+    // SubtypeVerdict.Unknown no longer exists (renamed to Indeterminate).
     "leaf-1: SubtypeVerdict.Unknown does not exist (compile-time probe)" in {
         val errors = typeCheckErrors("val _: kyo.Tasty.SubtypeVerdict = kyo.Tasty.SubtypeVerdict.Unknown")
         assert(errors.nonEmpty, "Expected compile error for SubtypeVerdict.Unknown but got none")
         succeed
     }
 
-    // Leaf 2: Budget exhaustion yields Indeterminate (not Unknown).
+    // Budget exhaustion yields Indeterminate (not Unknown).
     "leaf-2: budget exhaustion via 66-deep Rec chain yields Indeterminate" in {
         nextId = 0
         val leafSym          = makeSym("RecBudgetLeaf")
@@ -89,7 +89,7 @@ class IsSubtypeOfTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // Leaf 3: Unhandled parent shape accumulates in cp.errors (Q-003 binding).
+    // Unhandled parent shape accumulates in cp.errors (binding).
     // Uses a Symbol.Class whose parentTypes contains a TermRef (not Named/Applied(Named)),
     // which is outside the matcher set in checkParents. After isSubtypeOf, calling
     // Tasty.classpath folds any accumulated decodeCtx.subtypingErrors into cp.errors.
@@ -133,7 +133,7 @@ class IsSubtypeOfTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // Leaf 4: Signature of isSubtypeOf is SubtypeVerdict < Sync (no Abort[TastyError]).
+    // Signature of isSubtypeOf is SubtypeVerdict < Sync (no Abort[TastyError]).
     // This helper method must compile for the test to pass; its return type annotation is the assertion.
     "leaf-4: isSubtypeOf return type is SubtypeVerdict < Sync (no Abort row)" in {
         def checkSignature(using Frame): Tasty.SubtypeVerdict < Sync =
@@ -142,7 +142,7 @@ class IsSubtypeOfTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 5: Schema round-trips each SubtypeVerdict case via JSON.
+    // Schema round-trips each SubtypeVerdict case via JSON.
     "leaf-5: Schema round-trips Sub, NotSub, Indeterminate" in {
         for verdict <- Seq(
                 Tasty.SubtypeVerdict.Sub,
@@ -163,7 +163,7 @@ class IsSubtypeOfTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 6: TastyError.UnhandledSubtypingCase is a closed-enum variant: constructable,
+    // TastyError.UnhandledSubtypingCase is a closed-enum variant: constructable,
     // matchable, and its omission from a match causes an exhaustiveness compile error.
     "leaf-6: UnhandledSubtypingCase is a reachable, closed-enum TastyError variant" in {
         // Reachability: the variant can be constructed and matched.

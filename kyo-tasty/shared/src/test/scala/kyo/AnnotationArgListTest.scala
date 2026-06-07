@@ -11,7 +11,7 @@ class AnnotationArgListTest extends kyo.test.Test[Any]:
     // Given: an Annotation built with the args expanded from Tree.Apply(_, Chunk(Literal("hi")))
     // When: a.arguments
     // Then: returns Chunk(Literal("hi"))
-    "Leaf 164: arguments is the decoded arg chunk" in {
+    "arguments is the decoded arg chunk" in {
         val tpe    = Tasty.Type.Named(SymbolId(0))
         val lit    = Tasty.Tree.Literal(Tasty.Constant.StringConst("hi"))
         val ann    = Tasty.Annotation(tpe, Chunk(lit))
@@ -27,7 +27,7 @@ class AnnotationArgListTest extends kyo.test.Test[Any]:
     }
 
     // Additional coverage: a single non-Apply tree appears as a single-element Chunk
-    "Leaf 164b: arguments holds a single-element Chunk for a non-Apply tree" in {
+    "arguments holds a single-element Chunk for a non-Apply tree" in {
         val tpe    = Tasty.Type.Named(SymbolId(0))
         val ident  = Tasty.Tree.Ident(Tasty.Name("x"), tpe)
         val ann    = Tasty.Annotation(tpe, Chunk(ident))
@@ -37,7 +37,7 @@ class AnnotationArgListTest extends kyo.test.Test[Any]:
     }
 
     // Additional coverage: an annotation with no arg trees has an empty arguments Chunk
-    "Leaf 164c: arguments is empty when the annotation carries no arg trees" in {
+    "arguments is empty when the annotation carries no arg trees" in {
         val tpe = Tasty.Type.Named(SymbolId(0))
         val ann = Tasty.Annotation(tpe, Chunk.empty)
         assert(ann.arguments.isEmpty, "arguments must be empty when no arg trees were decoded")

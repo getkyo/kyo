@@ -2,11 +2,12 @@ package kyo.internal
 
 import kyo.*
 
-/** test leaves: JS cross-platform fixture helper verification. Updated in to include Shape fixture.
+/** JS cross-platform fixture helper verification (includes the Shape fixture).
   *
-  * (BaseKyoCoreTest) handles `Abort[Any] & Async & Scope`, so test bodies call `TestClasspaths.withClasspath().map(cp => ...)` directly.
+  * BaseKyoCoreTest handles `Abort[Any] & Async & Scope`, so test bodies call
+  * `TestClasspaths.withClasspath.map(cp => ...)` directly.
   *
-  * Leaves:
+  * Cases:
   *   1. js-embedded-fixture-loads: cp.allClassLike.size > 0 from embedded fixtures.
   *   2. js-symbols-non-empty: cp.symbols.size > 0 (includes methods and vals).
   *   3. js-fidelity-suite-compiles: compile+run parity leaf (running proves compilation succeeded).
@@ -16,7 +17,7 @@ import kyo.*
   */
 class TestClasspathsJsTest extends kyo.test.Test[Any]:
 
-    // Leaf 1: js-embedded-fixture-loads
+    // js-embedded-fixture-loads
     // Given: the embedded TASTy fixtures compiled into the JS test bundle.
     // When: calling TestClasspaths.withClasspath on JS.
     // Then: the resulting Classpath has at least one class-like symbol.
@@ -35,7 +36,7 @@ class TestClasspathsJsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 2: js-symbols-non-empty
+    // js-symbols-non-empty
     // Given: the embedded TASTy fixtures.
     // When: calling cp.symbols.
     // Then: size == 1010 (exact count for the full embedded fixture set including Java fixture).
@@ -43,15 +44,15 @@ class TestClasspathsJsTest extends kyo.test.Test[Any]:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             // Exact count: the embedded fixture set (all kyo.fixtures.Embedded.* files including
             // JavaSimpleFixture added in) produces exactly 1010 symbols. This is
-            // deterministic because MemoryFileSource loads fixed compiled bytes. Q-025 RI-008 measured 2026-06-04.
+            // deterministic because MemoryFileSource loads fixed compiled bytes. measured 2026-06-04.
             assert(
                 cp.symbols.size == 1010,
-                s"Expected cp.symbols.size == 1010 (Q-025 RI-008 measured 2026-06-04) but got ${cp.symbols.size}"
+                s"Expected cp.symbols.size == 1010 (measured 2026-06-04) but got ${cp.symbols.size}"
             )
             succeed
     }
 
-    // Leaf 3: js-fidelity-suite-compiles
+    // js-fidelity-suite-compiles
     // Given: the JS test source for fixture leaves.
     // When: scalac runs in JS mode.
     // Then: the suite compiles and runs without "compile error: class not found".
@@ -62,7 +63,7 @@ class TestClasspathsJsTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 4: js-no-classpath-errors
+    // js-no-classpath-errors
     // Given: the embedded TASTy fixtures (all well-formed, compiled from real Scala source).
     // When: loading via TestClasspaths.withClasspath with ErrorMode.SoftFail.
     // Then: cp.errors is empty (no parse errors on valid fixture bytes).
@@ -75,7 +76,7 @@ class TestClasspathsJsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 5: js-enum-case-symbol-kind
+    // js-enum-case-symbol-kind
     // Given: the embedded shapeTasty fixture (kyo.fixtures.Shape parametric enum with Circle/Square/Rectangle cases).
     // When: loading via TestClasspaths.withClasspath.
     // Then: at least one symbol is an instance of Symbol.EnumCase (class-form enum case from Shape).
@@ -91,7 +92,7 @@ class TestClasspathsJsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 6: js-cross-file-resolution
+    // js-cross-file-resolution
     // Given: both BaseClass.tasty and ChildClass.tasty embedded in the fixture set.
     // When: loading via TestClasspaths.withClasspath (both files loaded together).
     // Then: both kyo.fixtures.BaseClass and kyo.fixtures.ChildClass are findable by FQN.

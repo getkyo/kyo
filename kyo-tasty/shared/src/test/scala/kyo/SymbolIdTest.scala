@@ -4,14 +4,14 @@ import kyo.Tasty.SymbolId
 
 /** Tests for the SymbolId opaque type.
   *
-  * . Covers identity equality, inequality, and pattern-binding (leaves 1-3). The private[kyo] construction constraint (leaf 4)
+  * Covers identity equality, inequality, and pattern-binding. The private[kyo] construction constraint (leaf 4)
   * lives in external.SymbolIdVisibilityTest, which is in package external so that assertDoesNotCompile evaluates the snippet outside the
   * kyo package scope. typeCheckErrors from within package kyo would not reject private[kyo] members because the test file itself is inside
   * the kyo package.
   */
 class SymbolIdTest extends kyo.test.Test[Any]:
 
-    // Leaf 1: SymbolId identity equality.
+    // SymbolId identity equality.
     // Given: two SymbolId.apply(7) calls.
     // When: compared via == and via underlying value extension.
     // Then: both return true; underlying Int is 7.
@@ -23,7 +23,7 @@ class SymbolIdTest extends kyo.test.Test[Any]:
         assert(b.value == 7, s"Expected value == 7 but got ${b.value}")
     }
 
-    // Leaf 2: SymbolId inequality.
+    // SymbolId inequality.
     // Given: SymbolId.apply(7) and SymbolId.apply(8).
     // When: compared via ==.
     // Then: returns false.
@@ -33,7 +33,7 @@ class SymbolIdTest extends kyo.test.Test[Any]:
         assert(a != b, s"Expected a != b but both had the same value")
     }
 
-    // Leaf 3: SymbolId pattern-binding.
+    // SymbolId pattern-binding.
     // Given: a SymbolId produced from value 42.
     // When: pattern-matched and the underlying Int extracted via value extension.
     // Then: the extracted Int equals 42.

@@ -4,8 +4,8 @@ import kyo.*
 
 /** JS platform: jar CEN walk is not available; fall back to path-only digest.
   *
-  * On JS, RandomAccessFile does not exist and JarCentralDirectory is JVM-only. JS jar roots use a path-based xxh64-custom hash
-  * (INV-003 JS/Native fallback). The digest is deterministic within a single run (same path always produces the same value) but is
+  * On JS, RandomAccessFile does not exist and JarCentralDirectory is JVM-only. JS jar roots use a path-based xxh64-custom hash.
+  * The digest is deterministic within a single run (same path always produces the same value) but is
   * NOT content-addressed: in-place jar mutation (replacing jar bytes without changing the path) will NOT invalidate the cache on JS.
   *
   * Limitation: users who mutate jars in-place on JS must clear the cache directory manually. This is a known trade-off; real

@@ -1,9 +1,6 @@
 package kyo
 
-/** Tests for show methods on Symbol, Type, Tree, and Constant.
-  *
-  * Leaf id:7. Pins: INV-005, INV-008.
-  */
+/** Tests for show methods on Symbol, Type, Tree, and Constant. */
 class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
 
     import AllowUnsafe.embrace.danger
@@ -116,7 +113,7 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
         )
     end method
 
-    // Leaf id:7 -- Tasty.show(Symbol), Tasty.show(Type), Tasty.show(Tree), Tasty.show(Constant) emit non-empty strings
+    // 7 -- Tasty.show(Symbol), Tasty.show(Type), Tasty.show(Tree), Tasty.show(Constant) emit non-empty strings
     "Tasty.show(Symbol) returns non-empty string" in {
         makeClasspath.flatMap: cp =>
             Tasty.withClasspath(cp):
@@ -159,7 +156,7 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
         assert(Tasty.Constant.NullConst.show == "null")
     }
 
-    // F-008 leaves: StringConst escaping (INV-005)
+    // StringConst escaping
     "Constant.show StringConst escapes embedded double-quote" in {
         // StringConst("a\"b") must render as "a\"b", not "a"b"
         assert(Tasty.Constant.StringConst("a\"b").show == "\"a\\\"b\"")
@@ -177,13 +174,13 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
         assert(Tasty.Constant.StringConst("hello").show == "\"hello\"")
     }
 
-    // F-008 leaves: CharConst escaping
+    // CharConst escaping
     "Constant.show CharConst escapes single-quote" in {
         // escapeCharLiteral('\'') => '\'' (4 chars: quote, backslash, quote, quote)
         assert(Tasty.Constant.CharConst('\'').show == "'\\''")
     }
 
-    // F-008 leaves: FloatConst NaN/Infinity guards (INV-005)
+    // FloatConst NaN/Infinity guards
     "Constant.show FloatConst NaN emits Float.NaN" in {
         assert(Tasty.Constant.FloatConst(Float.NaN).show == "Float.NaN")
     }
@@ -200,7 +197,7 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
         assert(Tasty.Constant.FloatConst(1.5f).show == "1.5f")
     }
 
-    // F-008 leaves: DoubleConst NaN/Infinity guards
+    // DoubleConst NaN/Infinity guards
     "Constant.show DoubleConst NaN emits Double.NaN" in {
         assert(Tasty.Constant.DoubleConst(Double.NaN).show == "Double.NaN")
     }
@@ -217,7 +214,7 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
         assert(Tasty.Constant.DoubleConst(3.14).show == "3.14")
     }
 
-    // F-008 leaves: ClassConst unresolved Type.Named emits <id:N> placeholder (Q-009)
+    // ClassConst unresolved Type.Named emits <id:N> placeholder
     "Constant.show ClassConst with unresolved Named emits placeholder" in {
         import kyo.Tasty.SymbolId
         assert(Tasty.Constant.ClassConst(Tasty.Type.Named(SymbolId(7))).show == "classOf[<id:7>]")
@@ -231,7 +228,7 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
         assert(Tasty.Constant.ClassConst(Tasty.Type.Nothing).show == "classOf[Nothing]")
     }
 
-    // Leaf F-005-a: renderType renders Function as arrow (INV-008)
+    // renderType renders Function as arrow
     // Given: method def map[B](f: A => B): List[B]
     // When: Tasty.signature(mapMethod)
     // Then: exact string "def map[B](f: A => B): List[B]"
@@ -260,7 +257,7 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
                     succeed
     }
 
-    // Leaf F-005-b: renderType renders Tuple return type (INV-008)
+    // renderType renders Tuple return type
     // Given: method def pair: (A, B)
     // When: Tasty.signature(pairMethod)
     // Then: exact string "def pair: (A, B)"
@@ -285,7 +282,7 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
                     succeed
     }
 
-    // Leaf F-005-c: renderType renders Array param type (INV-008)
+    // renderType renders Array param type
     // Given: method def fill(xs: Array[Int]): Unit
     // When: Tasty.signature(fillMethod)
     // Then: exact string "def fill(xs: Array[Int]): Unit"
@@ -312,7 +309,7 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
                     succeed
     }
 
-    // Leaf F-005-d: renderType renders multi-arg Function param type (INV-008)
+    // renderType renders multi-arg Function param type
     // Given: method def combine(f: (A, B) => C): C
     // When: Tasty.signature(combineMethod)
     // Then: exact string "def combine(f: (A, B) => C): C"
@@ -345,7 +342,7 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
                     succeed
     }
 
-    // Leaf F-005-e: renderType renders ByName param type (INV-008)
+    // renderType renders ByName param type
     // Given: method def eval(x: => Int): Int
     // When: Tasty.signature(evalMethod)
     // Then: exact string "def eval(x: => Int): Int"

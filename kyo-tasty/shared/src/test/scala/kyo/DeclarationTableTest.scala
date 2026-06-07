@@ -4,13 +4,11 @@ import kyo.internal.tasty.symbol.DeclarationTable
 import kyo.internal.tasty.symbol.SymbolKind
 
 /** Tests for DeclarationTable: flat-array vs HashMap cutover, and AtomicRef CAS-swap visibility.
-  *
-  * Plan tests 21-23.
   */
 class DeclarationTableTest extends kyo.test.Test[Any]:
 
     private def makeSymbol(nameStr: String): Tasty.Symbol =
-        // plan: phase-02 bridge; Symbol.make creates a partial Symbol with just kind/flags/name.
+        // phase-02 bridge; Symbol.make creates a partial Symbol with just kind/flags/name.
         import AllowUnsafe.embrace.danger
         Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name(nameStr), Tasty.Flags.empty, Tasty.SymbolId(-1), Chunk.empty)
     end makeSymbol
@@ -55,7 +53,7 @@ class DeclarationTableTest extends kyo.test.Test[Any]:
 
     // Test 23: AtomicRef CAS-swap visibility: reader sees fully-populated dict after latch release.
     // Writer: populate FIRST, then release latch. Reader: await latch, then read.
-    // Verifies that the AtomicRef CAS-swap in populate() is visible to a fiber that starts reading
+    // Verifies that the AtomicRef CAS-swap in populate is visible to a fiber that starts reading
     // after the latch is released.
     "AtomicRef CAS-swap visibility: reader sees either empty or fully-populated dict" in {
         import AllowUnsafe.embrace.danger

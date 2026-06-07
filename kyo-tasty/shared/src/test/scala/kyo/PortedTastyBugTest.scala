@@ -11,13 +11,13 @@ import kyo.internal.TestClasspaths
   * `kyo-tasty-fixtures/shared/src/main/scala/kyo/fixtures/PortedBugFixture.scala`.
   *
   * Test contract: the test loads the standard real classpath (which includes the
-  * fixture jar plus scala-library) and asserts the post-fix behavior the original
+  * fixture jar plus scala-library) and asserts the behavior the original
   * issue established. A failing test indicates a real kyo-tasty bug that needs
   * a fix; failures are NOT to be weakened to pass.
   *
   * Lives in shared/src/test: every fixture FQN exercised here is embedded in
   * `kyo.fixtures.Embedded` and registered by the platform-specific
-  * `TestClasspaths.withClasspath`, so JVM (real classpath), JS (embedded), and
+  * `TestClasspaths.withClasspath`, so JVM (real classpath), JS (embedded)
   * Native (embedded) all dispatch to the same checks.
   */
 class PortedTastyBugTest extends kyo.test.Test[Any]:
@@ -126,7 +126,7 @@ class PortedTastyBugTest extends kyo.test.Test[Any]:
 
     // ── tasty-query#380 ───────────────────────────────────────────────────────
     // https://github.com/scalacenter/tasty-query/issues/380
-    // Symptom: computing the type of `new java.lang.Enum[Foo]()` inside an enum
+    // Symptom: computing the type of `new java.lang.Enum[Foo]` inside an enum
     // throws NonMethodReferenceException.
     // Post-fix behavior: decoding the enum's body or methods does not raise.
     "tasty-query#380: enum extending java.lang.Enum[Self] decodes without raising" in {
@@ -447,7 +447,7 @@ class PortedTastyBugTest extends kyo.test.Test[Any]:
     // ── tasty-query#116 ───────────────────────────────────────────────────────
     // https://github.com/scalacenter/tasty-query/issues/116
     // Symptom: IArray erased to java.lang.Object regardless of element type.
-    // Post-fix behavior: a trait declaring `def from(): IArray[String]` decodes;
+    // Post-fix behavior: a trait declaring `def from: IArray[String]` decodes;
     // method is visible.
     "tasty-query#116: IArray[String] method signature decodes" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>

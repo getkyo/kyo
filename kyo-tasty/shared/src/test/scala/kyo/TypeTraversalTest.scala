@@ -8,7 +8,7 @@ import kyo.Tasty.SymbolId
   */
 class TypeTraversalTest extends kyo.test.Test[Any]:
 
-    // Leaf 4: collectGathersByNameTypes
+    // collectGathersByNameTypes
     // Given: a fixture Type tree with two ByName sub-types nested inside Applied
     // When: the test calls t.collect { case bn: Type.ByName => bn }
     // Then: the Chunk[Type.ByName] has length 2 in pre-order
@@ -23,7 +23,7 @@ class TypeTraversalTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 5: findReturnsFirstHitInPreOrder
+    // findReturnsFirstHitInPreOrder
     // Given: a fixture Type tree with a Repeated nested inside an OrType
     // When: the test calls t.find(_.isInstanceOf[Type.Repeated])
     // Then: the result is Maybe.Present(repeated)
@@ -36,7 +36,7 @@ class TypeTraversalTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 6: findReturnsAbsentOnNoMatch
+    // findReturnsAbsentOnNoMatch
     // Given: a fixture Type tree with no ByName
     // When: the test calls t.find(_.isInstanceOf[Type.ByName])
     // Then: the result is Maybe.Absent
@@ -47,7 +47,7 @@ class TypeTraversalTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 7: foldLeftCountsNodes
+    // foldLeftCountsNodes
     // Given: a 3-node fixture: Applied(Any, Chunk(Nothing))
     // When: the test calls t.foldLeft(0)((acc, _) => acc + 1)
     // Then: the result is 3
@@ -59,7 +59,7 @@ class TypeTraversalTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 8: existsDetectsByNamePresence
+    // existsDetectsByNamePresence
     // Given: a fixture tree with one ByName and a sibling tree with none
     // When: the test calls t.exists(_.isInstanceOf[Type.ByName]) on both
     // Then: true on the first; false on the second
@@ -71,7 +71,7 @@ class TypeTraversalTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 9: visitNotPublicAnymore
+    // visitNotPublicAnymore
     // Given: a probe that calls Type.Any.visit from outside package kyo
     // When: the probe is evaluated at compile time via compiletime.testing.typeCheckErrors
     // Then: the returned list is non-empty (visit is private[kyo])

@@ -2,20 +2,20 @@ package kyo.internal
 
 import kyo.*
 
-/** Test helper for INV-101-DF2: cold-vs-warm field-equivalence of Tasty.Classpath pairs.
+/** Test helper: cold-vs-warm field-equivalence of Tasty.Classpath pairs.
   *
   * Compares a cold-loaded Classpath against a warm (snapshot-loaded) Classpath on axes that are expected to be equal after the
-  * finalizeMerge fix and   defensive filter:
+  * finalizeMerge fix and defensive filter:
   *
-  *   - symbols.size
-  *   - fqnIndex.size
-  *   - packageIds.size
-  *   - unresolvedRefs count (symbols whose any reachable Type contains Named(SymbolId(-1)))
+  *   symbols.size
+  *   fqnIndex.size
+  *   packageIds.size
+  *   unresolvedRefs count (symbols whose any reachable Type contains Named(SymbolId(-1)))
   *
   * Note: topLevelClassIds.size is intentionally excluded. The cold-load path computes topLevelClassIds by checking owner-is-Package on
   * final symbols. The warm-load (SnapshotReader) reconstructs it from per-symbol FQN presence and kind, which may include nested class
   * entries that cold filtered out. This asymmetry is a pre-existing known limitation of the reader reconstruction and is not fixed in this
-  * phase. The axis that matters for   is fqnIndex.size.
+  * phase. The axis that matters for is fqnIndex.size.
   *
   * Returns EquivResult.Equal when all checked axes match, or EquivResult.Diverged with the first failing axis.
   *

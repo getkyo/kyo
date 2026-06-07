@@ -3,11 +3,11 @@ package kyo
 import kyo.Tasty.SymbolId
 // typeCheckErrors is accessed via compiletime.testing.typeCheckErrors inline
 
-/** plan leaves 1-4 and 13.
+/** plan  and 13.
   *
-  * Leaf 1: every public ADT derives Schema (compile-time summon). Leaf 2: every public ADT derives CanEqual (compile-time summon). Leaf 3:
+  * every public ADT derives Schema (compile-time summon). Leaf 2: every public ADT derives CanEqual (compile-time summon). Leaf 3:
   * removed HEAD Symbol methods are absent (compileErrors). Leaf 4: Symbol.EnumCase is a peer of Symbol.Class (compileErrors cross-cast).
-  * Leaf 13: Tag[Symbol.EnumCase] summon succeeds.
+  * Tag[Symbol.EnumCase] summon succeeds.
   */
 class PureDataAdtsTest extends kyo.test.Test[Any]:
 
@@ -73,7 +73,7 @@ class PureDataAdtsTest extends kyo.test.Test[Any]:
     // ── Leaf 3: removed HEAD Symbol methods absent (compileErrors) ───────────
     // Each compileErrors call should return a non-empty string because the method no longer exists.
 
-    "Leaf 3: removed HEAD Symbol methods are off the surface" in {
+    "removed HEAD Symbol methods are off the surface" in {
         // typeCheckErrors takes a fully-qualified expression string; local vars are not in scope.
         // Use the null-cast idiom: (null: kyo.Tasty.Symbol).xxx -- if xxx is absent the typecheck fails.
         val __tcErrors1 = compiletime.testing.typeCheckErrors("(null: kyo.Tasty.Symbol).isPackage").length
@@ -95,7 +95,7 @@ class PureDataAdtsTest extends kyo.test.Test[Any]:
 
     // ── Leaf 4: Symbol.EnumCase is a peer of Symbol.Class (compileErrors) ────
 
-    "Leaf 4: Symbol.EnumCase is NOT a subtype of Symbol.Class" in {
+    "Symbol.EnumCase is NOT a subtype of Symbol.Class" in {
         val ec: Tasty.Symbol.EnumCase = Tasty.Symbol.EnumCase(
             SymbolId(1),
             Tasty.Name("MyCase"),
@@ -130,7 +130,7 @@ class PureDataAdtsTest extends kyo.test.Test[Any]:
 
     // ── Leaf 13: Tag[Symbol.EnumCase] summon succeeds ─────────────────────────
 
-    "Leaf 13: Tag[Symbol.EnumCase] summon compiles and produces a valid tag" in {
+    "Tag[Symbol.EnumCase] summon compiles and produces a valid tag" in {
         val tag = summon[Tag[Tasty.Symbol.EnumCase]]
         // verify the tag is not null (tags are always non-null; this is a sanity check)
         discard(tag)

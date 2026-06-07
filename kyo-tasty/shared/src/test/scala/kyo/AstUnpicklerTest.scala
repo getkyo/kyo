@@ -17,8 +17,6 @@ import scala.collection.mutable
   *
   * Loads real TASTy fixture files from the test classpath (kyo-tasty-fixtures module). Fixture source:
   * kyo-tasty-fixtures/shared/src/main/scala/kyo/fixtures/FixtureClasses.scala.
-  *
-  * Plan tests 7-20.
   */
 class AstUnpicklerTest extends kyo.test.Test[Any]:
 
@@ -238,7 +236,7 @@ class AstUnpicklerTest extends kyo.test.Test[Any]:
     }
 
     // Test 16: method symbol's owner is tracked in ownerBySymbol map.
-    // plan: phase-02 update; sym.owner is removed; use r.ownerBySymbol instead.
+    // phase-02 update; sym.owner is removed; use r.ownerBySymbol instead.
     "pass 1 on PlainClass.tasty: method symbol's owner is the class symbol (via ownerBySymbol)" in {
         val bytes = loadFixtureBytes("PlainClass.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
@@ -266,7 +264,7 @@ class AstUnpicklerTest extends kyo.test.Test[Any]:
     }
 
     // Test 17: Inner class owner chain is tracked in ownerBySymbol.
-    // plan: phase-02 update; sym.fullName removed; test owner chain instead.
+    // phase-02 update; sym.fullName removed; test owner chain instead.
     "pass 1 on Outer.tasty: Inner class owner is tracked in ownerBySymbol" in {
         val bytes = loadFixtureBytes("Outer.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
@@ -292,7 +290,7 @@ class AstUnpicklerTest extends kyo.test.Test[Any]:
     }
 
     // Test 18: body slices (bodyStart, bodyEnd) for a DEFDEF are non-zero.
-    // plan: phase-02 update; TastyOrigin removed; use bodyDataByAddr instead.
+    // phase-02 update; TastyOrigin removed; use bodyDataByAddr instead.
     "pass 1 on PlainClass.tasty: Method symbol body slice (bodyStart, bodyEnd) is non-zero (via bodyDataByAddr)" in {
         val bytes = loadFixtureBytes("PlainClass.tasty")
         Abort.run[TastyError](runPass1(bytes)).map { result =>
@@ -477,16 +475,16 @@ class AstUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 20: passing a corrupt ASTs section produces MalformedSection("ASTs", ...).
+    // Test 20: passing a corrupt ASTs section produces MalformedSection("ASTs".).
     // Directly calls AstUnpickler.readPass1 with a 3-byte view: PACKAGE tag (128), then a
     // Nat encoding a large payload length (127 = 0xff single-byte in dotty Nat), but no
-    // payload bytes follow. The readEnd() returns cursor+127 but the next readByte() is past
+    // payload bytes follow. The readEnd returns cursor+127 but the next readByte is past
     // the end of the array, triggering ArrayIndexOutOfBoundsException which readPass1 converts
-    // to MalformedSection("ASTs", ...).
+    // to MalformedSection("ASTs".).
     "pass 1 on truncated ASTs section produces MalformedSection(ASTs, ...)" in {
         // PACKAGE = 128 (category 5: tag + Length + payload)
         // Length Nat = 127 (single byte in dotty Nat encoding: (127 | 0x80).toByte = 0xff)
-        // Then 0 actual payload bytes. readByte() inside the payload will AIOOB.
+        // Then 0 actual payload bytes. readByte inside the payload will AIOOB.
         val corruptAsts = Array(128.toByte, 0xff.toByte)
         val arena       = TypeArena.canonical()
         val view        = ByteView(corruptAsts)
@@ -583,7 +581,7 @@ class AstUnpicklerTest extends kyo.test.Test[Any]:
     // changed internal maps from JVM-only IdentityHashMap to cross-platform LongMap keyed on
     // LoadingSymbol.Materialising.id. Assigns the four map fields to explicitly typed LongMap variables;
     // the assignment compiles only if the field types are correct. Asserts structural invariants.
-    "T-P4-1: Pass1Result map fields are LongMap instances " in {
+    "Pass1Result map fields are LongMap instances " in {
         import scala.collection.mutable
         import kyo.internal.tasty.symbol.LoadingSymbol
         val bytes = loadFixtureBytes("GenericBox.tasty")
@@ -611,8 +609,8 @@ class AstUnpicklerTest extends kyo.test.Test[Any]:
     }
 
     // T-P4-3: addrMap is populated after pass1 completes.
-    // plan: phase-02 update; TastyOrigin.addrMap removed; use r.addrMap (Pass1Result.addrMap) instead.
-    "T-P4-3: addrMap is populated after pass1 completes (via Pass1Result.addrMap)" in {
+    // phase-02 update; TastyOrigin.addrMap removed; use r.addrMap (Pass1Result.addrMap) instead.
+    "addrMap is populated after pass1 completes (via Pass1Result.addrMap)" in {
         val bytes = loadFixtureBytes("PlainClass.tasty")
         val arena = TypeArena.canonical()
         Abort.run[TastyError](runPass1WithArena(bytes, arena)).map { result =>

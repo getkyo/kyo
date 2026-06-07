@@ -11,7 +11,7 @@ import kyo.*
   * the active Binding; if absent they fall back to global.
   *
   * global: initialized at most once per process (lazy val). On JVM, cold-loads java.class.path via
-  * PlatformFallback.initFallback (INV-009 site-2). On JS and Native, returns Binding.empty.
+  * PlatformFallback.initFallback. On JS and Native, returns Binding.empty.
   *
   * private[kyo]: accessible within package kyo and kyo.* sub-packages only.
   */

@@ -84,12 +84,12 @@ class ClasspathAnnotatedTest extends kyo.test.Test[Any]:
     private def buildFixture(using Frame): Tasty.Classpath < Sync =
         Sync.defer:
             // Symbol layout (index == id.value) -- owner chain must resolve "scala.deprecated":
-            //   0 -> Package "scala"       (ownerId = -1)
-            //   1 -> Class   "deprecated"  (ownerId = 0, so fullName = "scala.deprecated")
-            //   2 -> Method  "m1"          (ownerId = 4, annotated with ann referencing id 1)
-            //   3 -> Val     "v1"          (ownerId = 4, annotated with ann referencing id 1)
-            //   4 -> Class   "PlainA"      (ownerId = -1, no annotation)
-            //   5 -> Method  "m2"          (ownerId = 4, no annotation)
+            //   0 -> Package "scala" (ownerId = -1)
+            //   1 -> Class "deprecated" (ownerId = 0, so fullName = "scala.deprecated")
+            //   2 -> Method "m1" (ownerId = 4, annotated with ann referencing id 1)
+            //   3 -> Val "v1" (ownerId = 4, annotated with ann referencing id 1)
+            //   4 -> Class "PlainA" (ownerId = -1, no annotation)
+            //   5 -> Method "m2" (ownerId = 4, no annotation)
 
             val scalaPkg        = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("scala"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
             val deprecatedClass = makeAnnotClass(1, "deprecated", "scala.deprecated")
@@ -143,7 +143,7 @@ class ClasspathAnnotatedTest extends kyo.test.Test[Any]:
     // Given: fixture with @deprecated def m1 and @deprecated val v1, plus unannotated PlainA and m2.
     // When: cp.symbolsAnnotatedWith("scala.deprecated")
     // Then: Chunk[Symbol] of size 2; contains m1 and v1; excludes PlainA, deprecatedClass, and m2.
-    "Leaf 128: symbolsAnnotatedWith returns only symbols bearing the given annotation" in {
+    "symbolsAnnotatedWith returns only symbols bearing the given annotation" in {
         buildFixture.flatMap: cp =>
             cp.symbolsAnnotatedWith("scala.deprecated").map: annotated =>
                 assert(

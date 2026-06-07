@@ -6,7 +6,7 @@ import kyo.*
   *
   * Provides `coldWarmEquiv(name)(body)` which runs `body` against both a cold-decoded classpath and a warm snapshot-loaded classpath,
   * asserting that the results are structurally equal. This makes every participating test leaf sensitive to cold/warm divergence, catching the
-  *   bug class at any leaf rather than only the dedicated INV-013 leaf.
+  *   bug class at any leaf rather than only the dedicated leaf.
   *
   * The `coldWarmEquiv` leaf uses `TestClasspaths2.withSnapshotInMemory` which works on all three platforms (JVM, JS, Native). On JVM, JS,
   * and Native the cold load uses the embedded fixture set; the in-memory MemoryFileSource round-trip verifies snapshot serialization and

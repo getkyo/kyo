@@ -24,7 +24,7 @@ private[kyo] object BinaryName:
       * joined with '$'. Top-level objects get a '$' suffix.
       */
     def compute(sym: Tasty.Symbol, cp: Tasty.Classpath): String =
-        // F-002: append the '$' suffix for Object before walking owners, so the binary name
+        // Append the '$' suffix for Object before walking owners, so the binary name
         // conforms to the JVM internal-name convention: "example/MyObj$" for "object MyObj".
         val leafSuffix: List[String] =
             if sym.kind == SymbolKind.Object then List("$") else Nil
@@ -49,7 +49,7 @@ private[kyo] object BinaryName:
                     nameStr + suffix.mkString
                 case Maybe.Present(owner) =>
                     if owner.kind == SymbolKind.Package then
-                        // F-002: Package symbols store the full dotted package name (e.g.
+                        // Package symbols store the full dotted package name (e.g.
                         // "kyo.fixtures"). Convert dots to slashes for the JVM binary name and stop
                         // recursion here; the package's own owner chain would only re-emit the same
                         // segments (computeFqn stops at the first Package for the same reason).

@@ -2,7 +2,7 @@ package kyo
 
 /** JVM-only leaves for WithClasspathTest that require java.nio.file or java.io.File.
   *
-  * Leaf 6: withClasspath(roots, Present(cacheDir)) requires java.nio.file.Files.createTempDirectory
+  * withClasspath(roots, Present(cacheDir)) requires java.nio.file.Files.createTempDirectory
   * and java.io.File, which are not available in Scala.js or Scala Native. This leaf is kept here
   * rather than in shared/src/test so that fastLinkJS does not fail with unresolved symbol errors.
   *

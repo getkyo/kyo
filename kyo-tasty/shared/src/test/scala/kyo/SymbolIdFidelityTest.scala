@@ -14,7 +14,7 @@ class SymbolIdFidelityTest extends kyo.test.Test[Any]:
     // Sentinel-count leaf 1: sentinel-count-phase04
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
     // When: computing cp.symbols.filter(_.id.value == -1).map(_.name.asString).toSet.size
-    // Then: post-fix size is strictly less than the old pre-consolidation baseline (11);
+    // Then: size is strictly less than the old pre-consolidation baseline (11);
     //       embedded fixtures have 0, which satisfies < 11 trivially.
     "partial : SymbolId(-1) sentinel name-set size decreased from pre-consolidation baseline" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
@@ -33,7 +33,7 @@ class SymbolIdFidelityTest extends kyo.test.Test[Any]:
     // Sentinel-count leaf 2: sentinel-count-bounded
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
     // When: computing cp.symbols.filter(_.id.value == -1).map(_.name.asString).toSet.size
-    // Then: post-fix size <= 3 (one per failure category: unresolved, rec-placeholder, unknown-tag)
+    // Then: size <= 3 (one per failure category: unresolved, rec-placeholder, unknown-tag)
     // Cross-platform: invariant "count <= 3" holds for any classpath; embedded fixtures have 0 which satisfies <= 3.
     "SymbolId(-1) sentinel name-set size <= 3 on real classpath" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
@@ -48,7 +48,7 @@ class SymbolIdFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 3: no-rec-placeholder-names-final
+    // no-rec-placeholder-names-final
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
     // When: scanning cp.symbols.map(_.name.asString)
     // Then: zero names start with "rec@", "rec-placeholder@", "typeref@", or "termref@"

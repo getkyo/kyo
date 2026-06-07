@@ -1681,7 +1681,7 @@ object TreeUnpickler:
                 // In type position (rare, inside MATCHCASEtype rhs) the body is the result type.
                 // Skip everything and return a Wildcard placeholder; the body's type is inaccessible
                 // without a full term decoder. Use unique tracked negative IDs for the bounds to avoid
-                // emitting the Named(-1) sentinel that would fail the INV-005 named-sentinel check.
+                // emitting the Named(-1) sentinel that would fail the named-sentinel check.
                 val end = view.readEnd()
                 view.goto(end)
                 val loId = typeSession.nextUnresolvedId()

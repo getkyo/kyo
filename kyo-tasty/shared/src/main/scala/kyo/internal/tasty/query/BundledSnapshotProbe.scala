@@ -7,10 +7,10 @@ import kyo.internal.tasty.snapshot.SnapshotReader
 
 /** Probe each jar root for an embedded KRFL snapshot at `META-INF/kyo-tasty/snapshot.krfl`.
   *
-  * INV-004: `withClasspath(roots, ...)` ALWAYS calls this probe before cold-loading. On a hit, the bundled snapshot is decoded and its
+  * `withClasspath(roots, ...)` ALWAYS calls this probe before cold-loading. On a hit, the bundled snapshot is decoded and its
   * SymbolId space is remapped into the merged classpath. On a miss, the root is cold-loaded via the existing Phase A/B/C pipeline.
   *
-  * INV-007 (verify-then-fallback): when the snapshot's embedded digest does not match the recomputed digest for the jar, the probe raises
+  * Verify-then-fallback: when the snapshot's embedded digest does not match the recomputed digest for the jar, the probe raises
   * `TastyError.DigestMismatch`. The caller's error mode decides whether to propagate (FailFast) or fall back to cold load (SoftFail).
   *
   * Scaladoc: 8-35 lines.
@@ -55,7 +55,7 @@ private[kyo] object BundledSnapshotProbe:
       * disjoint from any previously accumulated symbols. The function builds a new Classpath combining `existing` symbols plus the remapped
       * `partial` symbols, merging all index maps.
       *
-      * INV-005: after this call, every SymbolId from `partial` maps to `original + idOffset` in the result.
+      * After this call, every SymbolId from `partial` maps to `original + idOffset` in the result.
       */
     def mergePartialInto(
         existing: Tasty.Classpath,

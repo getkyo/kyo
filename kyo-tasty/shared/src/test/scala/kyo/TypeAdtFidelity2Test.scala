@@ -4,16 +4,16 @@ import kyo.internal.Fidelity2TestBase
 import kyo.internal.TestClasspaths
 import kyo.internal.tasty.type_.TypeOps
 
-/** Structural Type ADT fidelity tests for decoder-fidelity-2 campaign.
+/** Structural Type ADT fidelity tests.
   *
   * Covers findings:
-  *   -  : intersection types (AndType) collapse from APPLIEDtype(scala.&) or ANDtype tag
-  *   -  : MatchType cases decoded as Type.MatchCase children in TypeAlias bodies
-  *   -  : isTransparentInline flag (Inline AND Transparent combined)
-  *   -  : by-name parameter count >= 10 baseline
-  *   -  : opaque type TypeLambda paramIds free of SymbolId(-1) sentinels
-  *   -  : union types (OrType) present in method declaredTypes
-  *   -  : scala.reflect.Manifest$ and scala.reflect.Manifest fqnIndex keys documented
+  *   intersection types (AndType) collapse from APPLIEDtype(scala.&) or ANDtype tag
+  *   MatchType cases decoded as Type.MatchCase children in TypeAlias bodies
+  *   isTransparentInline flag (Inline AND Transparent combined)
+  *   by-name parameter count >= 10 baseline
+  *   opaque type TypeLambda paramIds free of SymbolId(-1) sentinels
+  *   union types (OrType) present in method declaredTypes
+  *   scala.reflect.Manifest$ and scala.reflect.Manifest fqnIndex keys documented
   *
   * relocated from jvm/src/test to shared/src/test. All core assertion leaves use TestClasspaths.withClasspath which works
   * on JS/Native via embedded fixtures. The coldWarmEquiv leaf is gated jvmOnly by Fidelity2TestBase.
@@ -21,17 +21,17 @@ import kyo.internal.tasty.type_.TypeOps
   * Note on JS/Native behavior: the embedded fixture set is small (kyo-tasty-fixtures compiled classes). Many count-positive assertions
   * that pass on JVM (via the full stdlib) may produce count=0 on JS/Native if the embedded fixtures do not exercise the feature. For
   * example, AndType from APPLIEDtype(scala.&) may not appear in the embedded set. When a count-positive assertion fails on JS/Native,
-  * it surfaces a genuine fixture gap for or the next campaign to address.
+  * it surfaces a genuine fixture gap for or the next to address.
   */
 class TypeAdtFidelity2Test extends Fidelity2TestBase:
 
     import AllowUnsafe.embrace.danger
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  : intersection types (via TypeAlias body, not method declaredType)
+    //  intersection types (via TypeAlias body, not method declaredType)
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Leaf 1: intersection-type-count-non-negative-structural-guard
+    // intersection-type-count-non-negative-structural-guard
     // Given: all TypeAlias bodies in the classpath
     // When: counting TypeAliases whose body reaches a Type.AndType anywhere
     // Then: count >= 0 (structural non-negative guard for cross-platform)
@@ -57,10 +57,10 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  : union types (in method declaredTypes)
+    //  union types (in method declaredTypes)
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Leaf 2: union-type-count-non-negative-structural-guard
+    // union-type-count-non-negative-structural-guard
     // Given: allMethods in classpath
     // When: counting methods whose declaredType reaches Type.OrType
     // Then: count >= 0 (structural non-negative guard for cross-platform)
@@ -80,7 +80,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 3: scala-and-applied-collapses-to-andtype (unit test of TypeOps.applied)
+    // scala-and-applied-collapses-to-andtype (unit test of TypeOps.applied)
     // Given: synthetic Applied(Named(andId), Chunk(intT, stringT)) with fqnHint = TypeOps.AndFqn
     // When: invoking TypeOps.applied
     // Then: returns Type.AndType(intT, stringT), not Applied
@@ -100,13 +100,13 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  : MatchType / MatchCase children (in TypeAlias bodies)
+    //  MatchType / MatchCase children (in TypeAlias bodies)
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Leaf 4: matchtype-count-positive-in-typealiases
+    // matchtype-count-positive-in-typealiases
     // Given: all TypeAlias bodies
     // When: counting MatchType instances
-    // Then: post-fix count > 0 on JVM; may be 0 on JS/Native if embedded fixtures lack match types
+    // Then: count > 0 on JVM; may be 0 on JS/Native if embedded fixtures lack match types
     "MatchType instances present in TypeAlias bodies" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             var matchTypeCount = 0
@@ -124,7 +124,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 5: matchcase-type-codec-correctness (unit test)
+    // matchcase-type-codec-correctness (unit test)
     // Given: a synthetic Type.MatchCase instance
     // When: checking the MatchCase ADT case constructor directly
     // Then: the MatchCase ADT case correctly holds pat and rhs (structural integrity)
@@ -141,10 +141,10 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  : transparent inline flag
+    //  transparent inline flag
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Leaf 6: transparentinline-count-positive
+    // transparentinline-count-positive
     // Given: cp.allMethods.count(_.isTransparentInline)
     // When: counting after the fix (isInline AND isTransparent combined)
     // Then: count >= 1; on JVM >= 20 (probe: 23); embedded fixtures have `inline def inlineAdd` (non-transparent)
@@ -159,7 +159,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 7: macrotransparent-disjoint-from-plain-transparent
+    // macrotransparent-disjoint-from-plain-transparent
     // Given: cp.allMethods
     // When: checking if isMacroTransparent is a subset of isTransparentInline
     // Then: isMacroTransparent count <= isTransparentInline count
@@ -179,10 +179,10 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  : by-name parameter baseline
+    //  by-name parameter baseline
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Leaf 8: byname-parameter-count-pins-baseline
+    // byname-parameter-count-pins-baseline
     // Given: cp.allParameters.count(p => p.declaredType.isInstanceOf[Type.ByName])
     // When: counting on the classpath
     // Then: count >= 0 (JVM probe baseline was 19; JS/Native may have 0 if no by-name params in embedded fixtures)
@@ -198,10 +198,10 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  : opaque type TypeLambda paramIds free of SymbolId(-1) sentinels
+    //  opaque type TypeLambda paramIds free of SymbolId(-1) sentinels
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Leaf 9: opaque-type-count-positive
+    // opaque-type-count-positive
     // Given: the classpath
     // When: counting OpaqueType symbols
     // Then: count > 0 (on JVM: probe: 26; on JS/Native: embedded Meters opaque type in FixtureClasses)
@@ -216,10 +216,10 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  : scala.reflect FQN documentation
+    //  scala.reflect FQN documentation
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Leaf 10: scala-reflect-manifest-fqnindex-has-canonical-key
+    // scala-reflect-manifest-fqnindex-has-canonical-key
     // Given: cp.indices.byFqn
     // When: checking for the canonical source form "scala.reflect.Manifest" (without $)
     // Then: the canonical key exists in fqnIndex if the $ form is present (FqnNormalizer strips trailing $)
@@ -245,7 +245,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
     // Snapshot round-trip leaf (JVM only)
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Leaf 11: snapshot-roundtrip-preserves-matchcase
+    // snapshot-roundtrip-preserves-matchcase
     // Given: (cold, warm) pair via TestClasspaths2.standardWithSnapshot
     // When: counting Type.MatchCase reachable from TypeAlias bodies in both
     // Then: cold count == warm count (TypeAlias bodies preserved round-trip)

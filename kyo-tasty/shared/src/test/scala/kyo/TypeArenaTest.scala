@@ -6,9 +6,8 @@ import kyo.internal.tasty.type_.TypeArena
 
 /** Tests for TypeArena intern and Phase C merge.
   *
-  * Plan tests 1-5.
-  *
-  * plan: phase-05; Named(id) carries SymbolId; makeSym assigns unique ids so that Named types created from different symbols are distinct
+  *   *
+  * phase-05; Named(id) carries SymbolId; makeSym assigns unique ids so that Named types created from different symbols are distinct
   * (id equality, not reference equality).
   */
 class TypeArenaTest extends kyo.test.Test[Any]:
@@ -123,15 +122,15 @@ class TypeArenaTest extends kyo.test.Test[Any]:
         assert(c1 eq c2)
     }
 
-    // Test 6 (B8/INV-019): deeply nested Applied chain at MaxDepth+1 throws DepthExceededException OR StackOverflowError during merge.
-    // plan: phase-05; hashOf also recurses without a depth guard; at MaxDepth+1 levels of nesting either the depth check
+    // Test 6 (B8/): deeply nested Applied chain at MaxDepth+1 throws DepthExceededException OR StackOverflowError during merge.
+    // phase-05; hashOf also recurses without a depth guard; at MaxDepth+1 levels of nesting either the depth check
     // fires (DepthExceededException) or hashOf stack-overflows first (StackOverflowError). Both indicate the depth limit
     // has been exceeded. adds a hash depth guard to fully fix this.
     // JVM-only (exception condition 3: test asserts JVM-specific behavior): the test constructs 1025 levels of nested
     //   Applied types so that the JVM call stack (configured to -Xss10M in CI) can reach the depth-guard check at
     //   TypeArena.MaxDepth (1024). The JS engine call stack and Scala Native default stack overflow well before depth
     //   1024 (RangeError on JS, native SOE on Native), so the assertion would not exercise the depth-guard branch.
-    "B8/INV-019: Applied chain at MaxDepth+1 throws DepthExceededException during merge".onlyJvm in {
+    "Applied chain at MaxDepth+1 throws DepthExceededException during merge".onlyJvm in {
         nextId = 0
         val baseSym       = makeSym("DepthBase")
         val argSym        = makeSym("DepthArg")
@@ -153,7 +152,7 @@ class TypeArenaTest extends kyo.test.Test[Any]:
                 assert(ex.getMessage.contains(s"depth ${TypeArena.MaxDepth} exceeded"), ex.getMessage)
                 succeed
             case _: StackOverflowError =>
-                // plan: phase-05; hashOf recurses without a depth guard; acceptable at extreme nesting.
+                // phase-05; hashOf recurses without a depth guard; acceptable at extreme nesting.
                 succeed
         end try
     }
@@ -189,7 +188,7 @@ class TypeArenaTest extends kyo.test.Test[Any]:
     // Test 8 (T4, Rec depth boundary): Rec-type nesting at MaxDepth-1 succeeds.
     // JVM-only (exception condition 3: test asserts JVM-specific behavior): 1023 levels of nested Rec types require
     //   the JVM call stack size; JS/Native default stacks overflow before reaching depth 1023.
-    "T4: Rec nesting at MaxDepth-1 merges successfully without DepthExceededException".onlyJvm in {
+    "Rec nesting at MaxDepth-1 merges successfully without DepthExceededException".onlyJvm in {
         nextId = 0
         val leafSym          = makeSym("RecDepthLeaf")
         val leaf: Tasty.Type = Tasty.Type.Named(leafSym.id)
@@ -207,7 +206,7 @@ class TypeArenaTest extends kyo.test.Test[Any]:
     }
 
     // Test 9 (T4, cyclic Rec self-reference): canonical map produces reference-equal result.
-    "T4: cyclic Rec(RecThis) self-reference interns to reference-equal canonical value" in {
+    "cyclic Rec(RecThis) self-reference interns to reference-equal canonical value" in {
         nextId = 0
         val sentinel = Tasty.Type.Named(makeSym("CyclicSentinel").id)
         val inner    = Tasty.Type.Rec(sentinel)
@@ -223,7 +222,7 @@ class TypeArenaTest extends kyo.test.Test[Any]:
     }
 
     // Test 10 (T7): 8-fiber concurrent interning with separate per-fiber arenas preserves canonicality.
-    "T7: 8-fiber concurrent interning with per-fiber arenas all return eq canonical reference" in {
+    "8-fiber concurrent interning with per-fiber arenas all return eq canonical reference" in {
         nextId = 0
         val sym        = makeSym("ConcurrentCanon")
         val t          = Tasty.Type.Named(sym.id)

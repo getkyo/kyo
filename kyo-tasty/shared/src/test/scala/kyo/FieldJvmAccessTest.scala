@@ -58,7 +58,7 @@ class FieldJvmAccessTest extends kyo.test.Test[Any]:
     // Given: Field with javaMetadata.accessFlags = ACC_PUBLIC (0x0001)
     // When: f.isJvmPublic
     // Then: true
-    "Leaf 82: isJvmPublic: returns true when ACC_PUBLIC bit is set in accessFlags" in {
+    "isJvmPublic: returns true when ACC_PUBLIC bit is set in accessFlags" in {
         val field = makeFieldWithAccess(id = 1, name = "F", accessFlags = 0x0001)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>
             assert(
@@ -88,7 +88,7 @@ class FieldJvmAccessTest extends kyo.test.Test[Any]:
     // Given: Field with javaMetadata=Maybe.Absent
     // When: f.isJvmStatic
     // Then: false
-    "Leaf 83: isJvmStatic-absent-javaMetadata: returns false when javaMetadata is Absent" in {
+    "isJvmStatic-absent-javaMetadata: returns false when javaMetadata is Absent" in {
         val field = makeFieldNoMeta(id = 1, name = "G")
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(field)).map: cp =>
             assert(

@@ -3,7 +3,7 @@ package kyo
 import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.query.ClasspathOrchestrator
 
-/** plan leaves 9-10: Tasty.allClassLike, allClasses, allObjects, allTraits, allMethods,
+/** Tasty.allClassLike, allClasses, allObjects, allTraits, allMethods,
   * allVals, allVars, allFields, allTypes, allPackages.
   */
 class QueryAggregatorsTest extends kyo.test.Test[Any]:
@@ -18,8 +18,8 @@ class QueryAggregatorsTest extends kyo.test.Test[Any]:
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end openFixtureClasspath
 
-    // Leaf 9: allClassLike covers all four subtypes
-    "Leaf 9: Tasty.allClassLike is non-empty for fixture classpath" in {
+    // allClassLike covers all four subtypes
+    "Tasty.allClassLike is non-empty for fixture classpath" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Tasty.withClasspath(cp):
@@ -35,8 +35,8 @@ class QueryAggregatorsTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // Leaf 10: aggregators are total on empty Classpath
-    "Leaf 10: all aggregators return Chunk.empty for empty Classpath" in {
+    // aggregators are total on empty Classpath
+    "all aggregators return Chunk.empty for empty Classpath" in {
         Tasty.withPickles(Chunk.empty):
             for
                 acl <- Tasty.allClassLike

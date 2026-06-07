@@ -122,11 +122,11 @@ private[kyo] object JarCentralDirectory:
 
     /** Read all CEN entries from a JAR file, returning them as a Chunk of JarEntry.
       *
-      * Used by DigestComputer to walk the central directory for content-addressed digest computation (INV-003). Returns ALL entries (no
+      * Used by DigestComputer to walk the central directory for content-addressed digest computation. Returns ALL entries (no
       * suffix filter); directories are excluded. Runs synchronously under AllowUnsafe; no Scope or Sync effect required.
       *
       * Propagates IOException on missing or corrupt jar files: the caller (PlatformDigest.digestForJarRoot on JVM) must handle it.
-      * Swallowing IOException here would cause digestForJar(Chunk.empty) == 0L, producing silent false-positive cache hits (BLOCKER-1).
+      * Swallowing IOException here would cause digestForJar(Chunk.empty) == 0L, producing silent false-positive cache hits.
       *
       * Unsafe: synchronous JAR CEN walk via RandomAccessFile; bounded to this call site; no Scope required.
       */

@@ -7,17 +7,17 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 /** Fidelity tests for TastyError channel fidelity: SoftFail/FailFast FileNotFound, MalformedSection, CorruptedFile, requireSymbol, and
   *
   * Before:
-  *   - `Tasty.Classpath.init(Seq("/tmp/missing"))` with SoftFail aborted via `Abort.fail(TastyError.FileNotFound)` instead of accumulating
+  *   `Tasty.Classpath.init(Seq("/tmp/missing"))` with SoftFail aborted via `Abort.fail(TastyError.FileNotFound)` instead of accumulating
   *     the error.
-  *   - `TastyError.SymbolNotFound` was never raised anywhere (dead variant --   gap).
-  *   - `TastyError.ClasspathBuilding` was never raised (dead variant --   gap).
-  *   - `TastyError.MalformedSection` reason was the raw JVM message "Array index out of range: 254" instead of "name table index 254 out of
-  *     range" ..
-  *   - `TastyError.CorruptedFile.path` was "<byte view>" instead of the actual file path ..
+  *   `TastyError.SymbolNotFound` was never raised anywhere (dead variant -- gap).
+  *   `TastyError.ClasspathBuilding` was never raised (dead variant -- gap).
+  *   `TastyError.MalformedSection` reason was the raw JVM message "Array index out of range: 254" instead of "name table index 254 out of
+  *     range".
+  *   `TastyError.CorruptedFile.path` was "<byte view>" instead of the actual file path.
   *
   * Cross-platform: uses MemoryFileSource and ClasspathOrchestrator.init with synthetic corrupt bytes. No JVM filesystem required.
   *
-  * Invariants produced: INV-103-DF2, INV-104-DF2, INV-107-DF2.
+  * Invariants produced: -DF2, -DF2, -DF2.
   */
 class ErrorFidelity2Test extends Fidelity2TestBase:
 
@@ -98,7 +98,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     // failfast-aborts-on-filenotfound
     // Given: same missing root with ErrorMode.FailFast
     // When: awaiting init result
-    // Then: aborts with Abort.fail(TastyError.FileNotFound(...))
+    // Then: aborts with Abort.fail(TastyError.FileNotFound(.))
     "FailFast missing root still raises FileNotFound" in {
         val src = MemoryFileSource()
         Abort.run[TastyError](ClasspathOrchestrator.init(Seq("missing"), Tasty.ErrorMode.FailFast, src, 1)).map: result =>
@@ -114,7 +114,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     }
 
     // softfail-accumulates-malformedsection
-    // Given: truncated .tasty bytes loaded with SoftFail via MemoryFileSource
+    // Given: truncated.tasty bytes loaded with SoftFail via MemoryFileSource
     // When: inspecting cp.errors
     // Then: cp.errors contains at least one MalformedSection
     "SoftFail truncated .tasty produces MalformedSection" in {
@@ -133,7 +133,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
     }
 
     // softfail-accumulates-corruptedfile
-    // Given: bit-flipped magic .tasty bytes loaded with SoftFail via MemoryFileSource
+    // Given: bit-flipped magic.tasty bytes loaded with SoftFail via MemoryFileSource
     // When: inspecting cp.errors
     // Then: cp.errors contains at least one CorruptedFile or MalformedSection
     "SoftFail bit-flipped magic produces CorruptedFile or MalformedSection" in {

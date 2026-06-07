@@ -3,7 +3,7 @@ package kyo.internal
 import kyo.*
 import kyo.internal.tasty.query.JvmFileSource
 
-/** Tests for StutterFileSource primitive (F-A4-OPEN-RW prerequisite).
+/** Tests for the StutterFileSource primitive.
   *
   * Verifies that wrapping(delegate).read blocks until the semaphore is released, then completes promptly. This validates the latch primitive
   * before it is used in the concurrent-reader-writer test.
@@ -12,9 +12,9 @@ class StutterFileSourceTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // Leaf 18: wrapping-suspends-read-until-latch-released
+    // wrapping-suspends-read-until-latch-released
     // Given: (stutter, semaphore) = StutterFileSource.wrapping(JvmFileSource)
-    // When: Async-launched read held at semaphore.acquire; after 50ms read incomplete; semaphore.release() releases it
+    // When: Async-launched read held at semaphore.acquire; after 50ms read incomplete; semaphore.release releases it
     // Then: post-release read completes; before release fiber is in pending state (not done)
     "StutterFileSource.wrapping blocks read until semaphore is released" in {
         // Write a temp file to read

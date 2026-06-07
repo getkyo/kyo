@@ -23,7 +23,7 @@ class PositionTest extends kyo.test.Test[Any]:
     // Given: a probe compileErrors("Position(Maybe.Absent, 10, 20)")
     // When: the test asserts
     // Then: the returned string is non-empty (sourceFile: String, cannot accept Maybe.Absent)
-    "Leaf 1: Position(Maybe.Absent, ...) does not compile -- sourceFile is now String not Maybe[String]" in {
+    "Position(Maybe.Absent, ...) does not compile -- sourceFile is now String not Maybe[String]" in {
         val errs = compiletime.testing.typeCheckErrors(
             "kyo.Tasty.Position(kyo.Maybe.Absent, 10, 20)"
         )
@@ -38,7 +38,7 @@ class PositionTest extends kyo.test.Test[Any]:
     // Then: the result map is empty, no error is emitted. Pre-Scala-3.3 TASTy files and files compiled
     //       without the Attributes SOURCEFILE attribute have their source path only in SOURCE entries inside
     //       the Positions stream; kyo-tasty does not resolve those. Symbols stay with sourcePosition == Absent.
-    "Leaf 2: Positions section with absent SOURCEFILE silently skips positions -- no error emitted" in {
+    "Positions section with absent SOURCEFILE silently skips positions -- no error emitted" in {
         // Minimal non-empty Positions payload: numLines=1, line sizes=[10], one Assoc entry.
         // header = (1<<3)|4 = 12, start_delta = 0.
         val payload = Array[Byte](
@@ -73,7 +73,7 @@ class PositionTest extends kyo.test.Test[Any]:
     // Given: a PositionsUnpickler.read call with a non-empty Positions payload and sourceFile = Present("Foo.scala").
     // When: the read succeeds.
     // Then: the result map contains the symbol with sourceFile == "Foo.scala".
-    "Leaf 3: present SOURCEFILE produces Position with the correct sourceFile string" in {
+    "present SOURCEFILE produces Position with the correct sourceFile string" in {
         // Payload: numLines=1, line sizes=[10], one entry at addrDelta=1, start_delta=0 => line 1, col 1.
         val payload = Array[Byte](
             (1 | 0x80).toByte,  // numLines = 1
@@ -92,7 +92,7 @@ class PositionTest extends kyo.test.Test[Any]:
         Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Maybe.Present("Foo.scala"))).map:
             case Result.Success(posMap) =>
                 assert(posMap.size == 1, s"Expected 1 position entry but got ${posMap.size}")
-                // F-006: LongMap keyed by sym.id.toLong, not by symbol object.
+                // LongMap keyed by sym.id.toLong, not by symbol object.
                 assert(posMap.contains(sym.id.toLong), "Expected sym.id to have a position entry")
                 val pos = posMap(sym.id.toLong)
                 assert(pos.sourceFile == "Foo.scala", s"Expected sourceFile='Foo.scala' but got '${pos.sourceFile}'")

@@ -7,7 +7,7 @@ import kyo.internal.tasty.query.JvmFileSource
 /** A test-only FileSource wrapper that delays reads until a latch is released.
   *
   * Wraps JvmFileSource (or any other FileSource) so that each read call suspends until the caller releases the latch by releasing the
-  * semaphore. This enables deterministic testing of concurrent reader+writer scenarios (F-A4-OPEN-RW): one fiber can hold a snapshot read at
+  * semaphore. This enables deterministic testing of concurrent reader+writer scenarios: one fiber can hold a snapshot read at
   * a controlled point while a second fiber writes a new snapshot to the same path.
   *
   * Design note: FileSource.read returns `Array[Byte] < (Sync & Abort[TastyError])`, which does not include Async in its effect row. The
@@ -53,7 +53,7 @@ object StutterFileSource:
     /** Wrap a FileSource so that each read blocks until `release()` is called on the returned semaphore.
       *
       * The semaphore starts at 0 permits. Each call to `read` acquires one permit (blocking until one is available). The test fiber calls
-      * `semaphore.release()` to unblock the waiting read.
+      * `semaphore.release` to unblock the waiting read.
       *
       * @param delegate
       *   the underlying FileSource to delegate all non-read operations to

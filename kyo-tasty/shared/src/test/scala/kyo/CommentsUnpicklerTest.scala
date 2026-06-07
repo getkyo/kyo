@@ -16,9 +16,9 @@ import scala.collection.immutable.IntMap
   * The Comments section format (from dotty CommentUnpickler.scala):
   * {{{
   * Entry = Addr Utf8 LongInt
-  * Addr  = Nat          -- byte address in AST section
-  * Utf8  = Nat Byte*    -- length-prefixed UTF-8 text
-  * LongInt = ...        -- source span (skipped here)
+  * Addr = Nat -- byte address in AST section
+  * Utf8 = Nat Byte* -- length-prefixed UTF-8 text
+  * LongInt =. -- source span (skipped here)
   * }}}
   *
   * TASTy Nat encoding: small values (0-127) use a single byte with bit 7 SET = (n | 0x80).toByte. TASTy LongInt encoding: for zero span,
@@ -54,7 +54,7 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
 
     /** Create a minimal LoadingSymbol.Materialising for testing with a unique sequential id.
       *
-      * F-006: the LongMap rotation in CommentsUnpickler keys by sym.id.toLong, so each symbol
+      * the LongMap rotation in CommentsUnpickler keys by sym.id.toLong, so each symbol
       * must have a unique id to avoid overwriting entries in the result map. Sequential ids
       * guarantee uniqueness across all test symbols in this test class.
       */
@@ -81,7 +81,7 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
         Abort.run[TastyError](CommentsUnpickler.read(view, addrMap)).map:
             case Result.Success(result) =>
                 assert(result.size == 1, s"Expected 1 entry but got ${result.size}")
-                // F-006: LongMap keyed by sym.id.toLong, not by symbol object.
+                // LongMap keyed by sym.id.toLong, not by symbol object.
                 assert(result.contains(sym.id.toLong), "Expected sym.id to have a comment entry")
                 val text = result(sym.id.toLong)
                 assert(text.contains("My doc"), s"Expected text to contain 'My doc' but got: $text")
@@ -109,7 +109,7 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
     // ── Test 3: malformed section (truncated mid-entry) fails with MalformedSection ─
 
     // Test 3: a Comments section truncated mid-entry produces
-    // Abort.fail(TastyError.MalformedSection("Comments", ...)).
+    // Abort.fail(TastyError.MalformedSection("Comments".)).
     "CommentsUnpickler: truncated section produces MalformedSection error" in {
         // Write addr Nat(5) = 0x85, then start a Utf8: Nat(20) = 0x94, then only 3 bytes of a
         // 20-byte string. ArrayIndexOutOfBoundsException triggers MalformedSection.
@@ -137,7 +137,7 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
 
     // ── Test 4: symbol with no comment has no map entry; with comment has an entry ─
 
-    // Test 4 (plan: phase-02 update): CommentsUnpickler returns a LongMap keyed by sym.id.
+    // Test 4 : CommentsUnpickler returns a LongMap keyed by sym.id.
     // A symbol at an addr that has a comment entry appears in the map; one without does not.
     "CommentsUnpickler: symbol with comment appears in returned map; symbol without does not" in {
         val symWithDoc    = makeTestSymbol("WithDoc")
@@ -148,7 +148,7 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
         val view    = ByteView(payload)
         Abort.run[TastyError](CommentsUnpickler.read(view, addrMap)).map:
             case Result.Success(comments) =>
-                // F-006: LongMap keyed by sym.id.toLong, not by symbol object.
+                // LongMap keyed by sym.id.toLong, not by symbol object.
                 assert(
                     comments.contains(symWithDoc.id.toLong),
                     s"Expected symWithDoc.id=${symWithDoc.id} to appear in comments map but it was absent"
@@ -180,7 +180,7 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
         Abort.run[TastyError](CommentsUnpickler.read(view, addrMap)).map:
             case Result.Success(comments) =>
                 assert(comments.size == 2, s"Expected 2 entries but got ${comments.size}")
-                // F-006: LongMap keyed by sym.id.toLong, not by symbol object.
+                // LongMap keyed by sym.id.toLong, not by symbol object.
                 assert(comments.contains(symAlpha.id.toLong), "Expected symAlpha.id to have a comment")
                 assert(comments.contains(symBeta.id.toLong), "Expected symBeta.id to have a comment")
                 assert(

@@ -99,7 +99,7 @@ class ClasspathSubclassTypedTest extends kyo.test.Test[Any]:
     // Given: class A and class B extends A; subclassIndex: A -> [B].
     // When: cp.directSubclassesOf(a) where a: Symbol.ClassLike (actually Symbol.Class)
     // Then: Chunk[ClassLike] size 1; element is Class B
-    "Leaf 129: directSubclassesOf returns Chunk[ClassLike] with direct subclasses" in {
+    "directSubclassesOf returns Chunk[ClassLike] with direct subclasses" in {
         directSubclassFixture.map: cp =>
             cp.findClass("A") match
                 case Maybe.Present(a) =>
@@ -125,7 +125,7 @@ class ClasspathSubclassTypedTest extends kyo.test.Test[Any]:
     //        concrete CFromA extends AbsA.
     // When: cp.implementationsOf(t)
     // Then: Chunk[Class] containing B, C, CFromA; excludes abstract AbsA and trait T itself.
-    "Leaf 130: implementationsOf returns only concrete Class instances transitively" in {
+    "implementationsOf returns only concrete Class instances transitively" in {
         implementationsFixture.map: cp =>
             cp.findClassLike("T") match
                 case Maybe.Present(t) =>

@@ -1313,7 +1313,7 @@ object ClasspathOrchestrator:
                         xfIdx += 1
                     end while
 
-                    // Sub-target 5: Q-005 default parent injection.
+                    // Default parent injection.
                     // For classes/traits/enum-cases with empty parentTypes after cross-file resolution,
                     // inject a synthetic default parent. Run AFTER cross-file resolution so cross-file
                     // resolved parents are visible before deciding whether to inject.
@@ -1669,11 +1669,11 @@ object ClasspathOrchestrator:
       *     it here and re-throw so the enclosing Sync.Unsafe.defer block propagates it as a panic that the
       *     finalizeMerge flatMap converts to Abort.fail(TastyError.MissingDeclaredType).
       *
-      * NOTE on INV-009 (cp.errors.size == 0 on clean stdlib load): stdlib TASTy TypeAlias/OpaqueType symbols
-      * that genuinely have absent bodies still produce an UnknownType entry under SoftFail. This is correct
-      * behavior: INV-009 applies to file-level errors (CorruptedFile, MalformedSection), not to per-symbol
-      * absent-type errors which are a separate concern. Any stdlib symbol with a truly absent body was already
-      * implicitly broken before this fix; surfacing it via cp.errors is the right signal.
+      * Stdlib TASTy TypeAlias/OpaqueType symbols that genuinely have absent bodies still produce an
+      * UnknownType entry under SoftFail. The clean-load invariant applies to file-level errors
+      * (CorruptedFile, MalformedSection), not to per-symbol absent-type errors which are a separate
+      * concern. Any stdlib symbol with a truly absent body was already implicitly broken; surfacing
+      * it via cp.errors is the right signal.
       */
     private def materializeSymbols(
         descriptors: Array[SymbolDescriptor],
@@ -2076,7 +2076,7 @@ object ClasspathOrchestrator:
     )(using Frame): Binding < (Sync & Async & Scope & Abort[TastyError]) =
         val source      = PlatformFileSource.get
         val concurrency = java.lang.Runtime.getRuntime.availableProcessors().max(1)
-        // INV-004: ALWAYS probe each root for a bundled snapshot before cold-loading.
+        // ALWAYS probe each root for a bundled snapshot before cold-loading.
         // Partition roots into bundled (probe hit) and cold (probe miss or non-jar).
         // SoftFail: DigestMismatch from a stale snapshot is caught and the root is cold-loaded.
         // FailFast: DigestMismatch propagates as Abort[TastyError].
@@ -2127,10 +2127,10 @@ object ClasspathOrchestrator:
             else coldLoad
     end coldLoadBinding
 
-    /** Probe each root for a bundled snapshot (INV-004).
+    /** Probe each root for a bundled snapshot.
       *
       * For each root: call BundledSnapshotProbe.probe. On a hit, decode the snapshot bytes into a partial Classpath and merge it into
-      * the running accumulator (INV-005 remap-at-merge). On a miss, add the root to the coldRoots list. DigestMismatch handling follows
+      * the running accumulator (remap-at-merge). On a miss, add the root to the coldRoots list. DigestMismatch handling follows
       * the error mode: SoftFail silently falls back to cold load; FailFast propagates the error.
       *
       * Returns a tuple of (mergedBundledClasspath, coldRoots). The caller cold-loads coldRoots and merges the result with

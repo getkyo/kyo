@@ -2,16 +2,14 @@ package kyo
 
 import kyo.internal.TestClasspaths
 
-/** Anchor fidelity test suite for the decoder-fidelity campaign.
+/** Anchor fidelity test suite for decoder fidelity.
   *
-  * This file owns the cross-cutting invariant leaves (INV-001, INV-003, INV-009, INV-012) that span multiple phases. It also hosts the TDD
-  * discipline pin that verifies every `*FidelityTest.scala` references `TestClasspaths.withClasspath` (HARD RULE 1).
+  * This file owns the cross-cutting invariant tests. It also hosts the discipline check that every
+  * `*FidelityTest.scala` references `TestClasspaths.withClasspath`.
   *
-  * Leaves owned by are ACTIVE below. Leaves owned by later phases are PENDING until the producing phase un-pends them.
-  *
-  * relocated from jvm/src/test to shared/src/test. Leaves using filesystem walks or the real stdlib classpath are gated jvmOnly.
-  * All java.nio.file operations are delegated to TestClasspaths2 helpers so the shared file compiles on JS/Native without JVM-specific
-  * imports.
+  * Tests using filesystem walks or the real stdlib classpath are gated jvmOnly. All java.nio.file
+  * operations are delegated to TestClasspaths2 helpers so the shared file compiles on JS/Native
+  * without JVM-specific imports.
   */
 class RealClasspathFidelityTest extends kyo.test.Test[Any]:
 
@@ -20,7 +18,7 @@ class RealClasspathFidelityTest extends kyo.test.Test[Any]:
     // anchor: no-unknown-tags-anchor
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: loading the classpath and checking for "unknown TASTy type tag" error strings
-    // Then: post-fix zero warnings matching "unknown TASTy type tag"; classpath has > 0 symbols
+    // Then: zero warnings matching "unknown TASTy type tag"; classpath has > 0 symbols
     // Cross-platform: the no-unknown-tag guard holds for any classpath; passes on embedded fixtures.
     "zero unknown-TASTy-tag warnings on a clean real-classpath load" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
@@ -34,7 +32,7 @@ class RealClasspathFidelityTest extends kyo.test.Test[Any]:
             // additionally indexes the real JVM stdlib on JVM. On any platform a clean load must
             // produce at least one symbol per fixture file (>= 70); a value < 70 indicates fixtures
             // were not picked up. We deliberately do not use exact equality because the JVM build
-            // additionally indexes the stdlib (RI-008 measured 81569 symbols on the JVM standard classpath 2026-06-04).
+            // additionally indexes the stdlib (measured 81569 symbols on the JVM standard classpath 2026-06-04).
             assert(
                 classpath.symbols.size >= 70,
                 s"Expected classpath.symbols.size >= 70 after clean load but got ${classpath.symbols.size}"
@@ -42,7 +40,7 @@ class RealClasspathFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    //  : tpt-tags-dispatched-to-tree-decoder
+    //  tpt-tags-dispatched-to-tree-decoder
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: the load completes successfully
     // Then: the classpath contains Type.Applied instances confirming TPT tags routed correctly
@@ -66,12 +64,12 @@ class RealClasspathFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // HARD RULE 2: unknown-tag-now-throws
+    // unknown-tag-now-throws
     // Given: TypeUnpickler.decodeTag called with an unrecognised tag
     // When: the unknown tag is dispatched
-    // Then: post-fix throws IllegalStateException whose message contains "unhandled"
+    // Then: throws IllegalStateException whose message contains "unhandled"
     // Cross-platform: "no TypeUnpickler errors" is universal for any valid classpath.
-    "HARD RULE 2 : TypeUnpickler throws on unhandled tag instead of silently continuing" in {
+    "TypeUnpickler throws on unhandled tag instead of silently continuing" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
             val typeUnpicklerErrors = classpath.errors.filter(_.toString.contains("TypeUnpickler"))
             assert(
@@ -108,7 +106,7 @@ class RealClasspathFidelityTest extends kyo.test.Test[Any]:
     // anchor: sentinel-bounded-anchor
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: computing cp.symbols.filter(_.id.value == -1).map(_.name.asString).toSet.size
-    // Then: post-fix size <= 3; holds for any correctly-decoded classpath
+    // Then: size <= 3; holds for any correctly-decoded classpath
     // Cross-platform: sentinel count is 0 on embedded fixtures; < 3 on real stdlib. Both satisfy <= 3.
     "SymbolId(-1) sentinel name set size <= 3 on real classpath" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>

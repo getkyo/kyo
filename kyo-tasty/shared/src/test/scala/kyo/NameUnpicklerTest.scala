@@ -11,11 +11,11 @@ import kyo.internal.tasty.reader.TastyHeader
   * compiled from `FixtureClasses.scala` in `kyo-tasty-fixtures`.
   *
   * TASTy header ends at byte 35 for PlainClass.tasty. After that:
-  *   - Nat at offset 35: name table byte count (value 272, encoded as two-byte Nat)
-  *   - Bytes 37..308: name table (29 entries)
-  *   - Bytes 309..: section table
+  *   Nat at offset 35: name table byte count (value 272, encoded as two-byte Nat)
+  *   Bytes 37.308: name table (29 entries)
+  *   Bytes 309.: section table
   *
-  * The name table includes the following UTF8 entries (0-based indices): 0=ASTs, 1=kyo, 2=fixtures, 4=PlainClass, 5=x, 6=Int, 7=scala, ...
+  * The name table includes the following UTF8 entries (0-based indices): 0=ASTs, 1=kyo, 2=fixtures, 4=PlainClass, 5=x, 6=Int, 7=scala.
   *
   * Name-table byte-count delimiting: the loop runs until `position >= nameTableEnd`, not for a fixed entry count. This is verified by the
   * corrupt-section test, which uses a truncated payload.
@@ -98,7 +98,7 @@ class NameUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Test 10: a corrupt section (truncated mid-name) produces Abort.fail(TastyError.MalformedSection("Names", ...)).
+    // Test 10: a corrupt section (truncated mid-name) produces Abort.fail(TastyError.MalformedSection("Names".)).
     "corrupt name table (truncated mid-entry) produces MalformedSection" in {
         // Build a fake name table: name-table-byte-count Nat says 10 bytes are coming, but we only provide 3.
         // Name table length = 10 (as Nat: single byte 0x8a because 10 | 0x80 = 0x8a)
@@ -155,7 +155,6 @@ class NameUnpicklerTest extends kyo.test.Test[Any]:
         //   nameTableByteCount = 7 (encoded as Nat: 7 | 0x80 = 0x87)
         //   Then: UTF8 tag (0x01) + length=5 (0x85) + 5 payload bytes ("hello") = 7 bytes total
         //   Then: 1 trailing byte 0xFF that must NOT be consumed as a new entry.
-        //
         // The loop condition is `while view.position < nameTableEnd`, so it stops exactly at byte 7
         // and leaves 0xFF in the buffer (the NameUnpickler does not consume past nameTableEnd).
         val bytes: Array[Byte] = Array(
@@ -190,12 +189,10 @@ class NameUnpicklerTest extends kyo.test.Test[Any]:
         // Build a name table with:
         //   1 UTF8 entry: "hello" (5 bytes, tag=1)
         //   1 QUALIFIED entry: prefix=99 (out of range since tableSize=1), selector=0 (valid)
-        //
         // Name table byte count covers both entries.
         // UTF8 entry: tag(1 byte) + length-nat(1 byte) + 5 bytes = 7 bytes
         // QUALIFIED entry: tag(1 byte) + readEnd-length-nat(1 byte) + prefix-nat(2 bytes for 99) + selector-nat(1 byte) = 5 bytes
         // Total = 12 bytes. Encoded as Nat: 12 | 0x80 = 0x8c
-        //
         // Encoding 99 as a Nat (big-endian base-128):
         //   99 = 0x63, fits in 7 bits, so needs 2 bytes: continuation byte 0x00 | high bits, then final.
         //   Actually 99 < 128 so it fits in 1 byte: 0x63 | 0x80 = 0xe3 (terminating).
@@ -206,9 +203,8 @@ class NameUnpicklerTest extends kyo.test.Test[Any]:
         //   Length Nat for payload = 2 bytes, encoded as: 2 | 0x80 = 0x82.
         //   prefix=99: 99 | 0x80 = 0xe3 (single terminating byte).
         //   selector=0: 0 | 0x80 = 0x80 (single terminating byte).
-        //
         // Full name table (12 bytes):
-        //   UTF8 entry: 0x01 (tag), 0x85 (len=5), 0x68, 0x65, 0x6c, 0x6c, 0x6f  => "hello" (7 bytes)
+        //   UTF8 entry: 0x01 (tag), 0x85 (len=5), 0x68, 0x65, 0x6c, 0x6c, 0x6f => "hello" (7 bytes)
         //   QUALIFIED: 0x02 (tag=2), 0x82 (len=2), 0xe3 (prefix=99), 0x80 (selector=0) (4 bytes)
         //   Total payload = 7 + 4 = 11 bytes. Encoded as Nat: 11 | 0x80 = 0x8b.
         val nameTableBytes: Array[Byte] = Array(

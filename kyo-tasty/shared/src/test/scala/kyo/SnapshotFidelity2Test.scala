@@ -5,16 +5,18 @@ import kyo.internal.SnapshotEquivalence
 import kyo.internal.TestClasspaths
 import kyo.internal.TestClasspaths2
 
-/** Snapshot warm-cold parity tests for decoder-fidelity-2 campaign.
+/** Snapshot warm-cold parity tests.
   *
-  * Pins findings   (finalizeMerge ghost-symbol fix),   (SnapshotWriter defensive Named(-1) filter), and
-  * (byte-equal idempotent cold writes). Produces invariants INV-013 (cold.indices.byFqn.size == warm.indices.byFqn.size) and INV-101-DF2
-  * (warmColdEquivalent returns Equal on the standard classpath pair).
+  * Covers the finalizeMerge ghost-symbol fix, the SnapshotWriter defensive Named(-1) filter, and
+  * byte-equal idempotent cold writes. Invariants verified:
+  * cold.indices.byFqn.size == warm.indices.byFqn.size, and warmColdEquivalent returns Equal on
+  * the standard classpath pair.
   *
-  * relocated from jvm/src/test to shared/src/test. All leaves depend on TestClasspaths2.standardWithSnapshot (cold + warm
-  * pair) which requires JVM filesystem access. Every leaf is gated with the jvmOnly tag so that JS/Native skip them cleanly.
+  * All tests depend on TestClasspaths2.standardWithSnapshot (cold + warm pair) which requires JVM
+  * filesystem access. Every test is gated with the jvmOnly tag so that JS/Native skip them cleanly.
   *
-  * On JS/Native this test class compiles and all leaves are skipped (jvmOnly gate). No test failures on non-JVM platforms.
+  * On JS/Native this test class compiles and all tests are skipped (jvmOnly gate). No test failures
+  * on non-JVM platforms.
   */
 class SnapshotFidelity2Test extends Fidelity2TestBase:
 
@@ -38,12 +40,12 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
             assert(
                 coldSize == warmSize,
                 s"cold.indices.byFqn.size ($coldSize) != warm.indices.byFqn.size ($warmSize); " +
-                    s"pre-fix gap was 37,225 entries due to ghost SymbolId(-1) entries dropped by SnapshotWriter"
+                    s"this regression typically signals ghost SymbolId(-1) entries dropped by SnapshotWriter"
             )
             succeed
     }
 
-    // Leaf 5: cold-findsymbol-predef-resolves
+    // cold-findsymbol-predef-resolves
     // Uses TestClasspaths.withClasspath which is cross-platform, but the assertion checks scala.Predef$ which is only
     // in the JVM stdlib. On JS/Native the embedded fixtures don't have scala.Predef$; the leaf produces succeed (Absent branch).
     "cold.findSymbol('scala.Predef$') resolves via binary-alias fqnIndex entry" in {
@@ -65,7 +67,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
     // warm-cold-unresolvedrefs-equal
     // Given: a cold + warm classpath from embedded fixtures via withSnapshotInMemory
     // When: counting Named(-1) refs in cold and warm via SnapshotEquivalence.countUnresolvedRefs
-    // Then: both are 0 (in-memory round-trip applies   defensive filter)
+    // Then: both are 0 (in-memory round-trip applies defensive filter)
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
     "cold and warm both have 0 Named(-1) refs after in-memory round-trip" in {
         TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
@@ -73,7 +75,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
             val warmUnresolved = SnapshotEquivalence.countUnresolvedRefs(warm)
             assert(
                 coldUnresolved == 0,
-                s"Expected 0 cold unresolved Named(-1) refs (pre-fix was 635), found $coldUnresolved"
+                s"Expected 0 cold unresolved Named(-1) refs, found $coldUnresolved"
             )
             assert(
                 warmUnresolved == 0,
@@ -155,7 +157,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
 
     coldWarmEquiv("-cw : fqnIndex.size is equal on cold and warm after in-memory round-trip")(_.indices.byFqn.size)
 
-    // Leaf 10: in-memory-snapshot-symbols-size-equal
+    // in-memory-snapshot-symbols-size-equal
     // Given: a cold classpath from embedded fixtures and a warm classpath from in-memory snapshot round-trip
     // When: comparing cp.symbols.size between cold and warm
     // Then: both symbol counts are equal (round-trip preserves all symbols)
@@ -169,7 +171,7 @@ class SnapshotFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 11: unresolvedFqnByNegId-persisted-via-fqnmap
+    // unresolvedFqnByNegId-persisted-via-fqnmap
     // Given: a cold classpath from embedded fixtures with unresolvedFqnByNegId entries and a warm in-memory snapshot load
     // When: comparing unresolvedFqnByNegId.size between cold and warm
     // Then: warm size equals cold size (FQNMAP__ section persists the map correctly)

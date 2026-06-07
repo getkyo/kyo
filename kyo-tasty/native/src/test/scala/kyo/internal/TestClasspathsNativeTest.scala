@@ -2,12 +2,12 @@ package kyo.internal
 
 import kyo.*
 
-/** test leaves: Native cross-platform fixture helper verification. Updated in to include Shape fixture.
+/** Native cross-platform fixture helper verification (includes the Shape fixture).
   *
-  * harness (BaseKyoCoreTest) handles `Abort[Any] & Async & Scope`, so test bodies call `TestClasspaths.withClasspath().map(cp => ...)`
-  * directly.
+  * The harness (BaseKyoCoreTest) handles `Abort[Any] & Async & Scope`, so test bodies call
+  * `TestClasspaths.withClasspath.map(cp => ...)` directly.
   *
-  * Leaves:
+  * Cases:
   *   1. native-embedded-fixture-loads: cp.allClassLike.size > 0 from embedded fixtures.
   *   2. native-symbols-non-empty: cp.symbols.size > 0 (includes methods and vals).
   *   3. native-fidelity-suite-compiles: compile+run parity leaf (running proves compilation succeeded).
@@ -17,7 +17,7 @@ import kyo.*
   */
 class TestClasspathsNativeTest extends kyo.test.Test[Any]:
 
-    // Leaf 1: native-embedded-fixture-loads
+    // native-embedded-fixture-loads
     // Given: the embedded TASTy fixtures compiled into the Native test bundle.
     // When: calling TestClasspaths.withClasspath on Native.
     // Then: the resulting Classpath has at least one class-like symbol.
@@ -36,7 +36,7 @@ class TestClasspathsNativeTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 2: native-symbols-non-empty
+    // native-symbols-non-empty
     // Given: the embedded TASTy fixtures.
     // When: calling cp.symbols.
     // Then: size == 1010 (exact count for the full embedded fixture set including Java fixture).
@@ -44,15 +44,15 @@ class TestClasspathsNativeTest extends kyo.test.Test[Any]:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             // Exact count: the embedded fixture set (all kyo.fixtures.Embedded.* files including
             // JavaSimpleFixture added in) produces exactly 1010 symbols. This is
-            // deterministic because MemoryFileSource loads fixed compiled bytes. Q-025 RI-008 measured 2026-06-04.
+            // deterministic because MemoryFileSource loads fixed compiled bytes. measured 2026-06-04.
             assert(
                 cp.symbols.size == 1010,
-                s"Expected cp.symbols.size == 1010 (Q-025 RI-008 measured 2026-06-04) but got ${cp.symbols.size}"
+                s"Expected cp.symbols.size == 1010 (measured 2026-06-04) but got ${cp.symbols.size}"
             )
             succeed
     }
 
-    // Leaf 3: native-fidelity-suite-compiles
+    // native-fidelity-suite-compiles
     // Given: the Native test source for fixture leaves.
     // When: scalac runs in Native mode.
     // Then: the suite compiles and runs without "compile error: class not found".
@@ -63,7 +63,7 @@ class TestClasspathsNativeTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 4: native-no-classpath-errors
+    // native-no-classpath-errors
     // Given: the embedded TASTy fixtures (all well-formed, compiled from real Scala source).
     // When: loading via TestClasspaths.withClasspath with ErrorMode.SoftFail.
     // Then: cp.errors is empty (no parse errors on valid fixture bytes).
@@ -76,7 +76,7 @@ class TestClasspathsNativeTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 5: native-enum-case-symbol-kind
+    // native-enum-case-symbol-kind
     // Given: the embedded shapeTasty fixture (kyo.fixtures.Shape parametric enum with Circle/Square/Rectangle cases).
     // When: loading via TestClasspaths.withClasspath.
     // Then: at least one symbol is an instance of Symbol.EnumCase (class-form enum case from Shape).
@@ -92,7 +92,7 @@ class TestClasspathsNativeTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 6: native-cross-file-resolution
+    // native-cross-file-resolution
     // Given: both BaseClass.tasty and ChildClass.tasty embedded in the fixture set.
     // When: loading via TestClasspaths.withClasspath (both files loaded together).
     // Then: both kyo.fixtures.BaseClass and kyo.fixtures.ChildClass are findable by FQN.

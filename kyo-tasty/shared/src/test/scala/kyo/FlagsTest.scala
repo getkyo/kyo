@@ -4,8 +4,6 @@ import kyo.internal.tasty.reader.TastyFormat
 import kyo.internal.tasty.symbol.Flags as InternalFlags
 
 /** Tests for Flag bit layout and fromTastyModifierTag.
-  *
-  * Plan tests 1-6.
   */
 class FlagsTest extends kyo.test.Test[Any]:
 

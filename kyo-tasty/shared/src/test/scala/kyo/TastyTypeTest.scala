@@ -10,7 +10,7 @@ class TastyTypeTest extends kyo.test.Test[Any] with TastyTestSupport:
 
     import AllowUnsafe.embrace.danger
 
-    // plan: phase-05; Type.show now requires (using cp: Classpath).
+    // phase-05; Type.show now requires (using cp: Classpath).
     // Named(id) renders as "Named(<id>)" until The implementation wires cp.symbol(id).name.
     "Type.show for Applied(scala.List, scala.Int) returns a non-empty string" in {
         Tasty.withPickles(Chunk.empty)(Tasty.classpath).map: cp =>
@@ -18,7 +18,7 @@ class TastyTypeTest extends kyo.test.Test[Any] with TastyTestSupport:
             val listType          = makeNamed("scala.List")
             val intType           = makeNamed("scala.Int")
             val applied           = Tasty.Type.Applied(listType, Chunk(intType))
-            // plan: phase-05; Name resolution deferred to; show renders id values.
+            // phase-05; Name resolution deferred to; show renders id values.
             val showResult = applied.toString
             assert(
                 showResult.nonEmpty,

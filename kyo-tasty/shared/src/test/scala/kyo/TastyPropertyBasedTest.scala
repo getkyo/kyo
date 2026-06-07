@@ -6,12 +6,12 @@ import scala.collection.mutable
 
 /** ScalaCheck-style property tests that verify kyo-tasty decoder stability under adversarial input.
   *
-  * Track B of the validation-infrastructure campaign (2026-06-02).
+  * of the validation-infrastructure (2026-06-02).
   *
   * Properties:
-  *   - PROP-PB-001: decoder never panics on random bytes (NullPointerException, AIOOBE, IllegalStateException)
-  *   - PROP-PB-002: decoder never panics on truncated real fixture bytes
-  *   - PROP-PB-003: idempotency - loading same fixture N times produces same symbol count and FQN set
+  *   PROP-PB-001: decoder never panics on random bytes (NullPointerException, AIOOBE, IllegalStateException)
+  *   PROP-PB-002: decoder never panics on truncated real fixture bytes
+  *   PROP-PB-003: idempotency - loading same fixture N times produces same symbol count and FQN set
   *
   * Note on implementation: ScalaCheck for Scala 3 is not present in the project's cached
   * dependencies. Properties are implemented using scala.util.Random with a fixed seed
@@ -97,7 +97,7 @@ class TastyPropertyBasedTest extends kyo.test.Test[Any]:
     // 100 random inputs, fixed seed 0xc0ffee42 for reproducibility.
     // Acceptable outcomes: Success, TastyError (any variant), known decode rejection.
     // Unacceptable: NullPointerException, ArrayIndexOutOfBoundsException, IllegalStateException.
-    "PROP-PB-001: decoder never panics on 100 random byte arrays (seed=0xc0ffee42)" in {
+    "decoder never panics on 100 random byte arrays (seed=0xc0ffee42)" in {
         val rng = new scala.util.Random(SEED)
         def go(remaining: Int, panics: List[String]): List[String] < (Async & Scope) =
             if remaining == 0 then panics
@@ -119,7 +119,7 @@ class TastyPropertyBasedTest extends kyo.test.Test[Any]:
     // PROP-PB-002: decoder never panics on truncated real fixture bytes.
     // Takes kyo.fixtures.Embedded.plainClassTasty, truncates at random offsets, attempts decode.
     // Same panic-class criteria as PROP-PB-001.
-    "PROP-PB-002: decoder never panics on 100 truncated fixture byte arrays (seed=0xc0ffee42)" in {
+    "decoder never panics on 100 truncated fixture byte arrays (seed=0xc0ffee42)" in {
         val rng      = new scala.util.Random(SEED)
         val original = kyo.fixtures.Embedded.plainClassTasty
         def go(remaining: Int, panics: List[String]): List[String] < (Async & Scope) =
@@ -140,7 +140,7 @@ class TastyPropertyBasedTest extends kyo.test.Test[Any]:
 
     // PROP-PB-003: idempotency - loading the same fixture 5 times produces equal symbol counts
     // and equal FQN index sizes. Guards against non-deterministic initialization.
-    "PROP-PB-003: loading fixture classpath 5 times produces equal symbol counts and FQN index sizes" in {
+    "loading fixture classpath 5 times produces equal symbol counts and FQN index sizes" in {
         def loadOnce(using Frame): (Int, Int) < (Async & Scope & Abort[TastyError]) =
             val src = MemFileSource()
             src.files("root/PlainClass.tasty") = kyo.fixtures.Embedded.plainClassTasty
@@ -175,7 +175,7 @@ class TastyPropertyBasedTest extends kyo.test.Test[Any]:
     // classpath with a non-zero symbol count AND zero errors. Either the load fails (error is clean),
     // or the classpath has errors recorded.
     // Uses 50 random single-byte flip positions; seed 0xdeadbeefL.
-    "PROP-PB-004: bit-flipped fixture either fails cleanly or reports errors (seed=0xdeadbeef)" in {
+    "bit-flipped fixture either fails cleanly or reports errors (seed=0xdeadbeef)" in {
         val rng  = new scala.util.Random(0xdeadbeefL)
         val base = kyo.fixtures.Embedded.plainClassTasty
         def flipOneByte(offset: Int): Array[Byte] =
@@ -226,7 +226,7 @@ class TastyPropertyBasedTest extends kyo.test.Test[Any]:
     // sentinel or unexpected exception class. Tag value 0 is not a valid tag in any position
     // so it exercises the unknown-tag path. Pins the invariant that corrupt/future-format
     // bytes produce clean errors.
-    "PROP-PB-005: TagKind throwFor produces TastyError.UnknownTagInPosition for unknown tag 0" in {
+    "TagKind throwFor produces TastyError.UnknownTagInPosition for unknown tag 0" in {
         import kyo.internal.tasty.reader.TagKind
         val invalidTag = 0
         val positions = Seq(
@@ -252,10 +252,10 @@ class TastyPropertyBasedTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // PROP-PB-006: TagKind.from() round-trips for all known tags in each position.
+    // PROP-PB-006: TagKind.from round-trips for all known tags in each position.
     // For each enum value, from(value.raw) returns the same enum case.
     // Verifies the byRawMap is correctly populated from the enum values.
-    "PROP-PB-006: TagKind from() round-trips for all known tags in each position" in {
+    "TagKind from() round-trips for all known tags in each position" in {
         import kyo.internal.tasty.reader.TagKind
 
         for tag <- TagKind.TypePositionTag.values do

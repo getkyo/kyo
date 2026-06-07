@@ -14,14 +14,14 @@ import kyo.internal.tasty.query.TastyState
   * `kyo.fixtures.Embedded` and calls `ClasspathOrchestrator.init` directly, bypassing `NativeFileSource` entirely.
   *
   * Design notes:
-  *   - `withClasspath` takes no `roots` parameter (no JVM classpath on Native).
-  *   - Concurrency is fixed at 1 (Native single-threaded model; higher values have no effect and would be misleading).
-  *   - All 13 embedded TASTy fixtures are included (PlainClass, SomeObject, SomeTrait, GenericBox, Outer, SomeCaseClass, Color,
+  *   `withClasspath` takes no `roots` parameter (no JVM classpath on Native).
+  *   Concurrency is fixed at 1 (Native single-threaded model; higher values have no effect and would be misleading).
+  *   All 13 embedded TASTy fixtures are included (PlainClass, SomeObject, SomeTrait, GenericBox, Outer, SomeCaseClass, Color,
   *     FixtureClasses$package, BaseClass, ChildClass, Shape, VarargFixture, TypeAdtFixture$package). Shape carries class-form enum cases
   *     (fixture additions for extended coverage).
   *
-  *   - The `roots` parameter mirrors the JVM surface but is ignored; embedded fixtures are always loaded.
-  *   - HARD RULE 7: the MemoryFileSource is internal to the loading call; it is not exposed to callers.
+  *   The `roots` parameter mirrors the JVM surface but is ignored; embedded fixtures are always loaded.
+  *   HARD RULE 7: the MemoryFileSource is internal to the loading call; it is not exposed to callers.
   *
   * Scaladoc: 8-35 lines.
   */
@@ -30,13 +30,13 @@ private[kyo] object TestClasspaths:
     /** Run `f` in a fresh classpath scope built from the embedded TASTy fixtures.
       *
       * Builds the classpath from an in-memory MemoryFileSource, installs the Binding in `TastyState.bindingLocal`,
-      * and runs `f` in that scope. Call inside a `run { ... }` test body. The `roots` parameter is ignored on
+      * and runs `f` in that scope. Call inside a `run {. }` test body. The `roots` parameter is ignored on
       * Native (no filesystem); embedded fixtures are always used.
       */
     def withClasspath[A, S](roots: Seq[String] = Seq.empty)(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
         val src = MemoryFileSource()
         src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
-        // Companion .class alongside .tasty so cp.findClass populates javaMetadata cross-platform .
+        // Companion.class alongside.tasty so cp.findClass populates javaMetadata cross-platform.
         src.add("root/PlainClass.class", kyo.fixtures.Embedded.plainClassClassfile)
         src.add("root/SomeObject.tasty", kyo.fixtures.Embedded.someObjectTasty)
         src.add("root/SomeTrait.tasty", kyo.fixtures.Embedded.someTraitTasty)
@@ -127,7 +127,7 @@ private[kyo] object TestClasspaths:
         src.add("root/portedBug71Outer/portedBug71Inner/Marker.tasty", kyo.fixtures.Embedded.portedBug71InnerMarkerTasty)
         // Java fixture: registered as a standalone root so walkRoot's ".class" branch discovers it.
         // Path "kyo/fixtures/JavaSimpleFixture.class" yields FQN "kyo.fixtures.JavaSimpleFixture" via
-        // classfilePathToFqn. See ClasspathOrchestrator.walkRoot:338 and F-A1-OPEN / F-A3-OPEN-AP.
+        // classfilePathToFqn. See ClasspathOrchestrator.walkRoot:338 and /.
         src.add("kyo/fixtures/JavaSimpleFixture.class", kyo.fixtures.EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
         Scope.run:
             ClasspathOrchestrator.init(Seq("root", "kyo/fixtures/JavaSimpleFixture.class"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>

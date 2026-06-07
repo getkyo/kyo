@@ -5,7 +5,7 @@ import kyo.Tasty.SymbolId
 import kyo.internal.MemoryFileSource
 import kyo.internal.tasty.query.ClasspathOrchestrator
 
-/** plan leaves 11-14: Tasty.owner(Tasty), fullName, show, signature, parents; Tag[Symbol.X].
+/** Tasty.owner(Tasty), fullName, show, signature, parents; Tag[Symbol.X].
   */
 class QueryTraversalTest extends kyo.test.Test[Any]:
 
@@ -17,8 +17,8 @@ class QueryTraversalTest extends kyo.test.Test[Any]:
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end openFixtureClasspath
 
-    // Leaf 11: Tasty.owner(sym) returns Absent for the root package
-    "Leaf 11: Tasty.owner(Tasty) returns Absent for root package" in {
+    // Tasty.owner(sym) returns Absent for the root package
+    "Tasty.owner(Tasty) returns Absent for root package" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Tasty.withClasspath(cp):
@@ -38,8 +38,8 @@ class QueryTraversalTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // Leaf 13: Tag[Symbol.EnumCase] summon succeeds (DONE in PureDataAdtsTest; verify pattern-match behavior here)
-    "Leaf 13: Pattern match distinguishes Symbol.EnumCase from Symbol.Class via sealed match" in {
+    // Tag[Symbol.EnumCase] summon succeeds (DONE in PureDataAdtsTest; verify pattern-match behavior here)
+    "Pattern match distinguishes Symbol.EnumCase from Symbol.Class via sealed match" in {
         // Construct a Symbol.EnumCase and verify it matches EnumCase arm, not Class
         val enumCase: Tasty.Symbol = Tasty.Symbol.EnumCase(
             SymbolId(1),

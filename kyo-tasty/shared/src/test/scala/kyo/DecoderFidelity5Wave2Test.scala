@@ -14,7 +14,7 @@ import kyo.internal.tasty.snapshot.SnapshotWriter
   * Wave 2 probes a wider matrix of QA-mindset categories: boundaries, negative tests, resource exhaustion, races, half-load state, error
   * variants, idempotency, equality/hash, real-world synthetics, structural defense, error messages, API gaps.
   *
-  * Cross-platform: uses MemoryFileSource and TestClasspaths.withClasspath() (embedded fixtures). No JVM filesystem required.
+  * Cross-platform: uses MemoryFileSource and TestClasspaths.withClasspath (embedded fixtures). No JVM filesystem required.
   *
   * Leaves are numbered W2.N for traceability with the exploration document.
   */
@@ -24,7 +24,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
 
     private val plainClassTasty: Array[Byte] = kyo.fixtures.Embedded.plainClassTasty
 
-    // -- Helpers ---------------------------------------------------------------
+    // Helpers ---------------------------------------------------------------
 
     private def loadCorrupt(
         name: String,
@@ -393,7 +393,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
     }
 
     // W2.22: Symbol used as HashMap key resolves to itself.
-    // F-006: Symbol equality is id-based with a kind discriminant; the `final override def equals`
+    // Symbol equality is id-based with a kind discriminant; the `final override def equals`
     // on Tasty.Symbol compares `(id.value, kind)`. The decoder relies on `id`-based equality through
     // this override; case-class auto-derivation is shadowed by the trait-body override.
     "W2.22: Symbol usable as HashMap key (equals/hashCode contract)" in {
@@ -544,9 +544,9 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                         end if
     }
 
-    // W2.30: bodyMemo lives in DecodeContext, not Classpath. cp.copy produces a structurally equal Classpath.
-    // The bodyMemo in the active DecodeContext accumulates entries across bodyTree calls (INV-004).
-    "W2.30: bodyMemo accumulates in DecodeContext after bodyTree decode (INV-004 pin)" in {
+    // bodyMemo lives in DecodeContext, not Classpath. cp.copy produces a structurally equal Classpath.
+    // The bodyMemo in the active DecodeContext accumulates entries across bodyTree calls.
+    "bodyMemo accumulates in DecodeContext after bodyTree decode" in {
         // Must use the full callback form so Tasty.bodyTree and TastyState.bindingLocal run inside the binding scope.
         TestClasspaths.withClasspath():
             Tasty.classpath.flatMap: cp =>
@@ -601,7 +601,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
-    // b REGRESSION:   bounds-check before arraycopy (SnapshotReader level)
+    // b REGRESSION: bounds-check before arraycopy (SnapshotReader level)
     // =========================================================================
 
     // section-index entry with offset+length > snapshot length produces MalformedSection.
@@ -660,7 +660,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
-    // b REGRESSION:   IllegalStateException -> ClasspathClosed
+    // b REGRESSION: IllegalStateException -> ClasspathClosed
     // =========================================================================
 
     // decodeBody on a symbol whose blob.read throws IllegalStateException produces ClasspathClosed.
@@ -685,7 +685,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
-    // b REGRESSION:   fromPickles actually decodes input pickles
+    // b REGRESSION: fromPickles actually decodes input pickles
     // =========================================================================
 
     // fromPickles(Seq.empty) returns an empty classpath.
@@ -721,7 +721,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
-    // b REGRESSION:   ERRORS round-trip (typed format)
+    // b REGRESSION: ERRORS round-trip (typed format)
     // =========================================================================
 
     // every TastyError variant round-trips losslessly through write/read.
@@ -775,7 +775,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
-    // b REGRESSION:   sectionCount bound
+    // b REGRESSION: sectionCount bound
     // =========================================================================
 
     // snapshot with sectionCount=Int.MaxValue produces SnapshotFormatError, not OOM or panic.

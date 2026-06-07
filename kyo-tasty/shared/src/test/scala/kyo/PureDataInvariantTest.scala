@@ -30,11 +30,11 @@ class PureDataInvariantTest extends kyo.test.Test[Any]:
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end openFixtureClasspath
 
-    // Leaf 1: accessor idempotency
+    // accessor idempotency
     // Given: a classpath loaded from the embedded fixtures
     // When: calling each accessor on a sample of symbols twice in succession
     // Then: both calls return structurally equal results (no hidden mutation, no cache artifact)
-    "HARD RULE 7: Symbol accessors are idempotent (same value on second call)" in {
+    "Symbol accessors are idempotent (same value on second call)" in {
         openFixtureClasspath.map: cp =>
             given Tasty.Classpath = cp
             val sample            = cp.symbols.take(50)
@@ -55,11 +55,11 @@ class PureDataInvariantTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 2: structural field stability on ClassLike symbols
+    // structural field stability on ClassLike symbols
     // Given: ClassLike symbols accessed twice
     // When: comparing parentTypes and annotations Chunk references
     // Then: both references compare equal structurally
-    "HARD RULE 7: ClassLike parentTypes and annotations are stable across aliasing reads" in {
+    "ClassLike parentTypes and annotations are stable across aliasing reads" in {
         openFixtureClasspath.map: cp =>
             given Tasty.Classpath = cp
             val sample            = cp.symbols.take(50)
@@ -77,11 +77,11 @@ class PureDataInvariantTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 3: equality is reflexive (same instance equals itself under id-and-kind contract after F-006)
+    // equality is reflexive (same instance equals itself under id-and-kind contract after)
     // Given: the same Symbol instance retrieved twice (materialized symbols have non-sentinel ids)
     // When: comparing with ==
-    // Then: equal; hashCode also matches (F-006: id-and-kind equality is reflexive for non-sentinel ids)
-    "HARD RULE 7: Symbol equality is reflexive (same instance equals itself)" in {
+    // Then: equal; hashCode also matches (: id-and-kind equality is reflexive for non-sentinel ids)
+    "Symbol equality is reflexive (same instance equals itself)" in {
         openFixtureClasspath.map: cp =>
             val sample = cp.symbols.take(20)
             sample.foreach: sym =>

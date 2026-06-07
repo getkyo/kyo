@@ -54,13 +54,12 @@ object Tasty:
       * cold-loads and writes the snapshot before returning. Resources (mmap arenas, JAR handles)
       * are released when the scope exits via the internal `Scope.run`.
       *
-      * INV-009 site-1: init from file-system roots (cold-load) via `ClasspathOrchestrator.coldLoadBinding`.
       * This is the ONLY entry point that reads the file system during classpath construction. All
       * `Tasty.*` query methods called inside `f` are pure and perform no IO.
       *
       * Diagnostics accumulated during the scope by `Tasty.isSubtypeOf` (e.g.,
       * `TastyError.UnhandledSubtypingCase`) are folded into `cp.errors` on any call to
-      * `Tasty.classpath` within `f` (Q-003 binding: errors appear in `cp.errors`).
+      * `Tasty.classpath` within `f`.
       *
       * Effect row: `A < (Async & Abort[TastyError] & S)` -- `Scope` is consumed internally.
       */
@@ -80,7 +79,7 @@ object Tasty:
       * carries no body source handle.
       *
       * Diagnostics accumulated during the scope are folded into `cp.errors` on any call to
-      * `Tasty.classpath` within `f` (Q-003 binding: errors appear in `cp.errors`).
+      * `Tasty.classpath` within `f`.
       *
       * Effect row: `A < S` -- identical to `f`'s row.
       */
@@ -92,9 +91,9 @@ object Tasty:
       * Decodes the pickles sequentially using an in-memory FileSource. The resulting Binding carries
       * a fresh DecodeContext so `Tasty.bodyTree` can decode body bytes on demand.
       *
-      * INV-009 site-1-related (in-memory alt-init; no real-FS contact): constructs an anonymous
-      * in-memory FileSource from the pickle bytes map; never reads `PlatformFileSource.get` and
-      * never touches the real file system. All `Tasty.*` query methods called inside `f` are pure and perform no IO.
+      * In-memory alt-init: constructs an anonymous in-memory FileSource from the pickle bytes map;
+      * never reads `PlatformFileSource.get` and never touches the real file system. All `Tasty.*`
+      * query methods called inside `f` are pure and perform no IO.
       *
       * Effect row: `A < (Async & Abort[TastyError] & S)`.
       */
@@ -106,7 +105,7 @@ object Tasty:
     /** Delete snapshot files in `cacheDir` whose modification time is older than `maxAge`.
       *
       * Delegates to `Tasty.Snapshot.evictOlderThan`. Only deletes `*.krfl` files; does not recurse.
-      * INV-009 site-4: the underlying file-deletion logic uses AllowUnsafe via the FileSource.
+      * The underlying file-deletion logic uses AllowUnsafe via the FileSource.
       */
     def evictOlderThan(cacheDir: String, maxAge: Duration)(using Frame): Unit < (Sync & Abort[TastyError]) =
         Snapshot.evictOlderThan(cacheDir, maxAge)
@@ -120,7 +119,7 @@ object Tasty:
       * When called inside a `withClasspath` scope, folds any `TastyError.UnhandledSubtypingCase`
       * diagnostics accumulated by `isSubtypeOf` calls during the scope into the returned
       * `Classpath.errors` field. This makes `cp.errors` the user-visible channel for
-      * unhandled-shape diagnostics (Q-003 binding).
+      * unhandled-shape diagnostics.
       *
       * Effect row: Sync. Suspension is unconditional to keep the contract uniform regardless of whether TastyState.global was already realised.
       */
@@ -137,7 +136,7 @@ object Tasty:
     // ── Tasty.* query operations ────────────────────────────────────────────
     // All query operations read the active binding from TastyState.bindingLocal. They carry
     // < Sync in their effect row because the lazy fallback TastyState.global may trigger
-    // initialization on the first call (INV-009 site-2).
+    // initialization on the first call.
 
     /** Expand to the fully-qualified dotted name of `A`'s class symbol at compile time.
       *
@@ -996,8 +995,7 @@ object Tasty:
       * without re-decoding. The memo is keyed by `sym.id` (SymbolId) and is per-`withClasspath` invocation;
       * a second `withClasspath` call produces a fresh `DecodeContext` with an empty memo.
       *
-      * INV-009 site-3: `AllowUnsafe` is confined to `Sync.Unsafe.defer`; it does not appear on this signature.
-      * INV-010: the top-level signature does not carry `AllowUnsafe`.
+      * `AllowUnsafe` is confined to `Sync.Unsafe.defer`; it does not appear on this signature.
       */
     def bodyTree(sym: Symbol)(using frame: Frame): Maybe[Tree] < (Sync & Abort[TastyError]) =
         TastyState.bindingLocal.use: mbind =>
@@ -1010,13 +1008,13 @@ object Tasty:
                 else
                     val cp = mbind.get.cp
                     Sync.Unsafe.defer:
-                        // INV-009 site-3: Sync.Unsafe.defer is the only AllowUnsafe in the public query layer.
+                        // Sync.Unsafe.defer is the only AllowUnsafe in the public query layer.
                         val cached = ctx.bodyMemo.get(sym.id)
                         if cached != null then
                             cached match
                                 case Result.Success(t) => Maybe(t)
                                 case Result.Failure(e) => Abort.fail(e)
-                                // F-015: the memo only stores Success/Failure; the prior Result.Panic arm was dead.
+                                // The memo only stores Success/Failure; no Result.Panic arm.
                         else
                             val result: Result[TastyError, Tree] =
                                 // Upfront bounds validation. A malformed (bodyStart, bodyEnd) tuple is documented as
@@ -1051,7 +1049,7 @@ object Tasty:
                                         case _: IllegalStateException =>
                                             // mmap arena closed before bodyTree ran; documented contract is ClasspathClosed.
                                             Result.Failure(TastyError.ClasspathClosed(s"bodyTree(sym.id=${sym.id.value})"))
-                                        // F-015 / INV-013: NonFatal final arm wraps every other decoder bug into
+                                        // NonFatal final arm wraps every other decoder bug into
                                         // MalformedSection, preserving the documented Abort[TastyError] error channel.
                                         // Fatal throwables (OOM, InterruptedException) propagate untouched because
                                         // NonFatal filters them out.
@@ -1067,7 +1065,7 @@ object Tasty:
                             result match
                                 case Result.Success(t) => Maybe(t)
                                 case Result.Failure(e) => Abort.fail(e)
-                                // F-015: dead Result.Panic arm removed; memo never stores Panic.
+                                // The memo only stores Success/Failure; no Result.Panic arm.
                             end match
                         end if
                 end if
@@ -1100,9 +1098,9 @@ object Tasty:
       *   a definitive answer, or the type shapes were unsupported.
       *
       * Unhandled parent-walk shapes are collected in `decodeCtx.subtypingErrors` during the
-      * call and folded into `cp.errors` on the next `Tasty.classpath` read within the scope
-      * (Q-003 binding). The verdict signature carries no `Abort[TastyError]` row; diagnostics
-      * are surfaced through the error channel.
+      * call and folded into `cp.errors` on the next `Tasty.classpath` read within the scope.
+      * The verdict signature carries no `Abort[TastyError]` row; diagnostics are surfaced
+      * through the error channel.
       *
       * Effect row: `< Sync`. The check runs inside `Sync.defer` rather than returning a
       * plain value because it reads the `TastyState.bindingLocal`.
@@ -1195,7 +1193,7 @@ object Tasty:
           * Stats all files, sorts by mtime ascending (oldest first), deletes until the first non-stale entry, then stops.
           * This avoids unnecessary delete calls for files within the retention window and is O(N) stat syscalls + O(N log N) sort.
           *
-          * INV-009 site-4: realised effects are {list, stat, delete}. The AllowUnsafe gate lives inside FileSource's
+          * Realised effects are {list, stat, delete}. The AllowUnsafe gate lives inside FileSource's
           * platform implementations (list, stat) and in `kyo.Path.remove` (delete default).
           */
         private[kyo] def evictOlderThanWithSource(
@@ -1224,7 +1222,7 @@ object Tasty:
             source: kyo.internal.tasty.query.FileSource,
             path: String
         )(using Frame): Unit < (Sync & Abort[TastyError]) =
-            // F-001: single source.delete call. INV-009 site-4 effect set rotates to {list, stat, delete}.
+            // Single source.delete call; effect set is {list, stat, delete}.
             // Concurrent-writer races (path already gone) are absorbed by the outer Abort.run[TastyError]
             // wrapper at the evictOlderThanWithSource call site.
             source.delete(path)
@@ -1725,7 +1723,7 @@ object Tasty:
 
         /** Renders a Type for use inside classOf[...]. Since Constant.show is pure and has no
           * Classpath, Named references cannot be resolved to their FQN. An unresolved
-          * Type.Named(id) emits the placeholder <id:N> per Q-009. Other common Type cases
+          * Type.Named(id) emits the placeholder <id:N>. Other common Type cases
           * are rendered with their Scala source shape; the catch-all preserves existing
           * behaviour for any new Type cases added in the future.
           */
@@ -2834,8 +2832,8 @@ object Tasty:
         def scaladoc: Maybe[String]
         def sourcePosition: Maybe[Position]
 
-        // F-006: id-and-kind equality on the sealed-trait body. `final` blocks the 14 case classes'
-        // auto-derived structural equality from shadowing this override. INV-002.
+        // Id-and-kind equality on the sealed-trait body. `final` blocks the 14 case classes'
+        // auto-derived structural equality from shadowing this override.
         final override def equals(that: Any): Boolean = that match
             case other: Symbol =>
                 val selfIdVal  = id.value
@@ -3437,7 +3435,7 @@ object Tasty:
         // Java.Annotation.Value.AnnotationVal contains Annotation which contains Value.
         // The lazy initialization breaks the compile-time recursion.
         // Unsafe: null.asInstanceOf is used here intentionally to break the mutual-recursion cycle
-        // between Java.Annotation and Java.Annotation.Value at Schema derivation time (Q-004 / RI-004).
+        // between Java.Annotation and Java.Annotation.Value at Schema derivation time.
         private var _schemaAnnotationValue: Schema[Annotation.Value] =
             null.asInstanceOf[Schema[Annotation.Value]]
         given schemaAnnotationValue: Schema[Annotation.Value] =
@@ -3847,7 +3845,7 @@ object Tasty:
             findClass(fqn)
         end findClassByBinary
 
-        // ── require* throwing variants (INV-010: sole new effect-row additions in this phase) ──
+        // ── require* throwing variants ──
 
         /** Require a class by FQN; fails with `TastyError.InvalidFqn` when `fqn` is empty, or `TastyError.NotFound` when absent.
           *
@@ -4222,7 +4220,7 @@ object Tasty:
 
             // Override hashCode so that structurally-equal Indices instances produce the same hash.
             // The auto-generated case-class hashCode mixes each Dict's reference-based hashCode, which
-            // violates the equals/hashCode contract established by the equals override above (WARN-1 fix).
+            // violates the equals/hashCode contract established by the equals override above.
             // XOR-based fold over (key, value) pairs is used for each Dict field because XOR is commutative
             // and iteration order over Dict is not guaranteed to be stable.
             override def hashCode(): Int =
@@ -4486,8 +4484,7 @@ object Tasty:
                 end visit
                 visit(c)
                 out.result()
-            // F-004: Packages do not inherit; their memberIds ARE their All-scope members.
-            // This arm closes the doc-vs-impl gap documented at Tasty.scala:825-826.
+            // Packages do not inherit; their memberIds ARE their All-scope members.
             case p: Symbol.Package =>
                 p.memberIds.flatMap(id => cp.symbol(id).toChunk)
             case _ => Chunk.empty

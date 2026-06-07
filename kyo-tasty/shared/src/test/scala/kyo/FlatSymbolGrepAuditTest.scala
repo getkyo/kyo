@@ -14,7 +14,7 @@ class FlatSymbolGrepAuditTest extends kyo.test.Test[Any]:
     // The actual file-system scan runs in FlatSymbolGrepAuditJvmTest on JVM.
     // This leaf verifies the type hierarchy invariant at the API level: sealed trait Symbol
     // is the public entry point and the runtime type of any symbol is a subtype.
-    "Leaf 174: Symbol hierarchy has no flat case class -- sealed trait is the root" in {
+    "Symbol hierarchy has no flat case class -- sealed trait is the root" in {
         // Constructing a Class subtype must compile and produce a Symbol (not a flat case class).
         val sym: Tasty.Symbol = Tasty.Symbol.Package(
             kyo.Tasty.SymbolId(-1),

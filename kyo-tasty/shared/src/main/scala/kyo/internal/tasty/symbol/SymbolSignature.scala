@@ -75,8 +75,8 @@ private[kyo] object SymbolSignature:
         case Maybe.Absent      => ""
 
     private def renderType(t: Tasty.Type)(using cp: Tasty.Classpath)(using AllowUnsafe): String =
-        // F-005: cover every composite Type ADT case that Tasty.typeShow covers. The shapes
-        // mirror Scala source syntax (Function => "A => B", Applied => "F[X, Y]", Tuple => "(A, B)").
+        // Cover every composite Type ADT case that Tasty.typeShow covers. The shapes mirror
+        // Scala source syntax (Function => "A => B", Applied => "F[X, Y]", Tuple => "(A, B)").
         import Tasty.Name.asString
         t match
             case Tasty.Type.Named(id) =>
@@ -104,7 +104,7 @@ private[kyo] object SymbolSignature:
             case Tasty.Type.ByName(body)    => s"=> ${renderType(body)}"
             case Tasty.Type.Repeated(elem)  => s"${renderType(elem)}*"
             case Tasty.Type.ConstantType(c) => c.show
-            // plan: residual ADT cases (Refinement, MatchType, Skolem, etc.) fall through to toString unchanged
+            // Residual ADT cases (Refinement, MatchType, Skolem, etc.) fall through to toString unchanged.
             case _ => t.toString
         end match
     end renderType

@@ -10922,7 +10922,7 @@ object Embedded:
     )
 
     /** Contents of `ChildClass.tasty` (782 bytes). Compiled from kyo-tasty-fixtures ChildClass.scala (package kyo.fixtures). ChildClass
-      * extends BaseClass. This .tasty file contains a cross-file TYPEREFpkg/TYPEREFin reference to kyo.fixtures.BaseClass that
+      * extends BaseClass. This.tasty file contains a cross-file TYPEREFpkg/TYPEREFin reference to kyo.fixtures.BaseClass that
       * TypeUnpickler decodes as an UnresolvedRef. Phase C mergeResults resolves it when both files are opened together.
       */
     def childClassTasty: Array[Byte] = Array(

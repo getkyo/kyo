@@ -85,7 +85,7 @@ object SnapshotWriter:
         // in alphabetical order wins deterministically across JVM invocations. Without sorting,
         // HashMap.foreach iteration order may differ between invocations, causing different canonical
         // FQNs to be stored in fqnBySymbol for symbols with multiple aliases.
-        // CARRY-1 fix: keyed by SymbolId.value (Int) instead of Symbol object identity so that warm-loaded
+        // Keyed by SymbolId.value (Int) instead of Symbol object identity so that warm-loaded
         // classpaths (which create fresh Symbol instances with the same id.value) produce the same FQN
         // lookup result as a cold load. IdentityHashMap caused lookup misses on warm-load symbols because
         // their object identities differ from the cold-load symbols used to populate the map.
@@ -883,7 +883,7 @@ object SnapshotWriter:
       * Returns empty string for unrecognised types.
       * Called from serializeAnnotations to cover both Named and TermRef tycon forms.
       *
-      * CARRY-3 fix: pass unresolvedFqnByNegId so that nested Named(negId) references (e.g. the "scala" package
+      * Passes unresolvedFqnByNegId so that nested Named(negId) references (e.g. the "scala" package
       * qualifier in TermRef(Named(-X_scala), Name("deprecated"))) can be resolved to their FQN strings. Without
       * this, the qualifier resolves to "" and the outer TermRef returns only the simple name "deprecated" instead
       * of the full FQN "scala.deprecated".

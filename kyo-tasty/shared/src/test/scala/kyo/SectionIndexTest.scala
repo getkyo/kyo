@@ -49,9 +49,9 @@ class SectionIndexTest extends kyo.test.Test[Any]:
         // names.length == 1; nameRef=0 (valid).
         // sectionLen encoded as 5-byte Nat: 0x7f,0x7f,0x7f,0x7f,0xff.
         // Pre-Phase-08: Int accumulator overflows to negative; sectionLen < 0 guard fires.
-        // Post-Phase-08 (Q-002 delegation to readLongNat): readLongNat returns 34359738367L;
+        // Post-Phase-08 (delegation to readLongNat): readLongNat returns 34359738367L;
         // readNat truncates to 34359738367L.toInt = -1; sectionLen < 0 guard fires as before.
-        // Both paths produce MalformedSection("SectionIndex", ...).
+        // Both paths produce MalformedSection("SectionIndex".).
         val names         = makeNames(1)
         val nameRefBytes  = encodeNat(0)
         val sectionLenNeg = Array(0x7f.toByte, 0x7f.toByte, 0x7f.toByte, 0x7f.toByte, 0xff.toByte)

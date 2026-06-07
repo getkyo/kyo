@@ -173,7 +173,6 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
     //   Cat-3 (90-109): tag + readTree/readType (sub-AST immediately follows).
     //   Cat-4 (110-127): tag + readNat + readTree/readType.
     //   Cat-5 (128-255): tag + readEnd (length nat) + payload bytes.
-    //
     //   Length encoding for cat-5: the 'length' field encodes payload byte count as a nat.
     //   Single-byte: (payloadBytes | 0x80).toByte. After readEnd the position advances by the
     //   length nat width, and end = current_position + payloadBytes.

@@ -5,7 +5,7 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import scala.jdk.CollectionConverters.*
 
-/** JVM-only source-layout tests for INV-022 (kyo-tasty-examples extraction).
+/** JVM-only source-layout tests for the kyo-tasty-examples extraction.
   *
   * Uses java.nio.file to walk the worktree source tree; not available on Scala.js or Scala Native at link time, so these tests live in
   * jvm/src/test rather than shared/src/test.
@@ -13,7 +13,7 @@ import scala.jdk.CollectionConverters.*
 class TastyExamplesLayoutTest extends kyo.test.Test[Any]:
 
     "examples no longer ship in kyo-tasty source tree" in {
-        // : kyo-tasty/shared/src/main/scala/kyo/tasty/examples must not exist after.
+        // kyo-tasty/shared/src/main/scala/kyo/tasty/examples must not exist after.
         // This is a source-level check (not a JAR check); the directory was deleted as part of the
         // move to kyo-tasty-examples. A JAR-level check would require sbt compilation to have run
         // first and is deferred.
@@ -33,7 +33,7 @@ class TastyExamplesLayoutTest extends kyo.test.Test[Any]:
     }
 
     "kyo-tasty-examples sources at expected path with correct package" in {
-        // : kyo-tasty-examples/shared/src/main/scala/examples/ must contain exactly the 4
+        // kyo-tasty-examples/shared/src/main/scala/examples/ must contain exactly the 4
         // moved example files, each declaring `package examples` at the first non-blank line.
         val expectedNames = Set(
             "CodegenExample.scala",

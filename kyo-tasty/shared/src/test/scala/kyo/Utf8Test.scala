@@ -83,7 +83,7 @@ class Utf8Test extends kyo.test.Test[Any]:
 
     // T5 JS parity: JS Utf8.decode path (TextDecoder) produces the same result as the JVM
     // reference for a plain ASCII string. Pins T5.
-    "T5 JS parity: decode 'hello world' bytes returns 'hello world' on JS".onlyJs in {
+    "decode 'hello world' bytes returns 'hello world' on JS".onlyJs in {
         // "hello world" ASCII bytes
         val bytes  = "hello world".getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val result = Utf8.decode(bytes, 0, bytes.length)
@@ -93,7 +93,7 @@ class Utf8Test extends kyo.test.Test[Any]:
 
     // T5 Native parity: Native Utf8.decode path (String constructor via StandardCharsets.UTF_8)
     // produces the same result as the JVM reference for a plain ASCII string. Pins T5.
-    "T5 Native parity: decode 'hello world' bytes returns 'hello world' on Native".onlyNative in {
+    "decode 'hello world' bytes returns 'hello world' on Native".onlyNative in {
         // "hello world" ASCII bytes
         val bytes  = "hello world".getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val result = Utf8.decode(bytes, 0, bytes.length)
@@ -117,12 +117,12 @@ class Utf8Test extends kyo.test.Test[Any]:
             var j   = 0
             while j < len do
                 if rng.nextInt(10) == 0 then
-                    // 10% chance: supplementary code point in range U+10000..U+10FFFF
+                    // 10% chance: supplementary code point in range U+10000.U+10FFFF
                     val cp = 0x10000 + rng.nextInt(0x10ffff - 0x10000 + 1)
                     sb.append(new String(Character.toChars(cp)))
                     j += 1
                 else
-                    // BMP code point in range U+0020..U+D7FF (avoids surrogates and control codes)
+                    // BMP code point in range U+0020.U+D7FF (avoids surrogates and control codes)
                     val cp = 0x0020 + rng.nextInt(0xd7ff - 0x0020 + 1)
                     sb.appendCodePoint(cp)
                     j += 1

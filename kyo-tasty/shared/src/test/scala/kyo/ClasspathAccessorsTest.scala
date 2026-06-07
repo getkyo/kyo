@@ -4,11 +4,11 @@ import kyo.Tasty.SymbolId
 
 /** Tests for Cat 19 Classpath.symbol and related accessors.
   *
-  * Covers plan leaves 6, 7, 8, 9:
-  *   - cpSymbolReturnsMaybe: cp.symbol(SymbolId(-1)) returns Absent; cp.symbol(SymbolId(5)) returns Present.
-  *   - sentinelUnresolvedDeleted: Classpath.sentinelUnresolved does not exist.
-  *   - unresolvedCrossFileRefSurfacesAsTastyError: finalizeMerge accumulates UnresolvedReference in SoftFail mode.
-  *   - ownerReturnsMaybe: Tasty.owner(rootPkg) returns Absent for a package with ownerId = SymbolId(-1).
+  * Coverage:
+  *   cpSymbolReturnsMaybe: cp.symbol(SymbolId(-1)) returns Absent; cp.symbol(SymbolId(5)) returns Present.
+  *   sentinelUnresolvedDeleted: Classpath.sentinelUnresolved does not exist.
+  *   unresolvedCrossFileRefSurfacesAsTastyError: finalizeMerge accumulates UnresolvedReference in SoftFail mode.
+  *   ownerReturnsMaybe: Tasty.owner(rootPkg) returns Absent for a package with ownerId = SymbolId(-1).
   */
 class ClasspathAccessorsTest extends kyo.test.Test[Any]:
 
@@ -97,7 +97,7 @@ class ClasspathAccessorsTest extends kyo.test.Test[Any]:
     // ── Leaf 8: unresolvedCrossFileRefSurfacesAsTastyError ───────────────────
 
     // Given: a degenerate MergeState with a ghost FQN entry (FQN not backed by any allSyms entry)
-    //        loaded via triggerUnresolvedReferenceForTest() which calls finalizeMerge with SoftFail.
+    //        loaded via triggerUnresolvedReferenceForTest which calls finalizeMerge with SoftFail.
     // When: the resulting classpath's cp.errors is inspected.
     // Then: cp.errors contains exactly one TastyError.UnresolvedReference with the ghost FQN name.
     "unresolvedCrossFileRefSurfacesAsTastyError: finalizeMerge emits UnresolvedReference in SoftFail mode" in {

@@ -5,21 +5,23 @@ import kyo.internal.TestProbeFileSource
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import scala.collection.mutable
 
-/** INV-009 behavioral enforcement: side effects only in 4 named sites.
+/** Behavioral enforcement: side effects only in named sites.
   *
-  * Leaves 1-7: pure Tasty.* query methods perform zero IO when a probe FileSource is
-  * injected. Every pure query returns its expected value without raising the A1 sentinel.
-  * Leaf 8: Tasty.bodyTree returns Maybe.Absent under withClasspath(cp) (decodeCtx = Absent).
-  * Leaf 9: evictOlderThanWithSource raises the probe sentinel on first source.list call.
-  * Leaf 10: coldLoadBinding with probe raises the sentinel on first source.list/exists call.
-  * Leaf 11: withPickles does not touch the probe FileSource at all.
-  * Leaf 12: no public Unsafe-tier mirrors exist on object Tasty.*.
-  * Leaf 13: evictOlderThanWithSource call log contains list + delete entries (F-001: no rename).
-  * Leaf 14: all 13 prior leaves also pass on JS and Native (cross-platform placement).
+  * Pure Tasty.* query methods perform zero IO when a probe FileSource is injected. Every pure
+  * query returns its expected value without raising the probe sentinel.
+  *
+  *   - Tasty.bodyTree returns Maybe.Absent under withClasspath(cp) (decodeCtx = Absent).
+  *   - evictOlderThanWithSource raises the probe sentinel on first source.list call.
+  *   - coldLoadBinding with probe raises the sentinel on first source.list/exists call.
+  *   - withPickles does not touch the probe FileSource at all.
+  *   - no public Unsafe-tier mirrors exist on object Tasty.*.
+  *   - evictOlderThanWithSource call log contains list + delete entries (and no rename).
+  *
+  * All tests pass on JVM, JS, and Native (cross-platform placement).
   */
 class Inv009BehavioralTest extends kyo.test.Test[Any]:
 
-    // ── Shared test fixture for leaves 1-8 ───────────────────────────────────
+    // ── Shared test fixture ───────────────────────────────────────
 
     // Two Package symbols: pkg (id=0, root) and child (id=1, owned by pkg).
     // Minimal classpath; pure query methods that return empty Chunk on absent kinds are
@@ -70,7 +72,7 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
             log += s"rename $from -> $to"
             Kyo.unit
 
-        // F-001: override to log delete calls; trait-body default would attempt real filesystem op.
+        // override to log delete calls; trait-body default would attempt real filesystem op.
         override def delete(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
             log += s"delete $path"
             Kyo.unit
@@ -98,7 +100,7 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
     // When: each of findClass, findClassLike, findObject, findSymbol, findPackage,
     //       findModule, findConcreteClass, findClassesByName invoked
     // Then: each returns a Maybe / Chunk result without raising the A1 sentinel
-    "Leaf 1: pure find-family queries perform no IO" in {
+    "pure find-family queries perform no IO" in {
         Tasty.withClasspath(minimalCp):
             for
                 c1 <- Tasty.findClass("root.Nonexistent")
@@ -131,7 +133,7 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
     //       requirePackage, requireMethod invoked (with known or unknown FQNs)
     // Then: calls with unknown FQNs abort with NotFound (not a probe sentinel);
     //       requirePackage("root") returns the root Package without IO
-    "Leaf 2: pure require-family queries perform no IO" in {
+    "pure require-family queries perform no IO" in {
         Tasty.withClasspath(minimalCp):
             Abort.run[TastyError]:
                 for
@@ -168,7 +170,7 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
     //       allVals, allVars, allFields, allTypes, allPackages invoked
     // Then: each returns a Chunk result without raising the A1 sentinel;
     //       allPackages returns the 2 Package symbols in the fixture
-    "Leaf 3: pure aggregator queries perform no IO" in {
+    "pure aggregator queries perform no IO" in {
         Tasty.withClasspath(minimalCp):
             for
                 a1  <- Tasty.allClassLike
@@ -192,7 +194,7 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
     // Given: minimalCp bound via Tasty.withClasspath(cp); pkg as representative sym
     // When: owner(pkg), fullName(pkg), show(pkg, ShowFormat.Code) invoked
     // Then: each returns its value without raising the A1 sentinel
-    "Leaf 4: pure traversal queries perform no IO" in {
+    "pure traversal queries perform no IO" in {
         Tasty.withClasspath(minimalCp):
             for
                 o1 <- Tasty.owner(pkg)
@@ -206,13 +208,13 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
     }
 
     // ── Leaf 5: package member scope concrete equality ────────────────────────
-    // F-004: members(pkg, All) must equal members(pkg, Declared) for Package symbols;
+    // members(pkg, All) must equal members(pkg, Declared) for Package symbols;
     //        members(pkg, Inherited) must be Chunk.empty.
     // Given: minimalCp bound via Tasty.withClasspath(cp)
     //        pkg (SymbolId(0)) has memberIds = Chunk(SymbolId(1)) pointing to child package
     // When: members(pkg, scope) across all three MemberScope cases invoked
     // Then: Declared == Chunk(child); All == Chunk(child); Inherited == Chunk.empty
-    "Leaf 5: package member scope concrete equality (F-004)" in {
+    "package member scope concrete equality" in {
         Tasty.withClasspath(minimalCp):
             for
                 decl <- Tasty.members(pkg, Tasty.MemberScope.Declared).map(_.map(_.simpleName))
@@ -239,7 +241,7 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
     // Given: minimalCp bound via Tasty.withClasspath(cp)
     // When: hasAnnotation, findAnnotation, symbolsAnnotatedWith invoked
     // Then: each returns its Boolean / Maybe / Chunk result without raising the A1 sentinel
-    "Leaf 6: pure annotation queries perform no IO" in {
+    "pure annotation queries perform no IO" in {
         Tasty.withClasspath(minimalCp):
             for
                 b1 <- Tasty.hasAnnotation(pkg, "scala.deprecated")
@@ -256,7 +258,7 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
     // Given: minimalCp bound via Tasty.withClasspath(cp)
     // When: Tasty.classpath read
     // Then: returns minimalCp without raising the A1 sentinel
-    "Leaf 7: Tasty.classpath accessor performs no IO" in {
+    "Tasty.classpath accessor performs no IO" in {
         Tasty.withClasspath(minimalCp):
             Tasty.classpath.map: cp =>
                 assert(cp.symbols.size == 2, s"classpath must return bound cp; got ${cp.symbols.size} symbols")
@@ -269,7 +271,7 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
     // When: Tasty.bodyTree(pkg) invoked under Abort.run[TastyError]
     // Then: returns Maybe.Absent (short-circuits at decodeCtx isEmpty check);
     //       probe sentinel not raised
-    "Leaf 8: bodyTree returns Maybe.Absent under withClasspath(cp)" in {
+    "bodyTree returns Maybe.Absent under withClasspath(cp)" in {
         Tasty.withClasspath(minimalCp):
             Abort.run[TastyError](Tasty.bodyTree(pkg)).map:
                 case Result.Success(t) =>
@@ -285,7 +287,7 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
     // Given: a TestProbeFileSource installed; cacheDir = "inv009-cache"
     // When: Tasty.Snapshot.evictOlderThanWithSource(cacheDir, maxAgeMs, probe) under Abort.run
     // Then: Result.Panic carrying "A1 probe: no IO permitted (list inv009-cache)"
-    "Leaf 9: evictOlderThan exercises FileSource (probe sentinel raised)" in {
+    "evictOlderThan exercises FileSource (probe sentinel raised)" in {
         val probe = new TestProbeFileSource()
         Abort.run[TastyError](
             Tasty.Snapshot.evictOlderThanWithSource("inv009-cache", 86400000L, probe)
@@ -307,7 +309,7 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
     // When: ClasspathOrchestrator.coldLoadBinding(roots, mode, cacheDir, probe, 1)
     //       called under Scope.run and Abort.run[TastyError]
     // Then: Result.Panic carrying "A1 probe: no IO permitted" for list or exists call
-    "Leaf 10: withClasspath(roots) cold-load reads FileSource (probe sentinel raised)" in {
+    "withClasspath(roots) cold-load reads FileSource (probe sentinel raised)" in {
         val probe = new TestProbeFileSource()
         Scope.run:
             Abort.run[TastyError](
@@ -336,7 +338,7 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
     // When: Tasty.withPickles(pickles) { Tasty.classpath.map(_.symbols.size) }
     //       invoked (no probe installed in bindingLocal)
     // Then: returns symbol count > 0; no probe sentinel raised
-    "Leaf 11: withPickles does not touch FileSource" in {
+    "withPickles does not touch FileSource" in {
         val pickle = Tasty.Pickle(
             uuid = "inv009-leaf11",
             version = Tasty.Version(28, 3, 0),
@@ -359,7 +361,7 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
     // Given: compiletime.testing.typeCheckErrors for names that do not exist on Tasty
     // When: snippets checked
     // Then: every error set is non-empty (name not found)
-    "Leaf 12: no public Unsafe-tier mirrors on object Tasty.*" in {
+    "no public Unsafe-tier mirrors on object Tasty.*" in {
         val e1 = compiletime.testing.typeCheckErrors("kyo.Tasty.unsafeInit(Seq.empty)").length
         val e2 = compiletime.testing.typeCheckErrors("kyo.Tasty.decodeUnsafe").length
         val e3 = compiletime.testing.typeCheckErrors("kyo.Tasty.Unsafe.bodyTree").length
@@ -370,12 +372,12 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
     }
 
     // ── Leaf 13: evictOlderThan site-4 calls FileSource.delete, not rename ──────
-    // F-001: INV-009 site-4 effect set rotates from {list, stat, rename} to {list, stat, delete}.
+    // effect set rotates from {list, stat, rename} to {list, stat, delete}.
     // Given: a RecordingFileSource pre-loaded with one stale *.krfl file
     //        (mtime = 0, maxAge = 1 ms => always stale)
     // When: Tasty.Snapshot.evictOlderThanWithSource("cache13", 1L, rec) invoked
-    // Then: rec.calls contains "list cache13" and "delete cache13/dead.krfl"; no "rename ..." entry
-    "Leaf 13: evictOlderThan site-4 calls FileSource.delete, not rename" in {
+    // Then: rec.calls contains "list cache13" and "delete cache13/dead.krfl"; no "rename." entry
+    "evictOlderThan site-4 calls FileSource.delete, not rename" in {
         val cacheDir  = "cache13"
         val staleFile = s"$cacheDir/dead.krfl"
         // filesToList=staleFile so list returns a file; mtime=0 means infinitely old
@@ -388,14 +390,14 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
                 callLog.exists(_.startsWith(s"list $cacheDir")),
                 s"call log must contain 'list $cacheDir'; got: $callLog"
             )
-            // F-001: the call log must contain a delete entry, not a rename entry.
+            // the call log must contain a delete entry, not a rename entry.
             assert(
                 callLog.exists(_.startsWith("delete ")),
-                s"call log must contain at least one 'delete ...' entry (F-001 fix); got: $callLog"
+                s"call log must contain at least one 'delete ...' entry; got: $callLog"
             )
             assert(
                 callLog.forall(!_.startsWith("rename ")),
-                s"call log must NOT contain any 'rename ...' entries after F-001; got: $callLog"
+                s"call log must NOT contain any 'rename ...' entries; got: $callLog"
             )
             // The delete entry must name the stale file.
             assert(
@@ -411,10 +413,10 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
     }
 
     // ── Leaf 14: cross-platform (JVM, JS, Native) ─────────────────────────────
-    // All leaves 1-13 live in shared/src/test and are cross-platform by placement.
+    // All in shared/src/test and are cross-platform by placement.
     // This leaf is a compile-time assertion: the test file compiles on all three platforms.
     // The sbt verification command (kyo-tastyJS/test, kyo-tastyNative/test) confirms it.
-    "Leaf 14: cross-platform placement (JVM, JS, Native)" in {
+    "cross-platform placement (JVM, JS, Native)" in {
         // This leaf passes by the fact that the test compiles and runs on all platforms.
         // No runtime assertion needed beyond "this line was reached".
         succeed

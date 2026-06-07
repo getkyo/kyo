@@ -125,7 +125,7 @@ class SymbolShowFormatTest extends kyo.test.Test[Any]:
     // Given: Symbol.Class List in scala.collection.
     // When: c.show(ShowFormat.FullyQualified).
     // Then: returns "scala.collection.List".
-    "Leaf 151: show(FullyQualified) returns dotted FQN" in {
+    "show(FullyQualified) returns dotted FQN" in {
         buildFixture.flatMap: cp =>
             val c = cp.findClass("scala.collection.List").get
             Tasty.withClasspath(cp):
@@ -138,7 +138,7 @@ class SymbolShowFormatTest extends kyo.test.Test[Any]:
     // Given: same symbol.
     // When: c.show(ShowFormat.Simple).
     // Then: returns "List".
-    "Leaf 152: show(Simple) returns simple name" in {
+    "show(Simple) returns simple name" in {
         buildFixture.flatMap: cp =>
             val c = cp.findClass("scala.collection.List").get
             Tasty.withClasspath(cp):
@@ -148,10 +148,10 @@ class SymbolShowFormatTest extends kyo.test.Test[Any]:
     }
 
     // ── Leaf 153: show-Code-method ────────────────────────────────────────────
-    // Given: Symbol.Method "foo"(x: ...) from def foo(x: List): String.
+    // Given: Symbol.Method "foo"(x:.) from def foo(x: List): String.
     // When: m.show(ShowFormat.Code).
     // Then: returns a string starting with "def foo" and containing "(x: ".
-    "Leaf 153: show(Code) for method starts with def name and has params" in {
+    "show(Code) for method starts with def name and has params" in {
         buildFixture.flatMap: cp =>
             val m = cp.symbol(SymbolId(4)).asInstanceOf[Tasty.Symbol.Method]
             Tasty.withClasspath(cp):
@@ -165,7 +165,7 @@ class SymbolShowFormatTest extends kyo.test.Test[Any]:
     // Given: Symbol.Class "List"[A] extends D.
     // When: c.show(ShowFormat.Code).
     // Then: returns string containing "class List", "[A]", and "extends D".
-    "Leaf 154: show(Code) for class contains kind, name, type params, and extends clause" in {
+    "show(Code) for class contains kind, name, type params, and extends clause" in {
         buildFixture.flatMap: cp =>
             val c = cp.findClass("scala.collection.List").get
             Tasty.withClasspath(cp):

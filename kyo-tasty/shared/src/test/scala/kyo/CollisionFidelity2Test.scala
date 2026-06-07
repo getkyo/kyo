@@ -13,18 +13,18 @@ import kyo.internal.tasty.snapshot.SnapshotWriter
   * `TastyError.InconsistentClasspath`.
   *
   * Fixes:
-  *   -  : `mergeOneInto` records each FQN where a new structural symbol overwrites a different structural symbol; the bucket is
+  *   `mergeOneInto` records each FQN where a new structural symbol overwrites a different structural symbol; the bucket is
   *     converted to `FqnCollision` diagnostics in `finalizeMerge`.
-  *   - OQ-001 (InconsistentClasspath wiring): under `ErrorMode.FailFast`, the first collision raises
+  *   OQ-001 (InconsistentClasspath wiring): under `ErrorMode.FailFast`, the first collision raises
   *     `TastyError.InconsistentClasspath(fqn, zeroUUID, zeroUUID)`.
-  *   - OQ-006 (collisionReport visibility): `cp.collisionReport` returns a non-empty `Chunk` when collisions occurred under SoftFail.
+  *   OQ-006 (collisionReport visibility): `cp.collisionReport` returns a non-empty `Chunk` when collisions occurred under SoftFail.
   *
   * Collision fixture: the same embedded TASTy bytes loaded under two separate roots ("root1/" and "root2/"). Each root decodes the same
-  * .tasty content and creates fresh symbol objects; the merger detects the second object as a duplicate for the same FQN.
+  * tasty content and creates fresh symbol objects; the merger detects the second object as a duplicate for the same FQN.
   *
   * Cross-platform: uses MemoryFileSource and ClasspathOrchestrator.init directly. No JVM filesystem required.
   *
-  * Invariant produced: INV-106-DF2.
+  * Invariant produced: -DF2.
   */
 class CollisionFidelity2Test extends Fidelity2TestBase:
 
@@ -85,7 +85,7 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end withCleanClasspath
 
-    // Leaf 1 : same-fqn-collision-emits-diagnostic
+    // same-fqn-collision-emits-diagnostic
     // Given: embedded fixtures loaded under two roots (same-FQN collision scenario)
     // When: inspecting cp.collisionReport
     // Then: returns non-empty Chunk of FqnCollision entries; each has ids.size >= 2
@@ -106,7 +106,7 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 2 : findsymbol-collision-deterministic
+    // findsymbol-collision-deterministic
     // Given: same collision setup
     // When: invoking cp.findSymbol for a colliding FQN
     // Then: returns a deterministic Present(_) -- last-write-wins per HARD RULE 4
@@ -208,7 +208,7 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 7: cold/warm parity for collision detection
+    // cold/warm parity for collision detection
     // Given: clean classpath (SoftFail)
     // When: round-trip via in-memory snapshot
     // Then: warm has empty collisionReport (collisions are build-time; not serialized to KRFL)
@@ -235,7 +235,7 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
                     succeed
     }
 
-    // Leaf 8: diagnostics type check
+    // diagnostics type check
     // Given: clean standard classpath
     // When: checking diagnostics type
     // Then: diagnostics is Chunk[Tasty.Classpath.Diagnostic] and collisionReport is Chunk[Tasty.Classpath.FqnCollision]

@@ -12,22 +12,20 @@ import scala.collection.mutable
 /** Tests for TypeUnpickler decoding of TASTy type nodes.
   *
   * Most tests use synthetic byte sequences built by hand from TastyFormat constants. Encoding rules:
-  *   - Category 1 (1-59): tag byte only.
-  *   - Category 2 (60-89): tag byte + Nat (unsigned LEB128, one byte if < 128: raw byte; two bytes if 128-16383: (0x80 | hi) byte, lo
+  *   Category 1 (1-59): tag byte only.
+  *   Category 2 (60-89): tag byte + Nat (unsigned LEB128, one byte if < 128: raw byte; two bytes if 128-16383: (0x80 | hi) byte, lo
   *     byte).
-  *   - Category 3 (90-109): tag byte + one sub-type (another tag sequence).
-  *   - Category 4 (110-127): tag byte + Nat + one sub-type.
-  *   - Category 5 (128-255): tag byte + Nat (payload length) + payload bytes.
+  *   Category 3 (90-109): tag byte + one sub-type (another tag sequence).
+  *   Category 4 (110-127): tag byte + Nat + one sub-type.
+  *   Category 5 (128-255): tag byte + Nat (payload length) + payload bytes.
   *
   * Nat encoding (unsigned LEB128 as used in dotty TastyReader):
-  *   - Values 0-127: single byte (value & 0x7f), with high bit = 0 meaning "last byte".
-  *   - Wait: dotty uses big-endian base-128 with stop-bit on LAST byte: high bit = 1 means "more bytes follow", high bit = 0 means "last
+  *   Values 0-127: single byte (value & 0x7f), with high bit = 0 meaning "last byte".
+  *   Wait: dotty uses big-endian base-128 with stop-bit on LAST byte: high bit = 1 means "more bytes follow", high bit = 0 means "last
   *     byte". So for value 2: byte 0x02. For value 128: bytes 0x81, 0x00.
   *
-  * For readEnd(): reads a Nat (payload length), then end = cursor + length. So a payload of 3 bytes would be encoded as Nat(3) = 0x03
+  * For readEnd: reads a Nat (payload length), then end = cursor + length. So a payload of 3 bytes would be encoded as Nat(3) = 0x03
   * followed by the 3 payload bytes.
-  *
-  * Plan tests 12-24.
   */
 class TypeUnpicklerTest extends kyo.test.Test[Any]:
 
@@ -241,7 +239,7 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
     }
 
     // Test 18: decoding ANNOTATEDtype eagerly decodes the annotation term into arguments: Chunk[Tree].
-    // (INV-006): arguments is now a plain Chunk[Tree] field populated eagerly during Pass B.
+    // arguments is now a plain Chunk[Tree] field populated eagerly during Pass B.
     // The annotation term TYPEREFpkg(0) decodes to a TermRefPkg tree; arguments holds a single-element Chunk.
     "decoding ANNOTATEDtype eagerly populates Annotation.arguments as Chunk[Tree]" in {
         val sym        = makeSym("Int")
@@ -271,7 +269,7 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
     }
 
     // Test 18b: Annotation.arguments for a UNITconst term is Chunk(Literal(UnitConst)) after eager decode.
-    // (INV-006): arguments is a plain Chunk[Tree] field; no Abort.run needed to access it.
+    // arguments is a plain Chunk[Tree] field; no Abort.run needed to access it.
     "ANNOTATEDtype with UNITconst term: Annotation.arguments == Chunk(Literal(UnitConst))" in {
         val sym        = makeSym("Int")
         val symAddr    = 3
@@ -296,7 +294,7 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
     }
 
     // Test 18c: Annotation constructed directly with Chunk.empty has no arguments (synthetic annotation).
-    // (INV-006): pure case class, no decode context needed.
+    // pure case class, no decode context needed.
     "Annotation(type, Chunk.empty).arguments is empty without any effect" in {
         val ann = Tasty.Annotation(Tasty.Type.Named(Tasty.SymbolId(makeSym("Foo").id)), Chunk.empty)
         assert(ann.arguments.isEmpty, s"Expected empty arguments but got ${ann.arguments}")
@@ -410,11 +408,9 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
     "decoding RECtype with RECthis back-reference completes without stack overflow" in {
         // Hand-construct bytes for:
         //   RECtype(100) [parent = RECthis(66) back-ref to addr 0]
-        //
         // Layout: [addr 0] RECtype(100) [parent bytes]
         // RECthis(66) = category 2: tag + recType_ASTRef Nat. recType_ASTRef = 0 (addr of RECtype).
         // RECthis bytes: [66, 0]
-        //
         // RECtype is category 3: tag(100) + parent_Type (no length prefix in cat3!).
         // So bytes = [100, 66, 0]
         // In dotty TASTy: last byte of Nat has 0x80 SET. For addr 0: encodeNat(0) = (0 | 0x80) = 0x80.
@@ -454,7 +450,7 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         val canon = TypeArena.canonical()
         arena.merge(canon)
         // After merging two distinct interned types (Rec and RecThis), the canonical arena must contain
-        // both. We assert presence rather than exact equality because canonical() may carry built-in
+        // both. We assert presence rather than exact equality because canonical may carry built-in
         // pre-interned types (e.g. Any, Nothing) that the merge does not remove.
         val canonValues = canon.values
         assert(canonValues.exists(_ == rec), s"Canonical arena must contain the interned Rec; values size=${canonValues.size}")

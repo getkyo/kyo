@@ -7,18 +7,14 @@ import kyo.internal.tasty.snapshot.SnapshotReader
 
 /** Fidelity tests for snapshot round-trip integrity.
   *
-  * Pins findings  ,  ,  , and   un-pends all five existing leaves and adds one new v3-rejection leaf by
-  * fixing `SnapshotWriter` (serialize permittedSubclassIds, annotations, javaMetadata, full fqnIndex), `SnapshotReader` (read new fields,
-  * reject minor < 5, reconstruct dual-FQN index from FQNIDX__ section), and bumping FORMAT_VERSION to 5.
+  * Exercises `SnapshotWriter` (serialize permittedSubclassIds, annotations, javaMetadata, full
+  * fqnIndex), `SnapshotReader` (read new fields, reject old minors, reconstruct dual-FQN index
+  * from FQNIDX__ section), and version bumps.
   *
-  * relocated from jvm/src/test to shared/src/test.
-  *
-  * adds FQNMAP__ section for unresolvedFqnByNegId persistence (Target 3), bumps FORMAT_VERSION to 6, and adds in-memory
-  * snapshot round-trip leaves via TestClasspaths2.withSnapshotInMemory.
-  *
-  * migrates the 4 previously-jvmOnly leaves (INV-010,  ,  ,  ) from withRoundTrip (real JVM
-  * filesystem + real stdlib classpath) to withSnapshotInMemory (embedded fixtures). The stdlib-scale lower bounds (>= 5 deprecated symbols,
-  * scala.Option.permittedSubclassIds >= 2) are removed; the shape assertions (round-trip preserves count equality) are preserved. All leaves
+  * Includes a FQNMAP__ section round-trip for unresolvedFqnByNegId persistence and an in-memory
+  * snapshot round-trip via TestClasspaths2.withSnapshotInMemory. Where the JVM-only stdlib-scale
+  * lower bounds were dropped (>= 5 deprecated symbols, scala.Option.permittedSubclassIds >= 2), the
+  * shape assertions (round-trip preserves count equality) are preserved. All tests
   * now run on JVM, JS, and Native.
   */
 class SnapshotFidelityTest extends kyo.test.Test[Any]:
@@ -127,7 +123,7 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
     // When: finding any ClassLike with javaMetadata in cold; checking warm for same symbol
     // Then: javaMetadata Present in warm (if any javaMetadata symbol exists in fixtures); fields match
     // Cross-platform: uses TestClasspaths2.withSnapshotInMemory; no filesystem needed.
-    // Migration: was jvmOnly (required real stdlib .class files); embedded fixtures suffice for shape assertion.
+    // Migration: was jvmOnly (required real stdlib.class files); embedded fixtures suffice for shape assertion.
     "javaMetadata survives in-memory snapshot round-trip" in {
         TestClasspaths2.withSnapshotInMemory().flatMap: (coldCp, warmCp) =>
             coldCp.allClassLike.flatMap:

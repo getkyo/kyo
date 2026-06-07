@@ -11,7 +11,7 @@ class MethodBodyNamingTest extends kyo.test.Test[Any]:
     // ── Leaf 24: body no longer exists on Symbol.Method ──────────────────────
 
     // Given: a Symbol.Method constructed without a body field.
-    // When: attempt to access .body via compileErrors.
+    // When: attempt to access.body via compileErrors.
     // Then: the returned string is non-empty (body is not a member of Symbol.Method).
     "Symbol.Method.body does not exist (body field removed)" in {
         val m: Tasty.Symbol.Method = Tasty.Symbol.Method(

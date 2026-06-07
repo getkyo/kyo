@@ -119,9 +119,9 @@ object PositionsUnpickler:
         end while
 
         // Decode the Assoc stream.
-        // F-006 Q-001 AT-RISK rotation: key by sym.id (primitive Long), not the mutable
-        // LoadingSymbol.Materialising case class. Avoids structural-equality fragility when
-        // LoadingSymbol.id is mutated post-insertion. Matches the LongMap pattern in AstUnpickler.
+        // Key by sym.id (primitive Long), not the mutable LoadingSymbol.Materialising case class.
+        // Avoids structural-equality fragility when LoadingSymbol.id is mutated post-insertion.
+        // Matches the LongMap pattern in AstUnpickler.
         val builder  = scala.collection.mutable.LongMap.empty[Tasty.Position]
         var curIndex = 0
         var curStart = 0

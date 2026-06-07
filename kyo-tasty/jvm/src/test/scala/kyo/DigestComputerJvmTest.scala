@@ -9,10 +9,10 @@ import kyo.internal.tasty.snapshot.DigestComputer.JarDigestEntry
 
 /** JVM-only leaves for DigestComputer that require real JARs on disk (java.nio.file, java.util.zip).
   *
-  * Leaf 1: digestForRoot stable across mtime-only copy (INV-003). Requires real JARs and
+  * digestForRoot stable across mtime-only copy. Requires real JARs and
   * java.nio.file.Files.setLastModifiedTime.
-  * Leaf 2: digestForRoot changes when class bytes change (INV-003 sensitivity). Requires real JARs.
-  * Leaf 7: jrt:/ compute returns stable 8-byte result. Requires PlatformFileSource (JVM jrt:/ path).
+  * digestForRoot changes when class bytes change (sensitivity). Requires real JARs.
+  * jrt:/ compute returns stable 8-byte result. Requires PlatformFileSource (JVM jrt:/ path).
   *
   * Cross-platform leaves (3, 4, 5, 6, 8, 9) live in DigestComputerTest.scala (shared/src/test).
   *
@@ -20,8 +20,8 @@ import kyo.internal.tasty.snapshot.DigestComputer.JarDigestEntry
   */
 class DigestComputerJvmTest extends kyo.test.Test[Any]:
 
-    // Leaf 1: digestForRoot for byte-identical JARs with different mtimes returns equal values (INV-003).
-    "Leaf 1: digestForRoot stable across mtime-only copy of real JAR (INV-003)" in {
+    // digestForRoot for byte-identical JARs with different mtimes returns equal values.
+    "digestForRoot stable across mtime-only copy of real JAR" in {
         val dir     = Files.createTempDirectory("kyo-dct-leaf1").toAbsolutePath.toString
         val jarA    = s"$dir/A.jar"
         val jarB    = s"$dir/B.jar"
@@ -41,8 +41,8 @@ class DigestComputerJvmTest extends kyo.test.Test[Any]:
         assert(dA == dB, s"mtime-only copy must produce same CEN-CRC digest: $dA vs $dB")
     }
 
-    // Leaf 2: digestForRoot changes when class bytes differ (CRC32 in CEN changes).
-    "Leaf 2: digestForRoot changes when class bytes change (CEN CRC32 differs)" in {
+    // digestForRoot changes when class bytes differ (CRC32 in CEN changes).
+    "digestForRoot changes when class bytes change (CEN CRC32 differs)" in {
         val dir    = Files.createTempDirectory("kyo-dct-leaf2").toAbsolutePath.toString
         val jarA   = s"$dir/A.jar"
         val jarMod = s"$dir/A_mod.jar"
@@ -53,8 +53,8 @@ class DigestComputerJvmTest extends kyo.test.Test[Any]:
         assert(dA != dM, s"byte-content change must produce different digestForRoot: $dA vs $dM")
     }
 
-    // Leaf 7: jrt:/ compute returns a stable non-empty 8-byte result.
-    "Leaf 7: jrt:/ compute returns a stable 8-byte result" in {
+    // jrt:/ compute returns a stable non-empty 8-byte result.
+    "jrt:/ compute returns a stable 8-byte result" in {
         import kyo.internal.tasty.query.PlatformFileSource
         val src = PlatformFileSource.get
         Abort.run[TastyError]:

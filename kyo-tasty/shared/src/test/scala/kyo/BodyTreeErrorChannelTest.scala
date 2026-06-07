@@ -7,10 +7,10 @@ import kyo.internal.tasty.query.TastyState
 import kyo.internal.tasty.symbol.SymbolBody
 import scala.collection.immutable.IntMap
 
-/** Tests pinning INV-007 / INV-013: Tasty.bodyTree routes every NonFatal throwable from
+/** Tests pinning: Tasty.bodyTree routes every NonFatal throwable from
   * TreeUnpickler.decodeSync to TastyError.MalformedSection, never to a Sync panic.
   *
-  * F-015 / Phase 15: the catch block in bodyTree previously enumerated only three specific exception
+  * the catch block in bodyTree previously enumerated only three specific exception
   * types (DecodeException, ArrayIndexOutOfBoundsException, IllegalStateException). Any other exception
   * thrown by decodeSync (NullPointerException, MalformedVarintException, etc.) would escape as a
   * Sync panic instead of surfacing through the documented Abort[TastyError] channel.
@@ -58,18 +58,16 @@ class BodyTreeErrorChannelTest extends kyo.test.Test[Any]:
         Binding(cp, Maybe.Present(ctx))
     end bindingWithBody
 
-    // Leaf 1: MalformedVarintException routes to TastyError.MalformedSection via NonFatal arm.
-    //
+    // MalformedVarintException routes to TastyError.MalformedSection via NonFatal arm.
     // Synthetic corrupt bytes: the first byte is TERMREFdirect (0x3E = 62), which is a type tag
     // recognised by isTypeTag. The Val decode path calls readTypeOrSkip, which calls readType,
     // which calls TypeUnpickler.readTypeForTree -> readTypeNode -> decodeTag(TERMREFdirect) ->
-    // view.readNat(). The 10 following bytes are all 0x00 (TASTy big-endian base-128 continuation
+    // view.readNat. The 10 following bytes are all 0x00 (TASTy big-endian base-128 continuation
     // bytes: bit 7 clear = not the terminating byte). After reading 10 continuation bytes the
     // Varint.readLongNat guard fires MalformedVarintException (a RuntimeException not in the
     // previous specific-exception catch list).
-    //
-    // After F-015 the NonFatal arm catches it and returns TastyError.MalformedSection("ASTs", ...).
-    "Leaf 1: MalformedVarintException maps to TastyError.MalformedSection via NonFatal arm" in {
+    // After the NonFatal arm catches it and returns TastyError.MalformedSection("ASTs".).
+    "MalformedVarintException maps to TastyError.MalformedSection via NonFatal arm" in {
         // 0x3E = 62 = TERMREFdirect type tag; 10x 0x00 = continuation bytes (bit 7 clear)
         val sectionBytes: Array[Byte] = Array[Byte](0x3e, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         val sym                       = makeValSym(1)
@@ -104,17 +102,15 @@ class BodyTreeErrorChannelTest extends kyo.test.Test[Any]:
                     fail(s"bodyTree must NOT produce a Sync panic for MalformedVarintException; got: $t")
     }
 
-    // Leaf 2: truncated body (bodyEnd > sectionBytes.size) maps to TastyError.MalformedSection on every platform.
-    //
+    // truncated body (bodyEnd > sectionBytes.size) maps to TastyError.MalformedSection on every platform.
     // bodyTree's upfront bounds check inspects the (bodyStart, bodyEnd, sectionSize) tuple BEFORE invoking
     // TreeUnpickler.decodeSync. The check is platform-agnostic by construction: no unsafe read occurs, so
     // neither the JVM ArrayIndexOutOfBoundsException nor Scala.js's UndefinedBehaviorError can fire. The
     // documented Abort[TastyError] channel surfaces MalformedSection identically on JVM, JS, and Native.
-    //
     // The defense-in-depth ArrayIndexOutOfBoundsException catch arm below the upfront check remains, but
     // this leaf never exercises it for the truncated-body case; it covers any nested decoder path that
     // might still throw under inputs the upfront check does not reach.
-    "Leaf 2: truncated body (bodyEnd beyond sectionBytes) maps to TastyError.MalformedSection cross-platform" in {
+    "truncated body (bodyEnd beyond sectionBytes) maps to TastyError.MalformedSection cross-platform" in {
         // One byte: TERMREFdirect tag (0x3E). bodyEnd=12 is beyond the array length of 1.
         // The upfront bounds check in bodyTree (bodyEnd > sectionLen) fires and returns MalformedSection.
         val tooShortBytes: Array[Byte] = Array[Byte](0x3e)
@@ -153,14 +149,13 @@ class BodyTreeErrorChannelTest extends kyo.test.Test[Any]:
                     fail(s"bodyTree must NOT produce a Sync panic for truncated body; got: $t")
     }
 
-    // Leaf 3: Cached failure re-serves as Failure, not Panic (confirms dead Result.Panic arm removed).
-    //
+    // Cached failure re-serves as Failure, not Panic (confirms dead Result.Panic arm removed).
     // After a first bodyTree call that produces TastyError.MalformedSection, the result is memoised
     // in DecodeContext.bodyMemo. A second call reads from the memo and re-serves the cached Failure.
-    // Before F-015, the memo-hit path had a dead `case Result.Panic(t) => throw t` arm; it is now
+    // Before, the memo-hit path had a dead `case Result.Panic(t) => throw t` arm; it is now
     // gone. This test verifies that two successive calls both return the same Failure and that the
     // second call (memo-hit path) also returns Failure, confirming the dead arm is absent.
-    "Leaf 3: cached decode failure re-serves as MalformedSection on second bodyTree call" in {
+    "cached decode failure re-serves as MalformedSection on second bodyTree call" in {
         val sectionBytes: Array[Byte] = Array[Byte](0x3e, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         val sym                       = makeValSym(3)
         val body = SymbolBody(
@@ -191,12 +186,11 @@ class BodyTreeErrorChannelTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // Leaf 4: No Sync panic escapes under any synthetic corrupt-body scenario.
-    //
+    // No Sync panic escapes under any synthetic corrupt-body scenario.
     // Belt-and-suspenders: confirms that the Abort[TastyError] result type holds for both
     // a fresh decode (first call) and a memo-hit (second call), using a different corrupt-byte
     // pattern. Also verifies the section name is always "ASTs".
-    "Leaf 4: no Sync panic under any NonFatal corrupt body bytes" in {
+    "no Sync panic under any NonFatal corrupt body bytes" in {
         // Use a byte sequence that triggers MalformedVarintException on first type read.
         val sectionBytes: Array[Byte] = Array[Byte](0x3e, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         val sym                       = makeValSym(4)

@@ -5,7 +5,7 @@ import scala.deriving.*
 
 /** Sealed-ADT completeness test for kyo-tasty.
   *
-  * Track D of the validation-infrastructure campaign (2026-06-02).
+  * Track D of the validation-infrastructure (2026-06-02).
   *
   * For each sealed ADT (TastyError, Tasty.Type, Tasty.Tree, Tasty.Symbol):
   *   1. The expected variant count is pinned as a compile-time constant. Adding a new variant without
@@ -80,7 +80,7 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
     )
 
     // ADT-001: TastyError - all 23 variants covered by tests.
-    "ADT-001: TastyError - all 23 variants are covered by at least one named test" in {
+    "TastyError - all 23 variants are covered by at least one named test" in {
         val variantNames = enumVariantNames[TastyError]
         assert(
             variantNames.size == EXPECTED_TASTY_ERROR_COUNT,
@@ -145,7 +145,7 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
     )
 
     // ADT-002: Tasty.Type - all 29 variants covered by tests.
-    "ADT-002: Tasty.Type - all 29 variants are covered by at least one named test" in {
+    "Tasty.Type - all 29 variants are covered by at least one named test" in {
         val variantNames = enumVariantNames[Tasty.Type]
         assert(
             variantNames.size == EXPECTED_TYPE_COUNT,
@@ -258,7 +258,7 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
     private val treeUncoveredVariants: List[String] = List.empty
 
     // ADT-003: Tasty.Tree - variant count pinned via Mirror; all 70 variants have test coverage.
-    "ADT-003: Tasty.Tree - 70 variant count is pinned and 70 variants have test coverage" in {
+    "Tasty.Tree - 70 variant count is pinned and 70 variants have test coverage" in {
         val variantNames = enumVariantNames[Tasty.Tree]
         assert(
             variantNames.size == EXPECTED_TREE_COUNT,
@@ -334,7 +334,7 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
     )
 
     // ADT-004: Tasty.Symbol - all 14 match leaves are covered by named tests.
-    "ADT-004: Tasty.Symbol - all 14 match leaves are covered by at least one named test" in {
+    "Tasty.Symbol - all 14 match leaves are covered by at least one named test" in {
         assert(
             allSymbolLeaves.size == EXPECTED_SYMBOL_MATCH_LEAVES,
             s"ADT-004: allSymbolLeaves has ${allSymbolLeaves.size} entries but EXPECTED_SYMBOL_MATCH_LEAVES is $EXPECTED_SYMBOL_MATCH_LEAVES. " +

@@ -10,7 +10,7 @@ class TestClasspathsTest extends kyo.test.Test[Any]:
     // Test 1: scala-library-jar-discoverable
     // Given: a JVM with java.class.path populated by sbt's test runner
     // When: TestClasspaths.scala3LibraryJar resolves the jar
-    // Then: the path exists, ends in .jar, and the filename matches scala-library-3 or scala-library_3
+    // Then: the path exists, ends in.jar, and the filename matches scala-library-3 or scala-library_3
     "scala-library jar is discoverable from java.class.path" in {
         val jar = TestClasspaths.scala3LibraryJar
         assert(jar.nonEmpty, "scala3LibraryJar was empty")

@@ -8,11 +8,12 @@ import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
 import scala.collection.immutable.IntMap
 
-/** pinning tests for INV-006: Annotation.arguments eagerly decoded; failures accumulate in cp.errors.
+/** Pinning tests: Annotation.arguments eagerly decoded; failures accumulate in cp.errors.
   *
-  * Leaf 1: annotation arguments populated at open time. Accessing Annotation.arguments is a plain Chunk[Tree] field access with no effect
-  * row. Leaf 2: decode failure stores an empty Chunk and accumulates the error. Leaf 3: no _decodeCtx field on Annotation; structural
-  * reflection confirms the pure case-class shape. Leaf 4: Annotation case-class equality is structural.
+  * Annotation arguments are populated at open time. Accessing Annotation.arguments is a plain
+  * Chunk[Tree] field access with no effect row. A decode failure stores an empty Chunk and
+  * accumulates the error. There is no _decodeCtx field on Annotation; structural reflection
+  * confirms the pure case-class shape. Annotation case-class equality is structural.
   */
 class AnnotationEagerArgsTest extends kyo.test.Test[Any]:
 
@@ -57,7 +58,7 @@ class AnnotationEagerArgsTest extends kyo.test.Test[Any]:
         val bytes   = cat5(TastyFormat.ANNOTATEDtype, underlying ++ annTerm)
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
             case Result.Success(Tasty.Type.Annotated(_, ann)) =>
-                // : arguments is a plain field; access requires no effect row at all.
+                // arguments is a plain field; access requires no effect row at all.
                 ann.arguments match
                     case Chunk(Tasty.Tree.Literal(_: Tasty.Constant.UnitConst.type)) => succeed
                     case other => fail(s"Expected Chunk(Literal(UnitConst)) but got $other")
@@ -86,7 +87,7 @@ class AnnotationEagerArgsTest extends kyo.test.Test[Any]:
         val bytes       = cat5(TastyFormat.ANNOTATEDtype, underlying ++ corruptTerm)
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
             case Result.Success(Tasty.Type.Annotated(_, ann)) =>
-                // : decode error produces arguments = Chunk.empty, not a Kyo failure.
+                // decode error produces arguments = Chunk.empty, not a Kyo failure.
                 assert(ann.arguments.isEmpty, s"Expected empty arguments but got ${ann.arguments}")
             case Result.Success(other) =>
                 fail(s"Expected Annotated type but got $other")

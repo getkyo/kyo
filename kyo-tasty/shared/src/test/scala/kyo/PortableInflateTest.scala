@@ -78,7 +78,7 @@ class PortableInflateTest extends kyo.test.Test[Any]:
     // Buffer layout: byte0 = header (BFINAL=1 BTYPE=00 = 0x01, alignment padding auto-skipped),
     // bytes 1-2 = LEN=3 LE, bytes 3-4 = NLEN=~3&0xFFFF=0xFFFC LE, bytes 5-7 = 'A','B','C'
     // The test reads BFINAL+BTYPE (3 bits) first to simulate the block-loop entry, then calls
-    // decodeStoredBlock which calls alignToByte() internally before reading LEN/NLEN/data.
+    // decodeStoredBlock which calls alignToByte internally before reading LEN/NLEN/data.
     "decodeStoredBlock copies raw bytes (LEN=3, payload ABC)" in {
         // §839 case 3; direct decodeStoredBlock test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
@@ -108,7 +108,7 @@ class PortableInflateTest extends kyo.test.Test[Any]:
     // Fixed Huffman literal code for 65 ('A'):
     //   RFC 1951 §3.2.6: literals 0-143 use 8-bit codes starting at canonical 48 (0b00110000).
     //   Code for 65 = 48 + 65 = 113 = 0b01110001 (MSB-first).
-    //   The decoder reads bits LSB-first via readBit(), accumulating code = (code << 1) | bit.
+    //   The decoder reads bits LSB-first via readBit, accumulating code = (code << 1) | bit.
     //   First bit read = MSB of the code in canonical terms, so code accumulates to 113.
     //   Bit stream for code 113 in decoder order: bits [0,1,1,1,0,0,0,1].
     //   Packed into a byte (bit0=LSB): 0b10001110 = 0x8E.
@@ -133,7 +133,7 @@ class PortableInflateTest extends kyo.test.Test[Any]:
         )
     }
 
-    // -debt: copyBack rejects out-of-range LZ77 distance.
+    // debt: copyBack rejects out-of-range LZ77 distance.
     // A corrupt deflate stream that emits a backreference with dist > out.length
     // must raise InflateException, not a raw IndexOutOfBoundsException.
     "copyBack rejects LZ77 distance beyond output buffer length" in {
@@ -167,14 +167,13 @@ class PortableInflateTest extends kyo.test.Test[Any]:
     }
 
     // Test 8: ZLIB stored-block envelope with a corrupted Adler-32 trailer is rejected.
-    //
     // Byte construction:
     //   byte[0]=0x78 (CMF): CM=8 (deflate), CINFO=7 (window=32k)
     //   byte[1]=0x9C (FLG): FCHECK: (0x78*256+0x9C)=30876, 30876%31=0, checksum valid; FDICT bit clear
     //   byte[2]=0x01: BFINAL=1 (bit0), BTYPE=00 (bits1-2), rest=padding zeros
     //   byte[3]=0x00, byte[4]=0x00: LEN=0 (little-endian)
     //   byte[5]=0xFF, byte[6]=0xFF: NLEN=0xFFFF (little-endian); LEN ^ NLEN = 0xFFFF OK
-    //   bytes[7..10]: Adler-32 of empty payload = 0x00000001 big-endian = [0x00,0x00,0x00,0x01]
+    //   bytes[7.10]: Adler-32 of empty payload = 0x00000001 big-endian = [0x00,0x00,0x00,0x01]
     //   We replace the correct Adler [0x00,0x00,0x00,0x01] with wrong [0xFF,0xFF,0xFF,0xFF].
     "inflate rejects Adler-32 mismatch in stored-block ZLIB" in {
         // §839 case 3; direct inflate Adler-32 error-path test, single-threaded, no suspension.
@@ -205,18 +204,15 @@ class PortableInflateTest extends kyo.test.Test[Any]:
     }
 
     // Test 9 (deferred dynamic Huffman, now landing): Full ZLIB round-trip with dynamic Huffman block.
-    //
     // Fixture capture: produced via Java's java.util.zip.Deflater(DEFAULT_COMPRESSION) on the input
     // "aaabbbcccdddeeefffggghhh" repeated 50 times (1200 bytes). This highly repetitive ASCII input
     // causes the JVM deflater to emit a dynamic Huffman block (BTYPE=10), covering the
     // decodeDynamicHuffmanBlock + decodeCodeLengths paths that were deferred from.
-    //
     // Capture command used (Java):
     //   byte[] input = "aaabbbcccdddeeefffggghhh".repeat(50).getBytes("UTF-8");
     //   DeflaterOutputStream dos = new DeflaterOutputStream(baos, new Deflater(DEFAULT_COMPRESSION));
-    //   dos.write(input); dos.finish(); dos.close();
+    //   dos.write(input); dos.finish; dos.close;
     //   => 42 bytes, BFINAL=1, BTYPE=2 (dynamic Huffman)
-    //
     // CMF=0x78 FLG=0x9C: header checksum (0x78*256+0x9C)%31 = 0. No preset dictionary.
     // The expected decompressed bytes are "aaabbbcccdddeeefffggghhh".repeat(50) encoded as UTF-8.
     "inflate full ZLIB round-trip with dynamic Huffman block" in {

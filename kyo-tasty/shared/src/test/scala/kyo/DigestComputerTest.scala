@@ -14,8 +14,8 @@ import kyo.internal.tasty.snapshot.DigestComputer.JarDigestEntry
   */
 class DigestComputerTest extends kyo.test.Test[Any]:
 
-    // Leaf 3: digestForJar is stable for identical entries in any insertion order.
-    "Leaf 3: digestForJar is stable for same-name same-crc entries in any order" in {
+    // digestForJar is stable for identical entries in any insertion order.
+    "digestForJar is stable for same-name same-crc entries in any order" in {
         val e1 = JarDigestEntry("META-INF/INDEX.LIST", 0xdeadbeefL)
         val e2 = JarDigestEntry("META-INF/INDEX.LIST", 0xdeadbeefL)
         val h1 = DigestComputer.digestForJar(Chunk(e1, e2))
@@ -23,10 +23,10 @@ class DigestComputerTest extends kyo.test.Test[Any]:
         assert(h1 == h2, s"same-name same-crc entries must produce same digest: $h1 vs $h2")
     }
 
-    // Leaf 4: digestForJar distinguishes entries with distinct crc32 values.
+    // digestForJar distinguishes entries with distinct crc32 values.
     // Two identical-name entries with different crc32 produce a different digest than the same two
     // entries with the same crc32, confirming that crc32 is mixed into the hash.
-    "Leaf 4: digestForJar includes crc32 in the hash (different crc32 changes digest)" in {
+    "digestForJar includes crc32 in the hash (different crc32 changes digest)" in {
         val e1a = JarDigestEntry("foo.class", 0x11111111L)
         val e1b = JarDigestEntry("foo.class", 0x22222222L)
         val hA  = DigestComputer.digestForJar(Chunk(e1a))
@@ -34,15 +34,15 @@ class DigestComputerTest extends kyo.test.Test[Any]:
         assert(hA != hB, s"different crc32 values must produce different digest: $hA vs $hB")
     }
 
-    // Leaf 5: digestForJar(Chunk.empty) returns 0L.
+    // digestForJar(Chunk.empty) returns 0L.
     // With acc = 0L and zero mixing steps, xxh3Avalanche(0L) = 0L.
-    "Leaf 5: digestForJar(Chunk.empty) equals 0L (empty-input vector)" in {
+    "digestForJar(Chunk.empty) equals 0L (empty-input vector)" in {
         val result = DigestComputer.digestForJar(Chunk.empty)
         assert(result == 0L, s"digestForJar(Chunk.empty) expected 0L but got $result")
     }
 
-    // Leaf 6: directory root compute is deterministic and mtime-sensitive.
-    "Leaf 6: directory root compute is deterministic and mtime-sensitive" in {
+    // directory root compute is deterministic and mtime-sensitive.
+    "directory root compute is deterministic and mtime-sensitive" in {
         val src = MemoryFileSource()
         src.add("root/Foo.tasty", Array[Byte](1, 2, 3, 4))
         src.setMtime("root/Foo.tasty", 1_000_000L)
@@ -59,8 +59,8 @@ class DigestComputerTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // Leaf 8: digestForJar with JarDigestEntry is deterministic across platforms.
-    "Leaf 8: digestForJar with JarDigestEntry is deterministic across platforms" in {
+    // digestForJar with JarDigestEntry is deterministic across platforms.
+    "digestForJar with JarDigestEntry is deterministic across platforms" in {
         val entries = Chunk(
             JarDigestEntry("a/B.class", 0xdeadL),
             JarDigestEntry("c/D.class", 0xcafeL)
@@ -70,8 +70,8 @@ class DigestComputerTest extends kyo.test.Test[Any]:
         assert(h1 == h2, s"digestForJar must be deterministic: $h1 vs $h2")
     }
 
-    // Leaf 9: longToBytes and bytesToLong round-trip on digest output.
-    "Leaf 9: longToBytes/bytesToLong round-trip is lossless (8 bytes, little-endian)" in {
+    // longToBytes and bytesToLong round-trip on digest output.
+    "longToBytes/bytesToLong round-trip is lossless (8 bytes, little-endian)" in {
         val entries   = Chunk(JarDigestEntry("foo/Bar.class", 0x12345678L))
         val digest    = DigestComputer.digestForJar(entries)
         val bytes     = DigestComputer.longToBytes(digest)

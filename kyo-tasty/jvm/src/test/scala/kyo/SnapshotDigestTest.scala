@@ -6,7 +6,7 @@ import kyo.internal.tasty.snapshot.SnapshotWriter
 
 /** Cross-platform `DigestComputer.compute` tests covering jar-root and directory-root branches.
   *
-  * post-audit carry: T-J1, T-J3, T-J4, T-J5 migrated to `runJVM` with real temp jars after BLOCKER-1 fix. JVM jar roots now use
+  * post-audit carry: T-J1, T-J3, T-J4, T-J5 migrated to `runJVM` with real temp jars after fix. JVM jar roots now use
   * CEN-walk (RandomAccessFile) which requires real files on disk; MemoryFileSource jar paths are not accessible via RandomAccessFile and
   * would produce TastyError.MalformedSection (missing-jar is loud, not silent 0L). See decisions.md entry 10 for rationale.
   *
@@ -16,7 +16,7 @@ class SnapshotDigestTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // T-J1: jar-root digest is deterministic across two calls on the same jar (JVM: real jar; BLOCKER-1 post-fix).
+    // T-J1: jar-root digest is deterministic across two calls on the same jar (JVM: real jar;).
     "DigestComputer.compute on jar root returns same digest for two successive calls".onlyJvm in {
         import java.nio.file.Files
         import kyo.internal.tasty.query.PlatformFileSource
@@ -37,10 +37,10 @@ class SnapshotDigestTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // T-J3: -- bumping jar mtime must NOT change the digest (content-addressed; JVM CEN-walk).
+    // Bumping jar mtime must NOT change the digest (content-addressed; JVM CEN-walk).
     // After the jar digest is based on CEN CRC32 entries, not mtime. A mtime-only
     // change must produce the same digest (JVM: CEN walk; path-hash fallback is also mtime-invariant).
-    "DigestComputer.compute jar mtime change does NOT change digest (INV-003 content-addressed)".onlyJvm in {
+    "DigestComputer.compute jar mtime change does NOT change digest (content-addressed)".onlyJvm in {
         import java.nio.file.Files
         import kyo.internal.tasty.query.PlatformFileSource
         val dir     = Files.createTempDirectory("kyo-sndt-tj3").toAbsolutePath.toString
@@ -59,7 +59,7 @@ class SnapshotDigestTest extends kyo.test.Test[Any]:
                         (d1, d2)
         .map:
             case Result.Success((d1, d2)) =>
-                assert(d1.sameElements(d2), "mtime-only change must NOT change the CEN-CRC digest (INV-003)")
+                assert(d1.sameElements(d2), "mtime-only change must NOT change the CEN-CRC digest")
             case Result.Failure(e) =>
                 fail(s"Unexpected failure: $e")
             case Result.Panic(t) =>
@@ -97,7 +97,7 @@ class SnapshotDigestTest extends kyo.test.Test[Any]:
         val dir     = Files.createTempDirectory("kyo-sndt-tj5").toAbsolutePath.toString
         val jarPath = s"$dir/tj5.jar"
         writeJar(jarPath, Seq("Test.class" -> Array[Byte](10, 20, 30)))
-        // Write a real .tasty file so the directory root is non-empty.
+        // Write a real.tasty file so the directory root is non-empty.
         val tastyDir  = s"$dir/root"
         val tastyFile = s"$tastyDir/PlainClass.tasty"
         Files.createDirectories(java.nio.file.Paths.get(tastyDir))
@@ -116,7 +116,7 @@ class SnapshotDigestTest extends kyo.test.Test[Any]:
                 throw t
     }
 
-    // Leaf 5: INV007-digestStabilityPostBump.
+    // INV007-digestStabilityPostBump.
     // Given: a fixture classpath with errors serialized twice.
     // When: digests of both serializations are compared.
     // Then: digests are equal; flipping byte 16 produces a differing digest string.
@@ -149,7 +149,7 @@ class SnapshotDigestTest extends kyo.test.Test[Any]:
             "Two serializations of the same classpath must produce identical bytes"
         )
 
-        // The 8-byte input digest is embedded at bytes [16..23] (magic 4 + version 4 + flags 8 = 16).
+        // The 8-byte input digest is embedded at bytes [16.23] (magic 4 + version 4 + flags 8 = 16).
         val digestSlice1 = java.util.Arrays.copyOfRange(bytes1, 16, 24)
         val digestSlice2 = java.util.Arrays.copyOfRange(bytes2, 16, 24)
         val hex1         = DigestComputer.toHexString(digestSlice1)

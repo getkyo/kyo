@@ -10,8 +10,8 @@ import scala.collection.mutable
 
 /** Decoder-fidelity-5 cold/warm fidelity gaps -- 6 findings.
   *
-  * Findings closed in this phase:  ,  ,  ,  ,
-  * Finding   (post-Scope mmap decodeBody contract) is in the JVM-only companion
+  * Findings closed in this phase:,
+  * Finding (post-Scope mmap decodeBody contract) is in the JVM-only companion
   * `DecoderFidelity5Phase02JvmTest`.
   *
   * Tests P02.1 / P02.2 / P02.5 use Tasty.Classpath.make with explicit subclassIndex and
@@ -83,11 +83,11 @@ class DecoderFidelity5Phase02Test extends kyo.test.Test[Any]:
     /** Build a synthetic classpath with non-empty subclassIndex and companionIndex.
       *
       * Symbols:
-      *   - 0: Animal (trait-like Class; parent of Dog and Cat)
-      *   - 1: Dog (Class, parent = Animal)
-      *   - 2: Cat (Class, parent = Animal)
-      *   - 3: Foo (Class with companion)
-      *   - 4: Foo$ (Object companion of Foo)
+      *   0: Animal (trait-like Class; parent of Dog and Cat)
+      *   1: Dog (Class, parent = Animal)
+      *   2: Cat (Class, parent = Animal)
+      *   3: Foo (Class with companion)
+      *   4: Foo$ (Object companion of Foo)
       *
       * subclassIndex: Animal(0) -> [Dog(1), Cat(2)]
       * companionIndex: Foo(3) <-> Foo$(4)
@@ -138,7 +138,7 @@ class DecoderFidelity5Phase02Test extends kyo.test.Test[Any]:
                 (coldCp, warmCp)
     end roundTrip
 
-    // P02.1:   -- subclassIndex populated on warm load
+    // P02.1: -- subclassIndex populated on warm load
     // Given: synthetic cp with subclassIndex: Animal -> [Dog, Cat]
     // When: write snapshot and read back (warm load)
     // Then: warm subclassIndex.size == cold subclassIndex.size (1 entry, Animal -> [Dog, Cat])
@@ -174,7 +174,7 @@ class DecoderFidelity5Phase02Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // P02.2:   -- companionIndex populated on warm load
+    // P02.2: -- companionIndex populated on warm load
     // Given: synthetic cp with companionIndex: Foo <-> Foo$
     // When: write snapshot and read back (warm load)
     // Then: warm companionIndex.size == cold companionIndex.size (2 entries)
@@ -210,7 +210,7 @@ class DecoderFidelity5Phase02Test extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // P02.3:   /   -- Symbol equality is id-based, not body-byte-reference-based
+    // P02.3: / -- Symbol equality is id-based, not body-byte-reference-based
     // Given: two independent cold loads of the same single-file fixture produce separate Symbol instances
     // When: we compare symbols with the same FQN from cp1 and cp2 using ==
     // Then: they are equal (because equals is overridden to use id.value, not body bytes)
@@ -253,7 +253,7 @@ class DecoderFidelity5Phase02Test extends kyo.test.Test[Any]:
                             )
                             idx += 1
                         end while
-                        //  : HashMap key round-trip across classpaths
+                        //  HashMap key round-trip across classpaths
                         val sym1 = cp1.symbols(0)
                         val sym2 = cp2.symbols(0)
                         val m    = Map(sym1 -> "found")
@@ -268,7 +268,7 @@ class DecoderFidelity5Phase02Test extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // P02.4:   -- cp.copy produces a structurally equal classpath (bodyMemo moved to DecodeContext)
+    // P02.4: -- cp.copy produces a structurally equal classpath (bodyMemo moved to DecodeContext)
     // Given: a Classpath cp produced by ClasspathOrchestrator.init
     // When: Tasty.Classpath.copyWithErrors(cp, cp.errors) is called
     // Then: the resulting Classpath equals the original (bodyMemo is NOT part of Classpath since)
@@ -278,7 +278,7 @@ class DecoderFidelity5Phase02Test extends kyo.test.Test[Any]:
                 val src = MemSrc()
                 src.add("root/PlainClass.tasty", kyo.fixtures.Embedded.plainClassTasty)
                 ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1).map: cp =>
-                    // Tasty.Classpath.copyWithErrors calls cp.copy(errors = ...) internally.
+                    // Tasty.Classpath.copyWithErrors calls cp.copy(errors =.) internally.
                     // bodyMemo is NOT a constructor parameter and moved to DecodeContext in.
                     val copied = Tasty.Classpath.copyWithErrors(cp, cp.errors)
                     assert(
@@ -296,7 +296,7 @@ class DecoderFidelity5Phase02Test extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // P02.5:   cold/warm subclassesOf parity -- transitive BFS closure matches
+    // P02.5: cold/warm subclassesOf parity -- transitive BFS closure matches
     // Given: synthetic cp with subclassIndex: Animal -> [Dog, Cat]
     // When: write snapshot and reload; call subclassesOf(Animal) on both cold and warm
     // Then: both return 2 entries (Dog, Cat); sizes match

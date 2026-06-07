@@ -2,13 +2,13 @@ package kyo
 
 import kyo.internal.tasty.query.TastyState
 
-/** plan leaves 1-4: Cat 4 internal relocation and Cat 20 rename.
+/** Cat 4 internal relocation and Cat 20 rename.
   *
-  * Leaf 1: INV009-fourSites-preserved -- TastyState.global is reachable via Tasty.findClass without
-  *         breaking the four-site INV-009 count.
-  * Leaf 2: globalReadResolvesToTastyState -- no-scope Tasty.findClass resolves via TastyState.global.
-  * Leaf 3: symbolKindNotPublic -- kyo.Tasty.SymbolKind no longer resolves after relocation.
-  * Leaf 4: bindingLocalNotPublic -- kyo.Tasty.bindingLocal no longer resolves after deletion.
+  * INV009-fourSites-preserved -- TastyState.global is reachable via Tasty.findClass without
+  *         breaking the four-site count.
+  * globalReadResolvesToTastyState -- no-scope Tasty.findClass resolves via TastyState.global.
+  * symbolKindNotPublic -- kyo.Tasty.SymbolKind no longer resolves after relocation.
+  * bindingLocalNotPublic -- kyo.Tasty.bindingLocal no longer resolves after deletion.
   */
 class TestProbeFileSourceTest extends kyo.test.Test[Any]:
 
@@ -21,7 +21,7 @@ class TestProbeFileSourceTest extends kyo.test.Test[Any]:
     // When: Tasty.classpath is read.
     // Then: on JVM, PlatformFallback populates TastyState.global so the classpath is non-empty.
     //       The test verifies the binding is reachable (non-empty symbols or at least non-null).
-    "Leaf 2: globalReadResolvesToTastyState -- Tasty.classpath uses TastyState.global as fallback".onlyJvm in {
+    "globalReadResolvesToTastyState -- Tasty.classpath uses TastyState.global as fallback".onlyJvm in {
         Tasty.classpath.map: cp =>
             assert(cp.symbols.size >= 1, s"JVM fallback via TastyState.global must yield non-empty classpath; got ${cp.symbols.size}")
             succeed
@@ -31,7 +31,7 @@ class TestProbeFileSourceTest extends kyo.test.Test[Any]:
     // Given: Cat 4 moved SymbolKind out of object Tasty.
     // When: user code attempts to refer to kyo.Tasty.SymbolKind.
     // Then: the path does not resolve (typeCheckErrors is non-empty).
-    "Leaf 3: symbolKindNotPublic -- kyo.Tasty.SymbolKind does not resolve after relocation" in {
+    "symbolKindNotPublic -- kyo.Tasty.SymbolKind does not resolve after relocation" in {
         val err = compiletime.testing.typeCheckErrors("val k: kyo.Tasty.SymbolKind = ???")
         assert(err.nonEmpty, "kyo.Tasty.SymbolKind must not resolve; path removed from public API")
         succeed
@@ -41,7 +41,7 @@ class TestProbeFileSourceTest extends kyo.test.Test[Any]:
     // Given: Cat 4 deleted bindingLocal from object Tasty.
     // When: user code attempts to access kyo.Tasty.bindingLocal.
     // Then: the path does not resolve (typeCheckErrors is non-empty).
-    "Leaf 4: bindingLocalNotPublic -- kyo.Tasty.bindingLocal does not resolve after deletion" in {
+    "bindingLocalNotPublic -- kyo.Tasty.bindingLocal does not resolve after deletion" in {
         val err = compiletime.testing.typeCheckErrors("val b = kyo.Tasty.bindingLocal")
         assert(err.nonEmpty, "kyo.Tasty.bindingLocal must not resolve; field removed from public API")
         succeed

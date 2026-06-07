@@ -3,10 +3,10 @@ package kyo.internal
 import kyo.*
 import kyo.internal.tasty.query.FileSource
 
-/** INV-009 verification probe. A FileSource that throws on every IO method,
-  * carrying an A1-probe sentinel message. Used by Inv009BehavioralTest to
-  * prove that pure Tasty.* query methods perform zero IO and that the four
-  * named effectful sites are the ONLY surfaces that read/write the probe.
+/** IO-isolation verification probe. A FileSource that throws on every IO method,
+  * carrying a probe sentinel message. Used by Inv009BehavioralTest to prove that
+  * pure Tasty.* query methods perform zero IO and that the named effectful sites
+  * are the ONLY surfaces that read/write the probe.
   *
   * Every method raises a RuntimeException (not Abort.fail) so the sentinel
   * surfaces as Result.Panic at effect boundaries, bypassing any Abort.run
@@ -28,7 +28,7 @@ final private[kyo] class TestProbeFileSource extends FileSource:
         throw new RuntimeException(s"$sentinel (rename $from -> $to)")
 
     override def delete(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
-        // F-001: INV-009 site-4 behavioural guard. After F-001 the evictOlderThan path issues `delete`,
+        // behavioural guard. After the evictOlderThan path issues `delete`,
         // not `rename`. The probe surfaces the call as a sentinel exception so Inv009BehavioralTest can
         // assert site-4 reaches exactly delete and zero rename calls.
         throw new RuntimeException(s"$sentinel (delete $path)")

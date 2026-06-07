@@ -3,7 +3,7 @@ package kyo
 import kyo.Tasty.Name.asString
 import kyo.Tasty.SymbolId
 
-/** plan leaves 20-21: Tasty.hasAnnotation, findAnnotation, symbolsAnnotatedWith.
+/** Tasty.hasAnnotation, findAnnotation, symbolsAnnotatedWith.
   *
   * Uses synthetic classpath with owner chain for FQN resolution (same pattern as ClasspathAnnotatedTest).
   * sym[0] = Package "scala", sym[1] = Class "deprecated" (owner=scala), so FQN = "scala.deprecated".
@@ -68,8 +68,8 @@ class AnnotationsTest extends kyo.test.Test[Any]:
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(scalaPackage, deprecatedClass, annotatedMethod, plainMethod))
     end buildAnnotatedClasspath
 
-    // Leaf 20: Tasty.hasAnnotation returns true for annotated symbol
-    "Leaf 20: Tasty.hasAnnotation returns true for @deprecated method" in {
+    // Tasty.hasAnnotation returns true for annotated symbol
+    "Tasty.hasAnnotation returns true for @deprecated method" in {
         buildAnnotatedClasspath.flatMap: cp =>
             val m1 = cp.symbols(2) // annotated method (sym[2])
             Tasty.withClasspath(cp):
@@ -78,8 +78,8 @@ class AnnotationsTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // Leaf 20b: Tasty.hasAnnotation returns false for non-annotated symbol
-    "Leaf 20b: Tasty.hasAnnotation returns false for non-annotated method" in {
+    // Tasty.hasAnnotation returns false for non-annotated symbol
+    "Tasty.hasAnnotation returns false for non-annotated method" in {
         buildAnnotatedClasspath.flatMap: cp =>
             val m2 = cp.symbols(3) // not annotated (sym[3])
             Tasty.withClasspath(cp):
@@ -88,8 +88,8 @@ class AnnotationsTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // Leaf 21: Tasty.symbolsAnnotatedWith returns exactly the annotated symbols
-    "Leaf 21: Tasty.symbolsAnnotatedWith returns only annotated symbols" in {
+    // Tasty.symbolsAnnotatedWith returns exactly the annotated symbols
+    "Tasty.symbolsAnnotatedWith returns only annotated symbols" in {
         buildAnnotatedClasspath.flatMap: cp =>
             Tasty.withClasspath(cp):
                 Tasty.symbolsAnnotatedWith("scala.deprecated").map: annotated =>

@@ -24,7 +24,7 @@ private[kyo] object TestClasspaths2Jvm:
 
     /** Execute f with a warning-capturing Log installed for the current fiber.
       *
-      * The returned WarningSink collects every warn() call that occurs during f's execution. This is fiber-local via Log.let so parallel
+      * The returned WarningSink collects every warn call that occurs during f's execution. This is fiber-local via Log.let so parallel
       * test fibers do not see each other's log output.
       */
     def withWarningSink[A, S](f: TestClasspaths2.WarningSink => A < S)(using Frame): A < S =

@@ -3,10 +3,7 @@ package kyo
 import AllowUnsafe.embrace.danger
 import kyo.Tasty.SymbolId
 
-/** plan-mandated tests confirming exhaustive match on the Symbol hierarchy under -Xfatal-warnings.
-  *
-  * Leaves 13-14 per plan 05-plan.yaml id:1. Pins: INV-006.
-  */
+/** Confirms exhaustive match on the Symbol hierarchy under -Xfatal-warnings. */
 class SymbolExhaustiveMatchTest extends kyo.test.Test[Any]:
 
     // ── Leaf 13: exhaustive-match-14-cases-compiles ──────────────────────────
@@ -14,7 +11,7 @@ class SymbolExhaustiveMatchTest extends kyo.test.Test[Any]:
     // Given: a 14-branch match on Symbol with no wildcard.
     // When: the test file compiles under -Xfatal-warnings.
     // Then: compiles cleanly (no "match may not be exhaustive" warning).
-    "Leaf 13: exhaustive 14-case match on Symbol compiles cleanly" in {
+    "exhaustive 14-case match on Symbol compiles cleanly" in {
         def kindLabel(s: Tasty.Symbol): String = s match
             case _: Tasty.Symbol.Class        => "Class"
             case _: Tasty.Symbol.Trait        => "Trait"
@@ -40,7 +37,7 @@ class SymbolExhaustiveMatchTest extends kyo.test.Test[Any]:
     // Given: a 3-branch match on Symbol.ClassLike with no wildcard.
     // When: the test file compiles under -Xfatal-warnings.
     // Then: compiles cleanly.
-    "Leaf 14: exhaustive 3-case match on Symbol.ClassLike compiles cleanly" in {
+    "exhaustive 3-case match on Symbol.ClassLike compiles cleanly" in {
         def cl(c: Tasty.Symbol.ClassLike): String = c match
             case _: Tasty.Symbol.Class  => "C"
             case _: Tasty.Symbol.Trait  => "T"

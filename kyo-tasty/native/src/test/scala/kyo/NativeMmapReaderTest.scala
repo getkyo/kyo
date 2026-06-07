@@ -13,11 +13,9 @@ import kyo.internal.tasty.snapshot.NativeMmapReader
   *
   * The full concurrent-unmap variant (harness triggers munmap while reader fiber is mid-read) is deferred: Scala Native 0.5 multithreading
   * support does not yet provide safe ways to race a munmap against an active read without risking a genuine SIGSEGV. The simpler
-  * "close-after-scope-exit" variant covers the closed-flag guard code path and is sufficient to pin T5.
+  * The "close-after-scope-exit" variant covers the closed-flag guard code path.
   *
   * Must live in native/src/test because it imports NativeMmapReader and MappedByteView (Scala Native objects with POSIX FFI bindings).
-  *
-  * Pins T5 (Native-only path).
   */
 class NativeMmapReaderTest extends kyo.test.Test[Any]:
 

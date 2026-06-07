@@ -14,10 +14,10 @@ import scala.collection.immutable.IntMap
   * The Positions section format (from dotty TastyFormat.scala, verbatim):
   * {{{
   * Standard-Section: "Positions" LinesSizes Assoc*
-  *   LinesSizes = Nat Nat*             -- number of lines, then size of each line (chars, NOT counting '\n')
-  *   Assoc      = Header offset_Delta? offset_Delta? point_Delta?
-  *              | SOURCE nameref_Int   -- SOURCE=4 is a special header value indicating a source-path change
-  *   Header     = addr_delta<<3 | hasStart<<2 | hasEnd<<1 | hasPoint   (encoded as Nat)
+  *   LinesSizes = Nat Nat* -- number of lines, then size of each line (chars, NOT counting '\n')
+  *   Assoc = Header offset_Delta? offset_Delta? point_Delta?
+  *              | SOURCE nameref_Int -- SOURCE=4 is a special header value indicating a source-path change
+  *   Header = addr_delta<<3 | hasStart<<2 | hasEnd<<1 | hasPoint (encoded as Nat)
   * }}}
   *
   * All Assoc values (header, deltas) are encoded as TASTy Nat/Int respectively.
@@ -53,7 +53,7 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
 
     /** Create a minimal LoadingSymbol.Materialising for testing with a unique sequential id.
       *
-      * F-006: the LongMap rotation in PositionsUnpickler keys by sym.id.toLong, so each symbol
+      * the LongMap rotation in PositionsUnpickler keys by sym.id.toLong, so each symbol
       * must have a unique id to avoid overwriting entries in the result map. Sequential ids
       * guarantee uniqueness across all test symbols in this test class.
       */
@@ -94,7 +94,7 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
         Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Present("Foo.scala"))).map:
             case Result.Success(result) =>
                 assert(result.size == 1, s"Expected 1 position entry but got ${result.size}")
-                // F-006: LongMap keyed by sym.id.toLong, not by symbol object.
+                // LongMap keyed by sym.id.toLong, not by symbol object.
                 assert(result.contains(sym.id.toLong), "Expected sym.id to have a position entry")
                 val pos = result(sym.id.toLong)
                 assert(pos.sourceFile == "Foo.scala", s"Expected sourceFile=Foo.scala but got ${pos.sourceFile}")
@@ -123,7 +123,7 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
     // ── Test 3: malformed Positions section fails with MalformedSection ───────
 
     // Test 3: a Positions section truncated mid-entry produces
-    // Abort.fail(TastyError.MalformedSection("Positions", ...)).
+    // Abort.fail(TastyError.MalformedSection("Positions".)).
     // Payload: numLines=2, line sizes [10, 10], then a header byte indicating hasStart=true but
     // no start_delta follows (truncated). ArrayIndexOutOfBoundsException triggers MalformedSection.
     "PositionsUnpickler: truncated section produces MalformedSection error" in {
@@ -204,7 +204,7 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
         Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Present("test.scala"))).map:
             case Result.Success(result) =>
                 assert(result.size == 2, s"Expected 2 entries but got ${result.size}")
-                // F-006: LongMap keyed by sym.id.toLong, not by symbol object.
+                // LongMap keyed by sym.id.toLong, not by symbol object.
                 assert(result.contains(symAlpha.id.toLong), "Expected symAlpha.id to have a position entry")
                 assert(result.contains(symBeta.id.toLong), "Expected symBeta.id to have a position entry")
                 val posAlpha = result(symAlpha.id.toLong)
@@ -232,19 +232,17 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
     // T-P5-1: PositionsUnpickler.readSync with an IntMap addrMap of 10,000 entries returns
     // correct position mappings for all 10,000 entries. Behavioral correctness at scale.
     // Integer-allocation-elimination assertion is deferred to re-profiling per plan.
-    //
     // Payload construction:
-    //   - numLines = 10001 (enough lines for offset 10000)
-    //   - Each line has size 0 so lineStarts(k) = k (since lineStarts(k) = lineStarts(k-1) + 0 + 1)
-    //   - Each Assoc entry: addrDelta=1 (header=(1<<3)|4=12), start_delta=1 (offset advances by 1 per entry)
-    //   - Entry i (0-based): curIndex = i+1, curStart = i+1; offset i+1 => line i+1, col 1
-    //   - addrMap has {i+1 -> sym(i)} for i in [0, 10000)
-    //
+    //   numLines = 10001 (enough lines for offset 10000)
+    //   Each line has size 0 so lineStarts(k) = k (since lineStarts(k) = lineStarts(k-1) + 0 + 1)
+    //   Each Assoc entry: addrDelta=1 (header=(1<<3)|4=12), start_delta=1 (offset advances by 1 per entry)
+    //   Entry i (0-based): curIndex = i+1, curStart = i+1; offset i+1 => line i+1, col 1
+    //   addrMap has {i+1 -> sym(i)} for i in [0, 10000)
     // Spot checks at entries 0, 999, 4999, 7777, 9999.
-    "T-P5-1: PositionsUnpickler.readSync with IntMap addrMap of 10,000 entries returns correct positions" in {
+    "PositionsUnpickler.readSync with IntMap addrMap of 10,000 entries returns correct positions" in {
         val N = 10000
 
-        // Build 10,000 symbols, one per addr index 1..N
+        // Build 10,000 symbols, one per addr index 1.N
         val syms: Array[LoadingSymbol.Materialising] =
             Array.tabulate(N)(i => makeTestSymbol(s"sym$i"))
 
@@ -297,7 +295,7 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
             case Result.Success(result) =>
                 assert(result.size == N, s"Expected $N position entries but got ${result.size}")
                 // Spot-check 5 entries: indices 0, 999, 4999, 7777, 9999
-                // F-006: LongMap keyed by sym.id.toLong.
+                // LongMap keyed by sym.id.toLong.
                 val checks = Seq(0, 999, 4999, 7777, 9999)
                 for i <- checks do
                     val sym = syms(i)
@@ -332,15 +330,13 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
 
     // B9-1: When the cumulative sum of lineSizes overflows Int, PositionsUnpickler must
     // produce MalformedSection("Positions", reason) where reason contains "exceeds Int.MaxValue".
-    //
     // Payload: numLines=1, lineSizes=[Int.MaxValue].
     // lineStarts(1) = 0 + Int.MaxValue + 1 = 2147483648, which exceeds Int.MaxValue.
-    //
     // TASTy Nat encoding of Int.MaxValue (2147483647 = 0x7FFFFFFF):
     //   5 bytes big-endian in 7-bit groups: [7, 127, 127, 127, 127].
     //   bytes: 0x07, 0x7F, 0x7F, 0x7F, 0xFF (last byte has stop-bit 0x80 set).
     //   Verify: (7 << 28) | (127 << 21) | (127 << 14) | (127 << 7) | 127 = 2147483647.
-    "B9-1: PositionsUnpickler: Int overflow on lineStarts cumulation produces MalformedSection" in {
+    "PositionsUnpickler: Int overflow on lineStarts cumulation produces MalformedSection" in {
         // numLines=1 encoded as Nat: single byte (1 | 0x80) = 0x81
         // lineSizes[0] = Int.MaxValue = 2147483647 encoded as 5-byte Nat
         //   7-bit groups (big-endian): [7, 127, 127, 127, 127]
@@ -377,19 +373,18 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
     // lineStarts(0) = 0
     // lineStarts(k) = sum_{i=0}^{k-1} (100 + i + 1) = sum_{i=0}^{k-1} (101 + i) = 101*k + k*(k-1)/2
     // Spot-check: lineStarts(10) = 101*10 + 10*9/2 = 1010 + 45 = 1055.
-    //
-    // Payload encodes numLines=200, then 200 line sizes in [100..299], then a single Assoc entry
+    // Payload encodes numLines=200, then 200 line sizes in [100.299], then a single Assoc entry
     // at addrDelta=1, hasStart=true, start_delta=0 (curStart=0 => line 1, col 1).
-    "B9-2: PositionsUnpickler: 200-line file with varying line sizes decodes lineStarts correctly" in {
+    "PositionsUnpickler: 200-line file with varying line sizes decodes lineStarts correctly" in {
         val numLines = 200
 
-        // Build payload: numLines as Nat, then numLines line sizes (each in 100..299), then one Assoc entry
+        // Build payload: numLines as Nat, then numLines line sizes (each in 100.299), then one Assoc entry
         // numLines=200: single byte (200 > 127, need 2 bytes)
         // 200 = 1*128 + 72 => [0x01, (72 | 0x80)=0xC8] -- no, TASTy Nat uses 7-bit groups:
         //   200 in 7-bit groups: 200 = 1*128 + 72 => groups [1, 72] => bytes [0x01, (72|0x80)=0xC8]
-        // Line sizes 100..299 (values 100-127 fit in 1 byte, 128+ need 2 bytes):
-        //   size k (for k in 0..99): 100+k in [100..199] -- 100-127 fit 1 byte; 128-199 need 2 bytes
-        //   size k (for k in 100..199): 100+k in [200..299] -- all need 2 bytes
+        // Line sizes 100.299 (values 100-127 fit in 1 byte, 128+ need 2 bytes):
+        //   size k (for k in 0.99): 100+k in [100.199] -- 100-127 fit 1 byte; 128-199 need 2 bytes
+        //   size k (for k in 100.199): 100+k in [200.299] -- all need 2 bytes
         // For 2-byte Nat v where 128 <= v <= 16383:
         //   high 7 bits = v >> 7, low 7 bits = v & 0x7F; bytes = [v>>7, (v&0x7F)|0x80]
         val assocEntry = Array[Byte](
@@ -433,7 +428,7 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
         Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Present("test.scala"))).map:
             case Result.Success(result) =>
                 // Verify the read succeeded; the position of sym at offset 0 should be line 1, col 1
-                // F-006: LongMap keyed by sym.id.toLong.
+                // LongMap keyed by sym.id.toLong.
                 assert(result.contains(sym.id.toLong), "Expected sym.id to have a position entry")
                 val pos = result(sym.id.toLong)
                 assert(pos.line == 1, s"Expected line=1 but got ${pos.line}")
@@ -451,7 +446,7 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
     // B9-3: Confirms the exact value of lineStarts(10) for a 200-line file where line k has size (100+k).
     // lineStarts(10) = 101*10 + 10*9/2 = 1010 + 45 = 1055.
     // A symbol at address 1 with curStart=1055 should decode to (line=11, col=1).
-    "B9-3: PositionsUnpickler: lineStarts(10) equals 1055 for 200-line file with sizes 100+k" in {
+    "PositionsUnpickler: lineStarts(10) equals 1055 for 200-line file with sizes 100+k" in {
         val numLines = 200
 
         // Build line size bytes
@@ -494,7 +489,7 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
         // Use Present sourceFile so position entries are built, not the absent-SOURCEFILE silent skip.
         Abort.run[TastyError](PositionsUnpickler.read(view, addrMap, Present("test.scala"))).map:
             case Result.Success(result) =>
-                // F-006: LongMap keyed by sym.id.toLong.
+                // LongMap keyed by sym.id.toLong.
                 assert(result.contains(sym.id.toLong), "Expected sym.id to have a position entry")
                 val pos = result(sym.id.toLong)
                 // offset 1055 = lineStarts(10) => line index 10 (0-based) => line 11 (1-based), col 1

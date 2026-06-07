@@ -11,8 +11,8 @@ import scala.collection.mutable
 
 /** Decoder-fidelity-5 TastyError completeness -- 5 findings.
   *
-  * Findings closed in this phase:   (UnsupportedVersion + UnknownTagInPosition tests),   (UnknownTagInPosition scaladoc),
-  *   (ClasspathClosed + ClasspathBuilding context fields),   (exception class name in catch arms),   (extractParenContent
+  * Findings closed in this phase: (UnsupportedVersion + UnknownTagInPosition tests), (UnknownTagInPosition scaladoc),
+  *   (ClasspathClosed + ClasspathBuilding context fields), (exception class name in catch arms), (extractParenContent
   * dead code removed; obviated byb typed format).
   *
   * tests (P03.1, P03.2, P03.3) directly trigger both variants rather than asserting "variants exist therefore covered".
@@ -72,11 +72,10 @@ class DecoderFidelity5Phase03Test extends kyo.test.Test[Any]:
         magic ++ encodeNat(major) ++ encodeNat(minor) ++ encodeNat(experimental) ++ encodeNat(0) ++ uuid
     end syntheticTasty
 
-    // P03.1:   -- UnsupportedVersion via TastyHeader.read (low-level direct trigger)
-    //
+    // P03.1: -- UnsupportedVersion via TastyHeader.read (low-level direct trigger)
     // Given: a synthetic TASTy byte stream with major=99 (far beyond supported range).
-    // When:  TastyHeader.read is called directly via Abort.run.
-    // Then:  Result.Failure(TastyError.UnsupportedVersion(found, supported)) where found.major == 99.
+    // When: TastyHeader.read is called directly via Abort.run.
+    // Then: Result.Failure(TastyError.UnsupportedVersion(found, supported)) where found.major == 99.
     "P03.1 TastyHeader.read with major=99 produces UnsupportedVersion with correct found.major" in {
         val bytes = syntheticTasty(99, 0, 0)
         val view  = ByteView(bytes)
@@ -90,11 +89,10 @@ class DecoderFidelity5Phase03Test extends kyo.test.Test[Any]:
                     fail(s"Expected UnsupportedVersion but got: $other")
     }
 
-    // P03.2:   -- UnsupportedVersion flows into cp.errors via ClasspathOrchestrator SoftFail
-    //
-    // Given: a MemSrc with a single .tasty file whose major version is 99 (unsupported).
-    // When:  ClasspathOrchestrator.init is called with SoftFail.
-    // Then:  cp.errors contains at least one UnsupportedVersion (or CorruptedFile on path-patching)
+    // P03.2: -- UnsupportedVersion flows into cp.errors via ClasspathOrchestrator SoftFail
+    // Given: a MemSrc with a single.tasty file whose major version is 99 (unsupported).
+    // When: ClasspathOrchestrator.init is called with SoftFail.
+    // Then: cp.errors contains at least one UnsupportedVersion (or CorruptedFile on path-patching)
     //        entry; no panic escapes.
     "P03.2 UnsupportedVersion (major=99 .tasty) accumulates in cp.errors under SoftFail" in {
         Scope.run:
@@ -116,11 +114,10 @@ class DecoderFidelity5Phase03Test extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // P03.3:   -- UnknownTagInPosition fires from TypeUnpickler.readType with unknown tag byte
-    //
+    // P03.3: -- UnknownTagInPosition fires from TypeUnpickler.readType with unknown tag byte
     // Given: a ByteView containing a single byte 0xFF (255), which is not a valid type-position tag.
-    // When:  TypeUnpickler.readType is called with that view; the byte is read as the type tag.
-    // Then:  Abort.fail(TastyError.UnknownTagInPosition(255, "type")) is returned.
+    // When: TypeUnpickler.readType is called with that view; the byte is read as the type tag.
+    // Then: Abort.fail(TastyError.UnknownTagInPosition(255, "type")) is returned.
     "P03.3 TypeUnpickler.readType with tag=0xFF produces Abort.fail(UnknownTagInPosition(255, type))" in {
         val bytes: Array[Byte] = Array(0xff.toByte)
         val view               = ByteView(bytes)
@@ -141,11 +138,10 @@ class DecoderFidelity5Phase03Test extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // P03.4:   -- ClasspathClosed carries non-empty context field
-    //
+    // P03.4: -- ClasspathClosed carries non-empty context field
     // Given: TastyError.ClasspathClosed is constructed with a context string.
-    // When:  the context field is read via pattern match.
-    // Then:  context is non-empty and contains "decodeBody".
+    // When: the context field is read via pattern match.
+    // Then: context is non-empty and contains "decodeBody".
     "P03.4 ClasspathClosed carries non-empty context field" in {
         val err: TastyError = TastyError.ClasspathClosed("decodeBody(sym.id=7)")
         err match
@@ -158,11 +154,10 @@ class DecoderFidelity5Phase03Test extends kyo.test.Test[Any]:
         end match
     }
 
-    // P03.5:   -- ClasspathBuilding carries non-empty context field
-    //
+    // P03.5: -- ClasspathBuilding carries non-empty context field
     // Given: TastyError.ClasspathBuilding is constructed with a context string.
-    // When:  the context field is read via pattern match.
-    // Then:  context is non-empty and contains "finalizeMerge".
+    // When: the context field is read via pattern match.
+    // Then: context is non-empty and contains "finalizeMerge".
     "P03.5 ClasspathBuilding carries non-empty context field" in {
         val err: TastyError = TastyError.ClasspathBuilding("finalizeMerge: brokenFqnCount=1")
         err match
@@ -175,11 +170,10 @@ class DecoderFidelity5Phase03Test extends kyo.test.Test[Any]:
         end match
     }
 
-    // P03.6:   -- ClasspathBuilding.context populated by orchestrator trigger (end-to-end)
-    //
+    // P03.6: -- ClasspathBuilding.context populated by orchestrator trigger (end-to-end)
     // Given: ClasspathOrchestrator.triggerClasspathBuildingForTest produces a ClasspathBuilding abort.
-    // When:  the error is caught and inspected.
-    // Then:  context is non-empty and mentions "brokenFqnCount".
+    // When: the error is caught and inspected.
+    // Then: context is non-empty and mentions "brokenFqnCount".
     "P03.6 ClasspathOrchestrator.triggerClasspathBuildingForTest produces ClasspathBuilding with non-empty context" in {
         Abort.run[TastyError](ClasspathOrchestrator.triggerClasspathBuildingForTest()).map: result =>
             result match

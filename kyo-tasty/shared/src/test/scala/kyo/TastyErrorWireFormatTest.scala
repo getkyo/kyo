@@ -9,7 +9,7 @@ import scala.collection.mutable
 
 /** Tests for TastyError wire format minor 9 to 10.
   *
-  * Covers all 8 plan-driven test leaves:
+  * Coverage:
   *   1. Round-trip every TastyError variant through the new string-tag wire format.
   *   2. Wire tag equals productPrefix (byte-level check).
   *   3. Minor version bumped to 10.
@@ -129,7 +129,7 @@ class TastyErrorWireFormatTest extends kyo.test.Test[Any]:
                     case None        => Abort.fail(TastyError.FileNotFound(path))
     end MemoryFileSource
 
-    // Leaf 1: round-trip every TastyError variant through the new wire format.
+    // round-trip every TastyError variant through the new wire format.
     // Given: every TastyError variant (19 cases) with representative field values.
     // When: written via SnapshotWriter (serializeToBytes), read via SnapshotReader.
     // Then: decoded variant equals original case-by-case.
@@ -183,7 +183,7 @@ class TastyErrorWireFormatTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // Leaf 2: wire tag equals productPrefix.
+    // wire tag equals productPrefix.
     // Given: TastyError.DigestMismatch("x", "y").
     // When: serialize and peek tag bytes in the ERRORS section.
     // Then: on-disk tag string equals "DigestMismatch".
@@ -191,7 +191,7 @@ class TastyErrorWireFormatTest extends kyo.test.Test[Any]:
         val err           = TastyError.DigestMismatch("x", "y")
         val snapshotBytes = snapshotBytesWithErrors(Chunk(err))
         val (errBytes, _) = extractErrorsSection(snapshotBytes)
-        // errBytes layout: [4-byte count LE] [varint tag-len] [tag UTF-8 bytes] [fields...]
+        // errBytes layout: [4-byte count LE] [varint tag-len] [tag UTF-8 bytes] [fields.]
         val count = SnapshotFormat.readInt32LE(errBytes, 0)
         assert(count == 1, s"Expected 1 error in ERRORS section, got $count")
         // Read the LEB128 varint tag length at offset 4.
@@ -208,7 +208,7 @@ class TastyErrorWireFormatTest extends kyo.test.Test[Any]:
         )
     }
 
-    // Leaf 3: minor version bumped (originally to 10 for string-tag format; now 11).
+    // minor version bumped (originally to 10 for string-tag format; now 11).
     // Given: a freshly written snapshot.
     // When: read the format header bytes.
     // Then: minorVersion == 11 (bumped for four new TastyError variants).
@@ -225,7 +225,7 @@ class TastyErrorWireFormatTest extends kyo.test.Test[Any]:
         )
     }
 
-    // Leaf 4: unknown tag falls back to TastyError.NotImplemented.
+    // unknown tag falls back to TastyError.NotImplemented.
     // Given: synthetic snapshot bytes with tag "FutureVariant" injected into the ERRORS section.
     // When: read via SnapshotReader.
     // Then: TastyError.NotImplemented(s) where s contains "FutureVariant".
@@ -276,7 +276,7 @@ class TastyErrorWireFormatTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // Leaf 5: short tag names use one byte (single-byte varint).
+    // short tag names use one byte (single-byte varint).
     // Given: tag bytes for "FileNotFound" (12 bytes).
     // When: read length prefix from the ERRORS section.
     // Then: equals 12 (single-byte varint: 12 < 128).
@@ -284,7 +284,7 @@ class TastyErrorWireFormatTest extends kyo.test.Test[Any]:
         val err           = TastyError.FileNotFound("test/path/Foo.tasty")
         val snapshotBytes = snapshotBytesWithErrors(Chunk(err))
         val (errBytes, _) = extractErrorsSection(snapshotBytes)
-        // errBytes: [4-byte count] [varint tag-len] [tag bytes] [fields...]
+        // errBytes: [4-byte count] [varint tag-len] [tag bytes] [fields.]
         // For "FileNotFound" (12 chars = 12 UTF-8 bytes), the varint must be 1 byte with value 12.
         val firstTagByte = errBytes(4) & 0xff
         val isOneByte    = (firstTagByte & 0x80) == 0
@@ -297,7 +297,7 @@ class TastyErrorWireFormatTest extends kyo.test.Test[Any]:
         assert(expected == 12, s"FileNotFound must be 12 UTF-8 bytes, got $expected")
     }
 
-    // Leaf 6: long tag names use a multi-byte varint.
+    // long tag names use a multi-byte varint.
     // Given: synthetic tag of length 200 (string of 200 'x' characters).
     // When: read the length prefix varint from the raw bytes.
     // Then: first byte is 0xC8, second byte is 0x01 (LEB128 encoding of 200).
@@ -328,7 +328,7 @@ class TastyErrorWireFormatTest extends kyo.test.Test[Any]:
         assert(decoded == 200, s"LEB128 decoding of 0xC8 0x01 must yield 200, got $decoded")
     }
 
-    // Leaf 7: old fixture snapshots at minor=9 fail with TastyError.SnapshotVersionMismatch.
+    // old fixture snapshots at minor=9 fail with TastyError.SnapshotVersionMismatch.
     // Given: a snapshot byte array whose header byte at offset 5 is patched to 9.
     // When: loaded via SnapshotReader.read.
     // Then: raises TastyError.SnapshotVersionMismatch with found=(1,9,0), supported=(1,11,0).
@@ -362,7 +362,7 @@ class TastyErrorWireFormatTest extends kyo.test.Test[Any]:
             case Result.Panic(t) => throw t
     }
 
-    // Leaf 8: cross-platform round-trip (JVM, JS, Native all pass).
+    // cross-platform round-trip (JVM, JS, Native all pass).
     // Given: all 19 TastyError variants serialized to bytes and read back on the current platform.
     // When: executed.
     // Then: every variant round-trips correctly.

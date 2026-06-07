@@ -5,7 +5,7 @@ import kyo.internal.TestClasspaths2
 
 /** fidelity tests for JPMS jrt:/ classfile decoding.
   *
-  * Owns all 8 plan leaves for  ,  , and   Un-pends the corresponding stubs in RealClasspathFidelity2Test and
+  * Owns all 8 plan leaves for, and Un-pends the corresponding stubs in RealClasspathFidelity2Test and
   * covers the full set of JDK class shapes reachable after initWithPlatformModules walks jrt:/ classfiles.
   *
   * JDK version requirement: JDK 11+ for jrt:/ filesystem; JDK 14+ for java.lang.Runtime.Version records; JDK 17+ for sealed classes
@@ -24,7 +24,7 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
     // ACTIVE leaves
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Leaf 1:   -- java.lang.String resolves
+    // java.lang.String resolves
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules (initWithPlatformModules)
     // When: calling cp.findClass("java.lang.String")
     // Then: returns Present (jrt:/ walker enumerates String.class and ClassfileUnpickler decodes it)
@@ -41,7 +41,7 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
                     )
     }
 
-    // Leaf 2: java.util.HashMap resolves
+    // java.util.HashMap resolves
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules
     // When: calling cp.findClass("java.util.HashMap")
     // Then: returns Present; HashMap.class is in java.base under jrt:/modules/java.base/java/util/HashMap.class
@@ -58,7 +58,7 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
                     )
     }
 
-    // Leaf 3: java.util.concurrent.ConcurrentHashMap resolves
+    // java.util.concurrent.ConcurrentHashMap resolves
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules
     // When: calling cp.findClass("java.util.concurrent.ConcurrentHashMap")
     // Then: returns Present; java.util.concurrent is in java.base
@@ -75,7 +75,7 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
                     )
     }
 
-    // Leaf 4: cp.modules contains "java.base"
+    // cp.modules contains "java.base"
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules
     // When: calling cp.findModule("java.base")
     // Then: returns Present with at least one export starting with "java.lang"
@@ -101,7 +101,7 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
                     )
     }
 
-    // Leaf 5: JDK class parentTypes includes java.lang.Object
+    // JDK class parentTypes includes java.lang.Object
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules; java.util.HashMap found
     // When: examining cp.findClass("java.util.HashMap").parentTypes
     // Then: at least one parent resolves to a non-sentinel symbol id (java.lang.AbstractMap or java.util.Map)
@@ -128,7 +128,7 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
             end match
     }
 
-    // Leaf 6:   -- Java enum isEnum
+    // Java enum isEnum
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules
     // When: calling cp.findClass("java.lang.annotation.RetentionPolicy")
     // Then: Present(sym) with sym.isEnum == true; RetentionPolicy is a JDK enum
@@ -148,7 +148,7 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
                     succeed
     }
 
-    // Leaf 7: Java sealed class permittedSubclasses populated (JDK 17+)
+    // Java sealed class permittedSubclasses populated (JDK 17+)
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules; JDK >= 17 for PermittedSubclasses attribute
     // When: calling cp.findClassLike("java.lang.constant.ConstantDesc")
     // Then: Present(sym) with sym.isSealed == true and sym.permittedSubclassIds.map(_.map(cp.symbol)).getOrElse(Chunk.empty) returns Present with >= 1 entry
@@ -187,7 +187,7 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
             end match
     }
 
-    // Leaf 8: Java interface default methods detectable
+    // Java interface default methods detectable
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules; java.util.Iterator found
     // When: enumerating java.util.Iterator.declarationIds.map(cp.symbol) and filtering for non-abstract methods
     // Then: at least one non-abstract method exists (the default method forEachRemaining added in Java 8)
@@ -220,7 +220,7 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
             end match
     }
 
-    // Leaf 9:   -- initWithPlatformModules includes JDK class symbols
+    // initWithPlatformModules includes JDK class symbols
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules (kyo-tasty roots + JDK)
     // When: verifying both kyo.Tasty and java.lang.String are findable
     // Then: both return Present; demonstrates user roots and JDK roots are merged
@@ -239,7 +239,7 @@ class JpmsFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 10:   -- unresolvedTypeReferenceCount with java.base JDK
+    // unresolvedTypeReferenceCount with java.base JDK
     // Given: Classpath loaded via TestClasspaths2.standardWithPlatformModules (java.base only)
     // When: calling cp.unresolvedTypeReferenceCount
     // Then: the count is non-negative (counts FQN-tracked cross-classpath gaps; types from

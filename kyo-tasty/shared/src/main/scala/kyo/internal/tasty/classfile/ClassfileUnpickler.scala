@@ -1118,11 +1118,10 @@ object ClassfileUnpickler:
                                                             ).map: methodPairs =>
                                                                 val allPairs   = fieldPairs ++ methodPairs
                                                                 val allSymbols = allPairs.map(_._1)
-                                                                // INV-011: LongMap keyed by sym.id avoids the
-                                                                // fragile mutable-case-class structural equality on
-                                                                // LoadingSymbol.Materialising (var id breaks Map lookups
-                                                                // if id is mutated post-insertion). This is the 4th
-                                                                // AT-RISK site Q-001 missed; fixed in Phase 09.
+                                                                // LongMap keyed by sym.id avoids the fragile
+                                                                // mutable-case-class structural equality on
+                                                                // LoadingSymbol.Materialising (var id breaks Map
+                                                                // lookups if id is mutated post-insertion).
                                                                 val memberTypes =
                                                                     val m = mutable.LongMap.empty[Tasty.Type]
                                                                     allPairs.foreach { case (sym, tpe) => m(sym.id.toLong) = tpe }

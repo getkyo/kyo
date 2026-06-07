@@ -4,20 +4,19 @@ import kyo.internal.TestClasspaths
 
 /** Fidelity tests for Tree decode: body presence and Tree tag handlers.
   *
-  * Pins findings   and   un-pends leaves 1, 2, 3, 6, 7, 8 by implementing real handlers for 20 Tree tags
-  * that previously returned Tree.Unknown. Leaves 4 and 5 remain pending until adds Tree.TermRef and Tree.SeqLiteral ADT cases.
+  * Covers real handlers for the Tree tags that would otherwise fall through to Tree.Unknown.
   *
-  * relocated from jvm/src/test to shared/src/test. Leaves 1, 2, 3, 7 rewritten to use embedded fixture classes (error-count
-  * guards + fixture symbol lookup) instead of stdlib-only symbols. All leaves are now cross-platform.
+  * Uses embedded fixture classes (error-count guards + fixture symbol lookup) instead of
+  * stdlib-only symbols, so the tests run cross-platform.
   */
 class TreeDecodeFidelityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    //   / leaf 1: no-unknown-tree-nodes
+    //   no-unknown-tree-nodes
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: verifying classpath loads without unhandled-tag exceptions
-    // Then: post-fix zero decodeTreeTag exceptions and the embedded fixture SomeCaseClass is findable
+    // Then: zero decodeTreeTag exceptions and the embedded fixture SomeCaseClass is findable
     // Cross-platform: the no-unknown-tag guard holds for any classpath; embedded fixtures exercise the same decode paths.
     "Tree.Unknown count drops to known minimum (quote/splice only)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
@@ -31,12 +30,12 @@ class TreeDecodeFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    //   leaf 2: new-carries-ctor-args
+    //   new-carries-ctor-args
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: verifying body decode completes without errors and fixture class methods are non-empty
-    // Then: post-fix body decode succeeds
+    // Then: body decode succeeds
     // Cross-platform: kyo.fixtures.SomeCaseClass has methods; error guard is universal.
-    // Carry A2: TastyError.UnknownType for absent TypeAlias/OpaqueType/Parameter bodies is now correctly
+    // TastyError.UnknownType for absent TypeAlias/OpaqueType/Parameter bodies is now correctly
     //           propagated (it was hidden by null sentinel). Exclude it from this filter since it is a
     //           per-symbol absent-type error, not a body decode / tree reconstruction error.
     "Tree.New preserves constructor argument list" in {
@@ -59,10 +58,10 @@ class TreeDecodeFidelityTest extends kyo.test.Test[Any]:
             end match
     }
 
-    //   leaf 3: select-tpe-not-stub
+    //   select-tpe-not-stub
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: verifying body trees decode correctly with Tree.Select nodes
-    // Then: post-fix Tree.Select nodes decode without error and typed symbols exist
+    // Then: Tree.Select nodes decode without error and typed symbols exist
     // Cross-platform: typed symbol count > 0 is ensured by embedded fixture methods; error guard is universal.
     "Tree.Select.tpe is not the stub Wildcard(Nothing, Any)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
@@ -82,10 +81,10 @@ class TreeDecodeFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    //   leaf 4: termref-not-fabricated-select
+    //   termref-not-fabricated-select
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
     // When: checking that no TERMREFin decode errors appear
-    // Then: post-fix no error strings contain "TERMREFin"
+    // Then: no error strings contain "TERMREFin"
     // Cross-platform: "no TERMREFin errors" is a universal no-error guard; passes trivially on embedded.
     "TERMREFin decodes to Tree.TermRef, not a fabricated Tree.Select" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
@@ -94,10 +93,10 @@ class TreeDecodeFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    //   leaf 5: repeated-emits-seqliteral
+    //   repeated-emits-seqliteral
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures with VarargFixture)
     // When: checking that classpath loaded without REPEATED placeholder artifacts
-    // Then: post-fix no error strings contain "_repeated"
+    // Then: no error strings contain "_repeated"
     // Cross-platform: "no _repeated errors" is a universal no-error guard; embedded VarargFixture exercises the varargs decode path.
     "REPEATED varargs decodes to Tree.SeqLiteral, not Ident(_repeated)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
@@ -106,10 +105,10 @@ class TreeDecodeFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    //   leaf 6: inlined-empty-becomes-unit
+    //   inlined-empty-becomes-unit
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures with inlineAdd)
     // When: loading the classpath (inline methods with INLINED bodies are decoded during symbol walk)
-    // Then: post-fix inline methods exist and classpath errors contain no INLINED failures
+    // Then: inline methods exist and classpath errors contain no INLINED failures
     // Cross-platform: embedded FixtureClasses.scala has `inline def inlineAdd`, so inlineMethods.nonEmpty passes on all platforms.
     "empty-body INLINED decodes to Tree.Inlined wrapping Tree.Literal(Unit)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
@@ -124,10 +123,10 @@ class TreeDecodeFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    //   leaf 7: matchcase-firstclass-adt
+    //   matchcase-firstclass-adt
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: walking the bodies of type alias symbols
-    // Then: post-fix Type.MatchType nodes exist; zero Applied(Named(sentinel)) for MATCHCASEtype
+    // Then: Type.MatchType nodes exist; zero Applied(Named(sentinel)) for MATCHCASEtype
     // Cross-platform: kyo.fixtures.TypeAdtFixture$package defines `type InnerOf[C] = C match { case GenericBox[t] => t; case _ => C }`
     //   which encodes as MATCHtype in TASTy. This fixture provides matchTypeCount > 0 on all platforms.
     "MATCHCASEtype decodes to Type.MatchCase first-class ADT case" in {
@@ -172,10 +171,10 @@ class TreeDecodeFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    //   leaf 8: transparent-inline-body-decodes
+    //   transparent-inline-body-decodes
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures with inlineAdd)
     // When: verifying the classpath loaded without unhandled-tag errors for transparent-inline-specific tags
-    // Then: post-fix zero decodeTreeTag exceptions and at least one inline method exists
+    // Then: zero decodeTreeTag exceptions and at least one inline method exists
     // Cross-platform: embedded FixtureClasses.scala has `inline def inlineAdd`; anyInline passes on all platforms.
     "transparent inline method body contains no Tree.Unknown nodes" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
@@ -197,10 +196,10 @@ class TreeDecodeFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    //   leaf 9: selectin-resolves-owner
+    //   selectin-resolves-owner
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
     // When: decoding a method body that uses a SELECTin (path-dependent type access)
-    // Then: post-fix no SELECTin errors and at least one Named type exists
+    // Then: no SELECTin errors and at least one Named type exists
     // Cross-platform: "no SELECTin errors" and "namedTypes > 0" both hold on embedded (many named types in fixture methods).
     "SELECTin decodes to a Type.Named with non-empty resolved owner FQN" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
@@ -224,7 +223,7 @@ class TreeDecodeFidelityTest extends kyo.test.Test[Any]:
     //   leaf: TYPEREF decodes to Type.TypeRef, not Type.TermRef
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
     // When: scanning all method and val declared types for Type.TypeRef instances
-    // Then: post-fix Type.TypeRef instances exist
+    // Then: Type.TypeRef instances exist
     // Cross-platform: TYPEREF appears wherever a type names an inner type member; embedded fixtures with
     //   inner types (Outer.Inner, HasTypeDef) produce Type.TypeRef instances on all platforms.
     "TYPEREF decodes to Type.TypeRef not Type.TermRef" in {
@@ -250,7 +249,7 @@ class TreeDecodeFidelityTest extends kyo.test.Test[Any]:
     //   leaf: TYPEBOUNDS decodes to Type.Bounds not Type.Wildcard
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
     // When: scanning type parameters and method types for Type.Bounds
-    // Then: post-fix no TYPEBOUNDS decode errors; boundsCount >= 0 (informational)
+    // Then: no TYPEBOUNDS decode errors; boundsCount >= 0 (informational)
     // Cross-platform: "boundsCount >= 0" is vacuously true; "no TYPEBOUNDS errors" is universal.
     "TYPEBOUNDS decodes to Type.Bounds not Type.Wildcard" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>

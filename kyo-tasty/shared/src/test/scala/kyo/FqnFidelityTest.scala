@@ -9,21 +9,20 @@ import scala.collection.mutable
 
 /** Fidelity tests for FQN computation correctness.
   *
-  * Pins findings   and   All leaves were PENDING until un-pended them by fixing `ClasspathOrchestrator.computeFqn`
-  * (halt walk at Package owners) and `TypeUnpickler` (TYPEREFin always concatenates when qual is non-empty).
+  * Exercises `ClasspathOrchestrator.computeFqn` (halt walk at Package owners) and `TypeUnpickler`
+  * (TYPEREFin always concatenates when qual is non-empty).
   *
-  * relocated from jvm/src/test to shared/src/test. Leaves 2, 3, 5, 6, 7 rewritten to use embedded fixture FQNs
-  * (kyo.fixtures.PlainClass, kyo.fixtures.SomeCaseClass, kyo.fixtures.SomeObject) instead of stdlib classes.
-  * Leaf 4 (TYPEREFin unit test) was already cross-platform. All leaves are now cross-platform.
+  * Uses embedded fixture FQNs (kyo.fixtures.PlainClass, kyo.fixtures.SomeCaseClass,
+  * kyo.fixtures.SomeObject) instead of stdlib classes, so all cases run cross-platform.
   */
 class FqnFidelityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    //   / leaf 1: no-doubled-segments
+    //   no-doubled-segments
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
     // When: scanning every key of cp.indices.byFqn
-    // Then: post-fix zero keys contain the substring "scala.scala" or "kyo.kyo";
+    // Then: zero keys contain the substring "scala.scala" or "kyo.kyo";
     //       zero keys begin with "<empty>.";
     //       before fix keys like "scala.scala.collection.scala.collection.immutable.List" appear
     // Cross-platform: invariant "no doubled segments" holds for any classpath after the fix; passes on embedded fixtures.
@@ -38,10 +37,10 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    //   leaf 2: plainclass-resolves-at-canonical-fqn
+    //   plainclass-resolves-at-canonical-fqn
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: calling cp.findClassLike("kyo.fixtures.PlainClass")
-    // Then: post-fix returns Present(_: Symbol.ClassLike) whose simple name is "PlainClass"
+    // Then: returns Present(_: Symbol.ClassLike) whose simple name is "PlainClass"
     // Cross-platform: kyo.fixtures.PlainClass is in the embedded fixture set on all platforms.
     "cp.findClassLike(kyo.fixtures.PlainClass) returns Present" in {
         import Tasty.Name.asString
@@ -65,10 +64,10 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
                     )
     }
 
-    //   /   leaf 3: fixture-classes-resolve-at-canonical-fqn
+    //   fixture-classes-resolve-at-canonical-fqn
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: calling cp.findClassLike("kyo.fixtures.SomeCaseClass") and cp.findClassLike("kyo.fixtures.SomeTrait")
-    // Then: post-fix both return Present
+    // Then: both return Present
     // Cross-platform: both fixture classes are in the embedded fixture set on all platforms.
     "cp.findClassLike(kyo.fixtures.SomeCaseClass) and cp.findClassLike(kyo.fixtures.SomeTrait) return Present" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
@@ -87,25 +86,24 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    //   leaf 4: typerefin-preserves-same-name-duplication
+    //   typerefin-preserves-same-name-duplication
     // Given: a TYPEREFin decode session where the qual's FQN equals the selected simpleName ("Map.Map" scenario)
     // When: decoding the TYPEREFin via TypeUnpickler.readTypeIntoSession
-    // Then: post-fix the FQN registered in unresolvedIdToFqn is "Map.Map" (outer + "." + inner)
+    // Then: the FQN registered in unresolvedIdToFqn is "Map.Map" (outer + "." + inner)
     // Cross-platform: purely algorithmic, no filesystem or classpath access.
     "TYPEREFin preserves legitimate same-name qualifications (Map.Map)" in {
         // Part A: real-classpath regression guard (JVM-only; gated via the full leaf above).
         // Leaf 4 tests only Part B: the direct unit verification of the TYPEREFin same-name-collapse fix.
         // Build a synthetic TYPEREFin where the qual FQN and simpleName both equal "Map".
-        // Pre-fix: fullFqn = "Map"  (guard `qualFqn != simpleName` drops the qualifier)
+        // Pre-fix: fullFqn = "Map" (guard `qualFqn != simpleName` drops the qualifier)
         // Post-fix: fullFqn = "Map.Map" (only the nonEmpty guard remains)
-        //
         // Nat encoding: value n < 128 -> (n | 0x80).toByte (last byte with stop-bit set).
         def encNat(n: Int): Array[Byte] =
             if n < 128 then Array((n | 0x80).toByte)
             else Array((n >> 7).toByte, ((n & 0x7f) | 0x80).toByte)
         val names = Array(Tasty.Name("scala"), Tasty.Name("Map"))
-        // qual  = TYPEREFpkg nameRef=1 -> "Map"; tracked by the session as qualFqn="Map"
-        // ns    = TYPEREFpkg nameRef=1  (namespace, ignored in FQN reconstruction)
+        // qual = TYPEREFpkg nameRef=1 -> "Map"; tracked by the session as qualFqn="Map"
+        // ns = TYPEREFpkg nameRef=1 (namespace, ignored in FQN reconstruction)
         val qualBytes    = TastyFormat.TYPEREFpkg.toByte +: encNat(1)
         val nsBytes      = TastyFormat.TYPEREFpkg.toByte +: encNat(1)
         val innerPayload = encNat(1) ++ qualBytes ++ nsBytes // nameRef=1 -> simpleName="Map"
@@ -138,10 +136,10 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    //   leaf 1: source-fqn-resolves
+    //   source-fqn-resolves
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: cp.findSymbol("kyo.fixtures.SomeObject") -- source FQN without trailing `$`
-    // Then: post-fix returns Present(_: Symbol.Object)
+    // Then: returns Present(_: Symbol.Object)
     // Cross-platform: kyo.fixtures.SomeObject is in the embedded fixture set on all platforms.
     "cp.findSymbol(kyo.fixtures.SomeObject) returns Present(Symbol.Object)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
@@ -165,7 +163,7 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
                     )
     }
 
-    //   leaf 2: binary-fqn-still-resolves
+    //   binary-fqn-still-resolves
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: cp.findSymbol("kyo.fixtures.SomeObject$") -- binary FQN with trailing `$`
     // Then: Present(_) both before and after fix (primary binary key preserved; layered compat)
@@ -182,10 +180,10 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
                     )
     }
 
-    //   leaf 3: both-fqns-same-symbol
+    //   both-fqns-same-symbol
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: cp.findSymbol("kyo.fixtures.SomeObject") and cp.findSymbol("kyo.fixtures.SomeObject$")
-    // Then: post-fix both Present(s) with same s.id
+    // Then: both Present(s) with same s.id
     // Cross-platform: kyo.fixtures.SomeObject is in the embedded fixture set on all platforms.
     "kyo.fixtures.SomeObject and kyo.fixtures.SomeObject$ resolve to the same Symbol id" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
@@ -219,7 +217,7 @@ class FqnFidelityTest extends kyo.test.Test[Any]:
             end match
     }
 
-    //   leaf 4: non-existent-still-absent
+    //   non-existent-still-absent
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
     // When: cp.findSymbol("nonexistent.Type") and cp.findSymbol("nonexistent.Type$")
     // Then: both Absent; the dual-index does not fabricate entries for non-existent keys

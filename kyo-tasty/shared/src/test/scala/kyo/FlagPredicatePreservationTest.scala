@@ -8,7 +8,7 @@ class FlagPredicatePreservationTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // Leaf 43: 40-predicates-on-class
+    // 40-predicates-on-class
     // Given: Symbol.Class final case class fixture; When: invoke all 40 predicates; Then: isFinal/isCase/isClass true; 37 others false
     "40-predicates-on-class: isFinal/isCase/isClass true; 37 others false" in {
         val flags = Tasty.Flags(Tasty.Flag.Final, Tasty.Flag.Case)
@@ -40,7 +40,7 @@ class FlagPredicatePreservationTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 44: 40-predicates-on-method
+    // 40-predicates-on-method
     // Given: Symbol.Method inline given def; When: invoke all 40 predicates; Then: isInline/isGiven/isMethod true; 37 others false
     "40-predicates-on-method: isInline/isGiven/isMethod true" in {
         val flags = Tasty.Flags(Tasty.Flag.Inline, Tasty.Flag.Given)
@@ -67,7 +67,7 @@ class FlagPredicatePreservationTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 45: 40-predicates-on-package
+    // 40-predicates-on-package
     // Given: Symbol.Package fixture; When: invoke all 40 predicates; Then: isPackage true; 39 others false
     "40-predicates-on-package: isPackage true; isClass/isMethod/isVal false" in {
         val sym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("pkg"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
@@ -82,7 +82,7 @@ class FlagPredicatePreservationTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 46: 40-predicates-on-sentinel-package
+    // 40-predicates-on-sentinel-package
     // Symbol.Unresolved is deleted; the former Classpath.sentinelUnresolved is now a Package(id=-1).
     // Verifies that a negative-id Package still passes basic predicate checks.
     "40-predicates-on-unresolved: sentinel Package(id=-1) is Package kind, not ClassLike" in {

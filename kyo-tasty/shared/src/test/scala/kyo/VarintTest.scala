@@ -32,7 +32,7 @@ class VarintTest extends kyo.test.Test[Any]:
         import AllowUnsafe.embrace.danger
         // 128 = 0x80: high 7 bits = 0x01, low 7 bits = 0x00
         // Continuation byte (0x80 CLEAR): 0x01
-        // Terminating byte (0x80 SET):   0x80
+        // Terminating byte (0x80 SET): 0x80
         val view = viewOf(Array(0x01.toByte, 0x80.toByte))
         assert(Varint.readNat(view) == 128)
     }
@@ -64,7 +64,7 @@ class VarintTest extends kyo.test.Test[Any]:
     "readInt decodes -1 using dotty sign-extension semantics" in {
         // §839 case 3; direct Varint cursor test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
-        // -1 in dotty readLongInt: single byte 0xFF
+        // 1 in dotty readLongInt: single byte 0xFF
         // First byte b = 0xFF, x = ((0xFF << 1).toByte >> 1) = (0xFE.toByte >> 1) = -1
         // b & 0x80 = 0x80 != 0, so loop doesn't continue
         // result: -1
@@ -81,20 +81,19 @@ class VarintTest extends kyo.test.Test[Any]:
         //   bits 34-28: only bit 31 is set in Int.MinValue, as Long = 0xFFFFFFFF80000000L
         //   Actually Int.MinValue.toLong = -2147483648L
         //   Highest 7 bits of the 35-bit signed representation:
-        //   -2147483648L = 0xFFFFFFFF80000000L in binary
-        //   bits[34:28] = 0x7F (all 1s for negative sign extension), but wait...
+        //   2147483648L = 0xFFFFFFFF80000000L in binary
+        //   bits[34:28] = 0x7F (all 1s for negative sign extension), but wait.
         //   Let's use the write loop from TastyBuffer.writeLongInt:
         //   It writes `(x >> 6)` first in a loop, then the last byte.
         //   writeLongInt(-2147483648):
         //     x = -2147483648L
         //     First iteration: if (x >>> 6) != 0L && (x >>> 6) != -1L => write & continue
-        //       x >>> 6 = 0x03FFFFFE00000000 >> ... wait, unsigned shift of negative Long:
-        //       -2147483648L >>> 6 = 0x03FFFFFFFFFFFE00... no
+        //       x >>> 6 = 0x03FFFFFE00000000 >>. wait, unsigned shift of negative Long:
+        //       2147483648L >>> 6 = 0x03FFFFFFFFFFFE00. no
         //       Actually -2147483648L in hex = 0xFFFFFFFF80000000L
         //       0xFFFFFFFF80000000L >>> 6 = 0x03FFFFFFFFFE0000
         //       That is not -1L, so we continue writing.
         //     This is getting complex. Let's just use known test vectors from dotty source tests.
-        //
         // From dotty test vectors, Int.MinValue encodes as: 0x78, 0x00, 0x00, 0x00, 0x80
         // (Each non-final byte: 0x78, 0x00, 0x00, 0x00 has 0x80 CLEAR = continuation)
         // Final byte: 0x80 has 0x80 SET = terminating, low 7 bits = 0x00)
@@ -111,7 +110,7 @@ class VarintTest extends kyo.test.Test[Any]:
         //   0x00 & 0x80 = 0, continue
         //   b=0x80=128, x=(-16777216L<<7)|(128&0x7f)=(-2147483648L)|0L = -2147483648L
         //   0x80 & 0x80 = 0x80 != 0, stop
-        //   result: -2147483648L.toInt = -2147483648 = Int.MinValue  CORRECT!
+        //   result: -2147483648L.toInt = -2147483648 = Int.MinValue CORRECT!
         val view = viewOf(Array(0x78.toByte, 0x00.toByte, 0x00.toByte, 0x00.toByte, 0x80.toByte))
         assert(Varint.readInt(view) == Int.MinValue)
     }
@@ -129,30 +128,28 @@ class VarintTest extends kyo.test.Test[Any]:
         // next 7 bytes 0xFF each (7 bits = 0x7F, continuation)
         // last byte 0xFF (7 bits = 0x7F, terminating since 0x80 SET)
         // Wait: 0xFF has 0x80 SET, so 0x7F & 0x7f = 0x7F, and 0xFF means terminating.
-        // Decode: x = (0<<7)|... let me trace:
+        // Decode: x = (0<<7)|. let me trace:
         // b=0x00, x=(0L<<7)|(0L&0x7f)=0, 0x00&0x80=0 continue
         // b=0xFF, x=(0L<<7)|(0xFF&0x7f)=0x7f, 0xFF&0x80=0x80 STOP
         // That only gives 127. Wrong.
-        //
         // Let me recalculate. For Long.MaxValue=0x7FFFFFFFFFFFFFFF:
         // 63 bits. In big-endian base-128, we need ceil(63/7)=9 bytes.
         // Byte 1 (MSB group, 7 bits): bits[62:56] of LongMax = 0x00 (since bit 63=0 for positive)
-        //   Wait, LongMax = 0111...1 (63 ones). Highest 7 bits = 0x00? No.
+        //   Wait, LongMax = 0111.1 (63 ones). Highest 7 bits = 0x00? No.
         //   0x7FFFFFFFFFFFFFFF: bits 62 down to 0 are all 1.
         //   Group them 7 at a time from the top:
         //   bits[62:56] = 0x7F (7 bits all 1, but bit 63 is 0 so this is the top group)
         //   Wait: 63 bits = 9 groups of 7: 9*7=63. Perfect fit.
         //   bits[62:56] = 0x7F (7 ones)
         //   bits[55:49] = 0x7F
-        //   ... all 9 groups = 0x7F
-        //
+        //   all 9 groups = 0x7F
         // Encoding: first 8 groups have 0x80 CLEAR (continuation), last has 0x80 SET:
         // bytes: 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0xFF
         // Decode:
         //   b=0x7F, x=0x7F, 0x7F&0x80=0 continue
         //   b=0x7F, x=(0x7FL<<7)|0x7fL=0x3FFFL, continue
         //   b=0x7F, x=(0x3FFFL<<7)|0x7fL=0x1FFFffL, continue
-        //   ... after 8 iterations x = 0x0FFFFFFFFFFFL... let me just verify the count:
+        //   after 8 iterations x = 0x0FFFFFFFFFFFL. let me just verify the count:
         //   After 9 bytes (8 continuation + 1 terminating), each adding 7 bits of 1:
         //   x = 2^63 - 1 = Long.MaxValue. YES.
         val bytes = Array(
@@ -171,7 +168,7 @@ class VarintTest extends kyo.test.Test[Any]:
     }
 
     // Test: readNat delegates to readLongNat; limit inherited from readLongNat (10 bytes)
-    // Per actual dotty TastyReader.readNat = readLongNat().toInt: no separate per-byte cap in readNat.
+    // Per actual dotty TastyReader.readNat = readLongNat.toInt: no separate per-byte cap in readNat.
     "readNat rejects continuation past 10 bytes (inherited readLongNat cap)" in {
         // §839 case 3; direct Varint error-path test, single-threaded, no suspension.
         // 11 bytes with 0x80 CLEAR: readLongNat fires bytes >= 10 after reading the 10th byte.
@@ -203,7 +200,7 @@ class VarintTest extends kyo.test.Test[Any]:
     }
 
     // readNat truncates values > Int.MaxValue matching dotty behavior
-    // Per actual dotty TastyReader.readNat = readLongNat().toInt: silently truncates to Int.
+    // Per actual dotty TastyReader.readNat = readLongNat.toInt: silently truncates to Int.
     "readNat truncates 9-byte Long.MaxValue encoding to Int (dotty parity)" in {
         // §839 case 3; direct Varint truncation test, single-threaded, no suspension.
         // Long.MaxValue in 9 bytes: 0x7F * 8 continuation + 0xFF terminating.
@@ -266,9 +263,9 @@ class VarintTest extends kyo.test.Test[Any]:
         val result = Varint.readLongNat(view)
         // Verify the round-trip: 9 continuation bytes of 0x01 (7 low bits = 1) then
         // terminating 0x81 (7 low bits = 1). Each byte contributes 7 bits of value 1,
-        // so result = sum of 1 shifted by 7*i for i in 0..9 = (2^70 - 1) / (2^7 - 1),
+        // so result = sum of 1 shifted by 7*i for i in 0.9 = (2^70 - 1) / (2^7 - 1),
         // but truncated to Long (64 bits). The exact value is:
-        // 0x01 accumulated 10 times: (1<<63)|(1<<56)|(1<<49)|...|(1<<7)|(1<<0) folded to Long.
+        // 0x01 accumulated 10 times: (1<<63)|(1<<56)|(1<<49)|.|(1<<7)|(1<<0) folded to Long.
         // What matters for this boundary test is that no exception is thrown.
         // We also verify the position advanced past all 10 bytes.
         assert(view.position == 10)

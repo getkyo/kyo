@@ -128,13 +128,6 @@ object SnapshotReader:
         if bytes.length < 24 then 0L
         else DigestComputer.bytesToLong(java.util.Arrays.copyOfRange(bytes, 16, 24))
 
-    // F-011: `readPickleVersion` deleted per Q-005 (RESOLVED: delete; reversible by git revert).
-    // The only known reference is sbt-plugin-ux/design/05-plan.md (staging document, not a working consumer).
-    // Re-add when the consumer ships.
-
-    // F-010: `readPickleUuid` deleted. The KRFL header does not store a per-file TASTy UUID;
-    // bytes [6..15] are reserved padding. There were no src/main callers.
-
     /** Thrown by readMappedView when the snapshot major version doesn't match. */
     final private[snapshot] class VersionMismatchException(
         val found: Tasty.Version,

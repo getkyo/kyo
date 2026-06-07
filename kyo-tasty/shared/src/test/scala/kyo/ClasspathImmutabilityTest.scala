@@ -8,7 +8,7 @@ import scala.collection.mutable
 /** plan-mandated tests pinning the Classpath immutability contract.
   *
   * Leaves:
-  *   1. Classpath constructor fields are immutable (INV-003).
+  *   1. Classpath constructor fields are immutable.
   */
 class ClasspathImmutabilityTest extends kyo.test.Test[Any]:
 
@@ -49,7 +49,7 @@ class ClasspathImmutabilityTest extends kyo.test.Test[Any]:
     // Given: a Classpath cp returned from Classpath.init.
     // When: any cp field is accessed twice.
     // Then: both accesses return the same reference (val semantics); no reassignment is possible.
-    "Leaf 1: Classpath constructor fields are immutable (val semantics)" in {
+    "Classpath constructor fields are immutable (val semantics)" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath.flatMap: cp =>
                 Sync.defer:

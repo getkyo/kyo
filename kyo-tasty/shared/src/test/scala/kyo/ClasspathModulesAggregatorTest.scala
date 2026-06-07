@@ -4,7 +4,7 @@ import kyo.Tasty.SymbolId
 
 /** followup for W-06-03: exercises `Classpath.modules` bulk aggregator.
   *
-  * W-06-03 noted that design/02-design.md §Classpath typed-accessors lists `def modules: Chunk[ModuleDescriptor]` but only landed
+  * W-06-03 noted that §Classpath typed-accessors lists `def modules: Chunk[ModuleDescriptor]` but only landed
   * `findModule` and `requireModule`. This test validates the new `modules` aggregator added in.
   */
 class ClasspathModulesAggregatorTest extends kyo.test.Test[Any]:

@@ -3,11 +3,10 @@ package kyo
 import kyo.Tasty.SymbolId
 import kyo.internal.tasty.symbol.SymbolKind
 
-/** plan tests for Type ADT SymbolId migration.
+/**   *
+  * Tests 1, 3, 4, 5 from phase id 5. Test 2 (TypeArena canonicalization) lives in TypeArenaTest.
   *
-  * Tests 1, 3, 4, 5 from design/05-plan.yaml phase id 5. Test 2 (TypeArena canonicalization) lives in TypeArenaTest.
-  *
-  * Produces INV-009: SymbolId in Type ADT eliminates case-class cycles.
+  * Produces : SymbolId in Type ADT eliminates case-class cycles.
   */
 class TypeSymbolIdTest extends kyo.test.Test[Any]:
 
@@ -17,7 +16,7 @@ class TypeSymbolIdTest extends kyo.test.Test[Any]:
     // ── Test 1: Type.Named carries SymbolId not Symbol ──────────────────────
 
     /** Given: a Type.Named instance constructed with a known SymbolId. When: the symbolId field is accessed. Then: the field type is
-      * SymbolId and the integer value matches what was passed in. Pins: INV-009 (no direct Symbol references in Type ADT).
+      * SymbolId and the integer value matches what was passed in. Pins: (no direct Symbol references in Type ADT).
       */
     "Type.Named carries SymbolId not Symbol" in {
         val id    = SymbolId(42)
@@ -35,7 +34,7 @@ class TypeSymbolIdTest extends kyo.test.Test[Any]:
 
     /** Given: a Classpath with a symbol at index 0 having kind=Unresolved. When: Pass C completes and the resulting Classpath is queried
       * via cp.symbol(id). Then: cp.symbols contains a symbol with kind=Unresolved at the SymbolId index; no NullPointerException, no
-      * AIOOBE. Pins: INV-002 (every Type.Named id resolves to a valid symbol).
+      * AIOOBE. Pins: (every Type.Named id resolves to a valid symbol).
       */
     "Type.Named(unresolved) references a valid symbol in classpath" in {
         val unresolvedSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("does.not.Exist"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
@@ -56,7 +55,7 @@ class TypeSymbolIdTest extends kyo.test.Test[Any]:
     // ── Test 4: Type pattern equality does not recurse through Symbol ────────
 
     /** Given: two distinct Symbols a and b with structurally identical parentTypes containing Named(SymbolId(7)). When: the parentTypes
-      * chunks are compared via ==. Then: comparison returns true and terminates in bounded time (no infinite recursion). Pins: INV-009
+      * chunks are compared via ==. Then: comparison returns true and terminates in bounded time (no infinite recursion). Pins:
       * (case-class equals on Type values never recurses through Symbol or Classpath).
       */
     "Type pattern equality does not recurse through Symbol" in {
@@ -75,7 +74,7 @@ class TypeSymbolIdTest extends kyo.test.Test[Any]:
     // ── Test 5: isSubtypeOf and show are member methods, not extensions ──────
 
     /** Given: a Type t. When: Tasty.isSubtypeOf(t, other) and Tasty.typeShow(t) are called from user code without importing any extension namespace. Then:
-      * both calls compile and resolve to the enum member. Pins: INV-009 (member methods on owned types).
+      * both calls compile and resolve to the enum member. Pins: (member methods on owned types).
       */
     "isSubtypeOf and show are member methods, not extensions" in {
         Tasty.withPickles(Chunk.empty):

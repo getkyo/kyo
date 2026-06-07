@@ -79,9 +79,9 @@ private[kyo] object FqnNormalizer:
       * Skips: $$ (double-dollar synthetic patterns), trailing $, leading $.
       * Only replaces a $ when the character before it is not $ and the character after it is not $.
       *
-      * F-014: uses explicit `i == 0` / `i == len - 1` boundary checks instead of an in-band
-      * sentinel character. The prior sentinel would mis-classify a real sentinel-value character
-      * adjacent to `$` as a boundary, preventing replacement in pathological inputs.
+      * Uses explicit `i == 0` / `i == len - 1` boundary checks instead of an in-band sentinel
+      * character. A sentinel approach would mis-classify a real sentinel-value character adjacent
+      * to `$` as a boundary, preventing replacement in pathological inputs.
       */
     private def replaceInnerDollar(s: String): String =
         val len = s.length
@@ -141,7 +141,7 @@ private[kyo] object FqnNormalizer:
     /** Return true if the given source FQN corresponds to a known Scala value class.
       *
       * Value classes (scala.Int, scala.Long, etc.) use scala.AnyVal as their synthetic default parent
-      * for Q-005 parent injection when no explicit parent is present in TASTy.
+      * for default-parent injection when no explicit parent is present in TASTy.
       */
     def isValueClass(sourceFqn: String): Boolean = ValueClassFqns.contains(sourceFqn)
 

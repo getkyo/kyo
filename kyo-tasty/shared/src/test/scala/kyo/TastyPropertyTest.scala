@@ -3,10 +3,10 @@ package kyo
 /** Property tests: every .tasty file in the embedded fixture set decodes without sentinels or unknown tags.
   *
   * Probes:
-  *   - Zero unknown tags: no `TastyError.UnknownTagInPosition` in cp.errors.
-  *   - Zero Named(-1): no method declaredType reachable from cp.allMethods carries SymbolId(-1).
+  *   Zero unknown tags: no `TastyError.UnknownTagInPosition` in cp.errors.
+  *   Zero Named(-1): no method declaredType reachable from cp.allMethods carries SymbolId(-1).
   *
-  * Cross-platform: uses the embedded fixture set via TestClasspaths.withClasspath(). No JVM filesystem required.
+  * Cross-platform: uses the embedded fixture set via TestClasspaths.withClasspath. No JVM filesystem required.
   *
   * Proposal 5 of-strict (HARD RULE 13).
   */
@@ -14,8 +14,8 @@ class TastyPropertyTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // Leaf 1: embedded fixture .tasty files decode with zero unknown-tag errors
-    "PROP-001: embedded fixture .tasty files decode with zero UnknownTagInPosition errors" in {
+    // embedded fixture.tasty files decode with zero unknown-tag errors
+    "embedded fixture .tasty files decode with zero UnknownTagInPosition errors" in {
         kyo.internal.TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val unknownTag = cp.errors.collect:
                 case TastyError.UnknownTagInPosition(tag, pos) =>
@@ -27,8 +27,8 @@ class TastyPropertyTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 2: embedded fixture: zero Named(-1) in allMethods declaredType
-    "PROP-002: embedded fixture: zero Named(-1) in allMethods declaredType" in {
+    // embedded fixture: zero Named(-1) in allMethods declaredType
+    "embedded fixture: zero Named(-1) in allMethods declaredType" in {
         kyo.internal.TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             import kyo.Tasty.SymbolId.value as idValue
             var sentinelCount   = 0

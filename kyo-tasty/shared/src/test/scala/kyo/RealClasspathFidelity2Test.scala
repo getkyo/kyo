@@ -4,16 +4,13 @@ import kyo.internal.Fidelity2TestBase
 import kyo.internal.TestClasspaths
 import kyo.internal.TestClasspaths2
 
-/** Anchor fidelity test suite for the decoder-fidelity-2 campaign.
+/** Anchor fidelity test suite for second-round decoder fidelity.
   *
-  * This file owns the cross-cutting invariant leaves (INV-001, INV-003) and the 44-finding PENDING spine that subsequent phases un-pend.
-  * Each F-id from the decoder-fidelity-2 design maps to exactly one PENDING leaf; phases 2.02 through 2.09 un-pend their assigned leaves.
+  * Active tests cover no-unknown-tags-on-clean-load, single-tasty-load-zero-warnings, and
+  * kyo-tasty-jar-zero-warnings.
   *
-  * active leaves (4): no-unknown-tags-on-clean-load, single-tasty-load-zero-warnings, kyo-tasty-jar-zero-warnings,
-  * forty-four-pending-leaves-at-phase-2-01.
-  *
-  * relocated from jvm/src/test to shared/src/test. Leaves using JVM filesystem APIs (loadStandardWithSink, findWorktreeRoot)
-  * are gated with the jvmOnly tag. On JS/Native those leaves are skipped; all PENDING stubs compile and run on every platform.
+  * Tests using JVM filesystem APIs (loadStandardWithSink, findWorktreeRoot) are gated with the
+  * jvmOnly tag. On JS/Native those tests are skipped; the rest run on every platform.
   */
 class RealClasspathFidelity2Test extends Fidelity2TestBase:
 
@@ -23,10 +20,10 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
     // ACTIVE leaves (JVM-only: use loadStandardWithSink)
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Leaf 4: no-unknown-tags-on-clean-load
-    // Given: TestClasspaths.withClasspath() loaded with a warning sink (cross-platform: embedded fixtures on all platforms)
+    // no-unknown-tags-on-clean-load
+    // Given: TestClasspaths.withClasspath loaded with a warning sink (cross-platform: embedded fixtures on all platforms)
     // When: counting sink entries whose message matches "unhandled cat" (new wording) or "unknown TASTy type tag" (legacy)
-    // Then: post-fix the count is 0; before fix at decoder-fidelity-2 entry the count is 78,501 on the real stdlib classpath
+    // Then: the count is 0; before fix at decoder-fidelity-2 entry the count is 78,501 on the real stdlib classpath
     // Cross-platform: the "no unknown-tag warnings" invariant is decoder-wide and holds on any classpath; embedded fixtures
     //   exercise every TASTy tag used in the fixture corpus. The JVM run additionally exercises the full stdlib corpus.
     "no unknown-tag warnings on clean classpath load" in {
@@ -40,10 +37,10 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 5: single-tasty-load-zero-warnings
+    // single-tasty-load-zero-warnings
     // Given: the embedded-fixture classpath load captured with a warning sink
     // When: counting unknown-tag entries in the warning sink
-    // Then: post-fix the count is 0; before fix the count > 0 (probe-001.log line 59 NEW=95 warning on stdlib)
+    // Then: the count is 0; before fix the count > 0 (probe-001.log line 59 NEW=95 warning on stdlib)
     // Cross-platform: the per-file decoder produces no unknown-tag warnings on a clean load regardless of corpus size.
     "single-tasty-load emits zero unknown-tag warnings" in {
         TestClasspaths2.loadEmbeddedWithSink.map: (_, sink) =>
@@ -54,16 +51,16 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 6: production-decoder-zero-warnings
+    // production-decoder-zero-warnings
     // Given: a classpath load captured with a warning sink
     // When: counting unknown-tag warnings after load
-    // Then: post-fix the count is 0; before fix the count exceeded 5,000 on the kyo-tasty jar per probe-001.log
+    // Then: the count is 0; before fix the count exceeded 5,000 on the kyo-tasty jar per probe-001.log
     // Cross-platform: the production decoder emits no unknown-tag warnings on any clean classpath.
     "production decoder contributes zero unknown-tag warnings" in {
         TestClasspaths2.loadEmbeddedWithSink.map: (cp, sink) =>
             assert(
                 sink.unknownTagCount == 0,
-                s"Expected 0 unknown-tag warnings on clean load (pre-fix >5,000 on kyo-tasty jar), found ${sink.unknownTagCount}"
+                s"Expected 0 unknown-tag warnings on clean load, found ${sink.unknownTagCount}"
             )
             succeed
     }
@@ -106,41 +103,34 @@ class RealClasspathFidelity2Test extends Fidelity2TestBase:
 
     // Leaf: jvm-only-leaf-gated-with-runJVM
     // Given: leaves that exercise JVM-only primitives (jrt:/, real stdlib classpath, JVM filesystem) use
-    //        runJVM { ... } so JS/Native compile away the body at link time.
+    //        runJVM {. } so JS/Native compile away the body at link time.
     // When: the test framework selects a leaf on a non-JVM platform
     // Then: the leaf is skipped via runJVM rather than failing
     // This meta-leaf is always passing; it documents the gating convention for auditors.
     "Phase-2.10 (HARD RULE 12): JVM-only leaves are gated with runJVM (cited per-leaf)" in {
-        // The gating convention is enforced structurally by runJVM { ... } on each
+        // The gating convention is enforced structurally by runJVM {. } on each
         // JVM-only leaf, each carrying a per-leaf rationale citing one of three exception conditions.
         succeed
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // ..2.11 backlog: RESOLVED 2026-06-02.
-    //
+    // 2.11 backlog: RESOLVED 2026-06-02.
     // All 34 PENDING leaves removed after verifying coverage in sibling Fidelity2 files. Each F-id below is
     // exercised by at least one active assertion in the cited test file; deleting the placeholder removes the
     // duplicate stub without losing coverage.
-    //
     // Coverage map (verdict C: already-covered):
-    //    ,            : ContextFunctionFidelity2Test
-    //                        : ConfirmationFidelity2Test (givens-enumeration-baseline)
-    //    ,  ,  ,
-    //    ,  ,  ,
-    //                        : TypeAdtFidelity2Test (AndType, MatchType, OpaqueType, scala.reflect FQN,
+    //    ContextFunctionFidelity2Test
+    //                        ConfirmationFidelity2Test (givens-enumeration-baseline)
+    //                        TypeAdtFidelity2Test (AndType, MatchType, OpaqueType, scala.reflect FQN,
     //                                                       by-name params, Refinement via SealedAdtCompletenessTest map)
-    //                        : EnumCaseFidelity2Test
-    //                        : VarargsFidelity2Test
-    //                        : UntestedFidelity2Test (DEFERRED per OQ-007: capture-checking needs -Ycc)
-    //    ,  ,
-    //                        : JpmsFidelity2Test (jvm/)
-    //    ,  ,  : SnapshotFidelity2Test
-    //    ,  ,  : ConfirmationFidelity2Test
-    //    ,  ,  ,
-    //    ,  ,  ,
-    //                        : ErrorFidelity2Test
-    //                        : CollisionFidelity2Test
+    //                        EnumCaseFidelity2Test
+    //                        VarargsFidelity2Test
+    //                        UntestedFidelity2Test (DEFERRED per OQ-007: capture-checking needs -Ycc)
+    //                        JpmsFidelity2Test (jvm/)
+    //    SnapshotFidelity2Test
+    //    ConfirmationFidelity2Test
+    //                        ErrorFidelity2Test
+    //                        CollisionFidelity2Test
     // ─────────────────────────────────────────────────────────────────────────
 
 end RealClasspathFidelity2Test

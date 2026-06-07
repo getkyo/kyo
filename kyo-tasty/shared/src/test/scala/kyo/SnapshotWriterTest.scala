@@ -11,9 +11,9 @@ import scala.collection.mutable
 
 /** Tests for SnapshotWriter serialization correctness.
   *
-  * INV-015 writer side: snapshot written from a real TASTy classpath has PARENTS, MEMBERS, and TPARAMS_ sections with length > 0.
+  * writer side: snapshot written from a real TASTy classpath has PARENTS, MEMBERS, and TPARAMS_ sections with length > 0.
   *
-  * CARRY-1 regression: two cold-writes of the same classpath produce byte-equal snapshots, AND warm-then-reserialize also
+  * regression: two cold-writes of the same classpath produce byte-equal snapshots, AND warm-then-reserialize also
   * produces byte-equal output. The fix replaces IdentityHashMap[Symbol,String] with HashMap[Int,String] keyed by SymbolId.value
   * so that warm-loaded Symbol instances (with different object identity but same id.value) hit the FQN map correctly.
   */
@@ -58,7 +58,7 @@ class SnapshotWriterTest extends kyo.test.Test[Any]:
                     case None        => Abort.fail(TastyError.FileNotFound(path))
     end MemoryFileSource
 
-    // Test 1 (INV-015 writer side): PARENTS, MEMBERS, and TPARAMS_ sections have length > 0
+    // Test 1 (writer side): PARENTS, MEMBERS, and TPARAMS_ sections have length > 0
     // after writing a snapshot from a real TASTy classpath that has class declarations and parents.
     "snapshot PARENTS, MEMBERS, and TPARAMS_ sections have length > 0 after writing a real classpath" in {
         val src = MemoryFileSource()
@@ -103,35 +103,35 @@ class SnapshotWriterTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // CARRY-1 test 1: two independent cold serializations of the same classpath produce byte-equal output.
-    // Regression guard for F-A4-OPEN-IDEMPOTENT (decoder-fidelity-2 carry-over).
+    // test 1: two independent cold serializations of the same classpath produce byte-equal output.
+    // Regression guard for (decoder-fidelity-2 carry-over).
     // Cross-platform: uses embedded fixtures so it runs on JVM, JS, and Native.
-    "CARRY-1 cold-vs-cold: two same-run serializations of the same classpath are byte-equal" in {
+    "two same-run serializations of the same classpath are byte-equal" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val digest = Array[Byte](0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67)
             val a      = SnapshotWriter.serializeToBytes(cp, digest)
             val b      = SnapshotWriter.serializeToBytes(cp, digest)
             assert(
                 java.util.Arrays.equals(a, b),
-                s"CARRY-1 cold-vs-cold: two serializations differ; len_a=${a.length} len_b=${b.length}"
+                s"cold-vs-cold: two serializations differ; len_a=${a.length} len_b=${b.length}"
             )
             succeed
     }
 
-    // CARRY-1 test 2: serialize cold, read back as warm, re-serialize warm: byte-equal to original.
+    // test 2: serialize cold, read back as warm, re-serialize warm: byte-equal to original.
     // Regression guard for the warm-then-reserialize residual reproduced in decoder-fidelity-3 leaf 24.
     // The IdentityHashMap lookup missed on warm-load symbols (fresh identity, same id.value) causing
     // annotation FQN interning order to differ and producing a 13-byte divergence. Fixed by keying
     // fqnBySymbol by SymbolId.value (Int) instead of Symbol object identity.
-    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory() which works on JVM, JS, and Native.
-    "CARRY-1 warm-reserialize: warm-loaded classpath re-serializes byte-equal to the original snapshot" in {
+    // Cross-platform: uses TestClasspaths2.withSnapshotInMemory which works on JVM, JS, and Native.
+    "warm-loaded classpath re-serializes byte-equal to the original snapshot" in {
         TestClasspaths2.withSnapshotInMemory().map: (cold, warm) =>
             val digest = Array[Byte](0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77)
             val a      = SnapshotWriter.serializeToBytes(cold, digest)
             val b      = SnapshotWriter.serializeToBytes(warm, digest)
             assert(
                 java.util.Arrays.equals(a, b),
-                s"CARRY-1 warm-reserialize: warm re-serialization differs; len_a=${a.length} len_b=${b.length}"
+                s"warm-reserialize: warm re-serialization differs; len_a=${a.length} len_b=${b.length}"
             )
             succeed
     }

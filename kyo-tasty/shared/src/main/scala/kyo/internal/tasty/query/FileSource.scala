@@ -37,7 +37,7 @@ trait FileSource:
       * JS via Node fs unlink). A missing path is a no-op (`kyo.Path.remove` returns false). Any `FileFsException` raised
       * by the platform layer is mapped to `TastyError.SnapshotIoError` so call sites see a uniform error type.
       *
-      * INV-009 site-4: realised by `Tasty.Snapshot.deleteFile` after F-001.
+      * Realised by `Tasty.Snapshot.deleteFile`.
       */
     def delete(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
         Abort.recover[FileFsException](err => Abort.fail(TastyError.SnapshotIoError(s"delete $path: ${err.getMessage}"))):

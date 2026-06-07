@@ -37,7 +37,7 @@ class ClasspathFlatListPreservationTest extends kyo.test.Test[Any]:
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
     end openFixtureCp
 
-    // Leaf 41: symbols-size-equals-sum-of-per-kind
+    // symbols-size-equals-sum-of-per-kind
     // Given: fixture loaded cp; When: cp.symbols.size and sum over 14 kinds; Then: equal
     "symbols-size-equals-sum-of-per-kind: flat list size equals sum of per-kind counts" in {
         Scope.run:
@@ -53,7 +53,7 @@ class ClasspathFlatListPreservationTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // Leaf 42: symbols-still-returns-Chunk-Symbol
+    // symbols-still-returns-Chunk-Symbol
     // Given: fixture loaded cp; When: val xs: Chunk[Tasty.Symbol] = cp.symbols; Then: compiles; size matches
     "symbols-still-returns-Chunk-Symbol: cp.symbols has type Chunk[Tasty.Symbol]" in {
         Scope.run:

@@ -12,7 +12,7 @@ import kyo.AllowUnsafe
   * Reference: dotty TastyReader.scala readLongNat / readLongInt.
   *
   * IMPORTANT: Signed integers (readInt / readLongInt) use 2's complement encoding with sign extension on bit 6 of the first byte. This is
-  * NOT zigzag encoding. The plan's "(n>>>1)^-(n&1)" formula is incorrect; the actual dotty TastyReader.readLongInt uses sign extension as
+  * NOT zigzag encoding. A zigzag formula "(n>>>1)^-(n&1)" would be incorrect; the actual dotty TastyReader.readLongInt uses sign extension as
   * implemented below.
   *
   * See: dotty/tools/tasty/TastyReader.scala, readLongNat (lines ~68-77), readLongInt (lines ~81-89).
@@ -22,9 +22,9 @@ object Varint:
 
     /** Read an unsigned big-endian base-128 Nat from `view` as Int.
       *
-      * Per Q-002 / actual dotty TastyReader.readNat: delegates to readLongNat and truncates the Long result to Int. No separate per-byte
+      * Matches dotty's TastyReader.readNat: delegates to readLongNat and truncates the Long result to Int. No separate per-byte
       * Int-range check is applied; dotty's TastyReader.readNat does readLongNat().toInt without a range check, and kyo matches that behavior
-      * so that large-section offsets encoded in 6-10 bytes are accepted (the old 5-byte cap was too strict).
+      * so that large-section offsets encoded in 6-10 bytes are accepted (a 5-byte cap would be too strict).
       */
     def readNat(view: ByteView)(using AllowUnsafe): Int =
         readLongNat(view).toInt

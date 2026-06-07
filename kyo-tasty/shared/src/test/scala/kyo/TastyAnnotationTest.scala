@@ -3,7 +3,7 @@ import kyo.internal.tasty.symbol.SymbolKind
 
 /** Tests for Tasty.Annotation public API surface after (pure case class with eager arguments).
   *
-  * (INV-006): Annotation is now a pure case class with arguments: Chunk[Tree] populated eagerly at open time. No argsPickle field,
+  * Annotation is now a pure case class with arguments: Chunk[Tree] populated eagerly at open time. No argsPickle field,
   * no DecodeContext, no effectful arguments accessor.
   *
   * makeNamed is inherited from TastyTestSupport.
@@ -68,7 +68,7 @@ class TastyAnnotationTest extends kyo.test.Test[Any] with TastyTestSupport:
     }
 
     // Test 3: Annotation with non-empty arguments field holds the trees directly.
-    // : arguments is a plain Chunk[Tree] field; no effect row needed.
+    // arguments is a plain Chunk[Tree] field; no effect row needed.
     "Annotation with a non-empty arguments chunk holds the trees as a plain field" in {
         import AllowUnsafe.embrace.danger
         val sym  = Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name("Foo"), Tasty.Flags.empty, Tasty.SymbolId(-1), Chunk.empty)

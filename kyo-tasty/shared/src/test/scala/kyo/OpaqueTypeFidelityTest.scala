@@ -4,23 +4,24 @@ import kyo.internal.TestClasspaths
 
 /** Fidelity tests for opaque type detection and dual FQN indexing.
   *
-  * Pins findings  ,  , and   All leaves were PENDING until un-pended them by adding dual-index registration for
-  * OpaqueType symbols in `ClasspathOrchestrator.mergeOneInto`, so that both the binary FQN (`kyo.Maybe$package$.Maybe`) and the source FQN
-  * (`kyo.Maybe`) point to the same `Symbol.OpaqueType` instance.
+  * Exercises dual-index registration for OpaqueType symbols in
+  * `ClasspathOrchestrator.mergeOneInto`, so both the binary FQN
+  * (`kyo.Maybe$package$.Maybe`) and the source FQN (`kyo.Maybe`) point to the same
+  * `Symbol.OpaqueType` instance.
   *
-  * all 4 leaves ungated. OpaqueFixture (kyo-tasty-fixtures/shared) provides two opaque types (`kyo.fixtures.Micros`
-  * and `kyo.fixtures.Millis`) in the embedded fixture set. Leaves 1-4 are rewritten to use these embedded opaque types instead of kyo.Maybe,
-  * kyo.Result, and kyo.Duration from kyo-data. The dual-FQN indexing property is structurally identical: a package-level opaque type
-  * `X` in `kyo.fixtures` has binary FQN `kyo.fixtures.OpaqueFixture$package$.X` and source FQN `kyo.fixtures.X`; both must be findable.
+  * OpaqueFixture (kyo-tasty-fixtures/shared) provides two opaque types (`kyo.fixtures.Micros` and
+  * `kyo.fixtures.Millis`) in the embedded fixture set. A package-level opaque type `X` in
+  * `kyo.fixtures` has binary FQN `kyo.fixtures.OpaqueFixture$package$.X` and source FQN
+  * `kyo.fixtures.X`; both must be findable.
   */
 class OpaqueTypeFidelityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    //   / leaf 1: embedded-micros
+    //   embedded-micros
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: calling cp.findSymbol("kyo.fixtures.Micros")
-    // Then: post-fix Present(s: Symbol.OpaqueType) with s.name.asString == "Micros"
+    // Then: Present(s: Symbol.OpaqueType) with s.name.asString == "Micros"
     // Cross-platform: kyo.fixtures.Micros is in the embedded fixture set (OpaqueFixture.scala) on all platforms.
     "cp.findSymbol(kyo.fixtures.Micros) returns Present(Symbol.OpaqueType)" in {
         import Tasty.Name.asString
@@ -47,10 +48,10 @@ class OpaqueTypeFidelityTest extends kyo.test.Test[Any]:
                     )
     }
 
-    //   leaf 2: embedded-micros-and-millis
+    //   embedded-micros-and-millis
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: calling cp.findSymbol("kyo.fixtures.Micros") and cp.findSymbol("kyo.fixtures.Millis")
-    // Then: post-fix both return Present(_: Symbol.OpaqueType)
+    // Then: both return Present(_: Symbol.OpaqueType)
     // Cross-platform: both Micros and Millis are in the embedded fixture set (OpaqueFixture.scala) on all platforms.
     "cp.findSymbol(kyo.fixtures.Micros) and kyo.fixtures.Millis return Present(Symbol.OpaqueType)" in {
         import Tasty.Name.asString
@@ -72,12 +73,12 @@ class OpaqueTypeFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Q-003 /   leaf 3: binary-fqn-still-findable
+    // leaf 3: binary-fqn-still-findable
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: calling cp.findSymbol("kyo.fixtures.OpaqueFixture$package$.Micros")
-    // Then: post-fix Present(_) (the binary FQN remains resolvable per HARD RULE 4 layer-don't-restrict)
+    // Then: Present(_) (the binary FQN remains resolvable per HARD RULE 4 layer-don't-restrict)
     // Cross-platform: OpaqueFixture is in the embedded fixture set on all platforms.
-    "Q-003 : opaque type is findable via its binary FQN kyo.fixtures.OpaqueFixture$package$.Micros" in {
+    "opaque type is findable via its binary FQN kyo.fixtures.OpaqueFixture$package$.Micros" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             // The source FQN must resolve to OpaqueType (this is the primary pin).
             val sourceResult = cp.findSymbol("kyo.fixtures.Micros")
@@ -97,10 +98,10 @@ class OpaqueTypeFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // leaf 4: no-opaque-as-val
+    // no-opaque-as-val
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: calling cp.findSymbol("kyo.fixtures.Micros") and examining cp.allOpaqueTypes for a "Micros" entry
-    // Then: post-fix cp.findSymbol("kyo.fixtures.Micros") returns a Symbol.OpaqueType (not Symbol.Val);
+    // Then: cp.findSymbol("kyo.fixtures.Micros") returns a Symbol.OpaqueType (not Symbol.Val);
     //       cp.allOpaqueTypes includes a symbol named "Micros"
     // Cross-platform: Micros is in the embedded fixture set (OpaqueFixture.scala) on all platforms.
     "kyo.fixtures.Micros symbol is Symbol.OpaqueType, not Symbol.Val" in {

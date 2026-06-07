@@ -132,7 +132,7 @@ class SymbolMemberSearchTest extends kyo.test.Test[Any]:
     // Given: class A { def foo; val x }
     // When: a.declaredMembers.map(_.simpleName)
     // Then: returns Chunk("foo", "x")
-    "Leaf 145: declaredMembers returns direct declarations of ClassLike" in {
+    "declaredMembers returns direct declarations of ClassLike" in {
         buildClassA.map: cp =>
             val a     = cp.findClass("A").get
             val names = a.declarationIds.flatMap(id => cp.symbol(id).toChunk).map(_.simpleName)
@@ -144,7 +144,7 @@ class SymbolMemberSearchTest extends kyo.test.Test[Any]:
     // Given: a Symbol.Method m.
     // When: m.declaredMembers.
     // Then: returns Chunk.empty.
-    "Leaf 146: declaredMembers returns empty for non-ClassLike symbol" in {
+    "declaredMembers returns empty for non-ClassLike symbol" in {
         buildClassA.map: cp =>
             val m = cp.symbol(SymbolId(1)).asInstanceOf[Tasty.Symbol.Method]
             // Method symbols have no declarationIds (they are not ClassLike/Package)
@@ -155,7 +155,7 @@ class SymbolMemberSearchTest extends kyo.test.Test[Any]:
     // Given: class A { def foo }; class B extends A { def bar }
     // When: b.allMembers.map(_.simpleName).toSet
     // Then: returns Set("bar", "foo")
-    "Leaf 147: allMembers includes inherited members from parent ClassLike" in {
+    "allMembers includes inherited members from parent ClassLike" in {
         buildInheritanceFixture.map: cp =>
             val b = cp.findClass("B").get
             val names = {
@@ -182,7 +182,7 @@ class SymbolMemberSearchTest extends kyo.test.Test[Any]:
     // Given: same fixture as leaf 147.
     // When: Maybe.fromOption(b.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "foo")) and b.findInheritedMember("foo").
     // Then: declared returns Absent; inherited returns Present.
-    "Leaf 148: findDeclaredMember vs findInheritedMember for inherited method" in {
+    "findDeclaredMember vs findInheritedMember for inherited method" in {
         buildInheritanceFixture.map: cp =>
             val b        = cp.findClass("B").get
             val declared = Maybe.fromOption(b.declarationIds.flatMap(id => cp.symbol(id).toChunk).find(_.simpleName == "foo"))
@@ -215,7 +215,7 @@ class SymbolMemberSearchTest extends kyo.test.Test[Any]:
     // Given: same fixture as leaf 147.
     // When: b.findAnyMember("foo").
     // Then: returns Maybe.Present(_).
-    "Leaf 149: findAnyMember finds inherited member" in {
+    "findAnyMember finds inherited member" in {
         buildInheritanceFixture.map: cp =>
             val b = cp.findClass("B").get
             val result =
@@ -242,7 +242,7 @@ class SymbolMemberSearchTest extends kyo.test.Test[Any]:
     // Given: class A { def foo(x: Int); def foo(s: String) } (overloaded).
     // When: a.collectMembers("foo").
     // Then: returns Chunk[Symbol] of size 2.
-    "Leaf 150: collectMembers returns all overloaded declarations" in {
+    "collectMembers returns all overloaded declarations" in {
         buildOverloadedFixture.map: cp =>
             val a       = cp.findClass("A").get
             val members = a.declarationIds.flatMap(id => cp.symbol(id).toChunk).filter(_.simpleName == "foo")

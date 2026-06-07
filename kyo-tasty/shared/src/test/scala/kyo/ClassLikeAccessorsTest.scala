@@ -5,10 +5,11 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.FileSource
 import scala.collection.mutable
 
-/** Plan-mandated tests for (leaves 52-65, 69): ClassLike typed resolution accessors.
+/** Tests for ClassLike typed resolution accessors.
   *
-  * Leaves 52-64, 69 use fromPicklesWithSymbols for synthetic fixtures. Leaf 65 (companion-on-class-resolves) uses a real cold-classpath
-  * opened via ClasspathOrchestrator to ensure companionIndex is populated (W-02: SnapshotReader does not re-encode relational data).
+  * Most cases use fromPicklesWithSymbols for synthetic fixtures. The companion-on-class-resolves
+  * case uses a real cold-classpath opened via ClasspathOrchestrator so that companionIndex is
+  * populated (SnapshotReader does not re-encode relational data).
   */
 class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
 
@@ -215,7 +216,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
     private def openClasspath(src: FileSource)(using Frame): Tasty.Classpath < (Sync & Async & Scope & Abort[TastyError]) =
         ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, src, 1)
 
-    // Leaf 52: parents-on-class
+    // parents-on-class
     // Given: fixture Symbol.Class with two Type.Named parents pointing to AnyRef + T
     // When: c.parents
     // Then: Chunk[ClassLike] size 2
@@ -245,7 +246,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 53: methods-typed-Chunk-Method
+    // methods-typed-Chunk-Method
     // Given: fixture class with def foo, def bar, val x
     // When: c.methods
     // Then: Chunk[Method] size 2 names foo/bar
@@ -264,7 +265,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 54: vals-typed-Chunk-Val
+    // vals-typed-Chunk-Val
     // Given: same fixture class with def foo, def bar, val x
     // When: c.vals
     // Then: Chunk[Val] size 1 name x
@@ -281,7 +282,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 55: vars-typed-Chunk-Var
+    // vars-typed-Chunk-Var
     // Given: fixture class with var y
     // When: c.vars
     // Then: Chunk[Var] size 1 name y
@@ -297,7 +298,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 56: fields-typed-on-java
+    // fields-typed-on-java
     // Given: class fixture with two Field declarations (Java classfile field kind)
     // When: c.fields
     // Then: Chunk[Field] size 2
@@ -315,7 +316,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 57: nestedTypes
+    // nestedTypes
     // Given: outer class with declarations: inner class, inner trait, inner object
     // When: c.nestedTypes
     // Then: Chunk[ClassLike] size 3
@@ -333,7 +334,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 58: typeAliases
+    // typeAliases
     // Given: class fixture with type A = Int, type B = String
     // When: c.declarations.collect { case t: Tasty.Symbol.TypeAlias => t }
     // Then: Chunk[TypeAlias] size 2
@@ -352,7 +353,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 59: abstractTypes
+    // abstractTypes
     // Given: trait fixture with abstract type X (no body)
     // When: t.declarations.collect { case t: Tasty.Symbol.AbstractType => t }
     // Then: Chunk[AbstractType] size 1
@@ -369,7 +370,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 60: opaqueTypes
+    // opaqueTypes
     // Given: object fixture with opaque type Money = Long
     // When: o.declarations.collect { case t: Tasty.Symbol.OpaqueType => t }
     // Then: Chunk[OpaqueType] size 1
@@ -388,7 +389,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 61: typeParams-on-class
+    // typeParams-on-class
     // Given: class C[A, +B, -C] -- typeParamIds pointing to 3 TypeParam symbols
     // When: c.typeParams
     // Then: Chunk[TypeParam] size 3 variances Invariant/Covariant/Contravariant
@@ -409,7 +410,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 62: declarations-untyped-Chunk-Symbol
+    // declarations-untyped-Chunk-Symbol
     // Given: class fixture with 4 declarations (method, val, var, field)
     // When: c.declarations
     // Then: Chunk[Symbol] size 4; binding as Chunk[Symbol] compiles
@@ -426,7 +427,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 63: constructors-typed
+    // constructors-typed
     // Given: class with primary <init> and secondary <init>
     // When: c.methods.collect { case m: Tasty.Symbol.Method if m.name.asString == "<init>" => m }
     // Then: Chunk[Method] size 2; all names == "<init>"
@@ -450,7 +451,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 64: parents-on-trait
+    // parents-on-trait
     // Given: trait T with one Type.Named parent pointing to another Trait U
     // When: t.parents
     // Then: Chunk[ClassLike] size 1 element is Symbol.Trait named "U"
@@ -473,7 +474,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Leaf 65: companion-on-class-resolves
+    // companion-on-class-resolves
     // Given: real cold classpath with PlainClass.tasty (class + companion registered by orchestrator)
     // When: cls.companion
     // Then: companion returns a Maybe (Present or Absent); the call itself does not throw
@@ -495,7 +496,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
                 case Result.Panic(t)   => throw t
     }
 
-    // Leaf 69: prior-flag-predicates-still-work-on-classlike
+    // prior-flag-predicates-still-work-on-classlike
     // Given: Symbol.Class with Final+Case flags; Symbol.Trait with Abstract+Sealed flags
     // When: invoke 8 representative flag predicates
     // Then: each predicate returns the correct boolean per

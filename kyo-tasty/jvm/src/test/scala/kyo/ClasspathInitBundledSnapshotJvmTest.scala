@@ -14,10 +14,10 @@ import scala.collection.mutable
 
 /** JVM-only leaves for ClasspathInitBundledSnapshot that require real jar files (java.util.zip, java.io.File).
   *
-  * Leaf 4: end-to-end transparent bundled load -- probe HIT; symbols come from bundled snapshot.
-  * Leaf 5: mixed-root merge -- bundled jar + cold jar produces combined symbol count.
-  * Leaf 6: digest mismatch under SoftFail falls back to cold load.
-  * Leaf 7: digest mismatch under FailFast raises DigestMismatch.
+  * end-to-end transparent bundled load -- probe HIT; symbols come from bundled snapshot.
+  * mixed-root merge -- bundled jar + cold jar produces combined symbol count.
+  * digest mismatch under SoftFail falls back to cold load.
+  * digest mismatch under FailFast raises DigestMismatch.
   *
   * Cross-platform leaf (10) lives in ClasspathInitBundledSnapshotTest.scala (shared/src/test).
   */
@@ -132,8 +132,8 @@ class ClasspathInitBundledSnapshotJvmTest extends kyo.test.Test[Any]:
                                     case None    => Maybe.Absent)
     end ZipMemoryFileSource
 
-    // Leaf 4: end-to-end transparent bundled load (probe HIT)
-    "Leaf 4: end-to-end bundled load produces exact symbol count (probe HIT)" in {
+    // end-to-end transparent bundled load (probe HIT)
+    "end-to-end bundled load produces exact symbol count (probe HIT)" in {
         val baseBytes     = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val baseFile      = writeTempJar(baseBytes)
         val basePath      = baseFile.getAbsolutePath
@@ -162,8 +162,8 @@ class ClasspathInitBundledSnapshotJvmTest extends kyo.test.Test[Any]:
                 assert(!hasMismatch, s"unexpected DigestMismatch in errors: ${cp.errors}")
     }
 
-    // Leaf 5: mixed-root merge (bundled HIT + cold jar)
-    "Leaf 5: mixed-root merge: bundled root contributes exact symbol count from snapshot" in {
+    // mixed-root merge (bundled HIT + cold jar)
+    "mixed-root merge: bundled root contributes exact symbol count from snapshot" in {
         val bundledBase     = buildZipBytes("A.class" -> Array[Byte](0xca.toByte))
         val bundledBaseFile = writeTempJar(bundledBase)
         val bundledBasePath = bundledBaseFile.getAbsolutePath
@@ -195,8 +195,8 @@ class ClasspathInitBundledSnapshotJvmTest extends kyo.test.Test[Any]:
                 assert(!hasMismatch, s"unexpected DigestMismatch: ${cp.errors}")
     }
 
-    // Leaf 6: SoftFail falls back on digest mismatch
-    "Leaf 6: SoftFail on digest mismatch falls back to cold load without raising Abort" in {
+    // SoftFail falls back on digest mismatch
+    "SoftFail on digest mismatch falls back to cold load without raising Abort" in {
         val staleJar = writeTempJar(buildZipBytes(
             "B.class"                              -> Array[Byte](0xca.toByte),
             BundledSnapshotProbe.snapshotEntryPath -> syntheticSnapshotBytes(2, 0xdeadbeefL)
@@ -206,8 +206,8 @@ class ClasspathInitBundledSnapshotJvmTest extends kyo.test.Test[Any]:
                 assert(cp.symbols.size >= 0, "symbol count must be non-negative after SoftFail fallback")
     }
 
-    // Leaf 7: probe raises DigestMismatch on stale snapshot
-    "Leaf 7: probe raises DigestMismatch when embedded digest does not match recomputed digest" in {
+    // probe raises DigestMismatch on stale snapshot
+    "probe raises DigestMismatch when embedded digest does not match recomputed digest" in {
         val baseBytes      = buildZipBytes("C.class" -> Array[Byte](0xca.toByte))
         val rootFile       = writeTempJar(baseBytes)
         val rootPath       = rootFile.getAbsolutePath

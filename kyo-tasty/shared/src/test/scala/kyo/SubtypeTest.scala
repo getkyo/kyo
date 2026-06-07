@@ -1,7 +1,7 @@
 package kyo
 import kyo.internal.tasty.symbol.SymbolKind
 
-// plan: phase-05; migrated from Symbol references to SymbolId in Named/TypeLambda.
+// phase-05; migrated from Symbol references to SymbolId in Named/TypeLambda.
 
 /** Tests for Subtype checking and type comparison.
   *
@@ -64,7 +64,7 @@ class SubtypeTest extends kyo.test.Test[Any]:
 
     /** Build a test Classpath populated with the given symbols, indexed by their id.value.
       *
-      * plan: phase-05; all symbols must have distinct non-negative id.value to be reachable via cp.symbol(id). Any gap in the id range is
+      * phase-05; all symbols must have distinct non-negative id.value to be reachable via cp.symbol(id). Any gap in the id range is
       * filled with a sentinel Unresolved symbol.
       */
     private def makeTestClasspath(syms: Chunk[Tasty.Symbol])(using Frame): Tasty.Classpath < Sync =
@@ -293,10 +293,10 @@ class SubtypeTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // ── F-003 tests: ADT sentinel cases Type.Any and Type.Nothing ──────────
+    // ── tests: ADT sentinel cases Type.Any and Type.Nothing ──────────
 
     // Test F003-1: Named(X).isSubtypeOf(Type.Any) returns Sub via ADT sentinel arm
-    "F003-1: Named(X).isSubtypeOf(Type.Any) == Sub (ADT sentinel)" in {
+    "Named(X).isSubtypeOf(Type.Any) == Sub (ADT sentinel)" in {
         nextId = 0
         val intSym  = makeSym("scala.Int")
         val intType = Tasty.Type.Named(intSym.id)
@@ -307,7 +307,7 @@ class SubtypeTest extends kyo.test.Test[Any]:
     }
 
     // Test F003-2: Type.Nothing.isSubtypeOf(Named(X)) returns Sub via ADT sentinel arm
-    "F003-2: Type.Nothing.isSubtypeOf(Named(X)) == Sub (ADT sentinel)" in {
+    "Type.Nothing.isSubtypeOf(Named(X)) == Sub (ADT sentinel)" in {
         nextId = 0
         val stringSym  = makeSym("java.lang.String")
         val stringType = Tasty.Type.Named(stringSym.id)
@@ -318,7 +318,7 @@ class SubtypeTest extends kyo.test.Test[Any]:
     }
 
     // Test F003-3: Type.Nothing.isSubtypeOf(Type.Any) returns Sub (both ADT sentinels)
-    "F003-3: Type.Nothing.isSubtypeOf(Type.Any) == Sub (both ADT sentinels)" in {
+    "Type.Nothing.isSubtypeOf(Type.Any) == Sub (both ADT sentinels)" in {
         nextId = 0
         makeTestClasspath(Chunk.empty).flatMap: cp =>
             Tasty.withClasspath(cp):
@@ -327,7 +327,7 @@ class SubtypeTest extends kyo.test.Test[Any]:
     }
 
     // Test F003-4: Type.Any.isSubtypeOf(Named(X)) returns NotSub (Any is not sub of random type)
-    "F003-4: Type.Any.isSubtypeOf(Named(X)) == NotSub (negative pinning)" in {
+    "Type.Any.isSubtypeOf(Named(X)) == NotSub (negative pinning)" in {
         nextId = 0
         val intSym  = makeSym("scala.Int")
         val intType = Tasty.Type.Named(intSym.id)
@@ -338,7 +338,7 @@ class SubtypeTest extends kyo.test.Test[Any]:
     }
 
     // Test F003-5: Named(X).isSubtypeOf(Type.Nothing) returns NotSub (Nothing is bottom type)
-    "F003-5: Named(X).isSubtypeOf(Type.Nothing) == NotSub (negative pinning)" in {
+    "Named(X).isSubtypeOf(Type.Nothing) == NotSub (negative pinning)" in {
         nextId = 0
         val stringSym  = makeSym("java.lang.String")
         val stringType = Tasty.Type.Named(stringSym.id)

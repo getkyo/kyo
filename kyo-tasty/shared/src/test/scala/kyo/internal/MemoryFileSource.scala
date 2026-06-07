@@ -56,7 +56,7 @@ final class MemoryFileSource(
                 Abort.fail(TastyError.SnapshotIoError(s"rename: $from not found"))
 
     override def delete(path: String)(using Frame): Unit < (Sync & Abort[TastyError]) =
-        // F-001: override the trait-body default so the in-memory test source honours delete locally
+        // override the trait-body default so the in-memory test source honours delete locally
         // without crossing into the platform kyo.Path layer (which would attempt a real filesystem op).
         Sync.defer:
             val _ = files.remove(path)

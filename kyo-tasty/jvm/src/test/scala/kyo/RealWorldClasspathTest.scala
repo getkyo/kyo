@@ -1,21 +1,19 @@
 package kyo
 
-/** plan leaves 1-9: real-world classpath alphabetical iteration.
+/** real-world classpath alphabetical iteration.
   *
-  * Leaf 1: Akka actor classpath loads without error (BIND-018, Akka).
-  * Leaf 2: Cats Effect classpath loads without error (BIND-018, Cats Effect).
-  * Leaf 3: Doobie classpath loads without error; Scala 2.13-only jar, no TASTy files (BIND-018, Doobie).
-  * Leaf 4: Http4s classpath loads without error (BIND-018, Http4s).
-  * Leaf 5: Pekko actor classpath loads without error (BIND-018, Pekko).
-  * Leaf 6: Play classpath loads without error (BIND-018, Play).
-  * Leaf 7: Spark classpath loads without error; Scala 2.13-only jar, no TASTy files (BIND-018, Spark).
-  * Leaf 8: Spire classpath loads without error (BIND-018, Spire).
-  * Leaf 9: ZIO classpath loads without error (BIND-018, ZIO).
+  * Akka actor classpath loads without error (BIND-018, Akka).
+  * Cats Effect classpath loads without error (BIND-018, Cats Effect).
+  * Doobie classpath loads without error; Scala 2.13-only jar, no TASTy files (BIND-018, Doobie).
+  * Http4s classpath loads without error (BIND-018, Http4s).
+  * Pekko actor classpath loads without error (BIND-018, Pekko).
+  * Play classpath loads without error (BIND-018, Play).
+  * Spark classpath loads without error; Scala 2.13-only jar, no TASTy files (BIND-018, Spark).
+  * Spire classpath loads without error (BIND-018, Spire).
+  * ZIO classpath loads without error (BIND-018, ZIO).
   *
   * All leaves are JVM-only (java.class.path discovery requires JVM) and tagged `slow` so they
   * are excluded from the default test run but can be included with `-- -n slow`.
-  *
-  * INV-006, INV-007, INV-008, INV-009.
   */
 class RealWorldClasspathTest extends kyo.test.Test[Any]:
 
@@ -77,7 +75,7 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
 
     // ── Leaf 3: Doobie classpath loads without error ──────────────────────────
     // Given: doobie-core_2.13-1.0.0-RC2.jar on java.class.path via build.sbt % Test intransitive dep
-    // Note: Doobie 1.x is Scala 2.13 only; the jar contains .class files but no .tasty files.
+    // Note: Doobie 1.x is Scala 2.13 only; the jar contains.class files but no.tasty files.
     // Loading it produces cp.symbols.isEmpty && cp.errors.isEmpty (no TASTy decoding occurs).
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
@@ -160,7 +158,7 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
 
     // ── Leaf 7: Spark classpath loads without error ───────────────────────────
     // Given: spark-core_2.13-3.5.1.jar on java.class.path via build.sbt % Test intransitive dep
-    // Note: Spark 3.x is Scala 2.13 only; the jar contains .class files but no .tasty files.
+    // Note: Spark 3.x is Scala 2.13 only; the jar contains.class files but no.tasty files.
     // Loading it produces cp.symbols.isEmpty && cp.errors.isEmpty (no TASTy decoding occurs).
     // When: Tasty.withClasspath(Seq(jar)) { Tasty.classpath.map(_.errors) } under Abort.run
     // Then: Result.Success(errors) AND errors.isEmpty
@@ -221,9 +219,9 @@ class RealWorldClasspathTest extends kyo.test.Test[Any]:
     }
 
     // Finds the first jar on java.class.path whose path contains the given fragment.
-    // Calls fail() immediately if no match, producing a red leaf with a clear message
+    // Calls fail immediately if no match, producing a red leaf with a clear message
     // rather than silently skipping (which would mask real failures).
-    // Must be inside runJVM { ... } because java.lang.System.getProperty and
+    // Must be inside runJVM {. } because java.lang.System.getProperty and
     // java.io.File.pathSeparatorChar are JVM-only.
     private def findJar(nameFragment: String)(using kyo.test.AssertScope, Frame): String =
         java.lang.System.getProperty("java.class.path", "")

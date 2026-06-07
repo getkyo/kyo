@@ -4,7 +4,7 @@ import kyo.Tasty.SymbolId
 
 /** Tests for Leaf 4: every Symbol subtype carries sourcePosition as a Maybe[Position].
   *
-  * Leaf 4: everySymbolSubtypeCarriesSourcePosition.
+  * everySymbolSubtypeCarriesSourcePosition.
   * Given: one instance of each Symbol subtype.
   * When: the test reads sym.sourcePosition for each.
   * Then: every value is a Maybe[Position]; pattern matches against Maybe.Present(p) and Maybe.Absent are exhaustive.
@@ -28,7 +28,7 @@ class SymbolAdtVariantCoverageTest extends kyo.test.Test[Any]:
     // Given: one instance of each of the 15 Symbol subtypes.
     // When: the test reads sym.sourcePosition.
     // Then: all values are Maybe[Position]; Present and Absent arms exhaustively cover the type.
-    "Leaf 4: every Symbol subtype carries sourcePosition as Maybe[Position]" in {
+    "every Symbol subtype carries sourcePosition as Maybe[Position]" in {
         val present: Maybe[Tasty.Position] = Maybe.Present(pos)
         val absent: Maybe[Tasty.Position]  = Maybe.Absent
 

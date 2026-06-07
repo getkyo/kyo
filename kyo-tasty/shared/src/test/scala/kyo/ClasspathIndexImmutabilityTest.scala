@@ -51,11 +51,11 @@ class ClasspathIndexImmutabilityTest extends kyo.test.Test[Any]:
         src
     end fixtureSource
 
-    // Leaf 1: fqnIndex is built once and never mutated.
+    // fqnIndex is built once and never mutated.
     // Given: a Classpath cp from Classpath.init.
     // When: cp.indices.byFqn is captured before and after an arbitrary read operation.
     // Then: both captures are the same Map reference.
-    "Leaf 1: fqnIndex is built once and never mutated (val semantics)" in {
+    "fqnIndex is built once and never mutated (val semantics)" in {
         Scope.run:
             Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
                 val idx1 = cp.indices.byFqn
@@ -78,13 +78,13 @@ class ClasspathIndexImmutabilityTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Leaf 2: subclassIndex is a non-null immutable Map constructed during Pass C.
+    // subclassIndex is a non-null immutable Map constructed during Pass C.
     // builds subclassIndex by inverting parentTypes. Parent types derived from same-file
-    // TYPEREFdirect/TYPEREFsymbol ARE indexed. Cross-file parents (encoded as APPLY(NEW(type),...) in
+    // TYPEREFdirect/TYPEREFsymbol ARE indexed. Cross-file parents (encoded as APPLY(NEW(type).) in
     // TASTy) resolve to Named(SymbolId(-1)) in; full cross-file parent indexing requires
     // the TASTy APPLY-tree descent added in.
     // This test pins: subclassIndex is constructed as an immutable Map after Pass C.
-    "Leaf 2: subclassIndex is a non-null immutable Map after Pass C (INV-008)" in {
+    "subclassIndex is a non-null immutable Map after Pass C" in {
         Scope.run:
             Abort.run[TastyError](ClasspathOrchestrator.init(Seq("root"), Tasty.ErrorMode.SoftFail, fixtureSource(), 1).map: cp =>
                 val idx1 = cp.indices.subclassIndex
@@ -97,7 +97,7 @@ class ClasspathIndexImmutabilityTest extends kyo.test.Test[Any]:
                     assert(
                         java.lang.System.identityHashCode(idx1.asInstanceOf[AnyRef]) ==
                             java.lang.System.identityHashCode(idx2.asInstanceOf[AnyRef]),
-                        "subclassIndex must be the same Dict instance (val semantics, INV-008)"
+                        "subclassIndex must be the same Dict instance (val semantics)"
                     )
                 case Result.Failure(e) =>
                     fail(s"Unexpected failure: $e")
@@ -105,17 +105,17 @@ class ClasspathIndexImmutabilityTest extends kyo.test.Test[Any]:
                     throw t
     }
 
-    // Leaves 3-5: grep-based deletion checks are in ClasspathIndexGrepTest (JVM-only, kyo-tasty/jvm/src/test).
+    // grep-based deletion checks are in ClasspathIndexGrepTest (JVM-only, kyo-tasty/jvm/src/test).
     // They verify that SingleAssign, ClasspathRef, UnresolvedRef do not appear in production sources.
-    "Leaf 3: SingleAssign deletion check delegates to ClasspathIndexGrepTest (JVM)" in {
+    "SingleAssign deletion check delegates to ClasspathIndexGrepTest (JVM)" in {
         succeed // JVM-only grep in ClasspathIndexGrepTest
     }
 
-    "Leaf 4: ClasspathRef deletion check delegates to ClasspathIndexGrepTest (JVM)" in {
+    "ClasspathRef deletion check delegates to ClasspathIndexGrepTest (JVM)" in {
         succeed // JVM-only grep in ClasspathIndexGrepTest
     }
 
-    "Leaf 5: UnresolvedRef deletion check delegates to ClasspathIndexGrepTest (JVM)" in {
+    "UnresolvedRef deletion check delegates to ClasspathIndexGrepTest (JVM)" in {
         succeed // JVM-only grep in ClasspathIndexGrepTest
     }
 

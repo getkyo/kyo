@@ -8,7 +8,7 @@ class ErrorModeTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // Leaf id:2 -- ErrorMode enum replaces strict: Boolean
+    // 2 -- ErrorMode enum replaces strict: Boolean
     // Given: Classpath.init signatures
     // When: overloads are exercised
     // Then: no overload takes `strict: Boolean`; mode-aware overload accepts ErrorMode

@@ -105,7 +105,7 @@ private[kyo] object TestClasspaths2:
 
     /** Run the concurrent reader+writer snapshot test (JVM only).
       *
-      * Writes an initial snapshot, starts a reader fiber via StutterFileSource, starts a writer fiber, releases the stutter latch, and
+      * Writes an initial snapshot, starts a reader fiber via StutterFileSource, starts a writer fiber, releases the stutter latch
       * returns true if the reader completed without a Panic. Callers must gate invocations with the `jvmOnly` tag.
       */
     def runConcurrentReaderWriterTest(
@@ -117,8 +117,8 @@ private[kyo] object TestClasspaths2:
 
     /** Load the embedded-fixture classpath with a warning sink (cross-platform).
       *
-      * Mirrors `loadStandardWithSink` but uses `TestClasspaths.withClasspath()` (embedded fixtures on all platforms,
-      * including JVM) instead of the real stdlib classpath. Captures warn() messages emitted during decode so callers
+      * Mirrors `loadStandardWithSink` but uses `TestClasspaths.withClasspath` (embedded fixtures on all platforms,
+      * including JVM) instead of the real stdlib classpath. Captures warn messages emitted during decode so callers
       * can assert on unknown-tag counts. Works on JVM, JS, and Native.
       */
     def loadEmbeddedWithSink(using Frame): (Tasty.Classpath, WarningSink) < (Sync & Async & Abort[TastyError]) =
@@ -147,8 +147,8 @@ private[kyo] object TestClasspaths2:
 
     /** Perform a cold load then write a snapshot to a MemoryFileSource and read it back, returning (cold, warm).
       *
-      * Cross-platform: uses `SnapshotWriter.serializeToBytes` and `SnapshotReader.readBytes` via a MemoryFileSource. Works on JVM, JS, and
-      * Native. On JVM the cold load uses the embedded fixture set from `TestClasspaths.withClasspath()` (same as JS/Native). This helper is
+      * Cross-platform: uses `SnapshotWriter.serializeToBytes` and `SnapshotReader.readBytes` via a MemoryFileSource. Works on JVM, JS
+      * Native. On JVM the cold load uses the embedded fixture set from `TestClasspaths.withClasspath` (same as JS/Native). This helper is
       * suitable for testing snapshot round-trip correctness on any platform; for tests requiring the full real stdlib classpath use
       * `TestClasspaths2.standardWithSnapshot` (JVM only).
       */

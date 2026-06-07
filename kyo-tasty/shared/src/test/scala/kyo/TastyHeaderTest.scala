@@ -11,13 +11,13 @@ import kyo.internal.tasty.reader.TastyHeader
   *
   * Version compatibility (verbatim dotty rule):
   *   fileMajor == compilerMajor &&
-  *     (  fileMinor == compilerMinor && fileExperimental == compilerExperimental
-  *     || fileMinor <  compilerMinor && fileExperimental == 0
+  *     (fileMinor == compilerMinor && fileExperimental == compilerExperimental
+  *     || fileMinor < compilerMinor && fileExperimental == 0
   *     )
   *   Supported: Version(28, 8, 0). So:
-  *     minor=7, exp=0  -> OK  (7 < 8 && exp==0)
-  *     minor=9, exp=0  -> FAIL (9 > 8, neither condition satisfied)
-  *     minor=8, exp=1  -> FAIL (minor==8 but exp!=0)
+  *     minor=7, exp=0 -> OK (7 < 8 && exp==0)
+  *     minor=9, exp=0 -> FAIL (9 > 8, neither condition satisfied)
+  *     minor=8, exp=1 -> FAIL (minor==8 but exp!=0)
   */
 class TastyHeaderTest extends kyo.test.Test[Any]:
 

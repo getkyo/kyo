@@ -4,7 +4,7 @@ import kyo.*
 
 /** JVM fallback: cold-load java.class.path exactly once.
   *
-  * INV-009 site-2: the AllowUnsafe boundary is bounded to this object. The lazy val TastyState.global
+  * The AllowUnsafe boundary is bounded to this object. The lazy val TastyState.global
   * calls initFallback at most once per JVM process; the result is cached in the lazy val.
   *
   * If loading fails for any reason (empty classpath, IO error, timeout), the fallback returns
@@ -18,7 +18,7 @@ private[kyo] object PlatformFallback:
         if roots.isEmpty then Binding.empty
         else
             given AllowUnsafe = AllowUnsafe.embrace.danger
-            // Frame.internal: required by coldLoadBinding; this is the INV-009 site-2 init boundary.
+            // Frame.internal: required by coldLoadBinding; this is the AllowUnsafe init boundary.
             given Frame = Frame.internal
             try
                 val result = KyoApp.Unsafe.runAndBlock(Duration.Infinity)(

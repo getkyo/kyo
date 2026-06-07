@@ -4,21 +4,21 @@ import kyo.internal.tasty.symbol.SymbolKind
 
 /** Fidelity tests for Method.declaredType, paramLists, and return type correctness.
   *
-  * Pins findings  ,  , and INV-005. All leaves are PENDING until and un-pend them by fixing
-  * `AstUnpickler.readDefDefReturnType` (consume full METHODtype lambda), `TypeUnpickler.decodeMethodType` / `decodePolyType`, THIS-type
-  * decode, and RECthis late-resolution.
+  * Exercises `AstUnpickler.readDefDefReturnType` (consume full METHODtype lambda),
+  * `TypeUnpickler.decodeMethodType` / `decodePolyType`, THIS-type decode, and RECthis late-resolution.
   *
-  * leaves 1, 2, 7, 8, 10, 11 rewritten to use embedded fixture classes (kyo.fixtures.SomeCaseClass,
-  * kyo.fixtures.GenericBox, kyo.fixtures.SealedBase, kyo.fixtures.ConcreteA) instead of stdlib classes. All leaves are now cross-platform.
+  * Uses embedded fixture classes (kyo.fixtures.SomeCaseClass, kyo.fixtures.GenericBox,
+  * kyo.fixtures.SealedBase, kyo.fixtures.ConcreteA) instead of stdlib classes so the tests run
+  * cross-platform.
   */
 class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    //   / leaf 1: no-unresolved-return-types
+    //   no-unresolved-return-types
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: iterating cp.allMethods.flatMap(_.declaredType.toChunk) and checking each head
-    // Then: post-fix fewer than 50% of Scala methods have Named(SymbolId(-1)) declaredType
+    // Then: fewer than 50% of Scala methods have Named(SymbolId(-1)) declaredType
     // Cross-platform: the fraction check holds for any classpath. When total == 0, 0.0 < 0.5 holds; when > 0, fixture
     //   methods have real return types after the fix.
     "no method declaredType resolves to Named(SymbolId(-1))" in {
@@ -40,10 +40,10 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    //   leaf 2: scala-methods-have-non-sentinel-types
+    //   scala-methods-have-non-sentinel-types
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: scanning all Scala methods for non-sentinel declaredType
-    // Then: post-fix at least one method has a non-sentinel declared type
+    // Then: at least one method has a non-sentinel declared type
     // Cross-platform: embedded fixtures provide methods (methodWithDefaults, compute, etc.) that exercise type decoding.
     "classpath Scala methods have at least one non-sentinel declared type" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
@@ -63,10 +63,10 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    //   leaf 3: function-types-materialize
+    //   function-types-materialize
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
     // When: iterating cp.allMethods.flatMap(_.declaredType.toChunk) and collecting non-sentinel types
-    // Then: post-fix at least 1 method has a non-sentinel declared type
+    // Then: at least 1 method has a non-sentinel declared type
     // Cross-platform: property "decoder produces non-sentinel types" holds for any classpath. Threshold lowered from 100 to 1 because
     // the fix property is "types exist", not "exactly 100+ types exist"; embedded fixtures provide enough methods to exercise the path.
     "at least one Scala method has a non-sentinel declared type (decoder fix)" in {
@@ -88,10 +88,10 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    //   leaf 4: this-type-resolves
+    //   this-type-resolves
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
     // When: walking the body's type positions and collecting Type.ThisType instances
-    // Then: post-fix at most 50% of ThisType instances reference a non-class symbol; passes vacuously when no ThisType found
+    // Then: at most 50% of ThisType instances reference a non-class symbol; passes vacuously when no ThisType found
     // Cross-platform: invariant holds for any classpath size; vacuously passes on embedded (no ThisType in small fixtures).
     "every Type.ThisType resolves to a real Class/Trait/Object symbol" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
@@ -124,10 +124,10 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    //   leaf 5: rec-no-placeholder-names
+    //   rec-no-placeholder-names
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
     // When: scanning cp.symbols.map(_.name.asString)
-    // Then: post-fix zero names start with "rec@"
+    // Then: zero names start with "rec@"
     // Cross-platform: invariant "no rec@ placeholder names" holds for any classpath after the fix.
     "no symbols with name starting rec@ in cp.symbols" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
@@ -143,10 +143,10 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    // leaf 6: sentinel-count-decreased
+    // sentinel-count-decreased
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
     // When: computing cp.symbols.filter(_.id.value == -1).map(_.name.asString).toSet.size
-    // Then: post-fix the set size is strictly less than 11
+    // Then: the set size is strictly less than 11
     // Cross-platform: invariant "sentinel count < 11" holds for any classpath which holds for any classpath. On JVM it exercises
     // the stdlib sentinel-count reduction; on JS/Native it passes with embedded fixtures (usually 0 or 1 sentinel names).
     "partial : SymbolId(-1) sentinel count decreased from pre-consolidation baseline" in {
@@ -164,10 +164,10 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    //   leaf 7: method-type-preserves-param-names
+    //   method-type-preserves-param-names
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: inspecting kyo.fixtures.SomeCaseClass methods' declaredType
-    // Then: post-fix at least one method has a non-sentinel declaredType
+    // Then: at least one method has a non-sentinel declaredType
     // Cross-platform: kyo.fixtures.SomeCaseClass is in the embedded fixture set on all platforms.
     "kyo.fixtures.SomeCaseClass methods have non-sentinel declaredType" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
@@ -191,10 +191,10 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Regression PIN leaf 8: nullary-method-still-decodes
+    // nullary-method-still-decodes
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: inspecting kyo.fixtures.SomeTrait.compute.declaredType (a nullary abstract method)
-    // Then: post-fix the type is not Named(SymbolId(-1))
+    // Then: the type is not Named(SymbolId(-1))
     // Cross-platform: kyo.fixtures.SomeTrait is in the embedded fixture set on all platforms.
     "regression PIN : kyo.fixtures.SomeTrait.compute.declaredType is not Named(SymbolId(-1))" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
@@ -225,10 +225,10 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         }
     }
 
-    // leaf 9: applied-tpt-yields-applied-type
+    // applied-tpt-yields-applied-type
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
     // When: decoding a method return type using an APPLIEDtpt at wire level (e.g. GenericBox[A])
-    // Then: post-fix the decoded Type is Type.Applied(...)
+    // Then: the decoded Type is Type.Applied(.)
     // Cross-platform: GenericBox[A] in embedded fixtures produces Type.Applied; assertion "size > 0" holds on all platforms.
     "APPLIEDtpt-encoded return type decodes to Type.Applied" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: classpath =>
@@ -256,13 +256,13 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    // Q-004 leaf: findConcreteClass-excludes-abstract
+    // findConcreteClass-excludes-abstract
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: calling cp.findConcreteClass("kyo.fixtures.SealedBase") and cp.findConcreteClass("kyo.fixtures.ConcreteA")
     // Then: findConcreteClass("kyo.fixtures.SealedBase") returns Absent (abstract class);
     //       findConcreteClass("kyo.fixtures.ConcreteA") returns Present (concrete class)
     // Cross-platform: kyo.fixtures.SealedBase (abstract) and ConcreteA (concrete) are in the embedded fixture set on all platforms.
-    "Q-004 : findConcreteClass excludes abstract classes while findClass remains permissive" in {
+    "findConcreteClass excludes abstract classes while findClass remains permissive" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             assert(
                 cp.findConcreteClass("kyo.fixtures.SealedBase").isEmpty,
@@ -274,17 +274,17 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
             )
             assert(
                 cp.findClass("kyo.fixtures.SealedBase").isDefined,
-                "findClass(\"kyo.fixtures.SealedBase\") returned Absent; findClass must remain permissive (Q-004 HARD RULE 4)"
+                "findClass(\"kyo.fixtures.SealedBase\") returned Absent; findClass must remain permissive"
             )
             succeed
     }
 
-    //   / Q-005 leaf: Q-005 parent injection improves coverage
+    //   parent injection improves coverage
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib; JS/Native: embedded fixtures)
     // When: counting ClassLike symbols with non-empty parentTypes
-    // Then: post-fix the fraction is >= 50% or totalClasses == 0
+    // Then: the fraction is >= 50% or totalClasses == 0
     // Cross-platform: assertion allows totalClasses==0 fallback; embedded fixtures with parentTypes populated satisfy >= 50%.
-    "/ Q-005 : Q-005 parent injection improves non-empty parentTypes coverage" in {
+    "parent injection improves non-empty parentTypes coverage" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val allClassLike = cp.allClassLike
             val totalClasses = allClassLike.size
@@ -298,19 +298,19 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
             succeed
     }
 
-    //   / Q-005 leaf: fixture-class parents non-empty (structural check)
+    //   fixture-class parents non-empty (structural check)
     // Given: any classpath loaded via TestClasspaths.withClasspath (JVM: real stdlib + fixtures; JS/Native: embedded fixtures)
     // When: finding kyo.fixtures.ChildClass which extends kyo.fixtures.BaseClass
-    // Then: ChildClass.parentTypes is non-empty (at least one parent type is present after Q-005 parent injection)
+    // Then: ChildClass.parentTypes is non-empty (at least one parent type is present after parent injection)
     // Cross-platform: kyo.fixtures.ChildClass is in the embedded fixture set on all platforms.
-    "/ Q-005 : kyo.fixtures.ChildClass.parentTypes is non-empty (extends BaseClass)" in {
+    "kyo.fixtures.ChildClass.parentTypes is non-empty (extends BaseClass)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             cp.findClassLike("kyo.fixtures.ChildClass") match
                 case Maybe.Present(childSym) =>
                     assert(
                         childSym.parentTypes.nonEmpty,
                         s"Expected kyo.fixtures.ChildClass.parentTypes to be non-empty (ChildClass extends BaseClass); " +
-                            s"got empty. Q-005 parent injection must populate parentTypes for cross-file inheritance."
+                            s"got empty. Default-parent injection must populate parentTypes for cross-file inheritance."
                     )
                     succeed
                 case Maybe.Absent =>

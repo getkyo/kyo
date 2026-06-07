@@ -5,8 +5,6 @@ import scala.compiletime.testing.typeCheckErrors
 /** Final-gate verification.
   *
   * Leaf 1 is a real compile-time probe that re-verifies INV-IMMUTABLE-ADT.
-  *
-  * INV-007; INV-011; INV-012; INV-013.
   */
 class FinalGateTest extends kyo.test.Test[Any]:
 

@@ -47,7 +47,7 @@ class ConstantPoolTest extends kyo.test.Test[Any]:
         val strBytes = s.getBytes("UTF-8")
         val len      = strBytes.length
         val buf      = new Array[Byte](2 + 1 + 2 + len)
-        // count = 2 (one entry; pool slots 1..count-1, so count=2 means one real entry)
+        // count = 2 (one entry; pool slots 1.count-1, so count=2 means one real entry)
         buf(0) = 0
         buf(1) = 2
         // tag = CONSTANT_Utf8
@@ -113,9 +113,7 @@ class ConstantPoolTest extends kyo.test.Test[Any]:
         buf
     end buildLongPoolBytes
 
-    // -------------------------------------------------------------------------
     // Test 1 (C3): ConstantPool.read succeeds on a Mapped ByteView; utf8 entry decoded correctly.
-    // -------------------------------------------------------------------------
     "ConstantPool.read on Mapped ByteView decodes UTF-8 entry correctly" in {
         // Given: a Mapped ByteView wrapping pool bytes with a single UTF-8 entry "foo".
         // When: ConstantPool.read is called with the Mapped view.
@@ -135,9 +133,7 @@ class ConstantPoolTest extends kyo.test.Test[Any]:
                             case other             => fail(s"Expected utf8(1)='foo', got $other")
     }
 
-    // -------------------------------------------------------------------------
     // Test 2 (C3): ConstantPool.read on Mapped ByteView preserves cursor position after read.
-    // -------------------------------------------------------------------------
     "ConstantPool.read on Mapped ByteView: cursor is positioned past pool after read" in {
         // Given: Mapped ByteView with cursor initially at 0; pool bytes for "bar".
         // When: ConstantPool.read is called.
@@ -158,9 +154,7 @@ class ConstantPoolTest extends kyo.test.Test[Any]:
                     )
     }
 
-    // -------------------------------------------------------------------------
     // tests (B5): typed accessor validates entry kind; structured errors on mismatch.
-    // -------------------------------------------------------------------------
 
     // Test B5-1: utf8(idx) rejects a ClassRef entry; error message names the found kind.
     "utf8 at a ClassRef index yields structured error naming ClassRef" in {
@@ -226,7 +220,7 @@ class ConstantPoolTest extends kyo.test.Test[Any]:
                         fail(s"Unexpected error type: $other")
     }
 
-    // Test T2-1: entry() on an out-of-range index yields a structured ClassfileFormatError.
+    // Test T2-1: entry on an out-of-range index yields a structured ClassfileFormatError.
     "entry at an out-of-range index yields structured ClassfileFormatError containing index and 'out of bounds'" in {
         // Given: a pool with 4 real entries (count=5); entry[1]=Utf8("a"), [2]=Utf8("b"), [3]=Utf8("c"), [4]=Utf8("d").
         // When: utf8(99) is called (index 99 is far out of range).
@@ -270,15 +264,15 @@ class ConstantPoolTest extends kyo.test.Test[Any]:
 
     // Test T2-2: ClassRef resolution via nameIdx returns the Utf8 string.
     "ClassRef at slot 5 with nameIdx=6 resolves to the Utf8 string at slot 6" in {
-        // Given: pool with 6 entries: slots 1..4 = Utf8 padding, slot 5 = ClassRef(nameIdx=6), slot 6 = Utf8("scala/Int").
+        // Given: pool with 6 entries: slots 1.4 = Utf8 padding, slot 5 = ClassRef(nameIdx=6), slot 6 = Utf8("scala/Int").
         // When: classRef(5) is called.
         // Then: returns "scala/Int".
         val padding = Array("x", "y", "z", "w")
         val target  = "scala/Int"
         val padBufs = padding.map(_.getBytes("UTF-8"))
         val tgtBuf  = target.getBytes("UTF-8")
-        // Layout: u2 count=7, entries[1..4]=Utf8 padding, entry[5]=ClassRef(nameIdx=6), entry[6]=Utf8("scala/Int")
-        // entry[5]: u1 tag=7, u2 nameIdx=6  -> 3 bytes
+        // Layout: u2 count=7, entries[1.4]=Utf8 padding, entry[5]=ClassRef(nameIdx=6), entry[6]=Utf8("scala/Int")
+        // entry[5]: u1 tag=7, u2 nameIdx=6 -> 3 bytes
         // entry[6]: u1 tag=1, u2 len, u1* bytes -> 1+2+tgtBuf.length bytes
         val totalSize = 2 + padBufs.foldLeft(0)((acc, b) => acc + 1 + 2 + b.length) + 3 + (1 + 2 + tgtBuf.length)
         val buf       = new Array[Byte](totalSize)
@@ -319,7 +313,7 @@ class ConstantPoolTest extends kyo.test.Test[Any]:
                         fail(s"Expected classRef(5)='scala/Int', got $other")
     }
 
-    // Test B5-4: entry() rejects Long/Double Hole slot with structured error.
+    // Test B5-4: entry rejects Long/Double Hole slot with structured error.
     "utf8 at a Long/Double Hole slot yields structured error" in {
         // Given: pool with entry[1]=Long(42L); slot 2 is the Hole.
         // When: utf8(2) is called (slot 2 is a Hole).

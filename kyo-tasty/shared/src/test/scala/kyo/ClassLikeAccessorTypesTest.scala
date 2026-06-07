@@ -56,7 +56,7 @@ class ClassLikeAccessorTypesTest extends kyo.test.Test[Any]:
             Chunk.empty
         )
 
-    // Leaf 66: typed-return-types-compile
+    // typed-return-types-compile
     // Given: Symbol.Class c with some declarations
     // When: 5 bindings on c using Tasty.* free functions
     // Then: every binding compiles cleanly
@@ -85,7 +85,7 @@ class ClassLikeAccessorTypesTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // Leaf 67: typed-return-preserves-method-specific-access
+    // typed-return-preserves-method-specific-access
     // Given: Symbol.Class c with method declaration
     // When: get methods via Tasty.declarations + filter
     // Then: returns the method correctly
@@ -102,7 +102,7 @@ class ClassLikeAccessorTypesTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // Leaf 67b: layered-preservation-base-symbol-caller
+    // layered-preservation-base-symbol-caller
     // Given: sym: Tasty.Symbol (upcast of Symbol.Class)
     // When: val decls: Chunk[Symbol] < Sync = Tasty.declarations(sym)
     // Then: compiles
@@ -118,7 +118,7 @@ class ClassLikeAccessorTypesTest extends kyo.test.Test[Any]:
                     succeed
     }
 
-    // Leaf 68: declarations-returns-untyped-symbol
+    // declarations-returns-untyped-symbol
     // Given: Symbol.Class c with declarations
     // When: val ds: Chunk[Symbol] < Sync = Tasty.declarations(c)
     // Then: compiles (declarations return type is Chunk[Symbol] < Sync)

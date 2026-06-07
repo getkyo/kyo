@@ -13,10 +13,10 @@ import scala.collection.mutable
 
 /** JVM-only leaves for BundledSnapshotProbe that require real zip construction (java.util.zip, java.io.File).
   *
-  * Leaf 1: jar with no snapshot entry returns Maybe.Absent.
-  * Leaf 2: jar with valid snapshot and matching digest returns Maybe.Present.
-  * Leaf 3: jar with stale digest raises TastyError.DigestMismatch.
-  * Leaf 11: probe is idempotent (same bytes returned on two calls).
+  * jar with no snapshot entry returns Maybe.Absent.
+  * jar with valid snapshot and matching digest returns Maybe.Present.
+  * jar with stale digest raises TastyError.DigestMismatch.
+  * probe is idempotent (same bytes returned on two calls).
   *
   * Cross-platform leaves (8, 9) live in BundledSnapshotProbeTest.scala (shared/src/test).
   */
@@ -137,11 +137,11 @@ class BundledSnapshotProbeJvmTest extends kyo.test.Test[Any]:
         tmp.getAbsolutePath
     end writeTempJarBytes
 
-    // Leaf 1: jar with no snapshot returns Absent
-    // Given: fixture jar containing only .class entries (no snapshot entry)
+    // jar with no snapshot returns Absent
+    // Given: fixture jar containing only.class entries (no snapshot entry)
     // When: BundledSnapshotProbe.probe(jarPath)
     // Then: returns Maybe.Absent
-    "Leaf 1: jar with no snapshot entry returns Maybe.Absent" in {
+    "jar with no snapshot entry returns Maybe.Absent" in {
         val noSnapBytes = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val root        = "no-snap.jar"
         val source      = new ZipMemoryFileSource(Map(root -> noSnapBytes))
@@ -150,9 +150,9 @@ class BundledSnapshotProbeJvmTest extends kyo.test.Test[Any]:
                 assert(result == Maybe.Absent, s"expected Absent, got $result")
     }
 
-    // Leaf 2: jar with valid snapshot returns Present
+    // jar with valid snapshot returns Present
     // Given: real jar on disk with KRFL snapshot; embedded digest matches JVM CEN walk digest.
-    "Leaf 2: jar with valid snapshot and matching digest returns Maybe.Present" in {
+    "jar with valid snapshot and matching digest returns Maybe.Present" in {
         val baseBytes     = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val basePath      = writeTempJarBytes(baseBytes)
         val digest        = DigestComputer.digestForRoot(basePath)
@@ -170,9 +170,9 @@ class BundledSnapshotProbeJvmTest extends kyo.test.Test[Any]:
                     case Maybe.Absent         => assert(false, "unreachable")
     }
 
-    // Leaf 3: digest mismatch raises DigestMismatch
+    // digest mismatch raises DigestMismatch
     // Given: real jar on disk; snapshot embeds a wrong digest (0xdeadbeef).
-    "Leaf 3: digest mismatch raises TastyError.DigestMismatch" in {
+    "digest mismatch raises TastyError.DigestMismatch" in {
         val baseBytes     = buildZipBytes("Foo.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val basePath      = writeTempJarBytes(baseBytes)
         val staleDigest   = 0xdeadbeefL // intentionally wrong
@@ -194,9 +194,9 @@ class BundledSnapshotProbeJvmTest extends kyo.test.Test[Any]:
                     assert(false, s"expected DigestMismatch failure, got: $other")
     }
 
-    // Leaf 11: probe is idempotent
+    // probe is idempotent
     // Given: same jar probed twice.
-    "Leaf 11: probe is idempotent; same bytes returned on two calls" in {
+    "probe is idempotent; same bytes returned on two calls" in {
         val baseBytes      = buildZipBytes("Bar.class" -> Array[Byte](0xca.toByte, 0xfe.toByte))
         val basePath       = writeTempJarBytes(baseBytes)
         val expectedDigest = DigestComputer.digestForRoot(basePath)

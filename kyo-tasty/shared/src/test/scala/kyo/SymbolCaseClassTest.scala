@@ -47,7 +47,7 @@ class SymbolCaseClassTest extends kyo.test.Test[Any]:
     // Given: a fully-specified 14-field Symbol.Class.
     // When: each field is read.
     // Then: every field equals the value provided at construction; no field is at a wrong default.
-    "Leaf 1: Symbol case-class construction populates all 14 fields" in {
+    "Symbol case-class construction populates all 14 fields" in {
         val sym = makeTestSymbol(
             id = 7,
             name = "Bar",
@@ -77,7 +77,7 @@ class SymbolCaseClassTest extends kyo.test.Test[Any]:
     // Given: two Symbol.Class instances built with identical constructor arguments.
     // When: compared via == and hashCode.
     // Then: equal; hashCode matches.
-    "Leaf 2: Symbol equality is structural over 14 constructor params" in {
+    "Symbol equality is structural over 14 constructor params" in {
         val sym1 = makeTestSymbol(id = 5, name = "MyClass")
         val sym2 = makeTestSymbol(id = 5, name = "MyClass")
         assert(sym1 == sym2, s"Expected sym1 == sym2 but they differ")
@@ -90,7 +90,7 @@ class SymbolCaseClassTest extends kyo.test.Test[Any]:
     // Given: a Symbol.Class s1 with scaladoc = Present("a").
     // When: s1.copy(scaladoc = Present("b")).
     // Then: the new instance has scaladoc = Present("b") and is not eq to s1; other fields equal.
-    "Leaf 3: Symbol copy produces independent instance" in {
+    "Symbol copy produces independent instance" in {
         val s1 = makeTestSymbol(id = 10, name = "CopyMe", scaladoc = Maybe("a"))
         val s2 = s1.copy(scaladoc = Maybe("b"))
         assert(!(s1 eq s2), "Expected copy to produce a new reference (not eq)")
@@ -106,7 +106,7 @@ class SymbolCaseClassTest extends kyo.test.Test[Any]:
     // Given: code in package kyo constructing Tasty.Symbol.Class directly.
     // When: compiled.
     // Then: compiles cleanly (private[kyo] allows this package).
-    "Leaf 4: private[kyo] constructor accessible from package kyo" in {
+    "private[kyo] constructor accessible from package kyo" in {
         val sym = makeTestSymbol(id = 99, name = "AccessTest")
         assert(sym.id == SymbolId(99), "Symbol was constructed via internal factory")
         succeed
@@ -117,7 +117,7 @@ class SymbolCaseClassTest extends kyo.test.Test[Any]:
     // Given: the Symbol.Class case class definition.
     // When: its 14 constructor parameter types are statically examined.
     // Then: all fields have pure-data types; no SingleAssign or OnceCell is accessible.
-    "Leaf 5: no SingleAssign or OnceCell field survives on Symbol" in {
+    "no SingleAssign or OnceCell field survives on Symbol" in {
         val sym = makeTestSymbol(id = 1, name = "Leaf5Test")
 
         // Pure field access - these must be val fields returning their stored value directly.

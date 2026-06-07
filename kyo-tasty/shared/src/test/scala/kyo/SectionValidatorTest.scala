@@ -10,7 +10,7 @@ import scala.collection.mutable
   * `SnapshotReader.read` interface. Each test constructs a synthetic KRFL snapshot with a specific structural violation and verifies that
   * `SnapshotReader.read` converts it to a structured `TastyError` rather than a JVM exception.
   *
-  * Covered:   (validateRange before arraycopy),   (sectionCount bound).
+  * Covered: (validateRange before arraycopy), (sectionCount bound).
   */
 class SectionValidatorTest extends kyo.test.Test[Any]:
 

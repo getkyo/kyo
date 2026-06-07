@@ -11,10 +11,10 @@ import kyo.internal.TestClasspaths2
   * the dedicated `Type.ContextFunction(params, result)` case, which is structurally distinct and additively introduced without modifying the
   * existing `Type.Function` case (HARD RULE 4 layered preservation).
   *
-  * leaves 1-4 migrated from jvmOnly to cross-platform. The embedded fixture set now includes ContextFunctionFixture (added in
-  * ) which uses the `?=>` arrow in method signatures. `TestClasspaths.withClasspath()` loads these fixtures on all platforms.
+  *  from jvmOnly to cross-platform. The embedded fixture set now includes ContextFunctionFixture (added in
+  * ) which uses the `?=>` arrow in method signatures. `TestClasspaths.withClasspath` loads these fixtures on all platforms.
   *
-  * Invariant produced: INV-105-DF2 (context-function half).
+  * Invariant produced: -DF2 (context-function half).
   */
 class ContextFunctionFidelity2Test extends Fidelity2TestBase:
 
@@ -31,7 +31,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // context-function-types-positive
     // Given: embedded classpath (includes ContextFunctionFixture on all platforms)
     // When: counting all ContextFunction types reachable from symbol declarations
-    // Then: post-fix count > 0; before fix count is 0
+    // Then: count > 0; before fix count is 0
     // Cross-platform: ContextFunctionFixture embedded in fixture set.
     "classpath symbols have at least one ContextFunction in their types" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
@@ -68,7 +68,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // parameters-have-context-function-type
     // Given: embedded classpath (includes ContextFunctionFixture)
     // When: counting all parameters with ContextFunction type
-    // Then: post-fix count > 0; before fix none
+    // Then: count > 0; before fix none
     // Cross-platform: ContextFunctionFixture embedded.
     "classpath parameters have at least one ContextFunction type" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
@@ -89,7 +89,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // total-context-function-count-positive
     // Given: embedded classpath (includes ContextFunctionFixture)
     // When: counting total ContextFunction types across all symbol types
-    // Then: post-fix count > 0; before fix the count is 0
+    // Then: count > 0; before fix the count is 0
     // Cross-platform: ContextFunctionFixture embedded.
     "-DF2 : classpath has positive ContextFunction count across all symbol types" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
@@ -119,7 +119,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // Cross-platform: ContextFunctionFixture embedded.
     // Note: isContext field removed in (Cat 10); the Boolean flag is gone.
     // The test now confirms structural disjointness rather than a flag value.
-    "HARD RULE 4 : no symbol has Function used where ContextFunction expected" in {
+    "no symbol has Function used where ContextFunction expected" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             // All three symbol subtypes are covered via their type fields.
             // The invariant is that ContextFunction and Function are structurally distinct:
@@ -147,12 +147,12 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 5: pattern-match-on-function-still-works
+    // pattern-match-on-function-still-works
     // Given: a value of Type.ContextFunction (constructed directly)
     // When: pattern matching on Type.Function(p, r) (post-Cat-10 two-arg form)
     // Then: the match does NOT trigger on ContextFunction types (cases are structurally disjoint)
     // Cross-platform: uses pure ADT construction; works on JS/Native.
-    "HARD RULE 4 : Type.Function pattern does not match Type.ContextFunction" in {
+    "Type.Function pattern does not match Type.ContextFunction" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val cfType = Tasty.Type.ContextFunction(
                 Chunk(Tasty.Type.Named(SymbolId(0))),
@@ -168,7 +168,7 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 6: snapshot-roundtrip-consistent-for-embedded-classpath
+    // snapshot-roundtrip-consistent-for-embedded-classpath
     // Given: (cold, warm) Classpath pair from the embedded classpath (in-memory snapshot round-trip)
     // When: checking that symbols.size is equal between cold and warm
     // Then: the two symbol counts are equal
@@ -176,13 +176,13 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
     // warm load; the snapshot preserves body bytes but not the already-decoded Parameter.declaredType
     // field. Counting ContextFunctions from declaredType is NOT snapshot-stable; use symbols.size as the
     // stable proxy. The in-memory round-trip correctness of ContextFunction types is covered by the
-    // decode-from-body-bytes path tested in leaves 1-4 above (both use TestClasspaths.withClasspath).
+    // decode-from-body-bytes path tested in above (both use TestClasspaths.withClasspath).
     // Cross-platform: coldWarmEquiv now uses in-memory snapshot via TestClasspaths2.withSnapshotInMemory.
     coldWarmEquiv("-DF2 : snapshot cold/warm symbols.size consistent on embedded classpath")(_.symbols.size)
 
-    // Leaf 7: show-context-function-uses-arrow
+    // show-context-function-uses-arrow
     // Given: Type.ContextFunction(Chunk(Named(id)), Named(id))
-    // When: invoking .show
+    // When: invoking.show
     // Then: the result contains "?=>" (context function arrow)
     // Cross-platform: uses pure ADT construction + show; works on JS/Native.
     "show : Type.ContextFunction.show uses ?=> arrow" in {

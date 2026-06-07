@@ -53,7 +53,7 @@ class SnapshotTypedRoundTripFullTest extends kyo.test.Test[Any]:
     // Given: multiple embedded fixture TASTy files loaded into a Classpath
     // When: write snapshot; reload; compare typed subtype, id, name, flags
     // Then: every pair matches; cp.symbols.size == reloaded.symbols.size
-    "Leaf 173: full snapshot round-trip preserves typed subtypes on multi-file fixture" in {
+    "full snapshot round-trip preserves typed subtypes on multi-file fixture" in {
         val cacheSrc = MemoryFileSource()
         val digest   = Array[Byte](0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x7e)
         Scope.run:

@@ -4,7 +4,7 @@ import kyo.*
 
 /** Native platform: jar CEN walk is not available; fall back to path-only digest.
   *
-  * On Native, the JarCentralDirectory is JVM-only. Native jar roots use a path-based xxh64-custom hash (INV-003 Native fallback).
+  * On Native, the JarCentralDirectory is JVM-only. Native jar roots use a path-based xxh64-custom hash.
   * The digest is deterministic within a single run (same path always produces the same value) but is NOT content-addressed:
   * in-place jar mutation (replacing jar bytes without changing the path) will NOT invalidate the cache on Native.
   *

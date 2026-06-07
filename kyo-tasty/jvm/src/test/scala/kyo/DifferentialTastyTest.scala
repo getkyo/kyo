@@ -10,7 +10,7 @@ import tastyquery.Symbols.PackageSymbol
   * For each fixture set loaded via TestClasspaths.kyoTastyFixtures, loads the same TASTy files through both implementations and diffs
   * the decoded top-level class FQNs. Any disagreement is a real kyo-tasty bug.
   *
-  * Track A of the validation-infrastructure campaign (2026-06-02).
+  * of the validation-infrastructure (2026-06-02).
   *
   * Platform: JVM-only. tasty-query.ClasspathLoaders requires java.nio.file (JVM filesystem).
   * The parallel shared tests TastyPropertyTest and TastyPropertyJvmTest cover cross-platform invariants.
@@ -20,7 +20,7 @@ import tastyquery.Symbols.PackageSymbol
   * so we focus on FQN enumeration which is the most reliable structural invariant.
   *
   * Timeout: 5 minutes per leaf. Under scoverage bytecode instrumentation the blocking
-  * ClasspathLoaders.read() calls are measurably slower than in a plain run. Caching the
+  * ClasspathLoaders.read calls are measurably slower than in a plain run. Caching the
   * two distinct loads (fixtureRoots and standard) in DifferentialTastyTest.Cache ensures
   * each root set is read at most once across all leaves.
   */
@@ -28,7 +28,7 @@ class DifferentialTastyTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // 5 minutes per leaf: covers scoverage overhead on the blocking ClasspathLoaders.read() calls.
+    // 5 minutes per leaf: covers scoverage overhead on the blocking ClasspathLoaders.read calls.
     // Under plain sbt the test finishes in ~25s; under coverage the instrumentation overhead
     // can push a single leaf close to 3 minutes, so 5 minutes gives a safe margin.
     override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(5))
@@ -83,7 +83,7 @@ class DifferentialTastyTest extends kyo.test.Test[Any]:
     // DIFF-001: kyo-tasty and tasty-query see the same top-level class FQNs on the fixture classpath.
     // Loaded from TestClasspaths.kyoTastyFixtures (JVM classes dir for kyo-tasty-fixtures).
     // Any FQN present in kyo-tasty but absent in tasty-query (or vice versa) is a real decoder bug.
-    "DIFF-001: kyo-tasty and tasty-query decode the same top-level class FQNs from fixtures" in {
+    "kyo-tasty and tasty-query decode the same top-level class FQNs from fixtures" in {
         val fixtureRoots = TestClasspaths.kyoTastyFixtures
         if fixtureRoots.isEmpty then
             println("DIFF-001: kyo-tasty-fixtures not found on test classpath; skipping differential check")
@@ -107,7 +107,7 @@ class DifferentialTastyTest extends kyo.test.Test[Any]:
                 // Companion objects like SomeCaseClass$ appear in kyo-tasty fqnIndex but
                 // tasty-query suppresses them from top-level. Filter out companion "$" entries.
                 val kyoNonCompanion = onlyInKyo.filterNot(_.endsWith("$"))
-                // Java-only classfiles (no .tasty companion) are not discovered by kyo-tasty's directory scanner,
+                // Java-only classfiles (no.tasty companion) are not discovered by kyo-tasty's directory scanner,
                 // which filters to ".tasty" + "module-info.class". JavaSimpleFixture.java is compiled into the
                 // fixture directory but is intentionally loaded via the standalone-root mechanism (see
                 // EmbeddedJavaFixtures and TestClasspaths.withClasspath on JS/Native). The DIFF-001 comparison
@@ -135,17 +135,15 @@ class DifferentialTastyTest extends kyo.test.Test[Any]:
     // Loads kyo-tasty + kyo-data + scala-library + fixtures through both decoders and
     // checks that the top-level non-Object class count from kyo-tasty is within a 20% band
     // of tasty-query's count.
-    //
     // Both decoders are compared on an equivalent surface:
-    //   - tasty-query's tqTopLevelFqns excludes ClassSymbols whose displayFullName ends with "$"
+    //   tasty-query's tqTopLevelFqns excludes ClassSymbols whose displayFullName ends with "$"
     //     (i.e., all module classes, which have ObjectClassTypeName names like "SomeObject$").
-    //   - kyo-tasty counts non-Object top-level ClassLike symbols here (Symbol.Object = module class).
-    //
+    //   kyo-tasty counts non-Object top-level ClassLike symbols here (Symbol.Object = module class).
     // Including Symbol.Object (module classes) in the kyo-tasty count produces ~2x the tasty-query
     // count on a real classpath because every companion object and $package synthetic adds one Object
     // symbol in kyo-tasty but zero non-$-ending names in tasty-query. Excluding Objects aligns the
     // surfaces and the ratio should be close to 1.0.
-    "DIFF-002: kyo-tasty top-level class count is within 20% of tasty-query count on standard classpath" in {
+    "kyo-tasty top-level class count is within 20% of tasty-query count on standard classpath" in {
         val roots = TestClasspaths.standard
         TestClasspaths.withClasspath(roots)(Tasty.classpath).map: kyoCp =>
             // Count non-Object top-level ClassLike symbols (equivalent to tasty-query's !endsWith("$") filter).
@@ -176,7 +174,7 @@ class DifferentialTastyTest extends kyo.test.Test[Any]:
 
     // DIFF-003: fixture FQN sets are non-empty in both decoders.
     // Guards against silent load failure where both decoders return empty but there is no error.
-    "DIFF-003: both kyo-tasty and tasty-query decode at least one fixture class" in {
+    "both kyo-tasty and tasty-query decode at least one fixture class" in {
         val fixtureRoots = TestClasspaths.kyoTastyFixtures
         if fixtureRoots.isEmpty then
             println("DIFF-003: kyo-tasty-fixtures not found on test classpath; skipping")
@@ -196,7 +194,7 @@ class DifferentialTastyTest extends kyo.test.Test[Any]:
 
     // DIFF-004: fixture parent types decoded by kyo-tasty include at least one parent per class
     // that appears in tasty-query's symbol tree. Checks that parent-type resolution is functioning.
-    "DIFF-004: kyo-tasty parent types for fixtures are non-empty where expected" in {
+    "kyo-tasty parent types for fixtures are non-empty where expected" in {
         val fixtureRoots = TestClasspaths.kyoTastyFixtures
         if fixtureRoots.isEmpty then
             println("DIFF-004: kyo-tasty-fixtures not found on test classpath; skipping")
@@ -226,12 +224,11 @@ class DifferentialTastyTest extends kyo.test.Test[Any]:
 end DifferentialTastyTest
 
 object DifferentialTastyTest:
-    // Cache tasty-query ClasspathLoaders.read() results across test leaves.
-    // ClasspathLoaders.read() is a blocking NIO scan that cannot be interrupted by Kyo's
+    // Cache tasty-query ClasspathLoaders.read results across test leaves.
+    // ClasspathLoaders.read is a blocking NIO scan that cannot be interrupted by Kyo's
     // Async.timeout. Loading each root set once and reusing the Context eliminates the
     // duplicate fixture load that DIFF-001 and DIFF-003 would otherwise each pay.
-    //
-    // Unsafe: ClasspathLoaders.read() performs blocking java.nio.file I/O. The lazy vals
+    // Unsafe: ClasspathLoaders.read performs blocking java.nio.file I/O. The lazy vals
     // are initialised at most once per JVM process (the sbt test runner) and are read-only
     // after initialisation, so the mutation is safely confined to the first accessor thread.
     private[kyo] lazy val fixturesContext: tastyquery.Contexts.Context =

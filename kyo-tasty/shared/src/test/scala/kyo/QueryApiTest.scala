@@ -11,8 +11,6 @@ import scala.collection.mutable
 /** Tests for the Query API, classpath lifecycle, and the A/B/C orchestration pipeline.
   *
   * Uses an in-memory FileSource for cross-platform compatibility.
-  *
-  * Plan tests 1-18, 24b, 31-34, 36.
   */
 class QueryApiTest extends kyo.test.Test[Any]:
 
@@ -94,7 +92,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
 
     /** Open a classpath from the in-memory source using ClasspathOrchestrator directly.
       *
-      * Returns `Tasty.Classpath` (the public opaque type) so that extension methods such as `findClass`, `errors`, `topLevelClasses`, and
+      * Returns `Tasty.Classpath` (the public opaque type) so that extension methods such as `findClass`, `errors`, `topLevelClasses`
       * `findClassByBinary` are in scope.
       */
     private def openFixtureClasspath(src: FileSource, mode: Tasty.ErrorMode = Tasty.ErrorMode.SoftFail)(
@@ -522,7 +520,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
     }
 
     // Test 1: sym.parentTypes for PlainClass returns a non-empty Chunk[Type].
-    // plan: phase-02 update; sym.parents is renamed to sym.parentTypes (direct field, no effect row).
+    // phase-02 update; sym.parents is renamed to sym.parentTypes (direct field, no effect row).
     "sym.parentTypes for PlainClass returns a non-empty Chunk[Type]" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
@@ -541,7 +539,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
     }
 
     // Test 2: sym.typeParamIds for GenericBox[A] returns a Chunk of length 1.
-    // plan: phase-02 update; sym.typeParamIds.flatMap(id => cp.symbol(id).toChunk) (Chunk[Symbol]) becomes sym.typeParamIds (Chunk[SymbolId]).
+    // phase-02 update; sym.typeParamIds.flatMap(id => cp.symbol(id).toChunk) (Chunk[Symbol]) becomes sym.typeParamIds (Chunk[SymbolId]).
     // Resolve SymbolId to Symbol via allSymbols for name check.
     "sym.typeParamIds for GenericBox[A] returns length 1 (phase-02 inline)" in {
         val src = MemoryFileSource()
@@ -614,7 +612,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
                 throw t
             case Result.Success(sym) =>
                 // Scope has exited; classpath is now closed. sym.parentTypes is a direct field, always valid.
-                // plan: phase-02 inline; sym.parents renamed to sym.parentTypes.
+                // phase-02 inline; sym.parents renamed to sym.parentTypes.
                 val parents = symParentTypes(sym)
                 assert(
                     parents.nonEmpty,
@@ -794,7 +792,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
     // Test 2: sym.declaredType for SomeTrait.compute returns a type (return-type-only
     // per anti-thrash rule; not a full Type.Function). The returned type is Named (proxy resolved
     // after Phase C). We assert that declaredType is populated and returns a Tasty.Type value.
-    // plan: phase-02 update; declarations->declarationIds; declaredType->Maybe[Type].
+    // phase-02 update; declarations->declarationIds; declaredType->Maybe[Type].
     "sym.declaredType for SomeTrait.compute (def compute: Int) returns a type" in {
         val src = MemoryFileSource()
         src.add("root/SomeTrait.tasty", kyo.fixtures.Embedded.someTraitTasty)
@@ -825,7 +823,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
     // Test 3: sym.declaredType for type alias `type StringList = List[String]` returns
     // a non-Named applied or named type (the alias body). StringList is a top-level type alias in
     // FixtureClasses$package.tasty.
-    // plan: phase-02 update; declaredType->Maybe[Type].
+    // phase-02 update; declaredType->Maybe[Type].
     "sym.declaredType for type StringList returns a type (alias body)" in {
         val src = MemoryFileSource()
         src.add("root/FixtureClasses$package.tasty", kyo.fixtures.Embedded.fixtureClassesPackageTasty)
@@ -858,7 +856,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
                     case None =>
                         fail(s"No 'values' member in ArrayRecord. Members: ${cr.symbols.map(_.name.asString).mkString(", ")}")
                     case Some(valuesSym) =>
-                        // plan: phase-02 update; declaredType is now Maybe[Type].
+                        // phase-02 update; declaredType is now Maybe[Type].
                         Abort.run[TastyError](Kyo.lift(symDeclaredType(valuesSym))).map:
                             case Result.Success(tpeMaybe) =>
                                 tpeMaybe match
@@ -883,7 +881,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
 
     // Test 5: sym.declaredType after classpath close returns the pre-populated type.
     // declaredType is a plain Maybe[Type] field on the case class; it remains valid after close.
-    // plan: phase-02 update; declarationIds used; declaredType is Maybe[Type].
+    // phase-02 update; declarationIds used; declaredType is Maybe[Type].
     "sym.declaredType after classpath close returns pre-populated type (no failure)" in {
         // x is a constructor parameter; find it via paramListIds of the <init> method
         val captureResult: Result[TastyError, Tasty.Symbol] < Async =
@@ -929,7 +927,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
     // Opens fixture classpath through the full orchestrator pipeline. FileResult values
     // carry mutable.HashMap for parentsBySymbol, childrenByOwner, and typeBySymbol. The merger reads
     // these maps during finalizeMerge. Verifies that the full pipeline produces the expected FQN index entry.
-    "T-P4-2: merger processes mutable.HashMap FileResult fields and produces expected FQN entry" in {
+    "merger processes mutable.HashMap FileResult fields and produces expected FQN entry" in {
         Scope.run:
             Abort.run[TastyError](openFixtureClasspath(fixtureSource()).flatMap: cp =>
                 cp.findClass("kyo.fixtures.PlainClass")).map:

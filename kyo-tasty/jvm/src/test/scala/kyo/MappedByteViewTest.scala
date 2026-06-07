@@ -49,7 +49,7 @@ class MappedByteViewTest extends kyo.test.Test[Any]:
         // §839 case 3; direct MappedByteView overflow test, single-threaded, no suspension.
         import AllowUnsafe.embrace.danger
         // Given: MappedByteView with cursor at Int.MaxValue + 1L.
-        // When: readByte() is called.
+        // When: readByte is called.
         // Then: IllegalStateException is thrown with message containing "mmap segment overflow".
         val (view, cleanup) = makeView(Int.MaxValue.toLong + 2L, Int.MaxValue.toLong + 1L)
         try

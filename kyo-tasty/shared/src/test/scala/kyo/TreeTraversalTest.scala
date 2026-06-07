@@ -4,11 +4,11 @@ import AllowUnsafe.embrace.danger
 
 /** Tests for Tree traversal members .
   *
-  * Leaf id:12. Pins: INV-005 (Tree traversal returns plain data).
+  * 12. Pins: (Tree traversal returns plain data).
   */
 class TreeTraversalTest extends kyo.test.Test[Any]:
 
-    // Leaf id:12 -- Tree.children covers all direct children
+    // 12 -- Tree.children covers all direct children
     "Ident has empty children" in {
         val n = Tasty.Name("x")
         import AllowUnsafe.embrace.danger
@@ -25,7 +25,7 @@ class TreeTraversalTest extends kyo.test.Test[Any]:
         val arg2 = Tasty.Tree.Literal(Tasty.Constant.IntConst(2))
         val app  = Tasty.Tree.Apply(fun, Chunk(arg1, arg2))
         assert(app.children.size == 3)
-        // Use .equals (no CanEqual for Tree in scope)
+        // Use.equals (no CanEqual for Tree in scope)
         assert(app.children(0).equals(fun))
         assert(app.children(1).equals(arg1))
         assert(app.children(2).equals(arg2))

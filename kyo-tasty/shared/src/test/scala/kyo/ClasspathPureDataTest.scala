@@ -6,12 +6,11 @@ import kyo.Tasty.Classpath
 import kyo.Tasty.SymbolId
 import kyo.internal.tasty.query.Binding
 
-/** plan leaves 1-6.
+/** Pure-data tests for Classpath.
   *
-  * Leaf 1: Classpath.empty round-trips through Schema. Leaf 2: non-empty Classpath round-trips.
-  * Leaf 3: Classpath.Indices derives Schema. Leaf 4: Classpath has no decodeCtx/canonical/mmapArena
-  * field (compileErrors). Leaf 5: Binding.empty wraps Classpath.empty. Leaf 6: cross-platform
-  * (leaves 1-5 are in shared/src/test, which runs on JVM, JS, and Native).
+  * Classpath.empty and a non-empty Classpath round-trip through Schema. Classpath.Indices derives
+  * Schema. Classpath has no decodeCtx/canonical/mmapArena field (compileErrors). Binding.empty
+  * wraps Classpath.empty. Tests live in shared/src/test and run on JVM, JS, and Native.
   */
 class ClasspathPureDataTest extends kyo.test.Test[Any]:
 
@@ -22,7 +21,7 @@ class ClasspathPureDataTest extends kyo.test.Test[Any]:
     val _canEqIndices: CanEqual[Classpath.Indices, Classpath.Indices] =
         summon[CanEqual[Classpath.Indices, Classpath.Indices]]
 
-    // Leaf 1: Classpath.empty round-trips through Schema (JSON codec)
+    // Classpath.empty round-trips through Schema (JSON codec)
     "Classpath.empty round-trips through Schema" in {
         val encoded = Json.encode(Classpath.empty)
         val decoded = Json.decode[Classpath](encoded)
@@ -37,7 +36,7 @@ class ClasspathPureDataTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // Leaf 2: non-empty Classpath round-trips through Schema
+    // non-empty Classpath round-trips through Schema
     "non-empty Classpath round-trips through Schema" in {
         import AllowUnsafe.embrace.danger
         val sym0 = Tasty.Symbol.Class(
@@ -93,7 +92,7 @@ class ClasspathPureDataTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // Leaf 3: Classpath.Indices derives Schema; round-trips Indices.empty
+    // Classpath.Indices derives Schema; round-trips Indices.empty
     "Classpath.Indices.empty round-trips through Schema" in {
         val encoded = Json.encode(Classpath.Indices.empty)
         val decoded = Json.decode[Classpath.Indices](encoded)
@@ -108,7 +107,7 @@ class ClasspathPureDataTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // Leaf 4: Classpath has no decodeCtx / canonical / mmapArena field (compile-time check)
+    // Classpath has no decodeCtx / canonical / mmapArena field (compile-time check)
     "Classpath has no decodeCtx canonical mmapArena field" in {
         val e1 = compiletime.testing.typeCheckErrors("(null: kyo.Tasty.Classpath).decodeCtx")
         val e2 = compiletime.testing.typeCheckErrors("(null: kyo.Tasty.Classpath).canonical")
@@ -119,7 +118,7 @@ class ClasspathPureDataTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 5: Binding is accessible from within package kyo (private[kyo]) and wraps Classpath.empty.
+    // Binding is accessible from within package kyo (private[kyo]) and wraps Classpath.empty.
     // Per C5 resolution (b): from within package kyo, private[kyo] IS accessible. We verify the
     // behavioral invariant: Binding.empty returns an empty Classpath and Absent decodeCtx.
     "Binding.empty wraps Classpath.empty and has Absent decodeCtx" in {
@@ -129,7 +128,7 @@ class ClasspathPureDataTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 6: cross-platform JVM JS Native -- the above leaves cover all platforms by
+    // cross-platform JVM JS Native -- the above leaves cover all platforms by
     // being placed in shared/src/test/scala. No per-platform assertions needed.
 
 end ClasspathPureDataTest

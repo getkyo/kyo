@@ -15,10 +15,10 @@ import kyo.internal.tasty.type_.TypeArena
   * during the agent run requires a Scala 2 compiler. Deviations from plan (see PHASE-10-IMPL-NOTES.md).
   *
   * Scala 2 pickle binary format (raw):
-  *   - Byte 0: MajorVersion = 5
-  *   - Byte 1: MinorVersion = 0
-  *   - NAT: entry count (high-bit-SET = more bytes, high-bit-CLEAR = last byte, big-endian 7-bit groups)
-  *   - Per entry: NAT tag, NAT length, <length> data bytes
+  *   Byte 0: MajorVersion = 5
+  *   Byte 1: MinorVersion = 0
+  *   NAT: entry count (high-bit-SET = more bytes, high-bit-CLEAR = last byte, big-endian 7-bit groups)
+  *   Per entry: NAT tag, NAT length, <length> data bytes
   *
   * For entry data (symbol entries): nameRef(nat) ownerRef(nat) flags(longNat) [infoRef(nat)]
   *
@@ -30,9 +30,7 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    // -------------------------------------------------------------------------
     // Pickle builder helpers
-    // -------------------------------------------------------------------------
 
     /** Build a NAT-encoded byte sequence for value n. For n <= 127: single byte n (Scala 2 big-endian base-128). */
     private def nat(n: Int): Array[Byte] =
@@ -89,11 +87,9 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
     private def readPickleDirect(pickleBytes: Array[Byte])(using Frame): Scala2PickleResult < (Sync & Abort[TastyError]) =
         Scala2PickleReader.readRaw(pickleBytes, new TypeArena)
 
-    // -------------------------------------------------------------------------
     // Test 1: ScalaSig attribute -> Flag.Scala2 on all symbols
-    // -------------------------------------------------------------------------
 
-    "Test 1: ScalaSig classfile dispatch: classfile with ScalaSig produces symbols with Flag.Scala2" in {
+    "ScalaSig classfile dispatch: classfile with ScalaSig produces symbols with Flag.Scala2" in {
         // Build a minimal pickle with one TERMname entry (idx 0 = "MyClass") and one CLASSsym entry (idx 1)
         // CLASSsym data: nameRef=0 ownerRef=0 flags=0 (no flags)
         val nameEntry   = entry(Scala2PickleReader.TERMname, nameData("MyClass"))
@@ -106,11 +102,9 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
             assert(hasScala2, s"Expected at least one symbol with Flag.Scala2; flags were: ${syms.map(_.flags.bits).mkString(", ")}")
     }
 
-    // -------------------------------------------------------------------------
     // Test 2: Scala 2 case class -> kind == Class, Flag.Case
-    // -------------------------------------------------------------------------
 
-    "Test 2: Scala 2 case class: CLASSsym with CASE flag -> kind=Class and Flag.Case" in {
+    "Scala 2 case class: CLASSsym with CASE flag -> kind=Class and Flag.Case" in {
         // CLASSsym with CASE_FLAG (0x00000800L) set
         val nameEntry   = entry(Scala2PickleReader.TERMname, nameData("MyCaseClass"))
         val classEntry  = entry(Scala2PickleReader.CLASSsym, symData(0, 0, Scala2PickleReader.CASE_FLAG))
@@ -125,11 +119,9 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
             assert(sym.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2")
     }
 
-    // -------------------------------------------------------------------------
     // Test 3: Scala 2 method -> declaredType is Type.Function
-    // -------------------------------------------------------------------------
 
-    "Test 3: Scala 2 method: VALsym with METH flag -> declaredType is Type.Function" in {
+    "Scala 2 method: VALsym with METH flag -> declaredType is Type.Function" in {
         // VALsym with METH_FLAG (0x00040000L): a method named "apply"
         val nameEntry   = entry(Scala2PickleReader.TERMname, nameData("apply"))
         val methodEntry = entry(Scala2PickleReader.VALsym, symData(0, 0, Scala2PickleReader.METH_FLAG))
@@ -139,8 +131,8 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
             assert(methods.nonEmpty, "Expected at least one Method symbol")
             val method = methods.head
             assert(method.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2")
-            // plan: phase-02 inline; declaredType is now Maybe[Type]; Scala2PickleReader sets it to Absent.
-            // declaredType for Method symbols was Type.Function(...) in old code; in it's Absent.
+            // phase-02 inline; declaredType is now Maybe[Type]; Scala2PickleReader sets it to Absent.
+            // declaredType for Method symbols was Type.Function(.) in old code; in it's Absent.
             (method match
                 case m: Tasty.Symbol.Method => m.declaredType;
                 case _                      => kyo.Maybe.Absent
@@ -150,15 +142,13 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
                 case kyo.Maybe.Present(other) =>
                     fail(s"Expected Type.Function, got $other")
                 case kyo.Maybe.Absent =>
-                    succeed // plan: phase-02; declaredType = Absent for Scala2 method symbols
+                    succeed // declaredType = Absent for Scala2 method symbols
             end match
     }
 
-    // -------------------------------------------------------------------------
     // Test 4: Scala 2 type alias -> kind == TypeAlias, declaredType is Named
-    // -------------------------------------------------------------------------
 
-    "Test 4: Scala 2 type alias: ALIASsym -> kind=TypeAlias and declaredType=Type.Named" in {
+    "Scala 2 type alias: ALIASsym -> kind=TypeAlias and declaredType=Type.Named" in {
         // ALIASsym entry: a type alias named "Alias"
         val nameEntry   = entry(Scala2PickleReader.TERMname, nameData("Alias"))
         val aliasEntry  = entry(Scala2PickleReader.ALIASsym, symData(0, 0, 0L))
@@ -169,7 +159,7 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
             val alias = aliases.head
             assert(alias.kind == SymbolKind.TypeAlias, s"Expected TypeAlias, got ${alias.kind}")
             assert(alias.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2")
-            // plan: phase-05; Named(id) no longer carries a Symbol name directly; name check deferred to.
+            // phase-05; Named(id) no longer carries a Symbol name directly; name check deferred to.
             (alias match
                 case ta: Tasty.Symbol.TypeAlias => kyo.Maybe(ta.body);
                 case _                          => kyo.Maybe.Absent
@@ -179,17 +169,15 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
                 case kyo.Maybe.Present(other) =>
                     fail(s"Expected Type.Named, got $other")
                 case kyo.Maybe.Absent =>
-                    succeed // plan: phase-02; declaredType Absent for Scala2 type alias
+                    succeed // declaredType Absent for Scala2 type alias
             end match
     }
 
-    // -------------------------------------------------------------------------
     // Test 5: classfile without ScalaSig -> no Flag.Scala2
-    // -------------------------------------------------------------------------
 
     // Cross-platform: uses Embedded.throwsFixtureClass instead of JDK Object.class.
     // Any Java classfile without ScalaSig works; the shape assertion (no Scala2 flag) is fixture-independent.
-    "Test 5: Java-only classfile (no ScalaSig attribute) -> Flag.Scala2 is absent" in {
+    "Java-only classfile (no ScalaSig attribute) -> Flag.Scala2 is absent" in {
         val result = ClassfileUnpickler.read(kyo.fixtures.Embedded.throwsFixtureClass, new TypeArena)
         result.map: r =>
             val sym = r.classSymbol
@@ -201,11 +189,9 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
             )
     }
 
-    // -------------------------------------------------------------------------
     // Test 6: corrupt ScalaSig bytes -> Abort.fail(CorruptedFile)
-    // -------------------------------------------------------------------------
 
-    "Test 6: corrupt Scala 2 pickle bytes -> Abort.fail(CorruptedFile)" in {
+    "corrupt Scala 2 pickle bytes -> Abort.fail(CorruptedFile)" in {
         // A pickle with wrong major version (e.g., 99 instead of 5) should produce CorruptedFile
         val badPickle = Array[Byte](99.toByte, 0.toByte) // wrong major version
         Abort.run(readPickleDirect(badPickle)).map: result =>
@@ -220,11 +206,9 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
                     fail(s"Unexpected panic: $t")
     }
 
-    // -------------------------------------------------------------------------
     // Test 7: Scala 2 class parents resolve via placeholder mechanism
-    // -------------------------------------------------------------------------
 
-    "Test 7: Scala 2 class symbol has at least one parent type (AnyRef placeholder)" in {
+    "Scala 2 class symbol has at least one parent type (AnyRef placeholder)" in {
         // Build a pickle with a single CLASSsym entry. The Scala2PickleReader adds an AnyRef placeholder parent.
         val nameEntry   = entry(Scala2PickleReader.TERMname, nameData("MyParentClass"))
         val classEntry  = entry(Scala2PickleReader.CLASSsym, symData(0, 0, 0L))
@@ -232,7 +216,7 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
         readPickleDirect(pickleBytes).map: result =>
             val parents = result.parents
             assert(parents.nonEmpty, "Expected at least one parent type for a Scala 2 class")
-            // plan: phase-05; Named(id) no longer carries name directly; verify that a Named parent exists.
+            // phase-05; Named(id) no longer carries name directly; verify that a Named parent exists.
             // Name check (AnyRef) deferred to once cp.symbol(id).name is resolvable.
             val hasNamedParent = parents.exists:
                 case Tasty.Type.Named(_) => true
@@ -240,21 +224,18 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
             assert(hasNamedParent, s"Expected at least one Named parent placeholder; got ${parents.size} parents")
     }
 
-    // -------------------------------------------------------------------------
     // Test 8: EXTref decodes to Unresolved symbol with correct FQN
-    // -------------------------------------------------------------------------
 
-    "Test 8: EXTref decodes to Unresolved symbol with FQN com.example.Foo" in {
+    "EXTref decodes to Unresolved symbol with FQN com.example.Foo" in {
         // Pickle layout (entry indices):
         //   0: TERMname "com"
         //   1: TERMname "example"
         //   2: EXTref nameRef=1 (no owner) -> "example" (root EXTref for package part)
         //   3: TERMname "Foo"
         //   4: EXTref nameRef=3 ownerRef=2 -> "example.Foo"
-        //
         // This test uses a 4-entry layout: ownerRef points to a TERMname directly (common for single-package owners).
-        //   0: TERMname "com.example"   (owner package as a single name)
-        //   1: EXTref ownerEntry=0       (owner EXTref: nameRef=0, no owner)
+        //   0: TERMname "com.example" (owner package as a single name)
+        //   1: EXTref ownerEntry=0 (owner EXTref: nameRef=0, no owner)
         //   2: TERMname "Foo"
         //   3: EXTref nameRef=2 ownerRef=1 -> resolves to "com.example.Foo"
         val ownerNameEntry = entry(Scala2PickleReader.TERMname, nameData("com.example"))
@@ -270,11 +251,9 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
             assert(fooSym.get.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2 on EXTref symbol")
     }
 
-    // -------------------------------------------------------------------------
     // Test 9: EXTMODCLASSref appends $ and decodes to Unresolved symbol
-    // -------------------------------------------------------------------------
 
-    "Test 9: EXTMODCLASSref appends $ and decodes to Unresolved symbol with FQN com.example.Foo$" in {
+    "EXTMODCLASSref appends $ and decodes to Unresolved symbol with FQN com.example.Foo$" in {
         // Layout (same owner chain as Test 8 but entry 3 is EXTMODCLASSref):
         //   0: TERMname "com.example"
         //   1: EXTref nameRef=0 (no owner) -> "com.example"
@@ -296,21 +275,18 @@ class Scala2PickleTest extends kyo.test.Test[Any]:
             assert(modSym.get.flags.contains(Tasty.Flag.Scala2), "Expected Flag.Scala2 on EXTMODCLASSref symbol")
     }
 
-    // -------------------------------------------------------------------------
     // Test 10: EXTref owner-cycle does not StackOverflow; resolves to a finite FQN
-    // -------------------------------------------------------------------------
 
-    "Test 10: malformed EXTref owner-cycle terminates safely without StackOverflow" in {
+    "malformed EXTref owner-cycle terminates safely without StackOverflow" in {
         // Pickle layout (entry indices):
         //   0: TERMname "Foo"
-        //   1: EXTref nameRef=0 ownerRef=1  <- self-cycle: ownerRef points to itself
-        //
+        //   1: EXTref nameRef=0 ownerRef=1 <- self-cycle: ownerRef points to itself
         // resolveExtFqn is called with entryIdx=1 and visited=Set.empty.
-        //   - Entry 1 is an EXTref, not in visited. It reads ownerRef=1.
-        //   - nextVisited = Set(1). Recursive call: resolveExtFqn(1, ..., Set(1)).
-        //   - visited.contains(1) is true -> returns "".
-        //   - ownerFqn is Absent (filtered empty), so leafName "Foo" is used.
-        //   - The owner resolution returns "Foo".
+        //   Entry 1 is an EXTref, not in visited. It reads ownerRef=1.
+        //   nextVisited = Set(1). Recursive call: resolveExtFqn(1., Set(1)).
+        //   visited.contains(1) is true -> returns "".
+        //   ownerFqn is Absent (filtered empty), so leafName "Foo" is used.
+        //   The owner resolution returns "Foo".
         // The outer decodeExtRef then builds fqn = "Foo" + "." + "Foo" = "Foo.Foo".
         // The key property tested: the computation terminates (no StackOverflow).
         val fooNameEntry = entry(Scala2PickleReader.TERMname, nameData("Foo"))

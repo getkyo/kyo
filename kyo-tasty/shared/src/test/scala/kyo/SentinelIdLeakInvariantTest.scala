@@ -6,13 +6,13 @@ import scala.collection.mutable
 
 /** INV-LOADING-SYMBOL enforcement: no SymbolId.value == -1 survives in produced public ADTs.
   *
-  * Phase 18 fix: after finalizeMerge, `Named(SymbolId(-1))` sentinels are filtered out of
+  * fix: after finalizeMerge, `Named(SymbolId(-1))` sentinels are filtered out of
   * parentTypes, declaredType, and annotations. This test verifies that invariant holds against
   * a real fixture classpath loaded cold via ClasspathOrchestrator.
   *
   * Covers:
-  *   - noSentinelIdInParentTypes: parentTypes Chunk contains no Named(SymbolId(-1))
-  *   - noSentinelIdInClassLikeAnnotations: ClassLike annotation tycon types are not Named(SymbolId(-1))
+  *   noSentinelIdInParentTypes: parentTypes Chunk contains no Named(SymbolId(-1))
+  *   noSentinelIdInClassLikeAnnotations: ClassLike annotation tycon types are not Named(SymbolId(-1))
   */
 class SentinelIdLeakInvariantTest extends kyo.test.Test[Any]:
 
@@ -77,7 +77,6 @@ class SentinelIdLeakInvariantTest extends kyo.test.Test[Any]:
     end loadFixtureCp
 
     // noSentinelIdInParentTypes
-    //
     // Given: a cold-loaded fixture classpath.
     // When: every ClassLike symbol's parentTypes are inspected.
     // Then: no Named(SymbolId(-1)) appears in any parent type (at any nesting depth).
@@ -102,7 +101,6 @@ class SentinelIdLeakInvariantTest extends kyo.test.Test[Any]:
     }
 
     // noSentinelIdInClassLikeAnnotations
-    //
     // Given: a cold-loaded fixture classpath.
     // When: every ClassLike symbol's annotations are inspected.
     // Then: no Named(SymbolId(-1)) appears in any annotation's annotationType.

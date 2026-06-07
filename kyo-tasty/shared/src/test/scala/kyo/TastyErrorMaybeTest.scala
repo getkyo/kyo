@@ -11,7 +11,7 @@ import kyo.internal.tasty.symbol.SymbolKind
 import scala.collection.immutable.IntMap
 import scala.collection.mutable
 
-/** Tests pinning INV-007: TastyError.NotImplemented is reserved for genuinely-deferred features only.
+/** Tests pinning: TastyError.NotImplemented is reserved for genuinely-deferred features only.
   *
   * TastyError.NotImplemented is returned only when a TASTy feature is not
   * yet implemented in this version of kyo-tasty. It is never returned for "this attribute does not apply to this symbol kind" (use
@@ -214,12 +214,11 @@ class TastyErrorMaybeTest extends kyo.test.Test[Any]:
     end MemoryFileSource
 
     // ── Leaf 1: NotImplemented usage audit ─────────────────────────────────
-    //
     // states that NotImplemented is only used in forward-compat deserialisation.
     // This test pins the contract by verifying that:
-    // (a) A recognized error string prefix ("FileNotFound(...)") round-trips to the
+    // (a) A recognized error string prefix ("FileNotFound(.)") round-trips to the
     //     correct TastyError variant and NOT to NotImplemented.
-    // (b) An unrecognized error string prefix ("FutureError(...)") produces NotImplemented.
+    // (b) An unrecognized error string prefix ("FutureError(.)") produces NotImplemented.
     // This distinguishes the two call sites in SnapshotReader.parseErrorString from
     // any hypothetical misuse.
 
@@ -274,11 +273,9 @@ class TastyErrorMaybeTest extends kyo.test.Test[Any]:
     }
 
     // ── Leaf 2: TreeUnpickler unrecognized-tag returns Tree.Unknown (not NotImplemented) ─
-    //
     // The plan anticipated that TreeUnpickler would return NotImplemented for unrecognized tags.
     // Audit shows TreeUnpickler does NOT use NotImplemented at all: unknown category-2-4 tags
     // produce Tree.Unknown for graceful degradation. This test pins the ACTUAL contract.
-    //
     // Setup: build a SymbolBody whose slice contains tag 77 (a category-2 gap in the
     // [60,89] range; not assigned in TastyFormat). decodeSync dispatches through
     // decodeSymBody -> readTree -> decodeTreeTag -> "Unknown category 2-4" arm -> Tree.Unknown(77, 0).
@@ -335,7 +332,6 @@ class TastyErrorMaybeTest extends kyo.test.Test[Any]:
     }
 
     // ── Leaf 3: Snapshot ERRORS section with fully-unrecognized prefix returns NotImplemented ─
-    //
     // Forward-compatibility scenario: a snapshot written by a future kyo-tasty version may contain
     // TastyError variants not known to this reader. The SnapshotReader.parseErrorString fallback
     // returns NotImplemented so that callers can inspect accumulated errors without losing them.
@@ -371,11 +367,9 @@ class TastyErrorMaybeTest extends kyo.test.Test[Any]:
     }
 
     // ── Leaf 4: UnresolvedReference is emitted by finalizeMerge ─────────────
-    //
     // TastyError.UnresolvedReference is produced by ClasspathOrchestrator.finalizeMerge when
     // a partial symbol in the fqnIndex cannot be resolved to a final SymbolId. Under SoftFail
     // mode the error is accumulated in cp.errors.
-    //
     // This test verifies the end-to-end production path: a degenerate MergeState with a ghost
     // FQN produces exactly one UnresolvedReference in cp.errors, whose name matches the ghost FQN.
     // Replaces the prior vacuous field-roundtrip probe per B-5 carry fix.

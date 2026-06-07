@@ -5,7 +5,7 @@ import scala.compiletime.testing.typeCheckErrors
 /** Leaf 1: README API-surface compile-time verification.
   *
   * Compile-time checks via typeCheckErrors verify that every key method referenced in
-  * README code blocks actually exists on the post-fix public surface. This is the
+  * README code blocks actually exists on the public surface. This is the
   * Approach A substitute for `sbt 'kyo-tasty/doctest'` (prep doc C4). The checks run
   * cross-platform; they exercise the API surface, not file I/O.
   *
@@ -16,11 +16,11 @@ import scala.compiletime.testing.typeCheckErrors
 class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
 
     // ── Leaf 1: compile-time surface checks ──────────────────────────────────
-    // Given: the post-fix public surface of object Tasty.
+    // Given: the public surface of object Tasty.
     // When: typeCheckErrors is called for each key README entry-point reference.
     // Then: every "ok" check produces empty errors (method exists); every "bad" check produces non-empty.
 
-    "Leaf 1a: Tasty.findClass exists with correct return type" in {
+    "Tasty.findClass exists with correct return type" in {
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Maybe[kyo.Tasty.Symbol.Class] < kyo.Sync = kyo.Tasty.findClass(\"x\")"
         )
@@ -28,7 +28,7 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    "Leaf 1b: Tasty.requireClass exists with correct return type" in {
+    "Tasty.requireClass exists with correct return type" in {
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Tasty.Symbol.Class < (kyo.Sync & kyo.Abort[kyo.TastyError]) = kyo.Tasty.requireClass(\"x\")"
         )
@@ -36,7 +36,7 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    "Leaf 1c: Tasty.findClassLike exists with correct return type" in {
+    "Tasty.findClassLike exists with correct return type" in {
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Maybe[kyo.Tasty.Symbol.ClassLike] < kyo.Sync = kyo.Tasty.findClassLike(\"x\")"
         )
@@ -44,7 +44,7 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    "Leaf 1d: Tasty.requireClassLike exists with correct return type" in {
+    "Tasty.requireClassLike exists with correct return type" in {
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Tasty.Symbol.ClassLike < (kyo.Sync & kyo.Abort[kyo.TastyError]) = kyo.Tasty.requireClassLike(\"x\")"
         )
@@ -52,7 +52,7 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    "Leaf 1e: Tasty.allClassLike exists with correct return type" in {
+    "Tasty.allClassLike exists with correct return type" in {
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Chunk[kyo.Tasty.Symbol.ClassLike] < kyo.Sync = kyo.Tasty.allClassLike"
         )
@@ -60,7 +60,7 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    "Leaf 1f: Tasty.allMethods exists with correct return type" in {
+    "Tasty.allMethods exists with correct return type" in {
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Chunk[kyo.Tasty.Symbol.Method] < kyo.Sync = kyo.Tasty.allMethods"
         )
@@ -68,7 +68,7 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    "Leaf 1g: Tasty.isSubtypeOf exists on object Tasty" in {
+    "Tasty.isSubtypeOf exists on object Tasty" in {
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Tasty.SubtypeVerdict < kyo.Sync = kyo.Tasty.isSubtypeOf(kyo.Tasty.Type.Any, kyo.Tasty.Type.Nothing)"
         )
@@ -76,13 +76,13 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    "Leaf 1h: Type.isSubtypeOf does NOT exist on Type" in {
+    "Type.isSubtypeOf does NOT exist on Type" in {
         val bad = typeCheckErrors("(null : kyo.Tasty.Type).isSubtypeOf(kyo.Tasty.Type.Nothing)")
         assert(bad.length > 0, "Type.isSubtypeOf should not exist on Type (it is on object Tasty)")
         succeed
     }
 
-    "Leaf 1i: Type.collect, find, foldLeft, exists are public" in {
+    "Type.collect, find, foldLeft, exists are public" in {
         val ok1 = typeCheckErrors("val _: kyo.Chunk[kyo.Tasty.Type] = kyo.Tasty.Type.Any.collect { case x => x }")
         val ok2 = typeCheckErrors("val _: kyo.Maybe[kyo.Tasty.Type] = kyo.Tasty.Type.Any.find(_ => true)")
         val ok3 = typeCheckErrors("val _: Int = kyo.Tasty.Type.Any.foldLeft(0)((acc, _) => acc + 1)")
@@ -94,11 +94,11 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Leaf 1j: Type.visit is private[kyo]. Accessible from within kyo package tests, so
+    // Type.visit is private[kyo]. Accessible from within kyo package tests, so
     // we verify behavioral non-existence: the visit method should NOT be discoverable from
     // a user-perspective code snippet outside the kyo package. We use a fully-qualified
     // external import pattern that the typeCheckErrors fresh context can check.
-    "Leaf 1j: Type.visit is private (not part of public API)" in {
+    "Type.visit is private (not part of public API)" in {
         // Private[kyo] means accessible within package kyo but not from user code outside.
         // We verify the pure traversal counterparts are the documented public API.
         val okCollect = typeCheckErrors("val _: kyo.Chunk[kyo.Tasty.Type] = kyo.Tasty.Type.Any.collect { case x => x }")
@@ -106,7 +106,7 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    "Leaf 1k: Tasty.bodyTree exists with correct return type" in {
+    "Tasty.bodyTree exists with correct return type" in {
         val ok = typeCheckErrors(
             "given kyo.Frame = kyo.Frame.internal; val _: kyo.Maybe[kyo.Tasty.Tree] < (kyo.Sync & kyo.Abort[kyo.TastyError]) = kyo.Tasty.bodyTree(null: kyo.Tasty.Symbol)"
         )
@@ -114,7 +114,7 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    "Leaf 1l: SubtypeVerdict.Indeterminate exists (not Unknown)" in {
+    "SubtypeVerdict.Indeterminate exists (not Unknown)" in {
         val okInd = typeCheckErrors("val _: kyo.Tasty.SubtypeVerdict = kyo.Tasty.SubtypeVerdict.Indeterminate")
         assert(okInd.length == 0, s"SubtypeVerdict.Indeterminate should type-check; errors: ${okInd.map(_.message).mkString("; ")}")
 
@@ -123,7 +123,7 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    "Leaf 1m: Tasty.Java.Annotation exists (not JavaAnnotation at top level)" in {
+    "Tasty.Java.Annotation exists (not JavaAnnotation at top level)" in {
         val okAnn = typeCheckErrors("val _: Class[?] = classOf[kyo.Tasty.Java.Annotation]")
         assert(okAnn.length == 0, s"Tasty.Java.Annotation should type-check; errors: ${okAnn.map(_.message).mkString("; ")}")
 
@@ -132,7 +132,7 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    "Leaf 1n: Tasty.Java.Module.Descriptor exists (not ModuleDescriptor at top level)" in {
+    "Tasty.Java.Module.Descriptor exists (not ModuleDescriptor at top level)" in {
         val okMod = typeCheckErrors("val _: Class[?] = classOf[kyo.Tasty.Java.Module.Descriptor]")
         assert(okMod.length == 0, s"Tasty.Java.Module.Descriptor should type-check; errors: ${okMod.map(_.message).mkString("; ")}")
 
@@ -141,19 +141,19 @@ class KyoTastyDoctestVerifyTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    "Leaf 1o: Type.Unknown does NOT exist (removed from API)" in {
+    "Type.Unknown does NOT exist (removed from API)" in {
         val bad = typeCheckErrors("val _: kyo.Tasty.Type = kyo.Tasty.Type.Unknown")
         assert(bad.length > 0, "Type.Unknown must not exist removed from API")
         succeed
     }
 
-    "Leaf 1p: Symbol.Unresolved does NOT exist (removed from API)" in {
+    "Symbol.Unresolved does NOT exist (removed from API)" in {
         val bad = typeCheckErrors("val _: Any = (null: kyo.Tasty.Symbol.Unresolved)")
         assert(bad.length > 0, "Symbol.Unresolved must not exist (removed from API)")
         succeed
     }
 
-    "Leaf 1q: Classpath.symbol returns Maybe[Symbol] not raw Symbol" in {
+    "Classpath.symbol returns Maybe[Symbol] not raw Symbol" in {
         val ok = typeCheckErrors(
             "val _: kyo.Maybe[kyo.Tasty.Symbol] = (null: kyo.Tasty.Classpath).symbol(kyo.Tasty.SymbolId(0))"
         )

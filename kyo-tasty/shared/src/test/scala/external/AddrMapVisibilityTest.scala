@@ -1,6 +1,6 @@
 package external
 
-/** Negative-compilation test for INV-011: Symbol.TastyOrigin.addrMap is not accessible outside the kyo package.
+/** Negative-compilation test: Symbol.TastyOrigin.addrMap is not accessible outside the kyo package.
   *
   * This file lives in package external (outside kyo) so that assertDoesNotCompile verifies the private[kyo] restriction.
   */

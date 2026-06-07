@@ -12,32 +12,32 @@ import kyo.internal.tasty.symbol.SymbolKind
   * were classified as Symbol.Field.
   *
   * extends the finalizeMerge post-process to cover all four forms:
-  *   - Class + Enum + Case (no Module): class-form (reclassified)
-  *   - Val + Enum + Case: simple value-form (this phase)
-  *   - Object + Enum + Case: singleton-object form (this phase)
-  *   - Field + Enum + JavaDefined + Static: Java enum constant (this phase)
+  *   Class + Enum + Case (no Module): class-form (reclassified)
+  *   Val + Enum + Case: simple value-form (this phase)
+  *   Object + Enum + Case: singleton-object form (this phase)
+  *   Field + Enum + JavaDefined + Static: Java enum constant (this phase)
   *
-  * relocated from jvm/src/test to shared/src/test. Leaves 1-6 use TestClasspaths.withClasspath which works on JS/Native
+  * relocated from jvm/src/test to shared/src/test. use TestClasspaths.withClasspath which works on JS/Native
   * via embedded fixtures (Color with Red/Green/Blue value-form enum, Shape with Circle/Square/Rectangle class-form enum). Leaf 7
   * (java enum constants) requires TestClasspaths2.standardWithPlatformModules (JVM only) and is gated with jvmOnly. The coldWarmEquiv
   * leaf is gated jvmOnly by Fidelity2TestBase.
   *
   * Cross-platform EnumCase parity: the embedded Color enum contributes 3 value-form enum cases (Red, Green, Blue), and the embedded
-  * Shape enum contributes 3 class-form enum cases (Circle, Square, Rectangle). Leaves 3 and 4 verify that the parity leaf (
+  * Shape enum contributes 3 class-form enum cases (Circle, Square, Rectangle). verify that the parity leaf (
   * leaf 4) sees the same count on all platforms.
   *
-  * Invariants produced: INV-105-DF2 (value-form EnumCase half),   closed.
+  * Invariants produced: -DF2 (value-form EnumCase half), closed.
   */
 class EnumCaseFidelity2Test extends Fidelity2TestBase:
 
     import AllowUnsafe.embrace.danger
     import Tasty.Name.asString
 
-    // Leaf 1: scala-compiletime-ops-enums-have-cases
+    // scala-compiletime-ops-enums-have-cases
     // Given: standard classpath (on JVM: includes kyo-tasty which defines kyo.SymbolKind, a value-form enum;
     //         on JS/Native: embedded fixtures include Color with Red/Green/Blue value-form enum cases)
     // When: collecting any EnumCase symbols from the classpath
-    // Then: post-fix count > 0; before fix count is 0 (value-form cases were Symbol.Val)
+    // Then: count > 0; before fix count is 0 (value-form cases were Symbol.Val)
     "classpath has at least one EnumCase child (value-form or class-form)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
             val enumCases = cp.symbols.count(_.isInstanceOf[Tasty.Symbol.EnumCase])
@@ -50,10 +50,10 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 2: every-enum-has-non-empty-cases
+    // every-enum-has-non-empty-cases
     // Given: standard classpath enum parent classes
     // When: for each enum class, collecting Symbol.EnumCase reachable via permittedSubclasses or companion declarations
-    // Then: post-fix every enum has at least 1 EnumCase; before fix 15 of 17 had 0
+    // Then: every enum has at least 1 EnumCase; before fix 15 of 17 had 0
     // Note: on JS/Native the embedded fixture set has Color (value-form) and Shape (class-form).
     "-DF2 : every enum class has at least one EnumCase child" in {
         TestClasspaths.withClasspath()(Tasty.classpath).flatMap: cp =>
@@ -91,10 +91,10 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
                 succeed
     }
 
-    // Leaf 3: total-enumcase-count-grows
+    // total-enumcase-count-grows
     // Given: standard classpath
     // When: counting cp.symbols that are Symbol.EnumCase
-    // Then: post-fix count > 0 (on JVM: > 10; before fix exactly 2 per probe-001.log line 39911)
+    // Then: count > 0 (on JVM: > 10; before fix exactly 2 per probe-001.log line 39911)
     //       on JS/Native: embedded fixtures contribute Color (3 value-form) + Shape (3 class-form) = 6 minimum
     "total EnumCase count > 0 after reclassification (at least embedded Color + Shape cases)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
@@ -107,10 +107,10 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
             succeed
     }
 
-    // Leaf 4: value-form-enumcase-owner-is-companion
+    // value-form-enumcase-owner-is-companion
     // Given: Color.Red/Green/Blue enum cases from the embedded fixture (present on all platforms)
     // When: inspecting each Color EnumCase's ownerId
-    // Then: post-fix every Color EnumCase owner is the companion Object (Color$)
+    // Then: every Color EnumCase owner is the companion Object (Color$)
     // Note: scoped to Color specifically to avoid the pre-existing class-form-owner resolution ambiguity
     //   (FileNotFound / FixedRecordWithHeader enum cases have non-Object owners due to a pre-existing
     //   class-form owner resolution quirk; that is documented and not regressed by this phase).
@@ -119,8 +119,8 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
         TestClasspaths.withClasspath()(Tasty.classpath).map: cp =>
 
             // Look for value-form enum cases from known enums:
-            // - kyo.SymbolKind (on JVM real classpath from kyo-tasty jar)
-            // - kyo.fixtures.Color (on JS/Native embedded fixtures)
+            // kyo.SymbolKind (on JVM real classpath from kyo-tasty jar)
+            // kyo.fixtures.Color (on JS/Native embedded fixtures)
             // Both are pure value-form enums with Object companions.
             val knownEnumNames = Set("SymbolKind", "Color")
             val knownValueFormCases = cp.symbols.collect:
@@ -149,7 +149,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
             end if
     }
 
-    // Leaf 5: class-form-enumcase-still-works
+    // class-form-enumcase-still-works
     // Given: embedded Shape enum (class-form, all cases have constructor parameters)
     //        or kyo.TastyError on JVM (class-form enum with constructor parameters)
     // When: inspecting its class-form enum cases via permittedSubclasses after
@@ -185,7 +185,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
             end match
     }
 
-    // Leaf 6: snapshot-roundtrip-preserves-enumcase
+    // snapshot-roundtrip-preserves-enumcase
     // Given: (cold, warm) Classpath pair from the standard classpath
     // When: comparing EnumCase counts across cold and warm
     // Then: equal across cold and warm (snapshot round-trip preserves EnumCase classification)
@@ -194,10 +194,10 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
         cp.symbols.count(_.isInstanceOf[Tasty.Symbol.EnumCase])
     }
 
-    // Leaf 7: java-enum-constants-are-enumcase
+    // java-enum-constants-are-enumcase
     // Given: standard classpath + java.base JDK classfiles (java.lang.annotation.RetentionPolicy)
     // When: inspecting RetentionPolicy's declared EnumCase members
-    // Then: post-fix RetentionPolicy's enum constants (RUNTIME, CLASS, SOURCE) are Symbol.EnumCase
+    // Then: RetentionPolicy's enum constants (RUNTIME, CLASS, SOURCE) are Symbol.EnumCase
     //       before fix they were Symbol.Field (Field + Enum + JavaDefined + Static)
     // JVM-only (exception condition 2: JVM-only primitive not wrapped cross-platform): the assertion pins
     //   java.lang.annotation.RetentionPolicy on the jrt:/ platform-modules classpath. Loading java.base via
@@ -233,7 +233,7 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
             end match
     }
 
-    // leaf 4: enumcase-count-identical-across-platforms
+    // enumcase-count-identical-across-platforms
     // Given: cp.symbols.count(_.isInstanceOf[Symbol.EnumCase]) on each platform
     // When: comparing the count
     // Then: count > 0 on every platform (embedded Color and Shape each contribute class-form or value-form cases)
