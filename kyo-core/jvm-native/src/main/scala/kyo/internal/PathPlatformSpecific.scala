@@ -427,6 +427,9 @@ end NioWalkHandle
 /** Platform-specific `Path` factory and system-directory accessors for JVM and Scala Native. */
 abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
 
+    private[kyo] val platformPathSeparator: String = java.io.File.pathSeparator
+    private[kyo] val platformFileSeparator: String = java.io.File.separator
+
     /** Wraps an existing `java.nio.file.Path` as a kyo `Path`.
       *
       * The path is normalised. Available on JVM and Scala Native only.

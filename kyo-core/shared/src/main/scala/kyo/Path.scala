@@ -41,8 +41,22 @@ object Path extends PathPlatformSpecific:
 
     given CanEqual[Path, Path] = CanEqual.derived
 
-    /** A path segment — either a literal string or another Path whose parts are spliced in. */
+    /** A path segment, either a literal string or another Path whose parts are spliced in. */
     type Part = String | Path
+
+    /** Platform separator between path entries in classpath-style joined strings.
+      *
+      * Returns `":"` on Unix-family systems and `";"` on Windows. On Scala.js, forwards Node's `path.delimiter`.
+      * Runtime-invariant; computed once at companion init.
+      */
+    val pathSeparator: String = platformPathSeparator
+
+    /** Platform separator between segments of a single path.
+      *
+      * Returns `"/"` on Unix-family systems and `"\\"` on Windows. On Scala.js, forwards Node's `path.sep`.
+      * Runtime-invariant; computed once at companion init.
+      */
+    val fileSeparator: String = platformFileSeparator
 
     // --- Construction ---
 
@@ -191,6 +205,14 @@ object Path extends PathPlatformSpecific:
         /** Reads the entire file contents as a `Span[Byte]`. */
         def readBytes(using Frame): Span[Byte] < (Sync & Abort[FileReadException]) =
             Sync.Unsafe.defer(Abort.get(self.unsafe.readBytes()))
+
+        /** Returns the size in bytes of the regular file at this path.
+          *
+          * Fails with `FileReadException` if the path does not exist, is not a regular file, or the underlying read fails.
+          */
+        def size(using Frame): Long < (Sync & Abort[FileReadException]) =
+            // <!-- flow-allow: kyo bridging API reference -->
+            Sync.Unsafe.defer(Abort.get(self.unsafe.size()))
 
         /** Reads all lines from the file as a `Chunk[String]` (UTF-8). */
         def readLines(using Frame): Chunk[String] < (Sync & Abort[FileReadException]) =

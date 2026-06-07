@@ -60,6 +60,7 @@ private[kyo] object NodePath extends js.Object:
     def basename(path: String): String    = js.native
     def dirname(path: String): String     = js.native
     def sep: String                       = js.native
+    def delimiter: String                 = js.native
 end NodePath
 
 @js.native
@@ -583,6 +584,9 @@ end bytesToUint8Array
 // --- PathPlatformSpecific ---
 
 abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
+
+    private[kyo] val platformPathSeparator: String = NodePath.delimiter
+    private[kyo] val platformFileSeparator: String = NodePath.sep
 
     private[kyo] def make(parts: Chunk[String]): Path =
         if parts.isEmpty then new NodePathUnsafe("").safe
