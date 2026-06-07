@@ -51,8 +51,6 @@ contract violation and requires a plan change and a bump to this list.
   discovers the system classpath from `java.class.path`. On JS and Native,
   `initFallback` returns `Binding.empty` without I/O.
 - Location: `kyo/internal/tasty/query/TastyState.scala`.
-- Note: `Tasty.current` was the old name (removed in Phase 2 of the cleanup
-  campaign). The canonical name is now `TastyState.global`.
 
 **Site 3: `Tasty.bodyTree(sym)`**
 - Effect: parses raw AST bytes on demand; result memoized per classpath instance.
@@ -92,12 +90,11 @@ exhaustive pattern matches can be checked at compile time. Adding a new variant:
 leave a gap. The current minor version is `12`.
 
 Wire-format bump history (append-only; do not reuse or renumber):
-- `10 -> 11` (cleanup campaign Phase 11): added `UnhandledSubtypingCase`,
-  `UnresolvedReference`, `UnknownType`, and `MissingDeclaredType` error variants.
-- `11 -> 12` (handoff-fixes campaign): added the `PLISTS__` section persisting
-  `Symbol.Method.paramListIds` (sparse two-level Int32-LE encoding). Minor-11
-  snapshots lack the section and return `TastyError.SnapshotVersionMismatch`;
-  regenerate the cache.
+- `10 -> 11`: added `UnhandledSubtypingCase`, `UnresolvedReference`, `UnknownType`,
+  and `MissingDeclaredType` error variants.
+- `11 -> 12`: added the `PLISTS__` section persisting `Symbol.Method.paramListIds`
+  (sparse two-level Int32-LE encoding). Minor-11 snapshots lack the section and
+  return `TastyError.SnapshotVersionMismatch`; regenerate the cache.
 
 A snapshot with the wrong minor version is rejected immediately with
 `TastyError.SnapshotVersionMismatch`; there is no downgrade path.
@@ -131,7 +128,7 @@ than silently mis-decoded.
 All types that model Java-specific classfile concepts live under `object Java`
 inside `object Tasty`. The mapping is:
 
-| Old name (pre-Phase 4)   | Current name                          |
+| Old name                 | Current name                          |
 |--------------------------|---------------------------------------|
 | `JavaAnnotation`         | `Tasty.Java.Annotation`               |
 | `JavaAnnotation.Value`   | `Tasty.Java.Annotation.Value`         |
@@ -237,8 +234,7 @@ reason.
 
 **Test platform gating:** use `runJVM { ... }` for leaves that genuinely
 require JVM APIs (e.g. `java.io.File` reads of fixtures on disk). Do not
-use `taggedAs jvmOnly` for new leaves; `runJVM` is the canonical form
-(BIND-010 / Q-012).
+use `taggedAs jvmOnly` for new leaves; `runJVM` is the canonical form.
 
 ---
 

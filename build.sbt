@@ -695,27 +695,19 @@ lazy val `kyo-tasty` =
         )
         .jvmSettings(
             mimaCheck(false),
-            // Track C: scoverage threshold for kyo-tasty JVM.
-            // Re-measured 2026-06-05 after phases 01-14 (campaign structural changes:
-            // Interner drop, pure-data ADTs, withClasspath entries, fallback,
-            // Base64 fixtures, Java fixtures, exact counts, runJVM, wire format
-            // minor, content digest, per-jar probe, sbt plugin).
-            // TypeKey.structuralEquals and computeHash made iterative (work-list)
-            // to prevent StackOverflowError under scoverage instrumentation.
-            // New measurement: 77.39% stmt; gate at 75.3% (measured minus 2% headroom).
-            // Run: sbt 'kyo-tasty/coverage; kyo-tasty/test; kyo-tasty/coverageReport'
+            // TypeKey.structuralEquals and computeHash are iterative (work-list) to prevent
+            // StackOverflowError under scoverage instrumentation.
             coverageMinimumStmtTotal := 75.3,
             coverageFailOnMinimum    := true,
-            // Track A: differential testing against tasty-query 1.7.0.
-            // tasty-query is JVM-only (ClasspathLoaders uses java.nio); test lives in jvm/src/test.
+            // Differential testing against tasty-query 1.7.0. JVM-only because
+            // tasty-query's ClasspathLoaders requires java.nio.
             libraryDependencies += "ch.epfl.scala" %% "tasty-query" % "1.7.0" % Test,
-            // Phase 17: real-world classpath fidelity targets. Each jar is intransitive to
-            // avoid downloading large transitive closures (Spark: ~5 GB; Play: ~500 MB).
-            // kyo-tasty loads only .tasty files in the jar; missing transitive deps produce
+            // Real-world classpath fidelity targets. Each jar is intransitive to avoid
+            // downloading large transitive closures (Spark: ~5 GB; Play: ~500 MB). kyo-tasty
+            // loads only .tasty files in the jar; missing transitive deps produce
             // Symbol.Unresolved stubs (not TastyError entries), so errors.isEmpty holds.
             libraryDependencies += "com.typesafe.akka"  % "akka-actor_3"        % "2.6.20"    % Test intransitive(),
             libraryDependencies += "org.typelevel"      %% "cats-effect"         % "3.7.0"     % Test intransitive(),
-            libraryDependencies += "org.tpolecat"       % "doobie-core_2.13"    % "1.0.0-RC2" % Test intransitive(),
             libraryDependencies += "org.http4s"         %% "http4s-core"         % "0.23.28"   % Test intransitive(),
             libraryDependencies += "org.apache.pekko"   %% "pekko-actor"         % "1.1.3"     % Test intransitive(),
             libraryDependencies += "org.playframework"  %% "play"                % "3.0.2"     % Test intransitive(),

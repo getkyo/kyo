@@ -1,2 +1,0 @@
- M kyo-tasty/audit-fixes/steering.md
-?? kyo-tasty/audit-fixes/phase-23a-baseline.txt

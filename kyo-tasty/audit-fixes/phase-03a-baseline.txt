@@ -1,2 +1,0 @@
-?? kyo-tasty/audit-fixes/phase-02f-verify.md
-?? kyo-tasty/audit-fixes/phase-03a-baseline.txt
