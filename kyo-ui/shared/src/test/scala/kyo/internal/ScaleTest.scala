@@ -14,8 +14,8 @@ import scala.language.implicitConversions
 
 class ScaleTest extends kyo.test.Test[Any]:
 
-    "niceTicks(0, 61200, 5) returns the demo snapped ticks" in {
-        // The BarChart demo calls niceTicks(0, 61200, 5).
+    "niceTicks(0, 61200, 5) snaps to 20000-step ticks" in {
+        // A revenue-scale domain: niceTicks(0, 61200, 5).
         // rawStep = 61200 / 4 = 15300; magnitude = 10000; residual = 1.53 -> niceUnit = 2
         // step = 20000; ticks: 0, 20000, 40000, 60000 (4 ticks, 60000 <= 61200 + small epsilon)
         val result = Scale.niceTicks(0.0, 61200.0, 5)

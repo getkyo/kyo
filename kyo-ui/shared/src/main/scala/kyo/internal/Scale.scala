@@ -108,7 +108,7 @@ private[kyo] object Scale:
       *
       * Degenerate inputs (`min == max` or `maxTicks <= 1`) return `Chunk(min)`. Every returned tick lies in
       * `[min, max]`. The step is chosen from `{1, 2, 5} * 10^k` to minimise the number of steps while covering
-      * the range, following D3's nice-tick algorithm and the BarChart demo's `niceTicks` helper.
+      * the range, following D3's nice-tick algorithm.
       */
     def niceTicks(min: Double, max: Double, maxTicks: Int = 5): Chunk[Double] =
         // Sort bounds so that an inverted domain (min > max) does not produce a negative rawStep,
@@ -281,7 +281,7 @@ private[kyo] object Scale:
     /** A band scale mapping an ordered set of category keys to equal-width bands across `[rangeLo, rangeHi]`.
       *
       * Each band center is at `rangeLo + (i + 0.5) * slot` where `slot = (rangeHi - rangeLo) / n`. Inner
-      * padding of 0.1 of the slot is applied (matching the BarChart demo's `bandScale`).
+      * padding of 0.1 of the slot is applied.
       */
     final case class Band(
         keys: Chunk[String],
