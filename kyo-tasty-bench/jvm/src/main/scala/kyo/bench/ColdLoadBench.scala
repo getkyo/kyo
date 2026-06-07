@@ -1,40 +1,50 @@
 package kyo.bench
 
-import java.nio.file.Files
-import java.nio.file.Paths
 import kyo.*
 
 /** Standalone cold-load profiling harness for kyo-tasty.
   *
-  * Opens the kyo-bench compiled TASTy directory via Tasty.Classpath.open, runs 5 warmup + 10 measurement iterations, and prints median/p95
-  * to stdout. Designed to be run with async-profiler attached via -agentpath.
+  * Opens the kyo-bench compiled TASTy directory via Tasty.Classpath.open, runs 5 warmup + 10
+  * measurement iterations, and prints median/p95 to stdout. Designed to be run with
+  * async-profiler attached via -agentpath.
   *
-  * Run with: sbt -J-agentpath:/opt/homebrew/lib/libasyncProfiler.dylib=start,event=cpu,file=/tmp/cold-load-flame.html \
+  * The classes directory is resolved in order:
+  *   1. The KYO_BENCH_CLASSES_DIR environment variable (set to the absolute path of the
+  *      kyo-bench JVM classes directory).
+  *   2. A CWD-relative fallback: kyo-bench/.jvm/target/scala-3.8.3/classes
+  *
+  * Run with: sbt -J-agentpath:/opt/homebrew/lib/libasyncProfiler.dylib=start,event=cpu,file=/tmp/cold-load-flame.html
   * 'kyo-tasty-bench/runMain kyo.bench.ColdLoadProfile'
   */
-object ColdLoadProfile:
+object ColdLoadProfile extends KyoApp:
 
-    private val kyoBenchRoot =
-        "/Users/fwbrasil/workspace/kyo/.claude/worktrees/cached-inventing-quasar/kyo-bench/.jvm/target/scala-3.8.3/classes"
+    /** Time one call to action and return the elapsed Duration. */
+    private def timed(action: => Unit < Sync)(using Frame): Duration < Sync =
+        Clock.nowMonotonic.map { start =>
+            action.map { _ =>
+                Clock.nowMonotonic.map { end =>
+                    end - start
+                }
+            }
+        }
 
-    private def timeNs(action: => Unit): Long =
-        val t0 = java.lang.System.nanoTime()
-        action
-        java.lang.System.nanoTime() - t0
-    end timeNs
-
-    private def bench(name: String, warmup: Int, measure: Int)(action: => Unit): Array[Long] =
-        for _ <- 1 to warmup do action
-        val times = new Array[Long](measure)
-        for i <- 0 until measure do times(i) = timeNs(action)
-        java.util.Arrays.sort(times)
-        val median = times(measure / 2)
-        val p95    = times((measure * 95 / 100).min(measure - 1))
-        java.lang.System.out.println(
-            f"[$name] median=${median / 1_000_000.0}%.2f ms  p95=${p95 / 1_000_000.0}%.2f ms"
-        )
-        times
-    end bench
+    private def bench(name: String, warmup: Int, measure: Int)(action: => Unit < Sync)(using Frame): Chunk[Duration] < Sync =
+        Kyo.foreachDiscard(Chunk.from(0 until warmup)) { _ =>
+            action
+        }.map { _ =>
+            Kyo.foreach(Chunk.from(0 until measure)) { _ =>
+                timed(action)
+            }.map { durations =>
+                val sorted = durations.sortBy(_.toNanos)
+                val median = sorted(measure / 2)
+                val p95    = sorted((measure * 95 / 100).min(measure - 1))
+                Console.printLine(
+                    f"[$name] median=${median.toNanos / 1_000_000.0}%.2f ms  p95=${p95.toNanos / 1_000_000.0}%.2f ms"
+                ).map { _ =>
+                    sorted
+                }
+            }
+        }
 
     private def runSync[A](v: => A < (Async & Abort[TastyError]))(using AllowUnsafe, Frame): A =
         KyoApp.Unsafe.runAndBlock(Duration.Infinity)(Abort.run[TastyError](v).map {
@@ -46,68 +56,89 @@ object ColdLoadProfile:
             case Result.Failure(err) => throw err
             case Result.Panic(ex)    => throw ex
 
-    def main(args: Array[String]): Unit =
+    /** Resolve the kyo-bench classes directory. Reads KYO_BENCH_CLASSES_DIR env var first, then
+      * falls back to a CWD-relative path.
+      */
+    private def resolveClassesDir(): String < Sync =
+        System.env[String]("KYO_BENCH_CLASSES_DIR").map {
+            case Present(dir) => dir
+            case Absent =>
+                Path.cwd.map { cwd =>
+                    (cwd / "kyo-bench" / ".jvm" / "target" / "scala-3.8.3" / "classes").toString
+                }
+        }
+
+    run {
         import AllowUnsafe.embrace.danger
 
         val warmupIter  = 5
         val measureIter = args.headOption.flatMap(_.toIntOption).getOrElse(10)
 
-        // Resolve the actual root — handle path aliases
-        val rootCandidates = Seq(
-            kyoBenchRoot,
-            // Resolve via the worktree link from the current working directory
-            Paths.get("").toAbsolutePath.resolve(
-                "kyo-bench/.jvm/target/scala-3.8.3/classes"
-            ).toString
-        )
-        val root = rootCandidates.find(p => Files.isDirectory(Paths.get(p))).getOrElse {
-            java.lang.System.err.println(s"ERROR: kyo-bench classes directory not found. Tried:")
-            rootCandidates.foreach(r => java.lang.System.err.println(s"  $r"))
-            java.lang.System.err.println("Run: sbt 'kyo-bench/compile' first")
-            java.lang.System.exit(1)
-            ""
+        resolveClassesDir().map { root =>
+            Path(root).isDirectory.map { rootExists =>
+                if !rootExists then
+                    Console.printLineErr(s"ERROR: kyo-bench classes directory not found: $root")
+                        .andThen(Console.printLineErr("Run: sbt 'kyo-bench/compile' first"))
+                        .andThen(Sync.defer(exit(1)))
+                else
+                    // Count TASTy and class files, total bytes.
+                    Scope.run(Path(root).walk.run).map { allPaths =>
+                        val tastyFiles = allPaths.count(p => p.toString.endsWith(".tasty"))
+                        val classFiles = allPaths.count(p => p.toString.endsWith(".class"))
+                        val relevantPaths =
+                            allPaths.filter(p => p.toString.endsWith(".tasty") || p.toString.endsWith(".class"))
+                        Kyo.foreach(relevantPaths) { p =>
+                            Abort.run[FileReadException](p.size).map {
+                                case Result.Success(s) => s
+                                case _                 => 0L
+                            }
+                        }.map { sizes =>
+                            val totalBytes = sizes.foldLeft(0L)(_ + _)
+                            val totalMB    = totalBytes.toDouble / (1024 * 1024)
+
+                            Console.printLine("=== ColdLoadProfile: kyo-bench cold-load ===")
+                                .andThen(Console.printLine(s"Root: $root"))
+                                .andThen(Console.printLine(f"Files: $tastyFiles TASTy + $classFiles classfiles, ${totalMB}%.2f MB"))
+                                .andThen(Console.printLine(""))
+                                .andThen {
+                                    bench("cold-load kyo-bench (enumerate top-level classes)", warmupIter, measureIter)(Sync.defer {
+                                        val _ = runSync {
+                                            Tasty.withClasspath(Seq(root)) {
+                                                Tasty.classpath.map(_.topLevelClasses.size)
+                                            }
+                                        }
+                                    })
+                                }
+                                .map { times =>
+                                    Console.printLine("")
+                                        .andThen {
+                                            // Also run snapshot-write timing.
+                                            Path.tempDir("kyo-tasty-profile").map { tmpDir =>
+                                                bench("cold-load kyo-bench + snapshot write", warmupIter, measureIter)(Sync.defer {
+                                                    val _ = runSync {
+                                                        Tasty.withClasspath(Seq(root), Maybe.Present(tmpDir.toString)) {
+                                                            Tasty.classpath.map(_.topLevelClasses.size)
+                                                        }
+                                                    }
+                                                }).map { snapshotTimes =>
+                                                    Console.printLine("")
+                                                        .andThen(Console.printLine("=== Summary ==="))
+                                                        .andThen(Console.printLine(
+                                                            f"cold-load           median=${times(measureIter / 2).toNanos / 1_000_000.0}%.2f ms  p95=${times((measureIter * 95 / 100).min(measureIter - 1)).toNanos / 1_000_000.0}%.2f ms"
+                                                        ))
+                                                        .andThen(Console.printLine(
+                                                            f"cold-load+snapshot  median=${snapshotTimes(measureIter / 2).toNanos / 1_000_000.0}%.2f ms  p95=${snapshotTimes((measureIter * 95 / 100).min(measureIter - 1)).toNanos / 1_000_000.0}%.2f ms"
+                                                        ))
+                                                        .andThen(Console.printLine("=== done ==="))
+                                                }
+                                            }
+                                        }
+                                }
+                        }
+                    }
+                end if
+            }
         }
-
-        // Count TASTy and class files, total bytes
-        val tastyFiles = Files.walk(Paths.get(root)).filter(_.toString.endsWith(".tasty")).toArray.length
-        val classFiles = Files.walk(Paths.get(root)).filter(_.toString.endsWith(".class")).toArray.length
-        val totalBytes = Files.walk(Paths.get(root))
-            .filter(p => p.toString.endsWith(".tasty") || p.toString.endsWith(".class"))
-            .mapToLong(p =>
-                try Files.size(p)
-                catch case _: Throwable => 0L
-            )
-            .sum()
-        val totalMB = totalBytes.toDouble / (1024 * 1024)
-
-        java.lang.System.out.println("=== ColdLoadProfile: kyo-bench cold-load ===")
-        java.lang.System.out.println(s"Root: $root")
-        java.lang.System.out.println(f"Files: $tastyFiles TASTy + $classFiles classfiles, ${totalMB}%.2f MB")
-        java.lang.System.out.println()
-
-        val times = bench("cold-load kyo-bench (enumerate top-level classes)", warmupIter, measureIter):
-            val _ = runSync:
-                Tasty.withClasspath(Seq(root)):
-                    Tasty.classpath.map(_.topLevelClasses.size)
-
-        java.lang.System.out.println()
-
-        // Also run snapshot-write timing
-        val tmpDir = Files.createTempDirectory("kyo-tasty-profile").toString
-        val snapshotTimes = bench("cold-load kyo-bench + snapshot write", warmupIter, measureIter):
-            val _ = runSync:
-                Tasty.withClasspath(Seq(root), Maybe.Present(tmpDir)):
-                    Tasty.classpath.map(_.topLevelClasses.size)
-
-        java.lang.System.out.println()
-        java.lang.System.out.println("=== Summary ===")
-        java.lang.System.out.println(
-            f"cold-load           median=${times(measureIter / 2) / 1_000_000.0}%.2f ms  p95=${times((measureIter * 95 / 100).min(measureIter - 1)) / 1_000_000.0}%.2f ms"
-        )
-        java.lang.System.out.println(
-            f"cold-load+snapshot  median=${snapshotTimes(measureIter / 2) / 1_000_000.0}%.2f ms  p95=${snapshotTimes((measureIter * 95 / 100).min(measureIter - 1)) / 1_000_000.0}%.2f ms"
-        )
-        java.lang.System.out.println("=== done ===")
-    end main
+    }
 
 end ColdLoadProfile
